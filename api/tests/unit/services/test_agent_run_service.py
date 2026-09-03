@@ -61,6 +61,27 @@ class TestEnqueueAgentRun:
     @pytest.mark.asyncio
     @patch("src.services.execution.agent_run_service.publish_message")
     @patch("src.services.execution.agent_run_service.get_redis")
+    async def test_runs_lifecycle_hook_before_queue_publish(
+        self, mock_get_redis, mock_publish, db_session
+    ):
+        _redis_context(mock_get_redis)
+        calls = []
+        db_session.commit.side_effect = lambda: calls.append("commit")
+        before_publish = AsyncMock(side_effect=lambda *_: calls.append("lifecycle"))
+        mock_publish.side_effect = lambda *_: calls.append("publish")
+
+        run_id = await enqueue_agent_run(
+            agent_id=None,
+            trigger_type="chat",
+            before_queue_publish=before_publish,
+        )
+
+        before_publish.assert_awaited_once_with(run_id)
+        assert calls == ["commit", "lifecycle", "publish"]
+
+    @pytest.mark.asyncio
+    @patch("src.services.execution.agent_run_service.publish_message")
+    @patch("src.services.execution.agent_run_service.get_redis")
     async def test_enqueue_stores_context_in_redis(
         self, mock_get_redis, _mock_publish, db_session
     ):
@@ -79,6 +100,29 @@ class TestEnqueueAgentRun:
         redis.set.assert_awaited_once()
         context = json.loads(redis.set.call_args.args[1])
         assert context["caller"]["organization_id"] == org_id
+
+    @pytest.mark.asyncio
+    @patch("src.services.execution.agent_run_service.publish_message")
+    @patch("src.services.execution.agent_run_service.get_redis")
+    async def test_enqueue_supports_agentless_conversation_runs(
+        self, mock_get_redis, mock_publish, db_session
+    ):
+        redis = _redis_context(mock_get_redis)
+        conversation_id = str(uuid4())
+
+        await enqueue_agent_run(
+            agent_id=None,
+            trigger_type="chat",
+            conversation_id=conversation_id,
+            input_data={"content": "hello"},
+        )
+
+        queued_run = db_session.add.call_args.args[0]
+        assert queued_run.agent_id is None
+        assert str(queued_run.conversation_id) == conversation_id
+        context = json.loads(redis.set.call_args.args[1])
+        assert context["conversation_id"] == conversation_id
+        assert mock_publish.call_args.args[1]["agent_id"] is None
 
     @pytest.mark.asyncio
     @patch("src.services.execution.agent_run_service.publish_message")

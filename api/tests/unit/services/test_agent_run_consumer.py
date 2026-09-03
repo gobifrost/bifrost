@@ -1,13 +1,20 @@
 """Unit tests for AgentRunConsumer error handling paths."""
 
+import asyncio
 import json
 from datetime import datetime, timezone
-import pytest
-from sqlalchemy import select
+from types import SimpleNamespace
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
+import pytest
+from sqlalchemy import select
+
 from src.jobs.consumers.agent_run import AgentRunConsumer
+from src.models.contracts.agents import ChatStreamChunk
+from src.models.enums import MessageRole
+from src.models.orm.agents import Conversation
 from src.models.orm.agent_runs import AgentRun
 
 
@@ -55,6 +62,33 @@ async def _load_run(async_session_factory, run_id):
     async with async_session_factory() as db:
         result = await db.execute(select(AgentRun).where(AgentRun.id == run_id))
         return result.scalar_one()
+
+
+def _chat_executor_stub(
+    chunks,
+    *,
+    usage_requests=3,
+    usage_tokens=11,
+    cancel_after=None,
+    stall_after=None,
+):
+    executor = MagicMock()
+    executor._save_message = AsyncMock()
+    executor._active_usage = SimpleNamespace(requests=usage_requests, total_tokens=usage_tokens)
+
+    def _chat(*args, **kwargs):
+        async def _gen():
+            for index, chunk in enumerate(chunks):
+                yield chunk
+                if cancel_after is not None and index == cancel_after:
+                    raise asyncio.CancelledError()
+                if stall_after is not None and index == stall_after:
+                    await asyncio.sleep(60)
+
+        return _gen()
+
+    executor.chat = _chat
+    return executor
 
 
 @pytest.fixture
@@ -243,3 +277,415 @@ async def test_late_terminalized_run_is_not_overwritten(
     sync_payload = sync_mock.await_args.args[1]
     assert sync_payload["status"] == "timeout"
     assert sync_payload["error"] == "scheduler terminalized the run"
+
+
+@pytest.mark.asyncio
+async def test_chat_run_publishes_stream_chunks_and_terminal_completion(
+    consumer,
+):
+    run_id = str(uuid4())
+    conversation_id = uuid4()
+    user_id = uuid4()
+    assistant_message_id = uuid4()
+    user_message_id = uuid4()
+
+    queued_run = MagicMock(
+        status="running",
+        agent_id=None,
+        conversation_id=conversation_id,
+        output=None,
+        error=None,
+        iterations_used=0,
+        tokens_used=0,
+    )
+    conversation = MagicMock(spec=Conversation)
+    conversation.id = conversation_id
+    conversation.title = "Existing title"
+    conversation.agent = None
+    conversation.user_id = user_id
+    conversation.user = MagicMock(id=user_id)
+
+    run_obj = MagicMock(
+        status="running",
+        output=None,
+        error=None,
+        iterations_used=0,
+        tokens_used=0,
+        llm_model=None,
+        duration_ms=None,
+        completed_at=None,
+    )
+
+    mock_session = AsyncMock()
+    mock_session.commit = AsyncMock()
+    mock_session.execute = AsyncMock(
+        return_value=SimpleNamespace(scalar_one_or_none=lambda: conversation)
+    )
+
+    async def _get(model, obj_id, **kwargs):
+        if model is AgentRun:
+            return run_obj
+        if model is Conversation:
+            return conversation
+        return None
+
+    mock_session.get = AsyncMock(side_effect=_get)
+    mock_session_ctx = AsyncMock()
+    mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
+    consumer._session_factory = MagicMock(return_value=mock_session_ctx)
+
+    redis_mock = AsyncMock()
+    redis_mock.get.return_value = None
+
+    publish_chat = AsyncMock()
+    publish_run = AsyncMock()
+
+    fake_executor = _chat_executor_stub(
+        [
+            ChatStreamChunk(
+                type="message_start",
+                user_message_id=str(user_message_id),
+                assistant_message_id=str(assistant_message_id),
+            ),
+            ChatStreamChunk(type="delta", content="Hello "),
+            ChatStreamChunk(
+                type="done",
+                content="Hello world",
+                message_id=str(assistant_message_id),
+                finish_reason="stop",
+                incomplete=False,
+                run_status="completed",
+            ),
+        ]
+    )
+
+    with (
+        patch("src.jobs.consumers.agent_run.get_redis", return_value=FakeRedisCtx(redis_mock)),
+        patch(
+            "src.services.ai_model_service.AIModelService.resolve_chat_profile",
+            new=AsyncMock(
+                return_value=(
+                    MagicMock(id=uuid4(), name="Everyday"),
+                    SimpleNamespace(model="test-model"),
+                    SimpleNamespace(),
+                )
+            ),
+        ),
+        patch("src.jobs.consumers.agent_run.AgentExecutor", return_value=fake_executor),
+        patch("src.jobs.consumers.agent_run.publish_chat_run_event", publish_chat),
+        patch("src.jobs.consumers.agent_run.publish_agent_run_update", publish_run),
+    ):
+        await consumer._process_chat_run(
+            run_id=run_id,
+            context={
+                "input": {
+                    "conversation_id": str(conversation_id),
+                    "content": "Hello world",
+                    "user_message_id": str(user_message_id),
+                    "client_run_id": str(uuid4()),
+                },
+                "caller": {
+                    "user_id": str(user_id),
+                    "email": "caller@example.com",
+                    "name": "Caller",
+                },
+            },
+            agent_run=queued_run,
+            agent=None,
+            sync=False,
+            start_time=time.time(),
+        )
+
+    assert [call.kwargs["kind"] for call in publish_chat.await_args_list] == [
+        "message_start",
+        "delta",
+        "done",
+    ]
+    assert [call.kwargs["status"] for call in publish_chat.await_args_list] == [
+        "running",
+        "running",
+        "completed",
+    ]
+    assert run_obj.status == "completed"
+    assert run_obj.output == {
+        "text": "Hello world",
+        "finish_reason": "stop",
+        "incomplete": False,
+    }
+    assert publish_run.await_count == 1
+    assert publish_run.await_args.args[0].status == "completed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("interruption", "expected_kind", "expected_status", "expected_error"),
+    [
+        ("cancel", "cancelled", "cancelled", "Chat run cancelled"),
+        ("timeout", "error", "timeout", "Chat run timed out after 0.001s"),
+    ],
+)
+async def test_chat_run_interruption_persists_partial_output_and_terminal_event(
+    consumer,
+    interruption,
+    expected_kind,
+    expected_status,
+    expected_error,
+):
+    run_id = str(uuid4())
+    conversation_id = uuid4()
+    user_id = uuid4()
+    assistant_message_id = uuid4()
+    user_message_id = uuid4()
+
+    queued_run = MagicMock(
+        status="running",
+        agent_id=None,
+        conversation_id=conversation_id,
+        output=None,
+        error=None,
+        iterations_used=0,
+        tokens_used=0,
+    )
+    conversation = MagicMock(spec=Conversation)
+    conversation.id = conversation_id
+    conversation.title = "Existing title"
+    conversation.agent = None
+    conversation.user_id = user_id
+    conversation.user = MagicMock(id=user_id)
+
+    run_obj = MagicMock(
+        status="running",
+        output=None,
+        error=None,
+        iterations_used=0,
+        tokens_used=0,
+        llm_model=None,
+        duration_ms=None,
+        completed_at=None,
+    )
+
+    mock_session = AsyncMock()
+    mock_session.commit = AsyncMock()
+    mock_session.execute = AsyncMock(
+        return_value=SimpleNamespace(scalar_one_or_none=lambda: conversation)
+    )
+
+    async def _get(model, obj_id, **kwargs):
+        if model is AgentRun:
+            return run_obj
+        if model is Conversation:
+            return conversation
+        return None
+
+    mock_session.get = AsyncMock(side_effect=_get)
+    mock_session_ctx = AsyncMock()
+    mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
+    consumer._session_factory = MagicMock(return_value=mock_session_ctx)
+
+    redis_mock = AsyncMock()
+    redis_mock.get.return_value = None
+
+    publish_chat = AsyncMock()
+    publish_run = AsyncMock()
+
+    fake_executor = _chat_executor_stub(
+        [
+            ChatStreamChunk(
+                type="message_start",
+                user_message_id=str(user_message_id),
+                assistant_message_id=str(assistant_message_id),
+            ),
+            ChatStreamChunk(type="delta", content="Partial "),
+        ],
+        usage_requests=4,
+        usage_tokens=19,
+        cancel_after=1 if interruption == "cancel" else None,
+        stall_after=1 if interruption == "timeout" else None,
+    )
+
+    with (
+        patch("src.jobs.consumers.agent_run.get_redis", return_value=FakeRedisCtx(redis_mock)),
+        patch(
+            "src.services.ai_model_service.AIModelService.resolve_chat_profile",
+            new=AsyncMock(
+                return_value=(
+                    MagicMock(id=uuid4(), name="Everyday"),
+                    SimpleNamespace(model="test-model"),
+                    SimpleNamespace(),
+                )
+            ),
+        ),
+        patch("src.jobs.consumers.agent_run.AgentExecutor", return_value=fake_executor),
+        patch("src.jobs.consumers.agent_run.DEFAULT_RUN_TIMEOUT", 0.001),
+        patch("src.jobs.consumers.agent_run.publish_chat_run_event", publish_chat),
+        patch("src.jobs.consumers.agent_run.publish_agent_run_update", publish_run),
+    ):
+        await consumer._process_chat_run(
+            run_id=run_id,
+            context={
+                "input": {
+                    "conversation_id": str(conversation_id),
+                    "content": "Hello world",
+                    "user_message_id": str(user_message_id),
+                    "client_run_id": str(uuid4()),
+                },
+                "caller": {
+                    "user_id": str(user_id),
+                    "email": "caller@example.com",
+                    "name": "Caller",
+                },
+            },
+            agent_run=queued_run,
+            agent=None,
+            sync=False,
+            start_time=time.time(),
+        )
+
+    assert [call.kwargs["kind"] for call in publish_chat.await_args_list] == [
+        "message_start",
+        "delta",
+        expected_kind,
+    ]
+    assert [call.kwargs["status"] for call in publish_chat.await_args_list] == [
+        "running",
+        "running",
+        expected_status,
+    ]
+    fake_executor._save_message.assert_awaited_once()
+    save_kwargs = fake_executor._save_message.await_args.kwargs
+    assert save_kwargs["message_id"] == assistant_message_id
+    assert save_kwargs["role"] == MessageRole.ASSISTANT
+    assert save_kwargs["content"] == "Partial "
+    assert run_obj.status == expected_status
+    assert run_obj.output == {"text": "Partial ", "partial": True}
+    assert run_obj.error == expected_error
+    assert publish_run.await_count == 1
+    assert publish_run.await_args.args[0].status == expected_status
+
+
+@pytest.mark.asyncio
+async def test_agentless_chat_skips_agent_lookup_and_socket_dependencies(
+    consumer,
+):
+    run_id = str(uuid4())
+    queued_run = MagicMock(status="queued")
+    mock_session = AsyncMock()
+    mock_session.get.return_value = queued_run
+    mock_session.execute = AsyncMock(side_effect=AssertionError("agent lookup should be skipped for chat"))
+    mock_session.commit = AsyncMock()
+    mock_session_ctx = AsyncMock()
+    mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
+    consumer._session_factory = MagicMock(return_value=mock_session_ctx)
+
+    redis_mock = AsyncMock()
+    redis_mock.get.return_value = json.dumps(
+        {
+            "trigger_type": "chat",
+            "input": {
+                "conversation_id": str(uuid4()),
+                "content": "Hello",
+                "client_run_id": str(uuid4()),
+            },
+            "caller": {
+                "user_id": str(uuid4()),
+                "email": "caller@example.com",
+                "name": "Caller",
+            },
+        }
+    )
+
+    process_chat = AsyncMock()
+
+    publish_chat = AsyncMock()
+    with (
+        patch("src.jobs.consumers.agent_run.get_redis", return_value=FakeRedisCtx(redis_mock)),
+        patch("src.jobs.consumers.agent_run.publish_chat_run_event", publish_chat),
+        patch("src.jobs.consumers.agent_run.publish_agent_run_update", AsyncMock()),
+        patch.object(consumer, "_process_chat_run", process_chat),
+    ):
+        await consumer.process_message(
+            {
+                "run_id": run_id,
+                "agent_id": None,
+                "trigger_type": "chat",
+            }
+        )
+
+    mock_session.execute.assert_not_called()
+    process_chat.assert_awaited_once()
+    assert process_chat.await_args.kwargs["agent"] is None
+    assert queued_run.status == "running"
+    publish_chat.assert_awaited_once()
+    assert publish_chat.await_args.kwargs["kind"] == "run_status"
+    assert publish_chat.await_args.kwargs["status"] == "running"
+
+
+@pytest.mark.asyncio
+async def test_chat_outer_failure_publishes_terminal_error_envelope(
+    consumer,
+):
+    run_id = str(uuid4())
+    conversation_id = uuid4()
+    queued_run = MagicMock(status="queued", conversation_id=conversation_id)
+    mock_session = AsyncMock()
+    mock_session.get.return_value = queued_run
+    mock_session.execute = AsyncMock(side_effect=AssertionError("agent lookup should be skipped for chat"))
+    mock_session.commit = AsyncMock()
+    mock_session_ctx = AsyncMock()
+    mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
+    consumer._session_factory = MagicMock(return_value=mock_session_ctx)
+
+    redis_mock = AsyncMock()
+    redis_mock.get.return_value = json.dumps(
+        {
+            "trigger_type": "chat",
+            "input": {
+                "conversation_id": str(conversation_id),
+                "content": "Hello",
+                "client_run_id": str(uuid4()),
+            },
+            "caller": {
+                "user_id": str(uuid4()),
+                "email": "caller@example.com",
+                "name": "Caller",
+            },
+        }
+    )
+
+    publish_chat = AsyncMock()
+    publish_run = AsyncMock()
+
+    with (
+        patch("src.jobs.consumers.agent_run.get_redis", return_value=FakeRedisCtx(redis_mock)),
+        patch("src.jobs.consumers.agent_run.publish_chat_run_event", publish_chat),
+        patch("src.jobs.consumers.agent_run.publish_agent_run_update", publish_run),
+        patch.object(
+            consumer,
+            "_process_chat_run",
+            AsyncMock(side_effect=RuntimeError("chat exploded before streaming")),
+        ),
+    ):
+        await consumer.process_message(
+            {
+                "run_id": run_id,
+                "agent_id": None,
+                "trigger_type": "chat",
+            }
+        )
+
+    assert [call.kwargs["kind"] for call in publish_chat.await_args_list] == [
+        "run_status",
+        "error",
+    ]
+    assert [call.kwargs["status"] for call in publish_chat.await_args_list] == [
+        "running",
+        "failed",
+    ]
+    terminal_payload = publish_chat.await_args_list[-1].kwargs["payload"]
+    assert terminal_payload["type"] == "error"
+    assert terminal_payload["run_status"] == "failed"
+    assert publish_run.await_args.args[0].status == "failed"

@@ -1,28 +1,35 @@
 /**
- * Chat WebSocket Streaming Hook
+ * Durable chat runtime hook.
  *
- * Provides real-time streaming chat via the shared WebSocketService.
- * Uses the chat store for state management.
+ * HTTP starts and cancels server-owned runs. WebSocket carries only replayable
+ * realtime events; reconnects hydrate the same projection from server state.
  */
 
-import { useCallback, useRef, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { useChatStore } from "@/stores/chatStore";
 import {
-	webSocketService,
-	type ChatStreamChunk,
-	type ChatAgentSwitch,
-	type AskUserQuestion,
-} from "@/services/websocket";
-import { generateMessageId, type UnifiedMessage } from "@/lib/chat-utils";
+	deriveActiveRun,
+	type ChatProjectionSnapshot,
+	type ChatStreamEnvelope,
+} from "@/lib/chat-runtime";
+import { generateMessageId } from "@/lib/chat-utils";
+import {
+	cancelChatRun,
+	createChatRun,
+	getChatRunState,
+	type ChatRunStateResponse,
+} from "@/services/chatRuns";
 import type { AttachmentPublic } from "@/services/chatAttachments";
 import type { ChatModelProfileId } from "@/services/chatModels";
+import {
+	webSocketService,
+	type ChatAgentSwitch,
+	type ChatStreamChunk,
+} from "@/services/websocket";
+import { useChatStore } from "@/stores/chatStore";
 
-export interface PendingQuestion {
-	questions: AskUserQuestion[];
-	requestId: string;
-}
+const STREAM_FLUSH_INTERVAL_MS = 32;
 
 export interface UseChatStreamOptions {
 	conversationId: string | undefined;
@@ -39,11 +46,42 @@ export interface UseChatStreamReturn {
 	) => Promise<void>;
 	isConnected: boolean;
 	isStreaming: boolean;
-	// AskUserQuestion support
-	pendingQuestion: PendingQuestion | null;
-	answerQuestion: (answers: Record<string, string>) => void;
-	// Stop/interrupt support
-	stopStreaming: () => void;
+	stopStreaming: () => Promise<void>;
+}
+
+function getChunk(input: ChatStreamEnvelope): ChatStreamChunk | null {
+	return input.payload ?? input.chunk ?? null;
+}
+
+function isTerminalPlatformJob(status: string | undefined): boolean {
+	return (
+		status === "succeeded" || status === "failed" || status === "cancelled"
+	);
+}
+
+function stateToProjectionSnapshot(
+	state: ChatRunStateResponse,
+): ChatProjectionSnapshot {
+	const activeRun = state.active_run;
+	const activeRunId = activeRun?.id ?? null;
+	const activeRunConversationId = activeRun?.conversation_id ?? null;
+	return {
+		conversation_id: state.conversation.id,
+		messages: state.messages ?? [],
+		runs:
+			activeRun && activeRunId
+				? {
+						[activeRunId]: {
+							run_id: activeRunId,
+							conversation_id: activeRunConversationId,
+							status: activeRun.status,
+							last_sequence: state.latest_sequence,
+						},
+					}
+				: undefined,
+		active_run_id: activeRunId,
+		last_sequence: state.latest_sequence,
+	};
 }
 
 export function useChatStream({
@@ -55,37 +93,82 @@ export function useChatStream({
 	const [isConnected, setIsConnected] = useState(() =>
 		webSocketService.isConnected(),
 	);
-	const [pendingQuestion, setPendingQuestion] =
-		useState<PendingQuestion | null>(null);
-
-	// Track current conversation for closure safety
-	const currentConversationIdRef = useRef<string | undefined>(conversationId);
-
-	// Ref for handleChunk to avoid effect dependency issues
-	const handleChunkRef = useRef<((chunk: ChatStreamChunk) => void) | null>(
-		null,
-	);
 	const chatUnsubscribeRef = useRef<(() => void) | null>(null);
 	const subscribedConversationIdRef = useRef<string | null>(null);
-	const activeUserMessageIdRef = useRef<string | null>(null);
+	const currentConversationIdRef = useRef<string | undefined>(conversationId);
 	const artifactJobUnsubscribersRef = useRef(new Map<string, () => void>());
-	const runAssistantMessageIdRef = useRef<string | null>(null);
+	const queuedEventsRef = useRef<ChatStreamEnvelope[]>([]);
+	const queuedConversationIdRef = useRef<string | null>(null);
+	const flushTimerRef = useRef<number | null>(null);
+	const onErrorRef = useRef(onError);
+	const onAgentSwitchRef = useRef(onAgentSwitch);
+	useEffect(() => {
+		onErrorRef.current = onError;
+		onAgentSwitchRef.current = onAgentSwitch;
+	}, [onAgentSwitch, onError]);
 
+	const projection = useChatStore((state) =>
+		conversationId
+			? state.projectionsByConversation[conversationId]
+			: undefined,
+	);
 	const {
-		isStreaming,
-		startStreaming,
-		completeStream,
+		applyChatRunEvent,
+		applyChatRunEvents,
+		hydrateConversationProjection,
+		stageOptimisticUserTurn,
 		setStreamError,
-		resetStream,
-		addSystemEvent,
-		addMessage,
-		setTodos,
 	} = useChatStore();
 
-	// Update ref when conversationId changes
+	const isStreaming = useMemo(
+		() => Boolean(projection && deriveActiveRun(projection)),
+		[projection],
+	);
+	const hasPendingSubmission = useMemo(
+		() =>
+			Boolean(
+				projection && deriveActiveRun(projection)?.status === "pending",
+			),
+		[projection],
+	);
 	useEffect(() => {
 		currentConversationIdRef.current = conversationId;
 	}, [conversationId]);
+
+	const flushQueuedEvents = useCallback(() => {
+		flushTimerRef.current = null;
+		const events = queuedEventsRef.current;
+		queuedEventsRef.current = [];
+		queuedConversationIdRef.current = null;
+		if (events.length === 0) return;
+		const targetConversationId = events[0]?.conversation_id;
+		if (!targetConversationId) return;
+		applyChatRunEvents(targetConversationId, events);
+	}, [applyChatRunEvents]);
+
+	const enqueueStreamEvent = useCallback(
+		(event: ChatStreamEnvelope) => {
+			const eventConversationId = event.conversation_id ?? null;
+			if (
+				queuedConversationIdRef.current &&
+				eventConversationId &&
+				queuedConversationIdRef.current !== eventConversationId
+			) {
+				if (flushTimerRef.current !== null) {
+					window.clearTimeout(flushTimerRef.current);
+				}
+				flushQueuedEvents();
+			}
+			queuedConversationIdRef.current = eventConversationId;
+			queuedEventsRef.current.push(event);
+			if (flushTimerRef.current !== null) return;
+			flushTimerRef.current = window.setTimeout(
+				flushQueuedEvents,
+				STREAM_FLUSH_INTERVAL_MS,
+			);
+		},
+		[flushQueuedEvents],
+	);
 
 	useEffect(
 		() => () => {
@@ -93,539 +176,145 @@ export function useChatStream({
 				unsubscribe(),
 			);
 			artifactJobUnsubscribersRef.current.clear();
+			chatUnsubscribeRef.current?.();
+			chatUnsubscribeRef.current = null;
+			subscribedConversationIdRef.current = null;
+			if (flushTimerRef.current !== null) {
+				window.clearTimeout(flushTimerRef.current);
+			}
+			flushTimerRef.current = null;
+			queuedEventsRef.current = [];
+			queuedConversationIdRef.current = null;
 		},
 		[],
 	);
 
-	// Handle incoming chat stream chunks
-	const handleChunk = useCallback(
-		(chunk: ChatStreamChunk) => {
-			const observeArtifactJob = (result: unknown, messageId: string) => {
-				if (!result || typeof result !== "object") return;
-				const job = result as {
-					type?: string;
-					job_id?: string;
-					kind?: string;
-					conversation_id?: string;
-				};
-				if (
-					job.type !== "platform_job" ||
-					job.kind !== "video_generation" ||
-					!job.job_id ||
-					artifactJobUnsubscribersRef.current.has(job.job_id)
-				) {
-					return;
-				}
-				const unsubscribe = webSocketService.onPlatformJobUpdate(
-					job.job_id,
-					(update) => {
-						if (
-							update.status !== "succeeded" &&
-							update.status !== "failed" &&
-							update.status !== "cancelled"
-						) {
-							return;
-						}
-						const convId =
-							job.conversation_id ||
-							currentConversationIdRef.current;
-						if (convId) {
-							queryClient.invalidateQueries({
-								queryKey: [
-									"get",
-									"/api/chat/conversations/{conversation_id}/messages",
-									{
-										params: {
-											path: { conversation_id: convId },
-										},
-									},
-								],
-							});
-						}
-						queryClient.invalidateQueries({
-							queryKey: ["chat-artifacts"],
-						});
-						if (update.status === "succeeded") {
-							toast.success("Video ready");
-						} else {
-							toast.error("Video generation did not finish", {
-								description:
-									update.error?.message ||
-									"Open the notification for details.",
-							});
-						}
-						artifactJobUnsubscribersRef.current.get(
-							job.job_id!,
-						)?.();
-						artifactJobUnsubscribersRef.current.delete(job.job_id!);
-						if (convId) {
-							useChatStore
-								.getState()
-								.updateMessage(convId, messageId, {
-									tool_state:
-										update.status === "succeeded"
-											? "completed"
-											: "error",
-									tool_result: {
-										...job,
-										status: update.status,
-									},
-								});
-						}
+	const hydrateRunState = useCallback(
+		(targetConversationId: string, state: ChatRunStateResponse) => {
+			hydrateConversationProjection(
+				targetConversationId,
+				stateToProjectionSnapshot(state),
+				(state.events ?? []) as unknown as ChatStreamEnvelope[],
+			);
+		},
+		[hydrateConversationProjection],
+	);
+
+	const invalidateConversation = useCallback(
+		(targetConversationId: string) => {
+			queryClient.invalidateQueries({
+				queryKey: [
+					"get",
+					"/api/chat/conversations/{conversation_id}/messages",
+					{
+						params: {
+							path: { conversation_id: targetConversationId },
+						},
 					},
-				);
-				artifactJobUnsubscribersRef.current.set(
-					job.job_id,
-					unsubscribe,
-				);
+				],
+			});
+			queryClient.invalidateQueries({
+				queryKey: ["get", "/api/chat/conversations"],
+			});
+		},
+		[queryClient],
+	);
+
+	const observeArtifactJob = useCallback(
+		(result: unknown, targetConversationId: string) => {
+			if (!result || typeof result !== "object") return;
+			const job = result as {
+				type?: string;
+				kind?: string;
+				job_id?: string;
 			};
-
-			// Handle title update - refresh conversations to show new title
-			if (chunk.type === "title_update") {
-				queryClient.invalidateQueries({
-					queryKey: ["get", "/api/chat/conversations"],
-				});
-				if (chunk.conversation_id) {
-					queryClient.invalidateQueries({
-						queryKey: [
-							"get",
-							"/api/chat/conversations/{conversation_id}",
-							{
-								params: {
-									path: {
-										conversation_id: chunk.conversation_id,
-									},
-								},
-							},
-						],
-					});
-				}
-				return;
-			}
-
-			// Only process chunks for current conversation
 			if (
-				chunk.conversation_id &&
-				chunk.conversation_id !== currentConversationIdRef.current
+				job.type !== "platform_job" ||
+				job.kind !== "video_generation" ||
+				!job.job_id ||
+				artifactJobUnsubscribersRef.current.has(job.job_id)
 			) {
 				return;
 			}
 
-			switch (chunk.type) {
-				case "message_start": {
-					const convId = currentConversationIdRef.current;
-					if (!convId) break;
-
-					// Get local_id from chunk (echoed back from server)
-					const localId = chunk.local_id;
-
-					// If we have a localId and user_message_id, update the optimistic message with server ID
-					if (localId && chunk.user_message_id) {
-						// Map localId to server ID for future dedup
-						useChatStore
-							.getState()
-							.mapLocalIdToServerId(
-								convId,
-								localId,
-								chunk.user_message_id,
-							);
-
-						const messages =
-							useChatStore.getState().messagesByConversation[
-								convId
-							] || [];
-						const optimistic = messages.find(
-							(m) =>
-								(m as UnifiedMessage).localId === localId &&
-								(m as UnifiedMessage).isOptimistic,
-						);
-						if (optimistic) {
-							// Replace optimistic with server-confirmed version
-							const confirmed: UnifiedMessage = {
-								...(optimistic as UnifiedMessage),
-								id: chunk.user_message_id,
-								isOptimistic: false,
-								localId: localId, // Keep localId for reference
-							};
-							// Update in store - replace by localId match
-							const updated = messages.map((m) =>
-								(m as UnifiedMessage).localId === localId &&
-								(m as UnifiedMessage).isOptimistic
-									? confirmed
-									: m,
-							);
-							useChatStore
-								.getState()
-								.setMessages(convId, updated);
-						}
-					}
-
-					// Create assistant message (with server-provided ID and current timestamp)
-					if (chunk.assistant_message_id) {
-						runAssistantMessageIdRef.current =
-							chunk.assistant_message_id;
-						const assistantMessage: UnifiedMessage = {
-							id: chunk.assistant_message_id,
-							conversation_id: convId,
-							role: "assistant",
-							content: "",
-							sequence: Date.now(),
-							created_at: new Date().toISOString(),
-							isStreaming: true,
-							isOptimistic: false, // Not optimistic - we have server ID
-						};
-						addMessage(convId, assistantMessage);
-
-						// Track which message is streaming
-						useChatStore
-							.getState()
-							.setStreamingMessageIdForConversation(
-								convId,
-								chunk.assistant_message_id,
-							);
-					}
-
-					// Invalidate to fetch user message (server-confirmed)
+			const unsubscribe = webSocketService.onPlatformJobUpdate(
+				job.job_id,
+				(update) => {
+					if (!isTerminalPlatformJob(update.status)) return;
+					invalidateConversation(targetConversationId);
 					queryClient.invalidateQueries({
-						queryKey: [
-							"get",
-							"/api/chat/conversations/{conversation_id}/messages",
-							{
-								params: {
-									path: { conversation_id: convId },
-								},
-							},
-						],
+						queryKey: ["chat-artifacts"],
 					});
-					break;
-				}
-
-				case "delta":
-					if (chunk.content) {
-						const convId = currentConversationIdRef.current;
-						if (!convId) break;
-
-						const streamingId =
-							useChatStore.getState().streamingMessageIds[convId];
-
-						// If no streaming message exists (after assistant_message_end), create new one
-						if (!streamingId) {
-							const newMessageId = generateMessageId();
-							const newAssistantMessage: UnifiedMessage = {
-								id: newMessageId,
-								conversation_id: convId,
-								role: "assistant",
-								content: chunk.content,
-								sequence: Date.now(),
-								created_at: new Date().toISOString(),
-								isStreaming: true,
-								isOptimistic: false,
-							};
-							addMessage(convId, newAssistantMessage);
-							useChatStore
-								.getState()
-								.setStreamingMessageIdForConversation(
-									convId,
-									newMessageId,
-								);
-						} else {
-							// Append to existing streaming message
-							const currentMessages =
-								useChatStore.getState().messagesByConversation[
-									convId
-								] || [];
-							const currentMsg = currentMessages.find(
-								(m) => m.id === streamingId,
-							);
-							useChatStore
-								.getState()
-								.updateMessage(convId, streamingId, {
-									content:
-										(currentMsg?.content || "") +
-										chunk.content,
-								});
-						}
-					}
-					break;
-
-				case "tool_call":
-					if (chunk.tool_call && chunk.message_id) {
-						const convId = currentConversationIdRef.current;
-						if (convId) {
-							// Add TOOL_CALL message directly
-							const toolCallMessage: UnifiedMessage = {
-								id: chunk.message_id,
-								conversation_id: convId,
-								role: "tool_call",
-								content: null,
-								tool_name: chunk.tool_call.name,
-								tool_input: chunk.tool_call.arguments,
-								tool_state: "running",
-								tool_call_id: chunk.tool_call.id,
-								execution_id: chunk.execution_id || null,
-								sequence: Date.now(),
-								created_at: new Date().toISOString(),
-							};
-							addMessage(convId, toolCallMessage);
-						}
-					}
-					break;
-
-				case "artifact_ready": {
-					const convId = currentConversationIdRef.current;
-					const artifact = chunk.artifact;
-					if (!convId || !chunk.message_id || !artifact?.id) break;
-					const messages =
-						useChatStore.getState().messagesByConversation[
-							convId
-						] || [];
-					const message = messages.find(
-						(item) => item.id === chunk.message_id,
-					);
-					const attachments = message?.attachments ?? [];
-					if (!attachments.some((item) => item.id === artifact.id)) {
-						useChatStore
-							.getState()
-							.updateMessage(convId, chunk.message_id, {
-								attachments: [
-									...attachments,
-									{
-										id: artifact.id,
-										filename: artifact.filename,
-										content_type: artifact.content_type,
-										size_bytes: artifact.size_bytes,
-										kind: "artifact",
-									},
-								],
-							});
-					}
-					queryClient.invalidateQueries({
-						queryKey: [
-							"get",
-							"/api/chat/conversations/{conversation_id}/messages",
-							{ params: { path: { conversation_id: convId } } },
-						],
-					});
-					break;
-				}
-
-				case "artifact_failed":
-					toast.error("File generation failed", {
-						description:
-							chunk.content ||
-							"The artifact could not be created.",
-					});
-					break;
-
-				case "artifact_started":
-					break;
-
-				case "tool_progress":
-					// Tool progress events are handled via the tool execution persistence system
-					// They update toolExecutionsByConversation directly
-					break;
-
-				case "tool_result":
-					if (chunk.tool_result && chunk.message_id) {
-						observeArtifactJob(
-							chunk.tool_result.result,
-							chunk.message_id,
-						);
-						const convId = currentConversationIdRef.current;
-						if (convId) {
-							// Update the TOOL_CALL message with result
-							useChatStore
-								.getState()
-								.updateMessage(convId, chunk.message_id, {
-									tool_state: chunk.tool_result.error
-										? "error"
-										: "completed",
-									tool_result: chunk.tool_result.error
-										? { error: chunk.tool_result.error }
-										: chunk.tool_result.result,
-									duration_ms: chunk.tool_result.duration_ms,
-								});
-						}
-					}
-					break;
-
-				case "assistant_message_start":
-					// Message segment is starting - nothing to do, message is already being built
-					break;
-
-				case "assistant_message_end": {
-					// Text segment complete - finalize current message
-					// Next delta will create a NEW message
-					const convId = currentConversationIdRef.current;
-					if (convId) {
-						const streamingId =
-							useChatStore.getState().streamingMessageIds[convId];
-						if (streamingId) {
-							useChatStore
-								.getState()
-								.updateMessage(convId, streamingId, {
-									// Intermediate text is persisted under its own ID. The
-									// pre-generated run ID is reserved for the final response.
-									id: chunk.message_id || streamingId,
-									isStreaming: false,
-									isFinal: true,
-								});
-							useChatStore
-								.getState()
-								.setStreamingMessageIdForConversation(
-									convId,
-									null,
-								);
-						}
-					}
-					break;
-				}
-
-				case "done": {
-					const convId = currentConversationIdRef.current;
-					const streamingId = convId
-						? useChatStore.getState().streamingMessageIds[convId]
-						: null;
-
-					const summaryMessageId =
-						chunk.message_id ||
-						runAssistantMessageIdRef.current ||
-						streamingId;
-
-					// The final segment may have a temporary client ID when it starts
-					// after tool execution. Replace that ID with the persisted summary
-					// ID so the visible response cannot remain stuck in streaming state.
-					const messageToFinalize = streamingId || summaryMessageId;
-					if (convId && messageToFinalize) {
-						useChatStore
-							.getState()
-							.updateMessage(convId, messageToFinalize, {
-								...(summaryMessageId &&
-								messageToFinalize !== summaryMessageId
-									? { id: summaryMessageId }
-									: {}),
-								isStreaming: false,
-								isFinal: true,
-								token_count_input:
-									chunk.token_count_input ?? undefined,
-								token_count_output:
-									chunk.token_count_output ?? undefined,
-								duration_ms: chunk.duration_ms ?? undefined,
-							});
-
-						// Clear streaming ID
-						useChatStore
-							.getState()
-							.setStreamingMessageIdForConversation(convId, null);
-					}
-					runAssistantMessageIdRef.current = null;
-					activeUserMessageIdRef.current = null;
-
-					completeStream();
-
-					// Refresh messages from API - this is the source of truth
-					if (convId) {
-						queryClient.invalidateQueries({
-							queryKey: [
-								"get",
-								"/api/chat/conversations/{conversation_id}/messages",
-								{
-									params: {
-										path: { conversation_id: convId },
-									},
-								},
-							],
-						});
-						queryClient.invalidateQueries({
-							queryKey: ["get", "/api/chat/conversations"],
+					if (update.status === "succeeded") {
+						toast.success("Video ready");
+					} else {
+						toast.error("Video generation did not finish", {
+							description:
+								update.error?.message ||
+								"Open the notification for details.",
 						});
 					}
-					break;
-				}
+					artifactJobUnsubscribersRef.current.get(job.job_id!)?.();
+					artifactJobUnsubscribersRef.current.delete(job.job_id!);
+				},
+			);
+			artifactJobUnsubscribersRef.current.set(job.job_id, unsubscribe);
+		},
+		[invalidateConversation, queryClient],
+	);
 
-				case "agent_switch": {
-					if (chunk.agent_switch) {
-						onAgentSwitch?.(chunk.agent_switch);
-						const convId = currentConversationIdRef.current;
-						if (convId) {
-							addSystemEvent(convId, {
-								id: `event-${Date.now()}`,
-								type: "agent_switch",
-								timestamp: new Date().toISOString(),
-								turnId:
-									activeUserMessageIdRef.current ?? undefined,
-								agentName: chunk.agent_switch.agent_name,
-								agentId: chunk.agent_switch.agent_id,
-								reason:
-									chunk.agent_switch.reason === "@mention"
-										? "@mention"
-										: "routed",
-							});
-						}
-					}
-					break;
-				}
+	const handleStreamEvent = useCallback(
+		(envelope: ChatStreamEnvelope) => {
+			const targetConversationId =
+				envelope.conversation_id ?? currentConversationIdRef.current;
+			if (!targetConversationId) return;
+			if (targetConversationId !== currentConversationIdRef.current)
+				return;
 
-				case "ask_user_question": {
-					// SDK is asking user a question - show modal
-					if (chunk.questions && chunk.request_id) {
-						setPendingQuestion({
-							questions: chunk.questions,
-							requestId: chunk.request_id,
-						});
-					}
-					break;
-				}
+			envelope.conversation_id = targetConversationId;
+			enqueueStreamEvent(envelope);
+			const chunk = getChunk(envelope);
+			if (!chunk) return;
 
-				case "todo_update": {
-					// SDK is updating the todo list
-					if (chunk.todos) {
-						setTodos(chunk.todos);
-					}
-					break;
-				}
-
-				case "error": {
-					const errorMsg = chunk.error || "Unknown error occurred";
-					setStreamError(errorMsg);
-					onError?.(errorMsg);
-
-					const convId = currentConversationIdRef.current;
-					if (convId) {
-						addSystemEvent(convId, {
-							id: `error-${Date.now()}`,
-							type: "error",
-							timestamp: new Date().toISOString(),
-							turnId: activeUserMessageIdRef.current ?? undefined,
-							error: errorMsg,
-						});
-					}
-
-					// Clear any pending question on error
-					setPendingQuestion(null);
-					activeUserMessageIdRef.current = null;
-					resetStream();
-					break;
-				}
+			if (chunk.type === "title_update") {
+				invalidateConversation(targetConversationId);
+			}
+			if (chunk.type === "artifact_ready") {
+				invalidateConversation(targetConversationId);
+				queryClient.invalidateQueries({ queryKey: ["chat-artifacts"] });
+			}
+			if (chunk.type === "artifact_failed") {
+				toast.error("File generation failed", {
+					description:
+						chunk.content || "The artifact could not be created.",
+				});
+			}
+			if (chunk.type === "tool_result") {
+				observeArtifactJob(
+					chunk.tool_result?.result,
+					targetConversationId,
+				);
+			}
+			if (chunk.type === "agent_switch" && chunk.agent_switch) {
+				onAgentSwitchRef.current?.(chunk.agent_switch);
+			}
+			if (chunk.type === "error") {
+				const message = chunk.error || "Unknown error occurred";
+				setStreamError(message);
+				onErrorRef.current?.(message);
+			}
+			if (chunk.type === "done") {
+				invalidateConversation(targetConversationId);
 			}
 		},
 		[
+			enqueueStreamEvent,
+			invalidateConversation,
+			observeArtifactJob,
 			queryClient,
-			completeStream,
 			setStreamError,
-			resetStream,
-			onError,
-			onAgentSwitch,
-			addSystemEvent,
-			addMessage,
-			setTodos,
 		],
 	);
-
-	// Keep handleChunk ref updated for use in effects (avoids dependency issues)
-	useEffect(() => {
-		handleChunkRef.current = handleChunk;
-	}, [handleChunk]);
 
 	const subscribeToConversation = useCallback(
 		(targetConversationId: string) => {
@@ -640,23 +329,86 @@ export function useChatStream({
 			chatUnsubscribeRef.current?.();
 			chatUnsubscribeRef.current = webSocketService.onChatStream(
 				targetConversationId,
-				(chunk) => handleChunkRef.current?.(chunk),
+				handleStreamEvent,
 			);
 			subscribedConversationIdRef.current = targetConversationId;
 		},
-		[],
+		[handleStreamEvent],
 	);
 
-	useEffect(
-		() => () => {
-			chatUnsubscribeRef.current?.();
-			chatUnsubscribeRef.current = null;
-			subscribedConversationIdRef.current = null;
-		},
-		[],
-	);
+	useEffect(() => {
+		if (!conversationId) return;
+		let cancelled = false;
+		subscribeToConversation(conversationId);
+		// A client-generated first-turn conversation does not exist on the server
+		// until its POST resolves. The send path connects and hydrates immediately
+		// afterward; probing sooner only produces a 404 and a denied subscription.
+		if (hasPendingSubmission) {
+			return () => {
+				cancelled = true;
+			};
+		}
 
-	// Send message via WebSocket
+		const setup = async () => {
+			try {
+				await webSocketService.connectToChat(conversationId);
+				if (cancelled) return;
+				setIsConnected(true);
+			} catch (error) {
+				if (cancelled) return;
+				console.error("[useChatStream] Failed to connect:", error);
+				setIsConnected(false);
+				return;
+			}
+
+			try {
+				const state = await getChatRunState(conversationId);
+				if (!cancelled) hydrateRunState(conversationId, state);
+			} catch (error) {
+				if (!cancelled) {
+					console.error(
+						"[useChatStream] Failed to restore chat state:",
+						error,
+					);
+				}
+			}
+		};
+		void setup();
+		return () => {
+			cancelled = true;
+		};
+	}, [
+		conversationId,
+		hasPendingSubmission,
+		hydrateRunState,
+		subscribeToConversation,
+	]);
+
+	useEffect(() => {
+		return webSocketService.onConnectionStatusChange((connected) => {
+			setIsConnected(connected);
+			const targetConversationId = currentConversationIdRef.current;
+			if (!connected || !targetConversationId) return;
+			const currentProjection =
+				useChatStore.getState().projectionsByConversation[
+					targetConversationId
+				];
+			if (
+				currentProjection &&
+				deriveActiveRun(currentProjection)?.status === "pending"
+			)
+				return;
+			void getChatRunState(targetConversationId)
+				.then((state) => hydrateRunState(targetConversationId, state))
+				.catch((error) =>
+					console.error(
+						"[useChatStream] Failed to replay chat state:",
+						error,
+					),
+				);
+		});
+	}, [hydrateRunState]);
+
 	const sendMessage = useCallback(
 		async (
 			message: string,
@@ -671,146 +423,94 @@ export function useChatStream({
 				return;
 			}
 
-			// Generate stable ID for user message
+			const runId = generateMessageId();
 			const userMessageId = generateMessageId();
-			const now = new Date().toISOString();
-
-			// Add optimistic user message with stable ID
-			const userMessage: UnifiedMessage = {
-				id: userMessageId,
+			stageOptimisticUserTurn(targetConversationId, {
 				conversation_id: targetConversationId,
-				role: "user",
+				run_id: runId,
+				user_message_id: userMessageId,
+				local_id: userMessageId,
 				content: message,
 				attachments,
-				sequence: Date.now(),
-				created_at: now,
-				isOptimistic: true,
-				localId: userMessageId, // Use same ID as localId for dedup
-			};
-			activeUserMessageIdRef.current = userMessageId;
-			addMessage(targetConversationId, userMessage);
-
-			// Show the sent message and run state before transport setup. This is
-			// especially important for the first turn, when the conversation channel
-			// does not exist until after the conversation-creation request completes.
-			startStreaming();
+				model: modelProfileId,
+				created_at: new Date().toISOString(),
+			});
 			subscribeToConversation(targetConversationId);
 
 			try {
-				// Install the local callback before joining the server channel so no
-				// routing or tool chunks can arrive in the gap between connect and subscribe.
+				await createChatRun({
+					conversation_id: targetConversationId,
+					content: message,
+					client_run_id: runId,
+					user_message_id: userMessageId,
+					attachment_ids: attachments.map(
+						(attachment) => attachment.id,
+					),
+					model_profile_id: modelProfileId,
+				});
+				// The command is durable before this resolves. Subscribe next, then
+				// replay state to close the command/subscription race without making
+				// the socket responsible for the run.
 				await webSocketService.connectToChat(targetConversationId);
-
-				// Send the chat message with localId for deduplication
-				let sent = webSocketService.sendChatMessage(
-					targetConversationId,
-					message,
-					userMessageId,
-					attachments.map((attachment) => attachment.id),
-					modelProfileId,
-				);
-				if (!sent) {
-					await webSocketService.connectToChat(targetConversationId);
-					sent = webSocketService.sendChatMessage(
-						targetConversationId,
-						message,
-						userMessageId,
-						attachments.map((attachment) => attachment.id),
-						modelProfileId,
-					);
-				}
-				if (!sent) throw new Error("WebSocket is not connected");
+				const state = await getChatRunState(targetConversationId);
+				hydrateRunState(targetConversationId, state);
+				invalidateConversation(targetConversationId);
 			} catch (error) {
-				console.error("[useChatStream] Failed to send message:", error);
-				setStreamError("Failed to send message");
-				activeUserMessageIdRef.current = null;
-				resetStream();
+				console.error(
+					"[useChatStream] Failed to create chat run:",
+					error,
+				);
+				const errorMessage =
+					error instanceof Error
+						? error.message
+						: "Failed to send message";
+				applyChatRunEvent(targetConversationId, {
+					event_id: `local-error:${runId}`,
+					conversation_id: targetConversationId,
+					run_id: runId,
+					kind: "error",
+					status: "failed",
+					payload: { type: "error", error: errorMessage },
+				});
+				setStreamError(errorMessage);
 				throw error;
 			}
 		},
 		[
+			applyChatRunEvent,
 			conversationId,
-			addMessage,
-			startStreaming,
+			hydrateRunState,
+			invalidateConversation,
 			setStreamError,
-			resetStream,
+			stageOptimisticUserTurn,
 			subscribeToConversation,
 		],
 	);
 
-	// Auto-connect when conversation changes - single subscription path
-	useEffect(() => {
-		if (!conversationId) return;
+	const stopStreaming = useCallback(async () => {
+		if (!conversationId || !projection) return;
+		const activeRun = deriveActiveRun(projection);
+		if (!activeRun) return;
 
-		// Subscribe locally before joining the channel. The first message may be
-		// sent by the pre-navigation render with a conversation ID override.
-		subscribeToConversation(conversationId);
-
-		const setup = async () => {
-			try {
-				await webSocketService.connectToChat(conversationId);
-				setIsConnected(true);
-			} catch (error) {
-				console.error("[useChatStream] Failed to connect:", error);
-				setIsConnected(false);
-			}
-		};
-		setup();
-	}, [conversationId, subscribeToConversation]);
-
-	// Track connection status from service via event subscription
-	useEffect(() => {
-		return webSocketService.onConnectionStatusChange(setIsConnected);
-	}, []);
-
-	// Answer a pending AskUserQuestion
-	const answerQuestion = useCallback(
-		(answers: Record<string, string>) => {
-			if (!conversationId || !pendingQuestion) {
-				return;
-			}
-
-			webSocketService.sendChatAnswer(
-				conversationId,
-				pendingQuestion.requestId,
-				answers,
-			);
-			setPendingQuestion(null);
-		},
-		[conversationId, pendingQuestion],
-	);
-
-	// Stop the current streaming operation
-	const stopStreaming = useCallback(() => {
-		if (!conversationId) {
-			return;
+		try {
+			await cancelChatRun(activeRun.run_id);
+			const state = await getChatRunState(conversationId);
+			hydrateRunState(conversationId, state);
+		} catch (error) {
+			console.error("[useChatStream] Failed to cancel chat run:", error);
+			const message =
+				error instanceof Error
+					? error.message
+					: "Failed to stop message";
+			setStreamError(message);
+			onError?.(message);
 		}
-
-		webSocketService.sendChatStop(conversationId);
-
-		// Finalize any in-progress streaming message (same as "done" handler)
-		const streamingId =
-			useChatStore.getState().streamingMessageIds[conversationId];
-		if (streamingId) {
-			useChatStore.getState().updateMessage(conversationId, streamingId, {
-				isStreaming: false,
-				isFinal: true,
-			});
-			useChatStore
-				.getState()
-				.setStreamingMessageIdForConversation(conversationId, null);
-		}
-
-		setPendingQuestion(null);
-		resetStream();
-	}, [conversationId, resetStream]);
+	}, [conversationId, hydrateRunState, onError, projection, setStreamError]);
 
 	return {
 		sendMessage,
 		isConnected,
 		isStreaming,
-		pendingQuestion,
-		answerQuestion,
 		stopStreaming,
 	};
 }

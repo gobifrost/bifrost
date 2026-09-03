@@ -525,6 +525,67 @@ class TestConversationsAccessControl:
 
 
 # =============================================================================
+# Durable Chat Run Tests
+# =============================================================================
+
+
+class TestDurableChatRuns:
+    """Test the request/replay boundary used by the realtime chat client."""
+
+    def test_submission_is_idempotent_and_state_replays_the_persisted_turn(
+        self,
+        e2e_client,
+        platform_admin,
+        test_conversation,
+    ):
+        run_id = str(uuid4())
+        message_id = str(uuid4())
+        request = {
+            "conversation_id": test_conversation["id"],
+            "client_run_id": run_id,
+            "user_message_id": message_id,
+            "content": "Keep this turn durable while I reconnect.",
+        }
+
+        submitted = e2e_client.post(
+            "/api/chat/runs",
+            json=request,
+            headers=platform_admin.headers,
+        )
+        assert submitted.status_code == 201, submitted.text
+        assert submitted.json()["run_id"] == run_id
+        assert submitted.json()["user_message"]["id"] == message_id
+        assert submitted.json()["idempotent"] is False
+
+        repeated = e2e_client.post(
+            "/api/chat/runs",
+            json=request,
+            headers=platform_admin.headers,
+        )
+        assert repeated.status_code == 201, repeated.text
+        assert repeated.json()["run_id"] == run_id
+        assert repeated.json()["user_message"]["id"] == message_id
+        assert repeated.json()["idempotent"] is True
+
+        conflicting = e2e_client.post(
+            "/api/chat/runs",
+            json={**request, "content": "Reuse the id for a different turn."},
+            headers=platform_admin.headers,
+        )
+        assert conflicting.status_code == 409, conflicting.text
+
+        state = e2e_client.get(
+            f"/api/chat/conversations/{test_conversation['id']}/state",
+            headers=platform_admin.headers,
+        )
+        assert state.status_code == 200, state.text
+        payload = state.json()
+        assert any(message["id"] == message_id for message in payload["messages"])
+        assert any(event["run_id"] == run_id for event in payload["events"])
+        assert payload["latest_sequence"] >= 1
+
+
+# =============================================================================
 # Message Tests
 # =============================================================================
 
@@ -563,6 +624,35 @@ class TestMessages:
             headers=platform_admin.headers,
         )
         assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_get_messages_returns_the_latest_window_in_display_order(
+        self,
+        e2e_client,
+        db_session,
+        platform_admin,
+        test_conversation,
+    ):
+        conversation_id = UUID(test_conversation["id"])
+        for sequence in range(1, 106):
+            db_session.add(
+                Message(
+                    conversation_id=conversation_id,
+                    role=MessageRole.USER,
+                    content=f"message {sequence}",
+                    sequence=sequence,
+                )
+            )
+        await db_session.commit()
+
+        response = e2e_client.get(
+            f"/api/chat/conversations/{conversation_id}/messages",
+            headers=platform_admin.headers,
+        )
+        assert response.status_code == 200, response.text
+        assert [message["sequence"] for message in response.json()] == list(
+            range(6, 106)
+        )
 
     def test_send_message_without_llm_config(
         self,

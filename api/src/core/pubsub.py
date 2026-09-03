@@ -24,11 +24,35 @@ if TYPE_CHECKING:
     from src.models.orm.agent_runs import AgentRun
 
 from src.config import get_settings
+from src.core.cache.keys import (
+    chat_run_events_stream_key,
+    chat_run_events_version_key,
+)
 from src.core.cache.redis_client import get_redis
 from src.core.log_safety import log_safe
 from src.core.redis_reconnect import ResilientPubSubListener
 
 logger = logging.getLogger(__name__)
+
+
+_PUBLISH_CHAT_RUN_EVENT_SCRIPT = """
+local sequence = redis.call('INCR', KEYS[2])
+local envelope = cjson.decode(ARGV[1])
+envelope['sequence'] = sequence
+local encoded = cjson.encode(envelope)
+redis.call(
+    'XADD', KEYS[1], 'MAXLEN', '~', ARGV[2], '*',
+    'event', encoded,
+    'sequence', tostring(sequence),
+    'kind', ARGV[3],
+    'status', ARGV[4],
+    'occurred_at', ARGV[5]
+)
+redis.call('EXPIRE', KEYS[1], ARGV[6])
+redis.call('EXPIRE', KEYS[2], ARGV[6])
+redis.call('PUBLISH', ARGV[7], encoded)
+return encoded
+"""
 
 
 @dataclass
@@ -301,7 +325,7 @@ async def publish_agent_run_update(
     message = {
         "type": "agent_run_update",
         "run_id": str(run.id),
-        "agent_id": str(run.agent_id),
+        "agent_id": str(run.agent_id) if run.agent_id else None,
         "agent_name": agent_name,
         "status": run.status,
         "trigger_type": run.trigger_type,
@@ -357,6 +381,86 @@ async def publish_agent_run_step(
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
     await manager.broadcast(f"agent-run:{run_id}", message)
+
+
+async def publish_chat_run_event(
+    conversation_id: str | UUID,
+    run_id: str | UUID,
+    kind: str,
+    status: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Publish a versioned, replayable chat run event."""
+    from uuid import uuid4
+
+    from src.models.contracts.agents import ChatStreamChunk
+
+    event_id = uuid4()
+    occurred_at = datetime.now(timezone.utc)
+    conversation_id_str = str(conversation_id)
+    run_id_str = str(run_id)
+    chunk = ChatStreamChunk.model_validate(payload)
+    envelope: dict[str, Any] = {
+        "type": "chat_run_event",
+        "protocol_version": 1,
+        "event_id": str(event_id),
+        "sequence": 0,
+        "conversation_id": conversation_id_str,
+        "run_id": run_id_str,
+        "occurred_at": occurred_at.isoformat(),
+        "kind": kind,
+        "status": status,
+        "payload": chunk.model_dump(mode="json", exclude_none=True),
+    }
+
+    stream_key = chat_run_events_stream_key(conversation_id_str)
+    version_key = chat_run_events_version_key(conversation_id_str)
+
+    async with get_redis() as redis:
+        encoded = await redis.eval(  # type: ignore[misc]
+            _PUBLISH_CHAT_RUN_EVENT_SCRIPT,
+            2,
+            stream_key,
+            version_key,
+            json.dumps(envelope),
+            "20000",
+            kind,
+            status,
+            occurred_at.isoformat(),
+            "86400",
+            f"bifrost:chat:{conversation_id_str}",
+        )
+
+    if isinstance(encoded, bytes):
+        encoded = encoded.decode()
+    return json.loads(encoded)
+
+
+async def replay_chat_run_events(
+    conversation_id: str | UUID,
+    *,
+    after_sequence: int | None = None,
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    """Replay retained chat run events from the Redis stream."""
+    conversation_id_str = str(conversation_id)
+    stream_key = chat_run_events_stream_key(conversation_id_str)
+    events: list[dict[str, Any]] = []
+    async with get_redis() as redis:
+        entries = await redis.xrange(stream_key, min="-", max="+")
+    for _entry_id, data in entries:
+        raw = data.get("event")
+        if not raw:
+            continue
+        event = json.loads(raw)
+        sequence = int(event.get("sequence") or data.get("sequence") or 0)
+        if after_sequence is not None and sequence <= after_sequence:
+            continue
+        events.append(event)
+    events.sort(key=lambda item: int(item.get("sequence") or 0))
+    if len(events) > limit:
+        events = events[-limit:]
+    return events
 
 
 async def publish_user_notification(

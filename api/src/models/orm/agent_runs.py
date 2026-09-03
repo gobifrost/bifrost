@@ -17,7 +17,7 @@ class AgentRun(Base):
     __tablename__ = "agent_runs"
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    agent_id: Mapped[UUID] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), nullable=False)
+    agent_id: Mapped[UUID | None] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), nullable=True)
     trigger_type: Mapped[str] = mapped_column(String(50), nullable=False)
     trigger_source: Mapped[str | None] = mapped_column(String(500), default=None)
     conversation_id: Mapped[UUID | None] = mapped_column(ForeignKey("conversations.id", ondelete="SET NULL"), default=None)

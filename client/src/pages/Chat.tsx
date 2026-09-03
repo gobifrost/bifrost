@@ -16,7 +16,9 @@ import { PageLoader } from "@/components/PageLoader";
 
 export function Chat() {
 	const { conversationId } = useParams<{ conversationId?: string }>();
-	const { setActiveConversation, reset } = useChatStore();
+	const setActiveConversation = useChatStore(
+		(state) => state.setActiveConversation,
+	);
 	const {
 		isConfigured,
 		isPlatformAdmin,
@@ -27,13 +29,6 @@ export function Chat() {
 	useEffect(() => {
 		setActiveConversation(conversationId ?? null);
 	}, [conversationId, setActiveConversation]);
-
-	// Reset store on unmount
-	useEffect(() => {
-		return () => {
-			reset();
-		};
-	}, [reset]);
 
 	// Show loading while checking config
 	if (configLoading) {
@@ -53,8 +48,8 @@ export function Chat() {
 							AI Chat Not Configured
 						</h1>
 						<p className="text-muted-foreground">
-							To enable AI chat, add a provider connection and enable
-							at least one reusable model profile for Chat.
+							To enable AI chat, add a provider connection and
+							enable at least one reusable model profile for Chat.
 						</p>
 					</div>
 					<Button asChild>

@@ -35,7 +35,7 @@ export interface AgentRunStep {
 
 export interface AgentRun {
 	id: string;
-	agent_id: string;
+	agent_id: string | null;
 	agent_name: string | null;
 	trigger_type: string;
 	trigger_source: string | null;

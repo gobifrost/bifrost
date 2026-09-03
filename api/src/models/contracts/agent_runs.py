@@ -26,7 +26,7 @@ class AgentRunResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
-    agent_id: UUID
+    agent_id: UUID | None
     agent_name: str | None = None
     trigger_type: str
     trigger_source: str | None = None

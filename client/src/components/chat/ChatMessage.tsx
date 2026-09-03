@@ -7,7 +7,7 @@
  */
 
 import { Bot, Check, Copy } from "lucide-react";
-import { useState } from "react";
+import { memo, useState } from "react";
 import { cn } from "@/lib/utils";
 import type { components } from "@/lib/v1";
 import ReactMarkdown from "react-markdown";
@@ -148,7 +148,7 @@ interface ChatMessageProps {
 	isStreaming?: boolean;
 }
 
-export function ChatMessage({
+function ChatMessageView({
 	message,
 	isStreaming,
 }: ChatMessageProps) {
@@ -264,6 +264,13 @@ export function ChatMessage({
 									content.includes("\n") || className;
 
 								if (isCodeBlock) {
+									if (isStreaming) {
+										return (
+											<pre className="my-2 overflow-x-auto rounded-md bg-slate-950 p-3 text-slate-100">
+												<code>{content}</code>
+											</pre>
+										);
+									}
 									return (
 										<SyntaxHighlighter
 											style={oneDark}
@@ -385,3 +392,9 @@ export function ChatMessage({
 		</div>
 	);
 }
+
+/**
+ * Streaming only changes the active message object. Keeping settled messages
+ * memoized prevents every token batch from reparsing the entire transcript.
+ */
+export const ChatMessage = memo(ChatMessageView);

@@ -5,7 +5,6 @@ Provides real-time updates via WebSocket connections.
 Replaces Azure Web PubSub with native FastAPI WebSockets.
 """
 
-import asyncio
 import logging
 from dataclasses import dataclass
 from typing import Annotated, Any, cast
@@ -21,14 +20,12 @@ from shared.policy_rules import PolicyRuleDomainMismatch, PolicyRuleNotFound, re
 from src.repositories.policy_rule import PolicyRuleRepository
 from shared.policies.subscription import decide_visibility_change
 from shared.role_cache import get_user_roles
-from shared.scope_resolver import has_scope_bypass
 from src.core.auth import get_current_user_ws
 from src.core.principal import UserPrincipal
 from src.core.database import get_db_context
 from src.core.log_safety import log_safe
 from src.core.pubsub import manager
 from src.models import Conversation, Execution
-from src.models.contracts.agents import ChatRequest
 from src.models.contracts.policies import Expr, TablePolicies
 from src.models.contracts.policies import FileAction
 from src.models.orm import Agent
@@ -1034,12 +1031,6 @@ async def websocket_connect(
     if user_channel not in allowed_channels:
         allowed_channels.append(user_channel)
 
-    # Track active chat tasks per conversation so they can be cancelled
-    active_chat_tasks: dict[str, asyncio.Task] = {}
-    pending_messages: dict[
-        str, tuple[str, str | None, list[UUID], UUID | None]
-    ] = {}
-
     # Per-connection state for policy-driven table subscriptions.
     # Populated by `_authorize_table_subscribe`; consulted by the dispatcher.
     websocket.state.table_subscriptions = {}
@@ -1178,6 +1169,23 @@ async def websocket_connect(
                             "type": "subscribed",
                             "channel": channel
                         })
+                    elif channel.startswith("chat:"):
+                        conversation_id = channel.split(":", 1)[1]
+                        has_access, _ = await can_access_conversation(user, conversation_id)
+                        if has_access:
+                            if channel not in manager.connections:
+                                manager.connections[channel] = set()
+                            manager.connections[channel].add(websocket)
+                            await websocket.send_json({
+                                "type": "subscribed",
+                                "channel": channel,
+                            })
+                        else:
+                            await websocket.send_json({
+                                "type": "error",
+                                "channel": channel,
+                                "message": "Access denied",
+                            })
                     elif channel.startswith("summary-backfill:"):
                         # Summary backfill job progress — platform admins only.
                         # Mirrors the initial-connect whitelist above; without this
@@ -1304,118 +1312,10 @@ async def websocket_connect(
             elif data.get("type") == "ping":
                 await websocket.send_json({"type": "pong"})
 
-            elif data.get("type") == "chat":
-                # Handle chat message - process and stream response
-                conversation_id = data.get("conversation_id")
-                message_text = data.get("message", "")
-                local_id = data.get("local_id")  # Client-generated ID for dedup
-                try:
-                    request = ChatRequest.model_validate({
-                        "message": message_text,
-                        "attachment_ids": data.get("attachment_ids", []),
-                        "model_profile_id": data.get("model_profile_id"),
-                    })
-                except ValueError as exc:
-                    await websocket.send_json({
-                        "type": "error",
-                        "error": str(exc),
-                    })
-                    continue
-
-                if not conversation_id:
-                    await websocket.send_json({
-                        "type": "error",
-                        "error": "Missing conversation_id"
-                    })
-                    continue
-
-                # Validate access and get conversation
-                has_access, conversation = await can_access_conversation(user, conversation_id)
-                if not has_access or not conversation:
-                    await websocket.send_json({
-                        "type": "error",
-                        "error": "Conversation not found or access denied"
-                    })
-                    continue
-
-                # If a task is already running for this conversation, queue the
-                # message instead of cancelling.  Cancelling mid-tool-call causes
-                # interleaved messages that break the Anthropic API contract.
-                existing_task = active_chat_tasks.get(conversation_id)
-                if existing_task and not existing_task.done():
-                    pending_messages[conversation_id] = (
-                        request.message,
-                        local_id,
-                        request.attachment_ids,
-                        request.model_profile_id,
-                    )
-                    continue
-
-                # No running task — process immediately
-                def _start_chat_task(
-                    cid: str,
-                    msg: str,
-                    lid: str | None,
-                    attachment_ids: list[UUID],
-                    model_profile_id: UUID | None,
-                ) -> asyncio.Task:
-                    t = asyncio.create_task(
-                        _process_chat_message(
-                            websocket=websocket,
-                            user=user,
-                            conversation_id=cid,
-                            message=msg,
-                            local_id=lid,
-                            attachment_ids=attachment_ids,
-                            model_profile_id=model_profile_id,
-                        )
-                    )
-                    active_chat_tasks[cid] = t
-
-                    def _on_task_done(_t: asyncio.Task, _cid: str = cid) -> None:
-                        active_chat_tasks.pop(_cid, None)
-                        queued = pending_messages.pop(_cid, None)
-                        if queued:
-                            q_msg, q_lid, q_attachments, q_profile_id = queued
-                            _start_chat_task(
-                                _cid, q_msg, q_lid, q_attachments, q_profile_id
-                            )
-
-                    t.add_done_callback(_on_task_done)
-                    return t
-
-                _start_chat_task(
-                    conversation_id,
-                    request.message,
-                    local_id,
-                    request.attachment_ids,
-                    request.model_profile_id,
-                )
-
-            elif data.get("type") == "chat_stop":
-                conversation_id = data.get("conversation_id")
-                if conversation_id:
-                    pending_messages.pop(conversation_id, None)
-                    task = active_chat_tasks.pop(conversation_id, None)
-                    if task and not task.done():
-                        task.cancel()
-
     except WebSocketDisconnect:
-        # Cancel all active chat tasks for this connection
-        pending_messages.clear()
-        for task in active_chat_tasks.values():
-            if not task.done():
-                task.cancel()
-        active_chat_tasks.clear()
         manager.disconnect(websocket)
         logger.info(f"WebSocket disconnected for user {user.user_id}")
     except Exception as e:
-        # Cancel all active chat tasks for this connection
-        pending_messages.clear()
-        for task in active_chat_tasks.values():
-            if not task.done():
-                task.cancel()
-        active_chat_tasks.clear()
         logger.error(f"WebSocket error: {e}")
         manager.disconnect(websocket)
 
@@ -1465,214 +1365,3 @@ async def websocket_execution(
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
         manager.disconnect(websocket)
-
-
-async def _generate_conversation_title(
-    db,
-    conversation: Conversation,
-    user_message: str,
-) -> str | None:
-    """
-    Generate a concise title for a conversation using LLM.
-
-    Returns the generated title or None if generation fails.
-    """
-    from src.services.llm import get_llm_client, LLMMessage
-
-    try:
-        llm_client = await get_llm_client(db)
-
-        # Use a simple prompt to generate a title
-        response = await llm_client.complete(
-            messages=[
-                LLMMessage(
-                    role="system",
-                    content="Generate a very short, concise title (3-6 words max) for a conversation that starts with the following message. Respond with ONLY the title, no quotes or punctuation at the end.",
-                ),
-                LLMMessage(
-                    role="user",
-                    content=user_message,
-                ),
-            ],
-            max_tokens=1024,
-        )
-
-        if response.content:
-            # Clean up the title - remove quotes, limit length
-            title = response.content.strip().strip('"\'')
-            # Truncate if too long (max 100 chars)
-            if len(title) > 100:
-                title = title[:97] + "..."
-            return title
-
-    except Exception as e:
-        logger.warning(f"Failed to generate conversation title: {e}")
-
-    return None
-
-
-async def _process_chat_message(
-    websocket: WebSocket,
-    user: UserPrincipal,
-    conversation_id: str,
-    message: str,
-    local_id: str | None = None,
-    attachment_ids: list[UUID] | None = None,
-    model_profile_id: UUID | None = None,
-) -> None:
-    """
-    Process a chat message and stream the response.
-
-    Sends streaming chunks directly to the WebSocket, then broadcasts
-    the final message to the chat channel for any other subscribers.
-
-    DB connections are only held for short discrete operations (loading
-    conversation, saving messages, etc.) — never during LLM streaming.
-
-    Args:
-        websocket: The WebSocket connection
-        user: The authenticated user
-        conversation_id: The conversation ID
-        message: The user's message
-    """
-    from src.core.database import get_session_factory
-    from src.services.agent_executor import AgentExecutor
-
-    try:
-        session_factory = get_session_factory()
-        conv_uuid = UUID(conversation_id)
-
-        # Load conversation in a short-lived session (released before streaming)
-        async with session_factory() as db:
-            result = await db.execute(
-                select(Conversation)
-                .options(
-                    selectinload(Conversation.agent).selectinload(Agent.tools),
-                    selectinload(Conversation.agent).selectinload(Agent.delegated_agents),
-                    selectinload(Conversation.user),
-                )
-                .where(Conversation.id == conv_uuid)
-            )
-            conversation = result.scalar_one_or_none()
-
-        if not conversation:
-            await websocket.send_json({
-                "type": "error",
-                "conversation_id": conversation_id,
-                "error": "Conversation not found"
-            })
-            return
-
-        if conversation.agent_id:
-            from src.repositories.agents import AgentRepository
-
-            async with session_factory() as db:
-                repo = AgentRepository(
-                    db,
-                    org_id=user.organization_id,
-                    user_id=user.user_id,
-                    is_superuser=has_scope_bypass(
-                        is_platform_admin=user.is_platform_admin,
-                        is_provider_org=user.is_provider_org,
-                    ),
-                    is_external=user.is_external,
-                )
-                accessible_agent = await repo.get_agent_with_access_check(conversation.agent_id)
-            if accessible_agent is None:
-                await websocket.send_json({
-                    "type": "error",
-                    "conversation_id": conversation_id,
-                    "error": "You don't have access to this agent",
-                })
-                return
-
-        # Check if conversation needs a title (no title set yet)
-        needs_title = conversation.title is None
-
-        # Execute chat — executor manages its own short-lived sessions
-        executor = AgentExecutor(session_factory)
-
-        # Track streamed content so we can persist partial responses on cancellation
-        streamed_content = ""
-        assistant_message_id: str | None = None
-
-        try:
-            async for chunk in executor.chat(
-                agent=conversation.agent,
-                conversation=conversation,
-                user_message=message,
-                stream=True,
-                local_id=local_id,
-                user=user,
-                attachment_ids=attachment_ids or [],
-                model_profile_id=model_profile_id,
-            ):
-                # Track partial content from deltas
-                if chunk.type == "delta" and chunk.content:
-                    streamed_content += chunk.content
-                elif chunk.type == "message_start" and chunk.assistant_message_id:
-                    assistant_message_id = chunk.assistant_message_id
-                elif chunk.type == "assistant_message_end":
-                    # Text segment was saved by executor; reset for next segment
-                    streamed_content = ""
-                    assistant_message_id = None
-
-                # Send chunk to WebSocket with conversation_id for client routing
-                # WebSocket.send_json ultimately uses the stdlib JSON encoder.
-                # Pydantic's JSON mode converts nested UUIDs and datetimes (for
-                # example ArtifactRef.created_at) before they reach Starlette.
-                chunk_data = chunk.model_dump(mode="json", exclude_none=True)
-                chunk_data["conversation_id"] = conversation_id
-                await websocket.send_json(chunk_data)
-        except asyncio.CancelledError:
-            logger.info(f"Chat processing cancelled for conversation {log_safe(conversation_id)}")
-
-            # Save partial assistant response if we have streamed content
-            # that hasn't been saved yet (no assistant_message_end was received)
-            if streamed_content:
-                from src.models.enums import MessageRole
-
-                await executor._save_message(
-                    conversation_id=UUID(conversation_id),
-                    role=MessageRole.ASSISTANT,
-                    content=streamed_content,
-                    message_id=UUID(assistant_message_id) if assistant_message_id else None,
-                )
-
-            try:
-                await websocket.send_json({
-                    "type": "done",
-                    "conversation_id": conversation_id,
-                })
-            except Exception:
-                pass  # WebSocket may already be closed
-            return
-
-        # Generate title if this is a new conversation (no title yet)
-        if needs_title:
-            async with session_factory() as db:
-                title = await _generate_conversation_title(db, conversation, message)
-                if title:
-                    conv = await db.get(Conversation, conv_uuid)
-                    if conv:
-                        conv.title = title
-                    await db.commit()
-
-            # Send title update to client AFTER commit
-            if title:
-                await websocket.send_json({
-                    "type": "title_update",
-                    "conversation_id": conversation_id,
-                    "title": title,
-                })
-
-    except Exception as e:
-        logger.error(f"Chat processing error: {e}", exc_info=True)
-        try:
-            await websocket.send_json({
-                "type": "error",
-                "conversation_id": conversation_id,
-                "error": str(e)
-            })
-        except Exception:
-            pass  # WebSocket may be closed

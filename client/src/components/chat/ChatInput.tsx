@@ -176,20 +176,33 @@ export function ChatInput({
 		const finalMessage = mentionPrefixes
 			? `${mentionPrefixes} ${trimmedMessage}`.trim()
 			: trimmedMessage;
+		const submittedMessage = message;
+		const submittedMentions = mentions;
+		const submittedAttachments = attachments;
 		setIsSubmitting(true);
+		setMessage("");
+		setMentions([]);
+		setAttachments([]);
+		if (textareaRef.current) textareaRef.current.style.height = "auto";
 		try {
 			await onSend(
 				finalMessage,
-				attachments.map((draft) => draft.file),
+				submittedAttachments.map((draft) => draft.file),
 				modelProfileId,
 			);
-			for (const draft of attachments) {
+			for (const draft of submittedAttachments) {
 				if (draft.previewUrl) URL.revokeObjectURL(draft.previewUrl);
 			}
-			setMessage("");
-			setMentions([]);
-			setAttachments([]);
-			if (textareaRef.current) textareaRef.current.style.height = "auto";
+		} catch {
+			// The parent owns the error UI. Restore the submitted draft only when
+			// the user has not already started composing a replacement.
+			setMessage((current) => current || submittedMessage);
+			setMentions((current) =>
+				current.length > 0 ? current : submittedMentions,
+			);
+			setAttachments((current) =>
+				current.length > 0 ? current : submittedAttachments,
+			);
 		} finally {
 			setIsSubmitting(false);
 		}

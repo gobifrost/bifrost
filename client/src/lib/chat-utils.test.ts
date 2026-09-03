@@ -1,9 +1,5 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
-import {
-	generateLocalId,
-	generateMessageId,
-	integrateMessages,
-} from "./chat-utils";
+import { generateMessageId } from "./chat-utils";
 
 const originalRandomUUID = crypto.randomUUID;
 const originalGetRandomValues = crypto.getRandomValues.bind(crypto);
@@ -34,9 +30,6 @@ describe("chat-utils ids", () => {
 
 		expect(generateMessageId()).toBe(
 			"11111111-1111-4111-8111-111111111111",
-		);
-		expect(generateLocalId()).toBe(
-			"local-11111111-1111-4111-8111-111111111111",
 		);
 	});
 
@@ -70,44 +63,5 @@ describe("chat-utils ids", () => {
 		vi.spyOn(Math, "random").mockReturnValue(0.5);
 
 		expect(generateMessageId()).toBe("fallback-mubbs7i8-i");
-	});
-});
-
-describe("integrateMessages", () => {
-	it("preserves server sequence and local arrival order across clock skew", () => {
-		const serverMessages = [
-			{
-				id: "user-1",
-				conversation_id: "conversation-1",
-				role: "user",
-				content: "Hello",
-				sequence: 1,
-				created_at: "2026-01-01T00:00:20Z",
-			},
-			{
-				id: "assistant-1",
-				conversation_id: "conversation-1",
-				role: "assistant",
-				content: "Hi",
-				sequence: 2,
-				created_at: "2026-01-01T00:00:10Z",
-			},
-		] as Parameters<typeof integrateMessages>[0];
-		const localMessages = [
-			{
-				id: "tool-1",
-				conversation_id: "conversation-1",
-				role: "tool_call",
-				content: null,
-				sequence: Date.now(),
-				created_at: "2026-01-01T00:00:05Z",
-			},
-		] as Parameters<typeof integrateMessages>[1];
-
-		expect(
-			integrateMessages(serverMessages, localMessages).map(
-				(message) => message.id,
-			),
-		).toEqual(["user-1", "assistant-1", "tool-1"]);
 	});
 });

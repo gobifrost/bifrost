@@ -14,6 +14,7 @@ from pydantic_ai.usage import RequestUsage
 
 from src.models.contracts.agents import ToolResult
 from src.models.contracts.artifacts import ModelCapabilities
+from src.models.enums import MessageRole
 from src.models.orm.ai_models import AIModelProfile
 from src.services.agent_executor import AgentExecutor
 from src.services.llm import LLMMessage, ToolDefinition
@@ -465,3 +466,63 @@ async def test_chat_maps_pydantic_tool_events_to_existing_bifrost_contract(
     ]
     assert next(chunk for chunk in chunks if chunk.type == "done").content == "Ticket checked"
     executor._execute_tool.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_chat_uses_persisted_user_message_without_duplication(
+    executor: AgentExecutor,
+    conversation,
+) -> None:
+    user_message_id = uuid4()
+
+    executor._save_message = AsyncMock(side_effect=_saved_message)
+    executor._record_ai_usage = AsyncMock()
+    executor._build_message_history = AsyncMock(
+        return_value=[
+            LLMMessage(role="system", content="Be useful"),
+            LLMMessage(role="user", content="Prior message"),
+        ]
+    )
+    executor._is_first_user_message = AsyncMock(return_value=True)
+    router = MagicMock()
+    router.parse_mention = AsyncMock(return_value=None)
+    router.route_message = AsyncMock(return_value=None)
+    router.strip_mention = MagicMock(side_effect=lambda text: text)
+    client = PydanticAIClient(
+        LLMConfig(provider="openai", model="test-model", api_key="test-key")
+    )
+
+    with patch(
+        "src.services.agent_router.AgentRouter",
+        return_value=router,
+    ), patch(
+        "src.services.agent_executor.get_llm_client",
+        new_callable=AsyncMock,
+        return_value=client,
+    ), patch(
+        "src.services.agent_executor.create_agent_model",
+        return_value=CountingTestModel(custom_output_text="Hello from Pydantic"),
+    ):
+        chunks = [
+            chunk
+            async for chunk in executor.chat(
+                None,
+                conversation,
+                "Current message",
+                stream=True,
+                enable_routing=True,
+                user_message_id=user_message_id,
+            )
+        ]
+
+    executor._is_first_user_message.assert_awaited_once_with(
+        conversation.id,
+        exclude_message_id=user_message_id,
+    )
+    user_persistence_calls = [
+        call for call in executor._save_message.await_args_list if call.kwargs.get("role") == MessageRole.USER
+    ]
+    assert user_persistence_calls == []
+    done = next(chunk for chunk in chunks if chunk.type == "done")
+    assert done.message_id is not None
+    assert next(call for call in executor._save_message.await_args_list if call.kwargs.get("role") == MessageRole.ASSISTANT)

@@ -708,7 +708,7 @@ class MCPAgentGatewayService:
                 "execution_type": "agent_run",
                 "workflow_id": None,
                 "workflow_name": None,
-                "agent_id": str(agent_run.agent_id),
+                "agent_id": str(agent_run.agent_id) if agent_run.agent_id else None,
                 "agent_name": agent_run.agent.name if agent_run.agent else None,
                 "status": self._agent_run_gateway_status(agent_run.status),
                 "created_at": agent_run.created_at,

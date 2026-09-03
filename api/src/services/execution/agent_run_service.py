@@ -1,6 +1,7 @@
 """Agent run enqueue and result waiting."""
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
@@ -19,7 +20,7 @@ REDIS_PREFIX = "bifrost:agent_run"
 
 
 async def enqueue_agent_run(
-    agent_id: str,
+    agent_id: str | None,
     trigger_type: str,
     input_data: dict | None = None,
     *,
@@ -29,9 +30,15 @@ async def enqueue_agent_run(
     caller_user_id: str | None = None,
     caller_email: str | None = None,
     caller_name: str | None = None,
+    caller_is_superuser: bool = False,
+    caller_is_external: bool = False,
+    caller_is_provider_org: bool = False,
+    caller_roles: list[str] | None = None,
     event_delivery_id: str | None = None,
+    conversation_id: str | None = None,
     sync: bool = False,
     run_id: str | None = None,
+    before_queue_publish: Callable[[str], Awaitable[None]] | None = None,
 ) -> str:
     """Persist and enqueue an agent run for worker processing.
 
@@ -49,12 +56,13 @@ async def enqueue_agent_run(
         db.add(
             AgentRun(
                 id=run_uuid,
-                agent_id=UUID(agent_id),
+                agent_id=UUID(agent_id) if agent_id else None,
                 trigger_type=trigger_type,
                 trigger_source=trigger_source,
                 event_delivery_id=(
                     UUID(event_delivery_id) if event_delivery_id else None
                 ),
+                conversation_id=UUID(conversation_id) if conversation_id else None,
                 input=input_data,
                 output_schema=output_schema,
                 status="queued",
@@ -79,8 +87,13 @@ async def enqueue_agent_run(
             "email": caller_email,
             "name": caller_name,
             "organization_id": org_id,
+            "is_superuser": caller_is_superuser,
+            "is_external": caller_is_external,
+            "is_provider_org": caller_is_provider_org,
+            "roles": caller_roles or [],
         },
         "event_delivery_id": event_delivery_id,
+        "conversation_id": conversation_id,
         "sync": sync,
         "cancelled": False,
     }
@@ -90,6 +103,9 @@ async def enqueue_agent_run(
         # Store full context in Redis, then publish a lightweight queue message.
         async with get_redis() as redis:
             await redis.set(redis_key, json.dumps(context), ex=3600)
+
+        if before_queue_publish is not None:
+            await before_queue_publish(run_id)
 
         message = {
             "run_id": run_id,

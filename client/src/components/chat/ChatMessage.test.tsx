@@ -149,6 +149,21 @@ describe("ChatMessage — assistant messages", () => {
 		expect(screen.getByText(/print/)).toBeInTheDocument();
 	});
 
+	it("defers syntax highlighting while a code block is still streaming", () => {
+		const { container } = renderWithProviders(
+			<ChatMessage
+				message={makeMessage({
+					role: "assistant",
+					content: "```python\nprint('still arriving')\n```",
+				})}
+				isStreaming
+			/>,
+		);
+
+		expect(container.querySelector("pre.bg-slate-950")).not.toBeNull();
+		expect(screen.getByText(/still arriving/)).toBeInTheDocument();
+	});
+
 	it("marks streaming content busy without fading the message", () => {
 		const { container, rerender } = renderWithProviders(
 			<ChatMessage

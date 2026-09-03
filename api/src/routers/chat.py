@@ -27,6 +27,10 @@ from src.core.db_deps import DbSession
 from src.models.contracts.agents import (
     ChatRequest,
     ChatResponse,
+    ChatRunCancelResponse,
+    ChatRunCreateRequest,
+    ChatRunCreateResponse,
+    ChatRunStateResponse,
     ChatModelProfilePublic,
     ChatModelProfilesResponse,
     ConversationCreate,
@@ -47,6 +51,11 @@ from src.services.chat_attachments import (
     MAX_FILES_PER_MESSAGE,
     ChatAttachmentError,
     ChatAttachmentService,
+)
+from src.services.chat_runs import (
+    cancel_chat_run,
+    create_chat_run,
+    get_chat_state,
 )
 
 logger = logging.getLogger(__name__)
@@ -277,6 +286,36 @@ async def delete_conversation(
     conversation.is_active = False
     conversation.updated_at = datetime.now(timezone.utc)
     await db.flush()
+
+
+@router.post("/runs", status_code=status.HTTP_201_CREATED, response_model=ChatRunCreateResponse)
+async def submit_chat_run(
+    request: ChatRunCreateRequest,
+    db: DbSession,
+    user: CurrentActiveUser,
+) -> ChatRunCreateResponse:
+    """Persist a user message, queue a durable chat run, and return its snapshot."""
+    return await create_chat_run(db, user, request)
+
+
+@router.get("/conversations/{conversation_id}/state", response_model=ChatRunStateResponse)
+async def get_chat_conversation_state(
+    conversation_id: UUID,
+    db: DbSession,
+    user: CurrentActiveUser,
+) -> ChatRunStateResponse:
+    """Return the authoritative chat conversation snapshot for reconnects."""
+    return await get_chat_state(db, user, conversation_id)
+
+
+@router.post("/runs/{run_id}/cancel", response_model=ChatRunCancelResponse)
+async def cancel_chat_run_route(
+    run_id: UUID,
+    db: DbSession,
+    user: CurrentActiveUser,
+) -> ChatRunCancelResponse:
+    """Cancel a durable chat run."""
+    return await cancel_chat_run(db, user, run_id)
 
 
 # =============================================================================
@@ -604,10 +643,11 @@ async def get_messages(
     if before_sequence is not None:
         stmt = stmt.where(Message.sequence < before_sequence)
 
-    stmt = stmt.order_by(Message.sequence.asc()).limit(limit)
+    bounded_limit = min(max(limit, 1), 200)
+    stmt = stmt.order_by(Message.sequence.desc()).limit(bounded_limit)
 
     result = await db.execute(stmt)
-    messages = result.scalars().all()
+    messages = list(reversed(result.scalars().all()))
 
     attachments_by_message: dict[UUID, list[MessageAttachment]] = {}
     message_ids = [message.id for message in messages]

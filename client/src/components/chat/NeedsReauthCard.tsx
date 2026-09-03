@@ -6,8 +6,7 @@
  * which we resolve into a friendly service name via React Query, plus a
  * ``metadata.reauth_url`` we use to build the OAuth popup target.
  *
- * Pattern matches AskUserQuestionCard — bordered card with a header,
- * descriptive copy, and a single action button. The OAuth popup flow
+ * Uses a bordered card with descriptive copy and one action. The OAuth popup flow
  * matches MCPConnectionEdit.tsx and UserMCPConnections.tsx: open the
  * `/api/me/mcp-connections/{id}/connect` URL in a sized popup, listen
  * for the ``mcp_oauth_success`` postMessage, and toast/refresh.
