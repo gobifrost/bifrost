@@ -1000,9 +1000,12 @@ class WebSocketService {
 		const conversationId = envelope.conversation_id;
 		if (!conversationId) return;
 
-		const callback = this.chatStreamCallbacks.get(conversationId);
-		if (callback) {
-			callback(envelope);
+		for (const [registeredConversationId, callback] of this
+			.chatStreamCallbacks) {
+			if (registeredConversationId === conversationId) {
+				callback(envelope);
+				return;
+			}
 		}
 	}
 
