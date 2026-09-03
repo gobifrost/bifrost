@@ -333,6 +333,7 @@ class TestBuiltInIntegrationEvents:
 
         try:
             import src.core.redis_client as redis_module
+            from src.core.database import reset_db_state
             from src.jobs.rabbitmq import rabbitmq
             from src.routers.oauth_connections import _apply_callback_to_mapping
             from src.routers import integrations
@@ -341,6 +342,7 @@ class TestBuiltInIntegrationEvents:
             # Source/workflow setup above runs through TestClient, while the
             # emitter below runs on pytest-asyncio's function-scoped loop.
             # Rebuild loop-bound clients before crossing that boundary.
+            reset_db_state()
             redis_module._redis_client = None
             rabbitmq.reset_pools()
 
