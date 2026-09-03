@@ -127,7 +127,10 @@
 | GET | `/api/chat/conversations/{conversation_id}/attachments/{attachment_id}/content` |
 | GET | `/api/chat/conversations/{conversation_id}/messages` |
 | POST | `/api/chat/conversations/{conversation_id}/messages` |
+| GET | `/api/chat/conversations/{conversation_id}/state` |
 | GET | `/api/chat/model-profiles` |
+| POST | `/api/chat/runs` |
+| POST | `/api/chat/runs/{run_id}/cancel` |
 | GET | `/api/claims` |
 | POST | `/api/claims` |
 | DELETE | `/api/claims/{name}` |

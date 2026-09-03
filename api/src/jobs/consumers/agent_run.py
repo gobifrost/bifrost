@@ -672,7 +672,6 @@ class AgentRunConsumer(BaseConsumer):
             final_incomplete: bool | None = None
             iterations_used = 0
             tokens_used = 0
-            agent_run_ref = agent_run
             timed_out = False
 
             try:
@@ -913,6 +912,7 @@ class AgentRunConsumer(BaseConsumer):
                 try:
                     await cancel_watcher
                 except asyncio.CancelledError:
+                    # Expected after explicitly cancelling the watcher above.
                     pass
 
     @staticmethod
