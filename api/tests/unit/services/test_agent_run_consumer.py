@@ -686,6 +686,6 @@ async def test_chat_outer_failure_publishes_terminal_error_envelope(
         "failed",
     ]
     terminal_payload = publish_chat.await_args_list[-1].kwargs["payload"]
-    assert terminal_payload["type"] == "error"
-    assert terminal_payload["run_status"] == "failed"
+    assert terminal_payload.type == "error"
+    assert terminal_payload.run_status == "failed"
     assert publish_run.await_args.args[0].status == "failed"

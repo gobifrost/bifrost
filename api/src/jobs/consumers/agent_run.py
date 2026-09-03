@@ -228,7 +228,7 @@ class AgentRunConsumer(BaseConsumer):
                             type="run_status",
                             conversation_id=str(agent_run.conversation_id),
                             run_status="running",
-                        ).model_dump(mode="json", exclude_none=True),
+                        ),
                     )
                     await publish_agent_run_update(agent_run, "Unknown")
                     await self._process_chat_run(
@@ -527,7 +527,7 @@ class AgentRunConsumer(BaseConsumer):
                                     type="error",
                                     error=str(e),
                                     run_status="failed",
-                                ).model_dump(mode="json", exclude_none=True),
+                                ),
                             )
                         except Exception as pub_err:
                             logger.debug(
@@ -693,7 +693,7 @@ class AgentRunConsumer(BaseConsumer):
                                 run_id=run_id,
                                 kind=chunk.type,
                                 status=_chat_chunk_status(chunk.type),
-                                payload=chunk.model_dump(mode="json", exclude_none=True),
+                                payload=chunk,
                             )
 
                             if (
@@ -806,7 +806,7 @@ class AgentRunConsumer(BaseConsumer):
                                 type="title_update",
                                 title=title,
                                 run_status="completed",
-                            ).model_dump(mode="json", exclude_none=True),
+                            ),
                         )
 
                 if sync:
@@ -858,9 +858,7 @@ class AgentRunConsumer(BaseConsumer):
                     run_id=run_id,
                     kind=interrupted_kind,
                     status=interrupted_status,
-                    payload=interrupted_payload.model_dump(
-                        mode="json", exclude_none=True
-                    ),
+                    payload=interrupted_payload,
                 )
 
                 async with self._session_factory() as db:

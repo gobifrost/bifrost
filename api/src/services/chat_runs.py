@@ -28,8 +28,9 @@ from src.models.contracts.agents import (
 from src.models.enums import MessageRole
 from src.models.orm import Agent, AgentRun, Conversation, Message
 from src.repositories.agents import AgentRepository
-from src.services.execution.agent_run_service import enqueue_agent_run
 from src.services.chat_attachments import ChatAttachmentError, ChatAttachmentService
+from src.services.chat_errors import public_chat_error_message
+from src.services.execution.agent_run_service import enqueue_agent_run
 
 
 def _conversation_public(conversation: Conversation, message_count: int) -> ConversationPublic:
@@ -50,7 +51,10 @@ def _conversation_public(conversation: Conversation, message_count: int) -> Conv
 def _run_public(run: AgentRun | None) -> ChatRunPublic | None:
     if run is None:
         return None
-    return ChatRunPublic.model_validate(run)
+    public_run = ChatRunPublic.model_validate(run)
+    if public_run.error is not None:
+        public_run.error = public_chat_error_message(public_run.status)
+    return public_run
 
 
 async def _load_conversation_or_404(db: DbSession, conversation_id: UUID, user: UserPrincipal) -> Conversation:
@@ -285,13 +289,13 @@ async def create_chat_run(
             run_id=run_id,
             kind="run_status",
             status="queued",
-            payload={
-                "type": "run_status",
-                "conversation_id": str(conversation.id),
-                "user_message_id": str(user_message.id),
-                "local_id": str(user_message.id),
-                "run_status": "queued",
-            },
+            payload=ChatStreamChunk(
+                type="run_status",
+                conversation_id=str(conversation.id),
+                user_message_id=str(user_message.id),
+                local_id=str(user_message.id),
+                run_status="queued",
+            ),
         )
 
     try:
@@ -335,12 +339,12 @@ async def create_chat_run(
             run_id=client_run_id,
             kind="error",
             status="failed",
-            payload={
-                "type": "error",
-                "conversation_id": str(conversation.id),
-                "run_status": "failed",
-                "error": "Chat run could not be queued",
-            },
+            payload=ChatStreamChunk(
+                type="error",
+                conversation_id=str(conversation.id),
+                run_status="failed",
+                error="Chat run could not be queued",
+            ),
         )
         raise
 
@@ -427,11 +431,11 @@ async def cancel_chat_run(
         run_id=run.id,
         kind="run_status",
         status=run.status,
-        payload={
-            "type": "run_status",
-            "conversation_id": str(run.conversation_id),
-            "run_status": run.status,
-        },
+        payload=ChatStreamChunk(
+            type="run_status",
+            conversation_id=str(run.conversation_id),
+            run_status=run.status,
+        ),
     )
 
     return ChatRunCancelResponse(run_id=run.id, status=run.status)

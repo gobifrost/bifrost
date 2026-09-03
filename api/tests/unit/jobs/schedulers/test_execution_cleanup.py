@@ -192,4 +192,4 @@ class TestExecutionCleanupAgentRuns:
         assert kwargs["run_id"] == str(run.id)
         assert kwargs["kind"] == "error"
         assert kwargs["status"] == "timeout"
-        assert kwargs["payload"]["run_status"] == "timeout"
+        assert kwargs["payload"].run_status == "timeout"

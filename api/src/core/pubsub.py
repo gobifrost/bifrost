@@ -21,6 +21,7 @@ from uuid import UUID
 if TYPE_CHECKING:
     from fastapi import WebSocket
 
+    from src.models.contracts.agents import ChatStreamChunk
     from src.models.orm.agent_runs import AgentRun
 
 from src.config import get_settings
@@ -383,23 +384,37 @@ async def publish_agent_run_step(
     await manager.broadcast(f"agent-run:{run_id}", message)
 
 
+def serialize_chat_stream_chunk(chunk: ChatStreamChunk) -> dict[str, Any]:
+    """Serialize a sparse chunk without altering nested contract payloads."""
+    payload = chunk.model_dump(mode="json")
+    return {
+        field: value
+        for field, value in payload.items()
+        if value is not None or field in chunk.model_fields_set
+    }
+
+
 async def publish_chat_run_event(
     conversation_id: str | UUID,
     run_id: str | UUID,
     kind: str,
     status: str,
-    payload: dict[str, Any],
+    payload: ChatStreamChunk,
 ) -> dict[str, Any]:
     """Publish a versioned, replayable chat run event."""
     from uuid import uuid4
 
-    from src.models.contracts.agents import ChatStreamChunk
+    from src.services.chat_errors import public_chat_error_message
 
     event_id = uuid4()
     occurred_at = datetime.now(timezone.utc)
     conversation_id_str = str(conversation_id)
     run_id_str = str(run_id)
-    chunk = ChatStreamChunk.model_validate(payload)
+    chunk = payload
+    if chunk.type == "error":
+        chunk = chunk.model_copy(
+            update={"error": public_chat_error_message(chunk.run_status or status)}
+        )
     envelope: dict[str, Any] = {
         "type": "chat_run_event",
         "protocol_version": 1,
@@ -410,7 +425,7 @@ async def publish_chat_run_event(
         "occurred_at": occurred_at.isoformat(),
         "kind": kind,
         "status": status,
-        "payload": chunk.model_dump(mode="json", exclude_none=True),
+        "payload": serialize_chat_stream_chunk(chunk),
     }
 
     stream_key = chat_run_events_stream_key(conversation_id_str)
@@ -443,6 +458,8 @@ async def replay_chat_run_events(
     limit: int = 200,
 ) -> list[dict[str, Any]]:
     """Replay retained chat run events from the Redis stream."""
+    from src.services.chat_errors import public_chat_error_message
+
     conversation_id_str = str(conversation_id)
     stream_key = chat_run_events_stream_key(conversation_id_str)
     events: list[dict[str, Any]] = []
@@ -453,6 +470,14 @@ async def replay_chat_run_events(
         if not raw:
             continue
         event = json.loads(raw)
+        payload = event.get("payload")
+        if isinstance(payload, dict) and payload.get("type") == "error":
+            event["payload"] = {
+                **payload,
+                "error": public_chat_error_message(
+                    payload.get("run_status") or event.get("status")
+                ),
+            }
         sequence = int(event.get("sequence") or data.get("sequence") or 0)
         if after_sequence is not None and sequence <= after_sequence:
             continue

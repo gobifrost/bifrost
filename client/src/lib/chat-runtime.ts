@@ -3,6 +3,11 @@ import type { ChatStreamChunk, ChatToolProgress } from "@/services/websocket";
 
 type MessagePublic = components["schemas"]["MessagePublic"];
 
+const CHAT_FAILURE_MESSAGE =
+	"We couldn't complete this response. Please try again.";
+const CHAT_TIMEOUT_MESSAGE =
+	"This response took too long to complete. Please try again.";
+
 export interface ChatContextWarningPayload {
 	current_tokens: number;
 	max_tokens: number;
@@ -981,11 +986,15 @@ function applyError(
 	projection: ChatProjection,
 	run: ChatRunProjection,
 	chunk: ChatStreamChunk,
+	status: string | null,
 	sequence: number,
 	occurredAt: string,
 	eventId: string | null,
 ): void {
-	const error = chunk.error ?? "Unknown error occurred";
+	const error =
+		(chunk.run_status ?? status) === "timeout"
+			? CHAT_TIMEOUT_MESSAGE
+			: CHAT_FAILURE_MESSAGE;
 	addSystemEvent(projection, {
 		type: "error",
 		id: eventId ?? makeSyntheticEventId("error", run.run_id, sequence),
@@ -1438,7 +1447,15 @@ function applyEnvelopeToProjection(
 			);
 			break;
 		case "error":
-			applyError(projection, run, chunk, sequence, occurredAt, dedupeId);
+			applyError(
+				projection,
+				run,
+				chunk,
+				envelope.status ?? null,
+				sequence,
+				occurredAt,
+				dedupeId,
+			);
 			break;
 		case "artifact_ready":
 			applyArtifactReady(projection, run, chunk, sequence);

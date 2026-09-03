@@ -672,4 +672,49 @@ describe("chat-runtime reducer", () => {
 			},
 		});
 	});
+
+	it("never projects a server diagnostic into a user-visible chat error", () => {
+		const rawError =
+			"1 validation error for ChatStreamChunk tool_result.result Field required";
+		const projection = applyChatStreamEnvelope(
+			makeEmptyChatProjection("conversation-1"),
+			{
+				...makeEnvelope(1, "run-1", {
+					type: "error",
+					run_status: "failed",
+					error: rawError,
+				}),
+				status: "failed",
+			},
+		);
+
+		expect(projection.system_events).toContainEqual(
+			expect.objectContaining({
+				type: "error",
+				error: "We couldn't complete this response. Please try again.",
+			}),
+		);
+		expect(JSON.stringify(projection.system_events)).not.toContain(rawError);
+	});
+
+	it("uses safe timeout copy for timed-out chat runs", () => {
+		const projection = applyChatStreamEnvelope(
+			makeEmptyChatProjection("conversation-1"),
+			{
+				...makeEnvelope(1, "run-1", {
+					type: "error",
+					error: "Chat run timed out after 300s",
+				}),
+				status: "timeout",
+			},
+		);
+
+		expect(projection.system_events).toContainEqual(
+			expect.objectContaining({
+				type: "error",
+				error:
+					"This response took too long to complete. Please try again.",
+			}),
+		);
+	});
 });

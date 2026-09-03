@@ -408,7 +408,7 @@ async def _cleanup_stale_agent_runs(now: datetime) -> dict[str, Any]:
                             type="error",
                             error=chat_event["error"],
                             run_status=chat_event["status"],
-                        ).model_dump(mode="json", exclude_none=True),
+                        ),
                     )
             except Exception:
                 logger.warning(
