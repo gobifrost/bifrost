@@ -576,6 +576,29 @@ Tables provide structured data storage with schema validation and multi-tenancy.
 
 Scope is resolved via cascade: org-specific first, then global fallback. The SDK `scope` parameter accepts `None` for global or an org UUID for a specific org. Omit it to use the execution context's org (default, with global cascade).
 
+### Claim-backed policies
+
+For multi-dimensional row access, materialize a scalar key from immutable UUIDs, such as `<site UUID>:<category UUID>`, and compare it with a list claim:
+
+```json
+{"in": [{"row": "access_key"}, {"claims": "allowed_access_keys"}]}
+```
+
+Keep component UUIDs on each grant row for filtered reference-data navigation, but preserve the composite key for document authorization so independent claims cannot create a Cartesian product.
+
+For managed files, a file policy may match an exact or slash-delimited descendant path against claim scopes:
+
+```json
+{
+  "path_within_any": [
+    {"file": "path"},
+    {"claims": "allowed_resource_paths"}
+  ]
+}
+```
+
+`path_within_any` is file-only and fails closed for missing, malformed, or empty scopes. Store one path prefix per grant row and use UUID path segments so display-name changes do not move files.
+
 ## Data Providers
 
 Data providers are workflows that return label/value pairs for form dropdowns.

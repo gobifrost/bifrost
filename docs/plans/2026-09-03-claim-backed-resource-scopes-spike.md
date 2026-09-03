@@ -25,7 +25,7 @@ The source-of-truth assignment model may remain normalized for editing. Authoriz
 | `pdf_path` | `documents/site-017/category-03/pdf/document-104/file.pdf` | View representation |
 | `download_path` | `documents/site-017/category-03/download/document-104/source.dwg` | Download representation |
 
-`document_access_key` must be generated from immutable identifiers, not display names. It prevents independent site and category claims from accidentally granting their Cartesian product.
+`document_access_key` must be generated from immutable UUIDs, not display names. Stable file paths use the same UUIDs as segments. Renaming a site or category therefore changes only its reference row; it does not rewrite grants, keys, or stored paths. The composite key prevents independent site and category claims from accidentally granting their Cartesian product.
 
 ### Table grant projection
 
@@ -70,6 +70,16 @@ The documents table policy is:
 ```
 
 The same exact predicate should cover query, get, update, and delete actions as appropriate. Create should validate the submitted access key against the claim before insertion.
+
+### Entitlement-filtered navigation
+
+Keep `site_id` and `category_id` on every `document_access_grants` row alongside the composite key. Component claims may safely filter reference tables for navigation:
+
+```json
+{"in": [{"row": "site_id"}, {"claims": "allowed_site_ids"}]}
+```
+
+Buildings and floors that inherit site access should also carry `site_id`, making their policies the same indexed membership check without a runtime join. The UI queries its own grant rows once, groups the original site/category pairs, and batch-resolves names for only those UUIDs. Component claims control label visibility; they never replace the composite document policy.
 
 ### File grant projection
 

@@ -77,6 +77,31 @@ The CLI read/write surface is text-only. `files write` replaces the complete fil
 
 File policy checks apply independently at every tier. Grant only the actions required for the path prefix: read, list, write, delete, or signed access as supported by the policy model.
 
+For many dynamic hierarchical grants, use one root file policy with the file-only `path_within_any` predicate and a list claim:
+
+```json
+{
+  "policies": [
+    {
+      "name": "read_granted_resources",
+      "actions": ["read"],
+      "when": {
+        "path_within_any": [
+          {"file": "path"},
+          {"claims": "allowed_resource_paths"}
+        ]
+      }
+    }
+  ]
+}
+```
+
+Back `allowed_resource_paths` with a flattened grant table containing one `user_id` and one `path_prefix` per row. The predicate matches the exact prefix or a slash-delimited descendant; sibling string prefixes do not match. Missing, malformed, non-list, and empty/root claim values fail closed.
+
+Build paths from immutable UUIDs, for example `documents/sites/<site UUID>/categories/<category UUID>/pdf/<document UUID>/file.pdf`. Keep view and source-download representations under different path segments so their grants can differ without per-file claim values. A label rename then changes only reference data.
+
+`path_within_any` is intentionally unavailable to table policies. Use indexed exact composite-key membership for table rows. Also treat `list` separately: permission to a descendant does not imply permission to enumerate every ancestor directory. Prefer an authorization-filtered table for navigation and grant file reads only when opening the selected resource.
+
 With `global_repo_access: false`, a Solution can access only its declared owned location. With it enabled, reads/list/exists/signed-read can fall back through eligible install-org and global file tiers. Writes and deletes still target the Solution-owned tier; the flag does not authorize modification of shared files.
 
 Read `solution-resource-access.md` for the exact runtime matrix.

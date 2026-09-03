@@ -79,7 +79,7 @@ Test missing mapping, expired/absent OAuth, API failure, pagination/rate limitin
 
 Roles are permission buckets assigned to users and entities. Permissions are a mapping, not a list. Read role membership and the protected entity before changing either side.
 
-Custom claims are org-scoped, query-derived user facts used by policy expressions. Design the backing query and policy together, and test users with empty, single, and multiple claim values.
+Custom claims are org-scoped, query-derived user facts used by policy expressions. Design the backing query, source-table read policy, and consuming policy together: claim resolution is restricted by the source table's policy. Claims select one scalar value per source row, so flatten list-valued grants into separate rows. Test users with empty, single, and multiple claim values.
 
 Table and file policies are deny-by-absence. Fresh resources commonly begin with an admin bypass only; ordinary users need explicit rules. Policy rules can be referenced by multiple resources, so inspect usages before updating or deleting a shared rule.
 

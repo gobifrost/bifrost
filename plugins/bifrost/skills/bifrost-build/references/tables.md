@@ -93,6 +93,35 @@ Missing rows normally return `None`/`null`; missing tables and denied access may
 
 Do not treat an empty Python `tables.query()` as proof that a shared table exists: Solution lookup can convert some missing-table reads into an empty list. Validate setup when absence would be an error.
 
+## Claim-backed authorization projections
+
+Use flattened grant rows when access depends on more than one resource dimension. Store immutable UUID components alongside one scalar composite key:
+
+```text
+document_access_grants
+├── user_id
+├── site_id
+├── category_id
+└── access_key       # "<site UUID>:<category UUID>"
+```
+
+The grant table must let a principal read only its own rows. A list claim can then select `access_key`, and the protected table compares it exactly:
+
+```json
+{
+  "in": [
+    {"row": "access_key"},
+    {"claims": "allowed_document_access_keys"}
+  ]
+}
+```
+
+Keep this composite boundary for protected rows. Separate `allowed_site_ids` and `allowed_category_ids` claims lose the original pairings and can create an unintended Cartesian product.
+
+The component claims are still useful for reference-data navigation. Policies on site, building, floor, or category catalog tables may compare their UUID field with the matching component claim so the app lists only entitled labels. Build cascading choices from the user's original grant rows to preserve which categories belong to each permitted site. A navigation result never replaces the composite policy on the protected table.
+
+Claims select one scalar field per source row and do not flatten a JSON list. Materialize one grant value per row. Use UUIDs in keys and references so renaming a display label does not rewrite policies, grants, or storage paths.
+
 ## Solution scope and shared fallback
 
 Solution context resolves its own table first. With `global_repo_access: true`, a miss may fall back by name to an eligible install-org and then global loose table. Shared fallback tables are read-only from the Solution; the flag does not permit row mutation outside the install. Policies still apply after resolution.
