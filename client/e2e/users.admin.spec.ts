@@ -53,24 +53,66 @@ test.describe("User Listing", () => {
 });
 
 test.describe("User Details", () => {
-	test("should show user details when clicked", async ({ page }) => {
+	test("opens user details once without remounting the dialog", async ({
+		page,
+	}) => {
 		await page.goto("/users");
 
 		await expect(
 			page.getByRole("heading", { name: /users/i }).first(),
 		).toBeVisible({ timeout: 10000 });
 
-		// Find a user row
 		const userRow = page.locator("table tbody tr").first();
-		const emptyState = page.getByText(/no users/i);
-		await expect(userRow.or(emptyState)).toBeVisible({ timeout: 10000 });
-		const hasUserRow = await userRow.isVisible().catch(() => false);
+		await expect(userRow).toBeVisible({ timeout: 10000 });
+		await page.evaluate(() => {
+			const observedWindow = window as unknown as {
+				__dialogTransitions: string[];
+			};
+			observedWindow.__dialogTransitions = [];
+			new MutationObserver((mutations) => {
+				for (const mutation of mutations) {
+					for (const node of mutation.addedNodes) {
+						if (
+							node instanceof HTMLElement &&
+							(node.matches('[role="dialog"]') ||
+								node.querySelector('[role="dialog"]'))
+						) {
+							observedWindow.__dialogTransitions.push("added");
+						}
+					}
+					for (const node of mutation.removedNodes) {
+						if (
+							node instanceof HTMLElement &&
+							(node.matches('[role="dialog"]') ||
+								node.querySelector('[role="dialog"]'))
+						) {
+							observedWindow.__dialogTransitions.push("removed");
+						}
+					}
+				}
+			}).observe(document.body, { childList: true, subtree: true });
+		});
 
-		if (hasUserRow) {
-			await userRow.click();
-			// Just verify the page responds to the click
-		}
-		// Test passes if either we clicked a user or there were no users
+		const emailCell = userRow.locator("td").nth(3);
+		const email = (await emailCell.textContent())?.trim();
+		expect(email).toBeTruthy();
+		await emailCell.getByText(email!, { exact: true }).click();
+		await expect(page).toHaveURL(/\/users\/[0-9a-f-]+$/);
+		await expect(
+			page.getByRole("dialog", { name: /edit user/i }),
+		).toBeVisible();
+		await page.evaluate(
+			() =>
+				new Promise((resolve) =>
+					requestAnimationFrame(() => requestAnimationFrame(resolve)),
+				),
+		);
+		const transitions = await page.evaluate(
+			() =>
+				(window as unknown as { __dialogTransitions: string[] })
+					.__dialogTransitions,
+		);
+		expect(transitions).toEqual(["added"]);
 	});
 
 	test("should show user organization membership", async ({ page }) => {

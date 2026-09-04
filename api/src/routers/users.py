@@ -6,11 +6,12 @@ List and manage users, view user roles and forms.
 
 import logging
 from datetime import datetime, timezone
+from typing import Literal
 from urllib.parse import parse_qs, urlparse
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import select
+from fastapi import APIRouter, HTTPException, Query, Response, status
+from sqlalchemy import case, exists, func, or_, select
 
 from src.config import get_settings
 from src.core.auth import CurrentSuperuser
@@ -36,6 +37,7 @@ from src.models.contracts.user_invites import (
     InviteStatus,
     SendInviteRequest,
 )
+from src.models.orm import UserInvite, UserOAuthAccount
 from src.core.constants import PROVIDER_ORG_ID
 
 logger = logging.getLogger(__name__)
@@ -52,6 +54,7 @@ router = APIRouter(prefix="/api/users", tags=["Users"])
 async def list_users(
     user: CurrentSuperuser,
     db: DbSession,
+    response: Response,
     type: str | None = Query(None, description="Filter by user type: 'platform' or 'org'"),
     scope: str | None = Query(
         None,
@@ -59,6 +62,18 @@ async def list_users(
         "or org UUID for specific org."
     ),
     include_inactive: bool = Query(False, description="Include inactive (disabled) users"),
+    search: str | None = Query(None, description="Search user name or email"),
+    sort_by: Literal["name", "email", "status", "created", "last_login"] | None = Query(
+        None, description="Sort field; omit to preserve the legacy email order"
+    ),
+    sort_direction: Literal["asc", "desc"] = Query("asc"),
+    limit: int | None = Query(
+        None,
+        ge=1,
+        le=100,
+        description="Maximum rows to return; omit for the legacy unbounded response",
+    ),
+    offset: int = Query(0, ge=0, description="Rows to skip when limit is set"),
 ) -> list[UserPublic]:
     """List users with optional filtering.
 
@@ -102,16 +117,67 @@ async def list_users(
         query = query.where(UserORM.organization_id == filter_org)
     # ALL: no filter applied
 
-    query = query.order_by(UserORM.email)
+    if search and (term := search.strip()):
+        pattern = f"%{term}%"
+        query = query.where(
+            or_(UserORM.name.ilike(pattern), UserORM.email.ilike(pattern))
+        )
+
+    total = await db.scalar(
+        select(func.count()).select_from(query.order_by(None).subquery())
+    )
+    response.headers["X-Total-Count"] = str(total or 0)
+
+    active_account = or_(
+        UserORM.is_registered.is_(True),
+        exists(
+            select(UserOAuthAccount.id).where(UserOAuthAccount.user_id == UserORM.id)
+        ),
+    )
+    pending_invite = exists(
+        select(UserInvite.id).where(
+            UserInvite.user_id == UserORM.id,
+            UserInvite.revoked_at.is_(None),
+            UserInvite.expires_at >= datetime.now(timezone.utc),
+        )
+    )
+    expired_invite = exists(
+        select(UserInvite.id).where(
+            UserInvite.user_id == UserORM.id,
+            UserInvite.revoked_at.is_(None),
+            UserInvite.expires_at < datetime.now(timezone.utc),
+        )
+    )
+    status_order = case(
+        (active_account, 0),
+        (expired_invite, 1),
+        (pending_invite, 3),
+        else_=2,
+    )
+    sort_expression = {
+        "name": func.coalesce(UserORM.name, UserORM.email),
+        "email": UserORM.email,
+        "status": status_order,
+        "created": UserORM.created_at,
+        "last_login": UserORM.last_login,
+    }.get(sort_by or "email", UserORM.email)
+    if sort_direction == "desc":
+        sort_expression = sort_expression.desc()
+    else:
+        sort_expression = sort_expression.asc()
+    query = query.order_by(sort_expression, UserORM.id.asc())
+    if limit is not None:
+        query = query.offset(offset).limit(limit)
 
     result = await db.execute(query)
     users = result.scalars().all()
 
     invite_svc = UserInviteService(db)
+    statuses = await invite_svc.statuses_for(list(users))
     out: list[UserPublic] = []
     for u in users:
         public = UserPublic.model_validate(u)
-        public.invite_status = await invite_svc.status_for(u)
+        public.invite_status = statuses[u.id]
         out.append(public)
     return out
 

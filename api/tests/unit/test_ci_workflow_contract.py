@@ -254,6 +254,19 @@ def test_release_tags_still_require_the_complete_suite() -> None:
     assert set(jobs["build-client"]["needs"]) == release_prerequisites
     assert set(jobs["create-release"]["needs"]) == {"build-api", "build-client"}
 
+    for job_name in ("build-api", "build-client"):
+        condition = _normalized(jobs[job_name]["if"])
+        assert "always()" in condition
+        assert "startsWith(github.ref, 'refs/tags/v')" in condition
+        for prerequisite in release_prerequisites:
+            assert f"needs.{prerequisite}.result == 'success'" in condition
+
+    release_condition = _normalized(jobs["create-release"]["if"])
+    assert "always()" in release_condition
+    assert "startsWith(github.ref, 'refs/tags/v')" in release_condition
+    assert "needs.build-api.result == 'success'" in release_condition
+    assert "needs.build-client.result == 'success'" in release_condition
+
 
 def test_nightly_owns_full_browser_slow_and_clean_build_discovery() -> None:
     workflow = _load_workflow(NIGHTLY_WORKFLOW)

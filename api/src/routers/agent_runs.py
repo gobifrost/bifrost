@@ -175,8 +175,26 @@ async def list_agent_runs(
     ),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    cursor: str | None = Query(
+        None,
+        description="Opaque page position returned as next_cursor; offset remains supported.",
+    ),
 ) -> AgentRunListResponse:
     """List agent runs with optional filters."""
+    page_offset = offset
+    if cursor is not None:
+        try:
+            page_offset = int(cursor)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="cursor is invalid",
+            ) from exc
+        if page_offset < 0:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="cursor is invalid",
+            )
     # Global history stays root-only so one orchestration is counted once.
     # An individual agent's history includes delegated runs because those are
     # real executions of that agent and should not disappear from its Runs tab.
@@ -274,13 +292,19 @@ async def list_agent_runs(
     total = total_result.scalar_one()
 
     # Fetch paginated results
-    query = query.order_by(desc(AgentRun.created_at)).limit(limit).offset(offset)
+    query = query.order_by(desc(AgentRun.created_at)).limit(limit + 1).offset(page_offset)
     result = await db.execute(query)
-    runs = result.scalars().all()
+    runs = list(result.scalars().all())
+    has_more = len(runs) > limit
+    if has_more:
+        runs = runs[:limit]
+
+    next_cursor = str(page_offset + len(runs)) if has_more else None
 
     return AgentRunListResponse(
         items=[_run_to_response(run) for run in runs],
         total=total,
+        next_cursor=next_cursor,
     )
 
 

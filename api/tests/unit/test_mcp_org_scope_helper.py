@@ -19,9 +19,10 @@ def _sql(query) -> str:
     return where
 
 
-def _ctx(*, is_platform_admin=False, org_id=...):
+def _ctx(*, is_platform_admin=False, is_provider_org=False, org_id=...):
     return SimpleNamespace(
         is_platform_admin=is_platform_admin,
+        is_provider_org=is_provider_org,
         org_id=uuid4() if org_id is ... else org_id,
     )
 
@@ -29,6 +30,17 @@ def _ctx(*, is_platform_admin=False, org_id=...):
 def test_platform_admin_no_filter():
     # No WHERE clause at all -> no org filter applied.
     sql = _sql(apply_mcp_org_scope(select(Application), Application, _ctx(is_platform_admin=True)))
+    assert sql.strip() == ""
+
+
+def test_provider_org_user_no_filter():
+    sql = _sql(
+        apply_mcp_org_scope(
+            select(Application),
+            Application,
+            _ctx(is_provider_org=True),
+        )
+    )
     assert sql.strip() == ""
 
 

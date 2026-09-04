@@ -291,6 +291,48 @@ def org_a_user_with_role_x(e2e_client, platform_admin, org1_user, role_x) -> Ite
 
 
 @pytest.fixture
+def customer_org_platform_admin(
+    e2e_client,
+    platform_admin,
+    org1_user,
+    refresh_user_tokens,
+) -> Iterator:
+    """Customer-org user with the named Platform Admin role, but no scope bypass.
+
+    Agent-management routes intentionally recognize this role as an admin grant.
+    Organization impersonation does not: only token superusers and provider-org
+    callers receive the canonical scope bypass.
+    """
+    role_resp = e2e_client.post(
+        "/api/roles",
+        headers=platform_admin.headers,
+        json={"name": "Platform Admin", "permissions": {}},
+    )
+    assert role_resp.status_code == 201, role_resp.text
+    role = role_resp.json()
+    grant_resp = e2e_client.post(
+        f"/api/roles/{role['id']}/users",
+        headers=platform_admin.headers,
+        json={"user_ids": [str(org1_user.user_id)]},
+    )
+    assert grant_resp.status_code in (200, 201, 204), grant_resp.text
+    refreshed_user = refresh_user_tokens(org1_user)
+
+    try:
+        yield refreshed_user
+    finally:
+        e2e_client.delete(
+            f"/api/roles/{role['id']}/users/{org1_user.user_id}",
+            headers=platform_admin.headers,
+        )
+        e2e_client.delete(
+            f"/api/roles/{role['id']}",
+            headers=platform_admin.headers,
+        )
+        refresh_user_tokens(org1_user)
+
+
+@pytest.fixture
 def org_a(org1) -> dict:
     """'Org A' in the matrix is ``org1`` — the agent's home org.
 
@@ -980,3 +1022,258 @@ class TestMcpToolAccessMatrix:
             f"workflow_org_id={workflow.get('organization_id')!r}. "
             f"Content: {content_text[:300]}"
         )
+
+    async def test_provider_org_user_can_list_and_call_cross_org_role_tool(
+        self,
+        seeded_agent_with_tools: dict[str, Any],
+        e2e_client,
+        provider_org_user,
+    ) -> None:
+        """A provider-org non-superuser receives the canonical scope bypass."""
+        agent = seeded_agent_with_tools["agent"]
+        workflow = seeded_agent_with_tools["workflows_by_key"]["org_b_role_gated"]
+        headers = {
+            "Authorization": f"Bearer {provider_org_user.access_token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        }
+
+        list_resp = e2e_client.post(
+            f"/mcp/{agent['id']}",
+            headers=headers,
+            json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
+        )
+        assert list_resp.status_code == 200, list_resp.text
+        list_payload = _parse_mcp_response(list_resp)
+        candidate_names = _candidate_tool_names_for_workflow(workflow)
+        registered_name = next(
+            (
+                tool.get("name")
+                for tool in list_payload["result"].get("tools", [])
+                if tool.get("name") in candidate_names
+            ),
+            None,
+        )
+        assert registered_name is not None, (
+            "provider-org caller did not receive cross-org role-gated tool; "
+            f"candidates={candidate_names}"
+        )
+
+        call_resp = e2e_client.post(
+            f"/mcp/{agent['id']}",
+            headers=headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {"name": registered_name, "arguments": {}},
+            },
+        )
+        assert call_resp.status_code == 200, call_resp.text
+        call_payload = _parse_mcp_response(call_resp)
+        assert "error" not in call_payload, call_payload
+        result = call_payload.get("result")
+        assert result is not None and not result.get("isError", False), call_payload
+        content_text = " ".join(
+            block.get("text", "")
+            for block in result.get("content", [])
+            if isinstance(block, dict)
+        )
+        assert "ok" in content_text, content_text
+
+    async def test_provider_gateway_discovery_requires_explicit_scope_or_target(
+        self,
+        seeded_agent_with_tools: dict[str, Any],
+        e2e_client,
+        provider_org_user,
+    ) -> None:
+        """Provider bypass applies to exact targets, not unscoped discovery."""
+        agent = seeded_agent_with_tools["agent"]
+        headers = {
+            "Authorization": f"Bearer {provider_org_user.access_token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        }
+
+        tools_response = e2e_client.post(
+            "/mcp",
+            headers=headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": 0,
+                "method": "tools/list",
+                "params": {},
+            },
+        )
+        assert tools_response.status_code == 200, tools_response.text
+        tools_payload = _parse_mcp_response(tools_response)
+        search_tool = next(
+            tool
+            for tool in tools_payload["result"]["tools"]
+            if tool["name"] == "bifrost_search_capabilities"
+        )
+        assert search_tool["inputSchema"]["properties"]["discovery_scope"][
+            "enum"
+        ] == ["accessible", "all"]
+
+        search_response = e2e_client.post(
+            "/mcp",
+            headers=headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {
+                    "name": "bifrost_search_capabilities",
+                    "arguments": {"query": agent["name"]},
+                },
+            },
+        )
+        assert search_response.status_code == 200, search_response.text
+        search_payload = _parse_mcp_response(search_response)
+        search_result = search_payload["result"]
+        assert not search_result.get("isError", False), search_payload
+        search_data = search_result.get("structuredContent")
+        assert isinstance(search_data, dict), search_payload
+        assert agent["id"] not in {
+            item["id"] for item in search_data.get("agents", [])
+        }
+
+        all_response = e2e_client.post(
+            "/mcp",
+            headers=headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "bifrost_search_capabilities",
+                    "arguments": {
+                        "query": agent["name"],
+                        "discovery_scope": "all",
+                    },
+                },
+            },
+        )
+        assert all_response.status_code == 200, all_response.text
+        all_payload = _parse_mcp_response(all_response)
+        all_result = all_payload["result"]
+        all_data = all_result.get("structuredContent")
+        assert isinstance(all_data, dict), all_payload
+        assert agent["id"] in {item["id"] for item in all_data.get("agents", [])}
+
+        explicit_response = e2e_client.post(
+            "/mcp",
+            headers=headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {
+                    "name": "bifrost_search_capabilities",
+                    "arguments": {"agent_id": agent["id"]},
+                },
+            },
+        )
+        assert explicit_response.status_code == 200, explicit_response.text
+        explicit_payload = _parse_mcp_response(explicit_response)
+        explicit_result = explicit_payload["result"]
+        assert not explicit_result.get("isError", False), explicit_payload
+        explicit_data = explicit_result.get("structuredContent")
+        assert isinstance(explicit_data, dict), explicit_payload
+        assert "agents" in explicit_data, explicit_data
+        assert explicit_data["agents"][0]["id"] == agent["id"]
+
+    async def test_customer_org_platform_admin_cannot_list_or_call_cross_org_tool(
+        self,
+        seeded_agent_with_tools: dict[str, Any],
+        e2e_client,
+        platform_admin,
+        customer_org_platform_admin,
+    ) -> None:
+        """A named admin role outside the provider org never grants impersonation."""
+        agent = seeded_agent_with_tools["agent"]
+        workflow = seeded_agent_with_tools["workflows_by_key"]["org_b_role_gated"]
+        admin_headers = {
+            "Authorization": f"Bearer {platform_admin.access_token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        }
+        admin_list = e2e_client.post(
+            f"/mcp/{agent['id']}",
+            headers=admin_headers,
+            json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
+        )
+        assert admin_list.status_code == 200, admin_list.text
+        candidates = _candidate_tool_names_for_workflow(workflow)
+        registered_name = next(
+            (
+                tool.get("name")
+                for tool in _parse_mcp_response(admin_list)["result"].get("tools", [])
+                if tool.get("name") in candidates
+            ),
+            None,
+        )
+        assert registered_name is not None, "fixture admin could not resolve tool name"
+
+        customer_headers = {
+            "Authorization": f"Bearer {customer_org_platform_admin.access_token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        }
+        all_search = e2e_client.post(
+            "/mcp",
+            headers=customer_headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {
+                    "name": "bifrost_search_capabilities",
+                    "arguments": {
+                        "query": agent["name"],
+                        "discovery_scope": "all",
+                    },
+                },
+            },
+        )
+        assert all_search.status_code == 200, all_search.text
+        all_search_payload = _parse_mcp_response(all_search)
+        all_search_data = all_search_payload["result"].get("structuredContent")
+        assert isinstance(all_search_data, dict), all_search_payload
+        assert all_search_data["code"] == "IMPERSONATION_FORBIDDEN"
+
+        customer_list = e2e_client.post(
+            f"/mcp/{agent['id']}",
+            headers=customer_headers,
+            json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
+        )
+        assert customer_list.status_code == 200, customer_list.text
+        visible_names = {
+            tool.get("name")
+            for tool in _parse_mcp_response(customer_list)["result"].get("tools", [])
+        }
+        assert registered_name not in visible_names, (
+            "customer-org Platform Admin role leaked cross-org tool metadata"
+        )
+
+        call_resp = e2e_client.post(
+            f"/mcp/{agent['id']}",
+            headers=customer_headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {"name": registered_name, "arguments": {}},
+            },
+        )
+        assert call_resp.status_code == 200, call_resp.text
+        payload = _parse_mcp_response(call_resp)
+        if "error" in payload:
+            return
+        result = payload.get("result")
+        assert result is None or result.get("isError", False) or not any(
+            "ok" in block.get("text", "")
+            for block in result.get("content", [])
+            if isinstance(block, dict)
+        ), "customer-org Platform Admin role executed a cross-org tool"

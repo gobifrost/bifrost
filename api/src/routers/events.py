@@ -15,6 +15,7 @@ from sqlalchemy.orm import joinedload
 
 from src.core.auth import Context, CurrentSuperuser
 from src.core.db_deps import DbSession
+from src.core.error_messages import format_exception_message
 from src.core.log_safety import log_safe
 from shared.event_deliveries import can_retry_delivery_status
 from src.models.contracts.events import (
@@ -783,20 +784,24 @@ async def delete_source(
         try:
             await unsubscribe_provider(db, source)
         except Exception as exc:
-            source.error_message = f"Provider deletion failed: {exc}"
+            error_message = format_exception_message(
+                exc,
+                context="deleting the provider subscription",
+            )
+            source.error_message = f"Provider deletion failed: {error_message}"
             source.updated_at = datetime.now(timezone.utc)
             await db.commit()
             logger.error(
                 "Refusing to delete webhook %s because provider cleanup failed: %s",
                 log_safe(source_id),
-                log_safe(exc),
+                log_safe(error_message),
                 exc_info=True,
             )
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail=(
                     "The provider subscription could not be deleted. The Bifrost "
-                    f"event source was retained so you can retry: {exc}"
+                    f"event source was retained so you can retry: {error_message}"
                 ),
             ) from exc
 
@@ -1469,9 +1474,13 @@ async def create_delivery(
     try:
         await processor.queue_event_deliveries(event_id)
     except Exception as e:
-        logger.error(f"Failed to queue delivery: {e}", exc_info=True)
+        error_message = format_exception_message(
+            e,
+            context="queueing event delivery",
+        )
+        logger.error(f"Failed to queue delivery: {error_message}", exc_info=True)
         delivery.status = EventDeliveryStatus.FAILED
-        delivery.error_message = str(e)
+        delivery.error_message = error_message
         await db.flush()
 
     logger.info(
@@ -1552,11 +1561,15 @@ async def retry_delivery(
         await processor.queue_event_deliveries(delivery.event_id)
         message = "Delivery queued for retry"
     except Exception as e:
-        logger.error(f"Failed to queue retry: {e}", exc_info=True)
+        error_message = format_exception_message(
+            e,
+            context="queueing event delivery retry",
+        )
+        logger.error(f"Failed to queue retry: {error_message}", exc_info=True)
         delivery.status = EventDeliveryStatus.FAILED
-        delivery.error_message = str(e)
+        delivery.error_message = error_message
         await db.flush()
-        message = f"Failed to queue retry: {e}"
+        message = f"Failed to queue retry: {error_message}"
 
     logger.info(f"Retried delivery {log_safe(delivery_id)}")
 

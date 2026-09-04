@@ -95,31 +95,74 @@ describe("platform-job WebSocket contract", () => {
 });
 
 describe("chat WebSocket contract", () => {
-	it("sends attachment ids and the governed model profile", () => {
-		const send = vi.fn();
-		const service = webSocketService as unknown as {
-			ws: { readyState: number; send: typeof send } | null;
-		};
-		service.ws = { readyState: WebSocket.OPEN, send };
-
-		expect(
-			webSocketService.sendChatMessage(
-				"conversation-1",
-				"Summarize this",
-				"local-1",
-				["attachment-1"],
-				"profile-pro",
-			),
-		).toBe(true);
-		expect(JSON.parse(send.mock.calls[0][0])).toEqual({
-			type: "chat",
+	it("dispatches durable chat run envelopes by conversation", () => {
+		const callback = vi.fn();
+		const unsubscribe = webSocketService.onChatStream(
+			"conversation-1",
+			callback,
+		);
+		const event = {
+			type: "chat_run_event",
+			protocol_version: 1,
+			event_id: "event-1",
+			sequence: 2,
 			conversation_id: "conversation-1",
-			message: "Summarize this",
-			local_id: "local-1",
-			attachment_ids: ["attachment-1"],
-			model_profile_id: "profile-pro",
+			run_id: "run-1",
+			occurred_at: "2026-09-02T12:00:00Z",
+			kind: "delta",
+			status: "running",
+			payload: { type: "delta", content: "hello" },
+		};
+
+		(
+			webSocketService as unknown as {
+				handleMessage(message: unknown): void;
+			}
+		).handleMessage(event);
+
+		expect(callback).toHaveBeenCalledWith(event);
+		unsubscribe();
+	});
+
+	it("reopens a closed socket even when the chat channel is remembered", async () => {
+		const service = webSocketService as unknown as {
+			ws: WebSocket | null;
+			subscribedChannels: Set<string>;
+			connect(channels: string[]): Promise<void>;
+			connectToChat(conversationId: string): Promise<void>;
+		};
+		const channel = "chat:conversation-reconnect";
+		service.ws = null;
+		service.subscribedChannels.add(channel);
+		const connect = vi
+			.spyOn(service, "connect")
+			.mockResolvedValue(undefined);
+
+		await service.connectToChat("conversation-reconnect");
+
+		expect(connect).toHaveBeenCalledWith([channel]);
+		service.subscribedChannels.delete(channel);
+		connect.mockRestore();
+	});
+
+	it("does not dispatch unversioned direct chat chunks", () => {
+		const callback = vi.fn();
+		const unsubscribe = webSocketService.onChatStream(
+			"conversation-strict",
+			callback,
+		);
+
+		(
+			webSocketService as unknown as {
+				handleMessage(message: unknown): void;
+			}
+		).handleMessage({
+			type: "delta",
+			conversation_id: "conversation-strict",
+			content: "legacy",
 		});
 
-		service.ws = null;
+		expect(callback).not.toHaveBeenCalled();
+		unsubscribe();
 	});
 });

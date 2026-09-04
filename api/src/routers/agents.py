@@ -19,6 +19,7 @@ from fastapi.responses import Response
 from sqlalchemy import delete, select
 from sqlalchemy.orm import selectinload
 
+from shared.scope_resolver import has_scope_bypass
 from src.core.auth import CurrentActiveUser
 from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
@@ -303,6 +304,13 @@ async def list_agents(
         False,
         description="Include per-agent run stats in the list response.",
     ),
+    discovery_only: bool = Query(
+        False,
+        description=(
+            "Apply ordinary organization and role visibility even for "
+            "impersonation-capable callers. Used by chat discovery."
+        ),
+    ),
 ) -> list[AgentSummary]:
     """
     List agents the user has access to.
@@ -317,17 +325,18 @@ async def list_agents(
     - Platform admins see all agents
     - Users see AUTHENTICATED agents + ROLE_BASED agents assigned to their roles
     """
-    # Apply organization filter using repository
-    try:
-        filter_type, filter_org_id = resolve_org_filter(user, scope)
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(e),
-        )
-
-    # Check if user is platform admin
-    is_admin = user.is_platform_admin
+    if discovery_only:
+        filter_org_id = user.organization_id
+        is_admin = False
+    else:
+        try:
+            filter_type, filter_org_id = resolve_org_filter(user, scope)
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(e),
+            )
+        is_admin = user.is_platform_admin
 
     # Create repository with appropriate access context
     repo = AgentRepository(
@@ -653,8 +662,10 @@ async def get_agent(
     user: CurrentActiveUser,
 ) -> AgentPublic:
     """Get agent by ID."""
-    # Check if user is platform admin
-    is_admin = user.is_platform_admin
+    is_admin = has_scope_bypass(
+        is_platform_admin=user.is_platform_admin,
+        is_provider_org=user.is_provider_org,
+    )
 
     repo = AgentRepository(
         session=db,

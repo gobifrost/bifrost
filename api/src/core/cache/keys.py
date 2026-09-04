@@ -262,6 +262,16 @@ def execution_logs_stream_key(execution_id: str) -> str:
     return f"bifrost:logs:{execution_id}"
 
 
+def chat_run_events_stream_key(conversation_id: str) -> str:
+    """Redis Stream containing replayable chat run events for a conversation."""
+    return f"bifrost:chat:{conversation_id}:events"
+
+
+def chat_run_events_version_key(conversation_id: str) -> str:
+    """Monotonic sequence key for chat run events in a conversation."""
+    return f"bifrost:chat:{conversation_id}:sequence"
+
+
 def agent_run_steps_stream_key(run_id: str) -> str:
     """
     Key for the Redis Stream containing steps for an agent run.

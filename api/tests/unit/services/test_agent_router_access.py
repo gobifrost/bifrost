@@ -36,13 +36,11 @@ class SessionBoundAgentRouter(AgentRouter):
         *,
         user_id: UUID,
         org_id: UUID | None,
-        is_superuser: bool = False,
     ):
         super().__init__(
             lambda: None,  # type: ignore[arg-type]
             user_id=user_id,
             org_id=org_id,
-            is_superuser=is_superuser,
         )
         self._session = session
 
@@ -192,6 +190,33 @@ async def test_available_agents_are_limited_to_user_access(db_session: AsyncSess
     names = {agent.name for agent in await router.get_available_agents()}
 
     assert names == {"Global Role Agent", "Org B Auth Agent", "Own Private Agent"}
+
+
+@pytest.mark.asyncio
+async def test_admin_status_does_not_expand_automatic_agent_discovery(
+    db_session: AsyncSession,
+):
+    org_a = await _make_org(db_session, "Admin Discovery Org A")
+    org_b = await _make_org(db_session, "Admin Discovery Org B")
+    admin = await _make_user(
+        db_session,
+        org_id=org_b.id,
+        email_prefix="scoped-admin",
+        is_superuser=True,
+    )
+
+    await _make_agent(db_session, "Admin Own Org Agent", org_id=org_b.id)
+    await _make_agent(db_session, "Admin Cross Org Agent", org_id=org_a.id)
+
+    router = SessionBoundAgentRouter(
+        db_session,
+        user_id=admin.id,
+        org_id=org_b.id,
+    )
+    names = {agent.name for agent in await router.get_available_agents()}
+
+    assert "Admin Own Org Agent" in names
+    assert "Admin Cross Org Agent" not in names
 
 
 @pytest.mark.asyncio

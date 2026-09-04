@@ -77,6 +77,7 @@ def _token_from_context(context: "MCPContext") -> str:
         "email": context.user_email or "",
         "name": context.user_name or "",
         "is_superuser": bool(context.is_platform_admin),
+        "is_provider_org": bool(getattr(context, "is_provider_org", False)),
         # OPEN-F: carry is_external from the MCP context. The real user-token
         # mints (mcp_server/auth.py) stamp this via resolve_external_claim;
         # this fallback mint (executor / test contexts) is the one site that

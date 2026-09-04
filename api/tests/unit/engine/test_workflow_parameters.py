@@ -8,6 +8,8 @@ Tests that workflow parameters are correctly:
 """
 
 import pytest
+from enum import Enum
+from typing import Literal
 
 from src.sdk.context import ExecutionContext, Organization
 from src.sdk.decorators import workflow
@@ -83,6 +85,52 @@ class TestWorkflowParameterParsing:
         assert types["flag"] == "bool"
         assert types["items"] == "list"
         assert types["config"] == "json"
+
+    def test_parameters_preserve_nested_list_and_enum_schema(self):
+        """Test that richer annotations survive onto workflow metadata."""
+
+        class Status(str, Enum):
+            OPEN = "open"
+            CLOSED = "closed"
+
+        @workflow(name="test_workflow", description="Test")
+        async def test_func(
+            payload_items: list[dict[str, int]],
+            status: Literal["open", "closed"],
+            severity: Status,
+        ):
+            return {}
+
+        metadata = test_func._executable_metadata
+        params = {param.name: param for param in metadata.parameters}
+
+        assert params["payload_items"].type == "list"
+        assert params["payload_items"].python_type == "list[dict[str, int]]"
+        assert params["payload_items"].json_schema == {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": {"type": "integer"},
+            },
+        }
+
+        assert params["status"].options == [
+            {"label": "open", "value": "open"},
+            {"label": "closed", "value": "closed"},
+        ]
+        assert params["status"].json_schema == {
+            "enum": ["open", "closed"],
+            "type": "string",
+        }
+
+        assert params["severity"].options == [
+            {"label": "open", "value": "open"},
+            {"label": "closed", "value": "closed"},
+        ]
+        assert params["severity"].json_schema == {
+            "enum": ["open", "closed"],
+            "type": "string",
+        }
 
 
 class TestWorkflowParameterExecution:

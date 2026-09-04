@@ -18,6 +18,17 @@ import type {
 } from "@/components/chat/ToolExecutionCard";
 import type { SystemEvent } from "@/components/chat/ChatSystemEvent";
 import type { TodoItem } from "@/services/websocket";
+import {
+	applyChatStreamEnvelope,
+	applyChatStreamEnvelopes,
+	hydrateChatProjection,
+	makeEmptyChatProjection,
+	stageOptimisticUserTurn,
+	type ChatProjection,
+	type ChatProjectionSnapshot,
+	type ChatStreamEnvelope,
+	type StageOptimisticUserTurnInput,
+} from "@/lib/chat-runtime";
 
 // Use generated types from API
 type AgentSummary = components["schemas"]["AgentSummary"];
@@ -48,6 +59,7 @@ interface ChatState {
 
 	// Messages per conversation (cached locally)
 	messagesByConversation: Record<string, MessagePublic[]>;
+	projectionsByConversation: Record<string, ChatProjection>;
 
 	// System events per conversation (agent switches, errors, etc.)
 	systemEventsByConversation: Record<string, SystemEvent[]>;
@@ -94,6 +106,23 @@ interface ChatActions {
 
 	// Message actions
 	setMessages: (conversationId: string, messages: MessagePublic[]) => void;
+	hydrateConversationProjection: (
+		conversationId: string,
+		snapshot: ChatProjectionSnapshot,
+		events?: ChatStreamEnvelope[],
+	) => void;
+	stageOptimisticUserTurn: (
+		conversationId: string,
+		input: StageOptimisticUserTurnInput,
+	) => void;
+	applyChatRunEvent: (
+		conversationId: string,
+		event: ChatStreamEnvelope,
+	) => void;
+	applyChatRunEvents: (
+		conversationId: string,
+		events: ChatStreamEnvelope[],
+	) => void;
 	addMessage: (conversationId: string, message: MessagePublic) => void;
 	updateMessage: (
 		conversationId: string,
@@ -173,6 +202,7 @@ const initialState: ChatState = {
 	toolExecutionsByConversation: {},
 	dedupStateByConversation: {},
 	messagesByConversation: {},
+	projectionsByConversation: {},
 	isStreaming: false,
 	isStudioMode: false,
 	selectedToolCallId: null,
@@ -181,6 +211,40 @@ const initialState: ChatState = {
 	todos: [],
 	streamingMessageIds: {},
 };
+
+function systemEventsFromProjection(
+	projection: ChatProjection,
+): SystemEvent[] {
+	return projection.system_events.map((event) => {
+		if (event.type === "agent_switch") {
+			return {
+				id: event.id,
+				type: "agent_switch",
+				timestamp: event.timestamp,
+				turnId: event.turn_id ?? undefined,
+				agentName: event.agent_name,
+				agentId: event.agent_id,
+				reason: event.reason === "@mention" ? "@mention" : "routed",
+			};
+		}
+		if (event.type === "error") {
+			return {
+				id: event.id,
+				type: "error",
+				timestamp: event.timestamp,
+				turnId: event.turn_id ?? undefined,
+				error: event.error,
+			};
+		}
+		return {
+			id: event.id,
+			type: "info",
+			timestamp: event.timestamp,
+			turnId: event.turn_id ?? undefined,
+			message: event.warning.message,
+		};
+	});
+}
 
 export const useChatStore = create<ChatStore>((set, get) => ({
 	...initialState,
@@ -226,6 +290,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 		set((state) => {
 			const { [conversationId]: _, ...remainingMessages } =
 				state.messagesByConversation;
+			const { [conversationId]: _projection, ...remainingProjections } =
+				state.projectionsByConversation;
 			const { [conversationId]: _events, ...remainingEvents } =
 				state.systemEventsByConversation;
 			const { [conversationId]: _tools, ...remainingTools } =
@@ -241,6 +307,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 					(c) => c.id !== conversationId,
 				),
 				messagesByConversation: remainingMessages,
+				projectionsByConversation: remainingProjections,
 				systemEventsByConversation: remainingEvents,
 				toolExecutionsByConversation: remainingTools,
 				dedupStateByConversation: remainingDedup,
@@ -285,6 +352,17 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 					...state.messagesByConversation,
 					[conversationId]: deduped,
 				},
+				projectionsByConversation: {
+					...state.projectionsByConversation,
+					[conversationId]: hydrateChatProjection(
+						state.projectionsByConversation[conversationId] ??
+							makeEmptyChatProjection(conversationId),
+						{
+							conversation_id: conversationId,
+							messages: deduped,
+						},
+					),
+				},
 				dedupStateByConversation: {
 					...state.dedupStateByConversation,
 					[conversationId]: {
@@ -293,6 +371,142 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 							existingDedup?.localIdToServerId || new Map(),
 					},
 				},
+			};
+		});
+	},
+
+	hydrateConversationProjection: (conversationId, snapshot, events = []) => {
+		set((state) => {
+			let projection = hydrateChatProjection(
+				state.projectionsByConversation[conversationId] ??
+					makeEmptyChatProjection(conversationId),
+				{
+					...snapshot,
+					conversation_id: snapshot.conversation_id ?? conversationId,
+					// Replay determines the live run state. Re-apply the snapshot below
+					// so its durable terminal status wins if event retention expired.
+					runs: undefined,
+					active_run_id: undefined,
+				},
+			);
+			projection = applyChatStreamEnvelopes(projection, events);
+			projection = hydrateChatProjection(projection, {
+				...snapshot,
+				conversation_id: snapshot.conversation_id ?? conversationId,
+			});
+			return {
+				projectionsByConversation: {
+					...state.projectionsByConversation,
+					[conversationId]: projection,
+				},
+				messagesByConversation: {
+					...state.messagesByConversation,
+					[conversationId]: projection.messages,
+				},
+				systemEventsByConversation: {
+					...state.systemEventsByConversation,
+					[conversationId]: systemEventsFromProjection(projection),
+				},
+				streamingMessageIds: {
+					...state.streamingMessageIds,
+					[conversationId]:
+						projection.active_run_id
+							? (projection.runs[projection.active_run_id]
+									?.streaming_message_id ?? null)
+							: null,
+				},
+				isStreaming: Boolean(projection.active_run_id),
+			};
+		});
+	},
+
+	stageOptimisticUserTurn: (conversationId, input) => {
+		set((state) => {
+			const projection = stageOptimisticUserTurn(
+				state.projectionsByConversation[conversationId] ??
+					makeEmptyChatProjection(conversationId),
+				{ ...input, conversation_id: input.conversation_id ?? conversationId },
+			);
+			return {
+				projectionsByConversation: {
+					...state.projectionsByConversation,
+					[conversationId]: projection,
+				},
+				messagesByConversation: {
+					...state.messagesByConversation,
+					[conversationId]: projection.messages,
+				},
+				streamingMessageIds: {
+					...state.streamingMessageIds,
+					[conversationId]: null,
+				},
+				isStreaming: true,
+			};
+		});
+	},
+
+	applyChatRunEvent: (conversationId, event) => {
+		set((state) => {
+			const projection = applyChatStreamEnvelope(
+				state.projectionsByConversation[conversationId] ??
+					makeEmptyChatProjection(conversationId),
+				event,
+			);
+			return {
+				projectionsByConversation: {
+					...state.projectionsByConversation,
+					[conversationId]: projection,
+				},
+				messagesByConversation: {
+					...state.messagesByConversation,
+					[conversationId]: projection.messages,
+				},
+				systemEventsByConversation: {
+					...state.systemEventsByConversation,
+					[conversationId]: systemEventsFromProjection(projection),
+				},
+				streamingMessageIds: {
+					...state.streamingMessageIds,
+					[conversationId]:
+						projection.active_run_id
+							? (projection.runs[projection.active_run_id]
+									?.streaming_message_id ?? null)
+							: null,
+				},
+				isStreaming: Boolean(projection.active_run_id),
+			};
+		});
+	},
+
+	applyChatRunEvents: (conversationId, events) => {
+		if (events.length === 0) return;
+		set((state) => {
+			const projection = applyChatStreamEnvelopes(
+				state.projectionsByConversation[conversationId] ??
+					makeEmptyChatProjection(conversationId),
+				events,
+			);
+			return {
+				projectionsByConversation: {
+					...state.projectionsByConversation,
+					[conversationId]: projection,
+				},
+				messagesByConversation: {
+					...state.messagesByConversation,
+					[conversationId]: projection.messages,
+				},
+				systemEventsByConversation: {
+					...state.systemEventsByConversation,
+					[conversationId]: systemEventsFromProjection(projection),
+				},
+				streamingMessageIds: {
+					...state.streamingMessageIds,
+					[conversationId]: projection.active_run_id
+						? (projection.runs[projection.active_run_id]
+								?.streaming_message_id ?? null)
+						: null,
+				},
+				isStreaming: Boolean(projection.active_run_id),
 			};
 		});
 	},

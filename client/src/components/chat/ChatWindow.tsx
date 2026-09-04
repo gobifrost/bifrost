@@ -16,7 +16,6 @@ import { ToolExecutionBadge } from "./ToolExecutionBadge";
 import { ToolExecutionGroup } from "./ToolExecutionGroup";
 import { ChatSystemEvent, type SystemEvent } from "./ChatSystemEvent";
 import { ChatRunActivity, getActiveRunLabel } from "./ChatRunActivity";
-import { AskUserQuestionCard } from "./AskUserQuestionCard";
 import { NeedsReauthCard, extractNeedsReauth } from "./NeedsReauthCard";
 import { TodoList } from "./TodoList";
 import { useChatStore, useTodos } from "@/stores/chatStore";
@@ -28,7 +27,8 @@ import {
 import { useChatStream } from "@/hooks/useChatStream";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { components } from "@/lib/v1";
-import { integrateMessages, type UnifiedMessage } from "@/lib/chat-utils";
+import { generateMessageId } from "@/lib/chat-utils";
+import type { ChatRuntimeMessage } from "@/lib/chat-runtime";
 import {
 	deleteUnboundChatAttachment,
 	uploadChatAttachments,
@@ -207,8 +207,7 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 	}, [checkIfAtBottom]);
 
 	// Get messages from API and local cache
-	const { data: apiMessages, isLoading: isLoadingMessages } =
-		useMessages(conversationId);
+	const { isLoading: isLoadingMessages } = useMessages(conversationId);
 	const localMessages = useChatStore(
 		(state) =>
 			(conversationId && state.messagesByConversation[conversationId]) ||
@@ -237,29 +236,21 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 		(profile) => profile.id === selectedModelProfileId,
 	)
 		? selectedModelProfileId
-		: (modelProfileData?.default_profile_id ?? modelProfiles[0]?.id ?? null);
+		: (modelProfileData?.default_profile_id ??
+			modelProfiles[0]?.id ??
+			null);
 
 	// Use WebSocket streaming
-	const {
-		sendMessage,
-		isStreaming,
-		pendingQuestion,
-		answerQuestion,
-		stopStreaming,
-	} = useChatStream({
+	const { sendMessage, isStreaming, stopStreaming } = useChatStream({
 		conversationId,
 		onError: (error) => {
 			console.error("[ChatWindow] Stream error:", error);
 		},
 	});
 
-	// Merge API and local messages using unified message model
-	const messages = useMemo(() => {
-		const apiMsgs = (apiMessages || []) as UnifiedMessage[];
-		const localMsgs = localMessages as UnifiedMessage[];
-
-		return integrateMessages(apiMsgs, localMsgs);
-	}, [apiMessages, localMessages]);
+	// The normalized projection is the only render source. Server snapshots and
+	// realtime events are reconciled into it before reaching this component.
+	const messages = localMessages;
 
 	// Build a map of tool_call_id -> tool result message for reconstructing state
 	const toolResultMessages = useMemo(() => {
@@ -277,6 +268,14 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 	const timeline = useMemo<TimelineItem[]>(() => {
 		const items: TimelineItem[] = [];
 		let currentToolGroup: MessagePublic[] = [];
+		const placedEventIds = new Set<string>();
+		const eventsByTurnId = new Map<string, SystemEvent[]>();
+		for (const event of systemEvents) {
+			if (!event.turnId) continue;
+			const turnEvents = eventsByTurnId.get(event.turnId) ?? [];
+			turnEvents.push(event);
+			eventsByTurnId.set(event.turnId, turnEvents);
+		}
 
 		const flushToolGroup = () => {
 			if (currentToolGroup.length > 0) {
@@ -304,25 +303,46 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 					data: msg,
 					timestamp: msg.created_at,
 				});
+
+				if (msg.role === "user") {
+					const runtimeMessage = msg as ChatRuntimeMessage;
+					const turnIds = [msg.id, runtimeMessage.local_id].filter(
+						(value): value is string => Boolean(value),
+					);
+					for (const turnId of turnIds) {
+						for (const event of eventsByTurnId.get(turnId) ?? []) {
+							if (placedEventIds.has(event.id)) continue;
+							items.push({
+								type: "event",
+								data: event,
+								timestamp: event.timestamp,
+							});
+							placedEventIds.add(event.id);
+						}
+					}
+				}
 			}
 		}
 		flushToolGroup();
 
-		// Add system events
+		// Events created before turn anchoring was available retain their timestamp
+		// position. Anchored events are already placed immediately after the user
+		// message that caused them, independent of browser/server clock skew.
 		for (const event of systemEvents) {
-			items.push({
+			if (placedEventIds.has(event.id)) continue;
+			const eventItem: TimelineItem = {
 				type: "event",
 				data: event,
 				timestamp: event.timestamp,
-			});
+			};
+			const insertionIndex = items.findIndex(
+				(item) =>
+					new Date(item.timestamp).getTime() >
+					new Date(event.timestamp).getTime(),
+			);
+			if (insertionIndex === -1) items.push(eventItem);
+			else items.splice(insertionIndex, 0, eventItem);
 		}
-
-		// Sort by timestamp
-		items.sort(
-			(a, b) =>
-				new Date(a.timestamp).getTime() -
-				new Date(b.timestamp).getTime(),
-		);
 
 		return items;
 	}, [messages, systemEvents]);
@@ -356,7 +376,7 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 				behavior: isStreaming ? "auto" : "smooth",
 			});
 		}
-	}, [messages, systemEvents, pendingQuestion, isAtBottom, isStreaming]);
+	}, [messages, systemEvents, isAtBottom, isStreaming]);
 
 	// Handle send message
 	const handleSendMessage = async (
@@ -366,15 +386,32 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 	) => {
 		let uploaded: AttachmentPublic[] = [];
 		let targetConversationId = conversationId;
+		let createdConversation: {
+			id: string;
+			agent_id?: string | null;
+		} | null = null;
 		try {
-			if (!targetConversationId) {
-				const data = await createConversation.mutateAsync({
+			if (!targetConversationId && files.length === 0) {
+				targetConversationId = generateMessageId();
+				// Stage the optimistic turn before activating the route. Activating an
+				// empty conversation first gives React one render in which the message
+				// query is loading and briefly flashes the history skeleton.
+				const submission = sendMessage(
+					message,
+					targetConversationId,
+					[],
+					modelProfileId,
+				);
+				setActiveConversation(targetConversationId);
+				setActiveAgent(null);
+				navigate(`/chat/${targetConversationId}`);
+				await submission;
+				return;
+			} else if (!targetConversationId) {
+				createdConversation = await createConversation.mutateAsync({
 					body: { channel: "chat" },
 				});
-				targetConversationId = data.id;
-				setActiveConversation(data.id);
-				setActiveAgent(data.agent_id ?? null);
-				navigate(`/chat/${data.id}`);
+				targetConversationId = createdConversation.id;
 			}
 
 			if (files.length > 0) {
@@ -382,12 +419,18 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 					await uploadChatAttachments(targetConversationId, files)
 				).attachments;
 			}
-			await sendMessage(
+			const submission = sendMessage(
 				message,
 				targetConversationId,
 				uploaded,
 				modelProfileId,
 			);
+			if (createdConversation) {
+				setActiveConversation(createdConversation.id);
+				setActiveAgent(createdConversation.agent_id ?? null);
+				navigate(`/chat/${createdConversation.id}`);
+			}
+			await submission;
 		} catch (error) {
 			if (targetConversationId && uploaded.length > 0) {
 				const cleanupConversationId = targetConversationId;
@@ -436,8 +479,9 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 		);
 	}
 
-	// Loading state
-	if (isLoadingMessages) {
+	// Loading state. If the durable runtime already has optimistic or streamed
+	// state, render it immediately instead of flashing skeletons over the turn.
+	if (isLoadingMessages && localMessages.length === 0 && !isStreaming) {
 		return (
 			<div className="flex-1 min-h-0 flex flex-col">
 				<div className="flex-1 p-4 space-y-4">
@@ -566,7 +610,7 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 				toolResultMessages={toolResultMessages}
 				conversationId={conversationId}
 				isStreaming={
-					(msg as UnifiedMessage).isStreaming ||
+					(msg as ChatRuntimeMessage).is_streaming ||
 					msg.id === streamingMessageId
 				}
 			/>
@@ -606,8 +650,8 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 							isActiveTurn &&
 							finalAssistant?.type === "message" &&
 							(Boolean(
-								(finalAssistant.data as UnifiedMessage)
-									.isStreaming,
+								(finalAssistant.data as ChatRuntimeMessage)
+									.is_streaming,
 							) ||
 								finalAssistant.data.id === streamingMessageId);
 						const runSummaryAssistant = turn.activity
@@ -627,8 +671,8 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 							Boolean(runSummaryAssistant) ||
 							(finalAssistant?.type === "message" &&
 								Boolean(
-									(finalAssistant.data as UnifiedMessage)
-										.isFinal,
+									(finalAssistant.data as ChatRuntimeMessage)
+										.is_final,
 								));
 						const durationMs =
 							runSummaryAssistant?.type === "message"
@@ -721,15 +765,6 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 					{/* Todo List - persistent checklist from SDK */}
 					{todos.length > 0 && (
 						<TodoList todos={todos} className="my-4" />
-					)}
-
-					{/* AskUserQuestion Card - inline at end of stream */}
-					{pendingQuestion && (
-						<AskUserQuestionCard
-							questions={pendingQuestion.questions}
-							onSubmit={answerQuestion}
-							onCancel={stopStreaming}
-						/>
 					)}
 
 					<div ref={messagesEndRef} />

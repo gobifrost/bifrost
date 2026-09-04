@@ -294,6 +294,7 @@ class TestAutonomousAgentExecutor:
     ):
         workflow_id = uuid4()
         caller_user_id = uuid4()
+        caller_org_id = uuid4()
         executor = AutonomousAgentExecutor(mock_session)
         executor._tool_workflow_id_map = {"specialist_tool": workflow_id}
         executor._caller_user_id = caller_user_id
@@ -301,6 +302,7 @@ class TestAutonomousAgentExecutor:
             "user_id": str(caller_user_id),
             "email": "person@example.com",
             "name": "Person",
+            "organization_id": str(caller_org_id),
             "is_platform_admin": True,
         }
 
@@ -330,7 +332,7 @@ class TestAutonomousAgentExecutor:
             user_id=str(caller_user_id),
             user_email="person@example.com",
             user_name="Person",
-            org_id=str(mock_agent.organization_id),
+            org_id=str(caller_org_id),
             is_platform_admin=True,
             is_agent=True,
             execution_id=None,
@@ -382,6 +384,22 @@ class TestAutonomousAgentExecutor:
             sync=True,
         )
 
+    def test_global_caller_scope_does_not_fall_back_to_agent_org(
+        self, mock_session, mock_agent
+    ):
+        executor = AutonomousAgentExecutor(mock_session)
+        executor._caller_user_id = uuid4()
+        executor._caller = {"organization_id": None}
+
+        assert executor._execution_org_id(mock_agent) is None
+
+    def test_run_without_caller_uses_agent_org(self, mock_session, mock_agent):
+        executor = AutonomousAgentExecutor(mock_session)
+        executor._caller_user_id = None
+        executor._caller = None
+
+        assert executor._execution_org_id(mock_agent) == mock_agent.organization_id
+
     @pytest.mark.asyncio
     async def test_delegated_system_tool_inherits_caller_identity(
         self,
@@ -389,6 +407,7 @@ class TestAutonomousAgentExecutor:
         mock_agent,
     ):
         caller_user_id = uuid4()
+        caller_org_id = uuid4()
         captured_context = None
 
         async def system_tool(context, **_arguments):
@@ -402,6 +421,7 @@ class TestAutonomousAgentExecutor:
             "user_id": str(caller_user_id),
             "email": "person@example.com",
             "name": "Person",
+            "organization_id": str(caller_org_id),
             "is_platform_admin": True,
         }
 
@@ -422,6 +442,7 @@ class TestAutonomousAgentExecutor:
         assert captured_context.user_id == caller_user_id
         assert captured_context.user_email == "person@example.com"
         assert captured_context.user_name == "Person"
+        assert captured_context.org_id == caller_org_id
         assert captured_context.is_platform_admin is True
 
     @pytest.mark.asyncio

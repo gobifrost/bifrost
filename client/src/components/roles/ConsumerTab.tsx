@@ -8,6 +8,7 @@ import {
 	DataTable,
 	DataTableBody,
 	DataTableCell,
+	DataTableFooter,
 	DataTableHead,
 	DataTableHeader,
 	DataTableRow,
@@ -27,6 +28,7 @@ import {
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { SearchBox } from "@/components/search/SearchBox";
+import { ListPagination } from "@/components/pagination/ListPagination";
 
 export interface OrgInfo {
 	id: string | null;
@@ -57,6 +59,18 @@ export interface ConsumerTabProps {
 	hideSecondary?: boolean;
 	/** Show an Organization column. Items must populate `org`. */
 	showOrgColumn?: boolean;
+	searchValue?: string;
+	onSearchChange?: (value: string) => void;
+	pagination?: {
+		offset: number;
+		limit: number;
+		total: number;
+		isFetching?: boolean;
+		onPageChange: (offset: number) => void;
+	};
+	onItemClick?: (item: ConsumerTabItem) => void;
+	getItemHref?: (item: ConsumerTabItem) => string;
+	onRequestCandidates?: () => void;
 	onAssign: (ids: string[]) => Promise<void>;
 	onUnassign: (ids: string[]) => Promise<void>;
 }
@@ -80,10 +94,17 @@ export function ConsumerTab({
 	secondaryColumnLabel = "Description",
 	hideSecondary = false,
 	showOrgColumn = false,
+	searchValue,
+	onSearchChange,
+	pagination,
+	onItemClick,
+	getItemHref,
+	onRequestCandidates,
 	onAssign,
 	onUnassign,
 }: ConsumerTabProps) {
-	const [search, setSearch] = useState("");
+	const [internalSearch, setInternalSearch] = useState("");
+	const search = searchValue ?? internalSearch;
 	const [selected, setSelected] = useState<Set<string>>(new Set());
 	const [drawerOpen, setDrawerOpen] = useState(false);
 	const [submitting, setSubmitting] = useState(false);
@@ -147,7 +168,9 @@ export function ConsumerTab({
 			setSelected(new Set());
 		} catch (e) {
 			toast.error(
-				e instanceof Error ? e.message : `Failed to remove ${consumerLabel}`,
+				e instanceof Error
+					? e.message
+					: `Failed to remove ${consumerLabel}`,
 			);
 		} finally {
 			setSubmitting(false);
@@ -155,15 +178,20 @@ export function ConsumerTab({
 	};
 
 	return (
-		<div className="flex flex-col gap-3">
+		<div className="flex h-full min-h-0 flex-col gap-3">
 			<div className="flex items-center gap-3">
 				<SearchBox
 					value={search}
-					onChange={setSearch}
+					onChange={onSearchChange ?? setInternalSearch}
 					placeholder={`Search ${consumerLabel}...`}
 					className="flex-1"
 				/>
-				<Button onClick={() => setDrawerOpen(true)}>
+				<Button
+					onClick={() => {
+						onRequestCandidates?.();
+						setDrawerOpen(true);
+					}}
+				>
 					<Plus className="h-4 w-4 mr-1.5" />
 					Assign {consumerLabel}
 				</Button>
@@ -180,73 +208,112 @@ export function ConsumerTab({
 					{emptyHint}
 				</div>
 			) : (
-				<DataTable>
-					<DataTableHeader>
-						<DataTableRow>
-							<DataTableHead className="w-0 whitespace-nowrap">
-								<Checkbox
-									checked={
-										allVisibleSelected
-											? true
-											: someVisibleSelected
-												? "indeterminate"
-												: false
-									}
-									onCheckedChange={toggleAll}
-									aria-label={`Select all visible ${consumerLabel}`}
-								/>
-							</DataTableHead>
-							{showOrgColumn && (
+				<div className="flex-1 min-h-0">
+					<DataTable className="max-h-full">
+						<DataTableHeader>
+							<DataTableRow>
 								<DataTableHead className="w-0 whitespace-nowrap">
-									Organization
-								</DataTableHead>
-							)}
-							<DataTableHead className="w-0 whitespace-nowrap">
-								{primaryColumnLabel}
-							</DataTableHead>
-							{!hideSecondary && (
-								<DataTableHead>{secondaryColumnLabel}</DataTableHead>
-							)}
-						</DataTableRow>
-					</DataTableHeader>
-					<DataTableBody>
-						{visibleItems.map((item) => (
-							<DataTableRow key={item.id} className="group/row">
-								<DataTableCell className="w-0 whitespace-nowrap">
 									<Checkbox
-										checked={effectiveSelected.has(item.id)}
-										onCheckedChange={() => toggleOne(item.id)}
-										aria-label={`Select ${item.primary}`}
+										checked={
+											allVisibleSelected
+												? true
+												: someVisibleSelected
+													? "indeterminate"
+													: false
+										}
+										onCheckedChange={toggleAll}
+										aria-label={`Select all visible ${consumerLabel}`}
 									/>
-								</DataTableCell>
+								</DataTableHead>
 								{showOrgColumn && (
-									<DataTableCell className="w-0 whitespace-nowrap text-sm">
-										<OrgBadge org={item.org ?? null} />
-									</DataTableCell>
+									<DataTableHead className="w-0 whitespace-nowrap">
+										Organization
+									</DataTableHead>
 								)}
-								<DataTableCell className="w-0 whitespace-nowrap font-medium">
-									{item.primary}
-								</DataTableCell>
+								<DataTableHead className="w-0 whitespace-nowrap">
+									{primaryColumnLabel}
+								</DataTableHead>
 								{!hideSecondary && (
-									<DataTableCell className="max-w-xs truncate text-muted-foreground">
-										{item.secondary ? (
-											<Tooltip>
-												<TooltipTrigger asChild>
-													<span className="block truncate">
-														{item.secondary}
-													</span>
-												</TooltipTrigger>
-												<TooltipContent>{item.secondary}</TooltipContent>
-											</Tooltip>
-										) : (
-											<span className="text-muted-foreground/60">-</span>
-										)}
-									</DataTableCell>
+									<DataTableHead>
+										{secondaryColumnLabel}
+									</DataTableHead>
 								)}
 							</DataTableRow>
-						))}
-					</DataTableBody>
-				</DataTable>
+						</DataTableHeader>
+						<DataTableBody>
+							{visibleItems.map((item) => (
+								<DataTableRow
+									key={item.id}
+									className="group/row"
+									clickable={Boolean(onItemClick)}
+									href={getItemHref?.(item)}
+									onClick={() => onItemClick?.(item)}
+								>
+									<DataTableCell
+										className="w-0 whitespace-nowrap"
+										onClick={(event) =>
+											event.stopPropagation()
+										}
+									>
+										<Checkbox
+											checked={effectiveSelected.has(
+												item.id,
+											)}
+											onCheckedChange={() =>
+												toggleOne(item.id)
+											}
+											aria-label={`Select ${item.primary}`}
+										/>
+									</DataTableCell>
+									{showOrgColumn && (
+										<DataTableCell className="w-0 whitespace-nowrap text-sm">
+											<OrgBadge org={item.org ?? null} />
+										</DataTableCell>
+									)}
+									<DataTableCell className="w-0 whitespace-nowrap font-medium">
+										{item.primary}
+									</DataTableCell>
+									{!hideSecondary && (
+										<DataTableCell className="max-w-xs truncate text-muted-foreground">
+											{item.secondary ? (
+												<Tooltip>
+													<TooltipTrigger asChild>
+														<span className="block truncate">
+															{item.secondary}
+														</span>
+													</TooltipTrigger>
+													<TooltipContent>
+														{item.secondary}
+													</TooltipContent>
+												</Tooltip>
+											) : (
+												<span className="text-muted-foreground/60">
+													-
+												</span>
+											)}
+										</DataTableCell>
+									)}
+								</DataTableRow>
+							))}
+						</DataTableBody>
+						{pagination && (
+							<DataTableFooter>
+								<DataTableRow>
+									<DataTableCell
+										colSpan={
+											2 +
+											(showOrgColumn ? 1 : 0) +
+											(hideSecondary ? 0 : 1)
+										}
+										className="p-0"
+									>
+										<ListPagination {...pagination} />
+									</DataTableCell>
+								</DataTableRow>
+							</DataTableFooter>
+						)}
+					</DataTable>
+				</div>
 			)}
 
 			{effectiveSelected.size > 0 && (
@@ -377,7 +444,9 @@ function AssignDrawer({
 			setPicked(new Set());
 		} catch (e) {
 			toast.error(
-				e instanceof Error ? e.message : `Failed to assign ${consumerLabel}`,
+				e instanceof Error
+					? e.message
+					: `Failed to assign ${consumerLabel}`,
 			);
 		} finally {
 			setSubmitting(false);
@@ -394,8 +463,8 @@ function AssignDrawer({
 					<SheetTitle>Assign {consumerLabel}</SheetTitle>
 					<SheetDescription>
 						Pick the {consumerLabel} you want to add to this role.
-						Already-assigned entries are hidden by default — toggle the switch
-						below to see them.
+						Already-assigned entries are hidden by default — toggle
+						the switch below to see them.
 					</SheetDescription>
 				</SheetHeader>
 

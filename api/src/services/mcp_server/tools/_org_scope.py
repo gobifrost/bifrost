@@ -16,6 +16,8 @@ from uuid import UUID
 
 from sqlalchemy import Select, or_
 
+from shared.scope_resolver import has_scope_bypass
+
 
 def apply_mcp_org_scope(
     query: Select[Any],
@@ -26,16 +28,19 @@ def apply_mcp_org_scope(
 
     Rules (mirrors ``OrgScopedRepository`` / ``resolve_org_filter``):
 
-    - Platform admin (``context.is_platform_admin``): no filter — full visibility.
+    - Platform admin or provider-org caller: no filter — full visibility.
     - Org user: cascade — own org OR global.
     - Non-admin with no org: global only (legacy behavior).
 
     Args:
         query: The SELECT to scope.
         model: The ORM model being filtered (must have ``organization_id``).
-        context: The MCP context carrying ``is_platform_admin`` and ``org_id``.
+        context: The MCP context carrying principal flags and ``org_id``.
     """
-    if getattr(context, "is_platform_admin", False):
+    if has_scope_bypass(
+        is_platform_admin=getattr(context, "is_platform_admin", False),
+        is_provider_org=getattr(context, "is_provider_org", False),
+    ):
         return query
 
     org_id = getattr(context, "org_id", None)

@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen, waitFor, within } from "@/test-utils";
 
-const mockUseUsersFiltered = vi.fn();
+const mockUseUsersPage = vi.fn();
+const mockUseUser = vi.fn();
 const mockUseDeleteUser = vi.fn();
 const mockUseUpdateUser = vi.fn();
 const mockUseOrganizations = vi.fn();
@@ -15,9 +16,11 @@ const mockUseEventSources = vi.fn();
 const mockToastSuccess = vi.fn();
 const mockToastError = vi.fn();
 const mockRefetch = vi.fn();
+const mockEditUserDialog = vi.fn();
 
 vi.mock("@/hooks/useUsers", () => ({
-	useUsersFiltered: (...args: unknown[]) => mockUseUsersFiltered(...args),
+	useUsersPage: (...args: unknown[]) => mockUseUsersPage(...args),
+	useUser: (...args: unknown[]) => mockUseUser(...args),
 	useDeleteUser: () => mockUseDeleteUser(),
 	useUpdateUser: () => mockUseUpdateUser(),
 }));
@@ -64,7 +67,12 @@ vi.mock("@/components/users/CreateUserDialog", () => ({
 }));
 
 vi.mock("@/components/users/EditUserDialog", () => ({
-	EditUserDialog: () => null,
+	EditUserDialog: (props: { open: boolean; user?: { id: string } }) => {
+		mockEditUserDialog(props);
+		return props.open ? (
+			<div role="dialog">Edit user test dialog</div>
+		) : null;
+	},
 }));
 
 vi.mock("@/components/users/BulkUserDialogs", () => ({
@@ -119,11 +127,14 @@ describe("Users — registration links", () => {
 		originalWriteText = navigator.clipboard?.writeText.bind(
 			navigator.clipboard,
 		);
-		mockUseUsersFiltered.mockReturnValue({
-			data: [pendingInviteUser()],
+		mockUseUsersPage.mockReturnValue({
+			data: { items: [pendingInviteUser()], total: 1 },
 			isLoading: false,
+			isFetching: false,
+			isError: false,
 			refetch: vi.fn(),
 		});
+		mockUseUser.mockReturnValue({ data: undefined });
 		mockUseDeleteUser.mockReturnValue({ mutateAsync: vi.fn() });
 		mockUseUpdateUser.mockReturnValue({ mutateAsync: vi.fn() });
 		mockUseOrganizations.mockReturnValue({
@@ -161,6 +172,18 @@ describe("Users — registration links", () => {
 		});
 		mockToastSuccess.mockReset();
 		mockToastError.mockReset();
+		mockEditUserDialog.mockClear();
+	});
+
+	it("waits for the route-selected user instead of pre-opening the dialog", async () => {
+		const { user } = renderWithProviders(<Users />);
+
+		await user.click(screen.getByText("Alice"));
+
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+		expect(mockEditUserDialog).toHaveBeenLastCalledWith(
+			expect.objectContaining({ open: false, user: undefined }),
+		);
 	});
 
 	afterEach(() => {
@@ -250,12 +273,15 @@ describe("Users — registration links", () => {
 describe("Users", () => {
 	beforeEach(() => {
 		mockRefetch.mockReset();
-		mockUseUsersFiltered.mockReset();
-		mockUseUsersFiltered.mockReturnValue({
-			data: [makeUser()],
+		mockUseUsersPage.mockReset();
+		mockUseUsersPage.mockReturnValue({
+			data: { items: [makeUser()], total: 1 },
 			isLoading: false,
+			isFetching: false,
+			isError: false,
 			refetch: mockRefetch,
 		});
+		mockUseUser.mockReturnValue({ data: undefined });
 		mockUseOrganizations.mockReset();
 		mockUseOrganizations.mockReturnValue({
 			data: [
@@ -298,12 +324,42 @@ describe("Users", () => {
 	it("includes inactive users when Show Inactive is enabled", async () => {
 		const { user } = renderWithProviders(<Users />);
 
-		expect(mockUseUsersFiltered).toHaveBeenLastCalledWith(undefined, false);
-
-		await user.click(
-			screen.getByRole("switch", { name: "Show Inactive" }),
+		expect(mockUseUsersPage).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				includeInactive: false,
+				offset: 0,
+				limit: 25,
+			}),
 		);
 
-		expect(mockUseUsersFiltered).toHaveBeenLastCalledWith(undefined, true);
+		await user.click(screen.getByRole("switch", { name: "Show Inactive" }));
+
+		expect(mockUseUsersPage).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				includeInactive: true,
+				offset: 0,
+				limit: 25,
+			}),
+		);
+	});
+
+	it("keeps pagination in the bounded table footer", () => {
+		mockUseUsersPage.mockReturnValue({
+			data: { items: [makeUser()], total: 30 },
+			isLoading: false,
+			isFetching: false,
+			isError: false,
+			refetch: mockRefetch,
+		});
+
+		renderWithProviders(<Users />);
+
+		const pagination = screen.getByRole("navigation", {
+			name: /pagination/i,
+		});
+		expect(pagination.closest("tfoot")).not.toBeNull();
+		expect(
+			screen.getAllByRole("table")[0].parentElement?.parentElement,
+		).toHaveClass("max-h-full");
 	});
 });

@@ -19,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models import Workflow
+from src.services.tool_schema import parameter_json_schema
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +51,16 @@ def _param_to_openapi_schema(param: dict[str, Any]) -> dict[str, Any]:
     Returns:
         OpenAPI schema dict for the parameter
     """
-    param_type = param.get("type", "string")
-    schema = TYPE_TO_OPENAPI.get(param_type, {"type": "string"}).copy()
+    schema = parameter_json_schema(param)
+    if not schema:
+        param_type = param.get("type", "string")
+        schema = TYPE_TO_OPENAPI.get(param_type, {"type": "string"}).copy()
+    elif (
+        param.get("json_schema") is None
+        and str(param.get("type", "")).lower() in {"json", "dict", "object"}
+        and schema == {"type": "object", "additionalProperties": True}
+    ):
+        schema = {"type": "object"}
 
     if param.get("default_value") is not None:
         schema["default"] = param["default_value"]

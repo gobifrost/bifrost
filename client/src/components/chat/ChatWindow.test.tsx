@@ -26,8 +26,6 @@ const messagesRef: {
 const streamRef = {
 	sendMessage: vi.fn(),
 	isStreaming: false,
-	pendingQuestion: null as unknown,
-	answerQuestion: vi.fn(),
 	stopStreaming: vi.fn(),
 };
 
@@ -35,6 +33,19 @@ const createConversationRef = {
 	mutateAsync: vi.fn(),
 	isPending: false,
 };
+
+const chatInputFilesRef: { current: File[] } = { current: [] };
+const attachmentServiceRef = {
+	upload: vi.fn(),
+	deleteUnbound: vi.fn(),
+};
+
+vi.mock("@/services/chatAttachments", () => ({
+	uploadChatAttachments: (...args: unknown[]) =>
+		attachmentServiceRef.upload(...args),
+	deleteUnboundChatAttachment: (...args: unknown[]) =>
+		attachmentServiceRef.deleteUnbound(...args),
+}));
 
 vi.mock("@/hooks/useChat", () => ({
 	useMessages: () => ({
@@ -80,7 +91,13 @@ const storeSelectors = {
 
 vi.mock("@/stores/chatStore", () => ({
 	useChatStore: <T,>(selector: (s: typeof storeSelectors) => T) =>
-		selector(storeSelectors),
+		selector({
+			...storeSelectors,
+			messagesByConversation:
+				messagesRef.data && messagesRef.data.length > 0
+					? { "c-1": messagesRef.data }
+					: storeSelectors.messagesByConversation,
+		}),
 	useTodos: () => storeSelectors.todos,
 }));
 
@@ -118,7 +135,7 @@ vi.mock("./ChatInput", () => ({
 					if (e.key === "Enter") {
 						onSend(
 							(e.target as HTMLInputElement).value,
-							[],
+							chatInputFilesRef.current,
 							modelProfileId ?? null,
 						);
 					}
@@ -142,20 +159,11 @@ vi.mock("./ToolExecutionGroup", () => ({
 vi.mock("./ChatSystemEvent", () => ({
 	ChatSystemEvent: () => <div data-marker="sys-event" />,
 }));
-vi.mock("./AskUserQuestionCard", () => ({
-	AskUserQuestionCard: () => <div data-marker="ask-user" />,
-}));
 vi.mock("./TodoList", () => ({
 	TodoList: () => <div data-marker="todo-list" />,
 }));
 
-// integrateMessages: ChatWindow delegates API+local merge to this util.
-// Pass through a concat to keep tests predictable.
 vi.mock("@/lib/chat-utils", () => ({
-	integrateMessages: (
-		a: Array<Record<string, unknown>>,
-		b: Array<Record<string, unknown>>,
-	) => [...(a || []), ...(b || [])],
 	generateMessageId: () => "test-id",
 }));
 
@@ -166,10 +174,12 @@ beforeEach(() => {
 	messagesRef.isLoading = false;
 	streamRef.sendMessage = vi.fn();
 	streamRef.isStreaming = false;
-	streamRef.pendingQuestion = null;
 	streamRef.stopStreaming = vi.fn();
 	createConversationRef.mutateAsync = vi.fn();
 	createConversationRef.isPending = false;
+	chatInputFilesRef.current = [];
+	attachmentServiceRef.upload.mockReset();
+	attachmentServiceRef.deleteUnbound.mockReset();
 	storeSelectors.setActiveConversation.mockReset();
 	storeSelectors.setActiveAgent.mockReset();
 	storeSelectors.messagesByConversation = {};
@@ -209,6 +219,16 @@ describe("ChatWindow — loading state", () => {
 		expect(
 			container.querySelectorAll(".animate-pulse").length,
 		).toBeGreaterThan(0);
+	});
+
+	it("does not cover an active optimistic turn with history skeletons", () => {
+		messagesRef.isLoading = true;
+		streamRef.isStreaming = true;
+		const { container } = renderWithProviders(
+			<ChatWindow conversationId="c-1" />,
+		);
+
+		expect(container.querySelectorAll(".animate-pulse")).toHaveLength(0);
 	});
 });
 
@@ -250,7 +270,7 @@ describe("ChatWindow — messages render & send", () => {
 				id: "assistant-final",
 				role: "assistant",
 				content: "I created the report.",
-				isStreaming: true,
+				is_streaming: true,
 				created_at: "2026-04-20T00:00:02Z",
 			},
 		];
@@ -291,6 +311,47 @@ describe("ChatWindow — messages render & send", () => {
 		// Stubbed ChatMessage emits a data-marker for each message.
 		expect(screen.getByText("ping")).toBeInTheDocument();
 		expect(screen.getByText("pong")).toBeInTheDocument();
+	});
+
+	it("keeps routed activity after its user message despite clock skew", () => {
+		messagesRef.data = [
+			{
+				id: "user-1",
+				role: "user",
+				content: "Route this",
+				created_at: "2026-04-20T00:00:20Z",
+			},
+			{
+				id: "assistant-1",
+				role: "assistant",
+				content: "Done",
+				duration_ms: 1_000,
+				created_at: "2026-04-20T00:00:10Z",
+			},
+		];
+		storeSelectors.systemEventsByConversation = {
+			"c-1": [
+				{
+					id: "route-1",
+					type: "agent_switch",
+					turnId: "user-1",
+					timestamp: "2026-04-20T00:00:05Z",
+				},
+			],
+		};
+
+		const { container } = renderWithProviders(
+			<ChatWindow conversationId="c-1" />,
+		);
+		const renderedItems = Array.from(
+			container.querySelectorAll("[data-marker]"),
+		).map((element) => element.getAttribute("data-marker"));
+
+		expect(renderedItems).toEqual([
+			"chat-message",
+			"sys-event",
+			"chat-message",
+		]);
 	});
 
 	it("uses the persisted run summary duration even when its content is empty", () => {
@@ -375,33 +436,69 @@ describe("ChatWindow — messages render & send", () => {
 		);
 	});
 
-	it("creates a conversation from the blank draft and sends the first message", async () => {
-		createConversationRef.mutateAsync.mockResolvedValue({
-			id: "new-conversation-id",
-			agent_id: null,
-		});
-
+	it("stages a blank-draft conversation ID without waiting for a create request", async () => {
 		renderWithProviders(<ChatWindow conversationId={undefined} />);
 
 		const input = screen.getByLabelText(/chat input/i) as HTMLInputElement;
 		fireEvent.change(input, { target: { value: "hello from draft" } });
 		fireEvent.keyDown(input, { key: "Enter" });
 
-		await waitFor(() =>
-			expect(createConversationRef.mutateAsync).toHaveBeenCalledWith({
-				body: { channel: "chat" },
-			}),
-		);
+		await waitFor(() => expect(streamRef.sendMessage).toHaveBeenCalled());
+		expect(createConversationRef.mutateAsync).not.toHaveBeenCalled();
 		expect(storeSelectors.setActiveConversation).toHaveBeenCalledWith(
-			"new-conversation-id",
+			"test-id",
 		);
 		expect(storeSelectors.setActiveAgent).toHaveBeenCalledWith(null);
-		expect(mockNavigate).toHaveBeenCalledWith("/chat/new-conversation-id");
+		expect(mockNavigate).toHaveBeenCalledWith("/chat/test-id");
 		expect(streamRef.sendMessage).toHaveBeenCalledWith(
 			"hello from draft",
-			"new-conversation-id",
+			"test-id",
 			[],
 			"profile-balanced",
 		);
+		expect(streamRef.sendMessage.mock.invocationCallOrder[0]).toBeLessThan(
+			storeSelectors.setActiveConversation.mock.invocationCallOrder[0],
+		);
+	});
+
+	it("stages an attachment turn before activating its new conversation", async () => {
+		const file = new File(["contents"], "notes.txt", {
+			type: "text/plain",
+		});
+		const attachment = {
+			id: "attachment-1",
+			filename: "notes.txt",
+			content_type: "text/plain",
+			size_bytes: 8,
+		};
+		chatInputFilesRef.current = [file];
+		createConversationRef.mutateAsync.mockResolvedValue({
+			id: "new-conversation",
+			agent_id: null,
+		});
+		attachmentServiceRef.upload.mockResolvedValue({
+			attachments: [attachment],
+		});
+		renderWithProviders(<ChatWindow conversationId={undefined} />);
+
+		const input = screen.getByLabelText(/chat input/i) as HTMLInputElement;
+		fireEvent.change(input, { target: { value: "summarize this file" } });
+		fireEvent.keyDown(input, { key: "Enter" });
+
+		await waitFor(() => expect(streamRef.sendMessage).toHaveBeenCalled());
+		expect(attachmentServiceRef.upload).toHaveBeenCalledWith(
+			"new-conversation",
+			[file],
+		);
+		expect(streamRef.sendMessage).toHaveBeenCalledWith(
+			"summarize this file",
+			"new-conversation",
+			[attachment],
+			"profile-balanced",
+		);
+		expect(streamRef.sendMessage.mock.invocationCallOrder[0]).toBeLessThan(
+			storeSelectors.setActiveConversation.mock.invocationCallOrder[0],
+		);
+		expect(mockNavigate).toHaveBeenCalledWith("/chat/new-conversation");
 	});
 });

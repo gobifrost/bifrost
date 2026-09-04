@@ -6098,6 +6098,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/chat/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Submit Chat Run
+         * @description Persist a user message, queue a durable chat run, and return its snapshot.
+         */
+        post: operations["submit_chat_run_api_chat_runs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/chat/conversations/{conversation_id}/state": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Chat Conversation State
+         * @description Return the authoritative chat conversation snapshot for reconnects.
+         */
+        get: operations["get_chat_conversation_state_api_chat_conversations__conversation_id__state_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/chat/runs/{run_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel Chat Run Route
+         * @description Cancel a durable chat run.
+         */
+        post: operations["cancel_chat_run_route_api_chat_runs__run_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/chat/artifacts": {
         parameters: {
             query?: never;
@@ -11284,11 +11344,8 @@ export interface components {
              * Format: uuid
              */
             id: string;
-            /**
-             * Agent Id
-             * Format: uuid
-             */
-            agent_id: string;
+            /** Agent Id */
+            agent_id: string | null;
             /** Agent Name */
             agent_name?: string | null;
             /** Trigger Type */
@@ -11434,11 +11491,8 @@ export interface components {
              * Format: uuid
              */
             id: string;
-            /**
-             * Agent Id
-             * Format: uuid
-             */
-            agent_id: string;
+            /** Agent Id */
+            agent_id: string | null;
             /** Agent Name */
             agent_name?: string | null;
             /** Trigger Type */
@@ -11642,6 +11696,28 @@ export interface components {
              * @description UUID of the owning Solution install (null if not solution-managed)
              */
             solution_id?: string | null;
+        };
+        /**
+         * AgentSwitch
+         * @description Agent switch event during chat.
+         */
+        AgentSwitch: {
+            /**
+             * Agent Id
+             * @description ID of the agent switched to
+             */
+            agent_id: string;
+            /**
+             * Agent Name
+             * @description Name of the agent switched to
+             */
+            agent_name: string;
+            /**
+             * Reason
+             * @description Reason for the switch (e.g., '@mention', 'routed')
+             * @default
+             */
+            reason: string;
         };
         /**
          * AgentUpdate
@@ -13586,6 +13662,210 @@ export interface components {
             token_count_output?: number | null;
             /** Duration Ms */
             duration_ms?: number | null;
+            /** Finish Reason */
+            finish_reason?: string | null;
+            /** Incomplete */
+            incomplete?: boolean | null;
+        };
+        /** ChatRunCancelResponse */
+        ChatRunCancelResponse: {
+            /** Run Id */
+            run_id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "cancelling" | "cancelled";
+        };
+        /**
+         * ChatRunCreateRequest
+         * @description Request for durable chat submission.
+         */
+        ChatRunCreateRequest: {
+            /**
+             * Conversation Id
+             * @description Conversation to append to. Omit to create a new chat conversation.
+             */
+            conversation_id?: string | null;
+            /**
+             * Content
+             * @default
+             */
+            content: string;
+            /**
+             * Client Run Id
+             * @description Client-provided idempotency key for the run. Server creates one if omitted.
+             */
+            client_run_id?: string | null;
+            /**
+             * User Message Id
+             * @description Client-generated UUID for the persisted user message. Server creates one if omitted.
+             */
+            user_message_id?: string | null;
+            /**
+             * Agent Id
+             * @description Optional agent override. Null means use the conversation's current agent (or agentless chat).
+             */
+            agent_id?: string | null;
+            /** Attachment Ids */
+            attachment_ids?: string[];
+            /** Model Profile Id */
+            model_profile_id?: string | null;
+        };
+        /**
+         * ChatRunCreateResponse
+         * @description Response from durable chat submission.
+         */
+        ChatRunCreateResponse: {
+            /** Run Id */
+            run_id: string;
+            conversation: components["schemas"]["ConversationPublic"];
+            user_message: components["schemas"]["MessagePublic"];
+            /** Status */
+            status: string;
+            /**
+             * Idempotent
+             * @default false
+             */
+            idempotent: boolean;
+        };
+        /**
+         * ChatRunEventPublic
+         * @description Versioned event envelope broadcast over chat:{conversation_id}.
+         */
+        ChatRunEventPublic: {
+            /**
+             * Type
+             * @default chat_run_event
+             * @constant
+             */
+            type: "chat_run_event";
+            /**
+             * Protocol Version
+             * @default 1
+             * @constant
+             */
+            protocol_version: 1;
+            /** Event Id */
+            event_id: string;
+            /** Sequence */
+            sequence: number;
+            /** Conversation Id */
+            conversation_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Occurred At */
+            occurred_at: string;
+            /** Kind */
+            kind: string;
+            /** Status */
+            status: string;
+            payload: components["schemas"]["ChatStreamChunk"];
+        };
+        /**
+         * ChatRunPublic
+         * @description Run status needed to reconstruct the realtime chat projection.
+         */
+        ChatRunPublic: {
+            /** Id */
+            id: string;
+            /** Conversation Id */
+            conversation_id: string;
+            /** Agent Id */
+            agent_id?: string | null;
+            /** Status */
+            status: string;
+            /** Error */
+            error?: string | null;
+            /** Created At */
+            created_at: string;
+            /** Started At */
+            started_at?: string | null;
+            /** Completed At */
+            completed_at?: string | null;
+        };
+        /**
+         * ChatRunStateResponse
+         * @description Authoritative snapshot for a chat conversation and its active run.
+         */
+        ChatRunStateResponse: {
+            conversation: components["schemas"]["ConversationPublic"];
+            active_run?: components["schemas"]["ChatRunPublic"] | null;
+            /** Messages */
+            messages?: components["schemas"]["MessagePublic"][];
+            /** Events */
+            events?: components["schemas"]["ChatRunEventPublic"][];
+            /**
+             * Latest Sequence
+             * @default 0
+             */
+            latest_sequence: number;
+        };
+        /**
+         * ChatStreamChunk
+         * @description Unified streaming chat response chunk.
+         *
+         *     This is the single source of truth for streaming chunk format.
+         */
+        ChatStreamChunk: {
+            /**
+             * Type
+             * @enum {string}
+             */
+            type: "message_start" | "delta" | "assistant_message_end" | "tool_call" | "tool_progress" | "tool_result" | "artifact_started" | "artifact_ready" | "artifact_failed" | "agent_switch" | "context_warning" | "run_status" | "title_update" | "done" | "cancelled" | "error";
+            /** Content */
+            content?: string | null;
+            tool_call?: components["schemas"]["ToolCall"] | null;
+            tool_progress?: components["schemas"]["ToolProgress"] | null;
+            tool_result?: components["schemas"]["ToolResult"] | null;
+            artifact?: components["schemas"]["ArtifactRef"] | null;
+            /**
+             * Execution Id
+             * @description Execution ID for tool_call chunks
+             */
+            execution_id?: string | null;
+            agent_switch?: components["schemas"]["AgentSwitch"] | null;
+            context_warning?: components["schemas"]["ContextWarning"] | null;
+            /** Message Id */
+            message_id?: string | null;
+            /**
+             * User Message Id
+             * @description Real UUID of user message (sent in message_start)
+             */
+            user_message_id?: string | null;
+            /**
+             * Assistant Message Id
+             * @description Real UUID of assistant message (sent in message_start)
+             */
+            assistant_message_id?: string | null;
+            /**
+             * Local Id
+             * @description Client-generated ID echoed back for optimistic update reconciliation
+             */
+            local_id?: string | null;
+            /** Conversation Id */
+            conversation_id?: string | null;
+            /** Token Count Input */
+            token_count_input?: number | null;
+            /** Token Count Output */
+            token_count_output?: number | null;
+            /** Duration Ms */
+            duration_ms?: number | null;
+            /** Finish Reason */
+            finish_reason?: string | null;
+            /** Incomplete */
+            incomplete?: boolean | null;
+            /** Run Status */
+            run_status?: string | null;
+            /** Error */
+            error?: string | null;
+            /** Title */
+            title?: string | null;
+            /**
+             * Stop Reason
+             * @description Why message ended: 'tool_use' or 'end_turn'
+             */
+            stop_reason?: string | null;
         };
         /**
          * ClaimQuery
@@ -13911,6 +14191,32 @@ export interface components {
             proposed_prompt: string;
             /** Affected Run Ids */
             affected_run_ids: string[];
+        };
+        /**
+         * ContextWarning
+         * @description Context window warning/compaction event.
+         */
+        ContextWarning: {
+            /**
+             * Current Tokens
+             * @description Estimated current token count
+             */
+            current_tokens: number;
+            /**
+             * Max Tokens
+             * @description Configured threshold
+             */
+            max_tokens: number;
+            /**
+             * Action
+             * @description 'warning' or 'compacted'
+             */
+            action: string;
+            /**
+             * Message
+             * @description Human-readable explanation
+             */
+            message: string;
         };
         /**
          * ConversationCreate
@@ -19469,6 +19775,12 @@ export interface components {
             /** Tool Ref */
             tool_ref?: string | null;
             /**
+             * Discovery Scope
+             * @default accessible
+             * @enum {string}
+             */
+            discovery_scope: "accessible" | "all";
+            /**
              * Limit
              * @default 10
              */
@@ -22982,6 +23294,30 @@ export interface components {
             } | null;
         };
         /**
+         * RoleUserSummary
+         * @description Display-ready user identity returned by the role detail endpoint.
+         */
+        RoleUserSummary: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string | null;
+            /** Email */
+            email: string;
+            /** Organization Id */
+            organization_id: string | null;
+            /** Organization Name */
+            organization_name: string | null;
+            /**
+             * Organization Is Provider
+             * @default false
+             */
+            organization_is_provider: boolean;
+        };
+        /**
          * RoleUsersResponse
          * @description Response model for getting users assigned to a role
          */
@@ -22991,6 +23327,17 @@ export interface components {
              * @description List of user IDs assigned to the role
              */
             user_ids: string[];
+            /**
+             * Users
+             * @description Display-ready summaries for users assigned to the role
+             */
+            users?: components["schemas"]["RoleUserSummary"][];
+            /**
+             * Total
+             * @description Total users assigned to the role after filtering
+             * @default 0
+             */
+            total: number;
         };
         /**
          * RoleWorkflowsResponse
@@ -25350,6 +25697,88 @@ export interface components {
              * @description Owning organization display name (workflow tools only; null = global tool or system tool)
              */
             organization_name?: string | null;
+        };
+        /**
+         * ToolProgress
+         * @description Tool execution progress update.
+         */
+        ToolProgress: {
+            /**
+             * Tool Call Id
+             * @description ID of the tool call
+             */
+            tool_call_id: string;
+            /**
+             * Execution Id
+             * @description Execution ID for tracking
+             */
+            execution_id?: string | null;
+            /**
+             * Status
+             * @description Status: pending, running, success, failed, timeout
+             */
+            status?: string | null;
+            /** @description Log entry if this is a log update */
+            log?: components["schemas"]["ToolProgressLog"] | null;
+        };
+        /**
+         * ToolProgressLog
+         * @description Log entry for tool execution progress.
+         */
+        ToolProgressLog: {
+            /**
+             * Level
+             * @description Log level: debug, info, warning, error
+             */
+            level: string;
+            /**
+             * Message
+             * @description Log message
+             */
+            message: string;
+        };
+        /**
+         * ToolResult
+         * @description Result from tool execution.
+         */
+        ToolResult: {
+            /**
+             * Tool Call Id
+             * @description ID of the tool call this responds to
+             */
+            tool_call_id: string;
+            /**
+             * Tool Name
+             * @description Name of the tool that was called
+             */
+            tool_name: string;
+            /**
+             * Result
+             * @description Result from tool execution
+             */
+            result: unknown;
+            /**
+             * Error
+             * @description Error message if tool failed
+             */
+            error?: string | null;
+            /**
+             * Duration Ms
+             * @description Execution duration in milliseconds
+             */
+            duration_ms?: number | null;
+            /**
+             * Error Type
+             * @description Optional structured error class. Used by the chat surface to render specialized recovery UIs (e.g. 'needs_reauth' shows an inline reconnect button instead of a plain error message).
+             */
+            error_type?: string | null;
+            /**
+             * Metadata
+             * @description Optional structured payload that travels alongside the error. For 'needs_reauth' this carries 'reauth_url', 'connection_id', and 'tool_name' so the chat surface can build the reconnect button without re-querying.
+             */
+            metadata?: {
+                [key: string]: unknown;
+            } | null;
         };
         /**
          * ToolsResponse
@@ -28710,6 +29139,15 @@ export interface operations {
                 scope?: string | null;
                 /** @description Include inactive (disabled) users */
                 include_inactive?: boolean;
+                /** @description Search user name or email */
+                search?: string | null;
+                /** @description Sort field; omit to preserve the legacy email order */
+                sort_by?: ("name" | "email" | "status" | "created" | "last_login") | null;
+                sort_direction?: "asc" | "desc";
+                /** @description Maximum rows to return; omit for the legacy unbounded response */
+                limit?: number | null;
+                /** @description Rows to skip when limit is set */
+                offset?: number;
             };
             header?: never;
             path?: never;
@@ -29088,7 +29526,16 @@ export interface operations {
     };
     list_roles_api_roles_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Search role name or description */
+                search?: string | null;
+                sort_by?: "name" | "created";
+                sort_direction?: "asc" | "desc";
+                /** @description Maximum rows to return; omit for the legacy unbounded response */
+                limit?: number | null;
+                /** @description Rows to skip when limit is set */
+                offset?: number;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -29102,6 +29549,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RolePublic"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -29236,7 +29692,14 @@ export interface operations {
     };
     get_role_users_api_roles__role_id__users_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Search assigned user name or email */
+                search?: string | null;
+                /** @description Maximum rows to return; omit for the legacy unbounded response */
+                limit?: number | null;
+                /** @description Rows to skip when limit is set */
+                offset?: number;
+            };
             header?: never;
             path: {
                 role_id: string;
@@ -36334,6 +36797,8 @@ export interface operations {
                 active_only?: boolean;
                 /** @description Include per-agent run stats in the list response. */
                 include_stats?: boolean;
+                /** @description Apply ordinary organization and role visibility even for impersonation-capable callers. Used by chat discovery. */
+                discovery_only?: boolean;
             };
             header?: never;
             path?: never;
@@ -37670,6 +38135,101 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    submit_chat_run_api_chat_runs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatRunCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatRunCreateResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_chat_conversation_state_api_chat_conversations__conversation_id__state_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatRunStateResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_chat_run_route_api_chat_runs__run_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatRunCancelResponse"];
+                };
             };
             /** @description Validation Error */
             422: {

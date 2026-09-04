@@ -12,7 +12,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 from sqlalchemy import select, and_, desc, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer, selectinload
@@ -51,6 +51,28 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/executions", tags=["Executions"])
 
+_EXECUTION_QUERY_PARAM_ALIASES: dict[str, tuple[str, ...]] = {
+    "workflowName": ("workflow_name",),
+    "workflowId": ("workflow_id",),
+    "startDate": ("start_date",),
+    "endDate": ("end_date",),
+    "excludeLocal": ("exclude_local",),
+    "continuationToken": ("continuation_token",),
+}
+
+_EXECUTION_QUERY_PARAM_NAMES = {
+    "scope",
+    "workflowName",
+    "workflowId",
+    "status",
+    "startDate",
+    "endDate",
+    "excludeLocal",
+    "limit",
+    "continuationToken",
+    *{alias for aliases in _EXECUTION_QUERY_PARAM_ALIASES.values() for alias in aliases},
+}
+
 
 # =============================================================================
 # History pagination cursor
@@ -87,6 +109,36 @@ def _decode_history_cursor(token: str) -> tuple[datetime | None, UUID] | None:
         # Not a keyset cursor (legacy numeric offset, or garbage) — the caller
         # falls back to legacy offset parsing / first page.
         return None
+
+
+def _query_param(request: Request, name: str) -> str | None:
+    for key in (name, *_EXECUTION_QUERY_PARAM_ALIASES.get(name, ())):
+        value = request.query_params.get(key)
+        if value is not None:
+            return value
+    return None
+
+
+def _reject_unknown_query_params(request: Request) -> None:
+    unknown = sorted(set(request.query_params.keys()) - _EXECUTION_QUERY_PARAM_NAMES)
+    if unknown:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Unsupported query parameter(s): {', '.join(unknown)}",
+        )
+
+
+def _validate_iso_date_filter(value: str | None, name: str) -> str | None:
+    if value is None:
+        return None
+    try:
+        datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"{name} must be an ISO 8601 date-time",
+        ) from exc
+    return value
 
 
 # =============================================================================
@@ -682,6 +734,7 @@ class ExecutionRepository:
 )
 async def list_executions(
     ctx: Context,
+    request: Request,
     scope: str | None = Query(
         None,
         description="Filter scope: omit for all (superusers), 'global' for global only, "
@@ -701,6 +754,8 @@ async def list_executions(
     Superusers can filter by scope or see all executions.
     Org users see only their organization's executions.
     """
+    _reject_unknown_query_params(request)
+
     # Resolve organization filter based on user permissions
     try:
         filter_type, filter_org = resolve_org_filter(ctx.user, scope)
@@ -725,27 +780,64 @@ async def list_executions(
     # fallback for tokens minted before the keyset change.
     offset = 0
     cursor = None
-    if continuationToken:
-        cursor = _decode_history_cursor(continuationToken)
+    continuation_token = _query_param(request, "continuationToken") or continuationToken
+    if continuation_token:
+        cursor = _decode_history_cursor(continuation_token)
         if cursor is None:
             try:
-                offset = int(continuationToken)
-            except ValueError as e:
-                # Malformed continuation token — start from beginning
-                logger.debug(f"invalid continuationToken {log_safe(continuationToken)!r}, starting from offset 0: {log_safe(e)}")
+                offset = int(continuation_token)
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="continuationToken is invalid",
+                ) from exc
+            if offset < 0:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="continuationToken is invalid",
+                )
 
     # Parse workflowId to UUID if provided
-    parsed_workflow_id = UUID(workflowId) if workflowId else None
+    workflow_id_value = _query_param(request, "workflowId") or workflowId
+    try:
+        parsed_workflow_id = UUID(workflow_id_value) if workflow_id_value else None
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="workflowId must be a UUID",
+        ) from exc
+
+    start_date_value = _validate_iso_date_filter(
+        _query_param(request, "startDate") or startDate,
+        "startDate",
+    )
+    end_date_value = _validate_iso_date_filter(
+        _query_param(request, "endDate") or endDate,
+        "endDate",
+    )
+    workflow_name_value = _query_param(request, "workflowName") or workflowName
+    exclude_local_value = _query_param(request, "excludeLocal")
+    if exclude_local_value is None:
+        parsed_exclude_local = excludeLocal
+    elif exclude_local_value.casefold() in {"1", "true", "yes", "on"}:
+        parsed_exclude_local = True
+    elif exclude_local_value.casefold() in {"0", "false", "no", "off"}:
+        parsed_exclude_local = False
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="excludeLocal must be a boolean",
+        )
 
     executions, next_token = await repo.list_executions(
         user=ctx.user,
         org_id=org_filter,
-        workflow_name=workflowName,
+        workflow_name=workflow_name_value,
         workflow_id=parsed_workflow_id,
         status_filter=status_filter,
-        start_date=startDate,
-        end_date=endDate,
-        exclude_local=excludeLocal,
+        start_date=start_date_value,
+        end_date=end_date_value,
+        exclude_local=parsed_exclude_local,
         limit=limit,
         offset=offset,
         cursor=cursor,

@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.orm import Workflow
+from src.services.tool_schema import parameters_json_schema
 
 logger = logging.getLogger(__name__)
 
@@ -199,54 +200,21 @@ class ToolRegistry:
         Converts workflow parameter schema to JSON Schema format
         compatible with OpenAI/Anthropic function calling.
         """
-        # Build JSON Schema from parameters
-        properties: dict[str, Any] = {}
-        required: list[str] = []
-
-        for param in tool.parameters_schema:
-            param_name = param.get("name", "")
-            param_type = param.get("type", "string")
-            param_label = param.get("label") or param_name
-
-            # Map workflow types to JSON Schema types
-            json_type = self._map_type_to_json_schema(param_type)
-
-            properties[param_name] = {
-                "type": json_type,
-                "description": param_label,
-            }
-
-            # Array types require an "items" field for OpenAI schema validation
-            if json_type == "array":
-                properties[param_name]["items"] = {"type": "string"}
-
-            # Object types accept freeform key-value pairs
-            if json_type == "object":
-                properties[param_name]["additionalProperties"] = True
-
-            # Add enum options if present (from Literal type annotations)
-            if param.get("options"):
-                properties[param_name]["enum"] = [
-                    opt["value"] for opt in param["options"]
-                ]
-
-            # Add default value if present
-            if "default_value" in param and param["default_value"] is not None:
-                properties[param_name]["default"] = param["default_value"]
-
-            # Track required parameters
-            if param.get("required", False):
-                required.append(param_name)
-
-        parameters_schema: dict[str, Any] = {
-            "type": "object",
-            "properties": properties,
-            "additionalProperties": False,
-        }
-
-        if required:
-            parameters_schema["required"] = required
-
+        parameters_schema = parameters_json_schema(
+            tool.parameters_schema,
+            allow_unknown_when_empty=True,
+        )
+        for param_name, param_schema in parameters_schema["properties"].items():
+            matching = next(
+                (param for param in tool.parameters_schema if param.get("name") == param_name),
+                None,
+            )
+            if matching and matching.get("label") and "description" not in param_schema:
+                param_schema["description"] = matching["label"]
+            elif matching and matching.get("description") and "description" not in param_schema:
+                param_schema["description"] = matching["description"]
+            elif "description" not in param_schema:
+                param_schema["description"] = param_name
         return ToolDefinition(
             id=tool.id,
             name=_normalize_tool_name(tool.name, category=tool.category),

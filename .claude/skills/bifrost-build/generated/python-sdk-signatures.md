@@ -88,7 +88,7 @@ Event publishing operations (async).
 
 **`executions.get_current_logs(execution_id: str | None = None, start: str = '0', count: int = 100) -> 'list[ExecutionLog]'`**
 
-**`executions.list(workflow_name: str | None = None, status: str | None = None, start_date: str | None = None, end_date: str | None = None, limit: int = 50) -> list[WorkflowExecution]`**
+**`executions.list(workflow_name: str | None = None, status: str | None = None, start_date: str | None = None, end_date: str | None = None, limit: int = 50, workflow_id: str | None = None, exclude_local: bool | None = None, continuation_token: str | None = None) -> ExecutionList`**
 
 ### files
 

@@ -11,18 +11,19 @@
  *   same-origin requests with cookie/CSRF auth (the platform serves the app,
  *   so the session cookie is present). Unchanged behavior.
  * - **v2 standalone apps:** `<BifrostProvider>` installs a transport pointing
- *   at the configured `baseUrl` with a bearer token (and optional org header),
- *   so `tables.*`/`useTable` reach the real Bifrost API even when the app is
- *   served by its own dev server (`npm run dev`) on a different origin.
+ *   at the configured `baseUrl` with an authenticated fetch and a lazy token
+ *   reader for WebSocket reconnects, so `tables.*`/`useTable` reach the real
+ *   Bifrost API even when the app is served by its own dev server.
  */
 export interface BifrostTransport {
   baseUrl: string;
   /**
-   * Raw bearer token. HTTP calls carry it via `headers.Authorization`; the
-   * websocket client needs it separately because `WebSocket` cannot send
-   * headers — the server accepts a `token` query param on `/ws/connect`.
+	 * Initial bearer token. Updated providers prefer `getToken`; this remains as
+	 * the local-development and older-provider fallback.
    */
   token?: string;
+	/** Read the current token at connection time (deployed V2 apps rotate it). */
+	getToken?: () => string | undefined;
   fetchImpl?: typeof fetch;
   headers?: Record<string, string>;
 }

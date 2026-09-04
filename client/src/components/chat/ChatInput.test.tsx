@@ -10,6 +10,7 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { renderWithProviders, screen, fireEvent } from "@/test-utils";
+import { act, waitFor } from "@testing-library/react";
 
 const agentsRef: { data: Array<Record<string, unknown>> } = { data: [] };
 
@@ -63,6 +64,36 @@ describe("ChatInput — send behavior", () => {
 		expect(onSend).toHaveBeenCalledWith("hello world", [], null);
 		// Textarea is cleared post-send.
 		expect(textarea.value).toBe("");
+	});
+
+	it("clears the submitted draft before transport acknowledgement", async () => {
+		let resolveSend: (() => void) | undefined;
+		const onSend = vi.fn(
+			() =>
+				new Promise<void>((resolve) => {
+					resolveSend = resolve;
+				}),
+		);
+		const { user } = renderWithProviders(<ChatInput onSend={onSend} />);
+		const textarea = screen.getByPlaceholderText(/reply/i) as HTMLTextAreaElement;
+		fireEvent.change(textarea, { target: { value: "send immediately" } });
+
+		await user.click(screen.getByRole("button", { name: /send message/i }));
+
+		expect(textarea.value).toBe("");
+		expect(onSend).toHaveBeenCalledOnce();
+		await act(async () => resolveSend?.());
+	});
+
+	it("restores a submitted draft when submission fails", async () => {
+		const onSend = vi.fn().mockRejectedValue(new Error("offline"));
+		const { user } = renderWithProviders(<ChatInput onSend={onSend} />);
+		const textarea = screen.getByPlaceholderText(/reply/i) as HTMLTextAreaElement;
+		fireEvent.change(textarea, { target: { value: "please retry" } });
+
+		await user.click(screen.getByRole("button", { name: /send message/i }));
+
+		await waitFor(() => expect(textarea.value).toBe("please retry"));
 	});
 
 	it("Shift+Enter does not submit (line break instead)", async () => {
@@ -161,6 +192,20 @@ describe("ChatInput — @ mentions", () => {
 });
 
 describe("ChatInput — attachments and model profile", () => {
+	it("matches the conversation column width", () => {
+		const { container } = renderWithProviders(
+			<ChatInput onSend={vi.fn()} />,
+		);
+
+		expect(container.firstElementChild?.firstElementChild).toHaveClass(
+			"max-w-4xl",
+		);
+		expect(screen.getByLabelText("Chat input").parentElement).toHaveClass(
+			"bg-card",
+			"text-card-foreground",
+		);
+	});
+
 	it("keeps primary composer controls touch-sized on phones", () => {
 		const { container } = renderWithProviders(
 			<ChatInput onSend={vi.fn()} />,

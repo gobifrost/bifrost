@@ -46,13 +46,39 @@ describe("ConsumerTab", () => {
 		expect(screen.getByText("bob@example.com")).toBeInTheDocument();
 	});
 
+	it("opens an assigned item without treating checkbox selection as navigation", async () => {
+		const user = userEvent.setup();
+		const onItemClick = vi.fn();
+		renderWithProviders(
+			<ConsumerTab
+				{...defaults}
+				items={[{ id: "a", primary: "Alice" }]}
+				onItemClick={onItemClick}
+				getItemHref={(item) => `/users/${item.id}`}
+			/>,
+		);
+
+		await user.click(screen.getByText("Alice"));
+		expect(onItemClick).toHaveBeenCalledWith(
+			expect.objectContaining({ id: "a" }),
+		);
+
+		onItemClick.mockClear();
+		await user.click(screen.getByLabelText("Select Alice"));
+		expect(onItemClick).not.toHaveBeenCalled();
+	});
+
 	it("filters items by search across primary and secondary", async () => {
 		const user = userEvent.setup();
 		renderWithProviders(
 			<ConsumerTab
 				{...defaults}
 				items={[
-					{ id: "a", primary: "Alice", secondary: "alice@example.com" },
+					{
+						id: "a",
+						primary: "Alice",
+						secondary: "alice@example.com",
+					},
 					{ id: "b", primary: "Bob", secondary: "bob@example.com" },
 				]}
 			/>,
@@ -98,16 +124,16 @@ describe("ConsumerTab", () => {
 
 	it("opens the AssignDrawer when the Assign button is clicked", async () => {
 		const user = userEvent.setup();
+		const onRequestCandidates = vi.fn();
 		renderWithProviders(
 			<ConsumerTab
 				{...defaults}
 				candidates={[{ id: "c", primary: "Carol" }]}
+				onRequestCandidates={onRequestCandidates}
 			/>,
 		);
 
-		await user.click(
-			screen.getByRole("button", { name: /assign users/i }),
-		);
+		await user.click(screen.getByRole("button", { name: /assign users/i }));
 
 		// Candidate is rendered inside the drawer once it opens
 		await waitFor(() => {
@@ -117,5 +143,34 @@ describe("ConsumerTab", () => {
 		expect(
 			screen.getByText(/pick the users you want to add/i),
 		).toBeInTheDocument();
+		expect(onRequestCandidates).toHaveBeenCalledOnce();
+	});
+
+	it("keeps pagination in the pinned table footer", async () => {
+		const user = userEvent.setup();
+		const onPageChange = vi.fn();
+		renderWithProviders(
+			<ConsumerTab
+				{...defaults}
+				items={[{ id: "a", primary: "Alice" }]}
+				pagination={{
+					offset: 0,
+					limit: 25,
+					total: 30,
+					onPageChange,
+				}}
+			/>,
+		);
+
+		const pagination = screen.getByRole("navigation", {
+			name: /pagination/i,
+		});
+		expect(pagination.closest("tfoot")).not.toBeNull();
+		expect(
+			screen.getAllByRole("table")[0].parentElement?.parentElement,
+		).toHaveClass("max-h-full");
+
+		await user.click(screen.getByRole("link", { name: /next page/i }));
+		expect(onPageChange).toHaveBeenCalledWith(25);
 	});
 });

@@ -1,6 +1,6 @@
 """Stable progressive-discovery tools exposed by the unscoped MCP endpoint."""
 
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastmcp.tools import ToolResult
 from pydantic import Field
@@ -26,6 +26,10 @@ catalog. Read total_tools, returned_tools, complete, and has_more_matches. When
 complete is false—or when no matching tool is returned—assume more tools may
 exist and search again with the same agent_id plus a different or narrower
 query. Do not conclude that a capability is absent from a partial result.
+Use discovery_scope='all' only when the user explicitly requests discovery
+across organizations or otherwise inaccessible agents. This requires
+platform/provider impersonation authority; never select it merely because the
+caller may be an administrator.
 
 After selecting an agent, call bifrost_search_capabilities again with agent_id
 to load its live instructions. Follow those instructions as task-specific
@@ -58,6 +62,16 @@ async def bifrost_search_capabilities(
     query: str | None = None,
     agent_id: str | None = None,
     tool_ref: str | None = None,
+    discovery_scope: Annotated[
+        Literal["accessible", "all"],
+        Field(
+            description=(
+                "Use 'accessible' for normal organization and role discovery. "
+                "Use 'all' only when the user explicitly requests cross-organization "
+                "discovery; it requires platform/provider impersonation authority."
+            )
+        ),
+    ] = "accessible",
     limit: int = 10,
 ) -> ToolResult:
     """Search live agents and tools, or hydrate one selected capability."""
@@ -69,6 +83,7 @@ async def bifrost_search_capabilities(
             "query": query,
             "agent_id": agent_id,
             "tool_ref": tool_ref,
+            "discovery_scope": discovery_scope,
             "limit": limit,
         },
     )
@@ -216,7 +231,9 @@ TOOLS = [
         "Search Bifrost Capabilities",
         "Search accessible agents and tools through one bounded, progressive "
         "surface. Results explicitly disclose omitted tools. Reuse this tool with "
-        "agent_id to load instructions and tool_ref to load one exact schema.",
+        "agent_id to load instructions and tool_ref to load one exact schema. "
+        "Impersonation-capable callers may explicitly set discovery_scope='all' "
+        "to search across organizations.",
     ),
     (
         "bifrost_execute_tool",

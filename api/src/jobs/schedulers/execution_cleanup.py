@@ -16,9 +16,11 @@ from sqlalchemy import and_, select
 from src.core.database import get_session_factory
 from src.core.pubsub import (
     publish_agent_run_update,
+    publish_chat_run_event,
     publish_execution_update,
     publish_history_update,
 )
+from src.models.contracts.agents import ChatStreamChunk
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.agents import Agent
 from src.models import Execution as ExecutionModel, ExecutionLog
@@ -292,7 +294,7 @@ async def _cleanup_stale_agent_runs(now: datetime) -> dict[str, Any]:
         async with session_factory() as db:
             query = (
                 select(AgentRun, Agent)
-                .join(Agent, AgentRun.agent_id == Agent.id)
+                .outerjoin(Agent, AgentRun.agent_id == Agent.id)
                 .where(AgentRun.status.in_(("queued", "running")))
                 .order_by(AgentRun.created_at.asc())
             )
@@ -340,7 +342,7 @@ async def _cleanup_stale_agent_runs(now: datetime) -> dict[str, Any]:
                 if elapsed <= timeout_with_grace:
                     continue
 
-                agent_name = agent.name
+                agent_name = agent.name if agent is not None else "Chat"
                 if run.status == "queued":
                     final_status = "failed"
                     timeout_reason = (
@@ -375,6 +377,17 @@ async def _cleanup_stale_agent_runs(now: datetime) -> dict[str, Any]:
                     {
                         "run": run,
                         "agent_name": agent_name,
+                        "chat_event": (
+                            {
+                                "conversation_id": run.conversation_id,
+                                "run_id": str(run.id),
+                                "status": final_status,
+                                "error": timeout_reason,
+                            }
+                            if run.trigger_type == "chat"
+                            and run.conversation_id is not None
+                            else None
+                        ),
                     }
                 )
                 results["agent_run_total_cleaned"] += 1
@@ -384,6 +397,19 @@ async def _cleanup_stale_agent_runs(now: datetime) -> dict[str, Any]:
         for update in updates:
             try:
                 await publish_agent_run_update(update["run"], update["agent_name"])
+                chat_event = update["chat_event"]
+                if chat_event is not None:
+                    await publish_chat_run_event(
+                        conversation_id=chat_event["conversation_id"],
+                        run_id=chat_event["run_id"],
+                        kind="error",
+                        status=chat_event["status"],
+                        payload=ChatStreamChunk(
+                            type="error",
+                            error=chat_event["error"],
+                            run_status=chat_event["status"],
+                        ),
+                    )
             except Exception:
                 logger.warning(
                     "Failed to publish agent run update",

@@ -16,6 +16,7 @@ import {
 	DataTable,
 	DataTableBody,
 	DataTableCell,
+	DataTableFooter,
 	DataTableHead,
 	DataTableHeader,
 	DataTableRow,
@@ -39,10 +40,10 @@ import {
 	AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { SearchBox } from "@/components/search/SearchBox";
-import { useSearch } from "@/hooks/useSearch";
 import {
-	useUsersFiltered,
 	useDeleteUser,
+	useUser,
+	useUsersPage,
 	useUpdateUser,
 } from "@/hooks/useUsers";
 import { useUserSelection } from "@/hooks/useUserSelection";
@@ -72,6 +73,7 @@ import {
 } from "@/hooks/useUserInvites";
 import { useEventSources } from "@/services/events";
 import { toast } from "sonner";
+import { ListPagination } from "@/components/pagination/ListPagination";
 import type { components, components as v1 } from "@/lib/v1";
 type User = components["schemas"]["UserPublic"];
 type Organization = components["schemas"]["OrganizationPublic"];
@@ -83,6 +85,7 @@ type RegistrationLinkDialogState = {
 
 type SortColumn = "name" | "email" | "status" | "created" | "last_login";
 type SortDirection = "asc" | "desc";
+const PAGE_SIZE = 25;
 
 function SortIcon({
 	column,
@@ -106,7 +109,6 @@ export function Users() {
 	const { userId } = useParams<{ userId?: string }>();
 	const [selectedUser, setSelectedUser] = useState<User | undefined>();
 	const [isCreateOpen, setIsCreateOpen] = useState(false);
-	const [isEditOpen, setIsEditOpen] = useState(false);
 	const [isDeleteOpen, setIsDeleteOpen] = useState(false);
 	const [isDisableOpen, setIsDisableOpen] = useState(false);
 	const [searchTerm, setSearchTerm] = useState("");
@@ -116,20 +118,25 @@ export function Users() {
 	);
 	const [sortColumn, setSortColumn] = useState<SortColumn>("name");
 	const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+	const [offset, setOffset] = useState(0);
 	const [registrationLinkDialog, setRegistrationLinkDialog] =
 		useState<RegistrationLinkDialogState>(null);
 
 	const { scope } = useOrgScope();
 	const { user: currentUser, isPlatformAdmin } = useAuth();
 
-	const {
-		data: users,
-		isLoading,
-		refetch,
-	} = useUsersFiltered(
-		isPlatformAdmin ? filterOrgId : undefined,
-		showDisabled,
-	);
+	const usersQuery = useUsersPage({
+		scope: isPlatformAdmin ? filterOrgId : undefined,
+		includeInactive: showDisabled,
+		search: searchTerm,
+		sortBy: sortColumn,
+		sortDirection,
+		limit: PAGE_SIZE,
+		offset,
+	});
+	const users = usersQuery.data?.items ?? [];
+	const total = usersQuery.data?.total ?? 0;
+	const { data: routeSelectedUser } = useUser(userId);
 	const deleteMutation = useDeleteUser();
 	const updateMutation = useUpdateUser();
 	const resendMutation = useResendInvite();
@@ -158,62 +165,12 @@ export function Users() {
 		if (!orgId) return { name: "Platform", isProvider: false };
 		const org = organizations?.find((o: Organization) => o.id === orgId);
 		return {
-			name: org?.name || orgId,
+			name:
+				org?.name ||
+				(organizations ? "Unknown organization" : "Loading…"),
 			isProvider: org?.is_provider ?? false,
 		};
 	};
-
-	const filteredUsers = useSearch(users || [], searchTerm, ["email", "name"]);
-
-	const routeSelectedUser = useMemo(
-		() => users?.find((user) => user.id === userId),
-		[users, userId],
-	);
-	const editDialogUser = selectedUser ?? routeSelectedUser;
-	const isEditDialogOpen = isEditOpen || Boolean(routeSelectedUser);
-
-	const sortedUsers = useMemo(() => {
-		if (!filteredUsers) return [];
-		return [...filteredUsers].sort((a, b) => {
-			const dir = sortDirection === "asc" ? 1 : -1;
-			switch (sortColumn) {
-				case "name":
-					return (
-						dir *
-						(a.name || a.email || "").localeCompare(
-							b.name || b.email || "",
-						)
-					);
-				case "email":
-					return dir * (a.email || "").localeCompare(b.email || "");
-				case "status": {
-					const aVal = a.invite_status ?? "active";
-					const bVal = b.invite_status ?? "active";
-					return dir * aVal.localeCompare(bVal);
-				}
-				case "created": {
-					const aDate = a.created_at
-						? new Date(a.created_at).getTime()
-						: 0;
-					const bDate = b.created_at
-						? new Date(b.created_at).getTime()
-						: 0;
-					return dir * (aDate - bDate);
-				}
-				case "last_login": {
-					const aDate = a.last_login
-						? new Date(a.last_login).getTime()
-						: 0;
-					const bDate = b.last_login
-						? new Date(b.last_login).getTime()
-						: 0;
-					return dir * (aDate - bDate);
-				}
-				default:
-					return 0;
-			}
-		});
-	}, [filteredUsers, sortColumn, sortDirection]);
 
 	const handleSort = (column: SortColumn) => {
 		if (sortColumn === column) {
@@ -222,6 +179,7 @@ export function Users() {
 			setSortColumn(column);
 			setSortDirection("asc");
 		}
+		setOffset(0);
 	};
 
 	// ===== Bulk selection + actions =====
@@ -229,7 +187,7 @@ export function Users() {
 		() => (currentUser ? [currentUser.id] : []),
 		[currentUser],
 	);
-	const selection = useUserSelection(sortedUsers, disabledSelectionIds);
+	const selection = useUserSelection(users, disabledSelectionIds);
 
 	type BulkMode = "move_org" | "replace_roles" | "disable" | "enable" | null;
 	const [bulkMode, setBulkMode] = useState<BulkMode>(null);
@@ -267,8 +225,6 @@ export function Users() {
 	};
 
 	const handleEditUser = (user: User) => {
-		setSelectedUser(user);
-		setIsEditOpen(true);
 		if (userId !== user.id) {
 			navigate(`/users/${user.id}`);
 		}
@@ -356,8 +312,6 @@ export function Users() {
 	};
 
 	const handleEditClose = () => {
-		setIsEditOpen(false);
-		setSelectedUser(undefined);
 		if (userId) navigate("/users", { replace: true });
 	};
 
@@ -389,18 +343,15 @@ export function Users() {
 					<Button
 						variant="outline"
 						size="icon"
-						onClick={() => refetch()}
+						onClick={() => usersQuery.refetch()}
 						title="Refresh"
+						aria-label="Refresh users"
 					>
 						<RefreshCw className="h-4 w-4" />
 					</Button>
-					<Button
-						variant="outline"
-						size="icon"
-						onClick={() => setIsCreateOpen(true)}
-						title="Create User"
-					>
-						<Plus className="h-4 w-4" />
+					<Button onClick={() => setIsCreateOpen(true)}>
+						<Plus className="h-4 w-4 mr-1.5" />
+						Create user
 					</Button>
 				</div>
 			</div>
@@ -409,7 +360,10 @@ export function Users() {
 			<div className="flex items-center gap-4">
 				<SearchBox
 					value={searchTerm}
-					onChange={setSearchTerm}
+					onChange={(value) => {
+						setSearchTerm(value);
+						setOffset(0);
+					}}
 					placeholder="Search users by email or name..."
 					className="flex-1"
 				/>
@@ -417,7 +371,10 @@ export function Users() {
 					<div className="w-64">
 						<OrganizationSelect
 							value={filterOrgId}
-							onChange={setFilterOrgId}
+							onChange={(value) => {
+								setFilterOrgId(value);
+								setOffset(0);
+							}}
 							showAll={true}
 							showGlobal={false}
 							placeholder="All users"
@@ -428,7 +385,10 @@ export function Users() {
 					<Switch
 						id="show-disabled"
 						checked={showDisabled}
-						onCheckedChange={setShowDisabled}
+						onCheckedChange={(checked) => {
+							setShowDisabled(checked);
+							setOffset(0);
+						}}
 					/>
 					<Label
 						htmlFor="show-disabled"
@@ -440,15 +400,31 @@ export function Users() {
 			</div>
 
 			{/* Content */}
-			<div className="flex-1 min-h-0">
-				{isLoading ? (
+			<div className="flex-1 min-h-0" aria-busy={usersQuery.isFetching}>
+				{usersQuery.isLoading ? (
 					<div className="space-y-2">
 						{[...Array(5)].map((_, i) => (
 							<Skeleton key={i} className="h-12 w-full" />
 						))}
 					</div>
-				) : sortedUsers && sortedUsers.length > 0 ? (
-					<DataTable>
+				) : usersQuery.isError ? (
+					<div className="flex flex-col items-center justify-center rounded-lg border py-12 text-center">
+						<h3 className="text-lg font-semibold">
+							Users could not be loaded
+						</h3>
+						<p className="mt-2 text-sm text-muted-foreground">
+							Check your connection and try again.
+						</p>
+						<Button
+							className="mt-4"
+							variant="outline"
+							onClick={() => usersQuery.refetch()}
+						>
+							Try again
+						</Button>
+					</div>
+				) : users.length > 0 ? (
+					<DataTable className="max-h-full">
 						<DataTableHeader>
 							<DataTableRow>
 								<DataTableHead className="w-0 whitespace-nowrap">
@@ -528,7 +504,7 @@ export function Users() {
 							</DataTableRow>
 						</DataTableHeader>
 						<DataTableBody>
-							{sortedUsers.map((user) => {
+							{users.map((user) => {
 								const orgInfo = getOrgInfo(
 									user.organization_id,
 								);
@@ -620,16 +596,17 @@ export function Users() {
 															</Badge>
 														</TooltipTrigger>
 														<TooltipContent>
-															External user — sees only what the Everyone tier or an explicit role grant allows
+															External user — sees
+															only what the
+															Everyone tier or an
+															explicit role grant
+															allows
 														</TooltipContent>
 													</Tooltip>
 												)}
 											</div>
 										</DataTableCell>
-										<DataTableCell
-											className="text-muted-foreground max-w-0"
-											onClick={(e) => e.stopPropagation()}
-										>
+										<DataTableCell className="text-muted-foreground max-w-0">
 											<UserEmailCell email={user.email} />
 										</DataTableCell>
 										<DataTableCell className="w-0 whitespace-nowrap">
@@ -770,6 +747,19 @@ export function Users() {
 								);
 							})}
 						</DataTableBody>
+						<DataTableFooter>
+							<DataTableRow>
+								<DataTableCell colSpan={8} className="p-0">
+									<ListPagination
+										offset={offset}
+										limit={PAGE_SIZE}
+										total={total}
+										isFetching={usersQuery.isFetching}
+										onPageChange={setOffset}
+									/>
+								</DataTableCell>
+							</DataTableRow>
+						</DataTableFooter>
 					</DataTable>
 				) : (
 					<div className="flex flex-col items-center justify-center py-12 text-center">
@@ -841,9 +831,9 @@ export function Users() {
 			/>
 
 			<EditUserDialog
-				user={editDialogUser}
-				open={isEditDialogOpen}
-				onOpenChange={handleEditClose}
+				user={routeSelectedUser}
+				open={Boolean(userId && routeSelectedUser)}
+				onOpenChange={(open) => !open && handleEditClose()}
 			/>
 
 			<RegistrationLinkDialog

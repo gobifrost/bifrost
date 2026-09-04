@@ -326,7 +326,7 @@ class TestMCPAgentGateway:
         found = _call_gateway(
             self.token,
             "bifrost_search_capabilities",
-            {"query": self.agent_name},
+            {"query": self.agent_name, "discovery_scope": "all"},
         )
         found_agent = next(
             agent for agent in found["agents"] if agent["id"] == self.agent_id

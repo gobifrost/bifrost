@@ -6,7 +6,7 @@ scheduler import boundary while giving every agent surface one model abstraction
 
 from decimal import Decimal, InvalidOperation
 
-from pydantic_ai.models import Model
+from pydantic_ai.models import Model, infer_model
 from pydantic_ai.usage import RequestUsage
 
 from src.services.agent_runtime.retry_transport import get_ai_retry_http_client
@@ -34,6 +34,8 @@ def agent_model_settings(
         settings["max_tokens"] = resolved_max_tokens
     if is_openrouter_endpoint(config.endpoint):
         settings["extra_body"] = {"session_id": session_id[:256]}
+    elif config.provider == "openai":
+        settings["openai_store"] = False
     return settings
 
 
@@ -151,7 +153,12 @@ def create_agent_model(config: LLMConfig, *, model: str | None = None) -> Model:
             max_retries=0,
         )
         provider = OpenAIProvider(openai_client=client)
-        return OpenAIChatModel(model_name, provider=provider)
+        if config.openai_transport == "chat_completions":
+            return OpenAIChatModel(model_name, provider=provider)
+        return infer_model(
+            f"openai:{model_name}",
+            provider_factory=lambda _provider_name: provider,
+        )
 
     if config.provider == "anthropic":
         from anthropic import AsyncAnthropic

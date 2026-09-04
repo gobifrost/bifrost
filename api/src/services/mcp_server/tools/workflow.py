@@ -60,7 +60,7 @@ async def execute_workflow(
                 db,
                 org_id=ctx_org_id,
                 user_id=ctx_user_id,
-                is_superuser=context.is_platform_admin,
+                is_superuser=context.has_scope_bypass,
                 is_external=context.is_external,
             )
             workflow = await repo.resolve(workflow_id)
@@ -122,7 +122,7 @@ async def list_workflows(
                 db,
                 org_id=ctx_org_id,
                 user_id=ctx_user_id,
-                is_superuser=context.is_platform_admin,
+                is_superuser=context.has_scope_bypass,
                 is_external=context.is_external,
             )
             workflows = await repo.search(query=query, category=category, limit=100)
@@ -270,7 +270,7 @@ async def get_workflow(
                 db,
                 org_id=ctx_org_id,
                 user_id=ctx_user_id,
-                is_superuser=context.is_platform_admin,
+                is_superuser=context.has_scope_bypass,
                 is_external=context.is_external,
             )
 

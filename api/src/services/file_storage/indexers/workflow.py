@@ -397,6 +397,48 @@ class WorkflowIndexer:
 
         return None
 
+    def extract_parameters_from_source(
+        self,
+        source: str | bytes,
+        function_name: str,
+        *,
+        path: str = "<workflow>",
+    ) -> list[dict[str, Any]] | None:
+        """Extract one function's parameter contract without writing to the DB.
+
+        ``None`` means the source could not be parsed or did not define the
+        requested function. An empty list is a complete zero-argument contract.
+        Solution deploy uses this same AST path as workspace indexing so both
+        ownership tiers advertise identical tools.
+        """
+        content_str = (
+            source.decode("utf-8", errors="replace")
+            if isinstance(source, bytes)
+            else source
+        )
+        try:
+            tree = ast.parse(content_str, filename=path)
+        except SyntaxError as exc:
+            logger.warning(
+                "Syntax error extracting workflow parameters from %s: %s",
+                log_safe(path),
+                log_safe(exc),
+            )
+            return None
+
+        enum_definitions = self._collect_enum_definitions(tree)
+
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and node.name == function_name
+            ):
+                return self._extract_parameters_from_ast(
+                    node,
+                    enum_definitions=enum_definitions,
+                )
+        return None
+
     def _ast_value_to_python(self, node: ast.AST) -> Any:
         """Convert an AST node to a Python value."""
         if isinstance(node, ast.Constant):
@@ -420,7 +462,10 @@ class WorkflowIndexer:
         return None
 
     def _extract_parameters_from_ast(
-        self, func_node: ast.FunctionDef | ast.AsyncFunctionDef
+        self,
+        func_node: ast.FunctionDef | ast.AsyncFunctionDef,
+        *,
+        enum_definitions: dict[str, list[Any]] | None = None,
     ) -> list[dict[str, Any]]:
         """
         Extract parameter metadata from function definition AST.
@@ -462,10 +507,23 @@ class WorkflowIndexer:
             ui_type = "string"
             is_optional = has_default
             options = None
+            python_type = "Any"
+            json_schema: dict[str, Any] | None = None
             if arg.annotation:
-                ui_type = self._annotation_to_ui_type(arg.annotation)
+                ui_type = self._annotation_to_ui_type(
+                    arg.annotation,
+                    enum_definitions=enum_definitions,
+                )
                 is_optional = is_optional or self._is_optional_annotation(arg.annotation)
-                options = self._extract_literal_options(arg.annotation)
+                options = self._extract_literal_options(
+                    arg.annotation,
+                    enum_definitions=enum_definitions,
+                )
+                python_type = self._annotation_to_string(arg.annotation)
+                json_schema = self._annotation_to_json_schema(
+                    arg.annotation,
+                    enum_definitions=enum_definitions,
+                )
 
             # Generate label from parameter name
             label = re.sub(r"([a-z])([A-Z])", r"\1 \2", param_name.replace("_", " ")).title()
@@ -475,6 +533,8 @@ class WorkflowIndexer:
                 "type": ui_type,
                 "required": not is_optional,
                 "label": label,
+                "python_type": python_type,
+                "json_schema": json_schema or {"type": "string"},
             }
 
             if default_value is not None:
@@ -491,20 +551,113 @@ class WorkflowIndexer:
         """Convert annotation AST to string representation."""
         if isinstance(annotation, ast.Name):
             return annotation.id
-        elif isinstance(annotation, ast.Constant):
-            return str(annotation.value)
-        elif isinstance(annotation, ast.Subscript):
-            return f"{self._annotation_to_string(annotation.value)}[...]"
-        elif isinstance(annotation, ast.Attribute):
+        if isinstance(annotation, ast.Constant):
+            return repr(annotation.value) if annotation.value is not None else "None"
+        if isinstance(annotation, ast.Attribute):
             return f"{self._annotation_to_string(annotation.value)}.{annotation.attr}"
-        elif isinstance(annotation, ast.BinOp) and isinstance(annotation.op, ast.BitOr):
+        if isinstance(annotation, ast.Subscript):
+            base = self._annotation_to_string(annotation.value)
+            parts = self._annotation_slice_to_strings(annotation.slice)
+            return f"{base}[{', '.join(parts)}]" if parts else f"{base}[]"
+        if isinstance(annotation, ast.BinOp) and isinstance(annotation.op, ast.BitOr):
             # Python 3.10+ union syntax: str | None
             left = self._annotation_to_string(annotation.left)
             right = self._annotation_to_string(annotation.right)
             return f"{left} | {right}"
         return ""
 
-    def _annotation_to_ui_type(self, annotation: ast.AST) -> str:
+    def _annotation_slice_to_strings(self, slice_node: ast.AST) -> list[str]:
+        if isinstance(slice_node, ast.Tuple):
+            return [self._annotation_to_string(elt) for elt in slice_node.elts]
+        return [self._annotation_to_string(slice_node)]
+
+    def _collect_enum_definitions(self, tree: ast.Module) -> dict[str, list[Any]]:
+        """Collect local Enum/StrEnum/IntEnum classes and their member values."""
+        enum_definitions: dict[str, list[Any]] = {}
+
+        for node in tree.body:
+            if not isinstance(node, ast.ClassDef):
+                continue
+            if not self._class_inherits_enum(node):
+                continue
+
+            values = self._extract_enum_values(node)
+            if values:
+                enum_definitions[node.name] = values
+
+        return enum_definitions
+
+    def _class_inherits_enum(self, class_node: ast.ClassDef) -> bool:
+        enum_base_names = {"Enum", "StrEnum", "IntEnum"}
+        for base in class_node.bases:
+            base_name = self._annotation_to_string(base)
+            if base_name.rsplit(".", 1)[-1] in enum_base_names:
+                return True
+        return False
+
+    def _extract_enum_values(self, class_node: ast.ClassDef) -> list[Any]:
+        values: list[Any] = []
+
+        for stmt in class_node.body:
+            value_node: ast.AST | None = None
+            member_name: str | None = None
+
+            if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1:
+                target = stmt.targets[0]
+                if isinstance(target, ast.Name):
+                    member_name = target.id
+                    value_node = stmt.value
+            elif isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+                member_name = stmt.target.id
+                value_node = stmt.value
+
+            if not member_name or member_name.startswith("_") or value_node is None:
+                continue
+
+            value = self._ast_value_to_python(value_node)
+            if value is not None:
+                values.append(value)
+
+        return values
+
+    def _enum_values_for_annotation(
+        self,
+        annotation: ast.AST,
+        enum_definitions: dict[str, list[Any]] | None,
+    ) -> list[Any] | None:
+        if not enum_definitions:
+            return None
+
+        annotation_name = self._annotation_to_string(annotation)
+        if annotation_name in enum_definitions:
+            return enum_definitions[annotation_name]
+
+        short_name = annotation_name.rsplit(".", 1)[-1]
+        return enum_definitions.get(short_name)
+
+    def _enum_json_type(self, values: list[Any]) -> str | None:
+        """Return a JSON Schema primitive type when all enum values agree."""
+
+        value_types: set[str] = set()
+        for value in values:
+            if isinstance(value, str):
+                value_types.add("string")
+            elif isinstance(value, bool):
+                value_types.add("boolean")
+            elif isinstance(value, int):
+                value_types.add("integer")
+            elif isinstance(value, float):
+                value_types.add("number")
+            else:
+                return None
+        return next(iter(value_types)) if len(value_types) == 1 else None
+
+    def _annotation_to_ui_type(
+        self,
+        annotation: ast.AST,
+        *,
+        enum_definitions: dict[str, list[Any]] | None = None,
+    ) -> str:
         """Convert annotation AST to UI type string."""
         type_mapping = {
             "str": "string",
@@ -516,6 +669,14 @@ class WorkflowIndexer:
         }
 
         if isinstance(annotation, ast.Name):
+            enum_values = self._enum_values_for_annotation(annotation, enum_definitions)
+            if enum_values is not None:
+                return {
+                    "boolean": "bool",
+                    "integer": "int",
+                    "number": "float",
+                    "string": "string",
+                }.get(self._enum_json_type(enum_values), "json")
             return type_mapping.get(annotation.id, "json")
 
         elif isinstance(annotation, ast.Subscript):
@@ -528,35 +689,192 @@ class WorkflowIndexer:
                     return "json"
                 elif base_type == "Optional":
                     # Optional[str] -> string
-                    if isinstance(annotation.slice, ast.Name):
-                        return type_mapping.get(annotation.slice.id, "string")
-                    return "string"
+                    inner = self._annotation_to_ui_type(
+                        annotation.slice,
+                        enum_definitions=enum_definitions,
+                    )
+                    return inner
+                elif base_type == "Union":
+                    return self._annotation_to_ui_type(
+                        annotation.slice.elts[0] if isinstance(annotation.slice, ast.Tuple) and annotation.slice.elts else annotation.slice,
+                        enum_definitions=enum_definitions,
+                    )
                 elif base_type == "Literal":
                     # Literal["a", "b"] -> infer type from values
                     return self._infer_literal_type(annotation.slice)
+            if isinstance(annotation.value, ast.Attribute) and annotation.value.attr == "Literal":
+                return self._infer_literal_type(annotation.slice)
 
         elif isinstance(annotation, ast.BinOp) and isinstance(annotation.op, ast.BitOr):
             # str | None -> string
-            left_type = self._annotation_to_ui_type(annotation.left)
+            left_type = self._annotation_to_ui_type(
+                annotation.left,
+                enum_definitions=enum_definitions,
+            )
             return left_type
 
         return "json"
 
+    def _annotation_to_json_schema(
+        self,
+        annotation: ast.AST,
+        *,
+        enum_definitions: dict[str, list[Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Convert annotation AST to a JSON Schema fragment."""
+        if isinstance(annotation, ast.Name):
+            enum_values = self._enum_values_for_annotation(annotation, enum_definitions)
+            if enum_values is not None:
+                schema: dict[str, Any] = {"enum": enum_values}
+                json_type = self._enum_json_type(enum_values)
+                if json_type is not None:
+                    schema["type"] = json_type
+                return schema
+            if annotation.id == "Any":
+                return {}
+            if annotation.id == "str":
+                return {"type": "string"}
+            if annotation.id == "int":
+                return {"type": "integer"}
+            if annotation.id == "float":
+                return {"type": "number"}
+            if annotation.id == "bool":
+                return {"type": "boolean"}
+            if annotation.id == "list":
+                return {"type": "array", "items": {}}
+            if annotation.id == "dict":
+                return {"type": "object", "additionalProperties": True}
+            if annotation.id == "None":
+                return {"type": "null"}
+            return {"type": "object"}
+
+        if isinstance(annotation, ast.Constant):
+            if annotation.value is None:
+                return {"type": "null"}
+            if isinstance(annotation.value, str):
+                return {"type": "string"}
+            if isinstance(annotation.value, bool):
+                return {"type": "boolean"}
+            if isinstance(annotation.value, int):
+                return {"type": "integer"}
+            if isinstance(annotation.value, float):
+                return {"type": "number"}
+            return {}
+
+        if isinstance(annotation, ast.Attribute):
+            if self._annotation_to_string(annotation).endswith(".Any"):
+                return {}
+            return {"type": "object"}
+
+        if isinstance(annotation, ast.Subscript):
+            base_name = self._annotation_to_string(annotation.value)
+            if base_name.endswith(".Literal") or base_name == "Literal":
+                values = self._literal_values(annotation.slice)
+                schema = {"enum": values}
+                if values:
+                    first_val = values[0]
+                    if isinstance(first_val, str):
+                        schema["type"] = "string"
+                    elif isinstance(first_val, bool):
+                        schema["type"] = "boolean"
+                    elif isinstance(first_val, int):
+                        schema["type"] = "integer"
+                    elif isinstance(first_val, float):
+                        schema["type"] = "number"
+                return schema
+            if base_name.endswith("Optional") or base_name == "Optional":
+                return self._annotation_to_json_schema(
+                    annotation.slice,
+                    enum_definitions=enum_definitions,
+                )
+            if base_name.endswith("Union") or base_name == "Union":
+                if isinstance(annotation.slice, ast.Tuple):
+                    non_none = [
+                        elt for elt in annotation.slice.elts
+                        if self._annotation_to_string(elt) != "None"
+                    ]
+                    if len(non_none) == 1:
+                        return self._annotation_to_json_schema(
+                            non_none[0],
+                            enum_definitions=enum_definitions,
+                        )
+                    if non_none:
+                        return {
+                            "anyOf": [
+                                self._annotation_to_json_schema(
+                                    elt,
+                                    enum_definitions=enum_definitions,
+                                )
+                                for elt in non_none
+                            ]
+                        }
+                return self._annotation_to_json_schema(
+                    annotation.slice,
+                    enum_definitions=enum_definitions,
+                )
+            if base_name.endswith("list") or base_name == "list":
+                item_node = annotation.slice
+                if isinstance(item_node, ast.Tuple):
+                    item_node = item_node.elts[0] if item_node.elts else item_node
+                return {
+                    "type": "array",
+                    "items": self._annotation_to_json_schema(
+                        item_node,
+                        enum_definitions=enum_definitions,
+                    ),
+                }
+            if base_name.endswith("dict") or base_name == "dict":
+                value_node = None
+                if isinstance(annotation.slice, ast.Tuple):
+                    if len(annotation.slice.elts) >= 2:
+                        value_node = annotation.slice.elts[1]
+                elif not isinstance(annotation.slice, ast.Name):
+                    value_node = annotation.slice
+                schema: dict[str, Any] = {"type": "object", "additionalProperties": True}
+                if value_node is not None:
+                    value_schema = self._annotation_to_json_schema(
+                        value_node,
+                        enum_definitions=enum_definitions,
+                    )
+                    if value_schema:
+                        schema["additionalProperties"] = value_schema
+                return schema
+
+        if isinstance(annotation, ast.BinOp) and isinstance(annotation.op, ast.BitOr):
+            left = self._annotation_to_json_schema(
+                annotation.left,
+                enum_definitions=enum_definitions,
+            )
+            right = self._annotation_to_json_schema(
+                annotation.right,
+                enum_definitions=enum_definitions,
+            )
+            if self._annotation_to_string(annotation.left) == "None":
+                return right
+            if self._annotation_to_string(annotation.right) == "None":
+                return left
+            return {"anyOf": [left, right]}
+
+        return {"type": "object"}
+
+    def _literal_values(self, slice_node: ast.AST) -> list[Any]:
+        if isinstance(slice_node, ast.Tuple):
+            return [
+                value
+                for value in (self._ast_value_to_python(elt) for elt in slice_node.elts)
+                if value is not None
+            ]
+        value = self._ast_value_to_python(slice_node)
+        return [value] if value is not None else []
+
     def _infer_literal_type(self, slice_node: ast.AST) -> str:
         """Infer UI type from Literal values."""
         # Get the first value from the Literal
-        if isinstance(slice_node, ast.Tuple):
-            # Literal["a", "b"] - multiple values
-            if slice_node.elts:
-                first_val = self._ast_value_to_python(slice_node.elts[0])
-            else:
-                return "string"
-        else:
-            # Literal["a"] - single value
-            first_val = self._ast_value_to_python(slice_node)
-
-        if first_val is None:
+        values = self._literal_values(slice_node)
+        if not values:
             return "string"
+        first_val = values[0]
+
         if isinstance(first_val, str):
             return "string"
         if isinstance(first_val, bool):
@@ -567,30 +885,28 @@ class WorkflowIndexer:
             return "float"
         return "string"
 
-    def _extract_literal_options(self, annotation: ast.AST) -> list[dict[str, str]] | None:
+    def _extract_literal_options(
+        self,
+        annotation: ast.AST,
+        *,
+        enum_definitions: dict[str, list[Any]] | None = None,
+    ) -> list[dict[str, str]] | None:
         """Extract options from Literal type annotation."""
+        enum_values = self._enum_values_for_annotation(annotation, enum_definitions)
+        if enum_values is not None:
+            return [{"label": str(value), "value": str(value)} for value in enum_values]
+
         if not isinstance(annotation, ast.Subscript):
             return None
-        if not isinstance(annotation.value, ast.Name):
-            return None
-        if annotation.value.id != "Literal":
+        base_name = self._annotation_to_string(annotation.value)
+        if base_name != "Literal" and not base_name.endswith(".Literal"):
             return None
 
         # Get values from the Literal
-        slice_node = annotation.slice
-        values = []
-
-        if isinstance(slice_node, ast.Tuple):
-            # Literal["a", "b"] - multiple values
-            for elt in slice_node.elts:
-                val = self._ast_value_to_python(elt)
-                if val is not None:
-                    values.append({"label": str(val), "value": str(val)})
-        else:
-            # Literal["a"] - single value
-            val = self._ast_value_to_python(slice_node)
-            if val is not None:
-                values.append({"label": str(val), "value": str(val)})
+        values = [
+            {"label": str(value), "value": str(value)}
+            for value in self._literal_values(annotation.slice)
+        ]
 
         return values if values else None
 

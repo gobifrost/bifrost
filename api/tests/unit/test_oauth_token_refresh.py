@@ -161,6 +161,33 @@ async def test_per_token_success_writes_token_status(db_session: AsyncSession, m
     assert token.last_refresh_at is not None
 
 
+async def test_automatic_refresh_includes_client_credentials_token_without_expiry(
+    db_session: AsyncSession, monkeypatch
+):
+    """A missing access-token expiry must not make a token permanently stale."""
+    provider = await _make_provider(db_session, oauth_flow_type="client_credentials")
+    token = await _make_token(db_session, provider, organization_id=None)
+    token.encrypted_refresh_token = None
+    token.expires_at = None
+    await db_session.commit()
+
+    success_outcome = _make_success_outcome(token, provider)
+
+    async def fake_http(td):
+        return success_outcome
+
+    monkeypatch.setattr(mod, "refresh_oauth_token_http", fake_http)
+
+    result = await mod.run_refresh_job(
+        trigger_type="automatic", refresh_threshold_minutes=20
+    )
+
+    assert result["needs_refresh"] == 1
+    assert result["refreshed_successfully"] == 1
+    await db_session.refresh(token)
+    assert token.expires_at == success_outcome["expires_at"]
+
+
 async def test_per_token_failure_writes_token_status_message(db_session: AsyncSession, monkeypatch):
     """On failure, token.status == 'failed' and token.status_message contains the error."""
     org = await _make_org(db_session)

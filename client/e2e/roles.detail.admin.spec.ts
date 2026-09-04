@@ -44,6 +44,11 @@ test.describe("Roles detail", () => {
 		});
 		expect(u.ok(), await u.text()).toBe(true);
 		userId = (await u.json()).id;
+
+		const assign = await api.post(`/api/roles/${roleId}/users`, {
+			data: { user_ids: [userId] },
+		});
+		expect(assign.ok(), await assign.text()).toBe(true);
 	});
 
 	test.afterAll(async ({ api }) => {
@@ -51,11 +56,15 @@ test.describe("Roles detail", () => {
 		if (roleId) await api.delete(`/api/roles/${roleId}`);
 	});
 
-	test("card → users chip → drawer → assigned → unassign", async ({ page }) => {
+	test("card → users chip → drawer → assigned → unassign", async ({
+		page,
+	}) => {
 		await page.goto("/roles");
 
 		// The card for our role is rendered with name visible.
-		await expect(page.getByText(ROLE_NAME).first()).toBeVisible({ timeout: 10000 });
+		await expect(page.getByText(ROLE_NAME).first()).toBeVisible({
+			timeout: 10000,
+		});
 
 		// Navigate directly via the URL — the click-the-chip path is exercised
 		// in the vitest. This spec focuses on the assignment lifecycle, not on
@@ -67,7 +76,20 @@ test.describe("Roles detail", () => {
 			page.getByRole("heading", { name: ROLE_NAME }),
 		).toBeVisible();
 
-		// No users assigned yet.
+		// The role endpoint returns complete user display data. The page never
+		// exposes an assignment UUID while waiting for the user directory.
+		await expect(
+			page.getByText(new RegExp(`RoleDetail User ${SUFFIX}`)),
+		).toBeVisible();
+		await expect(page.getByText(userId, { exact: true })).toHaveCount(0);
+		await expect(page.getByText("1–1 of 1", { exact: true })).toBeVisible();
+
+		// Remove the seeded assignment so the rest of the test exercises the
+		// empty → assign → assigned lifecycle.
+		await page
+			.getByLabel(new RegExp(`Select RoleDetail User ${SUFFIX}`))
+			.click();
+		await page.getByRole("button", { name: /unassign from role/i }).click();
 		await expect(
 			page.getByText(/no users assigned to this role yet/i),
 		).toBeVisible();
@@ -94,18 +116,37 @@ test.describe("Roles detail", () => {
 		// Use the SheetClose icon-button (the dialog's primary close), not our
 		// outline footer Close button — there are two "Close" buttons in the
 		// drawer DOM.
-		await page.getByRole("dialog").getByRole("button", { name: /^close$/i }).last().click();
+		await page
+			.getByRole("dialog")
+			.getByRole("button", { name: /^close$/i })
+			.last()
+			.click();
 
 		// User is now in the assigned list.
 		await expect(
 			page.getByText(new RegExp(`RoleDetail User ${SUFFIX}`)),
 		).toBeVisible();
 
+		// Assigned users open the same detail route as rows on the Users page.
+		await page.getByText(new RegExp(`RoleDetail User ${SUFFIX}`)).click();
+		await expect(page).toHaveURL(new RegExp(`/users/${userId}$`));
+		await page.goBack();
+		await expect(page).toHaveURL(new RegExp(`/roles/${roleId}/users$`));
+		await expect(
+			page.getByRole("heading", { name: ROLE_NAME }),
+		).toBeVisible();
+
 		// Tick + unassign.
-		await page.getByLabel(new RegExp(`Select RoleDetail User ${SUFFIX}`)).click();
+		await page
+			.getByLabel(new RegExp(`Select RoleDetail User ${SUFFIX}`))
+			.click();
 		await page.getByRole("button", { name: /unassign from role/i }).click();
 
-		await expect(page.getByText(/removed 1 users/i)).toBeVisible({
+		// This flow removes the user twice; target the newest toast so the earlier
+		// notification still fading out does not make the locator ambiguous.
+		await expect(
+			page.locator('[data-sonner-toast][data-front="true"]'),
+		).toContainText(/removed 1 users/i, {
 			timeout: 10000,
 		});
 		await expect(

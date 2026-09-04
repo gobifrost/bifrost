@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
-import { generateLocalId, generateMessageId } from "./chat-utils";
+import { generateMessageId } from "./chat-utils";
 
 const originalRandomUUID = crypto.randomUUID;
 const originalGetRandomValues = crypto.getRandomValues.bind(crypto);
@@ -28,8 +28,9 @@ describe("chat-utils ids", () => {
 			value: vi.fn(() => "11111111-1111-4111-8111-111111111111"),
 		});
 
-		expect(generateMessageId()).toBe("11111111-1111-4111-8111-111111111111");
-		expect(generateLocalId()).toBe("local-11111111-1111-4111-8111-111111111111");
+		expect(generateMessageId()).toBe(
+			"11111111-1111-4111-8111-111111111111",
+		);
 	});
 
 	it("falls back to getRandomValues when randomUUID is unavailable", () => {
@@ -41,14 +42,16 @@ describe("chat-utils ids", () => {
 			configurable: true,
 			value: vi.fn((array: Uint8Array) => {
 				array.set([
-					0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0,
-					0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0,
+					0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x12, 0x34,
+					0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0,
 				]);
 				return array;
 			}),
 		});
 
-		expect(generateMessageId()).toBe("12345678-9abc-4ef0-9234-56789abcdef0");
+		expect(generateMessageId()).toBe(
+			"12345678-9abc-4ef0-9234-56789abcdef0",
+		);
 	});
 
 	it("uses a timestamp fallback only when no browser crypto API exists", () => {

@@ -119,6 +119,62 @@ class TestSolutionDeployReconcile:
         await db.flush()
         assert await _active_wf_names(db, sol.id) == {"w1"}
 
+    async def test_solution_workflow_parameters_are_inferred_from_source(
+        self, db_session
+    ) -> None:
+        """Solution tools must advertise the same rich signature as _repo tools."""
+        db = db_session
+        sol = await self._make_install(db, f"params-{uuid4().hex[:8]}")
+        manifest_id = uuid4()
+        await SolutionDeployer(db).deploy(
+            SolutionBundle(
+                solution=sol,
+                python_files={
+                    "workflows/admin.py": (
+                        "from typing import Any, Literal\n\n"
+                        "async def run(\n"
+                        "    appointment_id: int,\n"
+                        "    payload_items: list[dict[str, Any]],\n"
+                        "    mode: Literal['preview', 'apply'] = 'preview',\n"
+                        "):\n"
+                        "    return None\n"
+                    )
+                },
+                workflows=[
+                    {
+                        "id": str(manifest_id),
+                        "name": "admin",
+                        "function_name": "run",
+                        "path": "workflows/admin.py",
+                        "type": "tool",
+                    }
+                ],
+            )
+        )
+
+        row = await db.get(Workflow, solution_entity_id(sol.id, manifest_id))
+        assert row is not None
+        by_name = {item["name"]: item for item in row.parameters_schema}
+        assert by_name["appointment_id"] == {
+            "name": "appointment_id",
+            "type": "int",
+            "required": True,
+            "label": "Appointment Id",
+            "python_type": "int",
+            "json_schema": {"type": "integer"},
+        }
+        assert by_name["payload_items"]["python_type"] == "list[dict[str, Any]]"
+        assert by_name["payload_items"]["json_schema"] == {
+            "type": "array",
+            "items": {"type": "object", "additionalProperties": True},
+        }
+        assert by_name["mode"]["required"] is False
+        assert by_name["mode"]["json_schema"] == {
+            "enum": ["preview", "apply"],
+            "type": "string",
+        }
+        assert by_name["mode"]["default_value"] == "preview"
+
     async def test_repo_and_other_install_untouched(self, db_session) -> None:
         db = db_session
 

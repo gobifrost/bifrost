@@ -11,6 +11,20 @@ from .client import get_client, raise_for_status_with_detail
 from .models import ExecutionLog, WorkflowExecution
 
 
+class ExecutionList(list[WorkflowExecution]):
+    """List of workflow executions with optional pagination metadata."""
+
+    continuation_token: str | None
+
+    def __init__(
+        self,
+        executions: list[WorkflowExecution] | None = None,
+        continuation_token: str | None = None,
+    ) -> None:
+        super().__init__(executions or [])
+        self.continuation_token = continuation_token
+
+
 class executions:
     """
     Execution history operations.
@@ -26,8 +40,12 @@ class executions:
         status: str | None = None,
         start_date: str | None = None,
         end_date: str | None = None,
-        limit: int = 50
-    ) -> list[WorkflowExecution]:
+        limit: int = 50,
+        *,
+        workflow_id: str | None = None,
+        exclude_local: bool | None = None,
+        continuation_token: str | None = None,
+    ) -> ExecutionList:
         """
         List workflow executions with filtering.
 
@@ -35,14 +53,18 @@ class executions:
         Regular users see only their own executions.
 
         Args:
+            workflow_id: Filter by workflow UUID (optional)
             workflow_name: Filter by workflow name (optional)
             status: Filter by status (optional)
             start_date: Filter by start date in ISO format (optional)
             end_date: Filter by end date in ISO format (optional)
+            exclude_local: Exclude local-only runs (optional)
+            continuation_token: Pagination token for the next page (optional)
             limit: Maximum number of results (default: 50, max: 1000)
 
         Returns:
-            list[WorkflowExecution]: List of execution SUMMARIES. Summaries
+            ExecutionList: List-compatible execution SUMMARIES. Read its
+            ``continuation_token`` attribute to request the next page. Summaries
             carry metadata only — ``input_data``, ``result``, ``logs``, and
             ``variables`` are always None here; call ``executions.get(id)``
             for a specific execution's payload. Summary attributes:
@@ -74,14 +96,20 @@ class executions:
 
         # Build query parameters
         params = {}
-        if workflow_name:
-            params["workflowName"] = workflow_name
+        if workflow_id:
+            params["workflow_id"] = workflow_id
+        elif workflow_name:
+            params["workflow_name"] = workflow_name
         if status:
             params["status"] = status
         if start_date:
-            params["startDate"] = start_date
+            params["start_date"] = start_date
         if end_date:
-            params["endDate"] = end_date
+            params["end_date"] = end_date
+        if exclude_local is not None:
+            params["exclude_local"] = str(exclude_local).lower()
+        if continuation_token:
+            params["continuation_token"] = continuation_token
         params["limit"] = min(limit, 1000)
 
         response = await client.get("/api/executions", params=params)
@@ -89,7 +117,13 @@ class executions:
         data = response.json()
         # API returns ExecutionsListResponse with executions array
         executions_data = data.get("executions", [])
-        return [WorkflowExecution.model_validate(exec_data) for exec_data in executions_data]
+        return ExecutionList(
+            [
+                WorkflowExecution.model_validate(exec_data)
+                for exec_data in executions_data
+            ],
+            continuation_token=data.get("continuation_token"),
+        )
 
     @staticmethod
     async def get(execution_id: str) -> WorkflowExecution:

@@ -12,6 +12,7 @@ from pydantic_core import SchemaValidator, core_schema
 
 from src.services.agent_runtime.errors import AgentRunCancelled
 from src.services.llm.base import ToolDefinition
+from src.services.tool_schema import validate_arguments_against_schema
 
 ToolExecutor = Callable[[str, dict[str, Any], str], Awaitable[Any]]
 
@@ -30,7 +31,7 @@ class ToolEvent:
 
 ToolEventHandler = Callable[[ToolEvent], Awaitable[None]]
 
-_ARGS_VALIDATOR = SchemaValidator(schema=core_schema.any_schema())
+_ARGS_VALIDATOR = SchemaValidator(schema=core_schema.dict_schema())
 
 MAX_MODEL_TOOL_RESULT_CHARS = 32_000
 """Maximum serialized characters one fresh tool result may add to context."""
@@ -111,7 +112,6 @@ class BifrostToolset(AbstractToolset[object]):
         ctx: RunContext[object],
         tool: ToolsetTool[object],
     ) -> Any:
-        del tool
         import time
 
         started = time.monotonic()
@@ -119,6 +119,41 @@ class BifrostToolset(AbstractToolset[object]):
             await self._event_handler(
                 ToolEvent(type="tool_call", tool_name=name, arguments=tool_args)
             )
+        schema = next(
+            (definition.parameters for definition in self._definitions if definition.name == name),
+            None,
+        )
+        if schema is not None:
+            issues, schema_error = validate_arguments_against_schema(schema, tool_args)
+            if schema_error:
+                message = f"Error: The live tool schema is invalid and cannot be executed: {schema_error}"
+                if self._event_handler:
+                    await self._event_handler(
+                        ToolEvent(
+                            type="tool_error",
+                            tool_name=name,
+                            arguments=tool_args,
+                            error=message,
+                            duration_ms=int((time.monotonic() - started) * 1_000),
+                        )
+                    )
+                return message
+            if issues:
+                message = (
+                    "Error: Arguments do not match the live tool schema. "
+                    f"Issues: {issues}"
+                )
+                if self._event_handler:
+                    await self._event_handler(
+                        ToolEvent(
+                            type="tool_error",
+                            tool_name=name,
+                            arguments=tool_args,
+                            error=message,
+                            duration_ms=int((time.monotonic() - started) * 1_000),
+                        )
+                    )
+                return message
         try:
             result = await self._executor(name, tool_args, ctx.tool_call_id or "")
         except Exception as exc:

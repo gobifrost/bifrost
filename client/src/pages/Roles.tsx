@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
 	ArrowDown,
@@ -22,6 +22,7 @@ import {
 	DataTable,
 	DataTableBody,
 	DataTableCell,
+	DataTableFooter,
 	DataTableHead,
 	DataTableHeader,
 	DataTableRow,
@@ -43,15 +44,16 @@ import {
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { SearchBox } from "@/components/search/SearchBox";
-import { useSearch } from "@/hooks/useSearch";
-import { useRoles, useDeleteRole } from "@/hooks/useRoles";
+import { useDeleteRole, useRolesPage } from "@/hooks/useRoles";
 import { RoleDialog } from "@/components/roles/RoleDialog";
+import { ListPagination } from "@/components/pagination/ListPagination";
 
 import type { components } from "@/lib/v1";
 type Role = components["schemas"]["RolePublic"];
 
 type SortColumn = "name" | "created";
 type SortDirection = "asc" | "desc";
+const PAGE_SIZE = 25;
 
 const CHIP_DEFS: {
 	key: "users" | "forms" | "agents" | "apps" | "workflows" | "knowledge";
@@ -91,33 +93,19 @@ export function Roles() {
 	const [searchTerm, setSearchTerm] = useState("");
 	const [sortColumn, setSortColumn] = useState<SortColumn>("name");
 	const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+	const [offset, setOffset] = useState(0);
 
 	const navigate = useNavigate();
-	const { data: roles, isLoading, refetch } = useRoles();
+	const rolesQuery = useRolesPage({
+		search: searchTerm,
+		sortBy: sortColumn,
+		sortDirection,
+		limit: PAGE_SIZE,
+		offset,
+	});
+	const roles = rolesQuery.data?.items ?? [];
+	const total = rolesQuery.data?.total ?? 0;
 	const deleteRole = useDeleteRole();
-
-	const filteredRoles = useSearch(roles || [], searchTerm, [
-		"name",
-		"description",
-	]);
-
-	const sortedRoles = useMemo(() => {
-		if (!filteredRoles) return [];
-		return [...filteredRoles].sort((a, b) => {
-			const dir = sortDirection === "asc" ? 1 : -1;
-			switch (sortColumn) {
-				case "name":
-					return dir * (a.name || "").localeCompare(b.name || "");
-				case "created": {
-					const aDate = a.created_at ? new Date(a.created_at).getTime() : 0;
-					const bDate = b.created_at ? new Date(b.created_at).getTime() : 0;
-					return dir * (aDate - bDate);
-				}
-				default:
-					return 0;
-			}
-		});
-	}, [filteredRoles, sortColumn, sortDirection]);
 
 	const handleSort = (column: SortColumn) => {
 		if (sortColumn === column) {
@@ -126,6 +114,7 @@ export function Roles() {
 			setSortColumn(column);
 			setSortDirection("asc");
 		}
+		setOffset(0);
 	};
 
 	const handleEdit = (role: Role) => {
@@ -155,29 +144,28 @@ export function Roles() {
 			{/* Header */}
 			<div className="flex items-center justify-between">
 				<div>
-					<h1 className="text-4xl font-extrabold tracking-tight">Roles</h1>
+					<h1 className="text-4xl font-extrabold tracking-tight">
+						Roles
+					</h1>
 					<p className="mt-2 text-muted-foreground">
-						Roles grant access to users, forms, agents, apps, workflows, and
-						knowledge namespaces. Click a count chip to manage that consumer
-						type.
+						Roles grant access to users, forms, agents, apps,
+						workflows, and knowledge namespaces. Click a count chip
+						to manage that consumer type.
 					</p>
 				</div>
 				<div className="flex gap-2">
 					<Button
 						variant="outline"
 						size="icon"
-						onClick={() => refetch()}
+						onClick={() => rolesQuery.refetch()}
 						title="Refresh"
+						aria-label="Refresh roles"
 					>
 						<RefreshCw className="h-4 w-4" />
 					</Button>
-					<Button
-						variant="outline"
-						size="icon"
-						onClick={handleAdd}
-						title="Create Role"
-					>
-						<Plus className="h-4 w-4" />
+					<Button onClick={handleAdd}>
+						<Plus className="h-4 w-4 mr-1.5" />
+						Create role
 					</Button>
 				</div>
 			</div>
@@ -186,7 +174,10 @@ export function Roles() {
 			<div className="flex items-center gap-4">
 				<SearchBox
 					value={searchTerm}
-					onChange={setSearchTerm}
+					onChange={(value) => {
+						setSearchTerm(value);
+						setOffset(0);
+					}}
 					placeholder="Search roles by name or description..."
 					className="flex-1"
 				/>
@@ -194,13 +185,31 @@ export function Roles() {
 
 			{/* Content */}
 			<div className="flex-1 min-h-0">
-				{isLoading ? (
+				{rolesQuery.isLoading ? (
 					<div className="space-y-2">
 						{[...Array(5)].map((_, i) => (
 							<Skeleton key={i} className="h-12 w-full" />
 						))}
 					</div>
-				) : sortedRoles.length === 0 ? (
+				) : rolesQuery.isError ? (
+					<Card>
+						<CardContent className="flex flex-col items-center justify-center py-12 text-center">
+							<h3 className="text-lg font-semibold">
+								Roles could not be loaded
+							</h3>
+							<p className="mt-2 text-sm text-muted-foreground">
+								Check your connection and try again.
+							</p>
+							<Button
+								className="mt-4"
+								variant="outline"
+								onClick={() => rolesQuery.refetch()}
+							>
+								Try again
+							</Button>
+						</CardContent>
+					</Card>
+				) : roles.length === 0 ? (
 					<Card>
 						<CardContent className="flex flex-col items-center justify-center py-12 text-center">
 							<UserCog className="h-12 w-12 text-muted-foreground" />
@@ -216,17 +225,19 @@ export function Roles() {
 							</p>
 							<Button
 								variant="outline"
-								size="icon"
 								onClick={handleAdd}
-								title="Create Role"
 								className="mt-4"
 							>
 								<Plus className="h-4 w-4" />
+								Create role
 							</Button>
 						</CardContent>
 					</Card>
 				) : (
-					<DataTable>
+					<DataTable
+						className="max-h-full"
+						aria-busy={rolesQuery.isFetching}
+					>
 						<DataTableHeader>
 							<DataTableRow>
 								<DataTableHead
@@ -261,7 +272,7 @@ export function Roles() {
 							</DataTableRow>
 						</DataTableHeader>
 						<DataTableBody>
-							{sortedRoles.map((role) => (
+							{roles.map((role) => (
 								<RoleRow
 									key={role.id}
 									role={role}
@@ -271,6 +282,19 @@ export function Roles() {
 								/>
 							))}
 						</DataTableBody>
+						<DataTableFooter>
+							<DataTableRow>
+								<DataTableCell colSpan={5} className="p-0">
+									<ListPagination
+										offset={offset}
+										limit={PAGE_SIZE}
+										total={total}
+										isFetching={rolesQuery.isFetching}
+										onPageChange={setOffset}
+									/>
+								</DataTableCell>
+							</DataTableRow>
+						</DataTableFooter>
 					</DataTable>
 				)}
 			</div>
@@ -289,8 +313,8 @@ export function Roles() {
 					<AlertDialogHeader>
 						<AlertDialogTitle>Delete Role</AlertDialogTitle>
 						<AlertDialogDescription>
-							Are you sure you want to delete the role "{roleToDelete?.name}"?
-							This action cannot be undone.
+							Are you sure you want to delete the role "
+							{roleToDelete?.name}"? This action cannot be undone.
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
@@ -299,7 +323,9 @@ export function Roles() {
 							onClick={handleConfirmDelete}
 							className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
 						>
-							{deleteRole.isPending ? "Deleting..." : "Delete Role"}
+							{deleteRole.isPending
+								? "Deleting..."
+								: "Delete Role"}
 						</AlertDialogAction>
 					</AlertDialogFooter>
 				</AlertDialogContent>
@@ -355,7 +381,9 @@ function RoleRow({
 										aria-label={`${count} ${label.toLowerCase()} — open ${label.toLowerCase()} tab`}
 									>
 										<Icon className="h-3 w-3" />
-										<span className="font-medium">{count}</span>
+										<span className="font-medium">
+											{count}
+										</span>
 									</Link>
 								</TooltipTrigger>
 								<TooltipContent>{label}</TooltipContent>

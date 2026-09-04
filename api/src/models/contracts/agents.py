@@ -463,8 +463,54 @@ class ChatResponse(BaseModel):
     token_count_input: int | None = None
     token_count_output: int | None = None
     duration_ms: int | None = None
+    finish_reason: str | None = None
+    incomplete: bool | None = None
 
     @field_serializer("message_id")
+    def serialize_uuid(self, v: UUID) -> str:
+        return str(v)
+
+
+class ChatRunCreateRequest(BaseModel):
+    """Request for durable chat submission."""
+
+    conversation_id: UUID | None = Field(
+        default=None,
+        description="Conversation to append to. Omit to create a new chat conversation.",
+    )
+    content: str = Field(default="", max_length=100000)
+    client_run_id: UUID | None = Field(
+        default=None,
+        description="Client-provided idempotency key for the run. Server creates one if omitted.",
+    )
+    user_message_id: UUID | None = Field(
+        default=None,
+        description="Client-generated UUID for the persisted user message. Server creates one if omitted.",
+    )
+    agent_id: UUID | None = Field(
+        default=None,
+        description="Optional agent override. Null means use the conversation's current agent (or agentless chat).",
+    )
+    attachment_ids: list[UUID] = Field(default_factory=list, max_length=5)
+    model_profile_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def require_content(self):
+        if not self.content.strip() and not self.attachment_ids:
+            raise ValueError("A message or attachment is required")
+        return self
+
+
+class ChatRunCreateResponse(BaseModel):
+    """Response from durable chat submission."""
+
+    run_id: UUID
+    conversation: ConversationPublic
+    user_message: MessagePublic
+    status: str
+    idempotent: bool = False
+
+    @field_serializer("run_id")
     def serialize_uuid(self, v: UUID) -> str:
         return str(v)
 
@@ -518,8 +564,10 @@ class ChatStreamChunk(BaseModel):
         "artifact_failed",
         "agent_switch",
         "context_warning",
+        "run_status",
         "title_update",
         "done",
+        "cancelled",
         "error",
     ]
 
@@ -550,6 +598,9 @@ class ChatStreamChunk(BaseModel):
     token_count_input: int | None = None
     token_count_output: int | None = None
     duration_ms: int | None = None
+    finish_reason: str | None = None
+    incomplete: bool | None = None
+    run_status: str | None = None
 
     # Error info
     error: str | None = None
@@ -559,6 +610,79 @@ class ChatStreamChunk(BaseModel):
 
     # Message boundary fields (for assistant_message_end)
     stop_reason: str | None = Field(default=None, description="Why message ended: 'tool_use' or 'end_turn'")
+
+
+class ChatRunEventPublic(BaseModel):
+    """Versioned event envelope broadcast over chat:{conversation_id}."""
+
+    type: Literal["chat_run_event"] = "chat_run_event"
+    protocol_version: Literal[1] = 1
+    event_id: UUID
+    sequence: int
+    conversation_id: UUID
+    run_id: UUID
+    occurred_at: datetime
+    kind: str
+    status: str
+    payload: ChatStreamChunk
+
+    @field_serializer("event_id", "conversation_id", "run_id")
+    def serialize_uuid(self, v: UUID) -> str:
+        return str(v)
+
+    @field_serializer("occurred_at")
+    def serialize_dt(self, v: datetime) -> str:
+        return v.isoformat()
+
+
+class ChatRunPublic(BaseModel):
+    """Run status needed to reconstruct the realtime chat projection."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    conversation_id: UUID
+    agent_id: UUID | None = None
+    status: str
+    error: str | None = None
+    created_at: datetime
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+    @field_serializer("id", "conversation_id")
+    def serialize_uuid(self, v: UUID) -> str:
+        return str(v)
+
+    @field_serializer("agent_id")
+    def serialize_optional_uuid(self, v: UUID | None) -> str | None:
+        return str(v) if v else None
+
+    @field_serializer("created_at")
+    def serialize_dt(self, v: datetime) -> str:
+        return v.isoformat()
+
+    @field_serializer("started_at", "completed_at")
+    def serialize_optional_dt(self, v: datetime | None) -> str | None:
+        return v.isoformat() if v else None
+
+
+class ChatRunStateResponse(BaseModel):
+    """Authoritative snapshot for a chat conversation and its active run."""
+
+    conversation: ConversationPublic
+    active_run: ChatRunPublic | None = None
+    messages: list[MessagePublic] = Field(default_factory=list)
+    events: list[ChatRunEventPublic] = Field(default_factory=list)
+    latest_sequence: int = 0
+
+
+class ChatRunCancelResponse(BaseModel):
+    run_id: UUID
+    status: Literal["cancelling", "cancelled"]
+
+    @field_serializer("run_id")
+    def serialize_uuid(self, v: UUID) -> str:
+        return str(v)
 
 
 # ==================== ROLE ASSIGNMENT MODELS ====================

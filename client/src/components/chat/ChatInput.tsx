@@ -176,20 +176,33 @@ export function ChatInput({
 		const finalMessage = mentionPrefixes
 			? `${mentionPrefixes} ${trimmedMessage}`.trim()
 			: trimmedMessage;
+		const submittedMessage = message;
+		const submittedMentions = mentions;
+		const submittedAttachments = attachments;
 		setIsSubmitting(true);
+		setMessage("");
+		setMentions([]);
+		setAttachments([]);
+		if (textareaRef.current) textareaRef.current.style.height = "auto";
 		try {
 			await onSend(
 				finalMessage,
-				attachments.map((draft) => draft.file),
+				submittedAttachments.map((draft) => draft.file),
 				modelProfileId,
 			);
-			for (const draft of attachments) {
+			for (const draft of submittedAttachments) {
 				if (draft.previewUrl) URL.revokeObjectURL(draft.previewUrl);
 			}
-			setMessage("");
-			setMentions([]);
-			setAttachments([]);
-			if (textareaRef.current) textareaRef.current.style.height = "auto";
+		} catch {
+			// The parent owns the error UI. Restore the submitted draft only when
+			// the user has not already started composing a replacement.
+			setMessage((current) => current || submittedMessage);
+			setMentions((current) =>
+				current.length > 0 ? current : submittedMentions,
+			);
+			setAttachments((current) =>
+				current.length > 0 ? current : submittedAttachments,
+			);
 		} finally {
 			setIsSubmitting(false);
 		}
@@ -306,7 +319,7 @@ export function ChatInput({
 
 	return (
 		<div className="px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2 sm:px-4 sm:pb-4">
-			<div className="mx-auto max-w-3xl">
+			<div className="mx-auto max-w-4xl">
 				<div
 					onDrop={handleDrop}
 					onDragOver={(event) => {
@@ -315,7 +328,7 @@ export function ChatInput({
 					}}
 					onDragLeave={() => setIsDragging(false)}
 					className={cn(
-						"relative rounded-2xl border bg-background shadow-sm transition-colors",
+						"relative rounded-2xl border bg-card text-card-foreground shadow-sm transition-colors",
 						"focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20",
 						isDragging && "border-primary bg-primary/5",
 					)}

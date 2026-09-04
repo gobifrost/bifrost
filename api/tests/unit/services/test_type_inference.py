@@ -1,13 +1,16 @@
 import inspect
+from enum import Enum
 from typing import Any, Literal, Optional, Union
 
 import pytest
 
 from src.services.execution.type_inference import (
+    build_json_schema,
     _is_execution_context,
     extract_parameters_from_signature,
     generate_label,
     get_literal_options,
+    get_python_type_name,
     get_ui_type,
     is_optional_type,
 )
@@ -161,6 +164,16 @@ class TestGetLiteralOptions:
     def test_plain_int_returns_none(self):
         assert get_literal_options(int) is None
 
+    def test_enum_members_return_options(self):
+        class TicketState(str, Enum):
+            OPEN = "open"
+            CLOSED = "closed"
+
+        assert get_literal_options(TicketState) == [
+            {"label": "open", "value": "open"},
+            {"label": "closed", "value": "closed"},
+        ]
+
 
 class TestGenerateLabel:
 
@@ -191,17 +204,76 @@ class TestExtractParametersFromSignature:
 
         params = extract_parameters_from_signature(func)
         assert len(params) == 2
-        assert params[0] == {
-            "name": "name",
-            "type": "string",
-            "required": True,
-            "label": "Name",
+        assert params[0]["name"] == "name"
+        assert params[0]["type"] == "string"
+        assert params[0]["required"] is True
+        assert params[0]["label"] == "Name"
+        assert params[0]["python_type"] == "str"
+        assert params[0]["json_schema"] == {"type": "string"}
+        assert params[1]["name"] == "count"
+        assert params[1]["type"] == "int"
+        assert params[1]["required"] is True
+        assert params[1]["label"] == "Count"
+        assert params[1]["python_type"] == "int"
+        assert params[1]["json_schema"] == {"type": "integer"}
+
+    def test_nested_generics_and_enum_metadata(self):
+        class Severity(str, Enum):
+            LOW = "low"
+            HIGH = "high"
+
+        def func(
+            payload_items: list[dict[str, int]],
+            status: Literal["open", "closed"],
+            severity: Severity,
+        ):
+            pass
+
+        params = extract_parameters_from_signature(func)
+        payload = next(param for param in params if param["name"] == "payload_items")
+        assert payload["type"] == "list"
+        assert payload["python_type"] == "list[dict[str, int]]"
+        assert payload["json_schema"] == {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": {"type": "integer"},
+            },
         }
-        assert params[1] == {
-            "name": "count",
-            "type": "int",
-            "required": True,
-            "label": "Count",
+
+        status = next(param for param in params if param["name"] == "status")
+        assert status["options"] == [
+            {"label": "open", "value": "open"},
+            {"label": "closed", "value": "closed"},
+        ]
+        assert status["json_schema"] == {
+            "enum": ["open", "closed"],
+            "type": "string",
+        }
+
+        severity = next(param for param in params if param["name"] == "severity")
+        assert severity["options"] == [
+            {"label": "low", "value": "low"},
+            {"label": "high", "value": "high"},
+        ]
+        assert severity["json_schema"] == {
+            "enum": ["low", "high"],
+            "type": "string",
+        }
+
+    def test_python_type_name_helper(self):
+        assert get_python_type_name(list[dict[str, Any]]) == "list[dict[str, Any]]"
+        assert get_python_type_name(Literal["a", "b"]) == "Literal['a', 'b']"
+        assert get_python_type_name(int | None) == "int | None"
+
+    def test_json_schema_helper(self):
+        assert build_json_schema(list[dict[str, Any]]) == {
+            "type": "array",
+            "items": {"type": "object", "additionalProperties": True},
+        }
+        assert build_json_schema(Literal["a", "b"]) == {
+            "enum": ["a", "b"],
+            "type": "string",
         }
 
     def test_default_values(self):

@@ -43,7 +43,7 @@ export function MentionPicker({
 	position,
 }: MentionPickerProps) {
 	const terminology = useTerminology();
-	const { data: agents } = useAgents();
+	const { data: agents } = useAgents(undefined, { discoveryOnly: true });
 	const selectionKey = `${open ? "open" : "closed"}:${searchTerm}`;
 	const [selection, setSelection] = useState({ key: selectionKey, index: 0 });
 	const listRef = useRef<HTMLDivElement>(null);

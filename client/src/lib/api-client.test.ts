@@ -2,6 +2,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { apiClient, authFetch } from "./api-client";
 import { ACCESS_TOKEN_KEY } from "./auth-token";
 
+interface TestPlatformAuthBridge {
+	getAccessToken: () => string | null;
+	canRefreshAccessToken: () => boolean;
+	refreshAccessToken: () => Promise<boolean>;
+	handleAuthenticationFailure: () => void;
+}
+
+type TestPlatformAuthGlobal = typeof globalThis & {
+	__BIFROST_PLATFORM_AUTH_V1__?: TestPlatformAuthBridge;
+};
+
 /**
  * Build a mock Response with a given status and an empty body.
  */
@@ -22,6 +33,42 @@ function buildFakeToken(): string {
 	const payload = btoa(JSON.stringify({ exp: farFuture }));
 	return `${header}.${payload}.sig`;
 }
+
+describe("V2 app platform auth bridge", () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		localStorage.clear();
+		sessionStorage.clear();
+	});
+
+	it("shares one refresh request across concurrent SDK recovery calls", async () => {
+		const refreshedToken = buildFakeToken();
+		let releaseRefresh!: () => void;
+		const refreshGate = new Promise<void>((resolve) => {
+			releaseRefresh = resolve;
+		});
+		const fetchMock = vi.fn(async () => {
+			await refreshGate;
+			return mockJsonResponse(200, { access_token: refreshedToken });
+		});
+		vi.stubGlobal("fetch", fetchMock);
+		const bridge = (globalThis as TestPlatformAuthGlobal)
+			.__BIFROST_PLATFORM_AUTH_V1__;
+		expect(bridge).toBeDefined();
+
+		const first = bridge!.refreshAccessToken();
+		const second = bridge!.refreshAccessToken();
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		releaseRefresh();
+
+		await expect(Promise.all([first, second])).resolves.toEqual([
+			true,
+			true,
+		]);
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		expect(bridge!.getAccessToken()).toBe(refreshedToken);
+	});
+});
 
 /**
  * Drain the microtask queue + advance fake timers so any pending setTimeout

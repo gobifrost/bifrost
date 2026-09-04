@@ -1,3 +1,4 @@
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
@@ -119,6 +120,67 @@ async def test_openai_compatible_connection_requires_endpoint(db_session):
             api_key="sk-test",
             endpoint=None,
         )
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_profile_detects_and_remembers_transport(db_session):
+    service = AIModelService(db_session)
+    connection = await service.create_connection(
+        name="Foundry",
+        provider="openai_compatible",
+        api_key="sk-test",
+        endpoint="https://foundry.example.test/openai/v1",
+    )
+    profile = await service.create_profile(
+        name="Foundry Luna",
+        connection_id=connection.id,
+        model="gpt-5.6-luna",
+        capabilities=None,
+        enabled_for_chat=True,
+    )
+    detector = AsyncMock(return_value="responses")
+
+    with patch(
+        "src.services.openai_transport_detection.detect_openai_transport", detector
+    ):
+        first = await service.resolve_config(profile_id=profile.id)
+        second = await service.resolve_config(profile_id=profile.id)
+
+    assert first.openai_transport == "responses"
+    assert second.openai_transport == "responses"
+    detector.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_profile_and_connection_changes_clear_detected_transport(db_session):
+    service = AIModelService(db_session)
+    connection = await service.create_connection(
+        name="Compatible",
+        provider="openai_compatible",
+        api_key="sk-test",
+        endpoint="https://one.example.test/v1",
+    )
+    profile = await service.create_profile(
+        name="Compatible Model",
+        connection_id=connection.id,
+        model="model-one",
+        capabilities=None,
+        enabled_for_chat=True,
+    )
+    profile.openai_transport = "responses"
+    await db_session.flush()
+
+    updated = await service.update_profile(profile.id, model="model-two")
+    assert updated.openai_transport is None
+
+    updated.openai_transport = "chat_completions"
+    await db_session.flush()
+    await service.update_connection(
+        connection.id,
+        endpoint="https://two.example.test/v1",
+        endpoint_provided=True,
+    )
+    assert updated.openai_transport is None
 
 
 @pytest.mark.asyncio
@@ -262,12 +324,17 @@ async def test_resolve_config_defaults_to_platform_default_assignment(db_session
     )
     await service.set_assignment("primary", profile.id)
 
-    config = await service.resolve_config()
+    with patch(
+        "src.services.openai_transport_detection.detect_openai_transport",
+        AsyncMock(return_value="responses"),
+    ):
+        config = await service.resolve_config()
 
     assert config.provider == "openai"
     assert config.endpoint == "https://llm.example.test/v1"
     assert config.api_key == "compatible-key"
     assert config.model == "custom/model"
+    assert config.openai_transport == "responses"
 
 
 @pytest.mark.asyncio

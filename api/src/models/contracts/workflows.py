@@ -43,6 +43,8 @@ class WorkflowParameter(BaseModel):
     default_value: Any | None = None
     description: str | None = None
     options: list[dict[str, str]] | None = None  # For Literal types - [{label, value}, ...]
+    python_type: str | None = None
+    json_schema: dict[str, Any] | None = None
 
 
 class WorkflowMetadata(BaseModel):

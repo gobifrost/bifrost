@@ -329,9 +329,28 @@ class UnassignWorkflowsFromRoleRequest(BaseModel):
     workflow_ids: list[str] = Field(..., min_length=1, max_length=500)
 
 
+class RoleUserSummary(BaseModel):
+    """Display-ready user identity returned by the role detail endpoint."""
+
+    id: UUID
+    name: str | None
+    email: str
+    organization_id: UUID | None
+    organization_name: str | None
+    organization_is_provider: bool = False
+
+
 class RoleUsersResponse(BaseModel):
     """Response model for getting users assigned to a role"""
     user_ids: list[str] = Field(..., description="List of user IDs assigned to the role")
+    users: list[RoleUserSummary] = Field(
+        default_factory=list,
+        description="Display-ready summaries for users assigned to the role",
+    )
+    total: int = Field(
+        default=0,
+        description="Total users assigned to the role after filtering",
+    )
 
 
 class RoleFormsResponse(BaseModel):

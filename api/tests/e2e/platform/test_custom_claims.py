@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -243,6 +243,119 @@ class TestCustomClaims:
 
         assert {row["data"]["title"] for row in alice_rows} == {"alice"}
         assert {row["data"]["title"] for row in bob_rows} == {"bob"}
+
+    @pytest.mark.asyncio
+    async def test_claim_scoped_file_path_reads_real_object_storage(
+        self,
+        e2e_client,
+        db_session,
+        platform_admin,
+        org_admin,
+        org1,
+        alice_user,
+        bob_user,
+    ):
+        from src.models.contracts.policies import FilePolicies
+        from src.services.file_policy_service import FilePolicyService
+
+        source_table, source_id = _create_claim_source(e2e_client, org_admin, org1)
+        claim_name = f"allowed_resource_paths_{uuid4().hex[:8]}"
+        created = e2e_client.post(
+            "/api/claims",
+            headers=org_admin.headers,
+            json={
+                "name": claim_name,
+                "type": "list",
+                "query": {
+                    "table": source_table,
+                    "where": {"eq": [{"row": "user_id"}, {"user": "user_id"}]},
+                    "select": "path_prefix",
+                },
+            },
+        )
+        assert created.status_code == 201, created.text
+
+        root = f"site-a:category-1/{uuid4().hex[:8]}"
+        allowed_prefix = f"{root}/pdf"
+        allowed_path = f"{allowed_prefix}/document-001/drawing.pdf"
+        denied_path = f"{root}/download/document-001/drawing.dwg"
+        _insert(
+            e2e_client,
+            org_admin.headers,
+            source_id,
+            {
+                "user_id": str(alice_user.user_id),
+                "path_prefix": allowed_prefix,
+            },
+        )
+
+        await FilePolicyService(db_session).upsert_policy(
+            organization_id=UUID(org1["id"]),
+            location="temp",
+            path=root,
+            policies=FilePolicies.model_validate(
+                {
+                    "policies": [
+                        {
+                            "name": "seed_objects",
+                            "actions": ["write"],
+                            "when": {"user": "is_platform_admin"},
+                        },
+                        {
+                            "name": "claim_scoped_read",
+                            "actions": ["read"],
+                            "when": {
+                                "path_within_any": [
+                                    {"file": "path"},
+                                    {"claims": claim_name},
+                                ]
+                            },
+                        },
+                    ]
+                }
+            ),
+        )
+        await db_session.commit()
+
+        for path in (allowed_path, denied_path):
+            write = e2e_client.post(
+                "/api/files/write",
+                headers=platform_admin.headers,
+                json={
+                    "path": path,
+                    "content": "synthetic document",
+                    "location": "temp",
+                    "scope": org1["id"],
+                    "mode": "cloud",
+                },
+            )
+            assert write.status_code == 204, write.text
+
+        allowed = e2e_client.post(
+            "/api/files/read",
+            headers=alice_user.headers,
+            json={
+                "path": allowed_path,
+                "location": "temp",
+                "scope": org1["id"],
+                "mode": "cloud",
+            },
+        )
+        assert allowed.status_code == 200, allowed.text
+        assert allowed.json()["content"] == "synthetic document"
+
+        for user, path in ((alice_user, denied_path), (bob_user, allowed_path)):
+            denied = e2e_client.post(
+                "/api/files/read",
+                headers=user.headers,
+                json={
+                    "path": path,
+                    "location": "temp",
+                    "scope": org1["id"],
+                    "mode": "cloud",
+                },
+            )
+            assert denied.status_code == 403, denied.text
 
     def test_delete_referenced_claim_refused(self, e2e_client, org_admin, org1):
         source_table, _source_id = _create_claim_source(e2e_client, org_admin, org1)
@@ -492,3 +605,189 @@ class TestCustomClaims:
         bob_titles = {row["data"]["title"] for row in _query(e2e_client, bob_user.headers, docs_id)}
         assert alice_titles == {"c1-d1"}
         assert bob_titles == {"c2-d2"}
+
+    def test_composite_grants_secure_documents_and_navigation(
+        self,
+        e2e_client,
+        org_admin,
+        org1,
+        alice_user,
+        bob_user,
+    ):
+        """One user's disjoint UUID pairs cannot widen into a cross-product."""
+        grants_table, grants_id = _create_claim_source(
+            e2e_client, org_admin, org1
+        )
+        claim_suffix = uuid4().hex[:8]
+        claims = {
+            "access_key": f"allowed_document_access_keys_{claim_suffix}",
+            "campus_id": f"allowed_campus_ids_{claim_suffix}",
+            "document_type_id": f"allowed_document_type_ids_{claim_suffix}",
+        }
+        for selected_field, claim_name in claims.items():
+            response = e2e_client.post(
+                "/api/claims",
+                headers=org_admin.headers,
+                json={
+                    "name": claim_name,
+                    "type": "list",
+                    "query": {
+                        "table": grants_table,
+                        "where": {
+                            "eq": [
+                                {"row": "user_id"},
+                                {"user": "user_id"},
+                            ]
+                        },
+                        "select": selected_field,
+                    },
+                },
+            )
+            assert response.status_code == 201, response.text
+
+        def claim_policy(row_field: str, claim_name: str) -> dict:
+            return {
+                "policies": [
+                    *_admin_bypass_policies()["policies"],
+                    {
+                        "name": "read_accessible_reference_rows",
+                        "actions": ["read"],
+                        "when": {
+                            "in": [
+                                {"row": row_field},
+                                {"claims": claim_name},
+                            ]
+                        },
+                    },
+                ]
+            }
+
+        campus_table_id = _create_table(
+            e2e_client,
+            org_admin.headers,
+            f"campuses_{claim_suffix}",
+            org1["id"],
+            policies=claim_policy("campus_id", claims["campus_id"]),
+        )
+        type_table_id = _create_table(
+            e2e_client,
+            org_admin.headers,
+            f"document_types_{claim_suffix}",
+            org1["id"],
+            policies=claim_policy(
+                "document_type_id", claims["document_type_id"]
+            ),
+        )
+        building_table_id = _create_table(
+            e2e_client,
+            org_admin.headers,
+            f"buildings_{claim_suffix}",
+            org1["id"],
+            policies=claim_policy("campus_id", claims["campus_id"]),
+        )
+        floor_table_id = _create_table(
+            e2e_client,
+            org_admin.headers,
+            f"floors_{claim_suffix}",
+            org1["id"],
+            policies=claim_policy("campus_id", claims["campus_id"]),
+        )
+
+        campus_ids = {name: str(uuid4()) for name in ("north", "south", "hidden")}
+        type_ids = {name: str(uuid4()) for name in ("drawing", "manual", "hidden")}
+        for name, campus_id in campus_ids.items():
+            _insert(
+                e2e_client,
+                org_admin.headers,
+                campus_table_id,
+                {"campus_id": campus_id, "name": name},
+            )
+            _insert(
+                e2e_client,
+                org_admin.headers,
+                building_table_id,
+                {
+                    "building_id": str(uuid4()),
+                    "campus_id": campus_id,
+                    "name": f"{name} building",
+                },
+            )
+            _insert(
+                e2e_client,
+                org_admin.headers,
+                floor_table_id,
+                {
+                    "floor_id": str(uuid4()),
+                    "campus_id": campus_id,
+                    "name": f"{name} floor",
+                },
+            )
+        for name, document_type_id in type_ids.items():
+            _insert(
+                e2e_client,
+                org_admin.headers,
+                type_table_id,
+                {"document_type_id": document_type_id, "name": name},
+            )
+
+        allowed_pairs = [
+            (campus_ids["north"], type_ids["drawing"]),
+            (campus_ids["south"], type_ids["manual"]),
+        ]
+        for campus_id, document_type_id in allowed_pairs:
+            _insert(
+                e2e_client,
+                org_admin.headers,
+                grants_id,
+                {
+                    "user_id": str(alice_user.user_id),
+                    "campus_id": campus_id,
+                    "document_type_id": document_type_id,
+                    "access_key": f"{campus_id}:{document_type_id}",
+                },
+            )
+
+        documents_id = _create_table(
+            e2e_client,
+            org_admin.headers,
+            f"documents_{claim_suffix}",
+            org1["id"],
+            policies=claim_policy("access_key", claims["access_key"]),
+        )
+        for campus_name in ("north", "south"):
+            for type_name in ("drawing", "manual"):
+                campus_id = campus_ids[campus_name]
+                document_type_id = type_ids[type_name]
+                _insert(
+                    e2e_client,
+                    org_admin.headers,
+                    documents_id,
+                    {
+                        "campus_id": campus_id,
+                        "document_type_id": document_type_id,
+                        "access_key": f"{campus_id}:{document_type_id}",
+                        "title": f"{campus_name}-{type_name}",
+                    },
+                )
+
+        assert {
+            row["data"]["title"]
+            for row in _query(e2e_client, alice_user.headers, documents_id)
+        } == {"north-drawing", "south-manual"}
+        assert _query(e2e_client, bob_user.headers, documents_id) == []
+        assert {
+            row["data"]["name"]
+            for row in _query(e2e_client, alice_user.headers, campus_table_id)
+        } == {"north", "south"}
+        assert {
+            row["data"]["name"]
+            for row in _query(e2e_client, alice_user.headers, type_table_id)
+        } == {"drawing", "manual"}
+        assert {
+            row["data"]["name"]
+            for row in _query(e2e_client, alice_user.headers, building_table_id)
+        } == {"north building", "south building"}
+        assert {
+            row["data"]["name"]
+            for row in _query(e2e_client, alice_user.headers, floor_table_id)
+        } == {"north floor", "south floor"}

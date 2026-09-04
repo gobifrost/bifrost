@@ -72,6 +72,7 @@ def _gateway_service(current_user: CurrentActiveUser):
             user_id=current_user.user_id,
             org_id=current_user.organization_id,
             is_platform_admin=current_user.is_superuser,
+            is_provider_org=current_user.is_provider_org,
             is_external=current_user.is_external,
             user_email=current_user.email,
             user_name=current_user.name,
@@ -98,6 +99,7 @@ def _raise_gateway_http_error(exc: Exception) -> NoReturn:
     status_code = {
         "INVALID_ARGUMENTS": status.HTTP_422_UNPROCESSABLE_ENTITY,
         "INVALID_CAPABILITY_SEARCH": status.HTTP_422_UNPROCESSABLE_ENTITY,
+        "IMPERSONATION_FORBIDDEN": status.HTTP_403_FORBIDDEN,
         "INVALID_RESULT_PATH": status.HTTP_422_UNPROCESSABLE_ENTITY,
         "AGENT_NOT_FOUND_OR_FORBIDDEN": status.HTTP_404_NOT_FOUND,
         "TOOL_NOT_FOUND_OR_FORBIDDEN": status.HTTP_404_NOT_FOUND,
@@ -126,6 +128,7 @@ async def search_gateway_capabilities(
             query=request.query,
             agent_id=request.agent_id,
             tool_ref=request.tool_ref,
+            discovery_scope=request.discovery_scope,
             limit=request.limit,
         )
     except Exception as exc:
@@ -526,7 +529,8 @@ async def list_mcp_tools(
             detail="External MCP access is disabled",
         )
 
-    # Per-user tool access is role-scoped inside MCPToolAccessService.
+    # This REST inventory backs the platform settings allow/block controls.
+    # Normal MCP discovery remains role-scoped in the protocol gateway.
     tool_service = MCPToolAccessService(db)
     result = await tool_service.get_accessible_tools(
         user_roles=current_user.roles,

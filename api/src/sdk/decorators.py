@@ -114,6 +114,8 @@ def workflow(
                 required=p["required"],
                 default_value=p.get("default_value"),
                 options=p.get("options"),
+                python_type=p.get("python_type"),
+                json_schema=p.get("json_schema"),
             )
             for p in param_dicts
         ]
@@ -281,6 +283,8 @@ def data_provider(
                 required=p["required"],
                 default_value=p.get("default_value"),
                 options=p.get("options"),
+                python_type=p.get("python_type"),
+                json_schema=p.get("json_schema"),
             )
             for p in param_dicts
         ]

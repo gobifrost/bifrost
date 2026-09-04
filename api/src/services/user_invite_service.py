@@ -109,6 +109,49 @@ class UserInviteService:
             return InviteStatus.EXPIRED
         return InviteStatus.PENDING
 
+    async def statuses_for(self, users: list[User]) -> dict[UUID, str]:
+        """Resolve invite status for a user collection with two bounded queries."""
+        if not users:
+            return {}
+
+        user_ids = [user.id for user in users]
+        oauth_user_ids = set(
+            (
+                await self.session.execute(
+                    select(UserOAuthAccount.user_id).where(
+                        UserOAuthAccount.user_id.in_(user_ids)
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        invites = (
+            (
+                await self.session.execute(
+                    select(UserInvite).where(UserInvite.user_id.in_(user_ids))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        invites_by_user = {invite.user_id: invite for invite in invites}
+        now = datetime.now(timezone.utc)
+
+        statuses: dict[UUID, str] = {}
+        for user in users:
+            if user.is_registered or user.id in oauth_user_ids:
+                statuses[user.id] = InviteStatus.ACTIVE
+                continue
+            invite = invites_by_user.get(user.id)
+            if invite is None or invite.revoked_at is not None:
+                statuses[user.id] = InviteStatus.NEVER_INVITED
+            elif invite.expires_at < now:
+                statuses[user.id] = InviteStatus.EXPIRED
+            else:
+                statuses[user.id] = InviteStatus.PENDING
+        return statuses
+
     async def _get_for_user(self, user_id: UUID) -> UserInvite | None:
         return (
             await self.session.execute(

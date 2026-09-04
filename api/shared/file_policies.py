@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Any, Protocol
 from uuid import UUID
 
+from shared.path_matching import normalize_path, path_matches_prefix
 from shared.policies.evaluate import evaluate
 from src.models.contracts.policies import FileAction, FilePolicies
 
@@ -69,9 +70,9 @@ def select_longest_prefix(
     for candidate in candidates:
         if candidate.location != location:
             continue
-        if not _path_matches(candidate.path, path):
+        if not path_matches_prefix(candidate.path, path):
             continue
-        normalized_len = len(_normalize_path(candidate.path))
+        normalized_len = len(normalize_path(candidate.path))
         if normalized_len > best_len:
             best = candidate
             best_len = normalized_len
@@ -98,18 +99,3 @@ def evaluate_file_action(
         ):
             return True
     return False
-
-
-def _path_matches(prefix: str, path: str) -> bool:
-    normalized_prefix = _normalize_path(prefix)
-    normalized_path = _normalize_path(path)
-    if normalized_prefix == "":
-        return True
-    return (
-        normalized_path == normalized_prefix
-        or normalized_path.startswith(f"{normalized_prefix}/")
-    )
-
-
-def _normalize_path(path: str) -> str:
-    return path.strip("/")

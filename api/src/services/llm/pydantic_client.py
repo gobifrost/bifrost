@@ -26,7 +26,7 @@ from pydantic_ai.messages import (
     UserContent,
 )
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.models.openai import OpenAIResponsesModelSettings
 from pydantic_ai.tools import ToolDefinition as PydanticToolDefinition
 
 from src.services.agent_runtime.model_factory import (
@@ -139,11 +139,14 @@ class PydanticAIClient(BaseLLMClient):
             logger.error("Pydantic AI streaming error: %s", exc)
             yield LLMStreamChunk(type="error", error=str(exc))
 
-    def _model_settings(self, max_tokens: int | None) -> ModelSettings:
+    def _model_settings(self, max_tokens: int | None) -> OpenAIResponsesModelSettings:
         resolved_max_tokens = request_max_tokens(self.config, max_tokens)
-        if resolved_max_tokens is None:
-            return ModelSettings()
-        return ModelSettings(max_tokens=resolved_max_tokens)
+        settings = OpenAIResponsesModelSettings()
+        if resolved_max_tokens is not None:
+            settings["max_tokens"] = resolved_max_tokens
+        if self.provider_name == "openai":
+            settings["openai_store"] = False
+        return settings
 
     @staticmethod
     def _request_parameters(

@@ -47,9 +47,9 @@ import {
 	SheetTitle,
 } from "@/components/ui/sheet";
 import {
-	useRoles,
+	useRole,
 	useDeleteRole,
-	useRoleUsers,
+	useRoleUsersPage,
 	useRoleForms,
 	useRoleAgents,
 	useRoleApps,
@@ -83,14 +83,13 @@ import {
 import type { components } from "@/lib/v1";
 
 type ConsumerKey =
-	| "users"
-	| "forms"
-	| "agents"
-	| "apps"
-	| "workflows"
-	| "knowledge";
+	"users" | "forms" | "agents" | "apps" | "workflows" | "knowledge";
 
-const TABS: { key: ConsumerKey; label: string; Icon: React.ComponentType<{ className?: string }> }[] = [
+const TABS: {
+	key: ConsumerKey;
+	label: string;
+	Icon: React.ComponentType<{ className?: string }>;
+}[] = [
 	{ key: "users", label: "Users", Icon: Users },
 	{ key: "forms", label: "Forms", Icon: FileText },
 	{ key: "agents", label: "Agents", Icon: Bot },
@@ -106,11 +105,7 @@ export function RoleDetail() {
 	const [editOpen, setEditOpen] = useState(false);
 	const [deleteOpen, setDeleteOpen] = useState(false);
 
-	const { data: roles, isLoading: rolesLoading } = useRoles();
-	const role = useMemo(
-		() => roles?.find((r) => r.id === roleId),
-		[roles, roleId],
-	);
+	const { data: role, isLoading: rolesLoading } = useRole(roleId);
 	const deleteRole = useDeleteRole();
 
 	const currentTab: ConsumerKey =
@@ -184,11 +179,13 @@ export function RoleDetail() {
 						{role.name}
 					</h1>
 					{role.description && (
-						<p className="mt-1 text-muted-foreground">{role.description}</p>
+						<p className="mt-1 text-muted-foreground">
+							{role.description}
+						</p>
 					)}
 					<p className="mt-2 text-xs text-muted-foreground">
-						A role grants access to every user, form, agent, app, workflow, and
-						knowledge namespace you assign below.
+						A role grants access to every user, form, agent, app,
+						workflow, and knowledge namespace you assign below.
 					</p>
 				</div>
 				<div className="flex gap-2">
@@ -217,7 +214,11 @@ export function RoleDetail() {
 					{TABS.map(({ key, label, Icon }) => {
 						const count = role.consumer_counts?.[key] ?? 0;
 						return (
-							<TabsTrigger key={key} value={key} className="gap-1.5">
+							<TabsTrigger
+								key={key}
+								value={key}
+								className="gap-1.5"
+							>
 								<Icon className="h-4 w-4" />
 								{label}
 								<span className="ml-1 text-xs text-muted-foreground">
@@ -259,9 +260,10 @@ export function RoleDetail() {
 					<AlertDialogHeader>
 						<AlertDialogTitle>Delete role</AlertDialogTitle>
 						<AlertDialogDescription>
-							Are you sure you want to delete "{role.name}"? This action cannot
-							be undone and removes the role from every user, form, and other
-							consumer it's assigned to.
+							Are you sure you want to delete "{role.name}"? This
+							action cannot be undone and removes the role from
+							every user, form, and other consumer it's assigned
+							to.
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
@@ -291,10 +293,14 @@ export function RoleDetail() {
 function useOrgLookup() {
 	const { data: orgs } = useOrganizations();
 	return useMemo(() => {
-		const byId = new Map<string, components["schemas"]["OrganizationPublic"]>();
+		const byId = new Map<
+			string,
+			components["schemas"]["OrganizationPublic"]
+		>();
 		for (const o of orgs ?? []) byId.set(o.id, o);
 		return (orgId: string | null | undefined) => {
-			if (!orgId) return { id: null, name: "Platform", isProvider: false };
+			if (!orgId)
+				return { id: null, name: "Platform", isProvider: false };
 			const o = byId.get(orgId);
 			return {
 				id: orgId,
@@ -306,34 +312,42 @@ function useOrgLookup() {
 }
 
 function UsersTab({ roleId }: { roleId: string }) {
-	const { data: assigned, isLoading } = useRoleUsers(roleId);
-	const { data: allUsers, isLoading: loadingAll } = useUsersFiltered();
+	const navigate = useNavigate();
+	const [search, setSearch] = useState("");
+	const [offset, setOffset] = useState(0);
+	const pageSize = 25;
+	const {
+		data: assigned,
+		isLoading,
+		isFetching,
+	} = useRoleUsersPage(roleId, {
+		search,
+		limit: pageSize,
+		offset,
+	});
+	const [candidatesRequested, setCandidatesRequested] = useState(false);
+	const { data: allUsers, isLoading: loadingAll } = useUsersFiltered(
+		undefined,
+		false,
+		candidatesRequested,
+	);
 	const assignMut = useAssignUsersToRole();
 	const unassignMut = useBulkUnassignUsers();
 	const orgFor = useOrgLookup();
 
-	const assignedIds = useMemo(
-		() => new Set(assigned?.user_ids ?? []),
-		[assigned],
-	);
-	const userById = useMemo(() => {
-		const m = new Map<string, components["schemas"]["UserPublic"]>();
-		for (const u of allUsers ?? []) m.set(u.id, u);
-		return m;
-	}, [allUsers]);
-
 	const items: ConsumerTabItem[] = useMemo(
 		() =>
-			Array.from(assignedIds).map((id) => {
-				const u = userById.get(id);
-				return {
-					id,
-					primary: u?.name || u?.email || id,
-					secondary: u?.email && u?.name !== u?.email ? u.email : null,
-					org: orgFor(u?.organization_id),
-				};
-			}),
-		[assignedIds, userById, orgFor],
+			(assigned?.users ?? []).map((u) => ({
+				id: u.id,
+				primary: u.name || u.email,
+				secondary: u.name && u.name !== u.email ? u.email : null,
+				org: {
+					id: u.organization_id ?? null,
+					name: u.organization_name ?? "Platform",
+					isProvider: u.organization_is_provider,
+				},
+			})),
+		[assigned],
 	);
 
 	const candidates: ConsumerTabItem[] = useMemo(
@@ -354,10 +368,29 @@ function UsersTab({ roleId }: { roleId: string }) {
 			candidates={candidates}
 			candidatesLoading={loadingAll}
 			consumerLabel="users"
-			emptyHint="No users assigned to this role yet."
+			emptyHint={
+				search
+					? "No assigned users match your search."
+					: "No users assigned to this role yet."
+			}
 			primaryColumnLabel="Name"
 			secondaryColumnLabel="Email"
 			showOrgColumn
+			searchValue={search}
+			onSearchChange={(value) => {
+				setSearch(value);
+				setOffset(0);
+			}}
+			pagination={{
+				offset,
+				limit: pageSize,
+				total: assigned?.total ?? 0,
+				isFetching,
+				onPageChange: setOffset,
+			}}
+			onItemClick={(item) => navigate(`/users/${item.id}`)}
+			getItemHref={(item) => `/users/${item.id}`}
+			onRequestCandidates={() => setCandidatesRequested(true)}
 			onAssign={async (ids) => {
 				await assignMut.mutateAsync({
 					params: { path: { role_id: roleId } },
@@ -516,7 +549,15 @@ function AppsTab({ roleId }: { roleId: string }) {
 
 	const allApps = useMemo(() => {
 		if (Array.isArray(allAppsResp)) return allAppsResp;
-		return (allAppsResp as { applications?: components["schemas"]["ApplicationPublic"][] } | undefined)?.applications ?? [];
+		return (
+			(
+				allAppsResp as
+					| {
+							applications?: components["schemas"]["ApplicationPublic"][];
+					  }
+					| undefined
+			)?.applications ?? []
+		);
 	}, [allAppsResp]);
 
 	const appById = useMemo(() => {
@@ -663,25 +704,28 @@ function KnowledgeTab({ roleId }: { roleId: string }) {
 	const entries = useMemo(() => data?.entries ?? [], [data]);
 
 	const orgName = useMemo(
-		() =>
-			(orgId?: string | null) => {
-				if (!orgId) return "All organizations";
-				const o = orgs?.find((x) => x.id === orgId);
-				return o?.name || orgId;
-			},
+		() => (orgId?: string | null) => {
+			if (!orgId) return "All organizations";
+			const o = orgs?.find((x) => x.id === orgId);
+			return o?.name || orgId;
+		},
 		[orgs],
 	);
 
 	const visible = useMemo(() => {
 		const q = search.trim().toLowerCase();
 		if (!q) return entries;
-		return entries.filter((e) =>
-			e.namespace.toLowerCase().includes(q) ||
-			orgName(e.organization_id).toLowerCase().includes(q),
+		return entries.filter(
+			(e) =>
+				e.namespace.toLowerCase().includes(q) ||
+				orgName(e.organization_id).toLowerCase().includes(q),
 		);
 	}, [entries, search, orgName]);
 
-	const visibleIds = useMemo(() => new Set(visible.map((e) => e.id)), [visible]);
+	const visibleIds = useMemo(
+		() => new Set(visible.map((e) => e.id)),
+		[visible],
+	);
 	const effective = useMemo(() => {
 		const out = new Set<string>();
 		for (const id of selected) if (visibleIds.has(id)) out.add(id);
@@ -887,18 +931,24 @@ function KnowledgeAssignDrawer({
 
 	return (
 		<Sheet open onOpenChange={(o) => !o && onClose()}>
-			<SheetContent side="right" className="w-[480px] sm:max-w-[480px] flex flex-col">
+			<SheetContent
+				side="right"
+				className="w-[480px] sm:max-w-[480px] flex flex-col"
+			>
 				<SheetHeader>
 					<SheetTitle>Assign knowledge namespace</SheetTitle>
 					<SheetDescription>
-						Grant this role access to a knowledge namespace. Namespaces are
-						free-form strings — pick the one used in your knowledge store.
+						Grant this role access to a knowledge namespace.
+						Namespaces are free-form strings — pick the one used in
+						your knowledge store.
 					</SheetDescription>
 				</SheetHeader>
 
 				<div className="px-6 space-y-3">
 					<label className="block text-sm">
-						<span className="block mb-1 text-muted-foreground">Namespace</span>
+						<span className="block mb-1 text-muted-foreground">
+							Namespace
+						</span>
 						<Input
 							type="text"
 							value={namespace}
@@ -908,7 +958,9 @@ function KnowledgeAssignDrawer({
 					</label>
 
 					<label className="block text-sm">
-						<span className="block mb-1 text-muted-foreground">Scope</span>
+						<span className="block mb-1 text-muted-foreground">
+							Scope
+						</span>
 						<select
 							value={orgId}
 							onChange={(e) => setOrgId(e.target.value)}
