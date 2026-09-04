@@ -21,6 +21,10 @@ from fastmcp.tools import ToolResult
 from src.services.mcp_server.tool_result import error_result, success_result
 from src.services.mcp_server.tools._http_bridge import call_rest, rest_client
 from src.services.mcp_server.tools.db import get_tool_db
+from src.services.tool_schema import (
+    parameters_json_schema,
+    validate_arguments_against_schema,
+)
 
 # MCPContext is imported where needed to avoid circular imports
 
@@ -67,6 +71,37 @@ async def execute_workflow(
 
             if not workflow:
                 return error_result(f"Workflow '{workflow_id}' not found. Use list_workflows to see available workflows.")
+
+            input_schema = parameters_json_schema(
+                workflow.parameters_schema or [],
+                allow_unknown_when_empty=True,
+            )
+            issues, schema_error = validate_arguments_against_schema(
+                input_schema,
+                params,
+            )
+            if schema_error:
+                return error_result(
+                    "The workflow's live input schema is invalid and cannot be executed.",
+                    {
+                        "code": "TOOL_SCHEMA_INVALID",
+                        "workflow_id": str(workflow.id),
+                        "workflow_name": workflow.name,
+                        "schema_error": schema_error,
+                    },
+                )
+            if issues:
+                return error_result(
+                    "Arguments do not match the workflow's live input schema. "
+                    "Inspect input_schema or call get_workflow before retrying.",
+                    {
+                        "code": "INVALID_ARGUMENTS",
+                        "workflow_id": str(workflow.id),
+                        "workflow_name": workflow.name,
+                        "issues": issues,
+                        "input_schema": input_schema,
+                    },
+                )
 
             result = await execute_tool(
                 workflow_id=str(workflow.id),
@@ -660,7 +695,12 @@ async def revoke_workflow_role(
 
 # Tool metadata for registration
 TOOLS = [
-    ("execute_workflow", "Execute Workflow", "Execute a Bifrost workflow by ID or name and return the results. Use list_workflows to get workflow IDs."),
+    (
+        "execute_workflow",
+        "Execute Workflow",
+        "Execute a Bifrost workflow by ID or name using its live input schema. "
+        "Use list_workflows to find workflows and get_workflow to inspect parameters.",
+    ),
     ("list_workflows", "List Workflows", "List workflows registered in Bifrost."),
     ("validate_workflow", "Validate Workflow", "Validate a workflow Python file for syntax and decorator issues."),
     ("get_workflow", "Get Workflow", "Get detailed metadata for a specific workflow by ID or name."),

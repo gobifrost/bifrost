@@ -617,6 +617,36 @@ async def test_execute_validates_before_dispatch():
 
 
 @pytest.mark.asyncio
+async def test_execute_keeps_legacy_empty_schema_permissive():
+    service = MCPAgentGatewayService(_context())
+    agent = _agent()
+    tool = _resolved_tool(
+        parameters={
+            "type": "object",
+            "properties": {},
+            "additionalProperties": True,
+        }
+    )
+    snapshot = AgentToolSnapshot(agent=agent, tools=[tool])
+    arguments = {"existing_solution_argument": "still accepted"}
+
+    with patch.object(
+        service,
+        "_dispatch",
+        new=AsyncMock(return_value={"output": "ok"}),
+    ) as dispatch:
+        result = await service.execute_tool(snapshot, tool, arguments)
+
+    assert result["result"] == {"output": "ok"}
+    dispatch.assert_awaited_once_with(
+        agent,
+        tool,
+        arguments,
+        async_execution=False,
+    )
+
+
+@pytest.mark.asyncio
 async def test_execute_returns_auditable_envelope():
     service = MCPAgentGatewayService(_context())
     agent = _agent()

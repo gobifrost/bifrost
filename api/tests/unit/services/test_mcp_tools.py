@@ -68,6 +68,7 @@ def mock_workflow():
     mock.endpoint_enabled = True
     mock.path = "/tmp/bifrost/workspace/workflows/test_workflow.py"
     mock.is_active = True
+    mock.parameters_schema = []
     return mock
 
 
@@ -655,6 +656,92 @@ class TestExecuteWorkflow:
         assert data["status"] == "Failed"
         assert data["error"] == "Division by zero"
         assert data["error_type"] == "ValueError"
+
+    @pytest.mark.asyncio
+    async def test_rejects_invalid_registered_arguments_before_execution(
+        self, org_user_context, mock_workflow
+    ):
+        """A generic workflow call must enforce the selected live contract."""
+        mock_workflow.parameters_schema = [
+            {
+                "name": "query",
+                "type": "string",
+                "required": True,
+            }
+        ]
+
+        with patch("src.core.database.get_db_context") as mock_db_ctx:
+            mock_session = AsyncMock()
+            mock_db_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            with patch(
+                "src.repositories.workflows.WorkflowRepository"
+            ) as mock_repo_cls:
+                mock_repo = MagicMock()
+                mock_repo.resolve = AsyncMock(return_value=mock_workflow)
+                mock_repo_cls.return_value = mock_repo
+
+                with patch(
+                    "src.services.execution.service.execute_tool"
+                ) as mock_execute:
+                    result = await execute_workflow(
+                        org_user_context,
+                        str(mock_workflow.id),
+                        {"sql": "SELECT 1"},
+                    )
+
+        data = result.structured_content
+        assert data["code"] == "INVALID_ARGUMENTS"
+        assert data["workflow_id"] == str(mock_workflow.id)
+        assert data["workflow_name"] == mock_workflow.name
+        assert data["input_schema"]["required"] == ["query"]
+        assert {issue["validator"] for issue in data["issues"]} == {
+            "additionalProperties",
+            "required",
+        }
+        mock_execute.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_legacy_empty_schema_remains_permissive(
+        self, org_user_context, mock_workflow
+    ):
+        """Old Solution registrations keep working before they are redeployed."""
+        mock_workflow.parameters_schema = []
+        mock_result = MagicMock()
+        mock_result.status.value = "Success"
+        mock_result.duration_ms = 100
+        mock_result.result = {"output": "ok"}
+        mock_result.error = None
+        mock_result.error_type = None
+
+        with patch("src.core.database.get_db_context") as mock_db_ctx:
+            mock_session = AsyncMock()
+            mock_db_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            with patch(
+                "src.repositories.workflows.WorkflowRepository"
+            ) as mock_repo_cls:
+                mock_repo = MagicMock()
+                mock_repo.resolve = AsyncMock(return_value=mock_workflow)
+                mock_repo_cls.return_value = mock_repo
+
+                with patch(
+                    "src.services.execution.service.execute_tool"
+                ) as mock_execute:
+                    mock_execute.return_value = mock_result
+                    result = await execute_workflow(
+                        org_user_context,
+                        str(mock_workflow.id),
+                        {"existing_solution_argument": "still accepted"},
+                    )
+
+        assert result.structured_content["success"] is True
+        mock_execute.assert_awaited_once()
+        assert mock_execute.call_args.kwargs["parameters"] == {
+            "existing_solution_argument": "still accepted"
+        }
 
     @pytest.mark.asyncio
     async def test_handles_missing_workflow_id(self, org_user_context):
