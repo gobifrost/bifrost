@@ -182,3 +182,49 @@ def test_ast_parameter_extraction_treats_any_as_unconstrained():
         "type": "array",
         "items": {"type": "object", "additionalProperties": True},
     }
+
+
+def test_ast_parameter_extraction_preserves_local_enum_values():
+    from src.services.file_storage.indexers.workflow import WorkflowIndexer
+
+    indexer = WorkflowIndexer(MagicMock())
+    params = indexer.extract_parameters_from_source(
+        """
+from enum import Enum, IntEnum
+
+class Action(str, Enum):
+    CREATE = "create"
+    DISABLE = "disable"
+
+class Priority(IntEnum):
+    LOW = 1
+    HIGH = 2
+
+def demo(action: Action, priority: Priority | None = None):
+    pass
+""",
+        "demo",
+        path="workflows/demo.py",
+    )
+
+    assert params is not None
+    action = next(param for param in params if param["name"] == "action")
+    assert action["type"] == "string"
+    assert action["python_type"] == "Action"
+    assert action["options"] == [
+        {"label": "create", "value": "create"},
+        {"label": "disable", "value": "disable"},
+    ]
+    assert action["json_schema"] == {
+        "enum": ["create", "disable"],
+        "type": "string",
+    }
+
+    priority = next(param for param in params if param["name"] == "priority")
+    assert priority["type"] == "int"
+    assert priority["python_type"] == "Priority | None"
+    assert priority["required"] is False
+    assert priority["json_schema"] == {
+        "enum": [1, 2],
+        "type": "integer",
+    }

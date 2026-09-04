@@ -426,12 +426,17 @@ class WorkflowIndexer:
             )
             return None
 
+        enum_definitions = self._collect_enum_definitions(tree)
+
         for node in ast.walk(tree):
             if (
                 isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
                 and node.name == function_name
             ):
-                return self._extract_parameters_from_ast(node)
+                return self._extract_parameters_from_ast(
+                    node,
+                    enum_definitions=enum_definitions,
+                )
         return None
 
     def _ast_value_to_python(self, node: ast.AST) -> Any:
@@ -457,7 +462,10 @@ class WorkflowIndexer:
         return None
 
     def _extract_parameters_from_ast(
-        self, func_node: ast.FunctionDef | ast.AsyncFunctionDef
+        self,
+        func_node: ast.FunctionDef | ast.AsyncFunctionDef,
+        *,
+        enum_definitions: dict[str, list[Any]] | None = None,
     ) -> list[dict[str, Any]]:
         """
         Extract parameter metadata from function definition AST.
@@ -502,11 +510,20 @@ class WorkflowIndexer:
             python_type = "Any"
             json_schema: dict[str, Any] | None = None
             if arg.annotation:
-                ui_type = self._annotation_to_ui_type(arg.annotation)
+                ui_type = self._annotation_to_ui_type(
+                    arg.annotation,
+                    enum_definitions=enum_definitions,
+                )
                 is_optional = is_optional or self._is_optional_annotation(arg.annotation)
-                options = self._extract_literal_options(arg.annotation)
+                options = self._extract_literal_options(
+                    arg.annotation,
+                    enum_definitions=enum_definitions,
+                )
                 python_type = self._annotation_to_string(arg.annotation)
-                json_schema = self._annotation_to_json_schema(arg.annotation)
+                json_schema = self._annotation_to_json_schema(
+                    arg.annotation,
+                    enum_definitions=enum_definitions,
+                )
 
             # Generate label from parameter name
             label = re.sub(r"([a-z])([A-Z])", r"\1 \2", param_name.replace("_", " ")).title()
@@ -554,7 +571,93 @@ class WorkflowIndexer:
             return [self._annotation_to_string(elt) for elt in slice_node.elts]
         return [self._annotation_to_string(slice_node)]
 
-    def _annotation_to_ui_type(self, annotation: ast.AST) -> str:
+    def _collect_enum_definitions(self, tree: ast.Module) -> dict[str, list[Any]]:
+        """Collect local Enum/StrEnum/IntEnum classes and their member values."""
+        enum_definitions: dict[str, list[Any]] = {}
+
+        for node in tree.body:
+            if not isinstance(node, ast.ClassDef):
+                continue
+            if not self._class_inherits_enum(node):
+                continue
+
+            values = self._extract_enum_values(node)
+            if values:
+                enum_definitions[node.name] = values
+
+        return enum_definitions
+
+    def _class_inherits_enum(self, class_node: ast.ClassDef) -> bool:
+        enum_base_names = {"Enum", "StrEnum", "IntEnum"}
+        for base in class_node.bases:
+            base_name = self._annotation_to_string(base)
+            if base_name.rsplit(".", 1)[-1] in enum_base_names:
+                return True
+        return False
+
+    def _extract_enum_values(self, class_node: ast.ClassDef) -> list[Any]:
+        values: list[Any] = []
+
+        for stmt in class_node.body:
+            value_node: ast.AST | None = None
+            member_name: str | None = None
+
+            if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1:
+                target = stmt.targets[0]
+                if isinstance(target, ast.Name):
+                    member_name = target.id
+                    value_node = stmt.value
+            elif isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+                member_name = stmt.target.id
+                value_node = stmt.value
+
+            if not member_name or member_name.startswith("_") or value_node is None:
+                continue
+
+            value = self._ast_value_to_python(value_node)
+            if value is not None:
+                values.append(value)
+
+        return values
+
+    def _enum_values_for_annotation(
+        self,
+        annotation: ast.AST,
+        enum_definitions: dict[str, list[Any]] | None,
+    ) -> list[Any] | None:
+        if not enum_definitions:
+            return None
+
+        annotation_name = self._annotation_to_string(annotation)
+        if annotation_name in enum_definitions:
+            return enum_definitions[annotation_name]
+
+        short_name = annotation_name.rsplit(".", 1)[-1]
+        return enum_definitions.get(short_name)
+
+    def _enum_json_type(self, values: list[Any]) -> str | None:
+        """Return a JSON Schema primitive type when all enum values agree."""
+
+        value_types: set[str] = set()
+        for value in values:
+            if isinstance(value, str):
+                value_types.add("string")
+            elif isinstance(value, bool):
+                value_types.add("boolean")
+            elif isinstance(value, int):
+                value_types.add("integer")
+            elif isinstance(value, float):
+                value_types.add("number")
+            else:
+                return None
+        return next(iter(value_types)) if len(value_types) == 1 else None
+
+    def _annotation_to_ui_type(
+        self,
+        annotation: ast.AST,
+        *,
+        enum_definitions: dict[str, list[Any]] | None = None,
+    ) -> str:
         """Convert annotation AST to UI type string."""
         type_mapping = {
             "str": "string",
@@ -566,6 +669,14 @@ class WorkflowIndexer:
         }
 
         if isinstance(annotation, ast.Name):
+            enum_values = self._enum_values_for_annotation(annotation, enum_definitions)
+            if enum_values is not None:
+                return {
+                    "boolean": "bool",
+                    "integer": "int",
+                    "number": "float",
+                    "string": "string",
+                }.get(self._enum_json_type(enum_values), "json")
             return type_mapping.get(annotation.id, "json")
 
         elif isinstance(annotation, ast.Subscript):
@@ -578,11 +689,15 @@ class WorkflowIndexer:
                     return "json"
                 elif base_type == "Optional":
                     # Optional[str] -> string
-                    inner = self._annotation_to_ui_type(annotation.slice)
+                    inner = self._annotation_to_ui_type(
+                        annotation.slice,
+                        enum_definitions=enum_definitions,
+                    )
                     return inner
                 elif base_type == "Union":
                     return self._annotation_to_ui_type(
-                        annotation.slice.elts[0] if isinstance(annotation.slice, ast.Tuple) and annotation.slice.elts else annotation.slice
+                        annotation.slice.elts[0] if isinstance(annotation.slice, ast.Tuple) and annotation.slice.elts else annotation.slice,
+                        enum_definitions=enum_definitions,
                     )
                 elif base_type == "Literal":
                     # Literal["a", "b"] -> infer type from values
@@ -592,14 +707,29 @@ class WorkflowIndexer:
 
         elif isinstance(annotation, ast.BinOp) and isinstance(annotation.op, ast.BitOr):
             # str | None -> string
-            left_type = self._annotation_to_ui_type(annotation.left)
+            left_type = self._annotation_to_ui_type(
+                annotation.left,
+                enum_definitions=enum_definitions,
+            )
             return left_type
 
         return "json"
 
-    def _annotation_to_json_schema(self, annotation: ast.AST) -> dict[str, Any]:
+    def _annotation_to_json_schema(
+        self,
+        annotation: ast.AST,
+        *,
+        enum_definitions: dict[str, list[Any]] | None = None,
+    ) -> dict[str, Any]:
         """Convert annotation AST to a JSON Schema fragment."""
         if isinstance(annotation, ast.Name):
+            enum_values = self._enum_values_for_annotation(annotation, enum_definitions)
+            if enum_values is not None:
+                schema: dict[str, Any] = {"enum": enum_values}
+                json_type = self._enum_json_type(enum_values)
+                if json_type is not None:
+                    schema["type"] = json_type
+                return schema
             if annotation.id == "Any":
                 return {}
             if annotation.id == "str":
@@ -653,7 +783,10 @@ class WorkflowIndexer:
                         schema["type"] = "number"
                 return schema
             if base_name.endswith("Optional") or base_name == "Optional":
-                return self._annotation_to_json_schema(annotation.slice)
+                return self._annotation_to_json_schema(
+                    annotation.slice,
+                    enum_definitions=enum_definitions,
+                )
             if base_name.endswith("Union") or base_name == "Union":
                 if isinstance(annotation.slice, ast.Tuple):
                     non_none = [
@@ -661,19 +794,34 @@ class WorkflowIndexer:
                         if self._annotation_to_string(elt) != "None"
                     ]
                     if len(non_none) == 1:
-                        return self._annotation_to_json_schema(non_none[0])
+                        return self._annotation_to_json_schema(
+                            non_none[0],
+                            enum_definitions=enum_definitions,
+                        )
                     if non_none:
                         return {
-                            "anyOf": [self._annotation_to_json_schema(elt) for elt in non_none]
+                            "anyOf": [
+                                self._annotation_to_json_schema(
+                                    elt,
+                                    enum_definitions=enum_definitions,
+                                )
+                                for elt in non_none
+                            ]
                         }
-                return self._annotation_to_json_schema(annotation.slice)
+                return self._annotation_to_json_schema(
+                    annotation.slice,
+                    enum_definitions=enum_definitions,
+                )
             if base_name.endswith("list") or base_name == "list":
                 item_node = annotation.slice
                 if isinstance(item_node, ast.Tuple):
                     item_node = item_node.elts[0] if item_node.elts else item_node
                 return {
                     "type": "array",
-                    "items": self._annotation_to_json_schema(item_node),
+                    "items": self._annotation_to_json_schema(
+                        item_node,
+                        enum_definitions=enum_definitions,
+                    ),
                 }
             if base_name.endswith("dict") or base_name == "dict":
                 value_node = None
@@ -684,14 +832,23 @@ class WorkflowIndexer:
                     value_node = annotation.slice
                 schema: dict[str, Any] = {"type": "object", "additionalProperties": True}
                 if value_node is not None:
-                    value_schema = self._annotation_to_json_schema(value_node)
+                    value_schema = self._annotation_to_json_schema(
+                        value_node,
+                        enum_definitions=enum_definitions,
+                    )
                     if value_schema:
                         schema["additionalProperties"] = value_schema
                 return schema
 
         if isinstance(annotation, ast.BinOp) and isinstance(annotation.op, ast.BitOr):
-            left = self._annotation_to_json_schema(annotation.left)
-            right = self._annotation_to_json_schema(annotation.right)
+            left = self._annotation_to_json_schema(
+                annotation.left,
+                enum_definitions=enum_definitions,
+            )
+            right = self._annotation_to_json_schema(
+                annotation.right,
+                enum_definitions=enum_definitions,
+            )
             if self._annotation_to_string(annotation.left) == "None":
                 return right
             if self._annotation_to_string(annotation.right) == "None":
@@ -728,8 +885,17 @@ class WorkflowIndexer:
             return "float"
         return "string"
 
-    def _extract_literal_options(self, annotation: ast.AST) -> list[dict[str, str]] | None:
+    def _extract_literal_options(
+        self,
+        annotation: ast.AST,
+        *,
+        enum_definitions: dict[str, list[Any]] | None = None,
+    ) -> list[dict[str, str]] | None:
         """Extract options from Literal type annotation."""
+        enum_values = self._enum_values_for_annotation(annotation, enum_definitions)
+        if enum_values is not None:
+            return [{"label": str(value), "value": str(value)} for value in enum_values]
+
         if not isinstance(annotation, ast.Subscript):
             return None
         base_name = self._annotation_to_string(annotation.value)
