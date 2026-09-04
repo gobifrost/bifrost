@@ -229,7 +229,11 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # EventSubscriptionCreate's filter_expression description now documents
     # its enforced JMESPath-compatible behavior (2026-08-26). COSMETIC: the
     # field shape is unchanged; fingerprint refreshed only.
-    "3052c60686d4a80f3321b1bb73054fdee3ab261813cc162fe7566f2074e26f36"
+    #
+    # WorkflowParameter gained optional python_type and json_schema fields
+    # (2026-09-04). ADDITIVE: older clients ignore the richer tool-contract
+    # metadata, so the fingerprint is refreshed without raising MIN_CLI_VERSION.
+    "8c98101e6e5e0b950748fdb76574c2e33afba66926a5daf7e6a7c548dcb38feb"
 )
 
 
