@@ -48,6 +48,8 @@ class WorkflowParameter:
     required: bool = False
     default_value: Any | None = None
     options: list[dict[str, str]] | None = None  # For Literal types - [{label, value}, ...]
+    python_type: str | None = None
+    json_schema: dict[str, Any] | None = None
 
 
 @dataclass
@@ -605,6 +607,13 @@ def _convert_data_provider_metadata(old_metadata: Any) -> DataProviderMetadata:
     )
 
 
+def _get_parameter_value(parameter: Any, key: str, default: Any = None) -> Any:
+    """Read a parameter field from either registry metadata or a plain mapping."""
+    if isinstance(parameter, dict):
+        return parameter.get(key, default)
+    return getattr(parameter, key, default)
+
+
 def _convert_parameters(params: list) -> list[WorkflowParameter]:
     """Convert parameter list to WorkflowParameter list."""
     result = []
@@ -613,12 +622,13 @@ def _convert_parameters(params: list) -> list[WorkflowParameter]:
             result.append(p)
         else:
             result.append(WorkflowParameter(
-                name=p.name,
-                type=p.type,
-                label=getattr(p, 'label', None),
-                required=getattr(p, 'required', False),
-                default_value=getattr(p, 'default_value', None),
+                name=_get_parameter_value(p, "name"),
+                type=_get_parameter_value(p, "type"),
+                label=_get_parameter_value(p, "label"),
+                required=_get_parameter_value(p, "required", False),
+                default_value=_get_parameter_value(p, "default_value"),
+                options=_get_parameter_value(p, "options"),
+                python_type=_get_parameter_value(p, "python_type"),
+                json_schema=_get_parameter_value(p, "json_schema"),
             ))
     return result
-
-

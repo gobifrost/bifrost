@@ -41,6 +41,7 @@ from src.services.mcp_server.tools.gateway import (
     GATEWAY_TOOL_NAMES,
 )
 from src.services.mcp_server.tool_result import error_result, success_result
+from src.services.tool_schema import parameters_json_schema
 
 logger = logging.getLogger(__name__)
 
@@ -841,25 +842,6 @@ async def _register_workflow_tools(mcp: "FastMCP") -> int:
                     # Store the registered name for agent-scoped lookups.
                     _WORKFLOW_ID_TO_TOOL_NAME[workflow_id] = tool_name
 
-                    # Build JSON Schema from parameters_schema
-                    properties: dict[str, Any] = {}
-                    required: list[str] = []
-                    for param in tool.parameters_schema:
-                        param_name = param.get("name")
-                        if not param_name:
-                            continue
-
-                        param_type = param.get("type", "string")
-                        json_type = _map_type_to_json_schema(param_type)
-
-                        properties[param_name] = {
-                            "type": json_type,
-                            "description": param.get("label") or param.get("description") or param_name,
-                        }
-
-                        if param.get("required", False):
-                            required.append(param_name)
-
                     # Create WorkflowTool with human-readable name
                     # Context is retrieved dynamically from authenticated token at runtime
                     workflow_tool = _WorkflowTool(
@@ -867,11 +849,10 @@ async def _register_workflow_tools(mcp: "FastMCP") -> int:
                         description=description,
                         workflow_id=workflow_id,
                         workflow_name=workflow_name,
-                        parameters={
-                            "type": "object",
-                            "properties": properties,
-                            "required": required,
-                        },
+                        parameters=parameters_json_schema(
+                            tool.parameters_schema,
+                            allow_unknown_when_empty=True,
+                        ),
                     )
 
                     # Add to FastMCP server

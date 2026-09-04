@@ -72,6 +72,29 @@ class TestParamToOpenAPISchema:
         schema = _param_to_openapi_schema(param)
         assert schema == {"type": "string"}
 
+    def test_nested_json_schema_is_preserved(self):
+        """Rich json_schema payloads are preserved for OpenAPI consumers."""
+        param = {
+            "name": "payload_items",
+            "type": "list",
+            "required": True,
+            "json_schema": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": {"type": "integer"},
+                },
+            },
+        }
+        schema = _param_to_openapi_schema(param)
+        assert schema == {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": {"type": "integer"},
+            },
+        }
+
 
 class TestGenerateWorkflowOpenAPISchema:
     """Tests for generating complete OpenAPI path schemas for workflows."""

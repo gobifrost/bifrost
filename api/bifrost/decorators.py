@@ -48,7 +48,9 @@ class WorkflowParameter:
     required: bool = True
     description: str | None = None
     ui_type: str = "text"
-    options: list[str] | None = None
+    options: list[dict[str, str]] | None = None
+    python_type: str | None = None
+    json_schema: dict[str, Any] | None = None
 
 
 @dataclass

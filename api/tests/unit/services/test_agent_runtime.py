@@ -719,6 +719,49 @@ async def test_toolset_preserves_stored_json_schema_and_emits_lifecycle_events()
 
 
 @pytest.mark.asyncio
+async def test_toolset_rejects_missing_and_unknown_args_before_executor() -> None:
+    calls: list[tuple[str, dict]] = []
+    events = []
+
+    async def execute(name: str, arguments: dict, tool_call_id: str) -> dict:
+        calls.append((name, arguments))
+        return {"ok": True}
+
+    async def observe(event) -> None:
+        events.append(event)
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string"},
+        },
+        "required": ["query"],
+        "additionalProperties": False,
+    }
+    toolset = BifrostToolset(
+        [ToolDefinition(name="search_records", description="Search", parameters=schema)],
+        execute,
+        event_handler=observe,
+    )
+    ctx = MagicMock(tool_call_id="call-1")
+    tools = await toolset.get_tools(ctx)
+
+    result = await toolset.call_tool(
+        "search_records",
+        {"sql": "SELECT * FROM tickets"},
+        ctx,
+        tools["search_records"],
+    )
+
+    assert calls == []
+    assert result.startswith("Error: Arguments do not match the live tool schema.")
+    assert "required" in result
+    assert "unexpected" in result or "unexpected" in result.lower()
+    assert [event.type for event in events] == ["tool_call", "tool_error"]
+    assert events[-1].error is not None
+
+
+@pytest.mark.asyncio
 async def test_toolset_bounds_large_model_result_but_observer_receives_full_result() -> None:
     full_result = "A" * 40_000
     events = []

@@ -22,6 +22,7 @@ from src.sdk.error_handling import WorkflowError
 from src.sdk.errors import UserError, WorkflowExecutionException
 from src.models.enums import ExecutionStatus
 from src.core.cache import get_cached_data_provider, cache_data_provider_result
+from src.core.error_messages import format_exception_message
 from src.core.secret_string import redact_secrets
 
 logger = logging.getLogger(__name__)
@@ -475,7 +476,11 @@ async def execute(request: ExecutionRequest) -> ExecutionResult:
         # Determine error type from original exception
         original_exc = e.original_exception
         error_type = type(original_exc).__name__
-        error_message = str(original_exc)
+        execution_context = "executing script" if request.code else "executing workflow"
+        error_message = format_exception_message(
+            original_exc,
+            context=execution_context,
+        )
 
         # Add traceback to logs
         import traceback
@@ -550,7 +555,10 @@ async def execute(request: ExecutionRequest) -> ExecutionResult:
                     'source': 'workflow'
                 })
 
-        _wf_err_msg = str(e)
+        _wf_err_msg = format_exception_message(
+            e,
+            context="executing script" if request.code else "executing workflow",
+        )
         e.__traceback__ = None  # Free traceback references
 
         _, scrubbed_vars, scrubbed_logs, scrubbed_err = _scrub_outputs(
@@ -574,12 +582,17 @@ async def execute(request: ExecutionRequest) -> ExecutionResult:
         # Unexpected error
         end_time = datetime.now(timezone.utc)
         duration_ms = int((end_time - start_time).total_seconds() * 1000)
+        execution_context = "executing script" if request.code else "executing workflow"
+        error_message = format_exception_message(
+            e,
+            context=execution_context,
+        )
 
         logger.error(
             f"Execution error: {request.name or 'script'}",
             extra={
                 "execution_id": request.execution_id,
-                "error": str(e),
+                "error": error_message,
                 "error_type": type(e).__name__
             },
             exc_info=True
@@ -613,7 +626,7 @@ async def execute(request: ExecutionRequest) -> ExecutionResult:
                         'source': 'script' if request.code else 'workflow'
                     })
 
-        _gen_err_msg = str(e)
+        _gen_err_msg = error_message
         e.__traceback__ = None  # Free traceback references
 
         _, scrubbed_vars, scrubbed_logs, scrubbed_err = _scrub_outputs(

@@ -11,9 +11,6 @@ from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID, uuid5
 
 import pydantic_core
-from jsonschema import FormatChecker
-from jsonschema.exceptions import SchemaError
-from jsonschema.validators import validator_for
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
@@ -41,6 +38,7 @@ from src.services.mcp_client.errors import (
     ToolDispatchError,
 )
 from src.services.mcp_server.config_service import MCPConfig, MCPConfigService
+from src.services.tool_schema import validate_arguments_against_schema
 
 if TYPE_CHECKING:
     from src.services.mcp_server.server import MCPContext
@@ -1012,43 +1010,20 @@ class MCPAgentGatewayService:
             "type": "object",
             "properties": {},
         }
-        try:
-            validator_class = validator_for(schema)
-            validator_class.check_schema(schema)
-            validator = validator_class(
-                schema,
-                format_checker=FormatChecker(),
-            )
-        except SchemaError as exc:
+        issues, schema_error = validate_arguments_against_schema(schema, arguments)
+        if schema_error:
             raise GatewayError(
                 "TOOL_SCHEMA_INVALID",
                 "The live tool schema is invalid and cannot be executed.",
                 details={
                     "tool_ref": tool.tool_ref,
                     "tool_name": tool.definition.name,
-                    "schema_error": exc.message,
+                    "schema_error": schema_error,
                 },
-            ) from exc
+            )
 
-        errors = sorted(
-            validator.iter_errors(arguments),
-            key=lambda error: [str(part) for part in error.absolute_path],
-        )
-        if not errors:
+        if not issues:
             return
-
-        issues = [
-            {
-                "path": _json_pointer(error.absolute_path),
-                "message": error.message,
-                "validator": error.validator,
-                "expected": pydantic_core.to_jsonable_python(
-                    error.validator_value,
-                    fallback=str,
-                ),
-            }
-            for error in errors[:10]
-        ]
         raise GatewayError(
             "INVALID_ARGUMENTS",
             "Arguments do not match the live tool schema.",
