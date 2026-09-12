@@ -350,7 +350,7 @@ class WebhookAdapter(ABC):
         prefix: str = "",
     ) -> bool:
         """
-        Verify HMAC-SHA256 signature.
+        Verify a hex- or base64-encoded HMAC-SHA256 signature.
 
         Args:
             body: Request body bytes.
@@ -364,20 +364,29 @@ class WebhookAdapter(ABC):
         if not signature:
             return False
 
+        import base64
         import hashlib
         import hmac
 
-        # Remove prefix if present
+        # Header values may include optional whitespace around the prefix or
+        # encoded digest. Whitespace within the digest remains significant.
+        signature = signature.strip()
         if prefix and signature.startswith(prefix):
-            signature = signature[len(prefix) :]
+            signature = signature[len(prefix) :].strip()
 
-        expected = hmac.new(
+        digest = hmac.new(
             secret.encode("utf-8"),
             body,
             hashlib.sha256,
-        ).hexdigest()
+        ).digest()
 
-        return hmac.compare_digest(signature.lower(), expected.lower())
+        hex_matches = hmac.compare_digest(signature.lower(), digest.hex())
+        base64_matches = hmac.compare_digest(
+            signature,
+            base64.b64encode(digest).decode("ascii"),
+        )
+
+        return hex_matches or base64_matches
 
     @staticmethod
     def expiration_datetime(days: int = 3) -> str:
