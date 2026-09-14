@@ -41,6 +41,7 @@ class AIProviderConnectionResponse(BaseModel):
     endpoint: str | None = None
     api_key_set: bool
     profile_count: int = 0
+    anthropic_prompt_cache_supported: bool | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -52,6 +53,7 @@ class AIProviderConnectionSummary(BaseModel):
     name: str
     provider: AIProviderKind
     endpoint: str | None = None
+    anthropic_prompt_cache_supported: bool | None = None
 
 
 class AIModelProfileCreate(BaseModel):

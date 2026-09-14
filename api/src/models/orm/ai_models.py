@@ -24,6 +24,9 @@ class AIProviderConnection(Base):
     provider: Mapped[str] = mapped_column(String(50), nullable=False)
     endpoint: Mapped[str | None] = mapped_column(String(500), nullable=True)
     encrypted_api_key: Mapped[str] = mapped_column(Text, nullable=False)
+    anthropic_prompt_cache_supported: Mapped[bool | None] = mapped_column(
+        Boolean, nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

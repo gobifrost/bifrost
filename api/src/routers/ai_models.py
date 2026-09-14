@@ -73,6 +73,7 @@ def _connection_response(connection: AIProviderConnection) -> AIProviderConnecti
         endpoint=connection.endpoint,
         api_key_set=bool(connection.encrypted_api_key),
         profile_count=len(connection.profiles),
+        anthropic_prompt_cache_supported=connection.anthropic_prompt_cache_supported,
         created_at=connection.created_at,
         updated_at=connection.updated_at,
     )
@@ -84,6 +85,7 @@ def _connection_summary(connection: AIProviderConnection) -> AIProviderConnectio
         name=connection.name,
         provider=connection.provider,
         endpoint=connection.endpoint,
+        anthropic_prompt_cache_supported=connection.anthropic_prompt_cache_supported,
     )
 
 

@@ -151,7 +151,11 @@ class PydanticAIClient(BaseLLMClient):
             # Prompt caching for ai.complete/ai.stream as well; see model_factory.
             from src.services.agent_runtime.model_factory import anthropic_prompt_cache_settings
 
-            settings.update(anthropic_prompt_cache_settings())
+            settings.update(
+                anthropic_prompt_cache_settings(
+                    self.config.anthropic_prompt_cache_supported
+                )
+            )
         return cast(ModelSettings, settings)
 
     @staticmethod

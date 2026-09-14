@@ -233,6 +233,8 @@ class AIModelService:
             api_key=api_key,
             endpoint=connection.endpoint,
             openai_transport=openai_transport,
+            provider_connection_id=connection.id,
+            anthropic_prompt_cache_supported=connection.anthropic_prompt_cache_supported,
         )
 
     async def list_chat_profiles(self) -> tuple[list[AIModelProfile], UUID | None]:
@@ -405,6 +407,7 @@ class AIModelService:
         if api_key is not None:
             connection.encrypted_api_key = self.encrypt_api_key(api_key)
         if transport_may_change:
+            connection.anthropic_prompt_cache_supported = None
             await self.session.execute(
                 update(AIModelProfile)
                 .where(AIModelProfile.connection_id == connection.id)

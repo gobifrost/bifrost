@@ -11150,6 +11150,8 @@ export interface components {
              * @default 0
              */
             profile_count: number;
+            /** Anthropic Prompt Cache Supported */
+            anthropic_prompt_cache_supported?: boolean | null;
             /**
              * Created At
              * Format: date-time
@@ -11177,6 +11179,8 @@ export interface components {
             provider: "openai" | "anthropic" | "google" | "openrouter" | "openai_compatible";
             /** Endpoint */
             endpoint?: string | null;
+            /** Anthropic Prompt Cache Supported */
+            anthropic_prompt_cache_supported?: boolean | null;
         };
         /** AIProviderConnectionUpdate */
         AIProviderConnectionUpdate: {

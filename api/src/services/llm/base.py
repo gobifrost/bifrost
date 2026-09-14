@@ -9,6 +9,7 @@ from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, Literal
+from uuid import UUID
 
 
 @dataclass
@@ -113,6 +114,8 @@ class LLMConfig:
     api_key: str
     endpoint: str | None = None
     openai_transport: Literal["responses", "chat_completions"] | None = None
+    provider_connection_id: UUID | None = None
+    anthropic_prompt_cache_supported: bool | None = None
     # Optional parameters
     extra_params: dict[str, Any] = field(default_factory=dict)
 
