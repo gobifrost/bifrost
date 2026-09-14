@@ -34,7 +34,7 @@ def agent_model_settings(
         settings["max_tokens"] = resolved_max_tokens
     if is_openrouter_endpoint(config.endpoint):
         settings["extra_body"] = {"session_id": session_id[:256]}
-    elif config.provider == "openai":
+    if config.provider == "openai" and not is_openrouter_endpoint(config.endpoint):
         settings["openai_store"] = False
     elif config.provider == "anthropic":
         settings.update(

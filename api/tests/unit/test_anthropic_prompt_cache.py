@@ -50,6 +50,19 @@ def test_known_unsupported_endpoint_omits_cache_settings():
     assert not set(anthropic_prompt_cache_settings()) & direct_settings.keys()
 
 
+def test_anthropic_messages_through_openrouter_keeps_cache_settings():
+    config = _config("anthropic", "https://openrouter.ai/api")
+
+    agent_settings = agent_model_settings(
+        config, max_tokens=1000, session_id="cache-probe"
+    )
+    direct_settings = PydanticAIClient(config)._model_settings(1000)
+
+    assert agent_settings["extra_body"] == {"session_id": "cache-probe"}
+    assert agent_settings["anthropic_cache"] is True
+    assert "anthropic_cache" in direct_settings
+
+
 @pytest.mark.asyncio
 async def test_native_anthropic_model_uses_adaptive_request_path():
     calls = []
