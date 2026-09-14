@@ -60,6 +60,24 @@ IDEMPOTENT_METHODS: frozenset[str] = frozenset({"GET", "PUT", "DELETE", "HEAD", 
 SDK_RETRY_BACKOFF_SECONDS: tuple[float, ...] = (0.5, 1.5, 4.0, 10.0, 20.0)
 
 
+# Transient transport-layer failures (connection reset, read/connect timeout,
+# pool exhaustion, protocol error). Unlike a 5xx these RAISE rather than return a
+# response, so they bypassed the retry loop entirely: one reset worker<->api
+# connection failed the whole workflow. Retried under the same gate as 5xx:
+# idempotent methods, or a caller that opts in with ``retry_transient=True`` for
+# an operation that is idempotent in effect (an ON CONFLICT upsert, an
+# absolute-value cursor write, etc.).
+TRANSIENT_TRANSPORT_EXCEPTIONS: tuple[type[BaseException], ...] = (
+    httpx.ConnectError,
+    httpx.ConnectTimeout,
+    httpx.ReadError,
+    httpx.ReadTimeout,
+    httpx.WriteError,
+    httpx.PoolTimeout,
+    httpx.RemoteProtocolError,
+)
+
+
 def _is_idempotent(method: str) -> bool:
     return method.upper() in IDEMPOTENT_METHODS
 
@@ -68,44 +86,65 @@ def _is_transient_5xx(status_code: int) -> bool:
     return status_code in TRANSIENT_5XX_STATUS_CODES
 
 
-async def _send_with_5xx_retry(
+async def _send_with_retry(
     method: str,
     do_send: Callable[[], Awaitable[httpx.Response]],
+    *,
+    retry_transient: bool = False,
 ) -> httpx.Response:
-    """Retry transient 5xx on idempotent methods.
+    """Retry transient 5xx AND transient transport errors on retryable requests.
+
+    A request is retryable when the method is idempotent OR the caller passes
+    ``retry_transient=True`` (asserting the operation is idempotent-in-effect).
+    Non-retryable requests make a single attempt, preserving plain POST/PATCH
+    behaviour.
 
     The do_send callable must be safe to invoke multiple times; it should
     re-issue the request fresh each call (httpx Request objects with bodies
     are single-use, so callers either pass simple methods or rebuild the
     request inside the closure).
     """
-    response = await do_send()
-    if not _is_idempotent(method):
+    retryable = _is_idempotent(method) or retry_transient
+    backoffs = SDK_RETRY_BACKOFF_SECONDS if retryable else ()
+    response: httpx.Response | None = None
+    for i in range(len(backoffs) + 1):
+        if i > 0:
+            await asyncio.sleep(backoffs[i - 1])
+        try:
+            response = await do_send()
+        except TRANSIENT_TRANSPORT_EXCEPTIONS:
+            if i == len(backoffs):  # retries exhausted (or non-retryable)
+                raise
+            continue
+        if i < len(backoffs) and _is_transient_5xx(response.status_code):
+            continue
         return response
-
-    for delay in SDK_RETRY_BACKOFF_SECONDS:
-        if not _is_transient_5xx(response.status_code):
-            return response
-        await asyncio.sleep(delay)
-        response = await do_send()
-    return response
+    return response  # type: ignore[return-value]
 
 
-def _send_sync_with_5xx_retry(
+def _send_sync_with_retry(
     method: str,
     do_send: Callable[[], httpx.Response],
+    *,
+    retry_transient: bool = False,
 ) -> httpx.Response:
-    """Sync counterpart of _send_with_5xx_retry."""
-    response = do_send()
-    if not _is_idempotent(method):
+    """Sync counterpart of :func:`_send_with_retry`."""
+    retryable = _is_idempotent(method) or retry_transient
+    backoffs = SDK_RETRY_BACKOFF_SECONDS if retryable else ()
+    response: httpx.Response | None = None
+    for i in range(len(backoffs) + 1):
+        if i > 0:
+            time.sleep(backoffs[i - 1])
+        try:
+            response = do_send()
+        except TRANSIENT_TRANSPORT_EXCEPTIONS:
+            if i == len(backoffs):
+                raise
+            continue
+        if i < len(backoffs) and _is_transient_5xx(response.status_code):
+            continue
         return response
-
-    for delay in SDK_RETRY_BACKOFF_SECONDS:
-        if not _is_transient_5xx(response.status_code):
-            return response
-        time.sleep(delay)
-        response = do_send()
-    return response
+    return response  # type: ignore[return-value]
 
 
 def raise_for_status_with_detail(response: httpx.Response) -> None:
@@ -748,6 +787,8 @@ class BifrostClient:
         self, method: str, path: str, **kwargs
     ) -> httpx.Response:
         """Make a synchronous request, refreshing on 401 and retrying once."""
+        retry_transient = kwargs.pop("retry_transient", False)
+
         def _send() -> httpx.Response:
             observed_access_token = self._access_token
             response = self._sync_http.request(method.upper(), path, **kwargs)
@@ -757,16 +798,18 @@ class BifrostClient:
                 response = self._sync_http.request(method.upper(), path, **kwargs)
             return response
 
-        return _send_sync_with_5xx_retry(method, _send)
+        return _send_sync_with_retry(method, _send, retry_transient=retry_transient)
 
     async def _request_with_refresh(self, method: str, path: str, **kwargs) -> httpx.Response:
         """Make an HTTP request, refreshing token on 401 and retrying once.
 
-        Wrapped with :func:`_send_with_5xx_retry` so idempotent methods retry
-        transient 502/503/504 during rolling API deploys. The 401-refresh-retry
+        Wrapped with :func:`_send_with_retry` so idempotent methods (or callers passing
+        ``retry_transient=True``) retry transient 502/503/504 and transport errors during rolling API deploys. The 401-refresh-retry
         fires inside each attempt, so a refresh-then-5xx still benefits from
         the outer retry.
         """
+        retry_transient = kwargs.pop("retry_transient", False)
+
         async def _send() -> httpx.Response:
             http = self._get_async_client()
             observed_access_token = self._access_token
@@ -777,7 +820,7 @@ class BifrostClient:
                     response = await getattr(http, method)(path, **kwargs)
             return response
 
-        return await _send_with_5xx_retry(method, _send)
+        return await _send_with_retry(method, _send, retry_transient=retry_transient)
 
     async def get(self, path: str, **kwargs) -> httpx.Response:
         """Make GET request."""
@@ -809,9 +852,11 @@ class BifrostClient:
         Needed for verbs whose shortcut method on ``httpx.AsyncClient`` does
         not accept a body (DELETE) but whose REST endpoint expects one.
 
-        Wrapped with :func:`_send_with_5xx_retry` so idempotent methods retry
-        transient 502/503/504 during rolling API deploys.
+        Wrapped with :func:`_send_with_retry` so idempotent methods (or callers passing
+        ``retry_transient=True``) retry transient 502/503/504 and transport errors during rolling API deploys.
         """
+        retry_transient = kwargs.pop("retry_transient", False)
+
         async def _send() -> httpx.Response:
             http = self._get_async_client()
             observed_access_token = self._access_token
@@ -822,7 +867,7 @@ class BifrostClient:
                     response = await http.request(method.upper(), path, **kwargs)
             return response
 
-        return await _send_with_5xx_retry(method, _send)
+        return await _send_with_retry(method, _send, retry_transient=retry_transient)
 
     def stream(self, method: str, path: str, **kwargs):
         """
@@ -838,7 +883,7 @@ class BifrostClient:
     def get_sync(self, path: str, **kwargs) -> httpx.Response:
         """Make synchronous GET request.
 
-        Wrapped with :func:`_send_sync_with_5xx_retry` so transient 502/503/504
+        Wrapped with :func:`_send_sync_with_retry` so transient 502/503/504
         from rolling API deploys are retried.
         """
         return self._request_with_refresh_sync("GET", path, **kwargs)

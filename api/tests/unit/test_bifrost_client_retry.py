@@ -228,3 +228,71 @@ def test_sync_post_does_not_retry_on_503(force_no_refresh):
         assert len(calls) == 1
     finally:
         client._sync_http.close()
+
+
+# ------------------- transient transport-error tests -------------------
+
+
+def _transport_seq_handler(
+    steps: list[object],
+) -> tuple[Callable[[httpx.Request], httpx.Response], list[int]]:
+    """Handler that, per call, either raises an exception instance or returns a
+    status code. ``steps`` mixes ``Exception`` instances and ints."""
+    counter: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        idx = len(counter)
+        counter.append(1)
+        if idx >= len(steps):
+            raise AssertionError(f"unexpected request #{idx + 1}")
+        step = steps[idx]
+        if isinstance(step, BaseException):
+            raise step
+        return httpx.Response(step, json={"ok": True})
+
+    return handler, counter
+
+
+@pytest.mark.asyncio
+async def test_async_get_retries_on_transport_error(force_no_refresh):
+    """GET ReadError, ReadError, 200 → succeeds after retrying the transport drops."""
+    handler, calls = _transport_seq_handler(
+        [httpx.ReadError("boom"), httpx.ReadError("boom"), 200]
+    )
+    client = _make_fixed_client(handler)
+    try:
+        response = await client.get("/api/things")
+        assert response.status_code == 200
+        assert len(calls) == 3
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_async_post_does_not_retry_transport_error(force_no_refresh):
+    """POST ReadError → propagates with a single call (non-idempotent, no opt-in)."""
+    handler, calls = _transport_seq_handler([httpx.ReadError("boom")])
+    client = _make_fixed_client(handler)
+    try:
+        with pytest.raises(httpx.ReadError):
+            await client.post("/api/things")
+        assert len(calls) == 1
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_async_post_retries_transport_error_with_opt_in(force_no_refresh):
+    """POST + retry_transient=True ReadError, 200 → retries an idempotent-in-effect op."""
+    handler, calls = _transport_seq_handler([httpx.ReadError("boom"), 200])
+    client = _make_fixed_client(handler)
+    try:
+        response = await client.post("/api/things", retry_transient=True)
+        assert response.status_code == 200
+        assert len(calls) == 2
+        # the opt-in flag must not leak into the httpx request kwargs
+    finally:
+        await client.close()
+
+
+# ------------------------- sync tests -------------------------
