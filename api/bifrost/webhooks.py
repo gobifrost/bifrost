@@ -34,16 +34,15 @@ Usage in workspace/adapters/my_adapter.py:
             ...
 """
 
+import base64
+import hashlib
+import hmac
+import json
+import secrets
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, TypeVar
-
-import hashlib
-import hmac
-import secrets
-import json
-
 
 F = TypeVar("F", bound=type)
 
@@ -304,7 +303,7 @@ class WebhookAdapter(ABC):
         prefix: str = "sha256=",
     ) -> bool:
         """
-        Verify HMAC-SHA256 signature.
+        Verify a hex- or base64-encoded HMAC-SHA256 signature.
 
         Common pattern for webhook validation (GitHub, Stripe, etc.)
 
@@ -317,16 +316,25 @@ class WebhookAdapter(ABC):
         Returns:
             True if signature is valid
         """
-        expected = hmac.new(
+        signature = signature.strip()
+        if prefix:
+            if not signature.startswith(prefix):
+                return False
+            signature = signature[len(prefix) :].strip()
+
+        digest = hmac.new(
             secret.encode(),
             payload,
             hashlib.sha256,
-        ).hexdigest()
+        ).digest()
 
-        if prefix:
-            expected = f"{prefix}{expected}"
+        hex_matches = hmac.compare_digest(signature, digest.hex())
+        base64_matches = hmac.compare_digest(
+            signature,
+            base64.b64encode(digest).decode("ascii"),
+        )
 
-        return hmac.compare_digest(expected, signature)
+        return hex_matches or base64_matches
 
     @staticmethod
     def expiration_datetime(

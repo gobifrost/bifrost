@@ -47,7 +47,7 @@ class GenericWebhookAdapter(WebhookAdapter):
                 "description": "HMAC secret for signature verification (optional)",
                 "format": "password",
                 "x-help": {
-                    "text": "Shared secret used to verify webhook signatures via HMAC-SHA256. Set the same secret in both Bifrost and the sending service.",
+                    "text": "Shared secret used to verify webhook signatures via HMAC-SHA256. Bifrost accepts hex- or base64-encoded digests. Set the same secret in both Bifrost and the sending service.",
                     "code": (
                         "# Python example: sign a webhook request\n"
                         "import hmac, hashlib\n"
@@ -73,7 +73,7 @@ class GenericWebhookAdapter(WebhookAdapter):
                 "description": "Prefix in signature value (e.g., 'sha256=')",
                 "default": "sha256=",
                 "x-help": {
-                    "text": "Prefix before the hex digest in the signature header value. Bifrost strips this before comparing. Use 'sha256=' for GitHub-style signatures, or leave empty if the header contains only the hex digest.",
+                    "text": "Prefix before the encoded digest in the signature header value. Bifrost strips the prefix and surrounding whitespace before comparing. Use 'sha256=' for GitHub-style signatures, or leave empty if the header contains only the digest.",
                 },
             },
             "event_type_header": {
