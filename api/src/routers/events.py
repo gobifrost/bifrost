@@ -1554,26 +1554,8 @@ async def retry_delivery(
         )
 
     # Reset delivery status to pending
-    delivery.status = EventDeliveryStatus.PENDING
-    delivery.error_message = None
-    delivery.execution_id = None
-    await db.flush()
-
-    # Queue the execution
     processor = EventProcessor(db)
-    try:
-        await processor.queue_event_deliveries(delivery.event_id)
-        message = "Delivery queued for retry"
-    except Exception as e:
-        error_message = format_exception_message(
-            e,
-            context="queueing event delivery retry",
-        )
-        logger.error(f"Failed to queue retry: {error_message}", exc_info=True)
-        delivery.status = EventDeliveryStatus.FAILED
-        delivery.error_message = error_message
-        await db.flush()
-        message = f"Failed to queue retry: {error_message}"
+    message = await processor.retry_delivery(delivery)
 
     logger.info(f"Retried delivery {log_safe(delivery_id)}")
 
