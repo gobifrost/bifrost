@@ -252,6 +252,9 @@ def test_runtime_uses_provider_output_defaults_except_when_api_requires_limit() 
     }
     assert agent_model_settings(anthropic, max_tokens=None, session_id="run-123") == {
         "max_tokens": 16_384,
+        "anthropic_cache": True,
+        "anthropic_cache_instructions": True,
+        "anthropic_cache_tool_definitions": True,
     }
 
 

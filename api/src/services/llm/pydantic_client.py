@@ -6,6 +6,7 @@ Pydantic AI without changing those callers while the higher-level chat loop is
 cut over separately.
 """
 
+from typing import Any, cast
 import logging
 from collections.abc import AsyncGenerator
 
@@ -26,7 +27,7 @@ from pydantic_ai.messages import (
     UserContent,
 )
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.models.openai import OpenAIResponsesModelSettings
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition as PydanticToolDefinition
 
 from src.services.agent_runtime.model_factory import (
@@ -139,14 +140,19 @@ class PydanticAIClient(BaseLLMClient):
             logger.error("Pydantic AI streaming error: %s", exc)
             yield LLMStreamChunk(type="error", error=str(exc))
 
-    def _model_settings(self, max_tokens: int | None) -> OpenAIResponsesModelSettings:
+    def _model_settings(self, max_tokens: int | None) -> ModelSettings:
         resolved_max_tokens = request_max_tokens(self.config, max_tokens)
-        settings = OpenAIResponsesModelSettings()
+        settings: dict[str, Any] = {}
         if resolved_max_tokens is not None:
             settings["max_tokens"] = resolved_max_tokens
         if self.provider_name == "openai":
             settings["openai_store"] = False
-        return settings
+        elif self.provider_name == "anthropic":
+            # Prompt caching for ai.complete/ai.stream as well; see model_factory.
+            from src.services.agent_runtime.model_factory import anthropic_prompt_cache_settings
+
+            settings.update(anthropic_prompt_cache_settings())
+        return cast(ModelSettings, settings)
 
     @staticmethod
     def _request_parameters(

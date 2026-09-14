@@ -36,7 +36,26 @@ def agent_model_settings(
         settings["extra_body"] = {"session_id": session_id[:256]}
     elif config.provider == "openai":
         settings["openai_store"] = False
+    elif config.provider == "anthropic":
+        settings.update(anthropic_prompt_cache_settings())
     return settings
+
+
+def anthropic_prompt_cache_settings() -> dict[str, object]:
+    """Anthropic prompt-cache breakpoints for agent and client requests.
+
+    Agent requests re-send the same system prompt and tool definitions on every
+    round, and multi-turn chats re-send the growing history. Without
+    ``cache_control`` Anthropic bills and prefills all of it each time. Explicit
+    breakpoints on the instructions and the last tool definition, plus the
+    automatic moving breakpoint on the latest message, cache the stable prefix
+    (roughly 90% cheaper on reads, and noticeably lower time-to-first-token).
+    """
+    return {
+        "anthropic_cache": True,
+        "anthropic_cache_instructions": True,
+        "anthropic_cache_tool_definitions": True,
+    }
 
 
 def _openrouter_usage(response: object, fallback: RequestUsage) -> RequestUsage:
