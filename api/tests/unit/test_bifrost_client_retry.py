@@ -206,6 +206,42 @@ async def test_async_get_500_not_retried(force_no_refresh):
 # ------------------------- sync tests -------------------------
 
 
+def test_sync_get_retries_on_transport_error(force_no_refresh):
+    """Sync GET retries a dropped connection and returns the next response."""
+    handler, calls = _transport_seq_handler([httpx.ReadError("boom"), 200])
+    client = _make_fixed_client(handler)
+    try:
+        response = client.get_sync("/api/things")
+        assert response.status_code == 200
+        assert len(calls) == 2
+    finally:
+        client._sync_http.close()
+
+
+def test_sync_post_does_not_retry_transport_error(force_no_refresh):
+    """Sync POST propagates a dropped connection unless the caller opts in."""
+    handler, calls = _transport_seq_handler([httpx.ReadError("boom")])
+    client = _make_fixed_client(handler)
+    try:
+        with pytest.raises(httpx.ReadError):
+            client.post_sync("/api/things")
+        assert len(calls) == 1
+    finally:
+        client._sync_http.close()
+
+
+def test_sync_post_retries_transport_error_with_opt_in(force_no_refresh):
+    """Sync POST retries when declared safe and keeps the flag out of httpx."""
+    handler, calls = _transport_seq_handler([httpx.ReadError("boom"), 200])
+    client = _make_fixed_client(handler)
+    try:
+        response = client.post_sync("/api/things", retry_transient=True)
+        assert response.status_code == 200
+        assert len(calls) == 2
+    finally:
+        client._sync_http.close()
+
+
 def test_sync_get_retries_on_503(force_no_refresh):
     """Sync GET retries on 503."""
     handler, calls = _seq_handler([503, 200])
