@@ -68,6 +68,40 @@ describe("Combobox", () => {
 			screen.queryByRole("option", { name: "Sora" }),
 		).not.toBeInTheDocument();
 	});
+	it("filters options by description text", async () => {
+		const { user } = renderWithProviders(
+			<Combobox
+				options={[
+					{
+						value: "archive-library",
+						label: "Archive document library",
+						description: "Moves completed files from SharePoint",
+					},
+					{
+						value: "audit-mailboxes",
+						label: "Audit mailboxes",
+						description: "Checks Exchange retention policies",
+					},
+				]}
+				onValueChange={vi.fn()}
+				placeholder="Choose workflow"
+				searchPlaceholder="Search workflows..."
+			/>,
+		);
+
+		await user.click(screen.getByRole("combobox"));
+		await user.type(
+			screen.getByPlaceholderText("Search workflows..."),
+			"sharepoint",
+		);
+
+		expect(
+			screen.getByRole("option", { name: /Archive document library/ }),
+		).toBeInTheDocument();
+		expect(
+			screen.queryByRole("option", { name: /Audit mailboxes/ }),
+		).not.toBeInTheDocument();
+	});
 	it("selects and clears a long option by keyboard and restores trigger focus", async () => {
 		const label =
 			"Customer reconciliation administrator with extended support permissions";

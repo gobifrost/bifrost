@@ -144,7 +144,10 @@ export function Combobox({
 										key={option.value}
 										value={option.value}
 										className="min-h-11"
-										keywords={[option.label]}
+										keywords={[
+											option.label,
+											option.description ?? "",
+										]}
 										data-checked={value === option.value}
 										onSelect={() => {
 											onValueChange?.(
