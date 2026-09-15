@@ -83,7 +83,7 @@ beforeEach(() => {
 });
 
 describe("Header", () => {
-	it("keeps the mobile header to a single toolbar by omitting the secondary passkey prompt", () => {
+	it("keeps the mobile header to a single toolbar by omitting secondary content", () => {
 		mockUseMediaQuery.mockImplementation(
 			(query: string) =>
 				query.includes("1279px") || query.includes("639px"),
@@ -97,13 +97,15 @@ describe("Header", () => {
 		expect(
 			screen.getByRole("button", { name: /account menu/i }),
 		).toBeVisible();
-		expect(screen.getByLabelText("Workspace status")).toBeVisible();
+		expect(
+			screen.queryByLabelText("Workspace status"),
+		).not.toBeInTheDocument();
 		expect(
 			screen.queryByRole("button", { name: /set up passkey/i }),
 		).not.toBeInTheDocument();
 	});
 
-	it("retains the passkey prompt outside the mobile breakpoint", () => {
+	it("retains secondary header content outside the mobile breakpoint", () => {
 		mockUseMediaQuery.mockImplementation((query: string) =>
 			query.includes("1279px"),
 		);
@@ -113,5 +115,6 @@ describe("Header", () => {
 		expect(
 			screen.getByRole("button", { name: /set up passkey/i }),
 		).toBeVisible();
+		expect(screen.getByLabelText("Workspace status")).toBeVisible();
 	});
 });

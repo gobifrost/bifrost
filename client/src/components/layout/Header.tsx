@@ -192,7 +192,7 @@ export function Header({
 					/>
 				</DropdownMenu>
 			</div>
-			{compactHeader && (
+			{compactHeader && !mobileHeader && (
 				<div
 					className="flex flex-wrap items-center justify-end gap-1 px-3 pb-2 empty:hidden sm:px-4"
 					aria-label="Workspace status"
