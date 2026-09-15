@@ -62,26 +62,53 @@ interface DiscoveredMetadata {
 	token_endpoint?: string;
 	authorization_url?: string;
 	token_url?: string;
+	issuer?: string;
 	audience?: string;
 	resource?: string;
 	scopes_supported?: string[];
 	scopes?: string[] | string;
 	grant_types_supported?: string[];
+	authorization_server_metadata?: {
+		issuer?: string;
+		authorization_endpoint?: string;
+		token_endpoint?: string;
+		grant_types_supported?: string[];
+		scopes_supported?: string[];
+	};
+	protected_resource_metadata?: {
+		resource?: string;
+	};
 	[key: string]: unknown;
 }
 
 function readMetadata(metadata: DiscoveredMetadata) {
+	const issuer =
+		metadata.authorization_server_metadata?.issuer ?? metadata.issuer ?? "";
 	const authorization_url =
-		metadata.authorization_endpoint ?? metadata.authorization_url ?? "";
-	const token_url = metadata.token_endpoint ?? metadata.token_url ?? "";
-	const audience = metadata.audience ?? metadata.resource ?? "";
-	const scopesValue = metadata.scopes_supported ?? metadata.scopes;
+		metadata.authorization_server_metadata?.authorization_endpoint ??
+		metadata.authorization_endpoint ??
+		metadata.authorization_url ??
+		"";
+	const token_url =
+		metadata.authorization_server_metadata?.token_endpoint ??
+		metadata.token_endpoint ??
+		metadata.token_url ??
+		"";
+	const audience =
+		metadata.protected_resource_metadata?.resource ??
+		metadata.resource ??
+		metadata.audience ??
+		"";
+	const scopesValue =
+		metadata.authorization_server_metadata?.scopes_supported ??
+		metadata.scopes_supported ??
+		metadata.scopes;
 	const scopes = Array.isArray(scopesValue)
 		? scopesValue.join(" ")
 		: typeof scopesValue === "string"
 			? scopesValue
 			: "";
-	return { authorization_url, token_url, audience, scopes };
+	return { issuer, authorization_url, token_url, audience, scopes };
 }
 
 /**
@@ -91,7 +118,10 @@ function readMetadata(metadata: DiscoveredMetadata) {
  * default to authorization_code (M365, etc.).
  */
 function detectFlowFromMetadata(metadata: DiscoveredMetadata): OAuthFlowType {
-	const grants = metadata.grant_types_supported ?? [];
+	const grants =
+		metadata.authorization_server_metadata?.grant_types_supported ??
+		metadata.grant_types_supported ??
+		[];
 	const hasCC = grants.includes("client_credentials");
 	const hasAC = grants.includes("authorization_code");
 	if (hasCC && !hasAC) return "client_credentials";
