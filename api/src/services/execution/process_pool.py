@@ -557,6 +557,21 @@ class ProcessPoolManager:
 
         logger.info("ProcessPoolManager started")
 
+    async def drain(self, deadline: float = 300.0) -> None:
+        """Wait for admitted executions and result persistence before stop().
+
+        The caller must first stop admission and finish routing handlers. Keep
+        monitoring, heartbeats, and result delivery alive while children finish.
+        Expiry leaves surviving handles with stop() for durable surrender.
+        """
+        expires_at = asyncio.get_running_loop().time() + deadline
+        while self.processes or any(not task.done() for task in self._result_tasks):
+            remaining = expires_at - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                logger.warning("Process pool drain deadline exceeded")
+                return
+            await asyncio.sleep(min(0.05, remaining))
+
     async def stop(self) -> None:
         """
         Gracefully stop the pool manager and all processes.
