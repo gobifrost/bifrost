@@ -16,7 +16,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from typing import Any
 
-from sqlalchemy import and_, delete, func, select
+from sqlalchemy import and_, delete, func, select, union
 
 from src.core.auth import Context, CurrentSuperuser
 from src.core.log_safety import log_safe
@@ -46,7 +46,7 @@ from src.models import (
 )
 from src.models.orm import Config as ConfigModel
 from src.models.orm import IntegrationConfigSchema
-from src.models.orm import OAuthToken
+from src.models.orm import OAuthProvider, OAuthToken
 from src.services.oauth_provider import (
     append_query_params,
     get_url_resolution_defaults,
@@ -171,27 +171,66 @@ class IntegrationsRepository:
     async def get_list_connection_summaries(
         self,
     ) -> dict[UUID, tuple[int, int, dict[str, int]]]:
-        """Aggregate mapping/token status counts for integration list cards."""
-        result = await self.db.execute(
+        """Aggregate mapping counts and distinct OAuth connection health."""
+        mapping_result = await self.db.execute(
             select(
                 IntegrationMapping.integration_id,
-                OAuthToken.status,
                 func.count(IntegrationMapping.id),
             )
-            .outerjoin(OAuthToken, OAuthToken.id == IntegrationMapping.oauth_token_id)
-            .group_by(IntegrationMapping.integration_id, OAuthToken.status)
+            .group_by(IntegrationMapping.integration_id)
         )
-        summaries: dict[UUID, tuple[int, int, dict[str, int]]] = {}
-        for integration_id, token_status, count in result.all():
+        summaries: dict[UUID, tuple[int, int, dict[str, int]]] = {
+            integration_id: (int(count or 0), 0, {})
+            for integration_id, count in mapping_result.all()
+        }
+
+        ranked_defaults = (
+            select(
+                OAuthProvider.integration_id.label("integration_id"),
+                OAuthToken.id.label("token_id"),
+                OAuthToken.status.label("token_status"),
+                func.row_number()
+                .over(
+                    partition_by=OAuthProvider.integration_id,
+                    order_by=(OAuthToken.created_at.desc(), OAuthToken.id.desc()),
+                )
+                .label("token_rank"),
+            )
+            .join(OAuthToken, OAuthToken.provider_id == OAuthProvider.id)
+            .where(
+                OAuthProvider.integration_id.isnot(None),
+                OAuthToken.organization_id.is_(None),
+            )
+            .subquery()
+        )
+        default_connections = select(
+            ranked_defaults.c.integration_id,
+            ranked_defaults.c.token_id,
+            ranked_defaults.c.token_status,
+        ).where(ranked_defaults.c.token_rank == 1)
+        override_connections = (
+            select(
+                IntegrationMapping.integration_id.label("integration_id"),
+                OAuthToken.id.label("token_id"),
+                OAuthToken.status.label("token_status"),
+            )
+            .join(OAuthToken, OAuthToken.id == IntegrationMapping.oauth_token_id)
+        )
+        connections = union(default_connections, override_connections).subquery()
+        status_result = await self.db.execute(
+            select(
+                connections.c.integration_id,
+                connections.c.token_status,
+                func.count(connections.c.token_id),
+            ).group_by(connections.c.integration_id, connections.c.token_status)
+        )
+        for integration_id, token_status, count in status_result.all():
             mapping_count, connected_count, status_counts = summaries.get(
-                integration_id,
-                (0, 0, {}),
+                integration_id, (0, 0, {})
             )
             count_int = int(count or 0)
-            mapping_count += count_int
-            if token_status:
-                status_counts[token_status] = status_counts.get(token_status, 0) + count_int
-            if token_status == "completed":
+            status_counts[token_status] = status_counts.get(token_status, 0) + count_int
+            if token_status in {"completed", "connected"}:
                 connected_count += count_int
             summaries[integration_id] = (mapping_count, connected_count, status_counts)
         return summaries

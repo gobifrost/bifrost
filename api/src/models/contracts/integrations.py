@@ -331,15 +331,15 @@ class IntegrationResponse(BaseModel):
     )
     connected_count: int = Field(
         default=0,
-        description="Number of mappings with a completed OAuth token",
+        description="Number of successful default or override OAuth connections",
     )
     needs_reconnection_count: int = Field(
         default=0,
-        description="Number of mappings with a failed OAuth token status",
+        description="Number of failed default or override OAuth connections",
     )
     connection_status_counts: dict[str, int] = Field(
         default_factory=dict,
-        description="Counts of mapped OAuth token statuses by status value",
+        description="Counts of distinct default and override OAuth connections by status",
     )
     is_deleted: bool = Field(
         default=False,

@@ -89,6 +89,7 @@ ALLOW_LIST_INLINE_ORG: set[tuple[str, str, str]] = {
     ('routers/export_import.py', 'mapping_query = mapping_query.where(IntegrationMapping.organization_id == org_id)', 'manifest sync inline; phase 8 follow-up'),
     ('routers/export_import.py', 'mapping_query = mapping_query.where(IntegrationMapping.organization_id.is_(None))', 'manifest sync inline; phase 8 follow-up'),
     ('routers/integrations.py', 'IntegrationMapping.organization_id == org_id,', 'integration mapping inline; phase 6 migrates'),
+    ('routers/integrations.py', 'OAuthToken.organization_id.is_(None),', 'integration health summary exact-scope lookup for the global default OAuth token (NOT cascade)'),
     ('routers/integrations.py', 'ConfigModel.organization_id.is_(None),', 'integration config inline; phase 5 migrates'),
     ('routers/integrations.py', 'ConfigModel.organization_id == organization_id,', 'integration config inline; phase 5 migrates'),
     ('routers/integrations.py', 'ConfigModel.organization_id == org_id,', 'integration config inline; phase 5 migrates'),

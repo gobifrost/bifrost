@@ -2,7 +2,6 @@ import type { KeyboardEvent } from "react";
 import { Link } from "react-router-dom";
 import { Check, Pencil, Trash2 } from "lucide-react";
 import { ResourceIcon } from "@/components/ResourceIcon";
-import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { RecordActionsMenu } from "@/components/common/RecordActionsMenu";
@@ -15,6 +14,7 @@ import {
 	DataTableRow,
 } from "@/components/ui/data-table";
 import type { Integration } from "@/services/integrations";
+import { IntegrationConnectionStatus } from "./IntegrationConnectionStatus";
 
 interface IntegrationListProps {
 	integrations: Integration[];
@@ -26,41 +26,6 @@ interface IntegrationListProps {
 	onOpen: (id: string) => void;
 	onEdit: (id: string) => void;
 	onDelete: (integration: Integration) => void;
-}
-
-export function IntegrationConnectionStatus({
-	integration,
-}: {
-	integration: Integration;
-}) {
-	const connected = integration.connected_count ?? 0;
-	const reconnect = integration.needs_reconnection_count ?? 0;
-	if (!integration.has_oauth_config)
-		return <span className="text-muted-foreground">Not monitored</span>;
-	return (
-		<div className="flex flex-wrap gap-2">
-			{connected > 0 && (
-				<Badge
-					variant="outline"
-					className="text-[var(--bf-success)] border-[var(--bf-success)]/30"
-				>
-					{connected} connected
-				</Badge>
-			)}
-			{reconnect > 0 && (
-				<Badge
-					variant="outline"
-					className="text-[var(--bf-warning)] border-[var(--bf-warning)]/30"
-				>
-					{reconnect} {reconnect === 1 ? "needs" : "need"}{" "}
-					reconnection
-				</Badge>
-			)}
-			{connected === 0 && reconnect === 0 && (
-				<span className="text-muted-foreground">Not connected</span>
-			)}
-		</div>
-	);
 }
 
 function IntegrationActions({

@@ -386,6 +386,66 @@ class TestPerMappingDisconnect:
                 headers=platform_admin.headers,
             )
 
+    @pytest.mark.asyncio
+    async def test_integration_list_counts_default_and_override_connections(
+        self, e2e_client, platform_admin, db_session, org1, integration_with_oauth
+    ):
+        """List health includes the default token and distinct mapping overrides."""
+        from sqlalchemy import update
+        from src.models.orm import IntegrationMapping
+
+        integration = integration_with_oauth["integration"]
+        oauth_provider = integration_with_oauth["oauth_provider"]
+        mapping_resp = e2e_client.post(
+            f"/api/integrations/{integration['id']}/mappings",
+            headers=platform_admin.headers,
+            json={
+                "organization_id": str(org1["id"]),
+                "entity_id": "health-summary-entity",
+            },
+        )
+        assert mapping_resp.status_code == 201
+        mapping_id = UUID(mapping_resp.json()["id"])
+
+        default_token = OAuthToken(
+            provider_id=oauth_provider.id,
+            organization_id=None,
+            encrypted_access_token=b"default-access-token",
+            status="connected",
+        )
+        override_token = OAuthToken(
+            provider_id=oauth_provider.id,
+            organization_id=UUID(org1["id"]),
+            encrypted_access_token=b"override-access-token",
+            status="failed",
+        )
+        db_session.add_all([default_token, override_token])
+        await db_session.flush()
+        await db_session.execute(
+            update(IntegrationMapping)
+            .where(IntegrationMapping.id == mapping_id)
+            .values(oauth_token_id=override_token.id)
+        )
+        await db_session.commit()
+
+        response = e2e_client.get(
+            "/api/integrations",
+            headers=platform_admin.headers,
+        )
+        assert response.status_code == 200
+        summary = next(
+            item
+            for item in response.json()["items"]
+            if item["id"] == integration["id"]
+        )
+        assert summary["mapping_count"] == 1
+        assert summary["connected_count"] == 1
+        assert summary["needs_reconnection_count"] == 1
+        assert summary["connection_status_counts"] == {
+            "connected": 1,
+            "failed": 1,
+        }
+
 
 @pytest.mark.e2e
 class TestPerMappingRefresh:
