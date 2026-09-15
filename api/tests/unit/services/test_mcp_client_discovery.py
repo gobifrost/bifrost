@@ -69,7 +69,10 @@ def authz_url():
 
 @pytest.fixture
 def resource_url():
-    return "https://vendor.example.com/.well-known/oauth-protected-resource"
+    return (
+        "https://vendor.example.com/.well-known/"
+        "oauth-protected-resource/path/to/mcp"
+    )
 
 
 @pytest.mark.asyncio
@@ -86,6 +89,9 @@ async def test_discovery_merges_both_documents(
     resource_body = {
         "resource": "https://vendor.example.com",
         "audience": "https://vendor.example.com/mcp",
+        "issuer": "https://attacker.example.com",
+        "authorization_endpoint": "https://attacker.example.com/authorize",
+        "token_endpoint": "https://attacker.example.com/token",
         # Conflicts with authz on scopes_supported — resource wins
         "scopes_supported": ["read.specific"],
     }
@@ -106,9 +112,12 @@ async def test_discovery_merges_both_documents(
     assert result is not None
     assert result["issuer"] == "https://vendor.example.com"
     assert result["authorization_endpoint"] == "https://vendor.example.com/oauth/authorize"
+    assert result["token_endpoint"] == "https://vendor.example.com/oauth/token"
     assert result["audience"] == "https://vendor.example.com/mcp"
     # Resource doc wins on the conflicting key
     assert result["scopes_supported"] == ["read.specific"]
+    assert result["authorization_server_metadata"] == authz_body
+    assert result["protected_resource_metadata"] == resource_body
 
 
 @pytest.mark.asyncio
@@ -246,7 +255,11 @@ async def test_discovery_skips_non_object_json(
     ):
         result = await discover_oauth_metadata(server_url)
 
-    assert result == {"audience": "x"}
+    assert result == {
+        "authorization_server_metadata": None,
+        "protected_resource_metadata": {"audience": "x"},
+        "audience": "x",
+    }
 
 
 @pytest.mark.asyncio
@@ -269,7 +282,128 @@ async def test_discovery_handles_5xx_as_unavailable(
     ):
         result = await discover_oauth_metadata(server_url)
 
-    assert result == {"audience": "x"}
+    assert result == {
+        "authorization_server_metadata": None,
+        "protected_resource_metadata": {"audience": "x"},
+        "audience": "x",
+    }
     # Verify the timeout was set as expected (5s per spec)
     _, kwargs = mock_client_class.call_args
     assert "timeout" in kwargs
+
+
+@pytest.mark.asyncio
+async def test_discovery_uses_path_aware_resource_url(server_url, resource_url):
+    """The resource doc is fetched from the RFC 9728 path-aware URL.
+
+    A vendor whose MCP endpoint is ``https://host/path/to/mcp`` exposes its
+    protected-resource metadata at
+    ``https://host/.well-known/oauth-protected-resource/path/to/mcp`` — not
+    at the host root. A doc served only at the host-root URL must not be
+    picked up.
+    """
+    authz_url = "https://vendor.example.com/.well-known/oauth-authorization-server"
+    host_root_resource_url = (
+        "https://vendor.example.com/.well-known/oauth-protected-resource"
+    )
+    assert resource_url != host_root_resource_url
+
+    requested: list[str] = []
+
+    class _RecordingClient(_FakeClient):
+        async def get(self, url):
+            requested.append(url)
+            return await super().get(url)
+
+    fake_client = _RecordingClient(
+        {
+            authz_url: _make_response(status_code=200, body={"issuer": "x"}),
+            resource_url: _make_response(
+                status_code=200, body={"resource": "y"}
+            ),
+        }
+    )
+
+    with patch(
+        "src.services.mcp_client.discovery.httpx.AsyncClient",
+        return_value=fake_client,
+    ):
+        result = await discover_oauth_metadata(server_url)
+
+    assert resource_url in requested
+    assert host_root_resource_url not in requested
+    assert result is not None
+    assert result["protected_resource_metadata"] == {"resource": "y"}
+
+
+@pytest.mark.asyncio
+async def test_discovery_allowlist_restricts_flattened_fields(
+    server_url, authz_url, resource_url
+):
+    """Only allowlisted resource-scoped fields are flattened.
+
+    Unknown or vendor-specific keys (and attacker-controlled authz fields
+    like ``issuer``) stay under ``protected_resource_metadata`` and never
+    leak into the top-level snapshot the form consumes.
+    """
+    authz_body = {"issuer": "https://vendor.example.com"}
+    resource_body = {
+        "resource": "https://vendor.example.com/mcp",
+        "vendor_custom_field": "should-not-flatten",
+        "issuer": "https://attacker.example.com",
+    }
+
+    fake_client = _FakeClient(
+        {
+            authz_url: _make_response(status_code=200, body=authz_body),
+            resource_url: _make_response(status_code=200, body=resource_body),
+        }
+    )
+
+    with patch(
+        "src.services.mcp_client.discovery.httpx.AsyncClient",
+        return_value=fake_client,
+    ):
+        result = await discover_oauth_metadata(server_url)
+
+    assert result is not None
+    assert result["resource"] == "https://vendor.example.com/mcp"
+    assert result["issuer"] == "https://vendor.example.com"
+    assert "vendor_custom_field" not in result
+    assert result["protected_resource_metadata"] == resource_body
+
+
+@pytest.mark.asyncio
+async def test_discovery_preserves_nested_scopes_supported(
+    server_url, authz_url, resource_url
+):
+    """Nested docs round-trip intact, including scopes under each document."""
+    authz_body = {
+        "issuer": "https://vendor.example.com",
+        "scopes_supported": ["read", "write"],
+    }
+    resource_body = {
+        "resource": "https://vendor.example.com/mcp",
+        "scopes_supported": ["read.specific"],
+    }
+
+    fake_client = _FakeClient(
+        {
+            authz_url: _make_response(status_code=200, body=authz_body),
+            resource_url: _make_response(status_code=200, body=resource_body),
+        }
+    )
+
+    with patch(
+        "src.services.mcp_client.discovery.httpx.AsyncClient",
+        return_value=fake_client,
+    ):
+        result = await discover_oauth_metadata(server_url)
+
+    assert result is not None
+    assert result["authorization_server_metadata"] == authz_body
+    assert result["protected_resource_metadata"] == resource_body
+    assert result["authorization_server_metadata"]["scopes_supported"] == [
+        "read",
+        "write",
+    ]
