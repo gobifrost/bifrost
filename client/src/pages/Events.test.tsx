@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { Route, Routes } from "react-router-dom";
 import { waitFor } from "@testing-library/react";
-import { renderWithProviders, screen } from "@/test-utils";
+import { fireEvent, renderWithProviders, screen } from "@/test-utils";
 
 const useEventSourcesMock = vi.fn();
 const useMediaQueryMock = vi.fn();
@@ -144,6 +144,21 @@ describe("Events page", () => {
 		expect(
 			screen.getByRole("cell", { name: /northwind automation/i }),
 		).toBeInTheDocument();
+	});
+
+	it("opens an event source row href on ctrl-click from a plain cell", () => {
+		const open = vi.spyOn(window, "open").mockImplementation(() => null);
+		useMediaQueryMock.mockReturnValue(false);
+
+		renderWithProviders(<Events />, {
+			initialEntries: ["/event-sources"],
+		});
+
+		fireEvent.click(screen.getByRole("cell", { name: /northwind automation/i }), {
+			ctrlKey: true,
+		});
+
+		expect(open).toHaveBeenCalledWith("/event-sources/source-1", "_blank");
 	});
 
 	it("routes to the detail shell when a source id is present", () => {

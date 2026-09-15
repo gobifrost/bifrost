@@ -260,6 +260,7 @@ export function IntegrationList(props: IntegrationListProps) {
 					<DataTableRow
 						key={integration.id}
 						clickable
+						href={`/integrations/${integration.id}`}
 						onClick={() => onOpen(integration.id)}
 					>
 						<DataTableCell onClick={(e) => e.stopPropagation()}>

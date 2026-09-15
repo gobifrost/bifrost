@@ -1,9 +1,39 @@
 import { describe, expect, it, vi } from "vitest";
-import { renderWithProviders, screen } from "@/test-utils";
+import { fireEvent, renderWithProviders, screen } from "@/test-utils";
 import { Button } from "@/components/ui/button";
 import { ResourceCatalogCard } from "./ResourceCatalogCard";
 
 describe("ResourceCatalogCard", () => {
+	it("provides a native link and leaves modified clicks to the browser", () => {
+		const onOpen = vi.fn();
+		renderWithProviders(
+			<ResourceCatalogCard
+				icon={null}
+				title="Linked resource"
+				href="/forms/123"
+				onOpen={onOpen}
+			/>,
+		);
+		const link = screen.getByRole("link", { name: "Linked resource" });
+		expect(link).toHaveAttribute("href", "/forms/123");
+		expect(fireEvent.click(link, { ctrlKey: true })).toBe(true);
+		expect(fireEvent.click(link, { metaKey: true })).toBe(true);
+		expect(fireEvent.click(link, { shiftKey: true })).toBe(true);
+		expect(
+			fireEvent(
+				link,
+				new MouseEvent("auxclick", {
+					button: 1,
+					bubbles: true,
+					cancelable: true,
+				}),
+			),
+		).toBe(true);
+		expect(onOpen).not.toHaveBeenCalled();
+		fireEvent.click(link);
+		expect(onOpen).toHaveBeenCalledOnce();
+	});
+
 	it("opens from the title-sized card target and keeps secondary actions isolated", async () => {
 		const onOpen = vi.fn();
 		const onAction = vi.fn();
@@ -45,6 +75,7 @@ describe("ResourceCatalogCard", () => {
 			<ResourceCatalogCard
 				icon={<span aria-hidden="true" />}
 				title="Inactive Form"
+				href="/forms/inactive"
 				action={
 					<Button
 						type="button"

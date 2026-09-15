@@ -120,7 +120,7 @@ test("WORKFLOW-METADATA-01 searches, saves and reopens workflow settings before 
 		"12.5",
 	);
 	await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
-	await page.getByRole("button", { name: target.name, exact: true }).click();
+	await page.getByRole("link", { name: target.name, exact: true }).click();
 	await expect(page).toHaveURL(
 		new RegExp(`/workflows/${target.name}/execute$`),
 	);

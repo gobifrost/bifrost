@@ -6,6 +6,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
+	fireEvent,
 	renderWithProviders,
 	screen,
 	waitFor,
@@ -19,8 +20,7 @@ const APP_LOGO_DATA_URL =
 
 const wsMocks = vi.hoisted(() => ({
 	platformJobCallback: undefined as
-		| ((job: Record<string, unknown>) => void)
-		| undefined,
+		((job: Record<string, unknown>) => void) | undefined,
 }));
 
 vi.mock("@/services/websocket", () => ({
@@ -108,8 +108,7 @@ vi.mock("@/services/solutions", () => ({
 	getSolutionSetup: (...a: unknown[]) => mockGetSolutionSetup(...a),
 	getSolutionReadme: (...a: unknown[]) => mockGetSolutionReadme(...a),
 	getSolutionSdkStatus: (...a: unknown[]) => mockGetSolutionSdkStatus(...a),
-	updateSolutionAppSdks: (...a: unknown[]) =>
-		mockUpdateSolutionAppSdks(...a),
+	updateSolutionAppSdks: (...a: unknown[]) => mockUpdateSolutionAppSdks(...a),
 	updateSolution: (...a: unknown[]) => mockUpdateSolution(...a),
 	deleteSolution: (...a: unknown[]) => mockDeleteSolution(...a),
 	uninstallSolution: (...a: unknown[]) => mockUninstallSolution(...a),
@@ -608,20 +607,17 @@ describe("SolutionDetail", () => {
 		).toBeInTheDocument();
 	});
 
-	it("opens workflow execution from the shared card and preserves the Solution return route", async () => {
+	it("opens workflow execution from the shared card", async () => {
 		const { user } = await renderPage();
 		await screen.findByTestId("solution-detail");
 
 		await user.click(screen.getByTestId("tab-contents"));
 		await user.click(screen.getByTestId("chip-workflows"));
-		const execute = screen.getByRole("button", {
-			name: "Sync Tickets",
-		});
-		await user.click(execute);
-
-		expect(mockNavigate).toHaveBeenCalledWith(
-			"/workflows/Sync%20Tickets/execute?from=solution:sol-1",
-		);
+		expect(
+			screen
+				.getAllByRole("link", { name: "Sync Tickets" })
+				.map((link) => link.getAttribute("href")),
+		).toContain("/workflows/Sync%20Tickets/execute?from=solution:sol-1");
 	});
 
 	it("opens the shared form card without exposing edit controls", async () => {
@@ -635,10 +631,11 @@ describe("SolutionDetail", () => {
 			screen.queryByRole("button", { name: /edit form/i }),
 		).not.toBeInTheDocument();
 
-		await user.click(screen.getByRole("button", { name: "Ticket Intake" }));
-		expect(mockNavigate).toHaveBeenCalledWith(
-			"/execute/form-1?from=solution:sol-1",
-		);
+		expect(
+			screen
+				.getAllByRole("link", { name: "Ticket Intake" })
+				.map((link) => link.getAttribute("href")),
+		).toContain("/execute/form-1?from=solution:sol-1");
 	});
 
 	it("opens sharing for a solution-managed form without exposing edit controls", async () => {
@@ -675,11 +672,11 @@ describe("SolutionDetail", () => {
 			"src",
 			APP_LOGO_DATA_URL,
 		);
-		await user.click(screen.getByRole("button", { name: "Solution App" }));
-
-		expect(mockNavigate).toHaveBeenCalledWith(
-			"/apps/solution-app?from=solution:sol-1",
-		);
+		expect(
+			screen
+				.getAllByRole("link", { name: "Solution App" })
+				.map((link) => link.getAttribute("href")),
+		).toContain("/apps/solution-app?from=solution:sol-1");
 	});
 
 	it("navigates a table row to its entity page with ?from=solution:", async () => {
@@ -693,6 +690,24 @@ describe("SolutionDetail", () => {
 		await user.click(screen.getByRole("row", { name: /customers/i }));
 		expect(mockNavigate).toHaveBeenCalledWith(
 			"/tables/tbl-1?from=solution:sol-1",
+		);
+	});
+
+	it("opens entity table row hrefs on ctrl-click with ?from=solution:", async () => {
+		const open = vi.spyOn(window, "open").mockImplementation(() => null);
+		const { user } = await renderPage();
+		await screen.findByTestId("solution-detail");
+
+		await user.click(screen.getByTestId("tab-contents"));
+		await user.click(screen.getByTestId("chip-tables"));
+		const row = screen.getByRole("row", { name: /customers/i });
+		fireEvent.click(within(row).getAllByText("-")[0], {
+			ctrlKey: true,
+		});
+
+		expect(open).toHaveBeenCalledWith(
+			"/tables/tbl-1?from=solution:sol-1",
+			"_blank",
 		);
 	});
 
@@ -851,9 +866,9 @@ describe("SolutionDetail", () => {
 		await user.click(screen.getByTestId("solution-actions"));
 		await user.click(screen.getByTestId("update-solution-app-sdks"));
 		await user.click(screen.getByTestId("solution-actions"));
-		expect(screen.getByTestId("update-solution-app-sdks")).toHaveTextContent(
-			"Updating app SDKs",
-		);
+		expect(
+			screen.getByTestId("update-solution-app-sdks"),
+		).toHaveTextContent("Updating app SDKs");
 		expect(screen.getByTestId("update-solution-app-sdks")).toHaveAttribute(
 			"aria-disabled",
 			"true",
@@ -869,9 +884,9 @@ describe("SolutionDetail", () => {
 				title: "Update app SDK",
 			});
 		});
-		expect(screen.getByTestId("update-solution-app-sdks")).toHaveTextContent(
-			"Updating app SDKs",
-		);
+		expect(
+			screen.getByTestId("update-solution-app-sdks"),
+		).toHaveTextContent("Updating app SDKs");
 
 		act(() => {
 			wsMocks.platformJobCallback?.({
@@ -889,10 +904,9 @@ describe("SolutionDetail", () => {
 				screen.getByTestId("update-solution-app-sdks"),
 			).toHaveTextContent("Update app SDKs"),
 		);
-		expect(screen.getByTestId("update-solution-app-sdks")).not.toHaveAttribute(
-			"aria-disabled",
-			"true",
-		);
+		expect(
+			screen.getByTestId("update-solution-app-sdks"),
+		).not.toHaveAttribute("aria-disabled", "true");
 	});
 
 	it("renders a Files chip in Contents when the install has files", async () => {

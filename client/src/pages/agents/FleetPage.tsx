@@ -26,6 +26,7 @@ import {
 	Hash,
 	MessageSquare,
 	Phone,
+	Pencil,
 	Plus,
 	Power,
 } from "lucide-react";
@@ -335,28 +336,7 @@ function AgentGridCard({
 					</>
 				}
 				description={agent.description}
-				action={
-					<div className="flex items-center gap-1">
-						{agent.is_solution_managed ? (
-							<SolutionManagedBadge
-								solutionId={agent.solution_id}
-							/>
-						) : null}
-						<RecordActionsMenu label={`${agent.name} actions`}>
-							<DropdownMenuItem
-								className="min-h-11"
-								onSelect={() => navigate(`/agents/${agent.id}`)}
-							>
-								<Bot aria-hidden="true" className="size-4" />
-								Open Agent
-							</DropdownMenuItem>
-							<AgentMcpCopyButton
-								agentId={agent.id}
-								variant="menuitem"
-							/>
-						</RecordActionsMenu>
-					</div>
-				}
+				action={<AgentActions agent={agent} />}
 				footer={
 					showOrg ? (
 						<p className="flex min-w-0 items-center gap-2">
@@ -369,6 +349,7 @@ function AgentGridCard({
 						</p>
 					) : undefined
 				}
+				href={`/agents/${agent.id}`}
 				onOpen={() => navigate(`/agents/${agent.id}`)}
 			>
 				<div className="flex flex-wrap items-center gap-1.5">
@@ -515,6 +496,9 @@ function AgentTable({
 						<DataTableHead className="w-0 whitespace-nowrap">
 							Status
 						</DataTableHead>
+						<DataTableHead className="w-0">
+							<span className="sr-only">Actions</span>
+						</DataTableHead>
 					</DataTableRow>
 				</DataTableHeader>
 				<DataTableBody>
@@ -547,6 +531,7 @@ function AgentTableRow({
 
 	return (
 		<DataTableRow
+			href={`/agents/${agent.id}`}
 			className="cursor-pointer hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
 			onPointerEnter={() => prefetchAgentDetail(agent.id)}
 			onFocus={() => prefetchAgentDetail(agent.id)}
@@ -574,9 +559,6 @@ function AgentTableRow({
 					>
 						{agent.name}
 					</Link>
-					{agent.is_solution_managed ? (
-						<SolutionManagedBadge solutionId={agent.solution_id} />
-					) : null}
 				</div>
 				{agent.description ? (
 					<div className="line-clamp-1 text-xs text-muted-foreground">
@@ -614,7 +596,32 @@ function AgentTableRow({
 					<Badge variant="secondary">Paused</Badge>
 				)}
 			</DataTableCell>
+			<DataTableCell className="w-0 whitespace-nowrap text-right">
+				<AgentActions agent={agent} />
+			</DataTableCell>
 		</DataTableRow>
+	);
+}
+
+function AgentActions({ agent }: { agent: AgentSummary }) {
+	const { isPlatformAdmin } = useAuth();
+	return (
+		<div className="flex items-center justify-end gap-1">
+			{agent.is_solution_managed && (
+				<SolutionManagedBadge solutionId={agent.solution_id} />
+			)}
+			<RecordActionsMenu label={`${agent.name} actions`}>
+				{isPlatformAdmin && !agent.is_solution_managed && (
+					<DropdownMenuItem asChild>
+						<Link to={`/agents/${agent.id}?tab=settings`}>
+							<Pencil aria-hidden="true" className="size-4" />
+							Edit Agent
+						</Link>
+					</DropdownMenuItem>
+				)}
+				<AgentMcpCopyButton agentId={agent.id} variant="menuitem" />
+			</RecordActionsMenu>
+		</div>
 	);
 }
 

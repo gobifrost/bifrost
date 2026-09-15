@@ -52,6 +52,8 @@ export type WorkflowListItem = BaseWorkflow & {
 export interface WorkflowListSurfaceProps {
 	workflows: WorkflowListItem[];
 	viewMode: "grid" | "table";
+	/** Query string to preserve the originating page in native navigation links. */
+	navigationSearch?: string;
 	isLoading?: boolean;
 	isPlatformAdmin: boolean;
 	canManageWorkflows: boolean;
@@ -101,21 +103,23 @@ function WorkflowTypeBadge({ workflow }: { workflow: WorkflowListItem }) {
 	);
 }
 
-function executeLabel(workflow: WorkflowListItem): string {
-	if (workflow.type === "tool") return "Test Tool";
-	if (workflow.type === "data_provider") return "Preview Data";
-	return "Execute Workflow";
-}
-
 function workflowTypeLabel(workflow: WorkflowListItem): string {
 	if (workflow.type === "tool") return "Tool";
 	if (workflow.type === "data_provider") return "Data Provider";
 	return "Workflow";
 }
 
+function workflowExecuteHref(
+	workflow: WorkflowListItem,
+	navigationSearch: string,
+): string {
+	return `/workflows/${encodeURIComponent(workflow.name ?? "")}/execute${navigationSearch}`;
+}
+
 export function WorkflowListSurface({
 	workflows,
 	viewMode,
+	navigationSearch = "",
 	isLoading = false,
 	isPlatformAdmin,
 	canManageWorkflows,
@@ -254,81 +258,85 @@ export function WorkflowListSurface({
 						</DataTableRow>
 					</DataTableHeader>
 					<DataTableBody>
-						{workflows.map((workflow) => (
-							<DataTableRow
-								key={workflow.id ?? workflow.name}
-								clickable
-								href={`/history?workflow=${encodeURIComponent(workflow.id ?? "")}`}
-								onClick={() =>
-									navigate(
-										`/history?workflow=${encodeURIComponent(workflow.id ?? "")}`,
-									)
-								}
-							>
-								<DataTableCell className="min-w-0 whitespace-normal align-top">
-									<Link
-										to={`/history?workflow=${encodeURIComponent(workflow.id ?? "")}`}
-										className="inline-flex min-h-11 min-w-0 items-center font-mono font-medium text-left [overflow-wrap:anywhere] hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-									>
-										{workflow.name}
-									</Link>
-									<div className="mb-2 flex flex-wrap items-center gap-2">
-										<WorkflowTypeBadge
-											workflow={workflow}
-										/>
-										{isPlatformAdmin && (
-											<span className="text-xs text-muted-foreground">
-												{getOrgName(
-													workflow.organization_id,
-												)}
+						{workflows.map((workflow) => {
+							const executeHref = workflowExecuteHref(
+								workflow,
+								navigationSearch,
+							);
+							return (
+								<DataTableRow
+									key={workflow.id ?? workflow.name}
+									clickable={!workflow.is_orphaned}
+									href={
+										!workflow.is_orphaned
+											? executeHref
+											: undefined
+									}
+									onClick={
+										!workflow.is_orphaned
+											? () => navigate(executeHref)
+											: undefined
+									}
+								>
+									<DataTableCell className="min-w-0 whitespace-normal align-top">
+										{!workflow.is_orphaned ? (
+											<Link
+												to={executeHref}
+												className="inline-flex min-h-11 min-w-0 items-center font-mono font-medium text-left [overflow-wrap:anywhere] hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+											>
+												{workflow.name}
+											</Link>
+										) : (
+											<span className="inline-flex min-h-11 min-w-0 items-center font-mono font-medium text-left [overflow-wrap:anywhere]">
+												{workflow.name}
 											</span>
 										)}
-										{workflow.is_orphaned && (
-											<Badge
-												variant="outline"
-												className="bg-[var(--bf-warning-soft)] text-[var(--bf-warning)]"
-											>
-												<Unlink className="mr-1 h-3 w-3" />
-												Orphaned
-											</Badge>
-										)}
-									</div>
-									<p className="max-w-prose text-sm text-muted-foreground [overflow-wrap:anywhere]">
-										{workflow.description ||
-											"No description"}
-									</p>
-								</DataTableCell>
-								<DataTableCell
-									className="w-0 whitespace-nowrap text-right"
-									onClick={(event) => event.stopPropagation()}
-								>
-									<div className="flex items-center justify-end gap-1">
-										{workflow.is_solution_managed && (
-											<SolutionManagedBadge
-												solutionId={
-													workflow.solution_id
-												}
+										<div className="mb-2 flex flex-wrap items-center gap-2">
+											<WorkflowTypeBadge
+												workflow={workflow}
 											/>
-										)}
-
-										<Button
-											variant="outline"
-											size="sm"
-											className="min-h-11"
-											onClick={() => onExecute(workflow)}
-											aria-label={`${executeLabel(workflow)}: ${workflow.name}`}
-										>
-											<PlayCircle
-												aria-hidden="true"
-												className="h-4 w-4"
-											/>
-											{executeLabel(workflow)}
-										</Button>
-										{renderActions(workflow)}
-									</div>
-								</DataTableCell>
-							</DataTableRow>
-						))}
+											{isPlatformAdmin && (
+												<span className="text-xs text-muted-foreground">
+													{getOrgName(
+														workflow.organization_id,
+													)}
+												</span>
+											)}
+											{workflow.is_orphaned && (
+												<Badge
+													variant="outline"
+													className="bg-[var(--bf-warning-soft)] text-[var(--bf-warning)]"
+												>
+													<Unlink className="mr-1 h-3 w-3" />
+													Orphaned
+												</Badge>
+											)}
+										</div>
+										<p className="max-w-prose text-sm text-muted-foreground [overflow-wrap:anywhere]">
+											{workflow.description ||
+												"No description"}
+										</p>
+									</DataTableCell>
+									<DataTableCell
+										className="w-0 whitespace-nowrap text-right"
+										onClick={(event) =>
+											event.stopPropagation()
+										}
+									>
+										<div className="flex items-center justify-end gap-1">
+											{workflow.is_solution_managed && (
+												<SolutionManagedBadge
+													solutionId={
+														workflow.solution_id
+													}
+												/>
+											)}
+											{renderActions(workflow)}
+										</div>
+									</DataTableCell>
+								</DataTableRow>
+							);
+						})}
 					</DataTableBody>
 				</DataTable>
 			</div>
@@ -428,6 +436,12 @@ export function WorkflowListSurface({
 						</div>
 					}
 					onOpen={() => onExecute(workflow)}
+					href={
+						!workflow.is_orphaned
+							? workflowExecuteHref(workflow, navigationSearch)
+							: undefined
+					}
+					disabled={workflow.is_orphaned}
 				>
 					{(workflow.endpoint_enabled ||
 						workflow.is_orphaned ||

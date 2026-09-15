@@ -96,7 +96,7 @@ async function submitAssignedFormAndVerifyResult(
 	await page
 		.locator('[data-slot="card"]')
 		.filter({ hasText: ASSIGNED_FORM_NAME })
-		.getByRole("button", { name: ASSIGNED_FORM_NAME })
+		.getByRole("link", { name: ASSIGNED_FORM_NAME })
 		.click();
 	await expect(page).toHaveURL(new RegExp(`/execute/${assignedFormId}$`));
 

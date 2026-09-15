@@ -5,11 +5,11 @@ import {
 	Globe,
 	MoreVertical,
 	Pencil,
-	PlayCircle,
 	Power,
 	Share2,
 	Trash2,
 } from "lucide-react";
+import { Link } from "react-router-dom";
 
 import { RecordActionsMenu } from "@/components/common/RecordActionsMenu";
 import { ResourceCatalogCard } from "@/components/catalog/ResourceCatalogCard";
@@ -57,6 +57,8 @@ export interface FormValidationState {
 export interface FormListSurfaceProps {
 	forms: FormListItem[];
 	viewMode: "grid" | "table";
+	/** Query string to preserve the originating page in native navigation links. */
+	navigationSearch?: string;
 	isLoading?: boolean;
 	isPlatformAdmin: boolean;
 	canManageForms: boolean;
@@ -74,6 +76,7 @@ export interface FormListSurfaceProps {
 export function FormListSurface({
 	forms,
 	viewMode,
+	navigationSearch = "",
 	isLoading = false,
 	isPlatformAdmin,
 	canManageForms,
@@ -160,17 +163,23 @@ export function FormListSurface({
 					<DataTableBody>
 						{forms.map((form) => {
 							const validation = formValidation.get(form.id);
-							const canOpenFormEditor =
-								canManageForms &&
-								!form.is_solution_managed &&
-								Boolean(onEdit);
+							const launchHref = `/execute/${form.id}${navigationSearch}`;
+							const canLaunch =
+								(form.is_active || canManageForms) &&
+								validation?.valid;
+							const unavailableReason = !validation?.valid
+								? `Cannot launch: Missing ${validation?.missingParams.join(", ")}`
+								: !form.is_active && !canManageForms
+									? `${term(terminology, "form", "singular")} is disabled`
+									: undefined;
 							return (
 								<DataTableRow
 									key={form.id}
-									clickable={canOpenFormEditor}
+									clickable={canLaunch}
+									href={canLaunch ? launchHref : undefined}
 									onClick={
-										canOpenFormEditor
-											? () => onEdit?.(form)
+										canLaunch
+											? () => onLaunch(form)
 											: undefined
 									}
 								>
@@ -209,9 +218,24 @@ export function FormListSurface({
 												}
 												size="table"
 											/>
-											<span className="min-w-0 [overflow-wrap:anywhere]">
-												{form.name}
-											</span>
+											{canLaunch ? (
+												<Link
+													to={launchHref}
+													className="min-w-0 [overflow-wrap:anywhere] hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+												>
+													{form.name}
+												</Link>
+											) : (
+												<span className="min-w-0 [overflow-wrap:anywhere]">
+													<span
+														title={
+															unavailableReason
+														}
+													>
+														{form.name}
+													</span>
+												</span>
+											)}
 										</div>
 									</DataTableCell>
 									<DataTableCell className="max-w-xs truncate text-muted-foreground">
@@ -271,25 +295,6 @@ export function FormListSurface({
 										}
 									>
 										<div className="flex gap-1 justify-end">
-											<Button
-												size="sm"
-												onClick={() => onLaunch(form)}
-												disabled={
-													(!form.is_active &&
-														!canManageForms) ||
-													!validation?.valid
-												}
-												title={
-													!validation?.valid
-														? `Cannot launch: Missing ${validation?.missingParams.join(", ")}`
-														: !form.is_active &&
-															  !canManageForms
-															? `${term(terminology, "form", "singular")} is disabled`
-															: `Launch ${term(terminology, "form", "singularLower")}`
-												}
-											>
-												<PlayCircle className="h-4 w-4" />
-											</Button>
 											{form.is_solution_managed && (
 												<SolutionManagedBadge
 													solutionId={
@@ -382,6 +387,7 @@ export function FormListSurface({
 		<div className="grid grid-cols-1 gap-3 sm:grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))]">
 			{forms.map((form) => {
 				const validation = formValidation.get(form.id);
+				const launchHref = `/execute/${form.id}${navigationSearch}`;
 				const canLaunch =
 					(form.is_active || canManageForms) && validation?.valid;
 				return (
@@ -507,6 +513,7 @@ export function FormListSurface({
 							) : undefined
 						}
 						onOpen={() => onLaunch(form)}
+						href={canLaunch ? launchHref : undefined}
 						disabled={!canLaunch}
 					>
 						{!validation?.valid && canManageForms && (

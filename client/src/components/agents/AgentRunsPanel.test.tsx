@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Route, Routes, useLocation } from "react-router-dom";
 
-import { renderWithProviders, screen } from "@/test-utils";
+import { fireEvent, renderWithProviders, screen } from "@/test-utils";
 
 const mockIsDesktop = vi.hoisted(() => vi.fn(() => true));
 vi.mock("@/hooks/useMediaQuery", () => ({
@@ -235,6 +235,26 @@ describe("AgentRunsPanel", () => {
 					label: "Back to run history",
 				},
 			}),
+		);
+	});
+
+	it("opens a run row href on ctrl-click from a plain cell", () => {
+		const open = vi.spyOn(window, "open").mockImplementation(() => null);
+		renderWithProviders(
+			<Routes>
+				<Route path="/history" element={<AgentRunsPanel />} />
+			</Routes>,
+			{ initialEntries: ["/history?type=agents"] },
+		);
+
+		fireEvent.click(
+			screen.getByRole("row", { name: /Service Desk Triage.*Completed/i }),
+			{ ctrlKey: true },
+		);
+
+		expect(open).toHaveBeenCalledWith(
+			"/agents/agent-1/runs/run-1",
+			"_blank",
 		);
 	});
 });

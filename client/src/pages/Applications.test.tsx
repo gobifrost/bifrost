@@ -1,8 +1,8 @@
 import { Applications } from "./Applications";
 /**
- * Tests for the Applications page — focused on the SolutionManagedBadge
- * affordance: managed apps show the shared admin-only badge and hide
- * Edit/Delete controls; non-managed apps keep their management controls.
+ * Tests for the Applications page — focused on managed app affordances:
+ * managed apps show a lock indicator and hide destructive/edit controls;
+ * non-managed apps keep their management controls.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -406,8 +406,8 @@ describe("Applications — app launch behavior", () => {
 		});
 		await renderPage();
 		expect(
-			screen.getByRole("button", { name: "Live Dash" }),
-		).toBeInTheDocument();
+			screen.getByRole("link", { name: "Live Dash" }),
+		).toHaveAttribute("href", "/apps/live-dash");
 		expect(screen.queryByText(/open published/i)).not.toBeInTheDocument();
 	});
 
@@ -449,7 +449,7 @@ describe("Applications — solution-managed badge (grid view)", () => {
 			refetch: vi.fn(),
 		});
 		const { user } = await renderPage();
-		const badge = screen.getByTestId("solution-managed-badge");
+		const badge = screen.getByLabelText("Managed by a Solution");
 		expect(badge).toHaveAttribute("href", "/solutions/s1");
 		await user.click(
 			screen.getByRole("button", { name: "Managed App actions" }),
@@ -461,7 +461,7 @@ describe("Applications — solution-managed badge (grid view)", () => {
 			screen.queryByRole("button", { name: /delete application/i }),
 		).not.toBeInTheDocument();
 		expect(
-			screen.queryByRole("menuitem", { name: /settings/i }),
+			screen.queryByRole("menuitem", { name: /^edit$/i }),
 		).not.toBeInTheDocument();
 		expect(
 			screen.queryByRole("menuitem", { name: /code editor/i }),
@@ -479,10 +479,10 @@ describe("Applications — solution-managed badge (grid view)", () => {
 			screen.getByRole("button", { name: "Live Dash actions" }),
 		);
 		expect(
-			screen.queryByTestId("solution-managed-badge"),
+			screen.queryByLabelText("Managed by a Solution"),
 		).not.toBeInTheDocument();
 		expect(
-			screen.getByRole("menuitem", { name: /settings/i }),
+			screen.getByRole("menuitem", { name: /^edit$/i }),
 		).toBeInTheDocument();
 		expect(
 			screen.getByRole("menuitem", { name: /code editor/i }),
@@ -512,7 +512,7 @@ describe("Applications — solution-managed badge (table view)", () => {
 			}),
 		]);
 		const table = document.querySelector("table")!;
-		const badge = within(table).getByTestId("solution-managed-badge");
+		const badge = within(table).getByLabelText("Managed by a Solution");
 		expect(badge).toHaveAttribute("href", "/solutions/s1");
 		expect(
 			within(table).queryByRole("button", { name: /delete/i }),
@@ -530,7 +530,7 @@ describe("Applications — solution-managed badge (table view)", () => {
 			"/api/applications/app-1/logo",
 		);
 		expect(
-			within(table).queryByTestId("solution-managed-badge"),
+			within(table).queryByLabelText("Managed by a Solution"),
 		).not.toBeInTheDocument();
 		expect(
 			screen.getByRole("menuitem", { name: "Delete" }),

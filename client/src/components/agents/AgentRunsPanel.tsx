@@ -583,7 +583,8 @@ export function AgentRunsPanel() {
 						{runs.map((run) => (
 							<DataTableRow
 								key={run.id}
-								className="cursor-pointer hover:bg-accent/40"
+								href={`/agents/${run.agent_id}/runs/${run.id}`}
+								className="hover:bg-accent/40"
 								onClick={() =>
 									navigate(
 										`/agents/${run.agent_id}/runs/${run.id}`,

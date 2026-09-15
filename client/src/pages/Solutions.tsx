@@ -865,6 +865,11 @@ export function Solutions() {
 								<DataTableRow
 									key={sol.id}
 									data-testid="install-row"
+									href={
+										selectionMode
+											? undefined
+											: `/solutions/${sol.id}`
+									}
 									className={
 										selectionMode
 											? canSelectOrUpdateSolution(sol)

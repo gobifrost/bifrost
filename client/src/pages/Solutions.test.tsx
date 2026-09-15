@@ -7,7 +7,7 @@ import { Solutions } from "./Solutions";
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderWithProviders, screen, within } from "@/test-utils";
+import { fireEvent, renderWithProviders, screen, within } from "@/test-utils";
 import { waitFor } from "@testing-library/react";
 import { toast } from "sonner";
 
@@ -595,6 +595,28 @@ describe("Solutions — bulk SDK updates", () => {
 				name: "Update SDKs for Dispatch Solution",
 			}),
 		).not.toBeInTheDocument();
+	});
+
+	it("opens a solution table row href on ctrl-click outside selection mode", async () => {
+		const open = vi.spyOn(window, "open").mockImplementation(() => null);
+		mockListSolutions.mockResolvedValue({
+			solutions: [
+				makeSolution({
+					id: "sol-1",
+					name: "Dispatch Solution",
+					slug: "dispatch",
+				}),
+			],
+		});
+
+		const { user } = await renderPage();
+		await user.click(screen.getByRole("radio", { name: "Table view" }));
+		const row = await screen.findByTestId("install-row");
+
+		fireEvent.click(within(row).getByText("dispatch"), { ctrlKey: true });
+
+		expect(open).toHaveBeenCalledWith("/solutions/sol-1", "_blank");
+		expect(mockNavigate).not.toHaveBeenCalled();
 	});
 
 	it("marks accepted solutions as updating and removes them from bulk actions", async () => {

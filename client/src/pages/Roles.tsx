@@ -617,6 +617,7 @@ function RoleRow({
 	return (
 		<DataTableRow
 			clickable
+			href={`/roles/${role.id}`}
 			onClick={() => onNavigate(`/roles/${role.id}`)}
 			className="group/row"
 		>
