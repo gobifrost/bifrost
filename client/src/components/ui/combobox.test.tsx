@@ -7,6 +7,20 @@ import { renderWithProviders, screen } from "@/test-utils";
 import { Combobox } from "./combobox";
 
 describe("Combobox", () => {
+	it("keeps a long selected label on one truncated line", () => {
+		const label =
+			"Active Directory user audit with an exceptionally long display name";
+		renderWithProviders(
+			<Combobox
+				options={[{ value: "directory-audit", label }]}
+				value="directory-audit"
+			/>,
+		);
+
+		expect(screen.getByRole("combobox")).toHaveClass("h-11", "sm:h-10");
+		expect(screen.getByText(label)).toHaveClass("truncate");
+	});
+
 	it("keeps the selected value visible when options are unavailable", () => {
 		renderWithProviders(<Combobox options={[]} value="ticket_id" placeholder="Pick key" />);
 		expect(screen.getByRole("combobox")).toHaveTextContent("ticket_id");

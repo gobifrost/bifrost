@@ -471,14 +471,14 @@ function ComboboxWorkflowSelector({
 					aria-expanded={open}
 					disabled={disabled}
 					className={cn(
-						"min-h-11 h-auto w-full min-w-0 justify-between whitespace-normal text-left font-normal",
+						"h-11 w-full min-w-0 justify-between overflow-hidden text-left font-normal",
 						!value && "text-muted-foreground",
 						className,
 					)}
 				>
 					{selectedWorkflow ? (
-						<div className="flex min-w-0 flex-wrap items-center gap-2">
-							<span className="min-w-0 [overflow-wrap:anywhere]">
+						<div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
+							<span className="min-w-0 truncate">
 								{selectedWorkflow.name}
 							</span>
 							{showOrgBadge &&

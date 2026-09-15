@@ -65,6 +65,27 @@ describe("WorkflowSelector — loading / error", () => {
 });
 
 describe("WorkflowSelector — listing & selection", () => {
+	it("keeps a long selected workflow name on one truncated line", () => {
+		const name =
+			"Active Directory user audit with an exceptionally long display name";
+		mockUseQuery.mockReturnValue({
+			data: [{ id: "wf-long", name, organization_id: null }],
+			isLoading: false,
+			error: null,
+		});
+
+		renderWithProviders(
+			<WorkflowSelector
+				value="wf-long"
+				onChange={vi.fn()}
+				variant="combobox"
+			/>,
+		);
+
+		expect(screen.getByRole("combobox")).toHaveClass("h-11");
+		expect(screen.getByText(name)).toHaveClass("truncate");
+	});
+
 	it("renders the currently-selected workflow name in the trigger", () => {
 		mockUseQuery.mockReturnValue({
 			data: [
