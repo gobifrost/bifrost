@@ -158,7 +158,11 @@ function collectionByName(home: HomeResponse, name: string): HomeCollection {
 async function openHome(page: Page): Promise<void> {
 	await page.goto("/");
 	await expect(
-		page.getByRole("heading", { name: "Your workspace" }),
+		page.getByRole("heading", {
+			name: "Workspace",
+			exact: true,
+			level: 1,
+		}),
 	).toBeVisible({
 		timeout: 10_000,
 	});

@@ -3,7 +3,7 @@ import { isVisibleCollection } from "@/services/home";
 import { useState, useRef, useEffect } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { LayoutDashboard, MessageSquare, Search } from "lucide-react";
+import { MessageSquare, Search } from "lucide-react";
 import { $api } from "@/lib/api-client";
 import { getErrorMessage } from "@/lib/api-error";
 import { useAuth } from "@/contexts/AuthContext";
@@ -14,6 +14,7 @@ import {
 } from "@/components/layout/PageWorkspace";
 import { CatalogFilters } from "./Home/components/CatalogFilters";
 import { ListPageHeader } from "@/components/layout/ListPageHeader";
+import { WorkspaceTabs } from "@/components/layout/WorkspaceTabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
@@ -250,38 +251,21 @@ export function Home() {
 			</div>
 		);
 	return (
-		<PageWorkspace className="mx-auto w-full max-w-[1200px] gap-5">
+		<PageWorkspace className="mx-auto w-full max-w-[1400px] gap-5">
 			<div className="shrink-0 space-y-4">
 				<ListPageHeader
-					title="Your workspace"
+					title="Workspace"
+					titleSlot={<WorkspaceTabs />}
 					className="flex-row"
-					titleClassName="text-xl sm:text-3xl"
 					actionsClassName="flex-nowrap"
 					description="Apps, forms and agents, together."
 					actions={
-						<>
-							{isPlatformAdmin && (
-								<Button variant="ghost" asChild>
-									<Link
-										to="/dashboard"
-										aria-label="Dashboard"
-									>
-										<LayoutDashboard className="size-4 sm:hidden" />
-										<span className="hidden sm:inline">
-											Dashboard
-										</span>
-									</Link>
-								</Button>
-							)}
-							<Button asChild>
-								<Link to="/chat" aria-label="New chat">
-									<MessageSquare className="size-4" />
-									<span className="hidden sm:inline">
-										New chat
-									</span>
-								</Link>
-							</Button>
-						</>
+						<Button asChild>
+							<Link to="/chat" aria-label="New chat">
+								<MessageSquare className="size-4" />
+								<span className="hidden sm:inline">New chat</span>
+							</Link>
+						</Button>
 					}
 				/>
 				<div className="flex flex-col gap-3">

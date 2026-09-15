@@ -23,21 +23,42 @@ test.describe("Home collections (admin)", () => {
 		try {
 			await page.goto("/");
 			await expect(
-				page.getByRole("heading", { name: "Your workspace" }),
+				page.getByRole("heading", {
+					name: "Workspace",
+					exact: true,
+					level: 1,
+				}),
 			).toBeVisible({ timeout: 10000 });
+			await expect(page.locator("[data-page-workspace]")).toHaveCSS(
+				"max-width",
+				"1400px",
+			);
 
 			await page
+				.getByRole("navigation", { name: "Workspace views" })
 				.getByRole("link", { name: "Dashboard", exact: true })
 				.click();
 			await expect(
-				page.getByRole("heading", { name: "Dashboard", exact: true }),
+				page.getByRole("heading", {
+					name: "Dashboard",
+					exact: true,
+					level: 1,
+				}),
 			).toBeVisible();
+			await expect(page.locator("[data-page-workspace]")).toHaveCSS(
+				"max-width",
+				"1400px",
+			);
 			await page
 				.getByRole("navigation", { name: "Workspace views" })
-				.getByRole("link", { name: "Home", exact: true })
+				.getByRole("link", { name: "Workspace", exact: true })
 				.click();
 			await expect(
-				page.getByRole("heading", { name: "Your workspace" }),
+				page.getByRole("heading", {
+					name: "Workspace",
+					exact: true,
+					level: 1,
+				}),
 			).toBeVisible({ timeout: 10000 });
 			await page.getByRole("combobox", { name: "Resource type" }).click();
 			await page.getByRole("option", { name: "Agents" }).click();
