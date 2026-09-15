@@ -143,6 +143,30 @@ async def test_websocket_event_matches_public_http_contract_and_hides_payload(
 
 
 @pytest.mark.asyncio
+async def test_notification_projection_is_persisted_before_websocket_broadcasts(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = await _enqueue(db_session)
+    job.notification_id = uuid4()
+    events: list[str] = []
+    notifications = MagicMock()
+    notifications.update_notification = AsyncMock(
+        side_effect=lambda *_args, **_kwargs: events.append("notification")
+    )
+    monkeypatch.setattr(service, "get_notification_service", lambda: notifications)
+    monkeypatch.setattr(
+        service.pubsub_manager,
+        "broadcast",
+        AsyncMock(side_effect=lambda *_args, **_kwargs: events.append("broadcast")),
+    )
+
+    await service.publish_platform_job_update(job)
+
+    assert events == ["notification", "broadcast", "broadcast"]
+
+
+@pytest.mark.asyncio
 async def test_progress_and_terminal_writes_are_fenced(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
