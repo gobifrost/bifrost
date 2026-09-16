@@ -407,6 +407,10 @@ def validate_csrf_token(cookie_token: str, header_token: str) -> bool:
     return secrets.compare_digest(cookie_token, header_token)
 
 
+NO_TIMEOUT_TOKEN_SECONDS = 86_400
+"""Engine-token base lifetime for workflows configured with timeout_seconds=0 (no timeout)."""
+
+
 def mint_engine_token(
     *,
     execution_id: str,
@@ -426,7 +430,8 @@ def mint_engine_token(
     The signed Solution claims are authoritative for internal module-fetch
     endpoints. A child cannot broaden its source-code scope by changing query
     parameters. The token lifetime covers the workflow timeout plus five
-    minutes for startup and completion flushing.
+    minutes for startup and completion flushing; a workflow with no timeout
+    (timeout_seconds=0) gets a 24h token, matching the engine's wait cap.
 
     Returns:
         (token, expires_at_iso): JWT string and ISO-8601 expiry timestamp.
@@ -443,7 +448,13 @@ def mint_engine_token(
         "engine_global_repo_access": bool(global_repo_access),
     }
 
-    lifetime = timedelta(seconds=max(timeout_seconds, 1) + 300)
+    # timeout_seconds == 0 means "no timeout" everywhere else in the engine
+    # (process_pool, execution_cleanup, and the 24h BLPOP cap in
+    # execution/service.py). Give those executions a 24h token; a 301-second
+    # token expires under the first long approval wait and every later SDK
+    # call fails with 401.
+    effective_timeout = timeout_seconds if timeout_seconds > 0 else NO_TIMEOUT_TOKEN_SECONDS
+    lifetime = timedelta(seconds=effective_timeout + 300)
     expires_at = datetime.now(timezone.utc) + lifetime
     token = create_access_token(token_data, expires_delta=lifetime)
 
