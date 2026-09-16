@@ -127,6 +127,10 @@ test.describe("Integration mapping layout", () => {
 					pageScroll.scrollHeight > pageScroll.clientHeight + 1,
 				scrollOwners,
 				documentScrollable,
+				// A phantom document height means absolutely positioned row labels
+				// escaped the scroll region and drew a second page below the shell.
+				documentOverflow:
+					document.documentElement.scrollHeight - window.innerHeight,
 			};
 		});
 
@@ -134,6 +138,7 @@ test.describe("Integration mapping layout", () => {
 		expect(geometry.listOwnScroll).toBe(false);
 		expect(geometry.scrollOwners).toEqual(["page-scroll"]);
 		expect(geometry.documentScrollable).toBe(false);
+		expect(geometry.documentOverflow).toBeLessThanOrEqual(1);
 
 		// Scroll to the end of the mapping list; the toolbar must stay pinned.
 		await page.evaluate(() => {
@@ -249,6 +254,12 @@ test.describe("Integration mapping layout", () => {
 			return found;
 		});
 		expect(owners).toEqual(["main"]);
+		expect(
+			await page.evaluate(
+				() =>
+					document.documentElement.scrollHeight - window.innerHeight,
+			),
+		).toBeLessThanOrEqual(1);
 
 		await page.evaluate(() => {
 			const main = document.querySelector("main")!;

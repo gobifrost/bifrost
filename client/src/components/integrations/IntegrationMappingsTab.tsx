@@ -508,7 +508,14 @@ function IntegrationMappingRecord({
 	const isRowLocked = isActionPending || isDeletePending;
 
 	return (
-		<li className="grid min-w-0 gap-3 py-4 first:pt-0 last:pb-0 lg:grid-cols-[minmax(7rem,0.8fr)_minmax(10rem,1.4fr)_minmax(6rem,0.55fr)_minmax(8rem,0.85fr)_auto] lg:items-center">
+		/*
+		 * `relative` is load-bearing: the `lg:sr-only` field labels below are
+		 * `position: absolute`, and without a positioned ancestor they resolve
+		 * their containing block to the initial containing block. They would then
+		 * escape the tab's scroll clipping and inflate the document, producing a
+		 * phantom page scroll past the app shell.
+		 */
+		<li className="relative grid min-w-0 gap-3 py-4 first:pt-0 last:pb-0 lg:grid-cols-[minmax(7rem,0.8fr)_minmax(10rem,1.4fr)_minmax(6rem,0.55fr)_minmax(8rem,0.85fr)_auto] lg:items-center">
 			<section className="min-w-0 space-y-1">
 				<h3 className="min-w-0 font-medium [overflow-wrap:anywhere]">
 					{org.name}
