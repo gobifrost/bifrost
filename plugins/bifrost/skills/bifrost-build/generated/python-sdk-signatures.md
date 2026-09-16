@@ -214,11 +214,7 @@ Event publishing operations (async).
 
 **`tables.list(scope: str | None = None, app: str | None = None) -> list[TableInfo]`**
 
-<<<<<<< HEAD
-**`tables.query(table: str, where: dict[str, Any] | None = None, order_by: str | None = None, order_dir: str = 'asc', limit: int = 100, offset: int = 0, scope: str | None = None, after_document_id: str | None = None, document_id_prefix: str | None = None, skip_count: bool = False, document_ids: list[str] | None = None) -> DocumentList`**
-=======
-**`tables.query(table: str, where: dict[str, Any] | None = None, order_by: str | None = None, order_dir: str = 'asc', limit: int = 100, offset: int = 0, scope: str | None = None, after_document_id: str | None = None, document_id_prefix: str | None = None, skip_count: bool = False, solution: str | None = None) -> DocumentList`**
->>>>>>> 7ced78dd0 (Per-call solution targeting with allow_inbound_access gate)
+**`tables.query(table: str, where: dict[str, Any] | None = None, order_by: str | None = None, order_dir: str = 'asc', limit: int = 100, offset: int = 0, scope: str | None = None, after_document_id: str | None = None, document_id_prefix: str | None = None, skip_count: bool = False, document_ids: list[str] | None = None, solution: str | None = None) -> DocumentList`**
 
 **`tables.update(table: str, doc_id: str, data: dict[str, Any], scope: str | None = None, updated_by: str | None = None) -> DocumentData | None`**
 

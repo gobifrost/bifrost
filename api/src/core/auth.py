@@ -197,6 +197,8 @@ async def get_current_user_optional(
         form_id=payload.get("form_id"),
         verified_params=payload.get("verified_params"),
         verified_context=payload.get("verified_context"),
+        engine_execution_id=payload.get("engine_execution_id"),
+        engine_solution_id=payload.get("engine_solution_id"),
         capability_fingerprint=payload.get("capability_fingerprint"),
         token_exp=payload.get("exp"),
     )
@@ -561,6 +563,8 @@ async def get_current_user_ws(websocket) -> UserPrincipal | None:
         form_id=payload.get("form_id"),
         verified_params=payload.get("verified_params"),
         verified_context=payload.get("verified_context"),
+        engine_execution_id=payload.get("engine_execution_id"),
+        engine_solution_id=payload.get("engine_solution_id"),
         capability_fingerprint=payload.get("capability_fingerprint"),
         token_exp=payload.get("exp"),
     )

@@ -819,15 +819,26 @@ async def execute_workflow(
     # resolves to THIS install's own workflow, not a sibling install's that
     # shares the path (Codex #8 P1) nor the bare _repo/ one. solution_id (a
     # form/agent) > form_id > app_id. A bad/foreign ref yields no scope.
-    solution_scope = await derive_execution_solution_scope(
-        db,
-        ctx,
-        solution_id=request.solution_id,
-        form_id=request.form_id,
-        app_id=request.app_id,
-        target_org_id=lookup_org_id,
-        caller_solution_id=request.caller_solution_id,
-    )
+    # An explicitly denied/sealed target raises SolutionInboundDenied — 404
+    # WITHOUT shared fallback (a denied install must never execute a loose
+    # same-path workflow).
+    from src.services.solution_scope import SolutionInboundDenied
+
+    try:
+        solution_scope = await derive_execution_solution_scope(
+            db,
+            ctx,
+            solution_id=request.solution_id,
+            form_id=request.form_id,
+            app_id=request.app_id,
+            target_org_id=lookup_org_id,
+            caller_solution_id=request.caller_solution_id,
+        )
+    except SolutionInboundDenied:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"message": f"Workflow '{request.workflow_id}' not found"},
+        ) from None
     allow_shared_workflow = (
         solution_scope is None
         or await solution_allows_global(db, solution_scope)

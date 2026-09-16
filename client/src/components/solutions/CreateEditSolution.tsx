@@ -1787,6 +1787,25 @@ function EditBody({
 								/>
 							</div>
 
+							<div className="flex items-center justify-between gap-3 rounded-[var(--bf-radius-surface)] border p-3">
+								<div className="space-y-0.5">
+									<Label htmlFor="edit-inbound-access">
+										Allow inbound access
+									</Label>
+									<p className="text-xs text-muted-foreground">
+										Allow other solutions and workflows to
+										call this install&apos;s workflows,
+										tables, and files. Off means only this
+										install&apos;s own calls resolve.
+									</p>
+								</div>
+								<Switch
+									id="edit-inbound-access"
+									checked={allowInboundAccess}
+									onCheckedChange={setAllowInboundAccess}
+								/>
+							</div>
+
 							<GitRepoSection
 								slug={solution.slug}
 								connected={
@@ -1825,7 +1844,6 @@ function EditBody({
 							)}
 						</fieldset>
 					</div>
-<<<<<<< HEAD
 					<DialogFooter className="shrink-0 border-t p-5">
 						<Button
 							type="button"
@@ -1857,64 +1875,5 @@ function EditBody({
 				</form>
 			</DialogContent>
 		</Dialog>
-=======
-					<Switch
-						id="edit-outbound-access"
-						checked={allowOutboundAccess}
-						onCheckedChange={setAllowOutboundAccess}
-					/>
-				</div>
-
-				<div className="flex items-center justify-between rounded-lg border p-3">
-					<div className="space-y-0.5">
-						<Label htmlFor="edit-inbound-access">Allow inbound access</Label>
-						<p className="text-xs text-muted-foreground">
-							Allow other solutions and workflows to call this
-							install&apos;s workflows, tables, and files. Off means
-							only this install&apos;s own calls resolve.
-						</p>
-					</div>
-					<Switch
-						id="edit-inbound-access"
-						checked={allowInboundAccess}
-						onCheckedChange={setAllowInboundAccess}
-					/>
-				</div>
-
-				<GitRepoSection
-					slug={solution.slug}
-					connected={connected && gitRepoUrl.trim() !== ""}
-					repoUrl={gitRepoUrl}
-					subpath={gitSubpath}
-					gitRef={gitRef}
-					onRepoUrlChange={(url) => {
-						setGitRepoUrl(url);
-						// Typing a URL on a disconnected install re-arms the connection.
-						if (url.trim() !== "") setConnected(true);
-					}}
-					onSubpathChange={setGitSubpath}
-					onRefChange={setGitRef}
-					onDisconnect={() => {
-						setConnected(false);
-						setGitRepoUrl("");
-						setGitSubpath("");
-						setGitRef("");
-					}}
-				/>
-			</div>
-
-			<DialogFooter>
-				<Button variant="outline" onClick={onClose}>
-					Cancel
-				</Button>
-				<Button disabled={saveMut.isPending} onClick={() => saveMut.mutate()}>
-					{saveMut.isPending && (
-						<Loader2 className="mr-2 h-4 w-4 animate-spin" />
-					)}
-					Save changes
-				</Button>
-			</DialogFooter>
-		</>
->>>>>>> 7ced78dd0 (Per-call solution targeting with allow_inbound_access gate)
 	);
 }

@@ -56,10 +56,23 @@ def is_engine_user(user) -> bool:
 async def resolve_trustworthy_caller(db: AsyncSession, ctx) -> UUID | None:
     """SPIKE: the caller's OWN install, from a trustworthy source only.
 
-    App-header callers → the app's solution_id from the DB. Engine callers →
-    the SDK-attested ``?caller_solution=``/body value. Everyone else → None
-    (outside any install). Used for the inbound own-call bypass.
+    Precedence: the SIGNED engine claims on the execution-scoped token
+    (mint_engine_token — unforgeable without SECRET_KEY; None solution =
+    _repo execution, i.e. outside) > the DB-backed app-header install >
+    the SDK-attested ``?caller_solution=``/body value on engine-sub
+    requests. Everyone else → None (outside any install). Used for the
+    inbound own-call bypass. Request-supplied caller ids are NEVER trusted
+    on their own — Codex review P1.
     """
+    engine_execution_id = getattr(getattr(ctx, "user", None), "engine_execution_id", None)
+    if engine_execution_id is not None:
+        raw = getattr(ctx.user, "engine_solution_id", None)
+        if raw is None:
+            return None
+        try:
+            return UUID(str(raw))
+        except (ValueError, AttributeError, TypeError):
+            return None
     if getattr(ctx, "app_id", None):
         try:
             from uuid import UUID as _UUID
@@ -110,6 +123,20 @@ async def check_inbound_allowed(
         return False
     status, allow_inbound = row._tuple()
     return bool(status == "active" and allow_inbound)
+
+
+class SolutionInboundDenied(Exception):
+    """An explicitly targeted install refused inbound access (sealed,
+    inactive, or unknown ref).
+
+    Distinct from "no scope" (None): routers must 404 WITHOUT shared
+    fallback — a denied target must never execute a loose same-path
+    workflow (Codex review P1).
+    """
+
+    def __init__(self, ref: str | None = None) -> None:
+        super().__init__(ref or "solution inbound denied")
+        self.ref = ref
 
 
 async def get_active_solution(db: AsyncSession, solution_id: UUID) -> Solution | None:
@@ -278,9 +305,17 @@ async def derive_execution_solution_scope(
     the resolver's own org gate (cascade scope) prevents a foreign scope from
     reaching another org's workflow.
 
-    SPIKE: an explicitly targeted install additionally passes the inbound
-    gate — own-install callers always pass, otherwise the target's
-    ``allow_inbound_access`` decides. Denied → None (404 downstream).
+    SPIKE: every resolved install passes the inbound gate — own-install
+    callers always pass, otherwise the target's ``allow_inbound_access``
+    decides. An EXPLICIT ref (``?solution=`` UUID or body ``solution_id``)
+    that is unknown, inactive, or sealed raises :class:`SolutionInboundDenied`
+    (routers 404 WITHOUT shared fallback — a denied target must never execute
+    a loose same-path workflow). Unset/compat sources (app header, form,
+    app) keep the old None semantics (no narrowing).
+
+    Raises:
+        SolutionInboundDenied: an explicit ref did not resolve to a
+            reachable install.
     """
     from src.models.orm.forms import Form
 
@@ -288,39 +323,58 @@ async def derive_execution_solution_scope(
     # Body accepts UUID (passthrough, as today) or slug/name (SPIKE: resolved
     # inside target_org_id). SDK per-call override flows through body with
     # ctx unset, so it resolves; direct HTTP callers with both keep ctx-wins.
+    target: UUID | None = None
+    explicit = False
     ctx_scope = await solution_context_id(db, ctx)
     if ctx_scope is not None:
         target = ctx_scope
-        explicit = False
-    elif solution_id:
-        target = await resolve_solution_ref(db, solution_id, target_org_id)
-        explicit = True
-    elif form_id:
-        try:
-            form_uuid = UUID(form_id)
-        except ValueError:
-            return None
-        target = (
-            await db.execute(select(Form.solution_id).where(Form.id == form_uuid))
-        ).scalar_one_or_none()
-        explicit = False
-    elif app_id:
-        try:
-            app_uuid = UUID(app_id)
-        except ValueError:
-            return None
-        target = (
-            await db.execute(
-                select(Application.solution_id).where(Application.id == app_uuid)
-            )
-        ).scalar_one_or_none()
-        explicit = False
+        # ?solution= carries an explicit UUID (SDK-forwarded own install or a
+        # direct targeting attempt) while the app-header path carries the
+        # caller's own install implicitly. Gate the former; the latter passes
+        # via the own-call bypass below.
+        explicit = parse_ctx_solution_id(ctx) is not None
     else:
-        return None
+        raw_ctx_solution = getattr(ctx, "solution_id", None)
+        if raw_ctx_solution:
+            # ?solution= slug/name (auth passes it through raw): resolve
+            # inside the target org like a body ref. Unresolvable garbage
+            # falls through to the compat sources below (pre-spike
+            # behavior); a resolved install is always explicit.
+            slug_target = await resolve_solution_ref(
+                db, str(raw_ctx_solution), target_org_id
+            )
+            if slug_target is not None:
+                target = slug_target
+                explicit = True
+        if target is None and solution_id:
+            target = await resolve_solution_ref(db, solution_id, target_org_id)
+            explicit = target is not None
+            if solution_id and target is None:
+                # Explicit body ref that resolves nowhere: denial, not
+                # fallback (a dangling id must not execute a loose workflow).
+                raise SolutionInboundDenied(solution_id)
+        if target is None and form_id:
+            try:
+                form_uuid = UUID(form_id)
+            except ValueError:
+                return None
+            target = (
+                await db.execute(select(Form.solution_id).where(Form.id == form_uuid))
+            ).scalar_one_or_none()
+        if target is None and app_id:
+            try:
+                app_uuid = UUID(app_id)
+            except ValueError:
+                return None
+            target = (
+                await db.execute(
+                    select(Application.solution_id).where(Application.id == app_uuid)
+                )
+            ).scalar_one_or_none()
     if target is None:
+        if explicit:
+            raise SolutionInboundDenied(solution_id)
         return None
-    if not explicit:
-        return target
     caller = await resolve_trustworthy_caller(db, ctx)
     if caller is None and caller_solution_id and is_engine_user(ctx.user):
         try:
@@ -329,6 +383,8 @@ async def derive_execution_solution_scope(
             caller = None
     if await check_inbound_allowed(db, target, caller):
         return target
+    if explicit:
+        raise SolutionInboundDenied(solution_id)
     return None
 
 

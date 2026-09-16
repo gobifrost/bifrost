@@ -81,3 +81,52 @@ class TestSpikeSolutionRef:
         org = (await _org(db_session)).id
         sol = await _sol(db_session, org, "open")
         assert await check_inbound_allowed(db_session, sol.id, None) is True
+
+    async def test_sealed_body_target_raises_no_fallback(self, db_session):
+        """Codex P1: a sealed explicit target raises (routers 404 without
+        shared fallback) instead of resolving or falling back."""
+        from src.services.solution_scope import SolutionInboundDenied
+
+        org = (await _org(db_session)).id
+        sol = await _sol(db_session, org, "sealed")
+        sol.allow_inbound_access = False
+        await db_session.flush()
+        with pytest.raises(SolutionInboundDenied):
+            await derive_execution_solution_scope(
+                db_session, _no_ctx(), solution_id=str(sol.id),
+                form_id=None, app_id=None, target_org_id=org,
+            )
+
+    async def test_sealed_ctx_target_raises(self, db_session):
+        """Codex P1: ?solution= targeting a sealed install is gated too."""
+        from src.services.solution_scope import SolutionInboundDenied
+
+        org = (await _org(db_session)).id
+        sol = await _sol(db_session, org, "sealed")
+        sol.allow_inbound_access = False
+        await db_session.flush()
+        with pytest.raises(SolutionInboundDenied):
+            await derive_execution_solution_scope(
+                db_session,
+                SimpleNamespace(solution_id=str(sol.id), app_id=None),
+                solution_id=None, form_id=None, app_id=None,
+            )
+
+    async def test_signed_engine_claim_beats_spoofed_param(self, db_session):
+        """Codex P1: the signed engine_solution_id is the caller even when a
+        request param claims otherwise."""
+        from src.services.solution_scope import resolve_trustworthy_caller
+
+        org = (await _org(db_session)).id
+        real = await _sol(db_session, org, "real")
+        spoof = uuid4()
+        ctx = SimpleNamespace(
+            solution_id=None,
+            app_id=None,
+            caller_solution_id=str(spoof),
+            user=SimpleNamespace(
+                engine_execution_id="exec-1",
+                engine_solution_id=str(real.id),
+            ),
+        )
+        assert await resolve_trustworthy_caller(db_session, ctx) == real.id

@@ -234,19 +234,16 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # (2026-09-04). ADDITIVE: older clients ignore the richer tool-contract
     # metadata, so the fingerprint is refreshed without raising MIN_CLI_VERSION.
     #
-<<<<<<< HEAD
     # IntegrationCreate/IntegrationUpdate gained optional description
     # (2026-09-09). ADDITIVE: older clients omit it and keep existing behavior.
-    "ab0febdc63454f2a731b072c6306052853d8da53aabc7cbc04fa4b4ce0323b83"
-=======
+    #
     # Solution access flags renamed with dual-name compat (2026-09-16, SPIKE).
     # allow_outbound_access is canonical; global_repo_access is still accepted
     # on input and emitted (deprecated) on output. allow_inbound_access added
     # (default true). WorkflowExecutionRequest/EmitEventRequest gained optional
     # caller_solution(_id). ADDITIVE: old clients use the old key / omit the
     # new fields and keep prior behavior; fingerprint refreshed only.
-    "190d223cd6dee6647399aafb2b4cecf7c0c4e7a7892af2d3e9474be5b012c9da"
->>>>>>> 7ced78dd0 (Per-call solution targeting with allow_inbound_access gate)
+    "231c1d9334919ae83b068f2123ac58b2eb75efa881e6a4efd2d5a8f1858c1a28"
 )
 
 

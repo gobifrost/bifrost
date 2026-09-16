@@ -63,6 +63,16 @@ def _validate_batch_document_limit(documents: list[dict[str, Any]]) -> None:
         raise ValueError("table batch writes accept at most 1000 documents")
 
 
+def _auto_create_allowed(explicit_solution: str | None) -> bool:
+    """Whether a 404 may trigger loose auto-create-on-insert.
+
+    Explicit per-call ``solution=`` targeting must never conjure a loose
+    shared table when the target is missing/inaccessible (Codex review P2) —
+    surface the 404 instead, same as inherited solution context does.
+    """
+    return not _has_solution_context() and explicit_solution is None
+
+
 async def _ensure_table_exists(table: str, scope: str | None) -> None:
     """Create the table if it doesn't already exist (auto-create-on-insert).
 
@@ -276,7 +286,7 @@ class tables:
         client = get_client()
         url = f"/api/tables/{table}/documents{_scope_query(effective_scope, solution)}"
         response = await client.post(url, json=body)
-        if response.status_code == 404 and not _has_solution_context():
+        if response.status_code == 404 and _auto_create_allowed(solution):
             # Table doesn't exist — auto-create then retry.
             await _ensure_table_exists(table, effective_scope)
             response = await client.post(url, json=body)
