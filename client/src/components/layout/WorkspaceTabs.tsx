@@ -12,7 +12,7 @@ export function WorkspaceTabs() {
 		return <h1 className={TITLE_CLASS_NAME}>Workspace</h1>;
 	}
 	return (
-		<nav aria-label="Workspace views" className="flex items-center gap-1">
+		<nav aria-label="Workspace views" className="flex flex-wrap items-center gap-1">
 			{[
 				{ to: "/", label: "Workspace" },
 				{ to: "/dashboard", label: "Dashboard" },
@@ -23,7 +23,7 @@ export function WorkspaceTabs() {
 					end
 					className={({ isActive }) =>
 						cn(
-							"inline-flex min-h-11 items-center border-b-2 px-3 transition-colors focus-visible:outline-2 focus-visible:outline-ring",
+							"inline-flex min-h-11 shrink-0 items-center border-b-2 px-3 transition-colors focus-visible:outline-2 focus-visible:outline-ring",
 							isActive
 								? "border-primary text-primary"
 								: "border-transparent text-muted-foreground hover:text-foreground",
