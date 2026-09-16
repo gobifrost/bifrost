@@ -169,15 +169,17 @@ export function IntegrationMappingsTab({
 	}, [entityLabelByValue, normalizedSearch, orgsWithMappings]);
 
 	return (
-		<Card className="overflow-clip">
+		<Card className="overflow-clip border-t-0">
 			{/*
 			 * Sticky so the tab's title, auto-match controls, and search stay
 			 * reachable once the page has scrolled the overview away. `overflow-clip`
 			 * on the Card keeps the rounded corners clipping children while still
 			 * allowing this to stick (unlike `overflow-hidden`, clip does not create
-			 * a scroll container).
+			 * a scroll container). The bar is pulled up over the Card's own top
+			 * padding and carries the Card's top border itself, so the edge is
+			 * never cut off when pinned.
 			 */}
-			<div className="sticky top-0 z-20 flex flex-col gap-3 border-b border-border/60 bg-card pb-3">
+			<div className="sticky top-0 z-20 -mt-(--card-spacing) flex flex-col gap-3 border-y border-border/70 bg-card pb-3 pt-(--card-spacing)">
 				<CardHeader className="flex flex-col gap-3 space-y-0 lg:flex-row lg:items-start lg:justify-between">
 					<div className="min-w-0">
 						<CardTitle>Organization Mappings</CardTitle>
