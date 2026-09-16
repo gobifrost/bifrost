@@ -829,7 +829,7 @@ export function IntegrationDetail() {
 				{/* Tabs for Mappings and Config Overrides */}
 				<Tabs
 					defaultValue="mappings"
-					className="flex min-h-0 flex-col gap-4 lg:min-h-96 lg:flex-1"
+					className="flex min-h-0 flex-col gap-4"
 				>
 					<TabsList
 						aria-label="Integration views"
@@ -851,9 +851,9 @@ export function IntegrationDetail() {
 
 					<TabsContent
 						value="mappings"
-						className="flex min-h-0 flex-1 flex-col"
+						className="flex min-h-0 flex-col"
 					>
-						<div className="min-w-0 lg:flex lg:min-h-0 lg:flex-1 lg:flex-col">
+						<div className="min-w-0">
 							{mappingSaveError && (
 								<div
 									role="alert"
@@ -881,7 +881,7 @@ export function IntegrationDetail() {
 							)}
 							<fieldset
 								disabled={batchMutation.isPending}
-								className="min-w-0 lg:flex lg:min-h-0 lg:flex-1 lg:flex-col"
+								className="min-w-0"
 							>
 								{batchMutation.isPending && (
 									<p

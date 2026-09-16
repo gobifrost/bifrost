@@ -237,18 +237,41 @@ describe("IntegrationMappingsTab — populated", () => {
 		expect(onDeleteMapping).toHaveBeenCalledWith(orgs[0]);
 	});
 
-	it("opens the config dialog for the clicked row", async () => {
+	it("opens the config dialog from the row actions menu", async () => {
 		const { user, onOpenConfigDialog } = renderTab({
 			orgsWithMappings: orgs,
 			entities: [{ value: "ent-a", label: "Entity A" }],
 		});
 
-		const configureBtn = screen
-			.getAllByRole("button")
-			.find((b) => b.getAttribute("title") === "Configure");
-		expect(configureBtn).toBeDefined();
-		await user.click(configureBtn!);
+		await user.click(
+			screen.getByRole("button", { name: "Mapping actions for Acme" }),
+		);
+		await user.click(screen.getByRole("menuitem", { name: "Configure" }));
 		expect(onOpenConfigDialog).toHaveBeenCalledWith("org-1");
+	});
+
+	it("marks rows with non-default config inside the actions menu", async () => {
+		const { user } = renderTab({
+			configSchema: [{ key: "apiBaseUrl", type: "string" }],
+			configDefaults: { apiBaseUrl: "https://default.example" },
+			orgsWithMappings: [
+				{
+					...orgs[0],
+					mapping: {
+						...orgs[0].mapping,
+						config: { apiBaseUrl: "https://override.example" },
+					} as OrgWithMapping["mapping"],
+				},
+			],
+			entities: [{ value: "ent-a", label: "Entity A" }],
+		});
+
+		await user.click(
+			screen.getByRole("button", { name: "Mapping actions for Acme" }),
+		);
+		expect(
+			screen.getByLabelText("Custom configuration"),
+		).toBeInTheDocument();
 	});
 
 	it("keeps Unlink disabled when there is no mapping to unlink", async () => {
@@ -267,8 +290,8 @@ describe("IntegrationMappingsTab — populated", () => {
 });
 
 describe("IntegrationMappingsTab — no data provider manual input", () => {
-	it("explains that auto-match needs a data provider while keeping Configure available", () => {
-		renderTab({
+	it("explains that auto-match needs a data provider while keeping Configure available", async () => {
+		const { user } = renderTab({
 			hasDataProvider: false,
 			configSchema: [{ key: "apiBaseUrl", type: "string" }],
 			orgsWithMappings: [
@@ -292,8 +315,12 @@ describe("IntegrationMappingsTab — no data provider manual input", () => {
 		expect(
 			screen.getByText(/auto-match is unavailable/i),
 		).toBeInTheDocument();
+
+		await user.click(
+			screen.getByRole("button", { name: "Mapping actions for Acme" }),
+		);
 		expect(
-			screen.getByRole("button", { name: /configure/i }),
+			screen.getByRole("menuitem", { name: "Configure" }),
 		).toBeInTheDocument();
 	});
 
@@ -347,7 +374,7 @@ describe("IntegrationMappingsTab — no data provider manual input", () => {
 });
 
 describe("IntegrationMappingsTab — OAuth connection column", () => {
-	it("renders Connect button when integration has OAuth and mapping has no token", () => {
+	it("shows status only, with Connect offered in the row actions menu", async () => {
 		const props = {
 			hasOAuth: true,
 			orgsWithMappings: [
@@ -368,9 +395,19 @@ describe("IntegrationMappingsTab — OAuth connection column", () => {
 				},
 			],
 		};
-		renderTab(props);
+		const { user } = renderTab(props);
 		expect(
-			screen.getByRole("button", { name: /connect/i }),
+			screen.getByText("Not connected", { exact: true }),
+		).toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", { name: /^connect/i }),
+		).not.toBeInTheDocument();
+
+		await user.click(
+			screen.getByRole("button", { name: "Mapping actions for Org 1" }),
+		);
+		expect(
+			screen.getByRole("menuitem", { name: "Connect" }),
 		).toBeInTheDocument();
 	});
 
@@ -401,8 +438,8 @@ describe("IntegrationMappingsTab — OAuth connection column", () => {
 		).toBeInTheDocument();
 	});
 
-	it("renders Expired instead of Connected when a completed token is past expiry", () => {
-		renderTab({
+	it("renders Expired instead of Connected when a completed token is past expiry", async () => {
+		const { user } = renderTab({
 			hasOAuth: true,
 			orgsWithMappings: [
 				{
@@ -432,12 +469,16 @@ describe("IntegrationMappingsTab — OAuth connection column", () => {
 		expect(
 			screen.getByText("Expired", { exact: true }),
 		).toBeInTheDocument();
+
+		await user.click(
+			screen.getByRole("button", { name: "Mapping actions for Org 1" }),
+		);
 		expect(
-			screen.getByRole("button", { name: /reconnect/i }),
+			screen.getByRole("menuitem", { name: "Reconnect" }),
 		).toBeInTheDocument();
 	});
 
-	it("Connected status has a refresh button that calls onRefreshMapping", async () => {
+	it("Connected status offers refresh in the actions menu", async () => {
 		const onRefreshMapping = vi.fn();
 		const props = {
 			hasOAuth: true,
@@ -464,10 +505,10 @@ describe("IntegrationMappingsTab — OAuth connection column", () => {
 			],
 		};
 		const { user } = renderTab(props);
-		const refreshBtn = screen.getByRole("button", {
-			name: /refresh token/i,
-		});
-		await user.click(refreshBtn);
+		await user.click(
+			screen.getByRole("button", { name: "Mapping actions for Org 1" }),
+		);
+		await user.click(screen.getByRole("menuitem", { name: "Refresh token" }));
 		expect(onRefreshMapping).toHaveBeenCalledWith(
 			props.orgsWithMappings[0],
 		);
@@ -497,16 +538,15 @@ describe("IntegrationMappingsTab — OAuth connection column", () => {
 			],
 		});
 
-		const row = screen.getByText("Org 1").closest("li")!;
-		expect(
-			within(row).getByRole("button", { name: /retrying/i }),
-		).toBeDisabled();
-		expect(
-			within(row).getByRole("button", { name: /configure/i }),
-		).toBeDisabled();
 		await user.click(
 			screen.getByRole("button", { name: "Mapping actions for Org 1" }),
 		);
+		expect(
+			screen.getByRole("menuitem", { name: "Retrying…" }),
+		).toHaveAttribute("aria-disabled", "true");
+		expect(
+			screen.getByRole("menuitem", { name: "Configure" }),
+		).toHaveAttribute("aria-disabled", "true");
 		expect(
 			screen.getByRole("menuitem", { name: "Disconnect" }),
 		).toHaveAttribute("aria-disabled", "true");
@@ -515,7 +555,7 @@ describe("IntegrationMappingsTab — OAuth connection column", () => {
 		).toHaveAttribute("aria-disabled", "true");
 	});
 
-	it("calls onConnectMapping with the org when Connect button is clicked", async () => {
+	it("calls onConnectMapping with the org from the actions menu", async () => {
 		const onConnectMapping = vi.fn();
 		const org = {
 			id: "org-1",
@@ -538,11 +578,14 @@ describe("IntegrationMappingsTab — OAuth connection column", () => {
 			orgsWithMappings: [org],
 		};
 		const { user } = renderTab(props);
-		await user.click(screen.getByRole("button", { name: /connect/i }));
+		await user.click(
+			screen.getByRole("button", { name: "Mapping actions for Org 1" }),
+		);
+		await user.click(screen.getByRole("menuitem", { name: "Connect" }));
 		expect(onConnectMapping).toHaveBeenCalledWith(org);
 	});
 
-	it("shows Connect button (not 'Save row first') when no mapping exists yet", () => {
+	it("offers Connect (not 'Save row first') when no mapping exists yet", async () => {
 		const props = {
 			hasOAuth: true,
 			orgsWithMappings: [
@@ -559,11 +602,15 @@ describe("IntegrationMappingsTab — OAuth connection column", () => {
 				},
 			],
 		};
-		renderTab(props);
-		expect(
-			screen.getByRole("button", { name: /connect/i }),
-		).toBeInTheDocument();
+		const { user } = renderTab(props);
 		expect(screen.queryByText(/save row first/i)).not.toBeInTheDocument();
+
+		await user.click(
+			screen.getByRole("button", { name: "Mapping actions for Org 1" }),
+		);
+		expect(
+			screen.getByRole("menuitem", { name: "Connect" }),
+		).toBeInTheDocument();
 	});
 
 	it("disconnects the selected mapping from its actions menu", async () => {
