@@ -1641,13 +1641,11 @@ function EditBody({
 		solution.organization_id ?? null,
 	);
 	const [allowOutboundAccess, setAllowOutboundAccess] = useState(
-		// New API key with fallback to the deprecated one (removed on regen).
-		(solution as { allow_outbound_access?: boolean }).allow_outbound_access ??
-			solution.global_repo_access,
+		// Deprecated global_repo_access still read during the transition.
+		solution.allow_outbound_access ?? solution.global_repo_access,
 	);
 	const [allowInboundAccess, setAllowInboundAccess] = useState(
-		(solution as { allow_inbound_access?: boolean }).allow_inbound_access ??
-			true,
+		solution.allow_inbound_access ?? true,
 	);
 	const [gitRepoUrl, setGitRepoUrl] = useState(solution.git_repo_url ?? "");
 	const [gitSubpath, setGitSubpath] = useState(solution.repo_subpath ?? "");
@@ -1659,11 +1657,8 @@ function EditBody({
 	const [connected, setConnected] = useState(solution.git_connected);
 
 	const outboundInitial =
-		(solution as { allow_outbound_access?: boolean }).allow_outbound_access ??
-		solution.global_repo_access;
-	const inboundInitial =
-		(solution as { allow_inbound_access?: boolean }).allow_inbound_access ??
-		true;
+		solution.allow_outbound_access ?? solution.global_repo_access;
+	const inboundInitial = solution.allow_inbound_access ?? true;
 
 	const saveMut = useMutation({
 		mutationFn: () => {
@@ -1672,11 +1667,9 @@ function EditBody({
 			if (orgId !== (solution.organization_id ?? null))
 				update.organization_id = orgId;
 			if (allowOutboundAccess !== outboundInitial)
-				(update as { allow_outbound_access?: boolean }).allow_outbound_access =
-					allowOutboundAccess;
+				update.allow_outbound_access = allowOutboundAccess;
 			if (allowInboundAccess !== inboundInitial)
-				(update as { allow_inbound_access?: boolean }).allow_inbound_access =
-					allowInboundAccess;
+				update.allow_inbound_access = allowInboundAccess;
 
 			const trimmedUrl = gitRepoUrl.trim();
 			// Connect when there's a URL and the user hasn't disconnected;

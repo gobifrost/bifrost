@@ -56,6 +56,8 @@ function makeSolution(overrides: Partial<Solution> = {}): Solution {
 		name: "My Solution",
 		organization_id: null,
 		global_repo_access: false,
+		allow_outbound_access: false,
+		allow_inbound_access: true,
 		git_connected: false,
 		git_repo_url: null,
 		scope: "global",
@@ -95,6 +97,29 @@ describe("CreateEditSolution — edit mode", () => {
 		expect(within(dialog).queryByLabelText(/git connected/i)).toBeNull();
 		expect(within(dialog).getByTestId("git-section")).toBeInTheDocument();
 		expect(within(dialog).getByText("Not connected")).toBeInTheDocument();
+	});
+
+	it("PATCHes outbound and inbound access under the new keys", async () => {
+		mockUpdateSolution.mockResolvedValue(makeSolution());
+		const { user } = renderEdit(makeSolution());
+
+		const dialog = await screen.findByTestId("solution-dialog");
+		await user.click(
+			within(dialog).getByRole("switch", { name: /allow outbound access/i }),
+		);
+		await user.click(
+			within(dialog).getByRole("switch", { name: /allow inbound access/i }),
+		);
+		await user.click(
+			within(dialog).getByRole("button", { name: /save changes/i }),
+		);
+
+		await waitFor(() =>
+			expect(mockUpdateSolution).toHaveBeenCalledWith("sol-1", {
+				allow_outbound_access: true,
+				allow_inbound_access: false,
+			}),
+		);
 	});
 
 	it("derives git_connected from the repo URL on save", async () => {

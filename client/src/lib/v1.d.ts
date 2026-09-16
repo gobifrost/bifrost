@@ -8525,7 +8525,7 @@ export interface paths {
         head?: never;
         /**
          * Update an install's local fields (admin only)
-         * @description Edit INSTALL-LOCAL fields only (name/scope/global_repo_access/git fields).
+         * @description Edit INSTALL-LOCAL fields only (name/scope/allow_outbound_access/allow_inbound_access/git fields).
          *
          *     Portable content (workflows/apps/forms/agents/tables/config declarations) is
          *     owned by the bundle/git and is never touched here. Changing the install's
@@ -16120,6 +16120,11 @@ export interface components {
              * @description Solution install id from the execution context. When set, topic lookup resolves this install's event source before _repo sources.
              */
             solution?: string | null;
+            /**
+             * Caller Solution
+             * @description SPIKE: the caller's OWN install on per-call targeted emits (SDK-attested, engine requests only) for the inbound own-call bypass.
+             */
+            caller_solution?: string | null;
         };
         /**
          * EmitEventResponse
@@ -25010,10 +25015,15 @@ export interface components {
             /** Organization Id */
             organization_id?: string | null;
             /**
-             * Global Repo Access
+             * Allow Outbound Access
              * @default false
              */
-            global_repo_access: boolean;
+            allow_outbound_access: boolean;
+            /**
+             * Allow Inbound Access
+             * @default true
+             */
+            allow_inbound_access: boolean;
             /**
              * Git Connected
              * @default false
@@ -25062,6 +25072,11 @@ export interface components {
              * @enum {string}
              */
             readonly scope: "org" | "global";
+            /**
+             * Global Repo Access
+             * @description Deprecated: use allow_outbound_access.
+             */
+            readonly global_repo_access: boolean;
         };
         /**
          * SolutionAccessUserSummary
@@ -25267,10 +25282,15 @@ export interface components {
             /** Name */
             name: string;
             /**
-             * Global Repo Access
+             * Allow Outbound Access
              * @default false
              */
-            global_repo_access: boolean;
+            allow_outbound_access: boolean;
+            /**
+             * Allow Inbound Access
+             * @default true
+             */
+            allow_inbound_access: boolean;
             /**
              * Git Connected
              * @default false
@@ -25999,8 +26019,10 @@ export interface components {
             name?: string | null;
             /** Organization Id */
             organization_id?: string | null;
-            /** Global Repo Access */
-            global_repo_access?: boolean | null;
+            /** Allow Outbound Access */
+            allow_outbound_access?: boolean | null;
+            /** Allow Inbound Access */
+            allow_inbound_access?: boolean | null;
             /** Git Connected */
             git_connected?: boolean | null;
             /** Git Repo Url */
@@ -27564,6 +27586,11 @@ export interface components {
              * @description Optional install id of the calling Solution form/agent. Used to scope a path::function workflow ref to that install (so it resolves the install's own workflow, not a sibling install's or the bare _repo/ one). Takes precedence over form_id/app_id derivation.
              */
             solution_id?: string | null;
+            /**
+             * Caller Solution Id
+             * @description SPIKE: the caller's OWN install on per-call targeted requests (SDK-attested, engine requests only). Lets the inbound gate tell own-calls (caller == target, always allow) from cross-install calls (target's allow_inbound_access decides).
+             */
+            caller_solution_id?: string | null;
             /**
              * Transient
              * @description If true, skip database persistence (for code editor debugging)
