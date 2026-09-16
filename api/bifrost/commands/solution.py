@@ -87,7 +87,7 @@ def _write_solution_descriptor(
     slug: str,
     name: str | None,
     version: str,
-    global_repo_access: bool,
+    allow_outbound_access: bool,
 ) -> pathlib.Path:
     workspace.mkdir(parents=True, exist_ok=True)
     descriptor = workspace / DESCRIPTOR_FILENAME
@@ -99,7 +99,7 @@ def _write_solution_descriptor(
                 "slug": slug,
                 "name": name or slug,
                 "version": version,
-                "global_repo_access": global_repo_access,
+                "allow_outbound_access": allow_outbound_access,
             },
             sort_keys=False,
         )
@@ -116,7 +116,7 @@ async def _post_create_install_for_descriptor(
         "slug": descriptor.slug,
         "name": descriptor.name,
         "organization_id": target_org_id,
-        "global_repo_access": descriptor.global_repo_access,
+        "allow_outbound_access": descriptor.allow_outbound_access,
         "git_connected": descriptor.git_connected,
         "git_repo_url": descriptor.git_repo_url,
         "repo_subpath": descriptor.repo_subpath,
@@ -134,14 +134,14 @@ def _create_solution_workspace(
     slug: str,
     name: str | None,
     version: str,
-    global_repo_access: bool,
+    allow_outbound_access: bool,
     org: str | None,
     is_global: bool,
     api_url: str | None,
 ) -> None:
     workspace = pathlib.Path(path)
     descriptor_path = _write_solution_descriptor(
-        workspace, slug, name, version, global_repo_access
+        workspace, slug, name, version, allow_outbound_access
     )
     descriptor = load_descriptor(workspace)
     remote_created = False
@@ -184,7 +184,10 @@ def _create_solution_workspace(
 @click.option("--name", default=None, help="Display name (defaults to slug).")
 @click.option("--version", "version", default="0.1.0", show_default=True,
               help="Bundle version recorded on the install at deploy time.")
-@click.option("--global-repo-access/--no-global-repo-access", default=False, show_default=True)
+@click.option("--allow-outbound-access/--no-allow-outbound-access", "allow_outbound_access",
+              default=None, help="Let the install fall back to shared _repo resources.")
+@click.option("--global-repo-access/--no-global-repo-access", "legacy_global_repo_access",
+              default=None, hidden=True, help="Deprecated: use --allow-outbound-access.")
 @click.option("--url", "api_url", default=None, help="Bifrost instance URL (default: current profile).")
 @org_option
 def create_cmd(
@@ -192,15 +195,27 @@ def create_cmd(
     slug: str,
     name: str | None,
     version: str,
-    global_repo_access: bool,
+    allow_outbound_access: bool | None,
+    legacy_global_repo_access: bool | None,
     org: str | None,
     is_global: bool,
     api_url: str | None,
 ) -> None:
     """Create a local descriptor and an empty remote install."""
     _create_solution_workspace(
-        path, slug, name, version, global_repo_access, org, is_global, api_url
+        path, slug, name, version,
+        _resolve_outbound_flag(allow_outbound_access, legacy_global_repo_access),
+        org, is_global, api_url,
     )
+
+
+def _resolve_outbound_flag(new: bool | None, legacy: bool | None) -> bool:
+    """Merge the canonical and deprecated outbound flags (new wins, default off)."""
+    if new is not None:
+        return new
+    if legacy is not None:
+        return legacy
+    return False
 
 
 @solution_group.command(
@@ -212,7 +227,10 @@ def create_cmd(
 @click.option("--name", default=None, help="Display name (defaults to slug).")
 @click.option("--version", "version", default="0.1.0", show_default=True,
               help="Bundle version recorded on the install at deploy time.")
-@click.option("--global-repo-access/--no-global-repo-access", default=False, show_default=True)
+@click.option("--allow-outbound-access/--no-allow-outbound-access", "allow_outbound_access",
+              default=None, help="Let the install fall back to shared _repo resources.")
+@click.option("--global-repo-access/--no-global-repo-access", "legacy_global_repo_access",
+              default=None, hidden=True, help="Deprecated: use --allow-outbound-access.")
 @click.option("--url", "api_url", default=None, help="Bifrost instance URL (default: current profile).")
 @org_option
 def init_cmd(
@@ -220,14 +238,17 @@ def init_cmd(
     slug: str,
     name: str | None,
     version: str,
-    global_repo_access: bool,
+    allow_outbound_access: bool | None,
+    legacy_global_repo_access: bool | None,
     org: str | None,
     is_global: bool,
     api_url: str | None,
 ) -> None:
     """Backward-compatible alias for ``bifrost solution create``."""
     _create_solution_workspace(
-        path, slug, name, version, global_repo_access, org, is_global, api_url
+        path, slug, name, version,
+        _resolve_outbound_flag(allow_outbound_access, legacy_global_repo_access),
+        org, is_global, api_url,
     )
 
 
@@ -2198,11 +2219,11 @@ def deploy_cmd(
         target_id = binding.solution_id
 
         # Vendor referenced _repo/ shared modules into the bundle so the deployed
-        # Solution is self-contained (criterion 5). When global_repo_access is on
+        # Solution is self-contained (criterion 5). When allow_outbound_access is on
         # the install can reach _repo/ at runtime, so vendoring is skipped.
         bundle_python = python_files
         vendored: dict[str, str] = {}
-        if not descriptor.global_repo_access:
+        if not descriptor.allow_outbound_access:
             from bifrost.solution_vendoring import vendor_shared_deps
 
             # Vendoring scans imports and reads each referenced _repo/ module
@@ -2813,7 +2834,7 @@ def start_cmd(
                 binding.solution_id,
                 bind_host,
                 proxy_origin,
-                descriptor.global_repo_access,
+                descriptor.allow_outbound_access,
             )
         )
     finally:

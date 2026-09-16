@@ -108,7 +108,7 @@ Registration creates a stable UUID and applies organization/access/role boundari
 - Use `bifrost workflows remap` only when intentionally consolidating two existing workflow records.
 - Execute the registered ref after writing to verify worker behavior and permissions.
 
-A Solution with `global_repo_access: true` can fall back only to an eligible registered loose workflow. Merely placing a decorated function in `_repo` does not make it callable through workflow resolution.
+A Solution with `allow_outbound_access: true` can fall back only to an eligible registered loose workflow. Merely placing a decorated function in `_repo` does not make it callable through workflow resolution.
 
 Read `workflows.md` for decorators, testing, dependencies, and tool naming.
 

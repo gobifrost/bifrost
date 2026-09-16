@@ -79,12 +79,15 @@ class Solution(Base):
         index=True,
     )
 
-    # Whether this Solution may fall back to shared _repo modules and loose
+    # Outbound gate:
+    # whether this Solution may fall back to shared _repo modules and loose
     # org/global workflows, tables, and files. Orthogonal to install scope and
     # off by default. Configs/integrations/OAuth/knowledge are shared instance
     # resources and are not governed by this flag.
-    global_repo_access: Mapped[bool] = mapped_column(
-        Boolean, default=False, server_default=text("false")
+    # NOTE: the DB column keeps its historical name; only the attribute was
+    # renamed for consistent code/UI language. No migration needed.
+    allow_outbound_access: Mapped[bool] = mapped_column(
+        "global_repo_access", Boolean, default=False, server_default=text("false")
     )
 
     # Version bookkeeping (Task 20). ``version`` is the deployed bundle's

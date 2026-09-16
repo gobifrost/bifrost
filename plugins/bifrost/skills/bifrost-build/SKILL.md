@@ -38,10 +38,10 @@ First choose which of four working models owns the change. `Workspace` here mean
 |---|---|---|---|
 | **Workspace** | Maintaining a v1 app, building a loose workflow/entity, or intentionally creating source/resources shared at the instance level | Edit `_repo` source with `bifrost files`; create and mutate its scoped entity records directly with dedicated CLI commands. Commands target the selected instance directly; v1 app source remains draft until published. | `references/repository.md` |
 | **App** | Building one normal Vite/React App in its own git repository while workflows, tables, files, configs, and integrations remain live platform resources | Create or bind with `bifrost app create` / `app bind`; develop with `bifrost app start`; deliver only the App bundle with `bifrost app deploy`. Source stays local and never enters `_repo` or a manifest. | `references/apps-independent.md` |
-| **Solution** | Building a cohesive, portable, versioned app or automation package that should own and deploy its definitions together | Edit local source and `.bifrost` manifests; preview with `bifrost solution start`; deliver with `bifrost solution deploy`. Keep `global_repo_access: false`. | `references/solutions.md` |
-| **Solution supported by the Workspace** | A Solution intentionally depends on eligible shared `_repo` modules, registered loose workflows, tables, or files | Author and deploy Solution-owned definitions locally, but manage each shared Workspace dependency separately through its own CLI/file path. Set `global_repo_access: true`; this adds runtime fallback, not ownership or permission. | `references/solutions.md` and `references/solution-resource-access.md` |
+| **Solution** | Building a cohesive, portable, versioned app or automation package that should own and deploy its definitions together | Edit local source and `.bifrost` manifests; preview with `bifrost solution start`; deliver with `bifrost solution deploy`. Keep `allow_outbound_access: false`. | `references/solutions.md` |
+| **Solution supported by the Workspace** | A Solution intentionally depends on eligible shared `_repo` modules, registered loose workflows, tables, or files | Author and deploy Solution-owned definitions locally, but manage each shared Workspace dependency separately through its own CLI/file path. Set `allow_outbound_access: true`; this adds runtime fallback, not ownership or permission. | `references/solutions.md` and `references/solution-resource-access.md` |
 
-Use `bifrost.solution.yaml` at the project root as the Solution ownership marker. If it exists, inspect `global_repo_access` to distinguish the two Solution models. Without it, a project-level `.env` containing `BIFROST_APP_ID` identifies an independent App; an ordinary loose checkout without either marker uses the Workspace model. If starting inside a nested folder, locate the root with ordinary file discovery; do not use a custom shell loop.
+Use `bifrost.solution.yaml` at the project root as the Solution ownership marker. If it exists, inspect `allow_outbound_access` to distinguish the two Solution models. Without it, a project-level `.env` containing `BIFROST_APP_ID` identifies an independent App; an ordinary loose checkout without either marker uses the Workspace model. If starting inside a nested folder, locate the root with ordinary file discovery; do not use a custom shell loop.
 
 For net-new work, confirm the model with the user before scaffolding. Use an App when one independently deployed frontend should consume live platform resources. Prefer a Solution when the frontend and its workflows, tables, configs, or other definitions must travel and reconcile as one installable package. Use the Workspace for deliberately loose, shared, or existing v1 content. Enable Workspace support for a Solution only when the shared dependencies are intentional and understood, never as a default convenience.
 
@@ -111,7 +111,7 @@ Keep these layers distinct:
 
 - **Working model and source ownership** determine where definitions are edited: instance `_repo`/live records, one local App repository, or local Solution source.
 - **Lifecycle ownership** determines how definitions reach the platform: immediate Workspace mutation, App artifact deploy, or Solution full-replace deploy.
-- **Dependency resolution** determines where running code may look after its own resources miss. `global_repo_access` changes this layer only.
+- **Dependency resolution** determines where running code may look after its own resources miss. `allow_outbound_access` changes this layer only.
 - **Authorization** determines whether a resolved entity or row/file operation is allowed. Organization, access level, roles, policies, and external-user rules always apply.
 - **Environment data** such as table rows, runtime files, config values, and integration mappings can be live even while Solution source is running locally.
 
@@ -123,7 +123,7 @@ These relationships produce the following hard boundaries:
 - Independent App source changes only in its local repository. `bifrost app deploy` builds and activates the App artifact; it does not capture, copy, or own the live workflows, tables, files, configs, or integrations the App calls.
 - Instance `_repo` source changes through direct `bifrost files` commands. Writing source does not replace entity creation or workflow registration.
 - `.bifrost/*.yaml` is Solution source inside a Solution. Outside a Solution, discover and mutate live entities with their CLI commands rather than treating an exported manifest as live state.
-- `global_repo_access` is a runtime fallback gate, not install scope, global entity permission, or an authorization bypass.
+- `allow_outbound_access` is a runtime fallback gate, not install scope, global entity permission, or an authorization bypass.
 - Prefer dedicated entity commands. Before using `bifrost api`, confirm the endpoint in `generated/openapi-digest.md`; it addresses the Bifrost platform API only, never a third-party integration API.
 - Keep integration credentials and decrypted config values behind Python workflows; do not expose them to browser code.
 

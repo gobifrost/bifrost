@@ -51,7 +51,7 @@ async def solution_allows_global(db: AsyncSession, solution_id: UUID) -> bool:
     # Solution ORM also selectin-loads its file locations and connection schema,
     # turning this boolean check into three queries on every execution.
     result = await db.execute(
-        select(Solution.global_repo_access).where(Solution.id == solution_id)
+        select(Solution.allow_outbound_access).where(Solution.id == solution_id)
     )
     return bool(result.scalar_one_or_none())
 
@@ -207,7 +207,7 @@ async def resolve_solution_table_by_name(
     if own is not None:
         return own
 
-    if not solution.global_repo_access:
+    if not solution.allow_outbound_access:
         return None
 
     repo = TableRepository(
@@ -256,7 +256,7 @@ async def file_read_tiers(
             solution_id,
         )
     ]
-    if solution.global_repo_access:
+    if solution.allow_outbound_access:
         if solution.organization_id is not None:
             tiers.append(
                 FileTier(

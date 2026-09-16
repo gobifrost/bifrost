@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, computed_field, model_validator
 
 from src.models.contracts.applications import (
     ApplicationSdkStatus,
@@ -19,13 +19,31 @@ SolutionScope = Literal["org", "global"]
 
 
 class SolutionBase(BaseModel):
+    """Shared install fields.
+
+    Outbound gate naming: ``allow_outbound_access`` is canonical;
+    ``global_repo_access`` remains accepted on input and emitted on output
+    (deprecated) so older CLIs/descriptors keep working through the transition.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
     slug: str = Field(min_length=1, max_length=255, description="Definition identity (shared across installs)")
     name: str = Field(min_length=1, max_length=255)
-    global_repo_access: bool = False
+    allow_outbound_access: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("allow_outbound_access", "global_repo_access"),
+    )
     git_connected: bool = False
     git_repo_url: str | None = None
     repo_subpath: str | None = None
     git_ref: str | None = None
+
+    @computed_field(alias="global_repo_access", description="Deprecated: use allow_outbound_access.")
+    @property
+    def legacy_global_repo_access(self) -> bool:
+        """Deprecated dual-emit of allow_outbound_access for older CLIs."""
+        return self.allow_outbound_access
 
 
 class SolutionCreate(SolutionBase):
@@ -57,9 +75,17 @@ class SolutionUpdate(BaseModel):
     request (``model_dump(exclude_unset=True)``).
     """
 
+    model_config = ConfigDict(populate_by_name=True)
+
     name: str | None = None
     organization_id: UUID | None = None
-    global_repo_access: bool | None = None
+    # Input-only alias: old key accepted, canonical key stored. Deliberately
+    # no dual-emit here — model_dump(exclude_unset=True) feeds setattr, so
+    # only explicitly provided fields may appear.
+    allow_outbound_access: bool | None = Field(
+        default=None,
+        validation_alias=AliasChoices("allow_outbound_access", "global_repo_access"),
+    )
     git_connected: bool | None = None
     git_repo_url: str | None = None
     repo_subpath: str | None = None
@@ -140,13 +166,16 @@ class Solution(BaseModel):
     on the ORM row — so it always reflects the install's true scope.
     """
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
     id: UUID
     slug: str
     name: str
     organization_id: UUID | None = None
-    global_repo_access: bool = False
+    allow_outbound_access: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("allow_outbound_access", "global_repo_access"),
+    )
     git_connected: bool = False
     git_repo_url: str | None = None
     # Subfolder within the connected repo holding this install's descriptor, and
@@ -181,6 +210,12 @@ class Solution(BaseModel):
     @property
     def scope(self) -> SolutionScope:
         return "org" if self.organization_id is not None else "global"
+
+    @computed_field(alias="global_repo_access", description="Deprecated: use allow_outbound_access.")
+    @property
+    def legacy_global_repo_access(self) -> bool:
+        """Deprecated dual-emit of allow_outbound_access for older CLIs."""
+        return self.allow_outbound_access
 
 
 class SolutionsList(BaseModel):

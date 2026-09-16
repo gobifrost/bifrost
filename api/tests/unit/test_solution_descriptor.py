@@ -31,15 +31,22 @@ def test_load_minimal(tmp_path: pathlib.Path) -> None:
     assert isinstance(d, SolutionDescriptor)
     assert d.slug == "mna"
     assert d.name == "MNA"
-    assert d.global_repo_access is False
+    # Deprecated key still loads onto the canonical attribute.
+    assert d.allow_outbound_access is False
     assert is_solution_workspace(tmp_path) is True
 
 
+def test_load_canonical_outbound_key(tmp_path: pathlib.Path) -> None:
+    _write(tmp_path, "slug: mna\nname: MNA\nallow_outbound_access: true\n")
+    d = load_descriptor(tmp_path)
+    assert d.allow_outbound_access is True
+
+
 def test_defaults(tmp_path: pathlib.Path) -> None:
-    """global_repo_access and git_connected default off."""
+    """allow_outbound_access and git_connected default off."""
     _write(tmp_path, "slug: braytel\nname: Braytel\n")
     d = load_descriptor(tmp_path)
-    assert d.global_repo_access is False
+    assert d.allow_outbound_access is False
     assert d.git_connected is False
     assert d.git_repo_url is None
 

@@ -4,7 +4,7 @@ A Solution is a portable definition installed on a Bifrost instance. Apps, workf
 
 ## Definition and install selection
 
-`bifrost.solution.yaml` defines the portable Solution: slug, name, version, `global_repo_access`, and optional git/logo fields. It carries neither an install ID nor install scope.
+`bifrost.solution.yaml` defines the portable Solution: slug, name, version, `allow_outbound_access`, and optional git/logo fields. It carries neither an install ID nor install scope.
 
 The CLI selects an instance through `--url`, `BIFROST_API_URL` in the local
 `.env`, or the selected default profile. It resolves an install from the
@@ -135,7 +135,7 @@ bifrost solution deploy --global               # creates globally when missing
 
 Deploy is a full replacement of managed definitions. A unique slug match is reused automatically. With no match, deploy requires an explicit org/global target, creates the install there, and then deploys; it never chooses the new scope implicitly. It preserves environment data according to each resource's contract, but removed managed entities are reconciled as deletions. Review the diff, captured/pulled state, policies, and production impact first.
 
-For a sealed Solution (`global_repo_access: false`), deploy vendors imported instance `_repo` Python modules into the bundle. Runtime is self-contained, but the selected instance remains a build-time source. If the Solution should own and version a module, move it into local `modules/`; local source is bundled directly and is not vendored. With shared fallback enabled, deploy skips vendoring and resolves eligible `_repo` modules at runtime.
+For a sealed Solution (`allow_outbound_access: false`), deploy vendors imported instance `_repo` Python modules into the bundle. Runtime is self-contained, but the selected instance remains a build-time source. If the Solution should own and version a module, move it into local `modules/`; local source is bundled directly and is not vendored. With shared fallback enabled, deploy skips vendoring and resolves eligible `_repo` modules at runtime.
 
 Live create/update commands against Solution-managed records return a deploy-ownership conflict. Update their local manifest content instead. Do not work around the guard by creating duplicate loose entities.
 
@@ -145,7 +145,7 @@ Use one slug/repository for the same product installed in several organizations.
 
 Fork to a new slug only when the product source genuinely diverges. If a slug is ambiguous on one instance, target the install ID.
 
-`global_repo_access` is separate from install scope. It gates fallback to eligible shared modules, registered loose workflows, tables, and files. Configs, integrations/OAuth, and knowledge follow their own shared instance rules. Read `solution-resource-access.md` before enabling it.
+`allow_outbound_access` is separate from install scope. It gates fallback to eligible shared modules, registered loose workflows, tables, and files. Configs, integrations/OAuth, and knowledge follow their own shared instance rules. Read `solution-resource-access.md` before enabling it.
 
 ## Package, install, and backup
 

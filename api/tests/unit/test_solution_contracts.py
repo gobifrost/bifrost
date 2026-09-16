@@ -25,7 +25,7 @@ def _row(org_id):
         slug="s",
         name="S",
         organization_id=org_id,
-        global_repo_access=False,
+        allow_outbound_access=False,
         git_connected=False,
         git_repo_url=None,
     )

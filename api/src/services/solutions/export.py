@@ -101,7 +101,7 @@ def build_workspace_zip(bundle: "SolutionBundle", *, password: str | None = None
         # No ``scope`` in the descriptor — install kind is the installer's
         # deploy-time choice (--org/--global), derived server-side from
         # organization_id. The exported descriptor is pure definition.
-        descriptor["global_repo_access"] = bool(solution.global_repo_access)
+        descriptor["allow_outbound_access"] = bool(solution.allow_outbound_access)
         if bundle.logo_b64 and bundle.logo_content_type in _LOGO_EXTENSIONS:
             logo_name = f"solution-logo{_LOGO_EXTENSIONS[bundle.logo_content_type]}"
             descriptor["logo"] = logo_name

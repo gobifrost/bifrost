@@ -2,13 +2,13 @@
 
 Read this reference when Solution code needs anything outside its install.
 
-`global_repo_access` is historical naming. It is not install scope and not blanket access to every global resource. It gates shared fallback for resource types that also have a Solution-owned tier: `_repo` modules, registered loose workflows, tables, and managed files.
+`allow_outbound_access` (formerly `global_repo_access`, still accepted) is not install scope and not blanket access to every global resource. It gates shared fallback for resource types that also have a Solution-owned tier: `_repo` modules, registered loose workflows, tables, and managed files.
 
 Config values, integrations/OAuth, and knowledge are shared instance resources with their own org/global resolution regardless of this flag. Normal authentication, organization, role, policy, and external-user checks always remain active.
 
 ## Runtime matrix
 
-| Resource | `global_repo_access: false` | `global_repo_access: true` | Write boundary |
+| Resource | `allow_outbound_access: false` | `allow_outbound_access: true` | Write boundary |
 |---|---|---|---|
 | Python modules | Install source only | Install source, then eligible instance `_repo` module | Code changes through its owning source/deploy or direct `_repo` file write |
 | Workflows | Own install only | Own install, then eligible registered loose install-org/global workflow | Each workflow executes as its own record/owner |
@@ -66,7 +66,7 @@ Solution manifests declare config/integration requirements, not isolated values 
 
 ## Knowledge
 
-Knowledge is an org/global namespace with its own access rules. Installing a Solution does not create a private knowledge tier and `global_repo_access` does not seal or open it.
+Knowledge is an org/global namespace with its own access rules. Installing a Solution does not create a private knowledge tier and neither access flag seals or opens it.
 
 ## Local preview
 

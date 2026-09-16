@@ -20,7 +20,7 @@ import {
  * Both sources share the read-only confirmation card (`PreviewConfirmation`):
  * the entity summary / upgrade diff / declared config values.
  *
- * Edit mode: name + Organization + global repo access + the git section.
+ * Edit mode: name + Organization + outbound access + the git section.
  *
  * Git connection is driven by GitHub being configured in Settings (a saved
  * token) — there is no manual "git connected" toggle. An install is
@@ -1640,8 +1640,10 @@ function EditBody({
 	const [orgId, setOrgId] = useState<string | null>(
 		solution.organization_id ?? null,
 	);
-	const [globalRepoAccess, setGlobalRepoAccess] = useState(
-		solution.global_repo_access,
+	const [allowOutboundAccess, setAllowOutboundAccess] = useState(
+		// New API key with fallback to the deprecated one (removed on regen).
+		(solution as { allow_outbound_access?: boolean }).allow_outbound_access ??
+			solution.global_repo_access,
 	);
 	const [gitRepoUrl, setGitRepoUrl] = useState(solution.git_repo_url ?? "");
 	const [gitSubpath, setGitSubpath] = useState(solution.repo_subpath ?? "");
@@ -1652,14 +1654,19 @@ function EditBody({
 	// is a "reconnect" — the same save, no separate control.
 	const [connected, setConnected] = useState(solution.git_connected);
 
+	const outboundInitial =
+		(solution as { allow_outbound_access?: boolean }).allow_outbound_access ??
+		solution.global_repo_access;
+
 	const saveMut = useMutation({
 		mutationFn: () => {
 			const update: SolutionUpdate = {};
 			if (name !== solution.name) update.name = name;
 			if (orgId !== (solution.organization_id ?? null))
 				update.organization_id = orgId;
-			if (globalRepoAccess !== solution.global_repo_access)
-				update.global_repo_access = globalRepoAccess;
+			if (allowOutboundAccess !== outboundInitial)
+				(update as { allow_outbound_access?: boolean }).allow_outbound_access =
+					allowOutboundAccess;
 
 			const trimmedUrl = gitRepoUrl.trim();
 			// Connect when there's a URL and the user hasn't disconnected;
@@ -1761,8 +1768,8 @@ function EditBody({
 
 							<div className="flex items-center justify-between gap-3 rounded-[var(--bf-radius-surface)] border p-3">
 								<div className="space-y-0.5">
-									<Label htmlFor="edit-global-repo">
-										Global repo access
+									<Label htmlFor="edit-outbound-access">
+										Allow outbound access
 									</Label>
 									<p className="text-xs text-muted-foreground">
 										Allow shared module imports and read
@@ -1771,9 +1778,9 @@ function EditBody({
 									</p>
 								</div>
 								<Switch
-									id="edit-global-repo"
-									checked={globalRepoAccess}
-									onCheckedChange={setGlobalRepoAccess}
+									id="edit-outbound-access"
+									checked={allowOutboundAccess}
+									onCheckedChange={setAllowOutboundAccess}
 								/>
 							</div>
 

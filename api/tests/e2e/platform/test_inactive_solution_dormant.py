@@ -261,7 +261,7 @@ class TestWorkerSideInactiveSolutionGate:
 
         sol = Solution(
             id=uuid4(), slug=f"s-{uuid4().hex[:8]}", name="S",
-            organization_id=org.id, global_repo_access=False, status="inactive",
+            organization_id=org.id, allow_outbound_access=False, status="inactive",
         )
         db.add(sol)
         await db.flush()
@@ -291,7 +291,7 @@ class TestWorkerSideInactiveSolutionGate:
 
         sol = Solution(
             id=uuid4(), slug=f"s-{uuid4().hex[:8]}", name="S",
-            organization_id=org.id, global_repo_access=False, status="active",
+            organization_id=org.id, allow_outbound_access=False, status="active",
         )
         db.add(sol)
         await db.flush()

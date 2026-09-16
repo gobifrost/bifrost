@@ -38,7 +38,7 @@ def _bundle() -> SolutionBundle:
         slug="exp-demo",
         name="Export Demo",
         organization_id=None,
-        global_repo_access=True,
+        allow_outbound_access=True,
     )
     return SolutionBundle(
         solution=solution,
@@ -203,7 +203,7 @@ def test_export_descriptor_omits_scope_regardless_of_org() -> None:
 
     b = _bundle()
     b.solution.organization_id = uuid.uuid4()
-    b.solution.global_repo_access = False
+    b.solution.allow_outbound_access = False
     result = preview_zip(build_workspace_zip(b))
     assert result.scope is None
     # And the raw descriptor in the zip has no scope: key.

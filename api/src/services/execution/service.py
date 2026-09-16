@@ -167,7 +167,7 @@ async def get_workflow_for_execution(
         from src.models.orm.solutions import Solution as SolutionORM
 
         stmt = (
-            select(WorkflowORM, SolutionORM.global_repo_access)
+            select(WorkflowORM, SolutionORM.allow_outbound_access)
             .outerjoin(SolutionORM, WorkflowORM.solution_id == SolutionORM.id)
             .where(
                 WorkflowORM.id == workflow_id,
@@ -187,7 +187,7 @@ async def get_workflow_for_execution(
         if row is None:
             raise WorkflowNotFoundError(f"Workflow with ID '{workflow_id}' not found")
 
-        workflow_record, global_repo_access = row
+        workflow_record, allow_outbound_access = row
         logger.debug(f"Loaded workflow for execution: {workflow_id} -> {workflow_record.name}")
 
         return {
@@ -200,7 +200,8 @@ async def get_workflow_for_execution(
             "execution_mode": workflow_record.execution_mode or "async",
             "organization_id": str(workflow_record.organization_id) if workflow_record.organization_id else None,
             "solution_id": str(workflow_record.solution_id) if workflow_record.solution_id else None,
-            "can_access_global_repo": bool(global_repo_access),
+            # Wire key kept stable for in-flight workflow_data across deploys.
+            "can_access_global_repo": bool(allow_outbound_access),
             "type": workflow_record.type or "workflow",
             "cache_ttl_seconds": workflow_record.cache_ttl_seconds or 0,
         }

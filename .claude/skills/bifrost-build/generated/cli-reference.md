@@ -2064,8 +2064,9 @@ Options:
   --name TEXT                     Display name (defaults to slug).
   --version TEXT                  Bundle version recorded on the install at
                                   deploy time.  [default: 0.1.0]
-  --global-repo-access / --no-global-repo-access
-                                  [default: no-global-repo-access]
+  --allow-outbound-access / --no-allow-outbound-access
+                                  Let the install fall back to shared _repo
+                                  resources.
   --url TEXT                      Bifrost instance URL (default: current
                                   profile).
   --global                        Target global scope (org=NULL). Alias for
@@ -2133,8 +2134,9 @@ Options:
   --name TEXT                     Display name (defaults to slug).
   --version TEXT                  Bundle version recorded on the install at
                                   deploy time.  [default: 0.1.0]
-  --global-repo-access / --no-global-repo-access
-                                  [default: no-global-repo-access]
+  --allow-outbound-access / --no-allow-outbound-access
+                                  Let the install fall back to shared _repo
+                                  resources.
   --url TEXT                      Bifrost instance URL (default: current
                                   profile).
   --global                        Target global scope (org=NULL). Alias for

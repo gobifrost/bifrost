@@ -128,7 +128,7 @@ These privileged namespaces manage tenant and identity state. Resolve the target
 - Omit explicit scope to use the current execution context.
 - Pass an organization scope only when the SDK method supports it and the caller is authorized.
 - Solution context is carried automatically for tables, files, and workflow resolution.
-- `global_repo_access` changes fallback for modules, workflows, tables, and files—not configs, integrations, or knowledge.
+- `allow_outbound_access` changes fallback for modules, workflows, tables, and files—not configs, integrations, or knowledge.
 - SDK access never bypasses policies, roles, org boundaries, or external-user restrictions.
 
 ## Verification
