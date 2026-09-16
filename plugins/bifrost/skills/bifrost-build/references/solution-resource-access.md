@@ -2,7 +2,14 @@
 
 Read this reference when Solution code needs anything outside its install.
 
-`allow_outbound_access` (formerly `global_repo_access`, still accepted) is not install scope and not blanket access to every global resource. It gates shared fallback for resource types that also have a Solution-owned tier: `_repo` modules, registered loose workflows, tables, and managed files.
+Two install-local gates control cross-boundary access. Outbound,
+`allow_outbound_access` (formerly `allow_outbound_access`, still accepted), lets
+an install fall back to shared `_repo` resources. Inbound,
+`allow_inbound_access` (default on), lets outside callers target this install
+per-call (see below). Both off is deterministic isolation. Neither is install
+scope, and neither grants blanket access to global resources. Outbound gates
+shared fallback for resource types that also have a Solution-owned tier:
+`_repo` modules, registered loose workflows, tables, and managed files.
 
 Config values, integrations/OAuth, and knowledge are shared instance resources with their own org/global resolution regardless of this flag. Normal authentication, organization, role, policy, and external-user checks always remain active.
 
@@ -38,7 +45,7 @@ Workflow resolution follows this order:
 2. If shared fallback is disabled, stop.
 3. Resolve an eligible registered loose workflow in the install org, then global.
 
-Use portable `path::function` refs. A loose source file without a workflow registration cannot resolve. A caller cannot resolve a sibling Solution workflow, including by UUID.
+Use portable `path::function` refs. Without an explicit per-call target, a caller resolves only its own install's workflow (or loose shared fallback) — never a sibling Solution's, including by UUID. To target another install, pass `solution=` (install UUID or slug) alongside `scope=` on SDK calls such as `workflows.execute`, `tables.query`, `files.read`, and `events.emit`; the solution ref resolves inside the already-resolved org scope, so org/role checks apply unchanged. The target's `allow_inbound_access` decides: sealed installs answer only their own install's calls, and everything else reads as not-found.
 
 When an open Solution invokes a loose workflow, it executes as that loose row (`solution_id` remains absent). Its imports and SDK calls use loose org/global context, not borrowed Solution ownership. Treat this as a trust boundary and permission the loose workflow explicitly.
 

@@ -79,7 +79,7 @@ class Solution(Base):
         index=True,
     )
 
-    # Outbound gate:
+    # Outbound gate (see allow_inbound_access below for the inbound one):
     # whether this Solution may fall back to shared _repo modules and loose
     # org/global workflows, tables, and files. Orthogonal to install scope and
     # off by default. Configs/integrations/OAuth/knowledge are shared instance
@@ -88,6 +88,15 @@ class Solution(Base):
     # renamed for consistent code/UI language. No migration needed.
     allow_outbound_access: Mapped[bool] = mapped_column(
         "global_repo_access", Boolean, default=False, server_default=text("false")
+    )
+
+    # Inbound counterpart (outbound is global_repo_access above): whether this
+    # install may be targeted by a per-call ``solution=`` ref from outside
+    # itself. False = deterministically isolated, only own-install calls
+    # (caller == target) resolve. On by default (= today's behavior); sealed
+    # is opt-in.
+    allow_inbound_access: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=text("true"), nullable=False
     )
 
     # Version bookkeeping (Task 20). ``version`` is the deployed bundle's

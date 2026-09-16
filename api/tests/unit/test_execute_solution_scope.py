@@ -47,11 +47,31 @@ async def _sol(db, org_id):
 class TestDeriveSolutionScope:
     async def test_explicit_solution_id_wins(self, db_session):
         db = db_session
-        sid = uuid4()
+        org = (await _org(db)).id
+        sol = await _sol(db, org)
         got = await derive_execution_solution_scope(
-            db, _no_ctx(), solution_id=str(sid), form_id=None, app_id=None
+            db,
+            _no_ctx(),
+            solution_id=str(sol.id),
+            form_id=None,
+            app_id=None,
+            target_org_id=org,
         )
-        assert got == sid
+        assert got == sol.id
+
+    async def test_explicit_unknown_solution_id_yields_none(self, db_session):
+        # SPIKE: explicit UUIDs are validated (existence + inbound) instead of
+        # passed through — a dangling id resolves to None (404 downstream),
+        # matching the old downstream outcome.
+        got = await derive_execution_solution_scope(
+            db_session,
+            _no_ctx(),
+            solution_id=str(uuid4()),
+            form_id=None,
+            app_id=None,
+            target_org_id=None,
+        )
+        assert got is None
 
     async def test_form_id_resolves_to_form_solution_id(self, db_session):
         db = db_session
@@ -132,15 +152,18 @@ class TestDeriveSolutionScope:
         assert got == ctx_sid
 
     async def test_invalid_ctx_solution_id_falls_through_to_body(self, db_session):
-        sid = uuid4()
+        db = db_session
+        org = (await _org(db)).id
+        sol = await _sol(db, org)
         got = await derive_execution_solution_scope(
-            db_session,
+            db,
             SimpleNamespace(solution_id="not-a-uuid", app_id=None),
-            solution_id=str(sid),
+            solution_id=str(sol.id),
             form_id=None,
             app_id=None,
+            target_org_id=org,
         )
-        assert got == sid
+        assert got == sol.id
 
     async def test_ctx_app_id_resolves_install_when_solution_id_absent(self, db_session):
         # solution_context_id's app fallback: a context carrying only app_id

@@ -281,6 +281,7 @@ async def create_solution(body: SolutionCreate, ctx: Context, user: CurrentSuper
         name=body.name,
         organization_id=org_id,
         allow_outbound_access=body.allow_outbound_access,
+        allow_inbound_access=body.allow_inbound_access,
         git_connected=body.git_connected,
         git_repo_url=body.git_repo_url,
         repo_subpath=body.repo_subpath,
@@ -1494,7 +1495,7 @@ async def preview_solution_capture(
 async def update_solution(
     solution_id: UUID, body: SolutionUpdate, ctx: Context, user: CurrentSuperuser
 ) -> SolutionDTO:
-    """Edit INSTALL-LOCAL fields only (name/scope/allow_outbound_access/git fields).
+    """Edit INSTALL-LOCAL fields only (name/scope/allow_outbound_access/allow_inbound_access/git fields).
 
     Portable content (workflows/apps/forms/agents/tables/config declarations) is
     owned by the bundle/git and is never touched here. Changing the install's

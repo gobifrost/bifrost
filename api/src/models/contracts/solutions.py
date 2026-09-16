@@ -34,6 +34,7 @@ class SolutionBase(BaseModel):
         default=False,
         validation_alias=AliasChoices("allow_outbound_access", "global_repo_access"),
     )
+    allow_inbound_access: bool = True
     git_connected: bool = False
     git_repo_url: str | None = None
     repo_subpath: str | None = None
@@ -86,6 +87,7 @@ class SolutionUpdate(BaseModel):
         default=None,
         validation_alias=AliasChoices("allow_outbound_access", "global_repo_access"),
     )
+    allow_inbound_access: bool | None = None
     git_connected: bool | None = None
     git_repo_url: str | None = None
     repo_subpath: str | None = None
@@ -176,6 +178,7 @@ class Solution(BaseModel):
         default=False,
         validation_alias=AliasChoices("allow_outbound_access", "global_repo_access"),
     )
+    allow_inbound_access: bool = True
     git_connected: bool = False
     git_repo_url: str | None = None
     # Subfolder within the connected repo holding this install's descriptor, and

@@ -684,6 +684,10 @@ class EmitEventRequest(BaseModel):
         default=None,
         description="Solution install id from the execution context. When set, topic lookup resolves this install's event source before _repo sources.",
     )
+    caller_solution: str | None = Field(
+        default=None,
+        description="SPIKE: the caller's OWN install on per-call targeted emits (SDK-attested, engine requests only) for the inbound own-call bypass.",
+    )
 
 
 class EmitEventResponse(BaseModel):

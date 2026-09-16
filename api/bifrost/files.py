@@ -36,7 +36,7 @@ from typing import Literal
 from urllib.parse import urlencode
 
 from .client import get_client, raise_for_status_with_detail
-from ._context import resolve_scope, _execution_context
+from ._context import resolve_scope, get_caller_solution, get_effective_solution
 
 Mode = Literal["local", "cloud"]
 # `location` is a free string. Special names: "workspace", "temp", "uploads".
@@ -45,13 +45,20 @@ Mode = Literal["local", "cloud"]
 
 
 def _current_context():
+    from ._context import _execution_context
+
     return _execution_context.get()
 
 
-def _solution_query() -> str:
-    ctx = _current_context()
-    solution_id = getattr(ctx, "solution_id", None) if ctx is not None else None
-    return f"?{urlencode({'solution': str(solution_id)})}" if solution_id else ""
+def _solution_query(solution: str | None = None) -> str:
+    params: dict[str, str] = {}
+    solution_id = get_effective_solution(solution)
+    if solution_id:
+        params["solution"] = str(solution_id)
+    caller = get_caller_solution()
+    if caller:
+        params["caller_solution"] = str(caller)
+    return f"?{urlencode(params)}" if params else ""
 
 
 class files:
@@ -71,6 +78,7 @@ class files:
         location: str = "workspace",
         mode: Mode = "cloud",
         scope: str | None = None,
+        solution: str | None = None,
     ) -> str:
         """
         Read a text file.
@@ -92,7 +100,7 @@ class files:
         client = get_client()
         effective_scope = resolve_scope(scope)
         response = await client.post(
-            f"/api/files/read{_solution_query()}",
+            f"/api/files/read{_solution_query(solution)}",
             json={"path": path, "location": location, "mode": mode, "binary": False, "scope": effective_scope}
         )
         raise_for_status_with_detail(response)

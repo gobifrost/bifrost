@@ -4,7 +4,7 @@ A Solution is a portable definition installed on a Bifrost instance. Apps, workf
 
 ## Definition and install selection
 
-`bifrost.solution.yaml` defines the portable Solution: slug, name, version, `allow_outbound_access`, and optional git/logo fields. It carries neither an install ID nor install scope.
+`bifrost.solution.yaml` defines the portable Solution: slug, name, version, `allow_outbound_access`, `allow_inbound_access`, and optional git/logo fields. It carries neither an install ID nor install scope. Both access flags are install-local settings (patchable after install); the descriptor only supplies defaults for fresh installs.
 
 The CLI selects an instance through `--url`, `BIFROST_API_URL` in the local
 `.env`, or the selected default profile. It resolves an install from the

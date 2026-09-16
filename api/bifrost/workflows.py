@@ -72,6 +72,7 @@ class workflows:
         *,
         org_id: str | None = None,
         run_as: str | None = None,
+        solution: str | None = None,
         scheduled_at: datetime | None = None,
         delay_seconds: int | None = None,
     ) -> str:
@@ -88,6 +89,9 @@ class workflows:
                      Like `bifrost run --org <org_id>`.
             run_as: Execute as this user UUID (admin only).
                     The execution will run under this user's identity.
+            solution: Target solution install (UUID or slug/name) in the
+                resolved scope. Unset → today's behavior (own install if
+                running inside one, else _repo/). Per-call only.
             scheduled_at: Run at this timezone-aware datetime (ISO-8601 in
                 the payload). Must be strictly in the future and within 1
                 year of now. Mutually exclusive with ``delay_seconds``.
@@ -119,7 +123,7 @@ class workflows:
         if scheduled_at is not None and scheduled_at.tzinfo is None:
             raise ValueError("'scheduled_at' must be timezone-aware")
 
-        from ._context import get_default_scope, _execution_context
+        from ._context import get_caller_solution, get_default_scope, get_effective_solution
 
         # Auto-include org_id from execution context if not explicitly provided,
         # same as tables, config, etc.
@@ -132,10 +136,12 @@ class workflows:
             "input_data": input_data or {},
             "sync": False,
         }
-        ctx = _execution_context.get()
-        solution_id = getattr(ctx, "solution_id", None) if ctx is not None else None
+        solution_id = get_effective_solution(solution)
         if solution_id:
             payload["solution_id"] = str(solution_id)
+        caller = get_caller_solution()
+        if caller:
+            payload["caller_solution_id"] = str(caller)
         if org_id is not None:
             payload["org_id"] = org_id
         if run_as is not None:

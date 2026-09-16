@@ -825,6 +825,8 @@ async def execute_workflow(
         solution_id=request.solution_id,
         form_id=request.form_id,
         app_id=request.app_id,
+        target_org_id=lookup_org_id,
+        caller_solution_id=request.caller_solution_id,
     )
     allow_shared_workflow = (
         solution_scope is None

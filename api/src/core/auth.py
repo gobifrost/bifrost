@@ -54,6 +54,13 @@ class ExecutionContext:
     # app_id: lets a workflow's `sdk.tables.get("name")` resolve its OWN install's
     # table first. None outside a solution execution.
     solution_id: str | None = None
+    # SPIKE: the caller's OWN install on per-call targeted requests. The SDK
+    # sends ?caller_solution=<inherited_id> alongside an explicit ?solution=
+    # target so the server can tell own-calls (caller == target, always allow)
+    # from cross-install calls (target's allow_inbound_access decides). UUID
+    # format only; malformed values are ignored (caller treated as outside).
+    # Trusted on engine requests only — resolvers decide via is_engine_user.
+    caller_solution_id: str | None = None
 
     @property
     def scope(self) -> str:
@@ -329,17 +336,18 @@ async def get_execution_context(
         try:
             solution_uuid = UUID(solution_id_param)
         except ValueError:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid solution id in ?solution= parameter",
-            )
-        solution_row = await db.get(SolutionORM, solution_uuid)
-        if solution_row is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Solution not found",
-            )
-        await _refuse_if_solution_inactive(solution_row)
+            # SPIKE: slug/name ref — leave for router-level resolution inside
+            # the resolved org scope (see resolve_solution_ref). Auth only
+            # gates UUIDs here; slugs 404 later if unresolvable.
+            solution_uuid = None
+        if solution_uuid is not None:
+            solution_row = await db.get(SolutionORM, solution_uuid)
+            if solution_row is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Solution not found",
+                )
+            await _refuse_if_solution_inactive(solution_row)
 
     # Gate: v2 SDK apps send X-Bifrost-App: <app_id>.  If that app belongs to a
     # solution, the solution must be active — otherwise the app is down along
@@ -363,15 +371,30 @@ async def get_execution_context(
                 if sol_row is not None:
                     await _refuse_if_solution_inactive(sol_row)
     if solution_id_param is not None and app_solution_id is not None:
-        if UUID(solution_id_param) != app_solution_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="X-Bifrost-App does not belong to the requested solution",
-            )
+        try:
+            if UUID(solution_id_param) != app_solution_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="X-Bifrost-App does not belong to the requested solution",
+                )
+        except ValueError:
+            # SPIKE: slug ref — router resolves it; mismatch surfaces as 404 there.
+            pass
 
     effective_solution_id = solution_id_param or (
         str(app_solution_id) if app_solution_id is not None else None
     )
+
+    # SPIKE: per-call caller attestation (see field docs). Format-gated only;
+    # trust is decided per-request by resolvers (engine requests only).
+    caller_solution_id: str | None = None
+    raw_caller = request.query_params.get("caller_solution")
+    if raw_caller:
+        try:
+            UUID(raw_caller)
+            caller_solution_id = raw_caller
+        except ValueError:
+            caller_solution_id = None
 
     return ExecutionContext(
         user=user,
@@ -380,6 +403,7 @@ async def get_execution_context(
         # Set by the v2 SDK provider for Solution apps; harmless/None otherwise.
         app_id=app_id_header,
         solution_id=effective_solution_id,
+        caller_solution_id=caller_solution_id,
     )
 
 

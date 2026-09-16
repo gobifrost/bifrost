@@ -1181,12 +1181,31 @@ async def emit_topic_event(
     solution_id: UUID | None = None
     requested_solution = request.solution or ctx.solution_id
     if requested_solution:
-        try:
-            solution_id = UUID(str(requested_solution))
-        except ValueError:
+        from src.services.solution_scope import (
+            check_inbound_allowed,
+            is_engine_user,
+            resolve_solution_ref,
+            resolve_trustworthy_caller,
+        )
+
+        solution_id = await resolve_solution_ref(
+            ctx.db, str(requested_solution), organization_id
+        )
+        if solution_id is None:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid solution: must be a UUID, got '{requested_solution}'",
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Solution not found",
+            )
+        caller = await resolve_trustworthy_caller(ctx.db, ctx)
+        if caller is None and request.caller_solution and is_engine_user(ctx.user):
+            try:
+                caller = UUID(str(request.caller_solution))
+            except ValueError:
+                caller = None
+        if not await check_inbound_allowed(ctx.db, solution_id, caller):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Solution not found",
             )
 
     event_id, subscribers_notified = await emit_event(

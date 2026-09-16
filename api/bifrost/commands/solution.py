@@ -100,6 +100,7 @@ def _write_solution_descriptor(
                 "name": name or slug,
                 "version": version,
                 "allow_outbound_access": allow_outbound_access,
+                "allow_inbound_access": True,
             },
             sort_keys=False,
         )
@@ -117,6 +118,7 @@ async def _post_create_install_for_descriptor(
         "name": descriptor.name,
         "organization_id": target_org_id,
         "allow_outbound_access": descriptor.allow_outbound_access,
+        "allow_inbound_access": descriptor.allow_inbound_access,
         "git_connected": descriptor.git_connected,
         "git_repo_url": descriptor.git_repo_url,
         "repo_subpath": descriptor.repo_subpath,

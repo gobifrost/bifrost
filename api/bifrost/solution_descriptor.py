@@ -39,6 +39,9 @@ class SolutionDescriptor(BaseModel):
     loose org/global workflows, tables, and files. Config values, integrations,
     OAuth, and knowledge are shared instance resources without a Solution-owned
     value tier, so this flag does not govern them.
+
+    ``allow_inbound_access`` is the inbound counterpart: whether this install
+    may be targeted by a per-call ``solution=`` ref from outside itself.
     """
 
     # Ignore unknown/legacy keys (e.g. a pre-standard ``scope:``) so old
@@ -56,6 +59,7 @@ class SolutionDescriptor(BaseModel):
         default=False,
         validation_alias=AliasChoices("allow_outbound_access", "global_repo_access"),
     )
+    allow_inbound_access: bool = True
     git_connected: bool = False
     git_repo_url: str | None = None
     # Subfolder of the connected repo holding this descriptor (omni-repo).

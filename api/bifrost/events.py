@@ -15,7 +15,7 @@ Usage:
 from __future__ import annotations
 
 from .client import get_client, raise_for_status_with_detail
-from ._context import resolve_scope, _execution_context
+from ._context import resolve_scope, get_caller_solution, get_effective_solution
 
 
 class events:
@@ -26,6 +26,7 @@ class events:
         topic: str,
         data: dict,
         scope: str | None = None,
+        solution: str | None = None,
     ) -> dict:
         """
         Publish an event to a topic. Workflows subscribed to this topic will run.
@@ -52,9 +53,13 @@ class events:
         """
         client = get_client()
         resolved = resolve_scope(scope)
-        ctx = _execution_context.get()
-        solution_id = getattr(ctx, "solution_id", None) if ctx is not None else None
+        solution_id = get_effective_solution(solution)
         payload = {"topic": topic, "data": data, "scope": resolved}
+        if solution_id:
+            payload["solution"] = str(solution_id)
+        caller = get_caller_solution()
+        if caller:
+            payload["caller_solution"] = str(caller)
         if solution_id:
             payload["solution"] = str(solution_id)
         response = await client.post(

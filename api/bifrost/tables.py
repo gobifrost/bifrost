@@ -20,7 +20,7 @@ from .models import (
     BatchDeleteResult,
     BulkUpsertResult,
 )
-from ._context import resolve_scope, _execution_context
+from ._context import resolve_scope, _execution_context, get_effective_solution
 
 
 def _current_context():
@@ -28,23 +28,28 @@ def _current_context():
     return _execution_context.get()
 
 
-def _scope_query(scope: str | None) -> str:
+def _scope_query(scope: str | None, solution: str | None = None) -> str:
     """Build the ``?scope=...&solution=...`` querystring for REST table URLs.
 
-    ``scope`` is the org scope (as before). When the active execution belongs to a
-    solution install, also append ``solution=<install_id>`` (from the
-    ExecutionContext) so the server resolves a table BY NAME to the install's OWN
-    table first, then the org/_repo/ cascade — the same own-first behavior a
-    Solution app gets via its ``X-Bifrost-App`` header. Omitted outside a solution
-    execution, so plain ``_repo/`` behavior is unchanged.
+    ``scope`` is the org scope (as before). ``solution`` is a per-call install
+    ref (UUID or slug/name) that wins over the inherited ExecutionContext for
+    this call only; unset → today's behavior (own install or _repo/).
+
+    SPIKE: whenever the execution inherits an install, ``caller_solution=``
+    attests it alongside, so a sealed target can tell own-calls
+    (caller == target) from cross-install calls.
     """
+    from ._context import get_caller_solution
+
     params: dict[str, str] = {}
     if scope:
         params["scope"] = scope
-    ctx = _current_context()
-    solution_id = getattr(ctx, "solution_id", None) if ctx is not None else None
+    solution_id = get_effective_solution(solution)
     if solution_id:
         params["solution"] = str(solution_id)
+    caller = get_caller_solution()
+    if caller:
+        params["caller_solution"] = str(caller)
     return f"?{urlencode(params)}" if params else ""
 
 
@@ -235,6 +240,7 @@ class tables:
         id: str | None = None,
         scope: str | None = None,
         created_by: str | None = None,
+        solution: str | None = None,
     ) -> DocumentData:
         """
         Insert a document into a table.
@@ -268,7 +274,7 @@ class tables:
             body["created_by"] = created_by
 
         client = get_client()
-        url = f"/api/tables/{table}/documents{_scope_query(effective_scope)}"
+        url = f"/api/tables/{table}/documents{_scope_query(effective_scope, solution)}"
         response = await client.post(url, json=body)
         if response.status_code == 404 and not _has_solution_context():
             # Table doesn't exist — auto-create then retry.
@@ -334,6 +340,7 @@ class tables:
         table: str,
         doc_id: str,
         scope: str | None = None,
+        solution: str | None = None,
     ) -> DocumentData | None:
         """
         Get a document by ID.
@@ -352,7 +359,7 @@ class tables:
         client = get_client()
         effective_scope = resolve_scope(scope)
         response = await client.get(
-            f"/api/tables/{table}/documents/{doc_id}{_scope_query(effective_scope)}",
+            f"/api/tables/{table}/documents/{doc_id}{_scope_query(effective_scope, solution)}",
         )
         if response.status_code == 404:
             return None
@@ -691,6 +698,7 @@ class tables:
         document_id_prefix: str | None = None,
         skip_count: bool = False,
         document_ids: list[str] | None = None,
+        solution: str | None = None,
     ) -> DocumentList:
         """
         Query documents with filtering and pagination.
@@ -720,6 +728,8 @@ class tables:
                 have set semantics; an empty list returns no documents. ANDed
                 with other filters. Results follow normal query ordering and
                 pagination rather than input order.
+            solution: Target solution install (UUID or slug/name) in the
+                resolved scope. Unset → own install or _repo/. Per-call only.
 
         Returns:
             DocumentList: Query results with documents, total count, and
@@ -731,7 +741,7 @@ class tables:
         client = get_client()
         effective_scope = resolve_scope(scope)
         response = await client.post(
-            f"/api/tables/{table}/documents/query{_scope_query(effective_scope)}",
+            f"/api/tables/{table}/documents/query{_scope_query(effective_scope, solution)}",
             json={
                 "where": where,
                 "order_by": order_by,

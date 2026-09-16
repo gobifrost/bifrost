@@ -66,8 +66,8 @@ from src.models.orm.custom_claims import CustomClaim as CustomClaimORM
 from src.models.orm.tables import Document, Table
 from src.services.solutions.guard import assert_entity_id_not_solution_managed
 from src.services.solution_scope import (
+    resolve_effective_solution_id,
     resolve_solution_table_by_name,
-    solution_context_id,
 )
 from src.services.table_policy_loader import load_resolved_table_policies
 from src.repositories.tables import TableRepository
@@ -632,7 +632,7 @@ async def get_table_or_404(
             f"table identifier {log_safe(name_or_id)!r} is not a UUID, "
             "falling back to name lookup"
         )
-    solution_id = await solution_context_id(ctx.db, ctx)
+    solution_id = await resolve_effective_solution_id(ctx.db, ctx, target_org_id)
     if table is not None and solution_id is not None and table.solution_id != solution_id:
         table = None
 
@@ -661,11 +661,30 @@ async def get_table_or_404(
             detail=f"Table '{name_or_id}' not found",
         )
 
+    # SPIKE inbound gate for direct UUID access to install-owned tables
+    # (the name path is gated inside resolve_solution_table_by_name).
+    # Own-install callers pass; otherwise allow_inbound_access decides.
+    if table.solution_id is not None:
+        from src.services.solution_scope import (
+            check_inbound_allowed,
+            resolve_trustworthy_caller,
+        )
+
+        caller = await resolve_trustworthy_caller(ctx.db, ctx)
+        if not await check_inbound_allowed(ctx.db, table.solution_id, caller):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Table '{name_or_id}' not found",
+            )
+
     return table
 
 
 async def _assert_solution_write_targets_owned_table(ctx: Context, table: Table) -> None:
-    solution_id = await solution_context_id(ctx.db, ctx)
+    # SPIKE: resolve slug ?solution= against the table's org so writes through
+    # a per-call solution slug stay gated to the install's own table.
+    target_org = table.organization_id
+    solution_id = await resolve_effective_solution_id(ctx.db, ctx, target_org)
     if solution_id is None or table.solution_id == solution_id:
         return
     raise HTTPException(
