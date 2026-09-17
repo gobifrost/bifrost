@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import partial
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -90,7 +91,7 @@ async def test_execution_list_reports_both_gates(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        service, "get_settings", lambda: _settings()
+        service, "get_settings", _settings
     )
     svc = kube.KubernetesExecutionService(db_session)
     settings = await svc.list_job_types(_settings())
@@ -110,7 +111,7 @@ async def test_placement_requires_all_three_gates(
 ) -> None:
     """Backend + allowlist + UI toggle must agree for remote placement."""
     monkeypatch.setattr(
-        service, "get_settings", lambda: _settings()
+        service, "get_settings", _settings
     )
 
     async def _enqueue() -> str:
@@ -242,7 +243,7 @@ async def test_detection_announces_each_transition_once(
 
     # Fresh install, never configured: silent, but records the snapshot.
     monkeypatch.setattr(
-        kube, "get_settings", lambda: _k8s_settings(False)
+        kube, "get_settings", partial(_k8s_settings, False)
     )
     assert (
         await kube.announce_detection_if_transitioned(db_session) is None
@@ -251,7 +252,7 @@ async def test_detection_announces_each_transition_once(
     assert notifier.create_notification.await_count == 0
 
     # First enablement: exactly one notice with explainer metadata.
-    monkeypatch.setattr(kube, "get_settings", lambda: _k8s_settings(True))
+    monkeypatch.setattr(kube, "get_settings", partial(_k8s_settings, True))
     assert (
         await kube.announce_detection_if_transitioned(db_session)
         == "enabled"
@@ -278,7 +279,7 @@ async def test_detection_announces_each_transition_once(
 
     # Disablement: exactly one notice the other way.
     monkeypatch.setattr(
-        kube, "get_settings", lambda: _k8s_settings(False)
+        kube, "get_settings", partial(_k8s_settings, False)
     )
     assert (
         await kube.announce_detection_if_transitioned(db_session)

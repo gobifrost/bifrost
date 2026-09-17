@@ -38,6 +38,7 @@ import subprocess
 import sys
 import time
 import uuid
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
@@ -143,17 +144,13 @@ async def _run_requirements_setup_subprocess() -> RequirementsInstallResult:
 
 
 def _kill_process_group(process: asyncio.subprocess.Process, sig: signal.Signals) -> None:
-    try:
+    with suppress(ProcessLookupError):
         os.killpg(process.pid, sig)
-    except ProcessLookupError:
-        pass
 
 
 async def _kill_process_group_after_grace(process: asyncio.subprocess.Process) -> None:
-    try:
+    with suppress(asyncio.TimeoutError):
         await asyncio.wait_for(process.wait(), timeout=5)
-    except asyncio.TimeoutError:
-        pass
     _kill_process_group(process, signal.SIGKILL)
     await process.wait()
 

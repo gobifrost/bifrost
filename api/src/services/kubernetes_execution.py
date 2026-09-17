@@ -286,12 +286,12 @@ def _detection_details(configured: bool) -> dict[str, Any]:
         return {
             "title": "Kubernetes execution is on",
             "paragraphs": [
-                "App deploys and SDK rebuilds now launch temporary pods "
-                "with their own memory instead of competing with the "
-                "scheduler, which stays warm for lightweight work.",
+                "App deploys and SDK rebuilds now launch temporary pods with "
+                "their own memory instead of competing with the scheduler, "
+                "which stays warm for lightweight work.",
                 "If the cluster has no room, work visibly waits and then "
-                "fails with a capacity error — it never falls back "
-                "silently into the scheduler.",
+                "fails with a capacity error — it never falls back silently "
+                "into the scheduler.",
                 "You control which job types go remote and how many may "
                 "overlap. Nothing else moves.",
             ],

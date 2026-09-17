@@ -5,6 +5,7 @@ import asyncio
 from datetime import datetime, timezone
 import logging
 from typing import Any
+from contextlib import suppress
 from uuid import UUID
 
 from sqlalchemy import select
@@ -205,10 +206,8 @@ async def kubernetes_build_loop(shutdown_event: asyncio.Event) -> None:
             except Exception as exc:
                 # Client exceptions never include tokens or API response bodies.
                 logger.error("Kubernetes build reconciliation failed (%s): %s", type(exc).__name__, exc)
-            try:
+            with suppress(TimeoutError):
                 await asyncio.wait_for(shutdown_event.wait(), timeout=2)
-            except TimeoutError:
-                pass
     finally:
         # Scheduler shutdown does not terminate remotely supervised builds.
         await client.close()

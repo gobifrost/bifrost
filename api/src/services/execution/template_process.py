@@ -22,6 +22,7 @@ import os
 import signal
 import subprocess
 import sys
+from contextlib import suppress
 from multiprocessing.connection import Connection
 from typing import Any
 
@@ -580,10 +581,8 @@ class TemplateProcess:
             self.start_method = None
             self.process_name = None
             if self._pipe is not None:
-                try:
+                with suppress(OSError, BrokenPipeError):
                     self._pipe.close()
-                except (OSError, BrokenPipeError):
-                    pass
                 self._pipe = None
 
         parent_conn, child_conn = multiprocessing.Pipe()
@@ -623,14 +622,10 @@ class TemplateProcess:
             self.process_name = msg.get("process_name")
             logger.info(f"Template process ready (PID={self.pid})")
         except Exception:
-            try:
+            with suppress(OSError, BrokenPipeError):
                 child_conn.close()
-            except (OSError, BrokenPipeError):
-                pass
-            try:
+            with suppress(OSError, BrokenPipeError):
                 parent_conn.close()
-            except (OSError, BrokenPipeError):
-                pass
             if process is not None and process.poll() is None:
                 process.kill()
                 process.wait(timeout=5)
@@ -699,10 +694,8 @@ class TemplateProcess:
                 raise RuntimeError(f"Unexpected fork response: {msg}")
         except Exception:
             for conn in (work_recv, work_send, result_recv, result_send):
-                try:
+                with suppress(OSError, BrokenPipeError):
                     conn.close()
-                except (OSError, BrokenPipeError):
-                    pass
             raise
 
         # Return queue-like wrappers around the consumer-side pipe ends.

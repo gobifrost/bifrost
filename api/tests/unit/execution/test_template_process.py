@@ -12,6 +12,7 @@ import subprocess
 import sys
 import textwrap
 import time
+from contextlib import suppress
 from pathlib import Path
 
 import pytest
@@ -45,7 +46,7 @@ def _wait_for_pid_to_die(pid: int, timeout: float = 5.0) -> None:
             os.kill(pid, 0)
             time.sleep(0.05)
         except OSError:
-            return  # Process is gone
+            break  # Process is gone
     # Best-effort — don't raise if still alive (zombie will be reaped by template)
 
 
@@ -348,10 +349,8 @@ class TestTemplateProcessFork:
             for child_pid, work_queue, result_queue in children:
                 work_queue.close()
                 result_queue.close()
-                try:
+                with suppress(ProcessLookupError):
                     os.kill(child_pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
             template.shutdown()
 
     def test_forked_child_can_execute_and_return_result(self):

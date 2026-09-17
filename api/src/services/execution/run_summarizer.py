@@ -17,11 +17,12 @@ regenerate button for recovery.
 import json
 import logging
 from datetime import datetime, timezone
+from collections.abc import Callable
 from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.pubsub import publish_agent_run_update
 from src.core.cache import get_shared_redis
@@ -194,7 +195,7 @@ def _truncate(value: Any, max_len: int) -> str | None:
 
 
 async def summarize_run(
-    run_id: UUID, session_factory: async_sessionmaker[AsyncSession]
+    run_id: UUID, session_factory: Callable[[], AsyncSession]
 ) -> None:
     """Summarize a completed run. Idempotent on ``summary_status='completed'``.
 

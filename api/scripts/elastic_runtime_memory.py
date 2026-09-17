@@ -14,6 +14,7 @@ import os
 import subprocess
 import sys
 import time
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -48,7 +49,7 @@ def _read_proc_status(pid: int | None = None) -> dict[str, int | None]:
         "vm_peak_bytes": None,
         "vm_size_bytes": None,
     }
-    try:
+    with suppress(OSError, IndexError, ValueError):
         with Path(f"/proc/{pid}/status").open(encoding="utf-8") as status:
             for line in status:
                 key, _, value = line.partition(":")
@@ -58,8 +59,6 @@ def _read_proc_status(pid: int | None = None) -> dict[str, int | None]:
                     values["vm_peak_bytes"] = int(value.split()[0]) * 1024
                 elif key == "VmSize":
                     values["vm_size_bytes"] = int(value.split()[0]) * 1024
-    except (OSError, IndexError, ValueError):
-        pass
     return values
 
 
@@ -70,7 +69,7 @@ def _read_smaps_rollup(pid: int | None = None) -> dict[str, int | None]:
         "private_dirty_bytes": None,
         "shared_clean_bytes": None,
     }
-    try:
+    with suppress(OSError, IndexError, ValueError):
         with Path(f"/proc/{pid}/smaps_rollup").open(encoding="utf-8") as smaps:
             for line in smaps:
                 key, _, value = line.partition(":")
@@ -80,8 +79,6 @@ def _read_smaps_rollup(pid: int | None = None) -> dict[str, int | None]:
                     values["private_dirty_bytes"] = int(value.split()[0]) * 1024
                 elif key == "Shared_Clean":
                     values["shared_clean_bytes"] = int(value.split()[0]) * 1024
-    except (OSError, IndexError, ValueError):
-        pass
     return values
 
 
@@ -118,13 +115,11 @@ def _cgroup_v2_dir(root: Path, relpaths: dict[str, str]) -> Path | None:
 
 def _read_cgroup_stat(path: Path) -> dict[str, int]:
     stat: dict[str, int] = {}
-    try:
+    with suppress(OSError, ValueError):
         with path.open(encoding="utf-8") as handle:
             for line in handle:
                 key, value = line.split()[:2]
                 stat[key] = int(value)
-    except (OSError, ValueError):
-        pass
     return stat
 
 
@@ -292,7 +287,12 @@ def _run_child(args: argparse.Namespace) -> int:
         stage.handler(args)
         ok = True
         error = None
-    except BaseException as exc:  # noqa: BLE001 - diagnostic reports sanitized stage errors
+    except (KeyboardInterrupt, SystemExit) as exc:
+        # A diagnostic child must report a sanitized stage error for
+        # interpreter-level interruptions too, never propagate them.
+        ok = False
+        error = type(exc).__name__
+    except Exception as exc:
         ok = False
         error = type(exc).__name__
     elapsed_ms = (time.perf_counter() - started) * 1000
