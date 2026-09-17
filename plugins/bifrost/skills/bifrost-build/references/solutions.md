@@ -6,6 +6,8 @@ A Solution is a portable definition installed on a Bifrost instance. Apps, workf
 
 `bifrost.solution.yaml` defines the portable Solution: slug, name, version, `allow_outbound_access`, `allow_inbound_access`, and optional git/logo fields. It carries neither an install ID nor install scope. Both access flags are install-local settings (patchable after install); the descriptor only supplies defaults for fresh installs.
 
+`allow_outbound_access` gates this install reaching shared `_repo` resources. `allow_inbound_access` (default on) gates outside callers targeting this install per-call with `solution=`. Both off is deterministic isolation. Set either at create with `bifrost solution create --allow-outbound-access`/`--allow-inbound-access` (or the `--no-` forms), and change it after install with `bifrost solution update --allow-inbound-access`/`--no-allow-inbound-access`. Read `solution-resource-access.md` for the runtime behavior.
+
 The CLI selects an instance through `--url`, `BIFROST_API_URL` in the local
 `.env`, or the selected default profile. It resolves an install from the
 portable slug. When multiple accessible installs share that slug, it stops and

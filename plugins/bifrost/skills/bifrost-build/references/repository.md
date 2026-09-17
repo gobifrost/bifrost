@@ -108,7 +108,7 @@ Registration creates a stable UUID and applies organization/access/role boundari
 - Use `bifrost workflows remap` only when intentionally consolidating two existing workflow records.
 - Execute the registered ref after writing to verify worker behavior and permissions.
 
-A Solution with `allow_outbound_access: true` can fall back only to an eligible registered loose workflow. Merely placing a decorated function in `_repo` does not make it callable through workflow resolution.
+A Solution with `allow_outbound_access: true` can fall back only to an eligible registered loose workflow. Merely placing a decorated function in `_repo` does not make it callable through workflow resolution. To call another install's workflow directly, pass `solution=` (install UUID or slug) to `workflows.execute`; the target's `allow_inbound_access` gate decides, and the child run starts as that install. See `solution-resource-access.md`.
 
 Read `workflows.md` for decorators, testing, dependencies, and tool naming.
 
