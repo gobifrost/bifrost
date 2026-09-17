@@ -88,6 +88,7 @@ def _write_solution_descriptor(
     name: str | None,
     version: str,
     allow_outbound_access: bool,
+    allow_inbound_access: bool = True,
 ) -> pathlib.Path:
     workspace.mkdir(parents=True, exist_ok=True)
     descriptor = workspace / DESCRIPTOR_FILENAME
@@ -100,7 +101,7 @@ def _write_solution_descriptor(
                 "name": name or slug,
                 "version": version,
                 "allow_outbound_access": allow_outbound_access,
-                "allow_inbound_access": True,
+                "allow_inbound_access": allow_inbound_access,
             },
             sort_keys=False,
         )
@@ -137,13 +138,14 @@ def _create_solution_workspace(
     name: str | None,
     version: str,
     allow_outbound_access: bool,
+    allow_inbound_access: bool,
     org: str | None,
     is_global: bool,
     api_url: str | None,
 ) -> None:
     workspace = pathlib.Path(path)
     descriptor_path = _write_solution_descriptor(
-        workspace, slug, name, version, allow_outbound_access
+        workspace, slug, name, version, allow_outbound_access, allow_inbound_access
     )
     descriptor = load_descriptor(workspace)
     remote_created = False
@@ -190,6 +192,8 @@ def _create_solution_workspace(
               default=None, help="Let the install fall back to shared _repo resources.")
 @click.option("--global-repo-access/--no-global-repo-access", "legacy_global_repo_access",
               default=None, hidden=True, help="Deprecated: use --allow-outbound-access.")
+@click.option("--allow-inbound-access/--no-allow-inbound-access", "allow_inbound_access",
+              default=None, help="Let other installs target this one via per-call solution refs.")
 @click.option("--url", "api_url", default=None, help="Bifrost instance URL (default: current profile).")
 @org_option
 def create_cmd(
@@ -199,6 +203,7 @@ def create_cmd(
     version: str,
     allow_outbound_access: bool | None,
     legacy_global_repo_access: bool | None,
+    allow_inbound_access: bool | None,
     org: str | None,
     is_global: bool,
     api_url: str | None,
@@ -207,6 +212,7 @@ def create_cmd(
     _create_solution_workspace(
         path, slug, name, version,
         _resolve_outbound_flag(allow_outbound_access, legacy_global_repo_access),
+        _resolve_inbound_flag(allow_inbound_access),
         org, is_global, api_url,
     )
 
@@ -218,6 +224,18 @@ def _resolve_outbound_flag(new: bool | None, legacy: bool | None) -> bool:
     if legacy is not None:
         return legacy
     return False
+
+
+def _resolve_inbound_flag(value: bool | None) -> bool:
+    """Resolve the inbound flag; absent means "allowed" (the install default)."""
+    return True if value is None else value
+
+
+def _resolve_optional_outbound_flag(new: bool | None, legacy: bool | None) -> bool | None:
+    """Merge outbound flags for PATCH; ``None`` means "leave unchanged"."""
+    if new is not None:
+        return new
+    return legacy
 
 
 @solution_group.command(
@@ -233,6 +251,8 @@ def _resolve_outbound_flag(new: bool | None, legacy: bool | None) -> bool:
               default=None, help="Let the install fall back to shared _repo resources.")
 @click.option("--global-repo-access/--no-global-repo-access", "legacy_global_repo_access",
               default=None, hidden=True, help="Deprecated: use --allow-outbound-access.")
+@click.option("--allow-inbound-access/--no-allow-inbound-access", "allow_inbound_access",
+              default=None, help="Let other installs target this one via per-call solution refs.")
 @click.option("--url", "api_url", default=None, help="Bifrost instance URL (default: current profile).")
 @org_option
 def init_cmd(
@@ -242,6 +262,7 @@ def init_cmd(
     version: str,
     allow_outbound_access: bool | None,
     legacy_global_repo_access: bool | None,
+    allow_inbound_access: bool | None,
     org: str | None,
     is_global: bool,
     api_url: str | None,
@@ -250,8 +271,93 @@ def init_cmd(
     _create_solution_workspace(
         path, slug, name, version,
         _resolve_outbound_flag(allow_outbound_access, legacy_global_repo_access),
+        _resolve_inbound_flag(allow_inbound_access),
         org, is_global, api_url,
     )
+
+
+@solution_group.command(
+    name="update",
+    help="Edit install-local fields (name, scope, access gates) of an existing install.",
+)
+@click.argument("path", type=click.Path(file_okay=False), default=".")
+@click.option("--solution", "solution_ref", default=None,
+              help="Install id or unique slug (default: workspace binding or descriptor slug).")
+@click.option("--name", default=None, help="New display name.")
+@click.option("--allow-outbound-access/--no-allow-outbound-access", "allow_outbound_access",
+              default=None, help="Let the install fall back to shared _repo resources.")
+@click.option("--global-repo-access/--no-global-repo-access", "legacy_global_repo_access",
+              default=None, hidden=True, help="Deprecated: use --allow-outbound-access.")
+@click.option("--allow-inbound-access/--no-allow-inbound-access", "allow_inbound_access",
+              default=None, help="Let other installs target this one via per-call solution refs.")
+@click.option("--url", "api_url", default=None, help="Bifrost instance URL (default: current profile).")
+@org_option
+def update_cmd(
+    path: str,
+    solution_ref: str | None,
+    name: str | None,
+    allow_outbound_access: bool | None,
+    legacy_global_repo_access: bool | None,
+    allow_inbound_access: bool | None,
+    org: str | None,
+    is_global: bool,
+    api_url: str | None,
+) -> None:
+    """PATCH install-local fields; fields not passed are left unchanged.
+
+    Install selection follows the binding/``--solution``/descriptor-slug rule
+    (like ``bind``/``deploy``). ``--org``/``--global`` set the install's NEW
+    scope — they do not select it.
+    """
+    workspace = _workspace_from_path_arg(path)
+    if not is_solution_workspace(workspace):
+        raise click.ClickException(
+            f"No {DESCRIPTOR_FILENAME} in {workspace} - not a Solution workspace. "
+            f"Run `bifrost solution init` first."
+        )
+    descriptor = load_descriptor(workspace)
+
+    body: dict[str, Any] = {}
+    if name is not None:
+        body["name"] = name
+    outbound = _resolve_optional_outbound_flag(
+        allow_outbound_access, legacy_global_repo_access
+    )
+    if outbound is not None:
+        body["allow_outbound_access"] = outbound
+    if allow_inbound_access is not None:
+        body["allow_inbound_access"] = allow_inbound_access
+    scope_selected = org is not None or is_global
+
+    if not body and not scope_selected:
+        raise click.UsageError(
+            "Nothing to update: pass --name, --org/--global, "
+            "--allow-outbound-access, or --allow-inbound-access."
+        )
+
+    async def _run() -> None:
+        client = _client_for_solution_workspace(workspace, api_url)
+        if scope_selected:
+            body["organization_id"] = await _resolve_install_org(client, org, is_global)
+        binding = await _resolve_solution_install(
+            client, workspace, descriptor, solution_ref
+        )
+        resp = await client.patch(f"/api/solutions/{binding.solution_id}", json=body)
+        if resp.status_code != 200:
+            raise click.ClickException(
+                f"Failed to update install ({resp.status_code}): {resp.text[:200]}"
+            )
+        updated = resp.json()
+        scope = updated.get("organization_id")
+        click.echo(
+            f"Updated Solution install {binding.solution_id} "
+            f"(name={updated.get('name')!r}, "
+            f"allow_outbound_access={updated.get('allow_outbound_access')}, "
+            f"allow_inbound_access={updated.get('allow_inbound_access')}, "
+            f"scope={'global' if not scope else scope})."
+        )
+
+    asyncio.run(_run())
 
 
 def _workspace_from_path_arg(path: str) -> pathlib.Path:

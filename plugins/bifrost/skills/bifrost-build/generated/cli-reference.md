@@ -2009,6 +2009,7 @@ Commands:
   sdk           Manage the app's vendored Bifrost SDK.
   start         Run the app's dev server + local workflows on one stable...
   swap-slugs    Atomically exchange two apps' slugs (v1→v2 migration...
+  update        Edit install-local fields (name, scope, access gates) of...
 ```
 
 ### `solution bind`
@@ -2067,6 +2068,9 @@ Options:
   --allow-outbound-access / --no-allow-outbound-access
                                   Let the install fall back to shared _repo
                                   resources.
+  --allow-inbound-access / --no-allow-inbound-access
+                                  Let other installs target this one via per-
+                                  call solution refs.
   --url TEXT                      Bifrost instance URL (default: current
                                   profile).
   --global                        Target global scope (org=NULL). Alias for
@@ -2137,6 +2141,9 @@ Options:
   --allow-outbound-access / --no-allow-outbound-access
                                   Let the install fall back to shared _repo
                                   resources.
+  --allow-inbound-access / --no-allow-inbound-access
+                                  Let other installs target this one via per-
+                                  call solution refs.
   --url TEXT                      Bifrost instance URL (default: current
                                   profile).
   --global                        Target global scope (org=NULL). Alias for
@@ -2303,6 +2310,35 @@ Usage: solution swap-slugs [OPTIONS] APP_A APP_B
 
 Options:
   --help  Show this message and exit.
+```
+
+### `solution update`
+
+```
+Usage: solution update [OPTIONS] [PATH]
+
+  Edit install-local fields (name, scope, access gates) of an existing
+  install.
+
+Options:
+  --solution TEXT                 Install id or unique slug (default:
+                                  workspace binding or descriptor slug).
+  --name TEXT                     New display name.
+  --allow-outbound-access / --no-allow-outbound-access
+                                  Let the install fall back to shared _repo
+                                  resources.
+  --allow-inbound-access / --no-allow-inbound-access
+                                  Let other installs target this one via per-
+                                  call solution refs.
+  --url TEXT                      Bifrost instance URL (default: current
+                                  profile).
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
+  --help                          Show this message and exit.
 ```
 
 ## `tables`
