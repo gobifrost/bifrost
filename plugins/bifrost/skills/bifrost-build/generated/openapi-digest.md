@@ -23,6 +23,9 @@
 | POST | `/api/admin/ai/profiles/merge` |
 | DELETE | `/api/admin/ai/profiles/{profile_id}` |
 | PATCH | `/api/admin/ai/profiles/{profile_id}` |
+| GET | `/api/admin/kubernetes/execution` |
+| PUT | `/api/admin/kubernetes/execution` |
+| GET | `/api/admin/kubernetes/status` |
 | DELETE | `/api/admin/llm/embedding-config` |
 | GET | `/api/admin/llm/embedding-config` |
 | POST | `/api/admin/llm/embedding-config` |
