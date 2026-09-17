@@ -186,8 +186,8 @@ The test stack runs in Docker and is separate from your dev stack. Boot it once 
 ./test.sh client unit                              # Vitest (no stack needed)
 ./test.sh client e2e                               # Playwright in containers
 
-# Required pre-PR gate and broader one-shot run
-./test.sh pre-pr                                 # Required clean-commit gate before a PR
+# Optional full local reproduction and broader one-shot run
+./test.sh pre-pr                                 # Optional: reproduce the merge gate locally
 ./test.sh ci                                     # All backend + full browser suites
 ```
 

@@ -26,7 +26,7 @@
 #   ./test.sh client e2e e2e/auth.unauth.spec.ts   Pass through to playwright.
 #
 # CI escape hatch:
-#   ./test.sh pre-pr                    Required local PR/merge gate for a clean commit.
+#   ./test.sh pre-pr                    Optional full local reproduction of the merge gate (diagnostic).
 #   ./test.sh ci                        Full isolated run: up, all tests, down.
 #
 # Global flags (apply to most subcommands):

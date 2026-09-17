@@ -140,15 +140,9 @@ python api/scripts/skill-truth/generate.py
 
 If host Python is missing API dependencies, run the generator in the API test image with writable `.claude/skills` and read-only source mounts. Do not hand-edit generated appendices.
 
-### 5.6. Required local gate before PR
+### 5.6. Clean candidate + queue as the gate
 
-After targeted verification, commit the exact candidate and run:
-
-```bash
-./test.sh pre-pr
-```
-
-Do not open a PR or queue it for merge unless this passes for the current `HEAD`. The command rejects dirty worktrees and branches that do not contain current `origin/main`; rerun it after every commit, amend, rebase, or merge. It exercises every locally reproducible PR and merge-queue gate. GitHub-only boundaries such as the synthetic merge ref, registry publication, signing, and attestation remain remote checks.
+After focused verification of the change surface, commit the exact candidate on a branch containing current `origin/main`. The merge queue is the authoritative complete-suite gate for the exact candidate — focused local verification, then queue. `./test.sh pre-pr` is an optional full local reproduction of the merge gate for diagnosis or unusually risky changes; it is not a PR prerequisite and does not need rerunning after every commit, amend, rebase, or merge.
 
 ### 6. PR linkage
 
@@ -221,7 +215,7 @@ gh pr view <N> --repo gobifrost/bifrost \
 gh api repos/gobifrost/bifrost/actions/jobs/<job_id>/logs
 ```
 
-If the failure is locally reproducible and `./test.sh pre-pr` passed for the same SHA, the local gate is incomplete or non-equivalent. Fix that harness/guidance defect and preserve the exposing condition in `pre-pr` before rerunning or requeueing; do not accept CI as the routine first broad test run.
+A queue failure in a locally reproducible check means the focused local verification missed the exposing condition. Reproduce it locally, fix the cause with a durable disposition (no retries, skips, or timeout inflation), and re-queue. `./test.sh pre-pr` can reproduce the queue's full check set locally when diagnosing.
 
 Fix CI failures in the same worktree and branch. Prefer a normal follow-up commit once reviewers or other agents may have seen the PR; amending with `--force-with-lease` is acceptable for a fresh, unreviewed PR where you are the only actor. After any force-push, re-check whether auto-merge/queue state survived.
 
