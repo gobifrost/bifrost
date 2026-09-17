@@ -36,6 +36,7 @@ function makeJob(
 		resource_lock_key: "application:app-1",
 		priority: 100,
 		title: "Update SDK",
+		execution_backend: "kubernetes",
 		requested_by_user_id: "user-1",
 		requested_by_name: "Ada",
 		status: "running",

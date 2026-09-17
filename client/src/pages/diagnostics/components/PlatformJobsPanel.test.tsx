@@ -262,4 +262,27 @@ describe("PlatformJobsPanel", () => {
 			(await screen.findAllByText("Cancelled")).length,
 		).toBeGreaterThan(0);
 	});
+
+	it("marks Kubernetes-backed jobs without flagging local ones", async () => {
+		mocks.getPlatformJobs.mockResolvedValue({
+			jobs: [
+				queuedJob,
+				{
+					...queuedJob,
+					id: "10000000-0000-0000-0000-000000000002",
+					title: "Remote app build",
+					execution_backend: "kubernetes",
+				},
+			],
+			total: 2,
+			limit: 25,
+			offset: 0,
+		});
+		renderPanel();
+
+		expect(
+			(await screen.findAllByText("Remote app build"))[0],
+		).toBeInTheDocument();
+		expect(screen.getAllByText("Kubernetes").length).toBeGreaterThan(0);
+	});
 });

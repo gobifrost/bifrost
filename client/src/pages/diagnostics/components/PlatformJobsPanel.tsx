@@ -52,6 +52,7 @@ import {
 	SheetTitle,
 } from "@/components/ui/sheet";
 import { copyToClipboard } from "@/lib/clipboard";
+import { KubernetesIcon } from "@/components/icons/KubernetesIcon";
 import {
 	cancelPlatformJob,
 	getPlatformJobs,
@@ -118,6 +119,20 @@ function StatusIcon({ status }: { status: string }) {
 			<Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />
 		);
 	return <Clock3 className="h-3.5 w-3.5" />;
+}
+
+function BackendBadge({ backend }: { backend?: string | null }) {
+	if (backend !== "kubernetes") return null;
+	return (
+		<Badge
+			variant="outline"
+			className="gap-1"
+			title="This job runs in a Kubernetes build pod, not the scheduler"
+		>
+			<KubernetesIcon className="h-3.5 w-3.5" />
+			Kubernetes
+		</Badge>
+	);
 }
 
 function elapsed(job: ObservablePlatformJob) {
@@ -401,15 +416,20 @@ export function PlatformJobsPanel({
 									job={job}
 									onSelect={() => setSelectedJob(job)}
 									status={
-										<Badge
-											variant="outline"
-											className={statusClassName(
-												job.status,
-											)}
-										>
-											<StatusIcon status={job.status} />
-											{displayStatus(job.status)}
-										</Badge>
+										<span className="flex flex-wrap items-center gap-2">
+											<Badge
+												variant="outline"
+												className={statusClassName(
+													job.status,
+												)}
+											>
+												<StatusIcon status={job.status} />
+												{displayStatus(job.status)}
+											</Badge>
+											<BackendBadge
+												backend={job.execution_backend}
+											/>
+										</span>
 									}
 									memory={
 										<MemorySummary
@@ -477,7 +497,8 @@ export function PlatformJobsPanel({
 												{job.requested_by_name}
 											</p>
 										</DataTableCell>
-										<DataTableCell>
+									<DataTableCell>
+										<div className="flex flex-wrap items-center gap-1">
 											<Badge
 												variant="outline"
 												className={`gap-1 ${statusClassName(job.status)}`}
@@ -487,6 +508,10 @@ export function PlatformJobsPanel({
 												/>
 												{displayStatus(job.status)}
 											</Badge>
+											<BackendBadge
+												backend={job.execution_backend}
+											/>
+										</div>
 											<p
 												className="mt-1 max-w-[260px] truncate text-xs text-muted-foreground"
 												title={
@@ -630,6 +655,9 @@ export function PlatformJobsPanel({
 								>
 									{selectedJob.job_type}
 								</Badge>
+								<BackendBadge
+									backend={selectedJob.execution_backend}
+								/>
 							</div>
 
 							<div className="mt-5 rounded-[var(--bf-radius-surface)] border bg-muted/20 px-3 py-2">
@@ -711,6 +739,15 @@ export function PlatformJobsPanel({
 									value={elapsed(selectedJob)}
 								/>
 								<Detail
+									label="Runs on"
+									value={
+										selectedJob.execution_backend ===
+										"kubernetes"
+											? "Kubernetes build pod"
+											: "Scheduler"
+									}
+								/>
+								<Detail
 									label="Resource"
 									value={
 										selectedJob.resource_type ??
@@ -750,9 +787,9 @@ export function PlatformJobsPanel({
 								/>
 							</dl>
 							<p className="mt-3 text-xs leading-relaxed text-muted-foreground">
-								Memory samples describe the shared scheduler
-								cgroup while this job ran; they are not isolated
-								process usage.
+								{selectedJob.execution_backend === "kubernetes"
+									? "Memory samples describe the isolated build pod cgroup while this job ran."
+									: "Memory samples describe the shared scheduler cgroup while this job ran; they are not isolated process usage."}
 							</p>
 
 							<div className="mt-6 flex flex-wrap gap-2">

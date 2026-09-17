@@ -23,11 +23,14 @@ import { MemorySettings } from "@/pages/settings/MemorySettings";
 import { RequiredInstructionsSettings } from "@/pages/settings/RequiredInstructionsSettings";
 import { MCP } from "@/pages/settings/MCP";
 import { Maintenance } from "@/pages/settings/Maintenance";
+import { KubernetesExecutions } from "@/pages/settings/KubernetesExecutions";
+import { getKubernetesStatus } from "@/services/kubernetes";
 import { cn } from "@/lib/utils";
 import {
 	Bot,
 	BrainCircuit,
 	ChevronDown,
+	Container,
 	Database,
 	DollarSign,
 	Key,
@@ -38,9 +41,9 @@ import {
 	ScrollText,
 	Shield,
 	Wrench,
-	type LucideIcon,
 } from "lucide-react";
 import { Github } from "@/components/icons/GithubIcon";
+import { KubernetesIcon } from "@/components/icons/KubernetesIcon";
 
 type SettingsItem = {
 	value: string;
@@ -52,7 +55,7 @@ type SettingsItem = {
 type SettingsSection = {
 	id: string;
 	label: string;
-	icon: LucideIcon;
+	icon: ComponentType<{ className?: string }>;
 	items: SettingsItem[];
 };
 
@@ -149,26 +152,69 @@ const settingsSections: SettingsSection[] = [
 	},
 ];
 
-function findActiveSectionId(currentTab: string) {
+function findActiveSectionId(
+	sections: SettingsSection[],
+	currentTab: string,
+) {
 	return (
-		settingsSections.find((section) =>
+		sections.find((section) =>
 			section.items.some((item) => item.value === currentTab),
-		)?.id ?? settingsSections[0].id
+		)?.id ?? sections[0].id
 	);
 }
+
+const kubernetesSection: SettingsSection = {
+	id: "kubernetes",
+	label: "Kubernetes",
+	icon: KubernetesIcon,
+		items: [
+			{
+				value: "kubernetes-executions",
+				label: "Executions",
+				icon: Container,
+				content: KubernetesExecutions,
+			},
+		],
+};
 
 export function Settings() {
 	const navigate = useNavigate();
 	const location = useLocation();
+	const [kubernetesAvailable, setKubernetesAvailable] = useState(false);
+
+	// The Kubernetes section appears only when the deployment configured
+	// the remote-build backend. It is a second home for K8s options later
+	// (e.g. built-in monitoring) beside today's Executions toggles.
+	useEffect(() => {
+		let active = true;
+		getKubernetesStatus()
+			.then((status) => {
+				if (active) setKubernetesAvailable(status.configured);
+			})
+			.catch(() => {
+				if (active) setKubernetesAvailable(false);
+			});
+		return () => {
+			active = false;
+		};
+	}, []);
+
+	const sections = useMemo(
+		() =>
+			kubernetesAvailable
+				? [...settingsSections, kubernetesSection]
+				: settingsSections,
+		[kubernetesAvailable],
+	);
 
 	// Parse the current tab from the URL path
 	const requestedTab = location.pathname.split("/settings/")[1];
-	const currentTab = settingsSections.some((section) =>
+	const currentTab = sections.some((section) =>
 		section.items.some((item) => item.value === requestedTab),
 	)
 		? requestedTab
 		: "ai";
-	const activeSectionId = findActiveSectionId(currentTab);
+	const activeSectionId = findActiveSectionId(sections, currentTab);
 	const [expandedSections, setExpandedSections] = useState<string[]>(() => [
 		activeSectionId,
 	]);
@@ -187,7 +233,7 @@ export function Settings() {
 	const mobileNavigationRef = useRef<HTMLButtonElement>(null);
 	const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
 	const activeLabel =
-		settingsSections
+		sections
 			.flatMap((section) => section.items)
 			.find((item) => item.value === currentTab)?.label ?? "Models";
 
@@ -197,7 +243,7 @@ export function Settings() {
 	);
 
 	const handleRouteChange = (value: string) => {
-		const destinationSection = findActiveSectionId(value);
+		const destinationSection = findActiveSectionId(sections, value);
 		setExpandedSections((sections) =>
 			sections.includes(destinationSection)
 				? sections
@@ -266,7 +312,7 @@ export function Settings() {
 							!mobileNavigationOpen && "hidden",
 						)}
 					>
-						{settingsSections.map((section) => {
+						{sections.map((section) => {
 							const SectionIcon = section.icon;
 							const isExpanded = sectionState.has(section.id);
 							const containsActive =
@@ -282,7 +328,7 @@ export function Settings() {
 											toggleSection(section.id)
 										}
 										className={cn(
-											"flex min-h-11 w-full items-center gap-2 rounded-none border-l-2 border-transparent px-3 py-2 text-left text-sm font-medium transition-colors duration-[var(--bf-motion-feedback)] motion-reduce:transition-none hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+											"flex min-h-11 w-full items-center gap-2 rounded-none border-l-2 border-transparent px-3 py-2 text-left text-sm font-medium transition-colors duration-[var(--bf-motion-feedback)] motion-reduce:transition-none hover:bg-accent hover:text-accent-foreground focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-[-2px]",
 											containsActive && "text-primary",
 											!containsActive &&
 												"text-muted-foreground",
@@ -326,7 +372,7 @@ export function Settings() {
 															)
 														}
 														className={cn(
-															"flex min-h-11 w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors duration-[var(--bf-motion-feedback)] motion-reduce:transition-none hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+															"flex min-h-11 w-full items-center gap-2 py-2 pl-9 pr-3 text-left text-sm transition-colors duration-[var(--bf-motion-feedback)] motion-reduce:transition-none hover:bg-accent hover:text-accent-foreground focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-[-2px]",
 															navigationSelectionClasses(
 																isActive,
 															),
@@ -353,7 +399,7 @@ export function Settings() {
 							data-page-scroll
 							className="min-w-0 p-4 sm:p-6 lg:min-h-0 lg:flex-1 lg:overflow-auto"
 						>
-							{settingsSections
+							{sections
 								.flatMap((section) => section.items)
 								.filter((item) => visitedTabs.has(item.value))
 								.map((item) => (

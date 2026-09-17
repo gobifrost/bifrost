@@ -5362,6 +5362,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/kubernetes/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Kubernetes Status */
+        get: operations["get_kubernetes_status_api_admin_kubernetes_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/kubernetes/execution": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Kubernetes Execution */
+        get: operations["get_kubernetes_execution_api_admin_kubernetes_execution_get"];
+        /** Update Kubernetes Execution */
+        put: operations["update_kubernetes_execution_api_admin_kubernetes_execution_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/required-instructions": {
         parameters: {
             query?: never;
@@ -19930,6 +19965,61 @@ export interface components {
             size_mb: number;
         };
         /**
+         * KubernetesExecutionJobType
+         * @description One remotely-eligible job type with its product opt-in state.
+         */
+        KubernetesExecutionJobType: {
+            /** Job Type */
+            job_type: string;
+            /** Title */
+            title: string;
+            /** Description */
+            description: string;
+            /** Enabled */
+            enabled: boolean;
+            /** Default Enabled */
+            default_enabled: boolean;
+            /** Allowed By Deployment */
+            allowed_by_deployment: boolean;
+            /** Max Concurrency */
+            max_concurrency?: number | null;
+            /** Default Max Concurrency */
+            default_max_concurrency?: number | null;
+        };
+        /**
+         * KubernetesExecutionSettings
+         * @description Product opt-in state for remote execution, per job type.
+         */
+        KubernetesExecutionSettings: {
+            /** Job Types */
+            job_types: components["schemas"]["KubernetesExecutionJobType"][];
+        };
+        /**
+         * KubernetesExecutionUpdate
+         * @description Toggle remote execution and/or concurrency for one job type.
+         *
+         *     max_concurrency is tri-state: omitted leaves the override unchanged,
+         *     null clears it back to the code default, 1-32 sets it.
+         */
+        KubernetesExecutionUpdate: {
+            /** Job Type */
+            job_type: string;
+            /** Enabled */
+            enabled: boolean;
+            /** Max Concurrency */
+            max_concurrency?: number | null;
+        };
+        /**
+         * KubernetesStatus
+         * @description Whether this deployment configured remote build execution.
+         */
+        KubernetesStatus: {
+            /** Configured */
+            configured: boolean;
+            /** Backend */
+            backend: string;
+        };
+        /**
          * LLMModelInfo
          * @description Model information with both ID and display name.
          */
@@ -22543,6 +22633,11 @@ export interface components {
             title: string;
             /** Action Url */
             action_url?: string | null;
+            /**
+             * Execution Backend
+             * @default local
+             */
+            execution_backend: string;
             /** Requested By User Id */
             requested_by_user_id: string;
             /** Requested By Name */
@@ -37656,6 +37751,79 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MemoryPlatformSettings"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_kubernetes_status_api_admin_kubernetes_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KubernetesStatus"];
+                };
+            };
+        };
+    };
+    get_kubernetes_execution_api_admin_kubernetes_execution_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KubernetesExecutionSettings"];
+                };
+            };
+        };
+    };
+    update_kubernetes_execution_api_admin_kubernetes_execution_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesExecutionUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KubernetesExecutionSettings"];
                 };
             };
             /** @description Validation Error */

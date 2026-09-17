@@ -27,6 +27,16 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
 	Popover,
 	PopoverContent,
 	PopoverTrigger,
@@ -211,6 +221,7 @@ function ProgressNotificationItem({
 	onOpenFile: (filePath: string, lineNumber?: number) => Promise<void>;
 }) {
 	const [isActionLoading, setIsActionLoading] = useState(false);
+	const [detailsOpen, setDetailsOpen] = useState(false);
 	const Icon = categoryIcons[notification.category] || Cog;
 	const statusConfig = notificationStatusConfig[notification.status];
 	const isActive = isActiveNotification(notification);
@@ -228,6 +239,30 @@ function ProgressNotificationItem({
 		action !== "view_file";
 	const actionLabel =
 		(notification.metadata?.action_label as string) || "Run";
+
+	// Optional explainer dialog (e.g. Kubernetes enable/disable notices):
+	// a "Learn more" button opens roomier copy plus a primary navigation.
+	const details = notification.metadata?.details as
+		| {
+				title?: unknown;
+				paragraphs?: unknown;
+				primary_label?: unknown;
+		  }
+		| undefined;
+	const detailParagraphs = Array.isArray(details?.paragraphs)
+		? details.paragraphs.filter(
+				(paragraph): paragraph is string =>
+					typeof paragraph === "string",
+			)
+		: [];
+	const hasDetails =
+		typeof details?.title === "string" && detailParagraphs.length > 0;
+	const detailsTitle =
+		typeof details?.title === "string" ? details.title : "";
+	const detailsPrimaryLabel =
+		typeof details?.primary_label === "string"
+			? details.primary_label
+			: "Open settings";
 
 	// Check if notification has a file link (view_file action with file_path)
 	const filePath = notification.metadata?.file_path as string | undefined;
@@ -291,6 +326,50 @@ function ProgressNotificationItem({
 				<p className="text-muted-foreground">
 					{notification.description}
 				</p>
+			)}
+			{hasDetails && (
+				<>
+					<Button
+						type="button"
+						variant="outline"
+						className="min-h-11 h-auto w-full whitespace-normal py-2"
+						onClick={() => setDetailsOpen(true)}
+					>
+						Learn more
+					</Button>
+					<AlertDialog
+						open={detailsOpen}
+						onOpenChange={setDetailsOpen}
+					>
+						<AlertDialogContent>
+							<AlertDialogHeader>
+								<AlertDialogTitle>
+									{detailsTitle}
+								</AlertDialogTitle>
+								<AlertDialogDescription asChild>
+									<div className="space-y-2 text-left">
+										{detailParagraphs.map(
+											(paragraph, index) => (
+												<p key={index}>{paragraph}</p>
+											),
+										)}
+									</div>
+								</AlertDialogDescription>
+							</AlertDialogHeader>
+							<AlertDialogFooter>
+								<AlertDialogCancel>Close</AlertDialogCancel>
+								<AlertDialogAction
+									onClick={() => {
+										setDetailsOpen(false);
+										void onAction(notification);
+									}}
+								>
+									{detailsPrimaryLabel}
+								</AlertDialogAction>
+							</AlertDialogFooter>
+						</AlertDialogContent>
+					</AlertDialog>
+				</>
 			)}
 			{notification.error && (
 				<p className="text-destructive">{notification.error}</p>
