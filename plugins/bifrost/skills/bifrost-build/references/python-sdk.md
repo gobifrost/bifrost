@@ -128,6 +128,7 @@ These privileged namespaces manage tenant and identity state. Resolve the target
 - Omit explicit scope to use the current execution context.
 - Pass an organization scope only when the SDK method supports it and the caller is authorized.
 - Solution context is carried automatically for tables, files, and workflow resolution.
+- Pass `solution=` (install UUID or slug) to reach another install per-call on `workflows.execute`, `tables.query`/`get`/`insert`, `files.read`, and `events.emit`; it resolves inside the resolved org scope and the target's `allow_inbound_access` gate decides. Read `solution-resource-access.md` before targeting cross-install.
 - `allow_outbound_access` changes fallback for modules, workflows, tables, and files—not configs, integrations, or knowledge.
 - SDK access never bypasses policies, roles, org boundaries, or external-user restrictions.
 

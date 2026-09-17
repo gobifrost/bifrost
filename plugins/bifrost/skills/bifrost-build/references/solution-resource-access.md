@@ -3,8 +3,8 @@
 Read this reference when Solution code needs anything outside its install.
 
 Two install-local gates control cross-boundary access. Outbound,
-`allow_outbound_access` (formerly `allow_outbound_access`, still accepted), lets
-an install fall back to shared `_repo` resources. Inbound,
+`allow_outbound_access` (formerly `global_repo_access`, still accepted), lets an
+install fall back to shared `_repo` resources. Inbound,
 `allow_inbound_access` (default on), lets outside callers target this install
 per-call (see below). Both off is deterministic isolation. Neither is install
 scope, and neither grants blanket access to global resources. Outbound gates
@@ -34,6 +34,35 @@ Forms, agents, apps, event sources, and claims are installed entities, not gener
 A deployed app's scaffolded provider sends its app identity on workflow, table, and file requests. The server resolves that app to its active Solution install. A Solution workflow carries its `solution_id` in execution context. Local `solution start` supplies equivalent install context through its proxy.
 
 Do not hand-build app/Solution headers or mix an app identity with a different explicit Solution. Mismatches are rejected.
+
+## Inbound targeting (per-call `solution=`)
+
+To reach another install from your own code, pass `solution=` to the scoped
+operation: `workflows.execute`, `tables.query`, `tables.get`, `tables.insert`,
+`files.read`, and `events.emit`. The value is an install UUID or slug.
+
+- The ref resolves **inside the already-resolved org scope** (the same `scope=`
+  rules and org/role checks apply). A slug belonging to another org reads as
+  not-found.
+- Unset keeps the default: your own install, then eligible shared fallback.
+- The **target's** `allow_inbound_access` decides. Own-install calls (caller ==
+  target) always pass. A sealed target reads as not-found, so a denied target
+  never falls through to a loose same-path workflow.
+- `workflows.execute(solution=...)` starts the child run **as that install**, so
+  the child's default SDK calls inherit the target's install context.
+- The caller's own install comes from the signed engine claim, never from a
+  request field you send. An explicit `solution=` also suppresses table
+  auto-create.
+- Targeting is resolution plus install context, not a delegated user identity.
+  Authorization still runs as the target: its policies, roles, and org
+  boundaries decide each read/write. If the target workflow gates on an
+  authenticated actor (`context.user`, `context.org_id`), verify what the child
+  run actually receives instead of assuming it inherits your caller.
+
+Set the gate at create time (`bifrost solution create --allow-inbound-access` /
+`--no-allow-inbound-access`), at install time via `allow_inbound_access` in
+`bifrost.solution.yaml`, or after install with
+`bifrost solution update --allow-inbound-access` / `--no-allow-inbound-access`.
 
 ## Modules and workflows
 
