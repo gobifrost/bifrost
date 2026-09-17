@@ -53,6 +53,9 @@ class PlatformJobPublic(BaseModel):
     priority: int = 100
     title: str
     action_url: str | None = None
+    # Where the attempt executes: "local" (scheduler child) or "kubernetes"
+    # (one-shot pod). Persisted at enqueue so replicas never disagree.
+    execution_backend: str = "local"
     requested_by_user_id: str
     requested_by_name: str
     status: PlatformJobStatus

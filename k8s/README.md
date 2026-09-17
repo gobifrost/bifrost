@@ -191,6 +191,17 @@ kubectl port-forward -n bifrost svc/api 8000:8000
 
 ## Scaling
 
+### Isolated App Build Jobs
+
+The optional Kubernetes App build Jobs overlay lives outside this base at
+`deploy/kubernetes/builds`. It is not enabled by `kubectl apply -k k8s/`.
+
+```bash
+kubectl apply -k deploy/kubernetes/builds
+```
+
+See `docs/runbooks/kubernetes-build-jobs.md` before enabling or disabling it.
+
 ### API
 
 ```bash

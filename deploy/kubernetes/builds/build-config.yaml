@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bifrost-build-jobs-config
+  namespace: bifrost
+  labels:
+    app.kubernetes.io/name: bifrost-build-jobs-config
+    app.kubernetes.io/component: build-controller
+    app.kubernetes.io/part-of: bifrost
+data:
+  BIFROST_PLATFORM_BUILD_BACKEND: "kubernetes"
+  BIFROST_KUBERNETES_BUILD_NAMESPACE: "bifrost"
+  BIFROST_KUBERNETES_BUILD_IMAGE: "ghcr.io/gobifrost/bifrost-api:REPLACE_WITH_COMPATIBLE_TAG"
+  BIFROST_KUBERNETES_BUILD_CONFIGMAP: "bifrost-config"
+  BIFROST_KUBERNETES_BUILD_SECRET: "bifrost-secrets"
+  BIFROST_KUBERNETES_BUILD_SERVICE_ACCOUNT: "bifrost-build-runner"
+  BIFROST_KUBERNETES_BUILD_JOB_TYPES: "application.deploy,application.sdk_update"
+  BIFROST_KUBERNETES_BUILD_MEMORY_REQUEST_MIB: "512"
+  BIFROST_KUBERNETES_BUILD_MEMORY_LIMIT_MIB: "2048"
+  BIFROST_KUBERNETES_BUILD_MAX_JOBS: "2"
+  BIFROST_KUBERNETES_BUILD_PENDING_TIMEOUT_SECONDS: "300"
+  BIFROST_KUBERNETES_BUILD_CPU_REQUEST: "250m"
+  BIFROST_KUBERNETES_BUILD_CPU_LIMIT: "1"

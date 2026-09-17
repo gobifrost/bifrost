@@ -26,6 +26,7 @@ from src.routers.cli import router as cli_router, install_router as cli_install_
 from src.routers.notifications import router as notifications_router
 from src.routers.profile import router as profile_router
 from src.routers.memory import admin_router as memory_admin_router, router as memory_router
+from src.routers.kubernetes import admin_router as kubernetes_admin_router
 from src.routers.required_instructions import (
     admin_router as required_instructions_admin_router,
     router as required_instructions_router,
@@ -109,6 +110,7 @@ __all__ = [
     "profile_router",
     "memory_router",
     "memory_admin_router",
+    "kubernetes_admin_router",
     "required_instructions_router",
     "required_instructions_admin_router",
     "agents_router",

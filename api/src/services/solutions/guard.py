@@ -18,7 +18,6 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.inspection import inspect as sa_inspect
@@ -26,6 +25,15 @@ from sqlalchemy.inspection import inspect as sa_inspect
 SOLUTION_MANAGED_MESSAGE = (
     "Solution-managed entities can only be managed by deployment methods."
 )
+
+
+def _solution_managed_http_exception(detail: str = SOLUTION_MANAGED_MESSAGE) -> Exception:
+    from fastapi import HTTPException, status
+
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail=detail,
+    )
 
 
 def is_solution_managed(entity: Any) -> bool:
@@ -40,10 +48,7 @@ def assert_not_solution_managed(entity: Any) -> None:
     existing mutation paths are unchanged for non-solution entities.
     """
     if is_solution_managed(entity):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=SOLUTION_MANAGED_MESSAGE,
-        )
+        raise _solution_managed_http_exception()
 
 
 class SolutionManagedWriteError(Exception):
@@ -141,10 +146,7 @@ async def assert_entity_id_not_solution_managed(
         await db.execute(select(model.solution_id).where(model.id == entity_id))  # type: ignore[attr-defined]
     ).scalar_one_or_none()
     if solution_id is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=SOLUTION_MANAGED_MESSAGE,
-        )
+        raise _solution_managed_http_exception()
 
 
 async def assert_role_not_bound_to_solution_managed(
@@ -213,11 +215,10 @@ async def assert_role_not_bound_to_solution_managed(
     else:
         listed = ", ".join(str(sid) for sid in sorted(bound_solution_ids, key=str))
     plural = "s" if len(bound_solution_ids) > 1 else ""
-    raise HTTPException(
-        status_code=status.HTTP_409_CONFLICT,
-        detail=(
+    raise _solution_managed_http_exception(
+        (
             f"This role is assigned to entities managed by the following "
             f"solution install{plural}: {listed}. Redeploy "
             f"{'each' if plural else 'it'} without the role before deleting it."
-        ),
+        )
     )

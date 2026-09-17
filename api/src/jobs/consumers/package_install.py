@@ -186,17 +186,14 @@ class PackageInstallConsumer(BroadcastConsumer):
         processes forked afterward have a fresh sys.modules that can see
         newly installed packages.
         """
-        try:
-            from src.services.execution.process_pool import get_process_pool
+        from src.services.execution.process_pool import get_process_pool
 
-            pool = get_process_pool()
-            if pool._started:
-                await pool.drain_and_restart_template()
-                logger.info("Drained workers and restarted template after pip install")
-            else:
-                logger.warning("Pool not started, skipping worker recycle")
-        except Exception as e:
-            logger.warning(f"Failed to drain/restart after pip install: {e}")
+        pool = get_process_pool()
+        if pool._started:
+            await pool.drain_and_restart_template()
+            logger.info("Drained workers and restarted template after pip install")
+        else:
+            logger.warning("Pool not started, skipping worker recycle")
 
     async def process_message(self, body: dict[str, Any]) -> None:
         """Process a package install or uninstall message.
@@ -242,7 +239,16 @@ class PackageInstallConsumer(BroadcastConsumer):
         # Worker subprocesses are forked before pip runs; recycle so they pick
         # up the new on-disk state.
         await report_phase(run_id, wid, phase="recycling", action=action)
-        await self._recycle_workers()
+        try:
+            await self._recycle_workers()
+        except Exception as exc:
+            logger.exception("Worker template restart failed after package installation")
+            await report_phase(
+                run_id, wid, phase="failed", action=action,
+                package=package_spec,
+                error=f"Worker template restart failed ({type(exc).__name__})",
+            )
+            return
         await self._update_pool_packages()
         await report_phase(run_id, wid, phase="recycled", action=action)
         logger.info(f"Package {action} completed on {wid}")

@@ -3,9 +3,11 @@
 Validates that the consumer uses short-lived sessions (no persistent session).
 """
 
-import pytest
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
+
+import pytest
 
 
 class TestCompletionMetadataRecovery:
@@ -121,6 +123,55 @@ class TestConsumerSessionLifecycle:
             ):
                 # Should complete without error
                 await consumer.stop()
+
+    @pytest.mark.asyncio
+    async def test_drain_waits_for_child_results_before_stopping_pool(self):
+        """Shutdown must keep result handling alive after dispatch tasks finish."""
+        from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer
+
+        call_order: list[str] = []
+
+        async def drain_active_executions(_deadline: float) -> bool:
+            call_order.append("drain_children")
+            return True
+
+        async def stop_pool() -> None:
+            call_order.append("stop_pool")
+
+        async def close_channel(self) -> None:  # type: ignore[no-untyped-def]
+            call_order.append("close_channel")
+
+        queue = AsyncMock()
+        queue.cancel.side_effect = lambda _tag: call_order.append("cancel_consumer")
+        dispatch_task = asyncio.create_task(asyncio.sleep(0))
+
+        with patch.object(WorkflowExecutionConsumer, "__init__", lambda self: None):
+            consumer = WorkflowExecutionConsumer()
+            consumer._queue = queue
+            consumer._consumer_tag = "consumer-tag"
+            consumer._draining = False
+            consumer._inflight = {dispatch_task}
+            consumer._channel = AsyncMock()
+            consumer._connection_ctx = AsyncMock()
+            consumer.queue_name = "workflow-executions"
+            consumer._pool_started = True
+            consumer._pool = MagicMock()
+            consumer._pool.drain_active_executions = drain_active_executions
+            consumer._pool.active_execution_count.return_value = 0
+            consumer._pool.stop = stop_pool
+
+            with patch.object(
+                WorkflowExecutionConsumer.__bases__[0], "stop", close_channel
+            ):
+                await consumer.drain(deadline=1.0)
+
+        assert call_order == [
+            "cancel_consumer",
+            "drain_children",
+            "stop_pool",
+            "close_channel",
+        ]
+        assert consumer._pool_started is False
 
     @pytest.mark.asyncio
     async def test_no_get_db_session_method(self):

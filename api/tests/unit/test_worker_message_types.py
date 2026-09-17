@@ -5,6 +5,8 @@ Validates the thin RabbitMQ consumer wrappers that delegate to
 itself is implemented in T12 and T15; this task only wires the message
 plumbing and the failure-swallowing path.
 """
+import sys
+from types import ModuleType
 from unittest.mock import AsyncMock, patch
 from uuid import UUID, uuid4
 
@@ -47,6 +49,61 @@ async def test_tune_chat_message_appends_and_replies():
         args = mock.await_args.args
         assert args[0] == run_id
         assert args[1] == "wrong route"
+
+
+@pytest.mark.asyncio
+async def test_lazy_summarize_wrapper_forwards_to_real_service(monkeypatch):
+    """Patch-compatible worker wrapper imports and forwards on first use."""
+    from src.jobs.summarize_worker import summarize_run
+
+    run_id = uuid4()
+    session_factory = object()
+    fake_module = ModuleType("src.services.execution.run_summarizer")
+    fake_module.summarize_run = AsyncMock()  # type: ignore[attr-defined]
+    monkeypatch.setitem(
+        sys.modules,
+        "src.services.execution.run_summarizer",
+        fake_module,
+    )
+
+    await summarize_run(run_id, session_factory)  # type: ignore[arg-type]
+
+    fake_module.summarize_run.assert_awaited_once_with(  # type: ignore[attr-defined]
+        run_id,
+        session_factory,
+    )
+
+
+@pytest.mark.asyncio
+async def test_lazy_tune_chat_wrapper_forwards_to_real_service(monkeypatch):
+    """Patch-compatible worker wrapper imports and forwards on first use."""
+    from src.jobs.summarize_worker import append_user_message_and_reply
+
+    run_id = uuid4()
+    db = object()
+    fake_module = ModuleType("src.services.execution.tuning_service")
+    fake_module.append_user_message_and_reply = AsyncMock(  # type: ignore[attr-defined]
+        return_value="ok"
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "src.services.execution.tuning_service",
+        fake_module,
+    )
+
+    result = await append_user_message_and_reply(  # type: ignore[arg-type]
+        run_id,
+        "wrong route",
+        db,
+    )
+
+    assert result == "ok"
+    append_user_message = fake_module.append_user_message_and_reply  # type: ignore[attr-defined]
+    append_user_message.assert_awaited_once_with(
+        run_id,
+        "wrong route",
+        db,
+    )
 
 
 @pytest.mark.asyncio

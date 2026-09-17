@@ -243,7 +243,10 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # (default true). WorkflowExecutionRequest/EmitEventRequest gained optional
     # caller_solution(_id). ADDITIVE: old clients use the old key / omit the
     # new fields and keep prior behavior; fingerprint refreshed only.
-    "231c1d9334919ae83b068f2123ac58b2eb75efa881e6a4efd2d5a8f1858c1a28"
+    #
+    # PlatformJobPublic gained execution_backend (2026-09-17). ADDITIVE: old
+    # clients ignore the placement detail and keep polling status as before.
+    "2c73f2dc8656f083d92b9bc25cceeb327f580428f1063b968ab077b92675660c"
 )
 
 

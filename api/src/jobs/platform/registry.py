@@ -48,3 +48,7 @@ _DEFINITIONS = {
 
 def get_platform_job_definition(job_type: str) -> PlatformJobDefinition | None:
     return _DEFINITIONS.get(job_type)
+
+
+def list_platform_job_definitions() -> list[PlatformJobDefinition]:
+    return list(_DEFINITIONS.values())

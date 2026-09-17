@@ -230,8 +230,10 @@ async def enqueue_code_execution(
         artifact_workspace_id=context.artifact_workspace_id,
     )
 
-    # Add to queue tracking
-    await add_to_queue(execution_id)
+    # Sync callers wait on their private result list and cannot consume queue
+    # position events. Match workflow execution enqueue behavior.
+    if not sync:
+        await add_to_queue(execution_id)
 
     # Prepare queue message with code
     message = {

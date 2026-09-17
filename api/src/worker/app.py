@@ -67,6 +67,7 @@ class Worker:
         self._shutdown_event = asyncio.Event()
         self._consumers: list = []
         self._stopping = False
+        self._startup_lock = asyncio.Lock()
 
     async def start(self) -> None:
         """Start the worker.
@@ -83,27 +84,33 @@ class Worker:
         logger.info(f"Environment: {self.settings.environment}")
 
         try:
-            # Initialize database connection
-            logger.info("Initializing database connection...")
-            await init_db()
-            # Configure the ORM before accepting queue messages. Lazy mapper
-            # setup otherwise lands on the first execution-row insert and can
-            # add hundreds of milliseconds to the first workflow after start.
-            from sqlalchemy.orm import configure_mappers
+            async with self._startup_lock:
+                if not self._stopping:
+                    # Initialize database connection
+                    logger.info("Initializing database connection...")
+                    await init_db()
 
-            configure_mappers()
-            logger.info("Database connection established")
+                if not self._stopping:
+                    # Configure the ORM before accepting queue messages. Lazy mapper
+                    # setup otherwise lands on the first execution-row insert and can
+                    # add hundreds of milliseconds to the first workflow after start.
+                    from sqlalchemy.orm import configure_mappers
 
-            # Initialize and start RabbitMQ consumers
-            logger.info("Starting RabbitMQ consumers...")
-            await self._start_consumers()
+                    configure_mappers()
+                    logger.info("Database connection established")
+
+                if not self._stopping:
+                    # Initialize and start RabbitMQ consumers
+                    logger.info("Starting RabbitMQ consumers...")
+                    await self._start_consumers()
         except Exception:
             logger.error("Startup failed; tearing down partially-started worker")
             await self._cleanup_after_failed_start()
             raise
 
-        logger.info("Bifrost Worker started")
-        logger.info("Waiting for messages... (Ctrl+C to stop)")
+        if not self._stopping:
+            logger.info("Bifrost Worker started")
+            logger.info("Waiting for messages... (Ctrl+C to stop)")
 
         # Keep running until shutdown
         await self._shutdown_event.wait()
@@ -147,8 +154,18 @@ class Worker:
 
         # Start each consumer
         for consumer in self._consumers:
+            if self._stopping:
+                logger.info(
+                    "Worker stop requested during startup; skipping remaining consumers"
+                )
+                break
             try:
                 await consumer.start()
+                if self._stopping:
+                    logger.info(
+                        f"Worker stop requested after starting {consumer.queue_name}"
+                    )
+                    break
                 logger.info(f"Started consumer: {consumer.queue_name}")
             except Exception as e:
                 logger.error(f"Failed to start consumer {consumer.queue_name}: {e}")
@@ -169,6 +186,9 @@ class Worker:
         self._stopping = True
         logger.info("Stopping Bifrost Worker (graceful drain)...")
         self.running = False
+
+        async with self._startup_lock:
+            pass
 
         # Drain consumers in parallel — each cancels its consumer tag, waits on
         # its in-flight tasks, then closes its channel.

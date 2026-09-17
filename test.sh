@@ -14,6 +14,9 @@
 #   ./test.sh all                       All backend tests, including slow tests.
 #   ./test.sh tests/path/... [args]     Pass through to pytest.
 #
+# Local Kubernetes spike (isolated Kind cluster):
+#   ./test.sh kubernetes up|status|down|collect|kubectl
+#
 # Quality checks:
 #   ./test.sh quality api               Run API pyright + ruff inside Docker.
 #
@@ -38,6 +41,12 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
+
+# Kubernetes uses an isolated kubeconfig and local fixtures, never Compose secrets.
+if [ "${1:-}" = "kubernetes" ]; then
+    shift
+    exec "$SCRIPT_DIR/scripts/kubernetes/local-kind.sh" "$@"
+fi
 
 # shellcheck source=scripts/lib/test_helpers.sh
 source "$SCRIPT_DIR/scripts/lib/test_helpers.sh"

@@ -14,8 +14,10 @@ Both handlers are exposed as standalone async functions so they can be
 unit-tested without a RabbitMQ connection. The ``_Consumer`` classes wrap
 them in :class:`BaseConsumer` for the worker bootstrap to register.
 """
+from __future__ import annotations
+
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from sqlalchemy import select
@@ -23,17 +25,16 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.config import get_settings
 from src.core.database import get_session_factory
+from src.jobs.queue_names import (
+    SUMMARIZE_BACKFILL_QUEUE as SUMMARIZE_BACKFILL_QUEUE,
+    SUMMARIZE_QUEUE as SUMMARIZE_QUEUE,
+    TUNE_CHAT_QUEUE as TUNE_CHAT_QUEUE,
+)
 from src.jobs.rabbitmq import BaseConsumer
 from src.models.orm.agent_runs import AgentRun
-from src.services.execution.run_summarizer import (
-    SUMMARIZE_BACKFILL_QUEUE,
-    SUMMARIZE_QUEUE,
-    summarize_run,
-)
-from src.services.execution.tuning_service import (
-    TUNE_CHAT_QUEUE,
-    append_user_message_and_reply,
-)
+
+if TYPE_CHECKING:
+    from src.models.orm.agent_run_flag_conversations import AgentRunFlagConversation
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,35 @@ __all__ = [
     "SummarizeConsumer",
     "TuneChatConsumer",
 ]
+
+
+async def summarize_run(
+    run_id: UUID,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Lazy forwarding wrapper for the heavyweight summarization service.
+
+    Importing the real service is intentionally deferred until a summary
+    message is handled. After the first real job the service stays resident in
+    the worker process, which is fine: the memory win is before summary/tuning
+    traffic arrives.
+    """
+    from src.services.execution.run_summarizer import summarize_run as _summarize_run
+
+    await _summarize_run(run_id, session_factory)
+
+
+async def append_user_message_and_reply(
+    run_id: UUID,
+    content: str,
+    db: AsyncSession,
+) -> AgentRunFlagConversation:
+    """Lazy forwarding wrapper for the heavyweight tuning service."""
+    from src.services.execution.tuning_service import (
+        append_user_message_and_reply as _append_user_message_and_reply,
+    )
+
+    return await _append_user_message_and_reply(run_id, content, db)
 
 
 async def handle_summarize_message(

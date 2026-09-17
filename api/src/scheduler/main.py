@@ -96,6 +96,7 @@ class Scheduler:
         self._leadership_task: asyncio.Task[None] | None = None
         self._job_slots = PLATFORM_JOB_CONCURRENCY
         self._platform_job_tasks: list[asyncio.Task[None]] = []
+        self._kubernetes_build_task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
         """Start the scheduler."""
@@ -121,6 +122,14 @@ class Scheduler:
             )
             for slot in range(self._job_slots)
         ]
+        if self.settings.platform_build_backend == "kubernetes":
+            from src.jobs.schedulers.kubernetes_jobs import kubernetes_build_loop
+
+            self._kubernetes_build_task = asyncio.create_task(
+                kubernetes_build_loop(self._shutdown_event),
+                name="kubernetes-build-controller",
+            )
+            self._kubernetes_build_task.add_done_callback(self._background_task_done)
         self._leadership_task = asyncio.create_task(
             self._leadership_loop(),
             name="scheduler-leadership",
@@ -135,7 +144,7 @@ class Scheduler:
         # Keep running until shutdown
         await self._shutdown_event.wait()
 
-        for task in (*self._platform_job_tasks, self._leadership_task):
+        for task in (*self._platform_job_tasks, self._leadership_task, self._kubernetes_build_task):
             if (
                 self.running
                 and task is not None
@@ -815,7 +824,7 @@ class Scheduler:
 
         tasks = [
             task
-            for task in (*self._platform_job_tasks, self._leadership_task)
+            for task in (*self._platform_job_tasks, self._leadership_task, self._kubernetes_build_task)
             if task is not None
         ]
         for task in tasks:
@@ -824,6 +833,7 @@ class Scheduler:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._platform_job_tasks = []
         self._leadership_task = None
+        self._kubernetes_build_task = None
 
         if self._heartbeat_task:
             self._heartbeat_task.cancel()

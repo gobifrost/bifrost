@@ -1,0 +1,71 @@
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: bifrost-rabbitmq
+  namespace: bifrost-local
+spec:
+  secretTargetRef:
+    - parameter: host
+      name: bifrost-local-secrets
+      key: BIFROST_RABBITMQ_URL
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: bifrost-worker
+  namespace: bifrost-local
+  annotations:
+    autoscaling.keda.sh/paused-scale-in: "true"
+spec:
+  scaleTargetRef:
+    name: bifrost-worker
+  pollingInterval: 5
+  cooldownPeriod: 3600
+  minReplicaCount: 1
+  maxReplicaCount: 4
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          selectPolicy: Disabled
+  triggers:
+    - type: rabbitmq
+      metadata:
+        protocol: amqp
+        queueName: workflow-executions
+        mode: QueueLength
+        value: "1"
+      authenticationRef:
+        name: bifrost-rabbitmq
+    - type: rabbitmq
+      metadata:
+        protocol: amqp
+        queueName: agent-runs
+        mode: QueueLength
+        value: "1"
+      authenticationRef:
+        name: bifrost-rabbitmq
+    - type: rabbitmq
+      metadata:
+        protocol: amqp
+        queueName: agent-summarization
+        mode: QueueLength
+        value: "1"
+      authenticationRef:
+        name: bifrost-rabbitmq
+    - type: rabbitmq
+      metadata:
+        protocol: amqp
+        queueName: agent-summarization-backfill
+        mode: QueueLength
+        value: "5"
+      authenticationRef:
+        name: bifrost-rabbitmq
+    - type: rabbitmq
+      metadata:
+        protocol: amqp
+        queueName: agent-tuning-chat
+        mode: QueueLength
+        value: "1"
+      authenticationRef:
+        name: bifrost-rabbitmq

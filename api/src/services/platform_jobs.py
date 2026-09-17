@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.config import get_settings
 from src.core.database import get_db_context
 from src.core.pubsub import manager as pubsub_manager
 from src.jobs.platform.base import PlatformJobDefinition
@@ -36,6 +37,27 @@ from src.services.notification_service import get_notification_service
 logger = logging.getLogger(__name__)
 ACTIVE_PLATFORM_JOB_STATUSES = ("queued", "running", "waiting", "cancel_requested")
 TERMINAL_PLATFORM_JOB_STATUSES = ("succeeded", "failed", "cancelled")
+
+#: Job types eligible for Kubernetes placement when the build backend is
+#: enabled. Mirrors the config default so partial settings doubles in tests
+#: behave like production. (The product opt-in default lives separately in
+#: kubernetes_execution.DEFAULT_REMOTE_JOB_TYPES; both are pinned by tests.)
+DEFAULT_KUBERNETES_JOB_TYPES = frozenset(
+    {"application.deploy", "application.sdk_update"}
+)
+
+
+def kubernetes_remote_job_types(settings: Any) -> frozenset[str]:
+    """Parse the operator allowlist of remotely-eligible job types."""
+    raw = getattr(
+        settings,
+        "kubernetes_build_job_types",
+        ",".join(sorted(DEFAULT_KUBERNETES_JOB_TYPES)),
+    )
+    types = frozenset(
+        part.strip() for part in str(raw).split(",") if part.strip()
+    )
+    return types or DEFAULT_KUBERNETES_JOB_TYPES
 
 
 def _now() -> datetime:
@@ -69,6 +91,7 @@ def platform_job_to_public(job: PlatformJob) -> PlatformJobPublic:
         priority=job.priority,
         title=job.title,
         action_url=job.action_url,
+        execution_backend=job.execution_backend or "local",
         requested_by_user_id=job.requested_by_user_id,
         requested_by_name=job.requested_by_name,
         status=PlatformJobStatus(job.status),
@@ -208,6 +231,18 @@ async def enqueue_platform_job(
         memory_profile_key=memory_profile_key,
     )
 
+    settings = get_settings()
+    # Three gates must agree: Bifrost classification (build class),
+    # operator ceiling (backend flag + deployment allowlist), and product
+    # opt-in (Settings UI, defaulting to the measured high-memory jobs).
+    # Resolved through the kubernetes_execution service (imported lazily:
+    # it pulls the job registry, which pulls this module at load time).
+    from src.services.kubernetes_execution import decide_execution_backend
+
+    execution_backend = await decide_execution_backend(
+        db, settings, definition
+    )
+
     job = PlatformJob(
         id=job_id or uuid4(),
         job_type=definition.job_type,
@@ -231,6 +266,7 @@ async def enqueue_platform_job(
         max_attempts=definition.policy.max_attempts,
         timeout_seconds=definition.policy.timeout_seconds,
         memory_profile_key=memory_profile_key,
+        execution_backend=execution_backend,
         memory_required_bytes=memory_required_bytes,
         retry_on_runner_loss=definition.policy.retry_on_runner_loss,
     )

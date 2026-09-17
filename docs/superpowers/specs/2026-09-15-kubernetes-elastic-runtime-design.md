@@ -1,8 +1,31 @@
 # Kubernetes Elastic Runtime Design
 
-**Status:** Revised discovery-spike design
+**Status:** Broad design; isolated App-build delivery in progress
 **Issue:** [#769](https://github.com/gobifrost/bifrost/issues/769)  
 **Date:** 2026-09-15
+
+## Current delivery priority (2026-09-16)
+
+The immediate user requirement is a warm scheduler for lighter work plus
+on-demand, resource-isolated build pods, initially around 1 GiB. The earlier
+worker-scaling experiment and 52% worker-memory reduction are useful foundations,
+but do not themselves satisfy that requirement.
+
+The next delivery implements the controller-assigned Kubernetes Job option for
+existing build-class PlatformJobs. PostgreSQL placement and attempt ownership
+remain authoritative. An independent scheduler reconciliation loop manages
+remote attempts without consuming the two ordinary local execution slots;
+the build pod supervises the existing handler and reports its own memory.
+Application deploy and SDK rebuild are the initial job types. Existing local
+execution remains the default. See the [bounded implementation plan](../plans/2026-09-15-kubernetes-build-jobs.md).
+
+The rest of this document remains the broader design, not a statement of
+implemented functionality. Bifrost Settings profiles, general lane routing,
+versioned live policy transitions, remote workflow runners, and automatic worker
+scale-in are not prerequisites for this first isolated-build delivery and must
+not be advertised as completed by it. Issue #769 remains open for that broader
+work. Worker-memory measurements and earlier local-scaling evidence are in
+[the results report](../../runbooks/worker-memory-reduction-results.md).
 
 ## Decision
 

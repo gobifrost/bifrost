@@ -108,6 +108,81 @@ class Settings(BaseSettings):
         description="Reject new forks when container memory usage exceeds this ratio (0.0-1.0)"
     )
 
+
+    # ==========================================================================
+    # Platform build jobs
+    # ==========================================================================
+    platform_build_backend: Literal["local", "kubernetes"] = Field(
+        default="local",
+        description="Execution backend for build-class platform jobs",
+    )
+    kubernetes_build_namespace: str | None = Field(
+        default=None,
+        description="Kubernetes namespace for on-demand build platform jobs",
+    )
+    kubernetes_build_image: str | None = Field(
+        default=None,
+        description="Container image for on-demand build platform jobs",
+    )
+    kubernetes_build_configmap: str | None = Field(
+        default=None,
+        description="ConfigMap mounted by on-demand build platform jobs",
+    )
+    kubernetes_build_secret: str | None = Field(
+        default=None,
+        description="Secret mounted by on-demand build platform jobs",
+    )
+    kubernetes_build_service_account: str | None = Field(
+        default=None,
+        description="Service account for on-demand build platform jobs",
+    )
+    kubernetes_build_memory_request_mib: int = Field(
+        default=512,
+        ge=1,
+        description=(
+            "Guaranteed memory, in MiB, reserved on a node for one on-demand "
+            "build platform job. Lower values pack more densely; the pod may "
+            "burst above this up to the memory limit."
+        ),
+    )
+    kubernetes_build_memory_limit_mib: int = Field(
+        default=2048,
+        ge=1,
+        description=(
+            "Hard memory ceiling, in MiB, for one on-demand build platform "
+            "job. The pod is OOM-killed past this. Must be at least the "
+            "memory request; splitting request and limit makes build pods "
+            "Burstable rather than Guaranteed."
+        ),
+    )
+    kubernetes_build_cpu_request: str = Field(
+        default="250m",
+        description="CPU request for one on-demand build platform job",
+    )
+    kubernetes_build_cpu_limit: str = Field(
+        default="1",
+        description="CPU limit for one on-demand build platform job",
+    )
+    kubernetes_build_max_jobs: int = Field(
+        default=2,
+        ge=1,
+        description="Maximum concurrent on-demand build platform jobs",
+    )
+    kubernetes_build_job_types: str = Field(
+        default="application.deploy,application.sdk_update",
+        description=(
+            "Comma-separated job types eligible for Kubernetes placement "
+            "when the build backend is enabled. Other build-class jobs stay "
+            "local. Lets operators pilot remote execution one job type at a "
+            "time without a code change."
+        ),
+    )
+    kubernetes_build_pending_timeout_seconds: int = Field(
+        default=300,
+        ge=1,
+        description="Seconds before an unstarted Kubernetes build job is stale",
+    )
+
     # ==========================================================================
     # Redis
     # ==========================================================================

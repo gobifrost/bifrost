@@ -55,6 +55,7 @@ from src.routers import (
     profile_router,
     memory_router,
     memory_admin_router,
+    kubernetes_admin_router,
     required_instructions_admin_router,
     required_instructions_router,
     agent_runs_router,
@@ -161,6 +162,25 @@ async def app_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             logger.info("Built-in policy rules seeded")
     except Exception as e:
         logger.warning(f"Built-in policy rule seeding failed: {e}")
+
+    # Announce Kubernetes execution transitions (enabled/disabled) once per
+    # change. Never fails startup; the snapshot comparison is idempotent
+    # across replicas.
+    try:
+        from src.services.kubernetes_execution import (
+            announce_detection_if_transitioned,
+        )
+
+        session_factory = get_session_factory()
+        async with session_factory() as db:
+            outcome = await announce_detection_if_transitioned(db)
+            await db.commit()
+            if outcome is not None:
+                logger.info(
+                    "Kubernetes execution transition announced: %s", outcome
+                )
+    except Exception as e:
+        logger.warning(f"Kubernetes detection announcement failed: {e}")
 
     logger.info(f"Bifrost API started in {settings.environment} mode")
 
@@ -580,6 +600,7 @@ def create_app() -> FastAPI:
     app.include_router(profile_router)
     app.include_router(memory_router)
     app.include_router(memory_admin_router)
+    app.include_router(kubernetes_admin_router)
     app.include_router(required_instructions_router)
     app.include_router(required_instructions_admin_router)
     app.include_router(agents_router)

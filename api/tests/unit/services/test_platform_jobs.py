@@ -10,6 +10,10 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.jobs.platform.application_deploy import (
+    APPLICATION_DEPLOY_DEFINITION,
+    ApplicationDeployPayload,
+)
 from src.jobs.platform.application_publish import (
     APPLICATION_PUBLISH_DEFINITION,
     ApplicationPublishPayload,
@@ -36,6 +40,108 @@ async def _enqueue(db_session: AsyncSession) -> PlatformJob:
     )
     assert reused is False
     return job
+
+
+@pytest.mark.asyncio
+async def test_enqueue_routes_build_class_jobs_to_configured_backend(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        service,
+        "get_settings",
+        lambda: SimpleNamespace(platform_build_backend="kubernetes"),
+    )
+    app_id = uuid4()
+    job, reused = await service.enqueue_platform_job(
+        db_session,
+        APPLICATION_DEPLOY_DEFINITION,
+        ApplicationDeployPayload(
+            application_id=app_id,
+            deployment_id=uuid4(),
+            input_sha256="a" * 64,
+        ),
+        dedupe_key=str(app_id),
+        organization_id=None,
+        requested_by_user_id=uuid4(),
+        requested_by_email="dev@example.com",
+        requested_by_name="Dev",
+        resource_type="application",
+        resource_id=str(app_id),
+        title="Deploying App",
+        action_url=None,
+    )
+
+    assert reused is False
+    assert job.execution_backend == "kubernetes"
+
+
+@pytest.mark.asyncio
+async def test_enqueue_keeps_default_class_jobs_local_when_build_backend_is_remote(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        service,
+        "get_settings",
+        lambda: SimpleNamespace(platform_build_backend="kubernetes"),
+    )
+
+    job = await _enqueue(db_session)
+
+    assert job.execution_backend == "local"
+
+
+@pytest.mark.asyncio
+async def test_enqueue_honors_remote_job_type_allowlist(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        service,
+        "get_settings",
+        lambda: SimpleNamespace(
+            platform_build_backend="kubernetes",
+            kubernetes_build_job_types="application.sdk_update",
+        ),
+    )
+    app_id = uuid4()
+    job, _ = await service.enqueue_platform_job(
+        db_session,
+        APPLICATION_DEPLOY_DEFINITION,
+        ApplicationDeployPayload(
+            application_id=app_id,
+            deployment_id=uuid4(),
+            input_sha256="a" * 64,
+        ),
+        dedupe_key=str(app_id),
+        organization_id=None,
+        requested_by_user_id=uuid4(),
+        requested_by_email="dev@example.com",
+        requested_by_name="Dev",
+        resource_type="application",
+        resource_id=str(app_id),
+        title="Deploying App",
+        action_url=None,
+    )
+
+    assert job.execution_backend == "local"
+
+
+def test_remote_job_type_allowlist_parsing() -> None:
+    assert service.kubernetes_remote_job_types(
+        SimpleNamespace(
+            kubernetes_build_job_types=" application.deploy ,,application.sdk_update "
+        )
+    ) == frozenset({"application.deploy", "application.sdk_update"})
+    # An empty allowlist cannot silently disable remote execution; it falls
+    # back to the default set.
+    assert service.kubernetes_remote_job_types(
+        SimpleNamespace(kubernetes_build_job_types="  , ")
+    ) == service.DEFAULT_KUBERNETES_JOB_TYPES
+    assert service.kubernetes_remote_job_types(SimpleNamespace()) == (
+        service.DEFAULT_KUBERNETES_JOB_TYPES
+    )
 
 
 @pytest.mark.asyncio

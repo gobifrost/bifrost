@@ -32,7 +32,7 @@ from uuid import UUID
 
 import redis
 
-from src.core.module_cache import (
+from src.core.module_cache_contract import (
     MODULE_INDEX_KEY,
     MODULE_KEY_PREFIX,
     MODULE_RESOLUTION_KEY_PREFIX,

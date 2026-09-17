@@ -85,6 +85,13 @@ APPLICATION_DEPLOY_DEFINITION = PlatformJobDefinition(
     policy=PlatformJobPolicy(
         timeout_seconds=20 * 60,
         max_attempts=1,
+        max_concurrency=1,
         min_memory_headroom_mb=512,
+        execution_class="build",
+    ),
+    display_name="App deploys",
+    description=(
+        "Compile and publish independent apps (npm install + vite build) "
+        "in isolated pods instead of the scheduler."
     ),
 )

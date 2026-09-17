@@ -35,6 +35,7 @@ import logging
 import os
 import signal
 import subprocess
+import sys
 import time
 import uuid
 from dataclasses import dataclass
@@ -51,7 +52,7 @@ from src.core.cache.keys import TTL_ACTIVE_EXECUTION, active_execution_key
 from src.core.redis_client import ActiveExecution
 from src.models.contracts.notifications import NotificationCategory, NotificationCreate, NotificationStatus
 from src.services.execution.memory_monitor import get_cgroup_memory, has_sufficient_memory_cgroup
-from src.services.execution.simple_worker import install_requirements, RequirementsInstallResult
+from src.services.execution.requirements_setup_result import RequirementsInstallResult
 from src.services.notification_service import get_notification_service
 from src.services.execution.template_process import TemplateProcess
 
@@ -110,6 +111,51 @@ async def _notify_requirements_failures(result: RequirementsInstallResult) -> No
         logger.info(f"[pool] Notified admins of requirements install failures: {shown}")
     except Exception as e:  # noqa: BLE001 - notification must never block the pool
         logger.warning(f"[pool] Could not publish requirements-failure notification: {e}")
+
+
+async def _run_requirements_setup_subprocess() -> RequirementsInstallResult:
+    process = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-m",
+        "src.services.execution.requirements_setup_helper",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = await process.communicate()
+    except asyncio.CancelledError:
+        _kill_process_group(process, signal.SIGTERM)
+        await _kill_process_group_after_grace(process)
+        raise
+
+    if process.returncode != 0:
+        raise RuntimeError(
+            "requirements setup helper failed "
+            f"(exit={process.returncode}, stderr_bytes={len(stderr)})"
+        )
+
+    try:
+        payload = json.loads(stdout.decode())
+    except json.JSONDecodeError as e:
+        raise RuntimeError("requirements setup helper returned invalid JSON") from e
+    return RequirementsInstallResult.from_json_dict(payload)
+
+
+def _kill_process_group(process: asyncio.subprocess.Process, sig: signal.Signals) -> None:
+    try:
+        os.killpg(process.pid, sig)
+    except ProcessLookupError:
+        pass
+
+
+async def _kill_process_group_after_grace(process: asyncio.subprocess.Process) -> None:
+    try:
+        await asyncio.wait_for(process.wait(), timeout=5)
+    except asyncio.TimeoutError:
+        pass
+    _kill_process_group(process, signal.SIGKILL)
+    await process.wait()
 
 
 def _get_installed_packages() -> list[dict[str, str]]:
@@ -455,6 +501,80 @@ class ProcessPoolManager:
             # (driven by route_execution) will see newly installed packages.
             await self.restart_template()
 
+    def active_execution_count(self) -> int:
+        """Return child executions still owned by the parent drain path."""
+        return sum(
+            1
+            for handle in self.processes.values()
+            if (
+                handle.state == ProcessState.BUSY
+                and handle.current_execution is not None
+            )
+        )
+
+    async def drain_active_executions(self, drain_timeout: float) -> bool:
+        """Wait for active workflow children to finish within a bounded grace.
+
+        Shutdown needs to keep the parent process, database, Redis, and broker
+        alive long enough for child results to reach ``on_result``. Normal
+        ``stop()`` remains a hard pool close; this method is the graceful
+        pre-stop phase used by the workflow consumer.
+        """
+        deadline = time.monotonic() + drain_timeout
+        while self.active_execution_count() > 0:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                logger.warning(
+                    "Process pool drain deadline exceeded with %s active execution(s)",
+                    self.active_execution_count(),
+                )
+                try:
+                    await asyncio.wait_for(
+                        self._report_shutdown_for_active_executions(),
+                        timeout=self.graceful_shutdown_seconds,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "Shutdown terminal result finalization exceeded %ss",
+                        self.graceful_shutdown_seconds,
+                    )
+                return False
+            await asyncio.sleep(min(0.2, remaining))
+
+        if self._result_tasks:
+            pending = [task for task in self._result_tasks if not task.done()]
+            if pending:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    logger.warning(
+                        "Process pool drain deadline exceeded with %s result task(s)",
+                        len(pending),
+                    )
+                    return False
+                try:
+                    await asyncio.wait_for(
+                        asyncio.gather(*pending, return_exceptions=True),
+                        timeout=remaining,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "Process pool drain deadline exceeded while waiting for result callbacks"
+                    )
+                    return False
+
+        return True
+
+    async def _report_shutdown_for_active_executions(self) -> None:
+        """Record terminal failure for acked executions abandoned by shutdown."""
+        for handle in list(self.processes.values()):
+            if (
+                handle.state != ProcessState.BUSY
+                or handle.current_execution is None
+                or handle.result_reported
+            ):
+                continue
+            await self._report_shutdown(handle)
+
     def _fork_process(self) -> ProcessHandle:
         """
         Create a new one-shot worker process by forking from the template.
@@ -524,12 +644,11 @@ class ProcessPoolManager:
         self._started_at = datetime.now(timezone.utc)
         self._last_active_execution_refresh = time.monotonic()
 
-        # Install requirements once (shared filesystem — all child processes inherit)
-        install_result = await asyncio.to_thread(install_requirements)
+        # Install requirements once in a short-lived helper so the supervisor
+        # never imports requirements cache/S3 clients before forking templates.
+        install_result = await _run_requirements_setup_subprocess()
         await _notify_requirements_failures(install_result)
-
-        # Compute requirements status for heartbeat reporting
-        self._update_requirements_status()
+        self._apply_requirements_status(install_result)
 
         # Start template process (loads deps, ready to fork)
         await self._start_template()
@@ -1135,9 +1254,9 @@ class ProcessPoolManager:
         # Pick up any requirements changes published to S3/Redis since
         # last start (recycle is typically triggered after a package
         # install on the API container).
-        install_result = await asyncio.to_thread(install_requirements)
+        install_result = await _run_requirements_setup_subprocess()
         await _notify_requirements_failures(install_result)
-        self._update_requirements_status()
+        self._apply_requirements_status(install_result)
 
         in_flight = len(self.processes)
         try:
@@ -1214,6 +1333,30 @@ class ProcessPoolManager:
             }))
         except Exception as e:
             logger.exception(f"Error reporting cancellation: {e}")
+
+    async def _report_shutdown(self, handle: ProcessHandle) -> None:
+        """
+        Report an execution interrupted by worker shutdown.
+
+        This is used only after the graceful drain deadline expires. At that
+        point the RabbitMQ message was already acknowledged at dispatch time,
+        so the parent must record a terminal result before closing DB/Redis.
+        """
+        exec_info = handle.current_execution
+        if self.on_result is None or exec_info is None:
+            return
+        handle.result_reported = True
+        try:
+            await self.on_result(exec_info.attach_transport_metadata({
+                "type": "result",
+                "execution_id": exec_info.execution_id,
+                "success": False,
+                "error": "Execution interrupted by worker shutdown",
+                "error_type": "WorkerShutdown",
+                "duration_ms": int(exec_info.elapsed_seconds * 1000),
+            }))
+        except Exception as e:
+            logger.exception(f"Error reporting shutdown interruption: {e}")
 
     async def _check_process_health(self) -> None:
         """
@@ -1444,16 +1587,18 @@ class ProcessPoolManager:
             handle: ProcessHandle that produced the result
             result: Result data from the worker
         """
-        # Mark result as reported before clearing current_execution so the invariant
-        # ("result_reported=True once on_result has fired") holds for external observers.
         self._unregister_result_reader(handle)
-        handle.result_reported = True
 
         execution = handle.current_execution
         if execution is None:
             logger.error("Result received without an active execution on %s", handle.id)
             return
         result = execution.attach_transport_metadata(result)
+        callback_already_owned = handle.result_reported
+
+        # Mark result as reported before clearing current_execution so the invariant
+        # ("result_reported=True once on_result has fired") holds for external observers.
+        handle.result_reported = True
 
         # Clear current execution
         handle.current_execution = None
@@ -1464,6 +1609,13 @@ class ProcessPoolManager:
         # pop() not check-then-del: race-safe against concurrent cleaners.
         self.processes.pop(handle.id, None)
         await self._notify_slot_free()
+
+        if callback_already_owned:
+            logger.info(
+                "Suppressing late child result for %s; terminal callback already owns it",
+                execution.execution_id,
+            )
+            return
 
         # Forward result to callback
         if self.on_result:
@@ -1585,41 +1737,10 @@ class ProcessPoolManager:
         except Exception as e:
             logger.error(f"Error unregistering worker: {e}")
 
-    def _update_requirements_status(self) -> None:
-        """
-        Compare installed packages against requirements.txt.
-
-        Sets _requirements_installed and _requirements_total for heartbeat reporting.
-        Called after install_requirements() at startup and after recycle_all.
-        """
-        try:
-            from src.core.requirements_cache import get_requirements_sync
-
-            content = get_requirements_sync()
-            if not content:
-                self._requirements_total = 0
-                self._requirements_installed = 0
-                return
-
-            required = {
-                line.split("==")[0].split(">=")[0].split("<=")[0].split("~=")[0].strip().lower()
-                for line in content.strip().split("\n")
-                if line.strip()
-            }
-            self._requirements_total = len(required)
-
-            installed = {p["name"].lower() for p in _get_installed_packages()}
-            self._requirements_installed = len(required & installed)
-
-            missing = required - installed
-            if missing:
-                logger.warning(f"[pool] Missing required packages: {', '.join(sorted(missing))}")
-            else:
-                logger.info(
-                    f"[pool] All {self._requirements_total} required packages installed"
-                )
-        except Exception as e:
-            logger.warning(f"Failed to check requirements status: {e}")
+    def _apply_requirements_status(self, result: RequirementsInstallResult) -> None:
+        """Apply helper-computed requirements counts for heartbeat reporting."""
+        self._requirements_total = result.requirements_total
+        self._requirements_installed = result.requirements_installed
 
     def _build_heartbeat(self) -> dict[str, Any]:
         """
