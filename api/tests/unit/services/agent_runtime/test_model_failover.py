@@ -285,8 +285,9 @@ async def test_mid_stream_cancellation_propagates_without_switch() -> None:
     task = asyncio.create_task(consume())
     await asyncio.sleep(0)
     task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
+    done, pending = await asyncio.wait({task})
+    assert not pending
+    assert task.cancelled()
     assert model.switches == []
     assert fallback.calls == []
 
