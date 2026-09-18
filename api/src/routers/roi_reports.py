@@ -326,7 +326,7 @@ async def get_roi_by_organization(
 
         organizations = [
             OrganizationROIEntry(
-                organization_id=str(row.organization_id),
+                organization_id=f"ORG:{row.organization_id}",
                 organization_name=row.organization_name or "Unknown",
                 execution_count=row.execution_count or 0,
                 success_count=row.success_count or 0,
