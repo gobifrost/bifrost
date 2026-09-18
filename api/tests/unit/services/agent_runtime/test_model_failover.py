@@ -31,6 +31,23 @@ def _response(text: str = "answer") -> ModelResponse:
     )
 
 
+class ChunkedStream:
+    """Minimal async-iterable stream that fails mid-consumption."""
+
+    def __init__(self, error: Exception) -> None:
+        self._error = error
+        self._yielded_first = False
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if not self._yielded_first:
+            self._yielded_first = True
+            return "chunk-1"
+        raise self._error
+
+
 class StubModel(Model):
     """Deterministic candidate: raises its error or returns its response."""
 
@@ -41,12 +58,14 @@ class StubModel(Model):
         error: Exception | None = None,
         response: ModelResponse | None = None,
         stream_error: Exception | None = None,
+        mid_stream_error: Exception | None = None,
     ) -> None:
         super().__init__()
         self._name = name
         self._error = error
         self._response = response or _response(f"from-{name}")
         self._stream_error = stream_error
+        self._mid_stream_error = mid_stream_error
         self.calls: list[Any] = []
 
     @property
@@ -79,7 +98,10 @@ class StubModel(Model):
         self.calls.append(model_settings)
         if self._stream_error is not None:
             raise self._stream_error
-        yield self._response
+        if self._mid_stream_error is not None:
+            yield ChunkedStream(self._mid_stream_error)
+        else:
+            yield self._response
 
 
 def _http_error(status: int) -> ModelHTTPError:
@@ -236,12 +258,35 @@ async def test_stream_establishment_failure_fails_over() -> None:
 
 @pytest.mark.asyncio
 async def test_mid_stream_error_propagates_without_switch() -> None:
+    primary = StubModel("primary", mid_stream_error=RuntimeError("mid-stream"))
+    fallback = StubModel("fallback")
+    model = FailoverModel([primary, fallback])
+    seen = []
+    with pytest.raises(RuntimeError, match="mid-stream"):
+        async with model.request_stream([], None, _params()) as stream:
+            async for chunk in stream:
+                seen.append(chunk)
+    assert seen == ["chunk-1"]
+    assert model.switches == []
+    assert fallback.calls == []
+
+
+@pytest.mark.asyncio
+async def test_mid_stream_cancellation_propagates_without_switch() -> None:
+    """Cancellation is a BaseException: it must close the stream, never fail over."""
     primary = StubModel("primary")
     fallback = StubModel("fallback")
     model = FailoverModel([primary, fallback])
-    with pytest.raises(RuntimeError, match="mid-stream"):
+
+    async def consume() -> None:
         async with model.request_stream([], None, _params()):
-            raise RuntimeError("mid-stream")
+            await asyncio.sleep(60)
+
+    task = asyncio.create_task(consume())
+    await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
     assert model.switches == []
     assert fallback.calls == []
 
