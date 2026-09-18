@@ -99,6 +99,10 @@ def _profile_response(profile: AIModelProfile) -> AIModelProfileResponse:
         capabilities=capabilities,
         enabled_for_chat=profile.enabled_for_chat,
         default_max_tokens=profile.default_max_tokens,
+        failover_profile_id=profile.failover_profile_id,
+        failover_profile_name=(
+            profile.failover_profile.name if profile.failover_profile else None
+        ),
         connection=_connection_summary(profile.connection),
         assignment_keys=[assignment.assignment_key for assignment in profile.assignments],
         referenced_agent_count=len(profile.agents),
@@ -269,6 +273,7 @@ async def create_model_profile(
             capabilities=request.capabilities,
             enabled_for_chat=request.enabled_for_chat,
             default_max_tokens=request.default_max_tokens,
+            failover_profile_id=request.failover_profile_id,
         )
         await db.commit()
         return _profile_response(await service.get_profile(profile.id))
@@ -323,6 +328,8 @@ async def update_model_profile(
             enabled_for_chat=request.enabled_for_chat,
             default_max_tokens=request.default_max_tokens,
             default_max_tokens_provided="default_max_tokens" in request.model_fields_set,
+            failover_profile_id=request.failover_profile_id,
+            failover_profile_id_provided="failover_profile_id" in request.model_fields_set,
         )
         await db.commit()
         return _profile_response(await service.get_profile(profile.id))

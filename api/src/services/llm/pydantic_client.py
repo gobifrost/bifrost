@@ -26,7 +26,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
     UserContent,
 )
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition as PydanticToolDefinition
 
@@ -34,10 +34,12 @@ from src.services.agent_runtime.model_factory import (
     create_agent_model,
     provider_name_for_config,
 )
+from src.services.agent_runtime.model_failover import FailoverModel
 from src.services.agent_runtime.retry_transport import ai_retry_context
 from src.services.agent_runtime.usage import provider_reported_cost
 from src.services.llm.base import (
     BaseLLMClient,
+    LLMConfig,
     LLMMessage,
     LLMResponse,
     LLMStreamChunk,
@@ -52,9 +54,49 @@ logger = logging.getLogger(__name__)
 class PydanticAIClient(BaseLLMClient):
     """Provider-neutral implementation of Bifrost's existing LLM contract."""
 
+    def __init__(
+        self,
+        config: LLMConfig,
+        *,
+        fallback_configs: list[LLMConfig] | tuple[LLMConfig, ...] = (),
+    ) -> None:
+        super().__init__(config)
+        self.fallback_configs: tuple[LLMConfig, ...] = tuple(fallback_configs)
+
     @property
     def provider_name(self) -> str:
         return provider_name_for_config(self.config)
+
+    def _candidate_models(self, resolved_model: str) -> list[Model]:
+        """Build the primary model plus one model per fallback config.
+
+        A per-call model override applies to the primary only: it names a
+        model on the primary's provider and may not exist elsewhere.
+        Fallbacks always use their own profile's configured model.
+        """
+        models = [create_agent_model(self.config, model=resolved_model)]
+        models.extend(
+            create_agent_model(fallback) for fallback in self.fallback_configs
+        )
+        return models
+
+    def _candidate_settings(self, max_tokens: int | None) -> list[ModelSettings | None]:
+        """Build per-candidate settings aligned with ``_candidate_models``."""
+        settings: list[ModelSettings | None] = [self._model_settings(max_tokens)]
+        settings.extend(
+            self._settings_for_config(fallback, None)
+            for fallback in self.fallback_configs
+        )
+        return settings
+
+    def _chain_or_single(self, resolved_model: str, max_tokens: int | None) -> Model:
+        """Return a lone model or a FailoverModel when fallbacks exist."""
+        models = self._candidate_models(resolved_model)
+        if len(models) == 1:
+            return models[0]
+        return FailoverModel(
+            models, candidate_settings=self._candidate_settings(max_tokens)
+        )
 
     async def complete(
         self,
@@ -76,7 +118,7 @@ class PydanticAIClient(BaseLLMClient):
             surface="llm_client.complete",
         ):
             async with model_request_stream(
-                create_agent_model(self.config, model=resolved_model),
+                self._chain_or_single(resolved_model, max_tokens),
                 self.convert_messages(messages),
                 model_settings=self._model_settings(max_tokens),
                 model_request_parameters=self._request_parameters(
@@ -104,7 +146,7 @@ class PydanticAIClient(BaseLLMClient):
                 surface="llm_client.stream",
             ):
                 async with model_request_stream(
-                    create_agent_model(self.config, model=resolved_model),
+                    self._chain_or_single(resolved_model, max_tokens),
                     self.convert_messages(messages),
                     model_settings=self._model_settings(max_tokens),
                     model_request_parameters=self._request_parameters(tools),
@@ -141,19 +183,25 @@ class PydanticAIClient(BaseLLMClient):
             yield LLMStreamChunk(type="error", error=str(exc))
 
     def _model_settings(self, max_tokens: int | None) -> ModelSettings:
-        resolved_max_tokens = request_max_tokens(self.config, max_tokens)
+        return self._settings_for_config(self.config, max_tokens)
+
+    @staticmethod
+    def _settings_for_config(
+        config: LLMConfig, max_tokens: int | None
+    ) -> ModelSettings:
+        resolved_max_tokens = request_max_tokens(config, max_tokens)
         settings: dict[str, Any] = {}
         if resolved_max_tokens is not None:
             settings["max_tokens"] = resolved_max_tokens
-        if self.config.provider == "openai" and self.provider_name != "openrouter":
+        if config.provider == "openai" and provider_name_for_config(config) != "openrouter":
             settings["openai_store"] = False
-        elif self.config.provider == "anthropic":
+        elif config.provider == "anthropic":
             # Prompt caching for ai.complete/ai.stream as well; see model_factory.
             from src.services.agent_runtime.model_factory import anthropic_prompt_cache_settings
 
             settings.update(
                 anthropic_prompt_cache_settings(
-                    self.config.anthropic_prompt_cache_supported
+                    config.anthropic_prompt_cache_supported
                 )
             )
         return cast(ModelSettings, settings)

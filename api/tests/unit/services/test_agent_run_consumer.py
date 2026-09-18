@@ -75,6 +75,8 @@ def _chat_executor_stub(
     executor = MagicMock()
     executor._save_message = AsyncMock()
     executor._active_usage = SimpleNamespace(requests=usage_requests, total_tokens=usage_tokens)
+    executor._active_llm_model = None
+    executor._active_failover_path = None
 
     def _chat(*args, **kwargs):
         async def _gen():

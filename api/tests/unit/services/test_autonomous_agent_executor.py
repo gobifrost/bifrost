@@ -36,13 +36,15 @@ def _tool(name: str) -> ToolDefinition:
 @pytest.fixture(autouse=True)
 def mock_runtime_config():
     with patch(
-        "src.services.execution.autonomous_agent_executor.get_llm_config",
+        "src.services.execution.autonomous_agent_executor.get_llm_configs",
         new_callable=AsyncMock,
-        return_value=LLMConfig(
-            provider="openai",
-            model="test-model",
-            api_key="test-key",
-        ),
+        return_value=[
+            LLMConfig(
+                provider="openai",
+                model="test-model",
+                api_key="test-key",
+            )
+        ],
     ) as mock_get_config:
         yield mock_get_config
 
@@ -146,9 +148,9 @@ class TestAutonomousAgentExecutor:
         assert repository.search.call_count == 2
 
     @pytest.mark.asyncio
-    @patch("src.services.execution.autonomous_agent_executor.create_agent_model")
+    @patch("src.services.agent_runtime.model_factory.create_agent_model")
     @patch("src.services.execution.autonomous_agent_executor.resolve_agent_tools")
-    async def test_run_returns_structured_result(self, mock_resolve_tools, mock_get_llm, mock_session, mock_agent, mock_runtime_config):
+    async def test_run_returns_structured_result(self, mock_resolve_tools, mock_create_model, mock_session, mock_agent, mock_runtime_config):
         """Run returns output, iterations_used, tokens_used, status."""
         mock_resolve_tools.return_value = ([], {})
 
@@ -160,7 +162,7 @@ class TestAutonomousAgentExecutor:
             input_tokens=100,
             output_tokens=50,
         ))
-        mock_get_llm.return_value = LegacyMockModel(mock_llm)
+        mock_create_model.return_value = LegacyMockModel(mock_llm)
 
         executor = AutonomousAgentExecutor(mock_session)
         result = await executor.run(
@@ -763,9 +765,9 @@ class TestAutonomousAgentExecutor:
             )
 
     @pytest.mark.asyncio
-    @patch("src.services.execution.autonomous_agent_executor.create_agent_model")
+    @patch("src.services.agent_runtime.model_factory.create_agent_model")
     @patch("src.services.execution.autonomous_agent_executor.resolve_agent_tools")
-    async def test_run_records_steps(self, mock_resolve_tools, mock_get_llm, mock_session, mock_agent):
+    async def test_run_records_steps(self, mock_resolve_tools, mock_create_model, mock_session, mock_agent):
         """Run records AgentRunStep entries via session.add."""
         mock_resolve_tools.return_value = ([], {})
 
@@ -777,7 +779,7 @@ class TestAutonomousAgentExecutor:
             input_tokens=100,
             output_tokens=50,
         ))
-        mock_get_llm.return_value = LegacyMockModel(mock_llm)
+        mock_create_model.return_value = LegacyMockModel(mock_llm)
 
         executor = AutonomousAgentExecutor(mock_session)
         await executor.run(
@@ -793,9 +795,9 @@ class TestAutonomousAgentExecutor:
         assert "llm_response" in step_types
 
     @pytest.mark.asyncio
-    @patch("src.services.execution.autonomous_agent_executor.create_agent_model")
+    @patch("src.services.agent_runtime.model_factory.create_agent_model")
     @patch("src.services.execution.autonomous_agent_executor.resolve_agent_tools")
-    async def test_run_with_tool_calls(self, mock_resolve_tools, mock_get_llm, mock_session, mock_agent):
+    async def test_run_with_tool_calls(self, mock_resolve_tools, mock_create_model, mock_session, mock_agent):
         """Run executes tools and continues the loop until no more tool calls."""
         workflow_id = uuid4()
         workflow_execution_id = str(uuid4())
@@ -826,7 +828,7 @@ class TestAutonomousAgentExecutor:
                 output_tokens=100,
             ),
         ])
-        mock_get_llm.return_value = LegacyMockModel(mock_llm)
+        mock_create_model.return_value = LegacyMockModel(mock_llm)
 
         # Mock the workflow tool execution (imported inside _execute_tool)
         with patch("src.services.execution.service.execute_tool") as mock_exec_tool:
@@ -868,12 +870,12 @@ class TestAutonomousAgentExecutor:
             ExecutionStatus.COMPLETED_WITH_ERRORS,
         ],
     )
-    @patch("src.services.execution.autonomous_agent_executor.create_agent_model")
+    @patch("src.services.agent_runtime.model_factory.create_agent_model")
     @patch("src.services.execution.autonomous_agent_executor.resolve_agent_tools")
     async def test_run_marks_terminal_workflow_failures_as_errored_results(
         self,
         mock_resolve_tools,
-        mock_get_llm,
+        mock_create_model,
         mock_session,
         mock_agent,
         workflow_status,
@@ -910,7 +912,7 @@ class TestAutonomousAgentExecutor:
                 ),
             ]
         )
-        mock_get_llm.return_value = LegacyMockModel(mock_llm)
+        mock_create_model.return_value = LegacyMockModel(mock_llm)
 
         with patch("src.services.execution.service.execute_tool") as mock_exec_tool:
             mock_exec_tool.return_value = WorkflowExecutionResponse(
@@ -932,9 +934,9 @@ class TestAutonomousAgentExecutor:
         assert tool_result["result"].startswith("Error:")
 
     @pytest.mark.asyncio
-    @patch("src.services.execution.autonomous_agent_executor.create_agent_model")
+    @patch("src.services.agent_runtime.model_factory.create_agent_model")
     @patch("src.services.execution.autonomous_agent_executor.resolve_agent_tools")
-    async def test_run_reserves_final_iteration_for_handoff(self, mock_resolve_tools, mock_get_llm, mock_session, mock_agent):
+    async def test_run_reserves_final_iteration_for_handoff(self, mock_resolve_tools, mock_create_model, mock_session, mock_agent):
         """The final allowed request completes without executing another tool."""
         mock_agent.max_iterations = 2
         mock_resolve_tools.return_value = (
@@ -951,7 +953,7 @@ class TestAutonomousAgentExecutor:
             input_tokens=10,
             output_tokens=5,
         ))
-        mock_get_llm.return_value = LegacyMockModel(mock_llm)
+        mock_create_model.return_value = LegacyMockModel(mock_llm)
 
         with patch("src.services.execution.service.execute_tool") as mock_exec_tool:
             mock_exec_tool.return_value = MagicMock(result="ok", status=MagicMock(value="completed"))
@@ -967,15 +969,15 @@ class TestAutonomousAgentExecutor:
         assert "configured run budget" in str(result["output"])
 
     @pytest.mark.asyncio
-    @patch("src.services.execution.autonomous_agent_executor.create_agent_model")
+    @patch("src.services.agent_runtime.model_factory.create_agent_model")
     @patch("src.services.execution.autonomous_agent_executor.resolve_agent_tools")
-    async def test_run_handles_llm_error(self, mock_resolve_tools, mock_get_llm, mock_session, mock_agent):
+    async def test_run_handles_llm_error(self, mock_resolve_tools, mock_create_model, mock_session, mock_agent):
         """Run returns failed status when LLM call raises."""
         mock_resolve_tools.return_value = ([], {})
 
         mock_llm = AsyncMock()
         mock_llm.complete = AsyncMock(side_effect=RuntimeError("API timeout"))
-        mock_get_llm.return_value = LegacyMockModel(mock_llm)
+        mock_create_model.return_value = LegacyMockModel(mock_llm)
 
         executor = AutonomousAgentExecutor(mock_session)
         result = await executor.run(
@@ -988,10 +990,10 @@ class TestAutonomousAgentExecutor:
         assert result["output"] is None
 
     @pytest.mark.asyncio
-    @patch("src.services.execution.autonomous_agent_executor.create_agent_model")
+    @patch("src.services.agent_runtime.model_factory.create_agent_model")
     @patch("src.services.execution.autonomous_agent_executor.resolve_agent_tools")
     async def test_run_parses_json_output_when_schema_given(
-        self, mock_resolve_tools, mock_get_llm, mock_session, mock_agent
+        self, mock_resolve_tools, mock_create_model, mock_session, mock_agent
     ):
         """When output_schema is provided, run attempts to parse JSON from LLM output."""
         mock_resolve_tools.return_value = ([], {})
@@ -1004,7 +1006,7 @@ class TestAutonomousAgentExecutor:
             input_tokens=100,
             output_tokens=50,
         ))
-        mock_get_llm.return_value = LegacyMockModel(mock_llm)
+        mock_create_model.return_value = LegacyMockModel(mock_llm)
 
         executor = AutonomousAgentExecutor(mock_session)
         result = await executor.run(
@@ -1017,10 +1019,10 @@ class TestAutonomousAgentExecutor:
         assert result["output"] == {"result": 42}
 
     @pytest.mark.asyncio
-    @patch("src.services.execution.autonomous_agent_executor.create_agent_model")
+    @patch("src.services.agent_runtime.model_factory.create_agent_model")
     @patch("src.services.execution.autonomous_agent_executor.resolve_agent_tools")
     async def test_run_handles_tool_execution_error(
-        self, mock_resolve_tools, mock_get_llm, mock_session, mock_agent
+        self, mock_resolve_tools, mock_create_model, mock_session, mock_agent
     ):
         """Tool execution errors are caught and fed back to the LLM."""
         workflow_id = uuid4()
@@ -1046,7 +1048,7 @@ class TestAutonomousAgentExecutor:
                 output_tokens=50,
             ),
         ])
-        mock_get_llm.return_value = LegacyMockModel(mock_llm)
+        mock_create_model.return_value = LegacyMockModel(mock_llm)
 
         with patch("src.services.execution.service.execute_tool") as mock_exec_tool:
             mock_exec_tool.side_effect = RuntimeError("Tool crashed")
@@ -1061,10 +1063,10 @@ class TestAutonomousAgentExecutor:
         assert result["output"] == "Recovered from error"
 
     @pytest.mark.asyncio
-    @patch("src.services.execution.autonomous_agent_executor.create_agent_model")
+    @patch("src.services.agent_runtime.model_factory.create_agent_model")
     @patch("src.services.execution.autonomous_agent_executor.resolve_agent_tools")
     async def test_delegation_uses_find_delegated_agent(
-        self, mock_resolve_tools, mock_get_llm, mock_session, mock_agent
+        self, mock_resolve_tools, mock_create_model, mock_session, mock_agent
     ):
         """Delegation tool calls use find_delegated_agent to resolve target."""
         # Create a delegated agent
@@ -1132,7 +1134,7 @@ class TestAutonomousAgentExecutor:
                 output_tokens=100,
             ),
         ])
-        mock_get_llm.return_value = LegacyMockModel(mock_llm)
+        mock_create_model.return_value = LegacyMockModel(mock_llm)
 
         executor = AutonomousAgentExecutor(mock_session)
         result = await executor.run(
@@ -1145,10 +1147,10 @@ class TestAutonomousAgentExecutor:
         assert "Sub agent summary" in result["output"]
 
     @pytest.mark.asyncio
-    @patch("src.services.execution.autonomous_agent_executor.create_agent_model")
+    @patch("src.services.agent_runtime.model_factory.create_agent_model")
     @patch("src.services.execution.autonomous_agent_executor.resolve_agent_tools")
     async def test_delegation_refetches_agent_with_relationships(
-        self, mock_resolve_tools, mock_get_llm, mock_session, mock_agent
+        self, mock_resolve_tools, mock_create_model, mock_session, mock_agent
     ):
         """Delegation re-fetches the target agent with eager-loaded relationships.
 
@@ -1225,7 +1227,7 @@ class TestAutonomousAgentExecutor:
                 output_tokens=100,
             ),
         ])
-        mock_get_llm.return_value = LegacyMockModel(mock_llm)
+        mock_create_model.return_value = LegacyMockModel(mock_llm)
 
         executor = AutonomousAgentExecutor(mock_session)
         result = await executor.run(
@@ -1241,10 +1243,10 @@ class TestAutonomousAgentExecutor:
         assert len(execute_calls) >= 1, "Expected at least one session.execute call for re-fetch"
 
     @pytest.mark.asyncio
-    @patch("src.services.execution.autonomous_agent_executor.create_agent_model")
+    @patch("src.services.agent_runtime.model_factory.create_agent_model")
     @patch("src.services.execution.autonomous_agent_executor.resolve_agent_tools")
     async def test_delegation_passes_redis_client_to_sub_executor(
-        self, mock_resolve_tools, mock_get_llm, mock_session, mock_agent
+        self, mock_resolve_tools, mock_create_model, mock_session, mock_agent
     ):
         """Sub-executor receives the parent's redis_client for pub/sub."""
         delegated = MagicMock()
@@ -1295,7 +1297,7 @@ class TestAutonomousAgentExecutor:
                 input_tokens=200, output_tokens=100,
             ),
         ])
-        mock_get_llm.return_value = LegacyMockModel(mock_llm)
+        mock_create_model.return_value = LegacyMockModel(mock_llm)
 
         mock_redis = MagicMock()
         executor = AutonomousAgentExecutor(mock_session, redis_client=mock_redis)
@@ -1321,10 +1323,10 @@ class TestAutonomousAgentExecutor:
         assert len(sub_init_calls) >= 1, "Sub-executor should receive parent's redis_client"
 
     @pytest.mark.asyncio
-    @patch("src.services.execution.autonomous_agent_executor.create_agent_model")
+    @patch("src.services.agent_runtime.model_factory.create_agent_model")
     @patch("src.services.execution.autonomous_agent_executor.resolve_agent_tools")
     async def test_delegation_respects_depth_limit(
-        self, mock_resolve_tools, mock_get_llm, mock_session, mock_agent
+        self, mock_resolve_tools, mock_create_model, mock_session, mock_agent
     ):
         """Delegation fails gracefully when depth limit is exceeded."""
         delegated = MagicMock()
@@ -1355,7 +1357,7 @@ class TestAutonomousAgentExecutor:
                 input_tokens=80, output_tokens=40,
             ),
         ])
-        mock_get_llm.return_value = LegacyMockModel(mock_llm)
+        mock_create_model.return_value = LegacyMockModel(mock_llm)
 
         # Start at max depth — delegation should be rejected immediately
         executor = AutonomousAgentExecutor(
@@ -1373,10 +1375,10 @@ class TestAutonomousAgentExecutor:
         assert mock_llm.complete.call_count == 2
 
     @pytest.mark.asyncio
-    @patch("src.services.execution.autonomous_agent_executor.create_agent_model")
+    @patch("src.services.agent_runtime.model_factory.create_agent_model")
     @patch("src.services.execution.autonomous_agent_executor.resolve_agent_tools")
     async def test_delegation_timeout(
-        self, mock_resolve_tools, mock_get_llm, mock_session, mock_agent
+        self, mock_resolve_tools, mock_create_model, mock_session, mock_agent
     ):
         """Delegation returns timeout error when sub-executor takes too long."""
         delegated = MagicMock()
@@ -1423,7 +1425,7 @@ class TestAutonomousAgentExecutor:
                 input_tokens=200, output_tokens=100,
             ),
         ])
-        mock_get_llm.return_value = LegacyMockModel(mock_llm)
+        mock_create_model.return_value = LegacyMockModel(mock_llm)
 
         executor = AutonomousAgentExecutor(mock_session)
 
@@ -1448,10 +1450,10 @@ class TestAutonomousAgentExecutor:
         assert "timed out" in result["output"].lower() or result["output"] == "The delegation timed out"
 
     @pytest.mark.asyncio
-    @patch("src.services.execution.autonomous_agent_executor.create_agent_model")
+    @patch("src.services.agent_runtime.model_factory.create_agent_model")
     @patch("src.services.execution.autonomous_agent_executor.resolve_agent_tools")
     async def test_unknown_tool_gets_one_bounded_model_retry(
-        self, mock_resolve_tools, mock_get_llm, mock_session, mock_agent
+        self, mock_resolve_tools, mock_create_model, mock_session, mock_agent
     ):
         """A hallucinated tool name gets one budgeted correction request."""
         mock_resolve_tools.return_value = (
@@ -1475,7 +1477,7 @@ class TestAutonomousAgentExecutor:
                 input_tokens=80, output_tokens=40,
             ),
         ])
-        mock_get_llm.return_value = LegacyMockModel(mock_llm)
+        mock_create_model.return_value = LegacyMockModel(mock_llm)
 
         executor = AutonomousAgentExecutor(mock_session)
         result = await executor.run(
@@ -1492,10 +1494,10 @@ class TestAutonomousAgentExecutor:
         )
 
     @pytest.mark.asyncio
-    @patch("src.services.execution.autonomous_agent_executor.create_agent_model")
+    @patch("src.services.agent_runtime.model_factory.create_agent_model")
     @patch("src.services.execution.autonomous_agent_executor.resolve_agent_tools")
     async def test_delegation_creates_child_agent_run(
-        self, mock_resolve_tools, mock_get_llm, mock_session, mock_agent
+        self, mock_resolve_tools, mock_create_model, mock_session, mock_agent
     ):
         """Delegation creates a child AgentRun with parent_run_id set."""
         delegated = MagicMock()
@@ -1548,7 +1550,7 @@ class TestAutonomousAgentExecutor:
                 input_tokens=200, output_tokens=100,
             ),
         ])
-        mock_get_llm.return_value = LegacyMockModel(mock_llm)
+        mock_create_model.return_value = LegacyMockModel(mock_llm)
 
         parent_run_id = str(uuid4())
         executor = AutonomousAgentExecutor(mock_session)
@@ -1576,10 +1578,10 @@ class TestAutonomousAgentExecutor:
         assert child_run.agent_id == delegated.id
 
     @pytest.mark.asyncio
-    @patch("src.services.execution.autonomous_agent_executor.create_agent_model")
+    @patch("src.services.agent_runtime.model_factory.create_agent_model")
     @patch("src.services.execution.autonomous_agent_executor.resolve_agent_tools")
     async def test_cancellation_check_between_iterations(
-        self, mock_resolve_tools, mock_get_llm, mock_session, mock_agent
+        self, mock_resolve_tools, mock_create_model, mock_session, mock_agent
     ):
         """Executor stops when Redis cancel flag is set between iterations."""
         mock_resolve_tools.return_value = (
@@ -1603,7 +1605,7 @@ class TestAutonomousAgentExecutor:
                 input_tokens=80, output_tokens=40,
             ),
         ])
-        mock_get_llm.return_value = LegacyMockModel(mock_llm)
+        mock_create_model.return_value = LegacyMockModel(mock_llm)
 
         # Mock Redis client to return cancel flag after first iteration
         mock_redis = AsyncMock()
@@ -1635,10 +1637,10 @@ class TestAutonomousAgentExecutor:
         assert mock_llm.complete.call_count == 1
 
     @pytest.mark.asyncio
-    @patch("src.services.execution.autonomous_agent_executor.create_agent_model")
+    @patch("src.services.agent_runtime.model_factory.create_agent_model")
     @patch("src.services.execution.autonomous_agent_executor.resolve_agent_tools")
     async def test_cancellation_without_redis_does_nothing(
-        self, mock_resolve_tools, mock_get_llm, mock_session, mock_agent
+        self, mock_resolve_tools, mock_create_model, mock_session, mock_agent
     ):
         """Without redis_client, cancellation checks return False and execution continues."""
         mock_resolve_tools.return_value = ([], {})
@@ -1649,7 +1651,7 @@ class TestAutonomousAgentExecutor:
             tool_calls=None, finish_reason="end_turn",
             input_tokens=100, output_tokens=50,
         ))
-        mock_get_llm.return_value = LegacyMockModel(mock_llm)
+        mock_create_model.return_value = LegacyMockModel(mock_llm)
 
         # No redis_client — cancellation checks should be no-ops
         executor = AutonomousAgentExecutor(mock_session, redis_client=None)

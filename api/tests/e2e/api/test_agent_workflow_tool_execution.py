@@ -138,7 +138,7 @@ async def test_chat_handler_executes_global_agent_workflow_in_caller_org(
                 ),
             ),
             patch(
-                "src.services.agent_executor.create_agent_model",
+                "src.services.agent_runtime.model_factory.create_agent_model",
                 return_value=WorkflowToolTestModel(f"wf_{workflow['name']}"),
             ),
         ):

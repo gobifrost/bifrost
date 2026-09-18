@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
@@ -32,6 +33,8 @@ if TYPE_CHECKING:
         ProviderTestResult,
     )
 
+logger = logging.getLogger(__name__)
+
 OPENROUTER_DEFAULT_ENDPOINT = "https://openrouter.ai/api/v1"
 PROVIDER_DEFAULT_ENDPOINTS: dict[AIProviderKind, str] = {
     "openai": "https://api.openai.com/v1",
@@ -47,6 +50,11 @@ ASSIGNMENT_KEYS: tuple[AIModelAssignmentKey, ...] = (
     "video_generation",
     "chat_default",
 )
+
+#: Maximum profiles in a resolved failover chain (primary + fallbacks).
+#: Bounds worst-case spend and added latency: each chain member only runs
+#: after the previous one exhausted its own 6-attempt / 60s transport budget.
+MAX_FAILOVER_CHAIN_LENGTH = 3
 
 
 @dataclass(frozen=True)
@@ -112,6 +120,65 @@ class AIModelService:
         if value is not None and not 1 <= value <= 200000:
             raise ValueError("Profile default_max_tokens must be between 1 and 200000")
 
+    async def _validate_failover(
+        self, profile_id: UUID | None, failover_profile_id: UUID
+    ) -> None:
+        """Reject missing targets, self-references, cycles, and over-long chains.
+
+        ``profile_id`` is None when the pointing profile does not exist yet
+        (create path), where a cycle is impossible and only existence matters.
+        Column-only reads keep this safe on the async session.
+        """
+        target = await self.session.get(AIModelProfile, failover_profile_id)
+        if target is None:
+            raise LookupError("Failover model profile not found")
+        if profile_id is None:
+            return
+        if failover_profile_id == profile_id:
+            raise ValueError("A model profile cannot fail over to itself")
+        # Forward walk from the new target: must not loop back, and the
+        # longest chain through the new edge must fit the cap. Inbound depth
+        # counts profiles already pointing (transitively) at this profile.
+        seen: set[UUID] = {profile_id}
+        current_id: UUID | None = failover_profile_id
+        while current_id is not None:
+            if current_id in seen:
+                raise ValueError("Failover selection would create a cycle")
+            seen.add(current_id)
+            row = await self.session.get(AIModelProfile, current_id)
+            current_id = row.failover_profile_id if row is not None else None
+        inbound = await self._inbound_failover_depth(profile_id, frozenset(seen))
+        if inbound + len(seen) > MAX_FAILOVER_CHAIN_LENGTH:
+            raise ValueError(
+                "Failover chain would exceed "
+                f"{MAX_FAILOVER_CHAIN_LENGTH} profiles"
+            )
+
+    async def _inbound_failover_depth(
+        self, profile_id: UUID, excluded: frozenset[UUID]
+    ) -> int:
+        """Longest path of profiles pointing (transitively) at ``profile_id``.
+
+        ``excluded`` holds the new edge's downstream members, so legacy rows
+        cannot loop the walk. Depth 0 means nothing points at the profile.
+        """
+        best = 0
+        rows = (
+            await self.session.execute(
+                select(AIModelProfile.id).where(
+                    AIModelProfile.failover_profile_id == profile_id
+                )
+            )
+        ).all()
+        for (dependent_id,) in rows:
+            if dependent_id in excluded:
+                continue
+            depth = 1 + await self._inbound_failover_depth(
+                dependent_id, excluded | {dependent_id}
+            )
+            best = max(best, depth)
+        return best
+
     def normalize_endpoint(
         self, provider: AIProviderKind, endpoint: str | None
     ) -> str | None:
@@ -142,8 +209,74 @@ class AIModelService:
         assignment_key: AIModelAssignmentKey = "primary",
     ) -> LLMConfig:
         """Resolve a profile UUID or assignment key into decrypted runtime LLM config."""
-        from src.services.llm.base import LLMConfig
+        profile = await self._resolve_head_profile(
+            profile_id=profile_id,
+            profile_name=profile_name,
+            assignment_key=assignment_key,
+        )
+        return await self._config_for_profile(profile)
 
+    async def resolve_chain(
+        self,
+        *,
+        profile_id: UUID | None = None,
+        profile_name: str | None = None,
+        assignment_key: AIModelAssignmentKey = "primary",
+    ) -> list[LLMConfig]:
+        """Resolve a profile plus its failover pointers into runtime configs.
+
+        Returns the primary config first, then one config per fallback hop,
+        truncated to ``MAX_FAILOVER_CHAIN_LENGTH``. Cycle-safe: a visited
+        profile ends the walk instead of looping.
+
+        Members that fail to resolve (unreachable endpoint during transport
+        detection, bad key, unknown provider) are skipped with a warning so
+        a dead primary does not wedge the chain — the failure that failover
+        exists for. When nothing resolves, the head member's error is raised
+        unchanged so misconfiguration still surfaces loudly.
+        """
+        head = await self._resolve_head_profile(
+            profile_id=profile_id,
+            profile_name=profile_name,
+            assignment_key=assignment_key,
+        )
+        configs: list[LLMConfig] = []
+        errors: list[Exception] = []
+        seen: set[UUID] = set()
+        # Hop-by-hop reloads: relationship lazy-loading is unavailable on the
+        # async session, so each fallback hop is an explicit fetch.
+        current: AIModelProfile | None = head
+        while current is not None and len(configs) < MAX_FAILOVER_CHAIN_LENGTH:
+            if current.id in seen:
+                break
+            seen.add(current.id)
+            try:
+                configs.append(await self._config_for_profile(current))
+            except Exception as exc:
+                errors.append(exc)
+                logger.warning(
+                    "ai_model_chain_skip",
+                    extra={
+                        "profile_id": str(current.id),
+                        "profile_name": current.name,
+                        "error_type": type(exc).__name__,
+                        "error": str(exc)[:300],
+                    },
+                )
+            next_id = current.failover_profile_id
+            current = await self.get_profile(next_id) if next_id is not None else None
+        if not configs and errors:
+            raise errors[0]
+        return configs
+
+    async def _resolve_head_profile(
+        self,
+        *,
+        profile_id: UUID | None = None,
+        profile_name: str | None = None,
+        assignment_key: AIModelAssignmentKey = "primary",
+    ) -> AIModelProfile:
+        """Resolve a profile UUID, name, or assignment key into its ORM row."""
         if profile_id is not None and profile_name is not None:
             raise ValueError("Specify either a model profile id or name, not both")
         if profile_id is not None:
@@ -151,7 +284,10 @@ class AIModelService:
                 (
                     await self.session.execute(
                         select(AIModelProfile)
-                        .options(joinedload(AIModelProfile.connection))
+                        .options(
+                            joinedload(AIModelProfile.connection),
+                            selectinload(AIModelProfile.failover_profile),
+                        )
                         .where(AIModelProfile.id == profile_id)
                     )
                 )
@@ -168,7 +304,10 @@ class AIModelService:
                 (
                     await self.session.execute(
                         select(AIModelProfile)
-                        .options(joinedload(AIModelProfile.connection))
+                        .options(
+                            joinedload(AIModelProfile.connection),
+                            selectinload(AIModelProfile.failover_profile),
+                        )
                         .where(
                             func.lower(AIModelProfile.name)
                             == trimmed_profile_name.casefold()
@@ -190,7 +329,10 @@ class AIModelService:
                         .options(
                             joinedload(AIModelAssignment.profile).joinedload(
                                 AIModelProfile.connection
-                            )
+                            ),
+                            joinedload(AIModelAssignment.profile).selectinload(
+                                AIModelProfile.failover_profile
+                            ),
                         )
                         .where(AIModelAssignment.assignment_key == assignment_key)
                     )
@@ -204,6 +346,12 @@ class AIModelService:
                     "Please configure AI model profiles in System Settings > AI Configuration."
                 )
             profile = assignment.profile
+
+        return profile
+
+    async def _config_for_profile(self, profile: AIModelProfile) -> LLMConfig:
+        """Build the decrypted runtime config for one profile row."""
+        from src.services.llm.base import LLMConfig
 
         connection = profile.connection
         provider = self.client_provider(connection.provider)
@@ -251,6 +399,7 @@ class AIModelService:
                     select(AIModelProfile)
                     .options(
                         joinedload(AIModelProfile.connection),
+                        selectinload(AIModelProfile.failover_profile),
                         selectinload(AIModelProfile.assignments),
                     )
                     .where(AIModelProfile.enabled_for_chat.is_(True))
@@ -306,6 +455,9 @@ class AIModelService:
                         .options(
                             joinedload(AIModelAssignment.profile).joinedload(
                                 AIModelProfile.connection
+                            ),
+                            joinedload(AIModelAssignment.profile).selectinload(
+                                AIModelProfile.failover_profile
                             ),
                             joinedload(AIModelAssignment.profile).selectinload(
                                 AIModelProfile.assignments
@@ -452,7 +604,9 @@ class AIModelService:
         return list(
             (
                 await self.session.execute(
-                    select(AIModelProfile).order_by(func.lower(AIModelProfile.name))
+                    select(AIModelProfile)
+                    .options(selectinload(AIModelProfile.failover_profile))
+                    .order_by(func.lower(AIModelProfile.name))
                 )
             )
             .unique()
@@ -467,6 +621,7 @@ class AIModelService:
                     select(AIModelProfile)
                     .options(
                         joinedload(AIModelProfile.connection),
+                        selectinload(AIModelProfile.failover_profile),
                         selectinload(AIModelProfile.assignments),
                     )
                     .where(AIModelProfile.id == profile_id)
@@ -490,6 +645,7 @@ class AIModelService:
         capabilities: ModelCapabilities | None,
         enabled_for_chat: bool,
         default_max_tokens: int | None = None,
+        failover_profile_id: UUID | None = None,
     ) -> AIModelProfile:
         trimmed_name = name.strip()
         trimmed_model = model.strip()
@@ -500,6 +656,8 @@ class AIModelService:
         self._validate_default_max_tokens(default_max_tokens)
         await self._ensure_unique_profile_name(trimmed_name)
         await self.get_connection(connection_id)
+        if failover_profile_id is not None:
+            await self._validate_failover(None, failover_profile_id)
         is_first_profile = (
             await self.session.execute(select(AIModelProfile.id).limit(1))
         ).scalar_one_or_none() is None
@@ -510,6 +668,7 @@ class AIModelService:
             capabilities=capabilities.model_dump(mode="json") if capabilities else None,
             enabled_for_chat=enabled_for_chat or is_first_profile,
             default_max_tokens=default_max_tokens,
+            failover_profile_id=failover_profile_id,
         )
         self.session.add(profile)
         await self.session.flush()
@@ -545,6 +704,8 @@ class AIModelService:
         enabled_for_chat: bool | None = None,
         default_max_tokens: int | None = None,
         default_max_tokens_provided: bool = False,
+        failover_profile_id: UUID | None = None,
+        failover_profile_id_provided: bool = False,
     ) -> AIModelProfile:
         profile = await self.get_profile(profile_id)
         if name is not None:
@@ -570,6 +731,10 @@ class AIModelService:
         if default_max_tokens_provided:
             self._validate_default_max_tokens(default_max_tokens)
             profile.default_max_tokens = default_max_tokens
+        if failover_profile_id_provided:
+            if failover_profile_id is not None:
+                await self._validate_failover(profile.id, failover_profile_id)
+            profile.failover_profile_id = failover_profile_id
         if enabled_for_chat is not None:
             if not enabled_for_chat and await self._profile_has_assignment(
                 profile.id, "chat_default"
@@ -592,6 +757,13 @@ class AIModelService:
             raise ValueError("Model profile is used by assignments")
         if profile.agents:
             raise ValueError("Model profile is used by agents")
+        fallback_users = await self._failover_dependents(profile.id)
+        if fallback_users:
+            names = ", ".join(sorted(fallback_users))
+            raise ValueError(
+                f"Model profile is used as a failover by: {names}. "
+                "Clear those failover selections first."
+            )
         await self.session.delete(profile)
         await self.session.flush()
 
@@ -658,6 +830,40 @@ class AIModelService:
         for agent in agents:
             agent.llm_profile = target
 
+        # Failover pointers follow successor semantics like assignments and
+        # agents: inbound references to deleted sources move to the target.
+        # The target inherits a deleted source's own fallback only when it
+        # has none, and never itself.
+        by_id = {profile.id: profile for profile in profiles}
+        inbound = list(
+            (
+                await self.session.execute(
+                    select(AIModelProfile)
+                    .where(AIModelProfile.failover_profile_id.in_(source_ids))
+                    .with_for_update(of=AIModelProfile)
+                )
+            )
+            .unique()
+            .scalars()
+            .all()
+        )
+        for referrer in inbound:
+            if referrer.id == target.id or referrer.id in source_ids:
+                continue
+            referrer.failover_profile_id = target.id
+        if target.failover_profile_id in source_ids:
+            inherited = by_id[target.failover_profile_id].failover_profile_id
+            target.failover_profile_id = (
+                None if inherited == target.id else inherited
+            )
+        touched = [referrer for referrer in inbound if referrer.id not in source_ids]
+        touched.append(target)
+        for touched_profile in touched:
+            if touched_profile.failover_profile_id is not None:
+                await self._validate_failover(
+                    touched_profile.id, touched_profile.failover_profile_id
+                )
+
         target.enabled_for_chat = preserve_chat
         target.updated_at = datetime.now(timezone.utc)
         for profile in profiles:
@@ -686,6 +892,9 @@ class AIModelService:
                     .options(
                         joinedload(AIModelAssignment.profile).joinedload(
                             AIModelProfile.connection
+                        ),
+                        joinedload(AIModelAssignment.profile).joinedload(
+                            AIModelProfile.failover_profile
                         ),
                         joinedload(AIModelAssignment.profile).selectinload(
                             AIModelProfile.assignments
@@ -852,6 +1061,17 @@ class AIModelService:
                 connection.provider, connection.endpoint
             ),
         )
+
+    async def _failover_dependents(self, profile_id: UUID) -> list[str]:
+        """Return names of profiles that fail over to the given profile."""
+        rows = (
+            await self.session.execute(
+                select(AIModelProfile.name).where(
+                    AIModelProfile.failover_profile_id == profile_id
+                )
+            )
+        ).all()
+        return [row[0] for row in rows]
 
     async def _profile_has_any_assignment(self, profile_id: UUID) -> bool:
         return bool(

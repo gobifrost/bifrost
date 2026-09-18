@@ -61,11 +61,9 @@ from src.services.agent_runtime import (
     AgentRunBudget,
     BifrostToolset,
     ModelCallEvent,
-    ObservedModel,
-    agent_model_settings,
-    build_runtime_capabilities,
     bound_tool_result_for_model,
-    create_agent_model,
+    build_chain_model,
+    build_runtime_capabilities,
     provider_reported_cost,
 )
 from src.services.model_capabilities import should_offer_tool_calling
@@ -148,6 +146,8 @@ class AgentExecutor:
         self._knowledge_search_budget = KnowledgeSearchBudget()
         self._active_usage: RunUsage | None = None
         self._active_budget: AgentRunBudget | None = None
+        self._active_llm_model: str | None = None
+        self._active_failover_path: list[str] | None = None
 
     @asynccontextmanager
     async def _db(self):
@@ -640,10 +640,13 @@ class AgentExecutor:
                     history_messages.pop()
                 )
 
-            observed_model = ObservedModel(
-                create_agent_model(llm_client.config, model=model_name),
+            chain = build_chain_model(
+                [llm_client.config, *llm_client.fallback_configs],
                 record_model_event,
                 retry_surface="chat_agent",
+                model_override=model_name,
+                max_tokens=max_tokens_override,
+                session_id=str(conversation.id),
             )
             toolset = BifrostToolset(
                 tool_definitions,
@@ -651,7 +654,7 @@ class AgentExecutor:
                 toolset_id=f"bifrost-chat-{agent.id if agent else 'default'}",
             )
             runtime = PydanticAgent(
-                observed_model,
+                chain.model,
                 # Stored chat history intentionally excludes the agent's
                 # system message. Pydantic's `instructions` are prepended on
                 # every fresh run, whereas `system_prompt` assumes an existing
@@ -659,12 +662,7 @@ class AgentExecutor:
                 instructions=system_prompt,
                 toolsets=[toolset] if tool_definitions else [],
                 capabilities=build_runtime_capabilities(budget),
-                model_settings=agent_model_settings(
-                    llm_client.config,
-                    max_tokens=max_tokens_override,
-                    session_id=str(conversation.id),
-                    agent_kind="worker",
-                ),
+                model_settings=chain.primary_settings,
                 # Permit one schema/tool-name correction. It is charged to the
                 # same pre-request budget, so a malformed provider response can
                 # recover once without opening an unbounded retry loop.
@@ -836,6 +834,12 @@ class AgentExecutor:
             pending_tool_chunks.clear()
 
             # 10. Yield done chunk with final content (for non-streaming mode)
+            self._active_llm_model = model_name
+            self._active_failover_path = (
+                chain.failover.fallback_path()
+                if chain.failover is not None
+                else None
+            )
             yield ChatStreamChunk(
                 type="done",
                 content=final_content if final_content else None,
@@ -850,6 +854,12 @@ class AgentExecutor:
 
         except Exception as e:
             logger.error(f"Agent execution error: {e}", exc_info=True)
+            self._active_llm_model = model_name
+            self._active_failover_path = (
+                chain.failover.fallback_path()
+                if chain.failover is not None
+                else None
+            )
             yield ChatStreamChunk(
                 type="error",
                 error=str(e),

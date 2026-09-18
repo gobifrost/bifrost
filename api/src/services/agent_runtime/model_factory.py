@@ -51,6 +51,30 @@ def agent_model_settings(
     return settings
 
 
+def agent_model_settings_for_chain(
+    configs: list[LLMConfig],
+    *,
+    max_tokens: int | None,
+    session_id: str,
+    agent_kind: str | None = None,
+) -> list[dict[str, object]]:
+    """Build per-candidate settings aligned with a failover chain.
+
+    The explicit per-agent override applies to the primary only: a token cap
+    tuned for one provider may be invalid on another. Fallbacks resolve from
+    their own profile defaults.
+    """
+    return [
+        agent_model_settings(
+            config,
+            max_tokens=max_tokens if index == 0 else None,
+            session_id=session_id,
+            agent_kind=agent_kind,
+        )
+        for index, config in enumerate(configs)
+    ]
+
+
 def anthropic_prompt_cache_settings(
     supported: bool | None = None,
 ) -> dict[str, object]:

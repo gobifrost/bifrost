@@ -29,10 +29,11 @@ export function ModelProfileCard({ profile, description, assignments, selectionM
 			<CardDescription className="min-w-0 [overflow-wrap:anywhere]">{description}</CardDescription>
 		</CardHeader>
 		<CardContent className="space-y-4">
-		{(profile.enabled_for_chat || isDefault || assignments.length > 0 || (profile as { default_max_tokens?: number | null }).default_max_tokens != null) && <div className="flex flex-wrap gap-2">
+		{(profile.enabled_for_chat || isDefault || assignments.length > 0 || profile.default_max_tokens != null || profile.failover_profile_name != null) && <div className="flex flex-wrap gap-2">
 			{profile.enabled_for_chat && <Badge variant="secondary"><MessageSquareText className="size-3" />Chat</Badge>}
 			{isDefault && <Badge><CheckCircle2 className="size-3" />Default</Badge>}
-			{(profile as { default_max_tokens?: number | null }).default_max_tokens != null && <Badge variant="outline" className="h-auto whitespace-normal">Default cap {(profile as { default_max_tokens?: number | null }).default_max_tokens?.toLocaleString()}</Badge>}
+			{profile.default_max_tokens != null && <Badge variant="outline" className="h-auto whitespace-normal">Default cap {profile.default_max_tokens?.toLocaleString()}</Badge>}
+			{profile.failover_profile_name != null && <Badge variant="outline" className="h-auto whitespace-normal [overflow-wrap:anywhere]">Fallback → {profile.failover_profile_name}</Badge>}
 			{assignments.map((name) => <Badge key={name} variant="outline" className="h-auto whitespace-normal [overflow-wrap:anywhere]">{name}</Badge>)}
 		</div>}
 			<div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 border-t pt-3">

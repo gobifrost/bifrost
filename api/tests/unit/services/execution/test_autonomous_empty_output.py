@@ -73,7 +73,7 @@ def _incident_blank() -> LLMResponse:
 
 
 @pytest.mark.asyncio
-@patch("src.services.execution.autonomous_agent_executor.create_agent_model")
+@patch("src.services.agent_runtime.model_factory.create_agent_model")
 @patch("src.services.execution.autonomous_agent_executor.resolve_agent_tools")
 async def test_blank_responses_fallback_once_then_hand_off_with_usage(
     mock_resolve_tools, mock_get_llm, mock_session, mock_agent
@@ -84,11 +84,11 @@ async def test_blank_responses_fallback_once_then_hand_off_with_usage(
     mock_get_llm.return_value = LegacyMockModel(mock_llm)
 
     with patch(
-        "src.services.execution.autonomous_agent_executor.get_llm_config",
+        "src.services.execution.autonomous_agent_executor.get_llm_configs",
         new_callable=AsyncMock,
-        return_value=LLMConfig(
-            provider="openai", model="test-model", api_key="test-key"
-        ),
+        return_value=[
+            LLMConfig(provider="openai", model="test-model", api_key="test-key")
+        ],
     ):
         executor = AutonomousAgentExecutor(mock_session)
         result = await executor.run(agent=mock_agent, run_id=str(uuid4()))
@@ -114,7 +114,7 @@ async def test_blank_responses_fallback_once_then_hand_off_with_usage(
 
 
 @pytest.mark.asyncio
-@patch("src.services.execution.autonomous_agent_executor.create_agent_model")
+@patch("src.services.agent_runtime.model_factory.create_agent_model")
 @patch("src.services.execution.autonomous_agent_executor.resolve_agent_tools")
 async def test_incident_shaped_blank_ends_durably_over_budget(
     mock_resolve_tools, mock_get_llm, mock_session, mock_agent
@@ -131,11 +131,11 @@ async def test_incident_shaped_blank_ends_durably_over_budget(
     mock_get_llm.return_value = LegacyMockModel(mock_llm)
 
     with patch(
-        "src.services.execution.autonomous_agent_executor.get_llm_config",
+        "src.services.execution.autonomous_agent_executor.get_llm_configs",
         new_callable=AsyncMock,
-        return_value=LLMConfig(
-            provider="openai", model="test-model", api_key="test-key"
-        ),
+        return_value=[
+            LLMConfig(provider="openai", model="test-model", api_key="test-key")
+        ],
     ):
         executor = AutonomousAgentExecutor(mock_session)
         result = await executor.run(agent=mock_agent, run_id=str(uuid4()))
@@ -157,7 +157,7 @@ async def test_incident_shaped_blank_ends_durably_over_budget(
 
 
 @pytest.mark.asyncio
-@patch("src.services.execution.autonomous_agent_executor.create_agent_model")
+@patch("src.services.agent_runtime.model_factory.create_agent_model")
 @patch("src.services.execution.autonomous_agent_executor.resolve_agent_tools")
 async def test_repetitive_no_tool_output_hands_off_after_one_retry(
     mock_resolve_tools, mock_get_llm, mock_session, mock_agent
@@ -179,11 +179,11 @@ async def test_repetitive_no_tool_output_hands_off_after_one_retry(
     mock_get_llm.return_value = LegacyMockModel(mock_llm)
 
     with patch(
-        "src.services.execution.autonomous_agent_executor.get_llm_config",
+        "src.services.execution.autonomous_agent_executor.get_llm_configs",
         new_callable=AsyncMock,
-        return_value=LLMConfig(
-            provider="openai", model="test-model", api_key="test-key"
-        ),
+        return_value=[
+            LLMConfig(provider="openai", model="test-model", api_key="test-key")
+        ],
     ):
         executor = AutonomousAgentExecutor(mock_session)
         result = await executor.run(agent=mock_agent, run_id=str(uuid4()))

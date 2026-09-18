@@ -68,6 +68,11 @@ class AIModelProfileCreate(BaseModel):
         le=200000,
         description="Profile-level default max output tokens (null = provider default)",
     )
+    failover_profile_id: UUID | None = Field(
+        default=None,
+        description="Fallback profile tried when this profile's provider fails "
+        "with a retryable transport error after retries are exhausted",
+    )
 
 
 class AIModelProfileUpdate(BaseModel):
@@ -81,6 +86,11 @@ class AIModelProfileUpdate(BaseModel):
         ge=1,
         le=200000,
         description="Profile-level default max output tokens (null = provider default)",
+    )
+    failover_profile_id: UUID | None = Field(
+        default=None,
+        description="Fallback profile tried when this profile's provider fails "
+        "with a retryable transport error after retries are exhausted",
     )
 
 
@@ -105,6 +115,8 @@ class AIModelProfileResponse(BaseModel):
     capabilities: ModelCapabilities | None = None
     enabled_for_chat: bool
     default_max_tokens: int | None = None
+    failover_profile_id: UUID | None = None
+    failover_profile_name: str | None = None
     connection: AIProviderConnectionSummary
     assignment_keys: list[AIModelAssignmentKey] = Field(default_factory=list)
     referenced_agent_count: int = 0

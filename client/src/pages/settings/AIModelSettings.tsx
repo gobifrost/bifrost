@@ -152,6 +152,7 @@ export function AIModelSettings() {
 	const [profileConnectionId, setProfileConnectionId] = useState("");
 	const [profileModel, setProfileModel] = useState("");
 	const [profileChatEnabled, setProfileChatEnabled] = useState(false);
+	const [profileFailoverId, setProfileFailoverId] = useState<string | null>(null);
 	const [profileSelectionMode, setProfileSelectionMode] = useState(false);
 	const [selectedProfileIds, setSelectedProfileIds] = useState<Set<string>>(
 		() => new Set(),
@@ -204,6 +205,7 @@ export function AIModelSettings() {
 		setProfileConnectionId("");
 		setProfileModel("");
 		setProfileChatEnabled(false);
+		setProfileFailoverId(null);
 	};
 
 	const changeProviderKind = (nextKind: AIProviderKind) => {
@@ -380,10 +382,9 @@ export function AIModelSettings() {
 				name: edit.name.trim(),
 				connection_id: edit.connectionId,
 				model: edit.model.trim(),
-				// Generated v1 types predate the backend field; the API accepts it.
 				default_max_tokens: edit.defaultMaxTokens,
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			} as any),
+				failover_profile_id: edit.failoverProfileId,
+			}),
 		onSuccess: () => {
 			setProfileEdit(null);
 			invalidateAI();
@@ -702,7 +703,7 @@ export function AIModelSettings() {
 						defaultPending={assignMutation.isPending && assignMutation.variables?.assignmentKey === "primary" && assignMutation.variables.profileId === profile.id}
 						defaultDisabled={assignmentsQuery.isLoading || assignmentsQuery.isError || assignMutation.isPending}
 						onSelect={(selected) => toggleProfileSelection(profile.id, selected)}
-						onEdit={() => { editProfileMutation.reset(); setProfileEdit({ id: profile.id, name: profile.name, connectionId: profile.connection_id, model: profile.model, defaultMaxTokens: (profile as { default_max_tokens?: number | null }).default_max_tokens ?? null }); }}
+						onEdit={() => { editProfileMutation.reset(); setProfileEdit({ id: profile.id, name: profile.name, connectionId: profile.connection_id, model: profile.model, defaultMaxTokens: profile.default_max_tokens ?? null, failoverProfileId: profile.failover_profile_id ?? null }); }}
 						onDelete={() => { deleteProfileMutation.reset(); setDeletingProfile(profile); }}
 						onChatChange={(enabledForChat) => updateProfileMutation.mutate({ profileId: profile.id, enabledForChat })}
 						onSetDefault={() => assignMutation.mutate({ assignmentKey: "primary", profileId: profile.id })}
@@ -740,13 +741,14 @@ export function AIModelSettings() {
 								})
 							} />
 
-			<ProfileCreateDialog profileCreateOpen={profileCreateOpen} profileName={profileName} profileConnectionId={profileConnectionId} profileModel={profileModel} profileChatEnabled={profileChatEnabled} profileReady={profileReady} providers={providers} firstProfile={profiles.length === 0} setProfileName={setProfileName} setProfileConnectionId={setProfileConnectionId} setProfileModel={setProfileModel} setProfileChatEnabled={setProfileChatEnabled} pending={createProfileMutation.isPending} error={createProfileMutation.error} onClose={() => { setProfileCreateOpen(false); resetProfileCreate(); }} onSubmit={() =>
+			<ProfileCreateDialog profileCreateOpen={profileCreateOpen} profileName={profileName} profileConnectionId={profileConnectionId} profileModel={profileModel} profileChatEnabled={profileChatEnabled} profileFailoverId={profileFailoverId} profileReady={profileReady} providers={providers} profiles={profiles} firstProfile={profiles.length === 0} setProfileName={setProfileName} setProfileConnectionId={setProfileConnectionId} setProfileModel={setProfileModel} setProfileChatEnabled={setProfileChatEnabled} setProfileFailoverId={setProfileFailoverId} pending={createProfileMutation.isPending} error={createProfileMutation.error} onClose={() => { setProfileCreateOpen(false); resetProfileCreate(); }} onSubmit={() =>
 								createProfileMutation.mutate({
 									name: profileName.trim(),
 									connection_id: profileConnectionId,
 									model: profileModel.trim(),
 									capabilities: null,
 									enabled_for_chat: profileChatEnabled,
+									failover_profile_id: profileFailoverId,
 								})
 							} />
 
@@ -757,7 +759,7 @@ export function AIModelSettings() {
 
 			<ProviderEditDialog providerEdit={providerEdit} pending={updateProviderMutation.isPending} failed={updateProviderMutation.isError} onChange={setProviderEdit} onClose={() => setProviderEdit(null)} onSave={(draft) => updateProviderMutation.mutate(draft)} />
 
-			<ModelProfileEditDialog profileEdit={profileEdit} providers={providers} providerLabel={providerLabel} pending={editProfileMutation.isPending} failed={editProfileMutation.isError} onChange={setProfileEdit} onClose={() => setProfileEdit(null)} onSave={(draft) => editProfileMutation.mutate(draft)} />
+			<ModelProfileEditDialog profileEdit={profileEdit} profiles={profiles} providers={providers} providerLabel={providerLabel} pending={editProfileMutation.isPending} failed={editProfileMutation.isError} onChange={setProfileEdit} onClose={() => setProfileEdit(null)} onSave={(draft) => editProfileMutation.mutate(draft)} />
 		</div>
 	);
 }

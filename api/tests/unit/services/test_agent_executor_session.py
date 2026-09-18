@@ -17,13 +17,15 @@ from src.services.llm.base import LLMConfig
 @pytest.fixture(autouse=True)
 def mock_runtime_config():
     with patch(
-        "src.services.execution.autonomous_agent_executor.get_llm_config",
+        "src.services.execution.autonomous_agent_executor.get_llm_configs",
         new_callable=AsyncMock,
-        return_value=LLMConfig(
-            provider="openai",
-            model="test-model",
-            api_key="test-key",
-        ),
+        return_value=[
+            LLMConfig(
+                provider="openai",
+                model="test-model",
+                api_key="test-key",
+            )
+        ],
     ):
         yield
 
@@ -118,7 +120,7 @@ class TestNoSessionDuringLLMCall:
             new_callable=AsyncMock,
             return_value=([], {}),
         ), patch(
-            "src.services.execution.autonomous_agent_executor.create_agent_model",
+            "src.services.agent_runtime.model_factory.create_agent_model",
             return_value=LegacyMockModel(mock_llm_client),
         ), patch(
             "src.services.execution.autonomous_agent_executor.publish_agent_run_step",
@@ -159,7 +161,7 @@ class TestStepsBufferedToRedis:
             new_callable=AsyncMock,
             return_value=([], {}),
         ), patch(
-            "src.services.execution.autonomous_agent_executor.create_agent_model",
+            "src.services.agent_runtime.model_factory.create_agent_model",
             return_value=LegacyMockModel(mock_llm_client),
         ), patch(
             "src.services.execution.autonomous_agent_executor.publish_agent_run_step",
@@ -204,7 +206,7 @@ class TestFlushToDb:
             new_callable=AsyncMock,
             return_value=([], {}),
         ), patch(
-            "src.services.execution.autonomous_agent_executor.create_agent_model",
+            "src.services.agent_runtime.model_factory.create_agent_model",
             return_value=LegacyMockModel(mock_llm_client),
         ), patch(
             "src.services.execution.autonomous_agent_executor.publish_agent_run_step",

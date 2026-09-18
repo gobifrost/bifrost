@@ -6,25 +6,28 @@ import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ProviderModelField } from "./ProviderModelField";
-import type { AIProviderConnection, AIProviderKind } from "@/services/aiModels";
+import { FailoverProfileField } from "./FailoverProfileField";
+import type { AIProviderConnection, AIProviderKind, AIModelProfile } from "@/services/aiModels";
 
 export interface ModelProfileEditDraft {
- id: string;
- name: string;
- connectionId: string;
- model: string;
- defaultMaxTokens: number | null;
+	id: string;
+	name: string;
+	connectionId: string;
+	model: string;
+	defaultMaxTokens: number | null;
+	failoverProfileId: string | null;
 }
 
-export function ModelProfileEditDialog({ profileEdit, providers, providerLabel, pending, failed, onChange, onClose, onSave }: {
- profileEdit: ModelProfileEditDraft | null;
- providers: AIProviderConnection[];
- providerLabel: (kind: AIProviderKind) => string;
- pending: boolean;
- failed: boolean;
- onChange: (draft: ModelProfileEditDraft) => void;
- onClose: () => void;
- onSave: (draft: ModelProfileEditDraft) => void;
+export function ModelProfileEditDialog({ profileEdit, profiles, providers, providerLabel, pending, failed, onChange, onClose, onSave }: {
+	profileEdit: ModelProfileEditDraft | null;
+	profiles: AIModelProfile[];
+	providers: AIProviderConnection[];
+	providerLabel: (kind: AIProviderKind) => string;
+	pending: boolean;
+	failed: boolean;
+	onChange: (draft: ModelProfileEditDraft) => void;
+	onClose: () => void;
+	onSave: (draft: ModelProfileEditDraft) => void;
 }) {
  const dialogFocus = useDialogReturnFocus();
 
@@ -125,6 +128,20 @@ export function ModelProfileEditDialog({ profileEdit, providers, providerLabel, 
 							/>
 							<p className="text-xs text-muted-foreground">Blank = provider default. Agents with an explicit value win over this.</p>
 						</div>
+						<FailoverProfileField
+							id="edit-profile-failover"
+							profiles={profiles}
+							currentProfileId={profileEdit.id}
+							currentConnectionId={profileEdit.connectionId}
+							value={profileEdit.failoverProfileId}
+							disabled={pending}
+							onChange={(failoverProfileId) =>
+								onChange({
+									...profileEdit,
+									failoverProfileId,
+								})
+							}
+						/>
 						</fieldset>
 					)}
 					{failed && <p role="alert" className="text-sm text-destructive">Could not update this model profile. Your entries are preserved. Check the fields and try again.</p>}

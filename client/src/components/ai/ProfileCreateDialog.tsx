@@ -8,26 +8,30 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { MessageSquareText } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { ProviderModelField } from "./ProviderModelField";
+import { FailoverProfileField } from "./FailoverProfileField";
 import { providerLabel } from "./providerOptions";
-import type { AIProviderConnection } from "@/services/aiModels";
+import type { AIProviderConnection, AIModelProfile } from "@/services/aiModels";
 
-export function ProfileCreateDialog({ profileCreateOpen, profileName, profileConnectionId, profileModel, profileChatEnabled, profileReady, providers, firstProfile, setProfileName, setProfileConnectionId, setProfileModel, setProfileChatEnabled, pending, error, onClose, onSubmit }: {
- profileCreateOpen: boolean;
- profileName: string;
- profileConnectionId: string;
- profileModel: string;
- profileChatEnabled: boolean;
- profileReady: boolean;
- providers: AIProviderConnection[];
- firstProfile: boolean;
- setProfileName: (value: string) => void;
- setProfileConnectionId: (value: string) => void;
- setProfileModel: (value: string) => void;
- setProfileChatEnabled: (value: boolean) => void;
- pending: boolean;
- error: Error | null;
- onClose: () => void;
- onSubmit: () => void;
+export function ProfileCreateDialog({ profileCreateOpen, profileName, profileConnectionId, profileModel, profileChatEnabled, profileFailoverId, profileReady, providers, profiles, firstProfile, setProfileName, setProfileConnectionId, setProfileModel, setProfileChatEnabled, setProfileFailoverId, pending, error, onClose, onSubmit }: {
+	profileCreateOpen: boolean;
+	profileName: string;
+	profileConnectionId: string;
+	profileModel: string;
+	profileChatEnabled: boolean;
+	profileFailoverId: string | null;
+	profileReady: boolean;
+	providers: AIProviderConnection[];
+	profiles: AIModelProfile[];
+	firstProfile: boolean;
+	setProfileName: (value: string) => void;
+	setProfileConnectionId: (value: string) => void;
+	setProfileModel: (value: string) => void;
+	setProfileChatEnabled: (value: boolean) => void;
+	setProfileFailoverId: (value: string | null) => void;
+	pending: boolean;
+	error: Error | null;
+	onClose: () => void;
+	onSubmit: () => void;
 }) {
  const dialogFocus = useDialogReturnFocus();
 
@@ -97,6 +101,15 @@ export function ProfileCreateDialog({ profileCreateOpen, profileName, profileCon
 								onValueChange={setProfileModel}
 							/>
 						</div>
+						<FailoverProfileField
+							id="ai-profile-failover"
+							profiles={profiles}
+							currentProfileId={null}
+							currentConnectionId={profileConnectionId}
+							value={profileFailoverId}
+							disabled={pending}
+							onChange={setProfileFailoverId}
+						/>
 						<label className="flex items-center justify-between gap-4 rounded-lg border px-3 py-2.5 text-sm">
 							<span>
 								<span className="flex items-center gap-2">
