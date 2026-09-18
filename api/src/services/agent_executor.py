@@ -83,10 +83,13 @@ from src.services.execution.autonomous_agent_executor import (
     ToolError,
 )
 from src.services.knowledge.search_budget import (
+    KNOWLEDGE_FULL_CONTENT_HINT,
     KnowledgeSearchBudget,
+    build_compact_knowledge_document,
     clamp_knowledge_result_limit,
     compact_knowledge_metadata,
     knowledge_search_rejection_payload,
+    parse_knowledge_followup,
     select_novel_knowledge_evidence,
 )
 from src.services.mcp_client import dispatch as mcp_dispatch
@@ -442,6 +445,10 @@ class AgentExecutor:
             # the runtime owns history replay, tool/result sequencing, context
             # compaction, and budget enforcement.
             max_tokens_override = agent.llm_max_tokens if agent else None
+            # The chat profile default travels on llm_client.config
+            # (resolve_chat_profile -> resolve_config); the explicit agent
+            # override wins when set, otherwise the profile default (or the
+            # provider default) applies.
             model_name = model_override
             budget = AgentRunBudget(
                 max_requests=agent.max_iterations if agent else None,
@@ -656,6 +663,7 @@ class AgentExecutor:
                     llm_client.config,
                     max_tokens=max_tokens_override,
                     session_id=str(conversation.id),
+                    agent_kind="worker",
                 ),
                 # Permit one schema/tool-name correction. It is charged to the
                 # same pre-request budget, so a malformed provider response can
@@ -1648,10 +1656,117 @@ class AgentExecutor:
             from src.services.embeddings import get_embedding_client
 
             # Get search parameters
-            query = tool_call.arguments.get("query", "")
+            arguments = tool_call.arguments or {}
+            query = arguments.get("query", "")
             limit = clamp_knowledge_result_limit(
-                tool_call.arguments.get("limit", 5)
+                arguments.get("limit", 5)
             )
+            doc_id, include_full = parse_knowledge_followup(arguments)
+
+            # Get the agent's configured namespaces
+            namespaces = agent.knowledge_sources
+            if not namespaces:
+                return ToolResult(
+                    tool_call_id=tool_call.id,
+                    tool_name=tool_call.name,
+                    result=None,
+                    error="No knowledge sources configured for this agent",
+                    duration_ms=int((time.time() - start_time) * 1000),
+                )
+
+            if doc_id:
+                cached = self._knowledge_search_budget.cached_document(doc_id)
+                if cached is None:
+                    return ToolResult(
+                        tool_call_id=tool_call.id,
+                        tool_name=tool_call.name,
+                        result={
+                            "documents": [],
+                            "count": 0,
+                            "from_cache": False,
+                            "message": (
+                                f"Unknown doc_id '{doc_id}'. Search first, then "
+                                "follow up with a returned document id."
+                            ),
+                        },
+                        error=None,
+                        duration_ms=int((time.time() - start_time) * 1000),
+                    )
+                if not include_full:
+                    return ToolResult(
+                        tool_call_id=tool_call.id,
+                        tool_name=tool_call.name,
+                        result={
+                            "documents": [build_compact_knowledge_document(
+                                doc_id,
+                                content=cached["content"],
+                                namespace=cached["namespace"],
+                                score=cached["score"],
+                                key=cached["key"],
+                                metadata=cached["metadata"],
+                            )],
+                            "count": 1,
+                            "from_cache": True,
+                            "hint": KNOWLEDGE_FULL_CONTENT_HINT,
+                        },
+                        error=None,
+                        duration_ms=int((time.time() - start_time) * 1000),
+                    )
+                full_document = build_compact_knowledge_document(
+                    doc_id,
+                    content=cached["content"],
+                    namespace=cached["namespace"],
+                    score=cached["score"],
+                    key=cached["key"],
+                    metadata=cached["metadata"],
+                    include_full=True,
+                )
+                import json as _json
+
+                claim = self._knowledge_search_budget.claim_evidence(
+                    f"{doc_id}#full",
+                    len(_json.dumps(full_document, default=str, ensure_ascii=False)),
+                )
+                if claim != "accepted":
+                    return ToolResult(
+                        tool_call_id=tool_call.id,
+                        tool_name=tool_call.name,
+                        result={
+                            "documents": [],
+                            "count": 0,
+                            "from_cache": True,
+                            "omitted_for_evidence_budget": (
+                                1 if claim == "evidence_budget_exhausted" else 0
+                            ),
+                            "message": (
+                                "Full document does not fit the remaining "
+                                "evidence envelope. Synthesize from the excerpt "
+                                "already returned."
+                            ),
+                            "evidence_chars_remaining": (
+                                self._knowledge_search_budget.evidence_chars_remaining
+                            ),
+                        },
+                        error=None,
+                        duration_ms=int((time.time() - start_time) * 1000),
+                    )
+                return ToolResult(
+                    tool_call_id=tool_call.id,
+                    tool_name=tool_call.name,
+                    result={
+                        "documents": [full_document],
+                        "count": 1,
+                        "from_cache": True,
+                        "evidence_chars_used": (
+                            self._knowledge_search_budget.evidence_chars_used
+                        ),
+                        "evidence_chars_remaining": (
+                            self._knowledge_search_budget.evidence_chars_remaining
+                        ),
+                    },
+                    error=None,
+                    duration_ms=int((time.time() - start_time) * 1000),
+                )
 
             if not query:
                 return ToolResult(
@@ -1703,24 +1818,34 @@ class AgentExecutor:
 
             duration_ms = int((time.time() - start_time) * 1000)
 
+            # Compact default: cache the full payload, send only the excerpt.
+            compacted: list[tuple[str, dict[str, Any]]] = []
+            for doc in results:
+                score = round(doc.score, 4) if doc.score is not None else None
+                metadata = compact_knowledge_metadata(doc.metadata)
+                self._knowledge_search_budget.cache_document(doc.id, {
+                    "content": doc.content,
+                    "namespace": doc.namespace,
+                    "score": score,
+                    "key": doc.key,
+                    "metadata": metadata,
+                })
+                compacted.append((
+                    doc.id,
+                    build_compact_knowledge_document(
+                        doc.id,
+                        content=doc.content,
+                        namespace=doc.namespace,
+                        score=score,
+                        key=doc.key,
+                        metadata=metadata,
+                        include_full=include_full,
+                    ),
+                ))
             # Format results for the agent
             evidence = select_novel_knowledge_evidence(
                 self._knowledge_search_budget,
-                [
-                    (
-                        doc.id,
-                        {
-                            "content": doc.content,
-                            "namespace": doc.namespace,
-                            "score": round(doc.score, 4)
-                            if doc.score is not None
-                            else None,
-                            "key": doc.key,
-                            "metadata": compact_knowledge_metadata(doc.metadata),
-                        },
-                    )
-                    for doc in results
-                ],
+                compacted,
             )
 
             return ToolResult(
@@ -1729,6 +1854,9 @@ class AgentExecutor:
                 result={
                     "documents": evidence.documents,
                     "count": len(evidence.documents),
+                    "compact": True,
+                    "hint": KNOWLEDGE_FULL_CONTENT_HINT,
+                    "from_cache": False,
                     "omitted_duplicate_evidence": evidence.omitted_duplicates,
                     "omitted_for_evidence_budget": evidence.omitted_for_budget,
                     "searches_used": decision.searches_used,

@@ -98,6 +98,7 @@ def _profile_response(profile: AIModelProfile) -> AIModelProfileResponse:
         model=profile.model,
         capabilities=capabilities,
         enabled_for_chat=profile.enabled_for_chat,
+        default_max_tokens=profile.default_max_tokens,
         connection=_connection_summary(profile.connection),
         assignment_keys=[assignment.assignment_key for assignment in profile.assignments],
         referenced_agent_count=len(profile.agents),
@@ -267,6 +268,7 @@ async def create_model_profile(
             model=request.model,
             capabilities=request.capabilities,
             enabled_for_chat=request.enabled_for_chat,
+            default_max_tokens=request.default_max_tokens,
         )
         await db.commit()
         return _profile_response(await service.get_profile(profile.id))
@@ -319,6 +321,8 @@ async def update_model_profile(
             capabilities=request.capabilities,
             capabilities_provided="capabilities" in request.model_fields_set,
             enabled_for_chat=request.enabled_for_chat,
+            default_max_tokens=request.default_max_tokens,
+            default_max_tokens_provided="default_max_tokens" in request.model_fields_set,
         )
         await db.commit()
         return _profile_response(await service.get_profile(profile.id))

@@ -107,6 +107,11 @@ class AIModelService:
         if existing:
             raise ValueError("Model profile name already exists")
 
+    @staticmethod
+    def _validate_default_max_tokens(value: int | None) -> None:
+        if value is not None and not 1 <= value <= 200000:
+            raise ValueError("Profile default_max_tokens must be between 1 and 200000")
+
     def normalize_endpoint(
         self, provider: AIProviderKind, endpoint: str | None
     ) -> str | None:
@@ -235,6 +240,7 @@ class AIModelService:
             openai_transport=openai_transport,
             provider_connection_id=connection.id,
             anthropic_prompt_cache_supported=connection.anthropic_prompt_cache_supported,
+            default_max_tokens=profile.default_max_tokens,
         )
 
     async def list_chat_profiles(self) -> tuple[list[AIModelProfile], UUID | None]:
@@ -483,6 +489,7 @@ class AIModelService:
         model: str,
         capabilities: ModelCapabilities | None,
         enabled_for_chat: bool,
+        default_max_tokens: int | None = None,
     ) -> AIModelProfile:
         trimmed_name = name.strip()
         trimmed_model = model.strip()
@@ -490,6 +497,7 @@ class AIModelService:
             raise ValueError("Model profile name is required")
         if not trimmed_model:
             raise ValueError("Model id is required")
+        self._validate_default_max_tokens(default_max_tokens)
         await self._ensure_unique_profile_name(trimmed_name)
         await self.get_connection(connection_id)
         is_first_profile = (
@@ -501,6 +509,7 @@ class AIModelService:
             model=trimmed_model,
             capabilities=capabilities.model_dump(mode="json") if capabilities else None,
             enabled_for_chat=enabled_for_chat or is_first_profile,
+            default_max_tokens=default_max_tokens,
         )
         self.session.add(profile)
         await self.session.flush()
@@ -534,6 +543,8 @@ class AIModelService:
         capabilities: ModelCapabilities | None = None,
         capabilities_provided: bool = False,
         enabled_for_chat: bool | None = None,
+        default_max_tokens: int | None = None,
+        default_max_tokens_provided: bool = False,
     ) -> AIModelProfile:
         profile = await self.get_profile(profile_id)
         if name is not None:
@@ -556,6 +567,9 @@ class AIModelService:
             profile.capabilities = (
                 capabilities.model_dump(mode="json") if capabilities else None
             )
+        if default_max_tokens_provided:
+            self._validate_default_max_tokens(default_max_tokens)
+            profile.default_max_tokens = default_max_tokens
         if enabled_for_chat is not None:
             if not enabled_for_chat and await self._profile_has_assignment(
                 profile.id, "chat_default"

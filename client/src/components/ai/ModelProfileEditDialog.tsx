@@ -13,6 +13,7 @@ export interface ModelProfileEditDraft {
  name: string;
  connectionId: string;
  model: string;
+ defaultMaxTokens: number | null;
 }
 
 export function ModelProfileEditDialog({ profileEdit, providers, providerLabel, pending, failed, onChange, onClose, onSave }: {
@@ -88,18 +89,42 @@ export function ModelProfileEditDialog({ profileEdit, providers, providerLabel, 
 									</SelectContent>
 								</Select>
 							</div>
-							<ProviderModelField
-								disabled={pending}
-								id="edit-profile-model"
-								connectionId={profileEdit.connectionId}
-								value={profileEdit.model}
-								onValueChange={(model) =>
+						<ProviderModelField
+							disabled={pending}
+							id="edit-profile-model"
+							connectionId={profileEdit.connectionId}
+							value={profileEdit.model}
+							onValueChange={(model) =>
+								onChange({
+									...profileEdit,
+									model,
+								})
+							}
+						/>
+						<div className="space-y-2">
+							<Label htmlFor="edit-profile-max-tokens">Default max output tokens</Label>
+							<Input
+								id="edit-profile-max-tokens"
+								type="number"
+								min={1}
+								max={200000}
+								placeholder="Provider default"
+								value={profileEdit.defaultMaxTokens ?? ""}
+								onChange={(event) => {
+									const raw = event.target.value;
+									if (raw === "") {
+										onChange({ ...profileEdit, defaultMaxTokens: null });
+										return;
+									}
+									const parsed = Number.parseInt(raw, 10);
 									onChange({
 										...profileEdit,
-										model,
-									})
-								}
+										defaultMaxTokens: Number.isNaN(parsed) ? null : parsed,
+									});
+								}}
 							/>
+							<p className="text-xs text-muted-foreground">Blank = provider default. Agents with an explicit value win over this.</p>
+						</div>
 						</fieldset>
 					)}
 					{failed && <p role="alert" className="text-sm text-destructive">Could not update this model profile. Your entries are preserved. Check the fields and try again.</p>}

@@ -68,6 +68,7 @@ class AIModelProfile(Base):
     )
     model: Mapped[str] = mapped_column(String(200), nullable=False)
     openai_transport: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    default_max_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     capabilities: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     enabled_for_chat: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(
@@ -90,6 +91,10 @@ class AIModelProfile(Base):
         CheckConstraint(
             "openai_transport IS NULL OR openai_transport IN ('responses', 'chat_completions')",
             name="ck_ai_model_profiles_openai_transport",
+        ),
+        CheckConstraint(
+            "default_max_tokens IS NULL OR (default_max_tokens >= 1 AND default_max_tokens <= 200000)",
+            name="ck_ai_model_profiles_default_max_tokens_range",
         ),
         Index("uq_ai_model_profiles_name_ci", text("lower(name)"), unique=True),
         Index("ix_ai_model_profiles_connection_id", "connection_id"),

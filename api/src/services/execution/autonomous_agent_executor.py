@@ -54,13 +54,17 @@ from src.services.agent_runtime import (
     create_agent_model,
     provider_reported_cost,
 )
+from src.services.agent_runtime.empty_output import EmptyOutputCircuitBreaker
 from src.services.llm import ToolCallRequest
 from src.services.llm.factory import get_llm_config
 from src.services.knowledge.search_budget import (
+    KNOWLEDGE_FULL_CONTENT_HINT,
     KnowledgeSearchBudget,
+    build_compact_knowledge_document,
     clamp_knowledge_result_limit,
     compact_knowledge_metadata,
     knowledge_search_rejection_payload,
+    parse_knowledge_followup,
     select_novel_knowledge_evidence,
 )
 from src.services.mcp_client import dispatch as mcp_dispatch
@@ -380,6 +384,14 @@ class AutonomousAgentExecutor:
             event_handler=record_tool_event,
             toolset_id=f"bifrost-{agent.id}",
         )
+        # Blank / repetitive no-tool completions are billed like real output
+        # (observed: 131072 output tokens with zero visible content and zero
+        # tool calls). Pydantic AI treats them as valid final output, so the
+        # breaker below rejects the first one via ModelRetry with a tightened
+        # output cap, then forces a durable handoff instead of stalling.
+        # Usage for every attempt — including rejected ones — is already
+        # charged to the shared UsageLimits ledger by ObservedModel.
+        empty_output_guard = EmptyOutputCircuitBreaker()
         runtime = PydanticAgent(
             observed_model,
             system_prompt=build_agent_system_prompt(
@@ -387,11 +399,18 @@ class AutonomousAgentExecutor:
                 execution_context={"mode": "autonomous"},
             ),
             toolsets=[toolset] if tool_definitions else [],
-            capabilities=build_runtime_capabilities(budget),
+            capabilities=[
+                *build_runtime_capabilities(budget),
+                empty_output_guard,
+            ],
             model_settings=agent_model_settings(
                 llm_config,
                 max_tokens=agent.llm_max_tokens,
                 session_id=run_id,
+                # llm_config already carries the resolved profile's
+                # default_max_tokens; agent.llm_max_tokens wins when set,
+                # otherwise the profile default (or provider default) applies.
+                agent_kind="worker",
             ),
             # One bounded correction for malformed tool names/arguments. The
             # shared UsageLimits ledger charges the retry to the parent run.
@@ -414,6 +433,21 @@ class AutonomousAgentExecutor:
                 conversation_id=run_id,
             )
             final_content = result.output
+            if empty_output_guard.handoff_triggered:
+                step_number += 1
+                await self._record_step(
+                    run_id,
+                    step_number,
+                    "budget_warning",
+                    {
+                        "tokens_used": usage.total_tokens - usage_start_tokens,
+                        "max_tokens": max_tokens,
+                        "iterations_used": usage.requests - usage_start_requests,
+                        "max_iterations": max_iterations,
+                        "reason": empty_output_guard.handoff_reason,
+                        "fallbacks_used": empty_output_guard.fallbacks_used,
+                    },
+                )
         except AgentRunCancelled as exc:
             status = "cancelled"
             error = str(exc)
@@ -427,11 +461,27 @@ class AutonomousAgentExecutor:
         except UsageLimitExceeded as exc:
             status = "budget_exceeded"
             error = str(exc)
-            final_content = last_response_content or (
-                "I reached this run's limit before I could finish. Completed "
-                "tool results and run steps were preserved so the work can "
-                "resume without starting over."
-            )
+            # A single blank completion can already exceed the token budget
+            # (observed: 131072 output tokens, zero visible content), in which
+            # case the guard's ModelRetry never gets a second request — the
+            # pre-request ledger guard rejects it first. That is still a
+            # durable handoff, but the message names the blank response so
+            # ownership does not stall on a generic budget note.
+            if not last_response_content and empty_output_guard.saw_empty_response:
+                final_content = (
+                    "I stopped here because the model returned an empty "
+                    "response without calling a tool, and the billed output "
+                    "exhausted this run's budget before a retry was possible. "
+                    "Completed tool results and run steps are preserved in "
+                    "this run. A human should review the goal and either "
+                    "retry with narrower instructions or continue manually."
+                )
+            else:
+                final_content = last_response_content or (
+                    "I reached this run's limit before I could finish. Completed "
+                    "tool results and run steps were preserved so the work can "
+                    "resume without starting over."
+                )
             step_number += 1
             await self._record_step(
                 run_id,
@@ -443,6 +493,7 @@ class AutonomousAgentExecutor:
                     "iterations_used": usage.requests - usage_start_requests,
                     "max_iterations": max_iterations,
                     "reason": "runtime_budget_exceeded",
+                    "empty_response_seen": empty_output_guard.saw_empty_response,
                 },
             )
         except Exception as exc:
@@ -674,22 +725,94 @@ class AutonomousAgentExecutor:
         return json.dumps(envelope, default=str)
 
     async def _execute_knowledge_search(self, tool_call: ToolCallRequest, agent: Agent) -> str:
-        """Execute knowledge search using the agent's configured namespaces."""
+        """Execute knowledge search using the agent's configured namespaces.
+
+        Compact default: ranked id + title + confidence + bounded excerpt.
+        Full document content requires an explicit follow-up
+        (``doc_id`` + ``include_full_content=true``) served from the run
+        cache, so the 40K envelope stays a ceiling rather than the norm.
+        """
         try:
             from src.repositories.knowledge import KnowledgeRepository
             from src.services.embeddings import get_embedding_client
 
-            query = tool_call.arguments.get("query", "")
+            arguments = tool_call.arguments or {}
+            query = arguments.get("query", "")
             limit = clamp_knowledge_result_limit(
-                tool_call.arguments.get("limit", 5)
+                arguments.get("limit", 5)
             )
-
-            if not query:
-                return "No query provided for knowledge search"
+            doc_id, include_full = parse_knowledge_followup(arguments)
 
             namespaces = agent.knowledge_sources
             if not namespaces:
                 return "No knowledge sources configured for this agent"
+
+            if doc_id:
+                cached = self._knowledge_search_budget.cached_document(doc_id)
+                if cached is None:
+                    return json.dumps({
+                        "documents": [],
+                        "count": 0,
+                        "from_cache": False,
+                        "message": (
+                            f"Unknown doc_id '{doc_id}'. Search first, then "
+                            "follow up with a returned document id."
+                        ),
+                    })
+                if not include_full:
+                    return json.dumps({
+                        "documents": [build_compact_knowledge_document(
+                            doc_id,
+                            content=cached["content"],
+                            namespace=cached["namespace"],
+                            score=cached["score"],
+                            key=cached["key"],
+                            metadata=cached["metadata"],
+                        )],
+                        "count": 1,
+                        "from_cache": True,
+                        "hint": KNOWLEDGE_FULL_CONTENT_HINT,
+                    })
+                full_document = build_compact_knowledge_document(
+                    doc_id,
+                    content=cached["content"],
+                    namespace=cached["namespace"],
+                    score=cached["score"],
+                    key=cached["key"],
+                    metadata=cached["metadata"],
+                    include_full=True,
+                )
+                claim = self._knowledge_search_budget.claim_evidence(
+                    f"{doc_id}#full",
+                    len(json.dumps(full_document, default=str, ensure_ascii=False)),
+                )
+                if claim != "accepted":
+                    return json.dumps({
+                        "documents": [],
+                        "count": 0,
+                        "from_cache": True,
+                        "omitted_for_evidence_budget": 1 if claim == "evidence_budget_exhausted" else 0,
+                        "message": (
+                            "Full document does not fit the remaining "
+                            "evidence envelope. Synthesize from the excerpt "
+                            "already returned."
+                        ),
+                        "evidence_chars_remaining": (
+                            self._knowledge_search_budget.evidence_chars_remaining
+                        ),
+                    })
+                return json.dumps({
+                    "documents": [full_document],
+                    "count": 1,
+                    "from_cache": True,
+                    "evidence_chars_used": self._knowledge_search_budget.evidence_chars_used,
+                    "evidence_chars_remaining": (
+                        self._knowledge_search_budget.evidence_chars_remaining
+                    ),
+                })
+
+            if not query:
+                return "No query provided for knowledge search"
 
             decision = self._knowledge_search_budget.reserve(query)
             if not decision.allowed:
@@ -714,28 +837,41 @@ class AutonomousAgentExecutor:
             if not results:
                 return "No relevant knowledge found."
 
+            # Compact default: cache the full payload, send only the excerpt.
+            compacted: list[tuple[str, dict[str, Any]]] = []
+            for doc in results:
+                score = round(doc.score, 4) if doc.score is not None else None
+                metadata = compact_knowledge_metadata(doc.metadata)
+                self._knowledge_search_budget.cache_document(doc.id, {
+                    "content": doc.content,
+                    "namespace": doc.namespace,
+                    "score": score,
+                    "key": doc.key,
+                    "metadata": metadata,
+                })
+                compacted.append((
+                    doc.id,
+                    build_compact_knowledge_document(
+                        doc.id,
+                        content=doc.content,
+                        namespace=doc.namespace,
+                        score=score,
+                        key=doc.key,
+                        metadata=metadata,
+                        include_full=include_full,
+                    ),
+                ))
             # Format results
             evidence = select_novel_knowledge_evidence(
                 self._knowledge_search_budget,
-                [
-                    (
-                        doc.id,
-                        {
-                            "content": doc.content,
-                            "namespace": doc.namespace,
-                            "score": round(doc.score, 4)
-                            if doc.score is not None
-                            else None,
-                            "key": doc.key,
-                            "metadata": compact_knowledge_metadata(doc.metadata),
-                        },
-                    )
-                    for doc in results
-                ],
+                compacted,
             )
             return json.dumps({
                 "documents": evidence.documents,
                 "count": len(evidence.documents),
+                "compact": True,
+                "hint": KNOWLEDGE_FULL_CONTENT_HINT,
+                "from_cache": False,
                 "omitted_duplicate_evidence": evidence.omitted_duplicates,
                 "omitted_for_evidence_budget": evidence.omitted_for_budget,
                 "searches_used": decision.searches_used,

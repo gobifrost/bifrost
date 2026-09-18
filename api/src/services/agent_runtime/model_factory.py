@@ -4,13 +4,14 @@ Provider SDK imports stay inside the selected branch. This preserves the worker 
 scheduler import boundary while giving every agent surface one model abstraction.
 """
 
+from dataclasses import replace
 from decimal import Decimal, InvalidOperation
 
 from pydantic_ai.models import Model, infer_model
 from pydantic_ai.usage import RequestUsage
 
 from src.services.agent_runtime.retry_transport import get_ai_retry_http_client
-from src.services.llm.base import LLMConfig, request_max_tokens
+from src.services.llm.base import LLMConfig, is_deepseek_family, request_max_tokens
 from src.services.model_pricing import is_openrouter_endpoint
 
 
@@ -25,11 +26,18 @@ def agent_model_settings(
     *,
     max_tokens: int | None,
     session_id: str,
+    agent_kind: str | None = None,
 ) -> dict[str, object]:
-    """Build per-run settings, including OpenRouter sticky cache routing."""
+    """Build per-run settings, including OpenRouter sticky cache routing.
+
+    ``max_tokens`` is the explicit agent override (Agent.llm_max_tokens); the
+    profile default travels on ``config.default_max_tokens`` — see
+    ``request_max_tokens``. ``agent_kind`` is accepted for backward
+    compatibility but ignored (no generic per-kind fallbacks).
+    """
 
     settings: dict[str, object] = {}
-    resolved_max_tokens = request_max_tokens(config, max_tokens)
+    resolved_max_tokens = request_max_tokens(config, max_tokens, agent_kind=agent_kind)
     if resolved_max_tokens is not None:
         settings["max_tokens"] = resolved_max_tokens
     if is_openrouter_endpoint(config.endpoint):
@@ -178,7 +186,32 @@ def create_agent_model(config: LLMConfig, *, model: str | None = None) -> Model:
             max_retries=0,
         )
         provider = OpenAIProvider(openai_client=client)
-        if config.openai_transport == "chat_completions":
+        # Match the family guard against the actually-requested model, which
+        # may be an override rather than the profile's configured model.
+        effective_config = (
+            config if model_name == config.model else replace(config, model=model_name)
+        )
+        deepseek_direct = is_deepseek_family(
+            effective_config
+        ) and not is_openrouter_endpoint(config.endpoint)
+        if config.openai_transport == "chat_completions" or deepseek_direct:
+            # DeepSeek exposes Chat Completions only: force the chat adapter
+            # even when transport auto-detection picked (or would pick) the
+            # Responses API, and force the legacy plain ``max_tokens`` wire
+            # field. Pydantic AI maps generic ``max_tokens`` to
+            # ``max_completion_tokens`` on OpenAI-family paths, which DeepSeek
+            # rejects — the OpenRouter gateway already forces ``max_tokens``
+            # via its provider profile; direct DeepSeek needs the same here.
+            if deepseek_direct:
+                from pydantic_ai.profiles import ModelProfile
+
+                return OpenAIChatModel(
+                    model_name,
+                    provider=provider,
+                    profile=ModelProfile(
+                        openai_chat_supports_max_completion_tokens=False
+                    ),
+                )
             return OpenAIChatModel(model_name, provider=provider)
         return infer_model(
             f"openai:{model_name}",

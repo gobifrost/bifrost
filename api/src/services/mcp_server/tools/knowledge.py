@@ -11,7 +11,12 @@ from fastmcp.tools import ToolResult
 
 from src.services.mcp_server.tool_result import error_result, success_result
 from src.services.mcp_server.tools.db import get_tool_db
-from src.services.knowledge.search_budget import clamp_knowledge_result_limit
+from src.services.knowledge.search_budget import (
+    KNOWLEDGE_FULL_CONTENT_HINT,
+    build_compact_knowledge_document,
+    clamp_knowledge_result_limit,
+    compact_knowledge_metadata,
+)
 
 # MCPContext is imported where needed to avoid circular imports
 
@@ -23,14 +28,22 @@ async def search_knowledge(
     query: str,
     namespace: str | None = None,
     limit: int = 5,
+    include_full_content: bool = False,
+    doc_id: str | None = None,
 ) -> ToolResult:
     """Search the knowledge base.
+
+    Compact default: ranked id + title + confidence + bounded excerpt. Pass
+    ``include_full_content=True`` (optionally with a ``doc_id`` from a prior
+    search) to receive full document content.
 
     Args:
         context: MCP context with user permissions
         query: Search query text
         namespace: Optional specific namespace to search (must be accessible)
         limit: Maximum number of results
+        include_full_content: Return full content instead of excerpts
+        doc_id: Reserved for agent run-cache follow-ups (ignored here)
     """
     from src.repositories.knowledge import KnowledgeRepository
     from src.services.embeddings import get_embedding_client
@@ -99,14 +112,24 @@ async def search_knowledge(
 
             result_data = []
             for doc in results:
-                result_data.append({
-                    "namespace": doc.namespace,
-                    "content": doc.content,
-                    "score": doc.score,
-                })
+                metadata = compact_knowledge_metadata(doc.metadata or {})
+                result_data.append(build_compact_knowledge_document(
+                    doc.id,
+                    content=doc.content,
+                    namespace=doc.namespace,
+                    score=doc.score,
+                    key=getattr(doc, "key", None),
+                    metadata=metadata,
+                    include_full=include_full_content,
+                ))
 
             display_text = f"Found {len(result_data)} result(s) for '{query}'"
-            return success_result(display_text, {"results": result_data, "count": len(result_data)})
+            return success_result(display_text, {
+                "results": result_data,
+                "count": len(result_data),
+                "compact": True,
+                "hint": KNOWLEDGE_FULL_CONTENT_HINT,
+            })
 
     except Exception as e:
         logger.exception(f"Error searching knowledge via MCP: {e}")
@@ -120,8 +143,9 @@ TOOLS = [
         "Search Knowledge",
         (
             "Hybrid-search the Bifrost knowledge base. Returns at most 5 "
-            "deduplicated results; use materially different queries for "
-            "follow-up searches."
+            "compact results (id + title + confidence + bounded excerpt); "
+            "pass include_full_content=true for full content and use "
+            "materially different queries for follow-up searches."
         ),
     ),
 ]

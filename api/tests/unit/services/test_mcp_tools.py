@@ -338,9 +338,49 @@ class TestSearchKnowledge:
         data = result.structured_content
         assert "results" in data
         assert len(data["results"]) == 1
-        assert data["results"][0]["content"] == "This is documentation about the SDK"
+        # Compact default: excerpt served, full content withheld.
+        assert data["compact"] is True
+        assert data["results"][0]["excerpt"] == "This is documentation about the SDK"
+        assert data["results"][0]["title"] == "SDK Guide"
+        assert data["results"][0]["confidence"] == 0.85
+        assert "content" not in data["results"][0]
         assert data["count"] == 1
         assert mock_repo.search.await_args.kwargs["query_text"] == "SDK documentation"
+
+    @pytest.mark.asyncio
+    async def test_full_content_requires_explicit_flag(
+        self, org_user_context, mock_knowledge_document
+    ):
+        """include_full_content=true returns the full document content."""
+        org_user_context.accessible_namespaces = ["test-namespace"]
+
+        with patch("src.core.database.get_db_context") as mock_db_ctx:
+            mock_session = AsyncMock()
+            mock_db_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            with patch(
+                "src.services.embeddings.get_embedding_client"
+            ) as mock_embed_client:
+                mock_client = AsyncMock()
+                mock_client.embed_single = AsyncMock(return_value=[0.1, 0.2, 0.3])
+                mock_embed_client.return_value = mock_client
+
+                with patch(
+                    "src.repositories.knowledge.KnowledgeRepository"
+                ) as mock_repo_cls:
+                    mock_repo = MagicMock()
+                    mock_repo.search = AsyncMock(return_value=[mock_knowledge_document])
+                    mock_repo_cls.return_value = mock_repo
+
+                    result = await search_knowledge(
+                        org_user_context,
+                        "SDK documentation",
+                        include_full_content=True,
+                    )
+
+        data = result.structured_content
+        assert data["results"][0]["content"] == "This is documentation about the SDK"
 
     @pytest.mark.asyncio
     async def test_returns_no_results_message(self, org_user_context):

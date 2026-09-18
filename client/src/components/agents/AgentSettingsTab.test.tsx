@@ -8,6 +8,9 @@ import { AgentSettingsTab } from "./AgentSettingsTab";
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderWithProviders, screen, waitFor } from "@/test-utils";
+import {
+	resolveInheritedMaxTokens,
+} from "./AgentSettingsTab";
 
 vi.mock("@/lib/api-client", async () => {
 	const actual =
@@ -72,6 +75,18 @@ vi.mock("@/hooks/useRoles", () => ({
 vi.mock("@/hooks/useKnowledge", () => ({
 	useKnowledgeNamespaces: () => ({ data: [] }),
 }));
+
+const mockListModelProfiles = vi.hoisted(() => vi.fn());
+vi.mock("@/services/aiModels", async () => {
+	const actual =
+		await vi.importActual<typeof import("@/services/aiModels")>(
+			"@/services/aiModels",
+		);
+	return {
+		...actual,
+		listModelProfiles: mockListModelProfiles,
+	};
+});
 vi.mock("@/components/ai/ModelProfileSelector", () => ({
 	ModelProfileSelector: ({
 		label,
@@ -104,6 +119,8 @@ beforeEach(() => {
 	mockToolsGrouped.mockReturnValue({
 		data: { system: [], workflow: [] },
 	});
+	mockListModelProfiles.mockReset();
+	mockListModelProfiles.mockResolvedValue([]);
 	mockRolesQuery.mockReset();
 	mockRolesQuery.mockReturnValue({
 		data: [],
@@ -233,6 +250,146 @@ describe("AgentSettingsTab — edit mode", () => {
 		expect(
 			screen.getByText("Optional cumulative limit (1k–1M tokens)."),
 		).toBeInTheDocument();
+	});
+
+	it("shows the inherit helper for max tokens per response", async () => {
+		mockAuth.mockReturnValue({ isPlatformAdmin: true });
+		await renderTab({ mode: "edit", agent: existingAgent });
+		expect(
+			screen.getByText("Blank = inherit. Agent value wins when set."),
+		).toBeInTheDocument();
+	});
+});
+
+describe("AgentSettingsTab — inherited max tokens", () => {
+	const profileWithDefault = {
+		id: "profile-support",
+		name: "Support profile",
+		connection_id: "connection-1",
+		model: "gpt-5-mini",
+		capabilities: null,
+		enabled_for_chat: true,
+		default_max_tokens: 8000,
+		connection: {
+			id: "connection-1",
+			name: "Default",
+			provider: "openai",
+			endpoint: null,
+		},
+		assignment_keys: [],
+		referenced_agent_count: 0,
+		created_at: "2026-08-22T00:00:00Z",
+		updated_at: "2026-08-22T00:00:00Z",
+	};
+
+	it("shows the Inherit placeholder when no profile default exists", async () => {
+		mockAuth.mockReturnValue({ isPlatformAdmin: true });
+		mockListModelProfiles.mockResolvedValue([]);
+		await renderTab({ mode: "edit", agent: existingAgent });
+		const input = await screen.findByLabelText(/max tokens \/ response/i);
+		expect(input).toHaveAttribute("placeholder", "Inherit");
+		expect(
+			screen.queryByTestId("profile-default-max-tokens"),
+		).not.toBeInTheDocument();
+	});
+
+	it("shows the profile placeholder and profile default when selected", async () => {
+		mockAuth.mockReturnValue({ isPlatformAdmin: true });
+		mockListModelProfiles.mockResolvedValue([profileWithDefault]);
+		const { user } = await renderTab({
+			mode: "edit",
+			agent: existingAgent,
+		});
+		await user.selectOptions(
+			screen.getByLabelText(/model profile/i),
+			"profile-support",
+		);
+		const input = await screen.findByPlaceholderText("8,000 (profile)");
+		expect(input).toHaveAttribute("placeholder", "8,000 (profile)");
+		expect(
+			screen.getByTestId("profile-default-max-tokens"),
+		).toHaveTextContent("Profile default: 8,000");
+	});
+
+	it("sends null when the agent field is cleared back to inherit", async () => {
+		mockAuth.mockReturnValue({ isPlatformAdmin: true });
+		mockListModelProfiles.mockResolvedValue([profileWithDefault]);
+		const { user } = await renderTab({
+			mode: "edit",
+			agent: {
+				...existingAgent,
+				llm_profile_id: "profile-support",
+				llm_max_tokens: 4000,
+			},
+		});
+		const input = (await screen.findByLabelText(
+			/max tokens \/ response/i,
+		)) as HTMLInputElement;
+		expect(input.value).toBe("4000");
+		await user.clear(input);
+		expect(input.value).toBe("");
+		await user.click(screen.getByRole("button", { name: /save changes/i }));
+		await waitFor(() => {
+			expect(mockUpdateMutation).toHaveBeenCalledTimes(1);
+		});
+		expect(
+			mockUpdateMutation.mock.calls[0][0].body.llm_max_tokens,
+		).toBeNull();
+	});
+
+	it("sends the explicit agent value when set", async () => {
+		mockAuth.mockReturnValue({ isPlatformAdmin: true });
+		mockListModelProfiles.mockResolvedValue([]);
+		const { user } = await renderTab({
+			mode: "edit",
+			agent: existingAgent,
+		});
+		const input = await screen.findByLabelText(/max tokens \/ response/i);
+		await user.type(input, "4000");
+		await user.click(screen.getByRole("button", { name: /save changes/i }));
+		await waitFor(() => {
+			expect(mockUpdateMutation).toHaveBeenCalledTimes(1);
+		});
+		expect(
+			mockUpdateMutation.mock.calls[0][0].body.llm_max_tokens,
+		).toBe(4000);
+	});
+
+	it("resolves precedence profile > provider default, no generic default", () => {
+		const anthropicProfile = {
+			id: "profile-anthropic",
+			name: "Anthropic profile",
+			connection_id: "connection-2",
+			model: "claude-sonnet-4-5",
+			connection: {
+				id: "connection-2",
+				name: "Anthropic",
+				provider: "anthropic",
+				endpoint: null,
+			},
+		};
+		// Agent value wins is handled by the form (explicit input); the
+		// resolver covers the inherit chain below it.
+		expect(
+			resolveInheritedMaxTokens({
+				...anthropicProfile,
+				default_max_tokens: 8000,
+			} as never),
+		).toEqual({ value: 8000, source: "profile" });
+		// No generic harness default: empty means inherit (provider default).
+		expect(resolveInheritedMaxTokens(null)).toBeNull();
+		expect(
+			resolveInheritedMaxTokens(anthropicProfile as never, {
+				harnessDefault: null,
+			}),
+		).toEqual({ value: 16384, source: "Anthropic" });
+		expect(
+			resolveInheritedMaxTokens(null, { harnessDefault: null }),
+		).toBeNull();
+		// Explicit harnessDefault opt still honored for backward compat.
+		expect(
+			resolveInheritedMaxTokens(null, { harnessDefault: 8000 }),
+		).toEqual({ value: 8000, source: "default" });
 	});
 });
 

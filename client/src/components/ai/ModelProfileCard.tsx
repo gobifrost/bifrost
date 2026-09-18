@@ -29,11 +29,12 @@ export function ModelProfileCard({ profile, description, assignments, selectionM
 			<CardDescription className="min-w-0 [overflow-wrap:anywhere]">{description}</CardDescription>
 		</CardHeader>
 		<CardContent className="space-y-4">
-			{(profile.enabled_for_chat || isDefault || assignments.length > 0) && <div className="flex flex-wrap gap-2">
-				{profile.enabled_for_chat && <Badge variant="secondary"><MessageSquareText className="size-3" />Chat</Badge>}
-				{isDefault && <Badge><CheckCircle2 className="size-3" />Default</Badge>}
-				{assignments.map((name) => <Badge key={name} variant="outline" className="h-auto whitespace-normal [overflow-wrap:anywhere]">{name}</Badge>)}
-			</div>}
+		{(profile.enabled_for_chat || isDefault || assignments.length > 0 || (profile as { default_max_tokens?: number | null }).default_max_tokens != null) && <div className="flex flex-wrap gap-2">
+			{profile.enabled_for_chat && <Badge variant="secondary"><MessageSquareText className="size-3" />Chat</Badge>}
+			{isDefault && <Badge><CheckCircle2 className="size-3" />Default</Badge>}
+			{(profile as { default_max_tokens?: number | null }).default_max_tokens != null && <Badge variant="outline" className="h-auto whitespace-normal">Default cap {(profile as { default_max_tokens?: number | null }).default_max_tokens?.toLocaleString()}</Badge>}
+			{assignments.map((name) => <Badge key={name} variant="outline" className="h-auto whitespace-normal [overflow-wrap:anywhere]">{name}</Badge>)}
+		</div>}
 			<div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 border-t pt-3">
 				<label className="flex min-h-11 cursor-pointer items-center gap-3 text-sm"><Switch checked={profile.enabled_for_chat} disabled={selectionMode || chatPending} onCheckedChange={onChatChange} aria-label={`Enable ${profile.name} for Chat`} />Enabled for Chat</label>
 				<Button type="button" variant="outline" className="min-h-11" disabled={selectionMode || isDefault || defaultDisabled} onClick={onSetDefault}>{defaultPending ? <><Loader2 className="size-4 animate-spin motion-reduce:animate-none" />Saving…</> : isDefault ? <><CheckCircle2 className="size-4" />Default</> : "Set Default"}</Button>

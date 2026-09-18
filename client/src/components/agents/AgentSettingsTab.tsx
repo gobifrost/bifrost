@@ -69,6 +69,11 @@ import {
 } from "@/components/agents/design-tokens";
 
 import { useAuth } from "@/contexts/AuthContext";
+import { useQuery } from "@tanstack/react-query";
+import {
+	listModelProfiles,
+	type AIModelProfile,
+} from "@/services/aiModels";
 import {
 	useAgents,
 	useCreateAgent,
@@ -115,6 +120,60 @@ const formSchema = z.object({
 });
 
 type FormValues = z.infer<typeof formSchema>;
+
+/**
+ * Inherited `llm_max_tokens` hint shown when the agent field is empty.
+ * Mirrors the backend precedence Agent.llm_max_tokens >
+ * Profile.default_max_tokens > provider default (Anthropic requires 16,384).
+ * There is NO generic harness default: empty means inherit, and a null
+ * resolution renders the "Inherit" placeholder.
+ *
+ * @deprecated Kept for backward compatibility only. It is no longer used as
+ * the default — do not reintroduce it into the inherit chain.
+ */
+export const HARNESS_DEFAULT_MAX_TOKENS = 8000;
+export const ANTHROPIC_REQUIRED_MAX_TOKENS = 16384;
+
+export type InheritedMaxTokensSource = "profile" | "default" | "Anthropic";
+export interface InheritedMaxTokens {
+	value: number;
+	source: InheritedMaxTokensSource;
+}
+
+/** Profile shape with the parallel-backend `default_max_tokens` field. */
+export type ModelProfileWithMaxTokens = AIModelProfile & {
+	default_max_tokens?: number | null;
+};
+
+export function resolveInheritedMaxTokens(
+	profile: ModelProfileWithMaxTokens | null | undefined,
+	opts?: { harnessDefault?: number | null },
+): InheritedMaxTokens | null {
+	const harnessDefault =
+		opts && "harnessDefault" in opts ? opts.harnessDefault : null;
+	const profileDefault = profile?.default_max_tokens ?? null;
+	if (profileDefault != null) {
+		return { value: profileDefault, source: "profile" };
+	}
+	const provider = profile?.connection?.provider?.toLowerCase?.() ?? "";
+	if (provider === "anthropic") {
+		return {
+			value: ANTHROPIC_REQUIRED_MAX_TOKENS,
+			source: "Anthropic",
+		};
+	}
+	if (harnessDefault != null) {
+		return { value: harnessDefault, source: "default" };
+	}
+	return null;
+}
+
+export function formatInheritedMaxTokensPlaceholder(
+	inherited: InheritedMaxTokens | null,
+): string | undefined {
+	if (!inherited) return undefined;
+	return `${inherited.value.toLocaleString("en-US")} (${inherited.source})`;
+}
 
 export interface AgentSettingsTabProps {
 	mode: "create" | "edit";
@@ -310,6 +369,31 @@ export function AgentSettingsTab({
 		dataUpdatedAt: knowledgeUpdated,
 		refetch: refetchKnowledge,
 	} = useKnowledgeNamespaces(watchedOrgId);
+
+	// Resolve the selected model profile so the empty llm_max_tokens state
+	// can show the inherited value + source. Same query key as
+	// ModelProfileSelector, so the result is shared/cached. Only admins see
+	// the budget fields, so only they need this lookup.
+	const { data: modelProfiles } = useQuery({
+		queryKey: ["ai", "model-profiles"],
+		queryFn: listModelProfiles,
+		enabled: isPlatformAdmin,
+	});
+	const selectedModelProfile = useMemo(
+		() =>
+			(modelProfiles as ModelProfileWithMaxTokens[] | undefined)?.find(
+				(profile) => profile.id === modelProfileId,
+			) ?? null,
+		[modelProfiles, modelProfileId],
+	);
+	const inheritedMaxTokens = useMemo(
+		() => resolveInheritedMaxTokens(selectedModelProfile),
+		[selectedModelProfile],
+	);
+	const inheritedMaxTokensPlaceholder =
+		formatInheritedMaxTokensPlaceholder(inheritedMaxTokens) ?? "Inherit";
+	const profileDefaultMaxTokens =
+		selectedModelProfile?.default_max_tokens ?? null;
 
 	// Exclude the current agent from delegation options, filter out null-id entries.
 	const delegationOptions = useMemo(
@@ -1578,6 +1662,9 @@ export function AgentSettingsTab({
 											<FormControl>
 												<Input
 													type="number"
+													placeholder={
+														inheritedMaxTokensPlaceholder
+													}
 													value={field.value ?? ""}
 													onChange={(e) =>
 														field.onChange(
@@ -1592,8 +1679,21 @@ export function AgentSettingsTab({
 												/>
 											</FormControl>
 											<FormDescription>
-												Per LLM call (model maximum).
+												Blank = inherit. Agent value
+												wins when set.
 											</FormDescription>
+											{profileDefaultMaxTokens !=
+											null ? (
+												<p
+													className="text-xs text-muted-foreground"
+													data-testid="profile-default-max-tokens"
+												>
+													Profile default:{" "}
+													{profileDefaultMaxTokens.toLocaleString(
+														"en-US",
+													)}
+												</p>
+											) : null}
 											<FormMessage />
 										</FormItem>
 									)}

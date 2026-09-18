@@ -380,7 +380,10 @@ export function AIModelSettings() {
 				name: edit.name.trim(),
 				connection_id: edit.connectionId,
 				model: edit.model.trim(),
-			}),
+				// Generated v1 types predate the backend field; the API accepts it.
+				default_max_tokens: edit.defaultMaxTokens,
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			} as any),
 		onSuccess: () => {
 			setProfileEdit(null);
 			invalidateAI();
@@ -699,7 +702,7 @@ export function AIModelSettings() {
 						defaultPending={assignMutation.isPending && assignMutation.variables?.assignmentKey === "primary" && assignMutation.variables.profileId === profile.id}
 						defaultDisabled={assignmentsQuery.isLoading || assignmentsQuery.isError || assignMutation.isPending}
 						onSelect={(selected) => toggleProfileSelection(profile.id, selected)}
-						onEdit={() => { editProfileMutation.reset(); setProfileEdit({ id: profile.id, name: profile.name, connectionId: profile.connection_id, model: profile.model }); }}
+						onEdit={() => { editProfileMutation.reset(); setProfileEdit({ id: profile.id, name: profile.name, connectionId: profile.connection_id, model: profile.model, defaultMaxTokens: (profile as { default_max_tokens?: number | null }).default_max_tokens ?? null }); }}
 						onDelete={() => { deleteProfileMutation.reset(); setDeletingProfile(profile); }}
 						onChatChange={(enabledForChat) => updateProfileMutation.mutate({ profileId: profile.id, enabledForChat })}
 						onSetDefault={() => assignMutation.mutate({ assignmentKey: "primary", profileId: profile.id })}
