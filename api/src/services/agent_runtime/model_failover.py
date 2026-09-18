@@ -184,8 +184,8 @@ class FailoverModel(WrapperModel):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
-        last_exc: Exception | None = None
-        for index in range(self._index, len(self._candidates)):
+        index = self._index
+        while True:
             try:
                 return await self._candidates[index].request(
                     messages,
@@ -197,10 +197,8 @@ class FailoverModel(WrapperModel):
                     exc
                 ):
                     raise
-                last_exc = exc
                 self._advance(index, exc)
-        assert last_exc is not None  # single-candidate path always returns/raises
-        raise last_exc
+                index += 1
 
     @asynccontextmanager
     async def request_stream(
@@ -215,41 +213,34 @@ class FailoverModel(WrapperModel):
         Once a stream is established and yielded to the caller, later chunks
         may already have escaped (deltas, persisted usage), so mid-stream
         failures propagate without switching — streams are never replayed.
+        Establishment is proven by reaching the first statement inside the
+        inner ``async with``: anything raised before that never yielded, so
+        a fresh candidate can take over transparently.
         """
-        last_exc: Exception | None = None
         for index in range(self._index, len(self._candidates)):
             candidate = self._candidates[index]
-            stream_cm = candidate.request_stream(
-                messages,
-                self._settings_for(index, model_settings),
-                model_request_parameters,
-                run_context,
-            )
+            established = False
             try:
-                stream = await stream_cm.__aenter__()
+                async with candidate.request_stream(
+                    messages,
+                    self._settings_for(index, model_settings),
+                    model_request_parameters,
+                    run_context,
+                ) as stream:
+                    established = True
+                    self._index = index
+                    self.wrapped = candidate
+                    yield stream
             except Exception as exc:
-                if index + 1 >= len(self._candidates) or not is_failover_eligible(
-                    exc
+                if (
+                    established
+                    or index + 1 >= len(self._candidates)
+                    or not is_failover_eligible(exc)
                 ):
                     raise
-                last_exc = exc
                 self._advance(index, exc)
-                continue
-            self._index = index
-            self.wrapped = candidate
-            try:
-                yield stream
-            except BaseException as exc:
-                suppress = await stream_cm.__aexit__(
-                    type(exc), exc, exc.__traceback__
-                )
-                if not suppress:
-                    raise
             else:
-                await stream_cm.__aexit__(None, None, None)
-            return
-        assert last_exc is not None
-        raise last_exc
+                return
 
 
 @dataclass(frozen=True)
