@@ -144,6 +144,35 @@ async def db_session(async_session_factory) -> AsyncGenerator[AsyncSession, None
 
 
 @pytest_asyncio.fixture(autouse=True)
+async def isolate_global_db_engine() -> AsyncGenerator[None, None]:
+    """Dispose the global pooled engine around every async test.
+
+    pytest-asyncio runs each test on a fresh event loop, but
+    ``src.core.database``'s engine (``pool_pre_ping=True``) persists across
+    tests. Checking out a connection minted on a previous test's loop can
+    raise "attached to a different loop" instead of recycling, because the
+    ping failure surfaces as RuntimeError rather than a disconnect the
+    pool recognizes. Disposing up front means every checkout in the test
+    mints connections on the current loop; disposing afterwards leaves
+    nothing stale behind. The NullPool test engine behind the
+    ``db_session`` fixture is a separate object and is unaffected.
+    """
+    from src.core.database import close_db
+
+    try:
+        await close_db()
+    except Exception as e:
+        raise RuntimeError("Global DB engine isolation failed") from e
+
+    yield
+
+    try:
+        await close_db()
+    except Exception as e:
+        raise RuntimeError("Global DB engine teardown failed") from e
+
+
+@pytest_asyncio.fixture(autouse=True)
 async def isolate_s3(request) -> AsyncGenerator[None, None]:
     """Wipe .bifrost/ from S3 before every async test that touches the repo.
 
