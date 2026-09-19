@@ -58,6 +58,7 @@ Options:
   --llm-max-tokens INTEGER        llm_max_tokens
   --max-iterations INTEGER        max_iterations
   --max-token-budget INTEGER      max_token_budget
+  --max-run-timeout INTEGER       max_run_timeout
   --global                        Target global scope (org=NULL). Alias for
                                   --org global.
   --org, --organization, --scope TEXT
@@ -148,6 +149,7 @@ Options:
   --llm-max-tokens INTEGER        llm_max_tokens
   --max-iterations INTEGER        max_iterations
   --max-token-budget INTEGER      max_token_budget
+  --max-run-timeout INTEGER       max_run_timeout
   --global                        Target global scope (org=NULL). Alias for
                                   --org global.
   --org, --organization, --scope TEXT
