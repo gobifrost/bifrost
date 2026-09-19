@@ -199,6 +199,9 @@ async def commit_checkpoint(
     Projects compatible ``AgentRunStep`` rows and updates counters and
     last-progress in the same transaction.
     """
+    import time as _time
+
+    started = _time.monotonic()
     run = await _locked_run(session, run_id)
     require_lease(run, lease_token)
     now = _now()
@@ -241,6 +244,15 @@ async def commit_checkpoint(
             )
         )
     await session.commit()
+    logger.debug(
+        "checkpoint_committed",
+        extra={
+            "agent_run_id": str(run_id),
+            "checkpoint_sequence": next_sequence,
+            "journal_kind": journal_kind,
+            "latency_ms": int((_time.monotonic() - started) * 1000),
+        },
+    )
     return checkpoint
 
 

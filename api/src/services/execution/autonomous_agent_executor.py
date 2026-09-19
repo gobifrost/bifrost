@@ -879,6 +879,13 @@ class AutonomousAgentExecutor:
         )
         if not new_errors:
             return reparsed, True, [], "completed"
+        logger.warning(
+            "agent_output_contract_failed",
+            extra={
+                "agent_run_id": self._current_run_id,
+                "violations": len(new_errors),
+            },
+        )
         return {"text": corrected_text}, False, new_errors, "contract_failed"
 
     # ------------------------------------------------------------------

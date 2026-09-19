@@ -487,6 +487,34 @@ async def _cleanup_stale_agent_runs(now: datetime) -> dict[str, Any]:
                     exc_info=True,
                 )
 
+        # Waiting-age visibility: oldest inactive run bounds scheduler lag.
+        # No prompts, arguments, or outputs are logged — only ages.
+        try:
+            async with session_factory() as db:
+                oldest_waiting = (
+                    await db.execute(
+                        select(AgentRun.created_at)
+                        .where(
+                            AgentRun.status.in_(
+                                ("waiting_child", "waiting_children", "sleeping")
+                            )
+                        )
+                        .order_by(AgentRun.created_at.asc())
+                        .limit(1)
+                    )
+                ).scalar_one_or_none()
+            if oldest_waiting is not None:
+                logger.debug(
+                    "agent_run_waiting_age",
+                    extra={
+                        "oldest_waiting_seconds": int(
+                            (now - oldest_waiting).total_seconds()
+                        ),
+                    },
+                )
+        except Exception:
+            logger.debug("waiting-age probe failed", exc_info=True)
+
         # Terminalized children wake waiting parents so delegation trees
         # cannot hang on a swept child. The notify is idempotent.
         if wake_parents_for:

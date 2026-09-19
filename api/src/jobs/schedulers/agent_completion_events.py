@@ -41,8 +41,19 @@ async def publish_pending_agent_completions(
             db, batch_size=batch_size
         )
     results["claimed"] = len(pending)
+    max_lag_seconds = 0.0
+    from datetime import datetime, timezone
+
     for run in pending:
         run_id = run.id
+        if run.completion_event_pending_at is not None:
+            pending_at = run.completion_event_pending_at
+            if pending_at.tzinfo is None:
+                pending_at = pending_at.replace(tzinfo=timezone.utc)
+            lag = (
+                datetime.now(timezone.utc) - pending_at
+            ).total_seconds()
+            max_lag_seconds = max(max_lag_seconds, lag)
         try:
             topic, body = agent_completion_payload(run)
             await emit_event(
@@ -71,4 +82,15 @@ async def publish_pending_agent_completions(
                 db, UUID(str(run_id)), emitted=True
             )
         results["emitted"] += 1
+    results["max_lag_seconds"] = round(max_lag_seconds, 1)
+    if results["claimed"]:
+        logger.info(
+            "agent_completion_outbox",
+            extra={
+                "claimed": results["claimed"],
+                "emitted": results["emitted"],
+                "failed": results["failed"],
+                "max_lag_seconds": results["max_lag_seconds"],
+            },
+        )
     return results

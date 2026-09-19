@@ -308,6 +308,14 @@ async def reclaim_in_flight(
                     "in flight when the worker was lost and has no "
                     "reconciliation hook; automatic replay is prohibited."
                 )
+                logger.warning(
+                    "uncertain_tool_no_hook",
+                    extra={
+                        "agent_run_id": str(run_id),
+                        "tool_name": invocation.tool_name,
+                        "tool_call_id": tool_call_id,
+                    },
+                )
                 continue
             decision: ReconcileDecision = await hook(
                 {
