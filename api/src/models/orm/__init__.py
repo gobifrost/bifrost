@@ -19,6 +19,15 @@ from src.models.orm.agent_runs import (
     AgentRunStep,
     AgentToolInvocation,
 )
+from src.models.orm.agent_evaluations import (
+    AgentCandidateSnapshot,
+    AgentEvaluationCase,
+    AgentEvaluationExecution,
+    AgentEvaluationResult,
+    AgentEvaluationSuite,
+    AgentSimulationSession,
+    AgentSimulationToolRecord,
+)
 from src.models.orm.summary_backfill_job import SummaryBackfillJob
 from src.models.orm.agents import Agent, AgentDelegation, AgentRole, AgentTool, Conversation, Message, MessageAttachment
 from src.models.orm.ai_usage import AIModelPricing, AIUsage
@@ -122,6 +131,14 @@ __all__ = [
     "AgentRunVerdictHistory",
     "AgentToolInvocation",
     "SummaryBackfillJob",
+    # Agent Evaluation Studio
+    "AgentEvaluationSuite",
+    "AgentEvaluationCase",
+    "AgentCandidateSnapshot",
+    "AgentEvaluationExecution",
+    "AgentEvaluationResult",
+    "AgentSimulationSession",
+    "AgentSimulationToolRecord",
     # Agents
     "Agent",
     "AgentPromptHistory",
