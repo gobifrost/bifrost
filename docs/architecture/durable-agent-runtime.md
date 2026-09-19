@@ -136,6 +136,26 @@ existing built-in topic semantics. Watch `agent_completion_outbox`
 - Active time excludes `waiting_*`/`sleeping` (journal-derived); the
   scheduler still enforces total safety age on expired leases.
 
+## Debugger (journal-backed inspection)
+
+The journal is the debugger source of truth. REST (`tree`, `timeline`,
+`snapshot`, `checkpoints` on the existing AgentRun router) and the CLI
+(`bifrost agents run-tree/run-timeline/run-snapshot/run-checkpoints`)
+project tree, ordered model/tool/delegation/timer/recovery/validation/
+completion events, tool reconciliation state, join progress, checkpoints,
+usage, and completion-event publication — never `caller_context`,
+credentials, tokens, or unredacted secrets (per-kind allowlist, default
+deny, plus key-name redaction).
+
+Reads reuse the exact AgentRun detail visibility/tenant checks
+(cross-tenant reads 404); tree loading is one batched query with bounded
+cycle diagnostics; timeline/checkpoint pages use opaque cursors stable
+for `(run_id, sequence)`. Journal appends emit a bounded
+`journal_appended` hint (run ID + latest sequence) on the existing
+`agent-run:{run_id}` channel. V1 is inspection-only: no replay/fork
+from historical checkpoints. Full contract:
+`docs/reference/agent-debugger-api.md`.
+
 ## Upgrade / rollback
 
 Migrations (all forward-only, additive):
