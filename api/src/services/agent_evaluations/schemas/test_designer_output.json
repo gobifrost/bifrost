@@ -1,0 +1,77 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "TestDesignerOutput",
+  "description": "Caller-owned output contract for the Test Designer agent. The designer proposes draft cases only; acceptance freezes a case version through the normal path.",
+  "type": "object",
+  "required": ["proposals"],
+  "additionalProperties": false,
+  "properties": {
+    "proposals": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "required": ["name", "input", "fixture", "assertions", "coverage"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255,
+            "pattern": "^[a-z0-9][a-z0-9-]*$"
+          },
+          "input": {"type": "object"},
+          "fixture": {
+            "type": "object",
+            "required": ["entities", "allowed_tools"],
+            "additionalProperties": true,
+            "properties": {
+              "version": {"type": "integer"},
+              "entities": {"type": "object"},
+              "allowed_tools": {
+                "type": "array",
+                "minItems": 1,
+                "items": {"type": "string"}
+              },
+              "rules": {"type": "array"},
+              "seed_time": {"type": "string"}
+            }
+          },
+          "simulator_policy": {"type": "object"},
+          "assertions": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["type"],
+              "additionalProperties": true,
+              "properties": {
+                "type": {"type": "string"},
+                "params": {"type": "object"},
+                "label": {"type": "string"}
+              }
+            }
+          },
+          "expected_tools": {
+            "type": "array",
+            "items": {"type": "string"}
+          },
+          "forbidden_tools": {
+            "type": "array",
+            "items": {"type": "string"}
+          },
+          "output_schema": {"type": "object"},
+          "coverage": {
+            "type": "string",
+            "enum": ["success", "failure", "safety", "edge"]
+          },
+          "provenance_run_ids": {
+            "type": "array",
+            "items": {"type": "string"}
+          }
+        }
+      }
+    }
+  }
+}
