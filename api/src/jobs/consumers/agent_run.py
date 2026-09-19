@@ -28,7 +28,6 @@ from src.models.orm.agents import Agent, Conversation
 from src.models.orm.agent_runs import AgentRun
 from src.services.agent_runtime import run_store
 from src.services.agent_runtime import types as runtime_types
-from src.services.agent_runtime.resume import active_seconds_used, prepare_resume
 from src.services.agent_runtime.settings import (
     DEFAULT_RUN_TIMEOUT_SECONDS,
     effective_run_timeout_seconds,
@@ -433,6 +432,14 @@ class AgentRunConsumer(BaseConsumer):
             # Reconcile in-flight work and rebuild resume history from the
             # latest checkpoint. An uncertain side effect without proof
             # moves the run to recovery_required instead of replaying blindly.
+            # Imported here (not at module level): resume pulls the
+            # Pydantic AI checkpoint codec, which must stay out of the
+            # worker's import-time closure (see import-hygiene tests).
+            from src.services.agent_runtime.resume import (
+                active_seconds_used,
+                prepare_resume,
+            )
+
             resume_plan, _reclaim_report, unrecoverable = await prepare_resume(
                 self._session_factory, UUID(run_id), lease_token
             )
