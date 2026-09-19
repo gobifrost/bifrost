@@ -28,6 +28,7 @@ class AgentCreate(BaseModel):
     llm_max_tokens: int | None = Field(default=None, ge=1, le=200000)
     max_iterations: int | None = Field(default=None, ge=1, le=200)
     max_token_budget: int | None = Field(default=None, ge=1000, le=1000000)
+    max_run_timeout: int | None = Field(default=None, ge=0, le=86400)
 
 
 class AgentUpdate(BaseModel):
@@ -51,3 +52,4 @@ class AgentUpdate(BaseModel):
     llm_max_tokens: int | None = Field(default=None, ge=1, le=200000)
     max_iterations: int | None = Field(default=None, ge=1, le=200)
     max_token_budget: int | None = Field(default=None, ge=1000, le=1000000)
+    max_run_timeout: int | None = Field(default=None, ge=0, le=86400)
