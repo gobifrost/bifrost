@@ -1,11 +1,12 @@
-# Agent Evaluation Studio — backend
+# Agent Evaluation Studio
 
 Reproducible synthetic evaluation for Agents: unpublished candidate
 snapshots, coherent stateful tool simulation, generated test cases, and
 baseline-versus-candidate comparison — all executed through the durable
 agent runtime and orchestrated by one canonical PlatformJob per suite
-execution. No client UI is implemented; the REST API, CLI, debugger links,
-and generated contracts are the complete v1 surface.
+execution. The integrated client exposes Studio from Agent detail and a durable
+run debugger from the existing run detail. REST API, CLI, and client consume
+the same generated contracts.
 
 Spec: `docs/superpowers/specs/2026-09-18-durable-agent-runtime-and-evaluation-studio-design.md`.
 Plan: `docs/superpowers/plans/2026-09-18-agent-evaluation-studio-backend.md`.
@@ -14,7 +15,7 @@ Plan: `docs/superpowers/plans/2026-09-18-agent-evaluation-studio-backend.md`.
 
 Suite, case, candidate, execution, result, assertion, comparison,
 simulation session, Test Designer, checkpoint, tool, completion — the API,
-CLI, docs, and (future) UI use these words identically.
+CLI, docs, and UI use these words identically.
 
 - **Suite**: versioned collection of cases targeting one baseline Agent.
   `draft` suites are editable; `published` suites are immutable.
@@ -176,11 +177,11 @@ load fixtures/assertions/overlays; Agent/tool/delegate refs resolve
 through `RefResolver`; `--json` output is automation-safe and `compare`
 summarizes regressions, failures, usage deltas, and linked run IDs.
 
-## Astra UI handoff
+## Integrated UI requirements
 
-Backend and CLI are complete with no client implementation. The UI pass
-owns visual hierarchy, responsive states, accessibility, and design-system
-work, and must honor the evidence-first requirements:
+The client shares the backend and CLI contracts. Its visual hierarchy,
+responsive states, accessibility, and design-system implementation follow
+the approved evidence-first requirements:
 
 - **R1 candidate clarity**: base Agent + all overrides visible as one
   context (`GET /candidates/{id}` returns both).
@@ -194,7 +195,7 @@ work, and must honor the evidence-first requirements:
 - **R5 explicit promotion**: never publish from test success; promotion
   is a distinct diff review through normal Agent update.
 
-Regenerate web types against a running stack before UI work:
+After API contract changes, regenerate web types against the running worktree:
 `cd client && npm run generate:types` (requires `./debug.sh` up).
 OpenAPI digest: `.claude/skills/bifrost-build/generated/openapi-digest.md`.
 
@@ -212,3 +213,24 @@ it cannot occupy the scheduler's bounded scan indefinitely. Draft acceptance
 revalidates stored fixtures and keeps historical provenance. Suite mutations
 serialize against publication, and draft edits advance their optimistic
 version.
+
+## Client experience
+
+Studio lives at `/agents/:id/studio`. Suite, candidate, execution, and Designer
+run identities are retained in the URL. Cases remain inspectable before explicit
+acceptance creates a frozen version. Selected historical runs supply authorized
+evidence to Test Designer; its dedicated Testing model is configured alongside
+Summarization in AI settings. Candidate creation and successful evaluation never
+update the live Agent. Applying overlays requires reviewing the current production
+diff and an explicit action through the normal Agent update API.
+
+The debugger at `/agents/:agentId/runs/:runId/debug` preserves the original run
+detail and actions. It shows the run tree, cursor timeline, immutable snapshot,
+checkpoints, lease/wake/recovery state, and runtime-only usage. Evidence links
+retain run and sequence identity. Old runs without durable records explain the
+missing evidence and keep their original detail available.
+
+Both pages refresh authoritative queries from existing AgentRun and PlatformJob
+notification events and reconnect hints. There are no feature polling loops.
+Designer completion is determined by snapshot correlation materialization
+metadata, not merely by the model run reaching completion.

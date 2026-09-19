@@ -520,3 +520,79 @@ Final backend correction verification:
 - `./test.sh tests/unit/services/test_agent_run_evaluation_completion.py tests/unit/services/test_agent_run_consumer.py tests/unit/jobs/platform/test_agent_evaluation.py tests/unit/jobs/platform/test_agent_evaluation_completion_race.py tests/unit/test_import_hygiene.py`: **73 passed**, zero failures/errors/skips. Retained JUnit: `/tmp/durable-terminal-bridge-focused-verified.xml`.
 - `./test.sh quality api`: **0 errors, 0 warnings**, Ruff all checks passed. Log: `/tmp/durable-terminal-bridge-quality-final.log`.
 - `git diff --check`: passed. UI browser verification resumes after this reviewed correction.
+
+### Astra UI verification addendum — 2026-09-19 (final browser gate running)
+
+This dated addendum supersedes the earlier UI handoff's runtime-blocked status.
+Parent reviewed the terminal consumer bridge in
+`/tmp/durable-terminal-bridge-reviewed.md` after 73 focused backend tests and API
+quality passed. No DTO or endpoint changed. Astra made no backend edits.
+
+- `./test.sh client e2e --screenshots e2e/agent-debugger.admin.spec.ts e2e/agent-evaluation-studio.admin.spec.ts`:
+  3 passed, 37.9 seconds on the final screenshot run. Studio completion refreshed
+  on the subscribed page through existing notifications, without reload or polling.
+- `./test.sh client unit`: final full result remains 519 files / 3,121 tests passed.
+  Functional client source is unchanged since that run; later edits only adjust
+  browser tests, screenshots, and documentation.
+- `cd client && npm run tsc` and `cd client && npm run lint`: passed. Lint retains
+  one existing `no-console` warning in `e2e/support/seed-review-pack.ts:197`.
+- Initial full `./test.sh client e2e` after the backend bridge: 168 passed, one
+  failure. All prior selector/pagination/completion failures passed in full order.
+  The new failure was a native-tab `page` event timeout. Trace network evidence
+  showed the destination loaded in a second frame despite the missing event.
+  A plain HTML native-link reproduction in the repository Playwright container
+  reproduced this with video recording (1/20) and passed without it (20/20).
+  The bounded repair disables only optional video recording in
+  `resource-navigation.admin.spec.ts`; traces, screenshots, original navigation
+  assertions, and timeouts remain. Reflow/foreground-click hypotheses were
+  insufficient and their changes were removed.
+- `./test.sh client e2e e2e/resource-navigation.admin.spec.ts` after the recorder
+  repair: 2 passed, 31.9 seconds. Complete browser gate is running again, with
+  repository retries=0. This addendum does not yet claim that gate is green.
+
+Final desktop/mobile debugger, Studio comparison metrics, assertion/tool evidence,
+and explicit production-diff screenshots were inspected. Captures are under
+`/tmp/durable-ui-screenshots/terminal-bridge-verified/`:
+`debugger-desktop.png`, `debugger-mobile.png`, `studio-results-desktop.png`,
+`studio-results-mobile.png`, `studio-evidence-desktop.png`,
+`studio-evidence-mobile.png`, and `studio-candidate-diff.png`.
+The prior deterministic Designer review also covers selected historical runs,
+queued generation, materialized draft inspection, and frozen acceptance.
+R1–R5, accessible semantic controls, content-sized scrolling, missing-value
+metrics, legacy runs, and sibling coverage were reviewed.
+
+Temporary Designer provider/profile/connection removal and restoration of Testing
+and Summarization assignments were verified. Normal debug stack remains running.
+Detailed evidence and final browser result are maintained in
+`/tmp/durable-astra-ui-result.md`. No commits, pushes, or deployment by Astra.
+
+### Astra final UI verification disposition — 2026-09-19
+
+The earlier runtime blocker is resolved; the new debugger and Studio journeys
+pass, including realtime completion on the subscribed page. The required full
+browser gate remains red: two completed runs each produced 168 passed / 1 failed
+out of 169, with zero retries, skips, flaky outcomes, or run-level errors. Every
+completed result was inspected. The remaining failure is native new-tab
+observation in `resource-navigation.admin.spec.ts`, not a Studio/debugger API
+failure. Retained network traces show the correct destination loading in a new
+frame while Playwright fails to emit its `page` event within the existing bound.
+
+The preceding recorder diagnosis was provisional and is superseded here. Disabling
+video passed focused verification but failed in the full run. Disabling trace
+screenshots also passed focused verification; however, the exact five-second
+plain-HTML comparison passed 100/100 both with and without image capture. It does
+not prove a recorder cause. All native-navigation test experiments were reverted;
+no unsupported workaround, timeout increase, retry, skip, or dependency upgrade
+is retained. Parent browser-harness review is required before another full-gate
+claim. Reproduction and exact artifacts are in
+`/tmp/durable-ui-contract-gaps.md`; this is a blocking handoff, not a waiver.
+
+Full Vitest remains 519 files / 3,121 tests passed, reusable because functional
+client source did not change during this verification. Final screenshot-focused
+command passed 3 tests in 37.9 seconds; screenshots listed in the preceding
+addendum were actually inspected. TypeScript and lint pass, with the existing
+single `seed-review-pack.ts:197` console warning. Temporary Designer resources are
+removed, Testing/Summarization restored, owned diagnostic processes stopped, and
+normal debug stack preserved. No backend, generated DTO, framework-comparison
+or dependency edits; no commits, pushes, or deployment. Feature completion is
+not claimed until the required full browser gate is green.
