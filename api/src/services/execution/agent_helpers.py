@@ -393,6 +393,44 @@ async def resolve_agent_tools(
                     )
                 )
 
+    # 5. Durable timer primitive. Every autonomous agent can suspend into
+    # ``sleeping`` and resume the same run later; the engine owns the wake.
+    if "sleep_until" not in seen_names:
+        tool_definitions.append(
+            ToolDefinition(
+                name="sleep_until",
+                description=(
+                    "Suspend this run until a future time, then continue "
+                    "the same run. Use for waiting on an external process "
+                    "or appointment without consuming a worker."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "wake_at": {
+                            "type": "string",
+                            "description": (
+                                "Absolute ISO-8601 wake time (one of "
+                                "wake_at/seconds is required)."
+                            ),
+                        },
+                        "seconds": {
+                            "type": "integer",
+                            "description": (
+                                "Wake after this many seconds (one of "
+                                "wake_at/seconds is required)."
+                            ),
+                        },
+                        "reason": {
+                            "type": "string",
+                            "description": "Bounded reason for the sleep.",
+                        },
+                    },
+                    "required": ["reason"],
+                },
+            )
+        )
+
     return tool_definitions, tool_workflow_id_map
 
 

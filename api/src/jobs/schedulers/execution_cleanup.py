@@ -297,8 +297,6 @@ async def _cleanup_stale_agent_runs(now: datetime) -> dict[str, Any]:
     - ``queued`` past safety age: ``failed`` (never started; queue stall).
     - ``sleeping`` with ``wake_at`` due: fenced wake + republish once.
     """
-    from src.services.agent_runtime import run_store
-
     session_factory = get_session_factory()
     updates: list[dict[str, Any]] = []
     requeued: list[str] = []
@@ -313,6 +311,19 @@ async def _cleanup_stale_agent_runs(now: datetime) -> dict[str, Any]:
     }
 
     try:
+        # Fenced due-timer promotion first (own sessions; never hold the
+        # sweep's row lock across it). Each due run wakes exactly once.
+        from src.services.agent_runtime.timers import promote_due_timers
+
+        try:
+            promoted_ids = await promote_due_timers(session_factory, now)
+        except Exception as exc:
+            logger.warning("agent_run_wake_failed", extra={"error": str(exc)})
+            promoted_ids = []
+        for promoted_id in promoted_ids:
+            requeued.append(str(promoted_id))
+            results["agent_run_woken"] += 1
+
         async with session_factory() as db:
             query = (
                 select(AgentRun, Agent)
@@ -323,8 +334,27 @@ async def _cleanup_stale_agent_runs(now: datetime) -> dict[str, Any]:
                 .order_by(AgentRun.created_at.asc())
             )
             runs = (await db.execute(query)).all()
+            promoted_set = {str(p) for p in promoted_ids}
+            agent_names = {
+                str(candidate.id): (agent.name if agent is not None else "Chat")
+                for candidate, agent in runs
+            }
 
             for candidate, agent in runs:
+                if candidate.status == "sleeping":
+                    # Handled by the promotion pass above; future timers wait.
+                    if str(candidate.id) in promoted_set:
+                        fresh = await db.get(AgentRun, candidate.id)
+                        if fresh is not None:
+                            updates.append(
+                                {
+                                    "run": fresh,
+                                    "agent_name": agent_names[str(candidate.id)],
+                                    "chat_event": None,
+                                }
+                            )
+                    continue
+
                 # Lock only the row already identified as stale. The status
                 # predicate is a compare-and-set guard against a worker that
                 # completed between the candidate read and this lock.
@@ -339,34 +369,6 @@ async def _cleanup_stale_agent_runs(now: datetime) -> dict[str, Any]:
                     )
                 ).scalar_one_or_none()
                 if run is None:
-                    continue
-
-                if run.status == "sleeping":
-                    if run.wake_at is None or run.wake_at > now:
-                        continue
-                    try:
-                        await run_store.wake_run(
-                            db, run.id, reason="sleeping timer due"
-                        )
-                    except Exception as exc:
-                        logger.warning(
-                            "agent_run_wake_failed",
-                            extra={
-                                "agent_run_id": str(run.id),
-                                "error": str(exc),
-                            },
-                        )
-                        continue
-                    requeued.append(str(run.id))
-                    results["agent_run_woken"] += 1
-                    agent_name = agent.name if agent is not None else "Chat"
-                    updates.append(
-                        {
-                            "run": run,
-                            "agent_name": agent_name,
-                            "chat_event": None,
-                        }
-                    )
                     continue
 
                 timeout_seconds = _agent_run_timeout_seconds(agent)

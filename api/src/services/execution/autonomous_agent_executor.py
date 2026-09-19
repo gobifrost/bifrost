@@ -1148,22 +1148,20 @@ class AutonomousAgentExecutor:
             suspend_for_deferred_calls,
             suspend_for_fanout,
         )
+        from src.services.agent_runtime.timers import suspend_for_timer
 
+        all_calls = (*deferred.calls, *deferred.approvals)
         singles = [
-            call for call in (*deferred.calls, *deferred.approvals)
-            if call.tool_name.startswith("delegate_to_")
+            call for call in all_calls if call.tool_name.startswith("delegate_to_")
         ]
-        fanouts = [
-            call for call in (*deferred.calls, *deferred.approvals)
-            if call.tool_name == "delegate_agents"
-        ]
-        known = len(singles) + len(fanouts)
-        if known != len(deferred.calls) + len(deferred.approvals):
+        fanouts = [call for call in all_calls if call.tool_name == "delegate_agents"]
+        timers = [call for call in all_calls if call.tool_name == "sleep_until"]
+        if len(singles) + len(fanouts) + len(timers) != len(all_calls):
             unknown = next(
                 call.tool_name
-                for call in (*deferred.calls, *deferred.approvals)
+                for call in all_calls
                 if not call.tool_name.startswith("delegate_to_")
-                and call.tool_name != "delegate_agents"
+                and call.tool_name not in ("delegate_agents", "sleep_until")
             )
             raise ToolError(
                 f"Deferred tool '{unknown}' has no durable "
@@ -1171,13 +1169,36 @@ class AutonomousAgentExecutor:
             )
         if deferred.approvals:
             raise ToolError("Deferred approvals are not supported.")
-        if singles and fanouts:
+        # One suspension parks a run per model turn. Sequential suspensions
+        # across turns compose naturally (suspend, wake, resume, suspend).
+        if len(all_calls) > 1:
             raise ToolError(
-                "Single delegation and fan-out cannot suspend together; "
-                "issue one per turn."
+                "Only one delegation, fan-out, or timer may suspend a run "
+                "per model turn; issue them on separate turns."
             )
-        if len(fanouts) > 1:
-            raise ToolError("Only one fan-out may suspend per model turn.")
+        if timers:
+            call = timers[0]
+            timer_outcome = await suspend_for_timer(
+                session_factory=self._session_factory,
+                run_id=UUID(run_id),
+                lease_token=self._durable_lease_token,
+                tool_call_id=call.tool_call_id,
+                arguments=(
+                    call.args_as_dict()
+                    if hasattr(call, "args_as_dict")
+                    else dict(call.args or {})
+                ),
+            )
+            return {
+                "output": None,
+                "iterations_used": usage.requests - usage_start_requests,
+                "tokens_used": usage.total_tokens - usage_start_tokens,
+                "status": "suspended",
+                "llm_model": None,
+                "contract_valid": None,
+                "contract_errors": [],
+                "suspended": timer_outcome,
+            }
         if fanouts:
             call = fanouts[0]
             outcome = await suspend_for_fanout(
@@ -1247,6 +1268,16 @@ class AutonomousAgentExecutor:
                 if hasattr(call, "args_as_dict")
                 else dict(call.args or {})
             )
+            if call.tool_name == "sleep_until":
+                results[call.tool_call_id] = await self._execute_sleep(
+                    LlmToolCallRequest(
+                        id=call.tool_call_id,
+                        name=call.tool_name,
+                        arguments=args,
+                    ),
+                    agent,
+                )
+                continue
             if call.tool_name == "delegate_agents":
                 results[call.tool_call_id] = await self._execute_fanout(
                     LlmToolCallRequest(
@@ -1405,6 +1436,10 @@ class AutonomousAgentExecutor:
         # Fan-out across delegated agents (durable all-join)
         if tool_call.name == "delegate_agents":
             return await self._execute_fanout(tool_call, agent)
+
+        # Durable timer (model-requested wake-up in the same run)
+        if tool_call.name == "sleep_until":
+            return await self._execute_sleep(tool_call, agent)
 
         # System tools
         if tool_call.name in (agent.system_tools or []):
@@ -2168,6 +2203,40 @@ class AutonomousAgentExecutor:
         return json.dumps(
             {"mode": "all", "children": items}, default=str, sort_keys=False
         )
+
+    async def _execute_sleep(
+        self,
+        tool_call: ToolCallRequest,
+        agent: Agent,
+    ) -> str:
+        """Execute a timer: suspend durably when leased, sleep inline otherwise."""
+        from datetime import datetime as _datetime
+        from datetime import timezone as _timezone
+
+        from src.services.agent_runtime.timers import (
+            TIMER_FIRED_TEXT,
+            parse_timer_args,
+            timer_call_metadata,
+        )
+
+        _ = agent
+        arguments = tool_call.arguments or {}
+        if self._durable_lease_token is not None:
+            wake_at = parse_timer_args(
+                arguments, now=_datetime.now(_timezone.utc)
+            )
+            raise CallDeferred(
+                timer_call_metadata(
+                    tool_call.id,
+                    wake_at,
+                    str(arguments.get("reason", "")),
+                )
+            )
+        wake_at = parse_timer_args(arguments, now=_datetime.now(_timezone.utc))
+        delay = (wake_at - _datetime.now(_timezone.utc)).total_seconds()
+        if delay > 0:
+            await asyncio.sleep(delay)
+        return TIMER_FIRED_TEXT
 
     async def _execute_system_tool(self, tool_call: ToolCallRequest, agent: Agent) -> str:
         """Execute a system tool."""

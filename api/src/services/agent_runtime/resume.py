@@ -122,6 +122,7 @@ async def prepare_resume(
         collect_deferred_results,
         deferred_tool_call_ids,
     )
+    from src.services.agent_runtime.timers import collect_timer_results
 
     async with session_factory() as session:
         checkpoint = await run_store.latest_checkpoint(session, run_id)
@@ -136,6 +137,11 @@ async def prepare_resume(
         deferred_pending = (
             await deferred_tool_call_ids(session, run_id)
         ) - set(deferred_results)
+        timer_results, timer_pending = await collect_timer_results(
+            session, run_id
+        )
+        deferred_results.update(timer_results)
+        deferred_pending |= timer_pending
     completed = {
         inv.provider_tool_call_id: (
             (inv.result or {}).get("text", "")

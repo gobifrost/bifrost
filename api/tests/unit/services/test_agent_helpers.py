@@ -37,8 +37,11 @@ class TestResolveAgentTools:
         tools, id_map = await resolve_agent_tools(mock_agent, mock_session)
         assert isinstance(tools, list)
         assert isinstance(id_map, dict)
-        assert len(tools) == 1
-        assert tools[0].name == "execute_workflow"
+        # System grant plus the always-present engine timer primitive.
+        assert [tool.name for tool in tools] == [
+            "execute_workflow",
+            "sleep_until",
+        ]
 
     @pytest.mark.asyncio
     @patch("src.services.mcp_server.server.get_system_tools")
@@ -68,13 +71,13 @@ class TestResolveAgentTools:
 
     @pytest.mark.asyncio
     @patch("src.services.mcp_server.server.get_system_tools", return_value=[])
-    async def test_no_tools_returns_empty(self, _mock_get_system_tools):
-        """Agent with no tools returns empty lists."""
+    async def test_no_tools_returns_only_timer_primitive(self, _mock_get_system_tools):
+        """Agent with no tools gets only the engine timer primitive."""
         mock_session = MagicMock()
         mock_agent = MagicMock()
         mock_agent.id = uuid4()
         # organization_id=None skips the MCP-tool query path so this test
-        # stays focused on the system-tool tier without needing a real DB.
+        # stays focused on the engine tiers without needing a real DB.
         mock_agent.organization_id = None
         mock_agent.tools = []
         mock_agent.system_tools = []
@@ -82,15 +85,15 @@ class TestResolveAgentTools:
         mock_agent.delegated_agents = []
 
         tools, id_map = await resolve_agent_tools(mock_agent, mock_session)
-        assert tools == []
+        assert [tool.name for tool in tools] == ["sleep_until"]
         assert id_map == {}
 
     @pytest.mark.asyncio
     @patch("src.services.mcp_server.server.get_system_tools", return_value=[])
-    async def test_delegation_tool_contract_remains_task_only(
+    async def test_delegation_tool_contract(
         self, _mock_get_system_tools
     ):
-        """Delegation hardening must not change the model-facing tool contract."""
+        """Delegation toolset: single-delegate, fan-out, and timer tools."""
         delegated = MagicMock()
         delegated.name = "Echo Specialist"
         delegated.description = "Returns a concise specialist answer."
@@ -107,8 +110,11 @@ class TestResolveAgentTools:
         tools, id_map = await resolve_agent_tools(parent, MagicMock())
 
         assert id_map == {}
-        assert len(tools) == 1
-        assert tools[0].name == "delegate_to_echo_specialist"
+        assert [tool.name for tool in tools] == [
+            "delegate_to_echo_specialist",
+            "delegate_agents",
+            "sleep_until",
+        ]
         assert tools[0].description == (
             "Delegate a task to Echo Specialist. "
             "Returns a concise specialist answer."
@@ -119,6 +125,13 @@ class TestResolveAgentTools:
                 "task": {
                     "type": "string",
                     "description": "The task or question to delegate to this agent",
+                },
+                "output_schema": {
+                    "type": "object",
+                    "description": (
+                        "Optional JSON Schema constraining "
+                        "the delegated result for this call"
+                    ),
                 },
             },
             "required": ["task"],
