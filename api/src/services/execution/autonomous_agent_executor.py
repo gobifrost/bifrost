@@ -157,7 +157,7 @@ class AutonomousAgentExecutor:
         # call routes to the case simulator; engine-owned delegation and
         # timer primitives keep their durable semantics. Delegated
         # sub-executors inherit the router so children stay synthetic.
-        self._synthetic_router = None
+        self._synthetic_router: Any = None
         self._synthetic_timer_max_seconds = 300
         self._knowledge_search_budget = KnowledgeSearchBudget()
         # Delegated executors receive these same objects. Pydantic AI mutates

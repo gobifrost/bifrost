@@ -51,7 +51,7 @@ from src.services.agent_evaluations.runner import (
     seed_side_fixtures,
     validate_synthetic_timer,
 )
-from src.services.agent_evaluations.simulator import Simulator, SyntheticToolError
+from src.services.agent_evaluations.simulator import Simulator
 from src.services.agent_runtime import run_store
 from src.services.agent_runtime.execution_snapshot import (
     is_synthetic_snapshot,

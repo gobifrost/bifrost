@@ -5,15 +5,12 @@ from __future__ import annotations
 from types import SimpleNamespace
 from uuid import uuid4
 
-import pytest
-
 from src.jobs.platform.agent_evaluation import (
     AGENT_EVALUATION_SUITE_DEFINITION,
     AgentEvaluationSuitePayload,
     _in_flight,
     _started_keys,
 )
-from src.jobs.platform.base import PlatformJobDeferred
 from src.jobs.platform.registry import get_platform_job_definition
 from src.models.orm.agent_evaluations import (
     AgentEvaluationExecution,

@@ -34,6 +34,7 @@ from src.routers.required_instructions import (
 from src.routers.agents import router as agents_router
 from src.routers.agent_runs import router as agent_runs_router
 from src.routers.agent_tuning import router as agent_tuning_router
+from src.routers.agent_evaluations import router as agent_evaluations_router
 from src.routers.chat import router as chat_router
 from src.routers.llm_config import router as llm_config_router
 from src.routers.ai_models import router as ai_models_router
@@ -116,6 +117,7 @@ __all__ = [
     "agents_router",
     "agent_runs_router",
     "agent_tuning_router",
+    "agent_evaluations_router",
     "chat_router",
     "llm_config_router",
     "ai_models_router",

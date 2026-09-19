@@ -20,31 +20,6 @@ SYNTHETIC_TOOLSET_ID = "bifrost-synthetic"
 """Toolset identity for evaluation-synthetic runs (Studio v1, never production)."""
 
 
-def build_simulator_toolset(
-    definitions: Sequence[ToolDefinition],
-    simulator_call: Callable[[str, dict[str, Any]], Any],
-    *,
-    event_handler: ToolEventHandler | None = None,
-) -> BifrostToolset:
-    """Documented test-run entry point: simulator-backed engine toolset.
-
-    Only the Evaluation service calls this. Every non-engine tool the model
-    invokes is routed to the case simulator; the executor has no path to
-    real workflow, MCP, or system-tool dispatch.
-    """
-
-    async def _executor(name: str, tool_args: dict[str, Any], tool_call_id: str) -> Any:
-        del tool_call_id
-        return simulator_call(name, tool_args)
-
-    return BifrostToolset(
-        definitions,
-        _executor,
-        event_handler=event_handler,
-        toolset_id=SYNTHETIC_TOOLSET_ID,
-    )
-
-
 @dataclass(frozen=True)
 class ToolEvent:
     """Observable tool lifecycle event emitted without exposing model internals."""
@@ -214,3 +189,28 @@ class BifrostToolset(AbstractToolset[object]):
                 )
             )
         return bound_tool_result_for_model(result)
+
+
+def build_simulator_toolset(
+    definitions: Sequence[ToolDefinition],
+    simulator_call: Callable[[str, dict[str, Any]], Any],
+    *,
+    event_handler: ToolEventHandler | None = None,
+) -> BifrostToolset:
+    """Documented test-run entry point: simulator-backed engine toolset.
+
+    Only the Evaluation service calls this. Every non-engine tool the model
+    invokes is routed to the case simulator; the executor has no path to
+    real workflow, MCP, or system-tool dispatch.
+    """
+
+    async def _executor(name: str, tool_args: dict[str, Any], tool_call_id: str) -> Any:
+        del tool_call_id
+        return simulator_call(name, tool_args)
+
+    return BifrostToolset(
+        definitions,
+        _executor,
+        event_handler=event_handler,
+        toolset_id=SYNTHETIC_TOOLSET_ID,
+    )

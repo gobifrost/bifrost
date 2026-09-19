@@ -33,7 +33,6 @@ from src.services.agent_evaluations.executions import (
     EVALUATION_CONCURRENCY_MAX,
     TERMINAL_RESULT_STATUSES,
     apply_terminal_event,
-    build_dedupe_key,
     finalize_execution,
     next_batch,
     plan_work_items,
@@ -226,7 +225,7 @@ async def run_agent_evaluation_suite(
             ],
             include_candidate=execution.candidate_id is not None,
         )
-        ceiling = EVALUATION_CONCURRENCY_DEFAULT
+        ceiling = min(EVALUATION_CONCURRENCY_DEFAULT, EVALUATION_CONCURRENCY_MAX)
         batch = next_batch(planned, _started_keys(results), _in_flight(results), ceiling)
         await context.report(
             "Dispatching synthetic runs",
@@ -376,7 +375,6 @@ async def reconcile_agent_evaluation_jobs() -> int:
     from src.core.database import get_db_context
     from src.models.orm.agent_evaluations import AgentEvaluationExecution
     from src.models.orm.agent_runs import AgentRun
-    from src.services.agent_evaluations.runner import is_synthetic_correlation
     from src.services.platform_jobs import finish_deferred_platform_job
 
     healed = 0

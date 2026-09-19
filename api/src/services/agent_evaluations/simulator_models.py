@@ -12,8 +12,6 @@ import copy
 import hashlib
 from typing import Any
 
-import pydantic_core
-
 FIXTURE_VERSION = 1
 
 SECRET_KEY_HINTS = ("secret", "token", "password", "api_key", "apikey", "credential")
