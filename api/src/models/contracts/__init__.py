@@ -186,6 +186,20 @@ if TYPE_CHECKING:
         ToolCall,
         ToolResult,
     )
+    from src.models.contracts.agent_debugger import (  # noqa: F401
+        AgentCheckpointPage,
+        AgentCheckpointSummary,
+        AgentDebuggerLinks,
+        AgentRunSnapshotView,
+        AgentRunTree,
+        AgentRunTreeNode,
+        AgentSnapshotCompletionEvent,
+        AgentSnapshotContract,
+        AgentSnapshotLease,
+        AgentSnapshotModel,
+        AgentTimelineEntry,
+        AgentTimelinePage,
+    )
     from src.models.contracts.audit import (  # noqa: F401
         AuditLogActor,
         AuditLogEntry,
