@@ -51,6 +51,89 @@ _TERMINAL_STATUS_MAP = {
     "contract_failed": runtime_types.CONTRACT_FAILED,
 }
 
+# Correlation keys identifying a committable synthetic evaluation root run.
+_EVALUATION_SYNTHETIC_TRIGGER = "evaluation_synthetic"
+_EVALUATION_SYNTHETIC_MODE = "evaluation_synthetic"
+
+
+async def _maybe_apply_synthetic_terminal(
+    session_factory,
+    run_id: str | None,
+    synthetic_hint: bool | None = None,
+) -> None:
+    """Project committed synthetic roots promptly; reconciliation repairs failures.
+
+    Re-read durable state and release the session before invoking the handler.
+    The admission-time hint only avoids unnecessary reads for production runs.
+    """
+    if not run_id:
+        return
+    if synthetic_hint is False:
+        # Immutable admission-time marker captured under the claim lock:
+        # definitely not a synthetic root, so skip the fresh read.
+        return
+    try:
+        run_uuid = UUID(str(run_id))
+    except (ValueError, AttributeError, TypeError):
+        return
+    try:
+        async with session_factory() as db:
+            row = await db.get(AgentRun, run_uuid)
+            if row is None:
+                return
+            if row.status not in runtime_types.TERMINAL_STATUSES:
+                return
+            if row.trigger_type != _EVALUATION_SYNTHETIC_TRIGGER:
+                return
+            if row.parent_run_id is not None:
+                return
+            correlation = dict(row.correlation or {})
+            if correlation.get("evaluation_mode") != _EVALUATION_SYNTHETIC_MODE:
+                return
+            if correlation.get("evaluation_designer"):
+                return
+            try:
+                execution_id = UUID(str(correlation["evaluation_execution_id"]))
+                case_id = UUID(str(correlation["evaluation_case_id"]))
+            except (KeyError, ValueError, TypeError, AttributeError):
+                return
+            side = correlation.get("evaluation_side")
+            if side not in ("baseline", "candidate"):
+                return
+            repetition_raw = correlation.get("evaluation_repetition")
+            if type(repetition_raw) is not int or repetition_raw < 0:
+                return
+            repetition_index = repetition_raw
+            status = str(row.status)
+        # Session is closed here: dispatch outside any transaction/row lock.
+    except Exception:
+        logger.exception(
+            "Synthetic terminal fast-path read failed for run %s; "
+            "scheduler reconciliation will recover",
+            run_id,
+        )
+        return
+    try:
+        # Imported lazily (not at module level): the evaluation platform-job
+        # module must stay out of the worker's import-time closure.
+        from src.jobs.platform.agent_evaluation import apply_synthetic_terminal
+
+        await apply_synthetic_terminal(
+            execution_id,
+            side=side,
+            case_id=case_id,
+            repetition_index=repetition_index,
+            run_id=run_uuid,
+            status=status,
+            evidence=None,
+        )
+    except Exception:
+        logger.exception(
+            "Synthetic terminal fast-path failed for run %s; "
+            "scheduler reconciliation will recover",
+            run_id,
+        )
+
 
 def _worker_owner() -> str:
     """Stable-enough owner label for lease debugging."""
@@ -198,6 +281,11 @@ class AgentRunConsumer(BaseConsumer):
         lease_token: str | None = None
         trigger_type: str | None = body.get("trigger_type")
         sync = body.get("sync", False)
+        # Immutable admission-time hint captured under the claim lock below.
+        # Plain bool only: never trust ORM attributes after a rollback. The
+        # fast-path helper re-validates everything from a fresh committed
+        # read; this hint merely lets definite production rows skip it.
+        synthetic_hint: bool | None = None
 
         try:
             # Atomically claim the durable queued row and load the agent.
@@ -226,6 +314,18 @@ class AgentRunConsumer(BaseConsumer):
                         agent_run.status,
                     )
                     return
+
+                # Capture the immutable synthetic-root marker while the row
+                # is freshly locked. trigger_type/parent_run_id never change
+                # after admission; evaluation_mode is admission-set for
+                # synthetic rows (Designer later adds its own flag, which the
+                # helper re-checks from the committed row).
+                synthetic_hint = (
+                    agent_run.trigger_type == _EVALUATION_SYNTHETIC_TRIGGER
+                    and agent_run.parent_run_id is None
+                    and (agent_run.correlation or {}).get("evaluation_mode")
+                    == _EVALUATION_SYNTHETIC_MODE
+                )
 
                 # Best-effort pre-cancel via the dedicated cancel flag. The
                 # legacy Redis execution context no longer exists.
@@ -1004,6 +1104,22 @@ class AgentRunConsumer(BaseConsumer):
             except Exception as e:
                 # Context key has a TTL; leaking one for a few minutes is harmless
                 logger.debug(f"failed to delete agent_run context key for {run_id}: {e}")
+
+            # Best-effort synthetic-evaluation fast path. Committed terminal
+            # synthetic roots apply immediately instead of waiting for the
+            # scheduler reconciliation; the helper re-reads the committed
+            # row in a fresh session (closed before dispatch), swallows its
+            # own failures, and leaves reconciliation recovery intact.
+            try:
+                await _maybe_apply_synthetic_terminal(
+                    self._session_factory, run_id, synthetic_hint
+                )
+            except Exception:
+                logger.exception(
+                    "Synthetic terminal fast-path failed for run %s; "
+                    "scheduler reconciliation will recover",
+                    run_id,
+                )
 
     @staticmethod
     async def _load_legacy_context(run_id: str) -> dict[str, Any] | None:

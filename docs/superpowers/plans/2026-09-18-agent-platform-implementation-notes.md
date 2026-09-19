@@ -444,3 +444,79 @@ and Designer coverage passed in the focused batch. Exact commands:
 API quality passed (zero Pyright errors/warnings; Ruff clean). Full backend
 8,645-pass evidence precedes this small correction; the full suite was not
 rerun for it. Astra UI implementation continues, with browser gates pending.
+
+### Astra UI implementation and verification in progress
+
+Implemented integrated Agent debugger and Evaluation Studio routes using generated
+contracts, existing query patterns, AgentRun events, and PlatformJob notification
+updates. Original run detail/actions remain available. Studio distinguishes live
+baseline from immutable candidate, keeps Designer drafts inspectable, freezes
+accepted versions, compares assertion/tool/usage evidence, and requires an explicit
+current-production diff before applying overlays. Added the dedicated Testing
+assignment beside Summarization. Runtime counters exclude automatic summaries;
+missing comparison measurements render as not recorded.
+
+The deterministic live Designer browser journey passed selected historical-run
+review, queued generation, post-materialization notification refresh, draft
+inspection, and frozen acceptance. Temporary AI assignments were restored and
+the disposable provider removed. Desktop/mobile captures were visually inspected.
+The first full Vitest gate passed 519 files / 3,115 tests; subsequent regression
+coverage exposed and repaired pending assertion presentation. The final expanded
+unit gate and full browser verification are ongoing. Broad browser failures have
+concrete fixes in client tests for semantic selectors and paginated organization
+lookup; they are not waived. Final evidence is maintained in
+`/tmp/durable-astra-ui-result.md`. No UI completion claim yet.
+
+Astra verification handoff: final full Vitest passed 519 files / 3,121 tests;
+TypeScript and lint passed (one preexisting seed-review-pack console warning).
+The full browser gate ran 169 tests: 162 passed, seven failed. All client-owned
+selector/pagination failures now have green focused reproductions, including the
+final Files/Table policy check (3/3). The debugger live journey passes. Designer
+selected-history → queued generation → materialized drafts → frozen acceptance
+passed with a deterministic provider, and screenshots were visually inspected.
+
+One parent-owned blocker remains: both synthetic AgentRuns completed at
+19:10:44 UTC, while their suite execution remained running until the 19:11:25
+reconciliation tick. `apply_synthetic_terminal` has no production caller; the
+60-second sweep is the only completion projection. A manual visual run likewise
+took 58.7 seconds to become succeeded. No browser timeout was increased and no
+polling or backend edit was added. Reproduction and proposed smallest correction
+are in `/tmp/durable-ui-contract-gaps.md`; complete UI evidence and changed files
+are in `/tmp/durable-astra-ui-result.md`. Parent must repair/resolve this runtime
+boundary, then the focused Studio journey and full browser gate must pass before
+feature completion. No commits were made by Astra.
+
+### UI-discovered backend correction: prompt synthetic completion projection
+
+Astra's browser reproduction proved that both synthetic roots were terminal while
+Studio's authoritative execution remained running until the 60-second sweep.
+`apply_synthetic_terminal` existed but had no production caller. The consumer now
+invokes it after its processing scope, using a fresh committed-state read and
+closing that session before projection. Only terminal synthetic roots with valid
+execution/case/side/repetition correlation qualify. Production runs, Designer
+runs, delegated children, and nonterminal waits are excluded. Failures preserve
+the committed run and leave the existing reconciliation recovery intact. No
+endpoint, DTO, scheduler interval, browser timeout, or polling contract changed.
+
+OpenCode `opencode-go/muse-spark-1.3-contributor` contributed only the consumer and
+its new sibling tests (session `ses_f44e5de21ffeUMCDl8wCTrCXlF`); parent review
+added database integration coverage, strict nonnegative integer repetition
+validation, and committed-fixture cleanup. Initial focused failures exposed a
+missing parent FK fixture and in-place JSON edits that SQLAlchemy did not persist;
+both fixtures were corrected. Additional validation tests reproduced truncation
+of fractional repetition values and acceptance of negative values; the helper
+now rejects these rather than coercing them. No retries or skips were added.
+
+The database integration test proves that a terminal consumer delivery completes
+the evaluation/shared job without calling reconciliation, missing persisted
+evidence fails explicitly, and duplicate delivery does not increment completion
+twice. Final focused and browser verification results are recorded below when
+complete. The full 8,645-test backend gate predates these two UI-discovered
+notification/projection corrections; their affected surfaces receive focused
+verification and the full browser gate exercises the resulting live path.
+
+Final backend correction verification:
+
+- `./test.sh tests/unit/services/test_agent_run_evaluation_completion.py tests/unit/services/test_agent_run_consumer.py tests/unit/jobs/platform/test_agent_evaluation.py tests/unit/jobs/platform/test_agent_evaluation_completion_race.py tests/unit/test_import_hygiene.py`: **73 passed**, zero failures/errors/skips. Retained JUnit: `/tmp/durable-terminal-bridge-focused-verified.xml`.
+- `./test.sh quality api`: **0 errors, 0 warnings**, Ruff all checks passed. Log: `/tmp/durable-terminal-bridge-quality-final.log`.
+- `git diff --check`: passed. UI browser verification resumes after this reviewed correction.
