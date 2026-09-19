@@ -177,7 +177,31 @@ async def append_journal(
     await session.flush()
     if commit:
         await session.commit()
+    _notify_journal_appended(run_id, entry.sequence)
     return entry
+
+
+def _notify_journal_appended(run_id: UUID, sequence: int) -> None:
+    """Best-effort live hint that the journal grew (never fails the write).
+
+    Debugger clients subscribed to the existing ``agent-run:{id}`` channel
+    use the bounded ``journal_appended`` payload (run ID + latest sequence)
+    to refresh; the journal content itself travels only over the read API.
+    """
+    try:
+        from src.core.pubsub import publish_agent_run_journal_appended
+
+        import asyncio
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop.create_task(
+            publish_agent_run_journal_appended(run_id, sequence)
+        )
+    except Exception as exc:  # noqa: BLE001 - notification must not fail writes
+        logger.debug(f"journal_appended notify skipped: {exc}")
 
 
 async def commit_checkpoint(

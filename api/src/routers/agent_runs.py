@@ -24,6 +24,13 @@ from src.models.contracts.agent_run_flag_conversations import (
     FlagConversationResponse,
     SendFlagMessageRequest,
 )
+from src.models.contracts.agent_debugger import (
+    AgentCheckpointPage,
+    AgentDebuggerLinks,
+    AgentRunSnapshotView,
+    AgentRunTree,
+    AgentTimelinePage,
+)
 from src.models.contracts.agent_runs import (
     AgentRunCreateRequest,
     AgentRunChildResponse,
@@ -55,6 +62,13 @@ from src.models.orm.agents import Agent
 from src.models.orm.solutions import Solution
 from src.models.orm.summary_backfill_job import SummaryBackfillJob
 from src.core.redis_client import get_redis_client
+from src.services.agent_runtime.debugger import (
+    DebuggerNotFoundError,
+    get_checkpoints as _debug_checkpoints,
+)
+from src.services.agent_runtime.debugger import get_run_tree as _debug_tree
+from src.services.agent_runtime.debugger import get_snapshot as _debug_snapshot
+from src.services.agent_runtime.debugger import get_timeline as _debug_timeline
 from src.services.execution.agent_run_access import agent_run_visibility_conditions
 from src.services.execution.agent_run_service import (
     enqueue_agent_run,
@@ -682,7 +696,128 @@ async def get_agent_run(
         steps=steps_response,
         ai_usage=ai_usage_list,
         ai_totals=ai_totals_response,
+        debug_links=AgentDebuggerLinks(
+            tree=f"/api/agent-runs/{run.id}/tree",
+            timeline=f"/api/agent-runs/{run.id}/timeline",
+            snapshot=f"/api/agent-runs/{run.id}/snapshot",
+            checkpoints=f"/api/agent-runs/{run.id}/checkpoints",
+        ),
     )
+
+
+# -----------------------------------------------------------------------------
+# Debugger read surface (journal-backed; existing responses above unchanged)
+# -----------------------------------------------------------------------------
+
+
+@router.get("/{run_id}/tree", response_model=AgentRunTree)
+async def get_agent_run_tree(
+    run_id: UUID,
+    db: DbSession,
+    user: CurrentActiveUser,
+) -> AgentRunTree:
+    """Delegation tree for a run. Only runs visible to the caller appear.
+
+    Returns 404 (rather than leaking existence) when the run is missing or
+    invisible to the caller under the exact detail-route visibility checks.
+    """
+    try:
+        return await _debug_tree(db, run_id, user)
+    except DebuggerNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+
+
+@router.get("/{run_id}/timeline", response_model=AgentTimelinePage)
+async def get_agent_run_timeline(
+    run_id: UUID,
+    db: DbSession,
+    user: CurrentActiveUser,
+    cursor: str | None = Query(
+        None,
+        description="Opaque page position from a previous next_cursor.",
+    ),
+    limit: int = Query(50, ge=1, le=200),
+    kind: str | None = Query(
+        None,
+        description="Filter to one journal event kind.",
+    ),
+    attempt: int | None = Query(None, ge=0),
+    include_descendants: bool = Query(
+        False,
+        description="Merge visible descendant runs into one ordered timeline.",
+    ),
+) -> AgentTimelinePage:
+    """Cursor-page the durable journal timeline. The journal is canonical."""
+    try:
+        return await _debug_timeline(
+            db,
+            run_id,
+            user,
+            limit=limit,
+            cursor=cursor,
+            kind=kind,
+            attempt=attempt,
+            include_descendants=include_descendants,
+        )
+    except DebuggerNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+
+@router.get("/{run_id}/snapshot", response_model=AgentRunSnapshotView)
+async def get_agent_run_snapshot(
+    run_id: UUID,
+    db: DbSession,
+    user: CurrentActiveUser,
+) -> AgentRunSnapshotView:
+    """Immutable execution-snapshot identity plus live lifecycle/lease state.
+
+    Exposes configuration identity and hashes — never caller_context,
+    credentials, tokens, or unredacted secrets.
+    """
+    try:
+        return await _debug_snapshot(db, run_id, user)
+    except DebuggerNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+
+
+@router.get("/{run_id}/checkpoints", response_model=AgentCheckpointPage)
+async def get_agent_run_checkpoints(
+    run_id: UUID,
+    db: DbSession,
+    user: CurrentActiveUser,
+    cursor: str | None = Query(
+        None,
+        description="Opaque page position from a previous next_cursor.",
+    ),
+    limit: int = Query(50, ge=1, le=200),
+) -> AgentCheckpointPage:
+    """Cursor-page checkpoint summaries (metadata only), oldest first."""
+    try:
+        return await _debug_checkpoints(db, run_id, user, limit=limit, cursor=cursor)
+    except DebuggerNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
 
 
 @router.post("/{run_id}/rerun")

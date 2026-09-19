@@ -6,6 +6,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from src.models.contracts.agent_debugger import AgentDebuggerLinks
 from src.models.contracts.executions import AIUsagePublicSimple, AIUsageTotalsSimple
 
 
@@ -90,6 +91,9 @@ class AgentRunDetailResponse(AgentRunResponse):
     child_runs: list[AgentRunChildResponse] = Field(default_factory=list)
     ai_usage: list[AIUsagePublicSimple] | None = None
     ai_totals: AIUsageTotalsSimple | None = None
+    # Additive navigation to the debugger read surface. Existing fields
+    # above are unchanged; journal-backed detail lives behind these links.
+    debug_links: AgentDebuggerLinks | None = None
 
 
 class AgentRunListResponse(BaseModel):

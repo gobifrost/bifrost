@@ -384,6 +384,26 @@ async def publish_agent_run_step(
     await manager.broadcast(f"agent-run:{run_id}", message)
 
 
+async def publish_agent_run_journal_appended(
+    run_id: str | UUID,
+    sequence: int,
+) -> None:
+    """Bounded live hint that the durable journal grew.
+
+    Broadcasts to the existing ``agent-run:{run_id}`` channel so debugger
+    clients refresh through the read API. Carries only the run ID and the
+    latest journal sequence — never journal content, which may hold
+    secret-bearing tool arguments before read-side redaction.
+    """
+    message = {
+        "type": "journal_appended",
+        "run_id": str(run_id),
+        "sequence": sequence,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    await manager.broadcast(f"agent-run:{run_id}", message)
+
+
 def serialize_chat_stream_chunk(chunk: ChatStreamChunk) -> dict[str, Any]:
     """Serialize a sparse chunk without altering nested contract payloads."""
     payload = chunk.model_dump(mode="json")
