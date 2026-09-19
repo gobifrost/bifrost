@@ -22,13 +22,15 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
+from src.services.agent_evaluations.quotas import MAX_SYNTHETIC_TIMER_SECONDS
+
 EVALUATION_SYNTHETIC_MODE = "evaluation_synthetic"
 PRODUCTION_MODE = "production"
 
 ENGINE_OWNED_TOOL_PREFIX = "delegate_to_"
 ENGINE_OWNED_TOOLS = frozenset({"delegate_agents", "sleep_until"})
 
-SYNTHETIC_TIMER_MAX_SECONDS_DEFAULT = 300
+SYNTHETIC_TIMER_MAX_SECONDS_DEFAULT = MAX_SYNTHETIC_TIMER_SECONDS
 
 # Correlation keys that would tag a run as a production event trigger.
 # Synthetic runs must never carry them.

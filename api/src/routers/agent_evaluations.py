@@ -220,6 +220,7 @@ async def create_case(
     db: DbSession,
     user: CurrentActiveUser,
 ) -> EvaluationCasePublic:
+    from src.services.agent_evaluations import quotas as eval_quotas
     from src.services.agent_evaluations.assertions import (
         AssertionDefinitionError,
         validate_assertions,
@@ -235,6 +236,25 @@ async def create_case(
             status_code=status.HTTP_409_CONFLICT,
             detail="Published suites are immutable; accept drafts as new versions.",
         )
+    try:
+        eval_quotas.check_fixture_size(dict(body.fixture))
+    except eval_quotas.QuotaExceeded as exc:
+        raise HTTPException(
+            status_code=exc.status_code, detail=str(exc)
+        ) from exc
+    existing_count = (
+        await db.execute(
+            select(func.count())
+            .select_from(AgentEvaluationCase)
+            .where(AgentEvaluationCase.suite_id == suite.id)
+        )
+    ).scalar() or 0
+    try:
+        eval_quotas.check_cases_per_suite(int(existing_count))
+    except eval_quotas.QuotaExceeded as exc:
+        raise HTTPException(
+            status_code=exc.status_code, detail=str(exc)
+        ) from exc
     try:
         validate_fixture({"version": 1, **body.fixture})
         validate_assertions([a.model_dump() for a in body.assertions])
@@ -437,6 +457,7 @@ async def designer_drafts(
     and allowed historical run IDs used for provenance. Returns drafts with
     coverage labels; drafts never run until explicitly accepted.
     """
+    from src.services.agent_evaluations import quotas as eval_quotas
     from src.services.agent_evaluations.test_designer import (
         DesignerError,
         deduplicate_proposals,
@@ -446,6 +467,14 @@ async def designer_drafts(
 
     suite = await _suite_or_404(db, user, suite_id)
     tool_schemas = body.get("tool_schemas") or {}
+    try:
+        eval_quotas.check_designer_proposal_count(
+            len((body.get("designer_output") or {}).get("proposals", []))
+        )
+    except eval_quotas.QuotaExceeded as exc:
+        raise HTTPException(
+            status_code=exc.status_code, detail=str(exc)
+        ) from exc
     allowed_runs = set(body.get("allowed_run_ids") or [])
     history = redact_history(body.get("historical_runs") or [], allowed_run_ids=allowed_runs)
     try:
@@ -603,6 +632,7 @@ async def create_execution(
         AGENT_EVALUATION_SUITE_DEFINITION,
         AgentEvaluationSuitePayload,
     )
+    from src.services.agent_evaluations import quotas as eval_quotas
     from src.services.agent_evaluations.executions import (
         build_dedupe_key,
         create_execution_objects,
@@ -618,6 +648,32 @@ async def create_execution(
             status_code=status.HTTP_409_CONFLICT,
             detail="Only published suites can execute; publish first.",
         )
+    try:
+        eval_quotas.check_repetitions(body.repetitions_override)
+    except eval_quotas.QuotaExceeded as exc:
+        raise HTTPException(
+            status_code=exc.status_code, detail=str(exc)
+        ) from exc
+    active_count = (
+        await db.execute(
+            select(func.count())
+            .select_from(AgentEvaluationExecution)
+            .join(
+                AgentEvaluationSuite,
+                AgentEvaluationSuite.id == AgentEvaluationExecution.suite_id,
+            )
+            .where(
+                AgentEvaluationSuite.org_id == suite.org_id,
+                AgentEvaluationExecution.status.in_(("queued", "running", "waiting")),
+            )
+        )
+    ).scalar() or 0
+    try:
+        eval_quotas.check_active_executions_per_org(int(active_count))
+    except eval_quotas.QuotaExceeded as exc:
+        raise HTTPException(
+            status_code=exc.status_code, detail=str(exc)
+        ) from exc
     candidate_id = body.candidate_id
     if candidate_id is not None:
         candidate = await db.get(AgentCandidateSnapshot, candidate_id)

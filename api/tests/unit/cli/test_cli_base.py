@@ -220,6 +220,7 @@ class TestSubgroupRegistration:
             "workflows",
             "forms",
             "agents",
+            "agent-tests",
             "apps",
             "integrations",
             "configs",

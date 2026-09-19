@@ -768,6 +768,7 @@ Entity mutation commands (see 'bifrost <entity> --help'):
   workflows    Manage workflow lifecycle and role assignments
   forms        Manage forms
   agents       Manage AI agents
+  agent-tests  Manage agent evaluation suites
   apps         Manage applications and dependencies
   claims       Manage custom claims
   integrations Manage integrations, config schemas, and mappings

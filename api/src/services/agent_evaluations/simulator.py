@@ -279,6 +279,13 @@ class Simulator:
     def _record(
         self, tool_name: str, args: dict[str, Any], *, result: Any
     ) -> None:
+        from src.services.agent_evaluations.quotas import MAX_SIM_RECORDS_PER_RUN
+
+        if len(self._records) >= MAX_SIM_RECORDS_PER_RUN:
+            raise SyntheticToolError(
+                f"Simulation exceeded {MAX_SIM_RECORDS_PER_RUN} tool records.",
+                code="quota_exceeded",
+            )
         self._records.append(
             {
                 "sequence": self._sequence,
