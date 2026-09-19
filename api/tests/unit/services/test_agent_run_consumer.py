@@ -106,9 +106,20 @@ def consumer():
 
 
 @pytest.mark.asyncio
-async def test_missing_redis_context_returns_early(consumer):
-    """Missing Redis context durably fails the queued run."""
+async def test_missing_snapshot_and_context_fails_closed(consumer):
+    """A legacy row with no snapshot and no Redis context fails with a recovery reason."""
+    run_id = str(uuid4())
     queued_run = MagicMock(status="queued")
+    queued_run.trigger_type = "manual"
+    queued_run.agent_id = uuid4()
+    queued_run.execution_snapshot = None
+    queued_run.org_id = None
+    queued_run.caller_user_id = None
+    queued_run.caller_email = None
+    queued_run.caller_name = None
+    queued_run.event_delivery_id = None
+    queued_run.conversation_id = None
+    queued_run.trigger_source = None
     mock_session = AsyncMock()
     mock_session.get.return_value = queued_run
     mock_session_ctx = AsyncMock()
@@ -123,30 +134,33 @@ async def test_missing_redis_context_returns_early(consumer):
         "src.jobs.consumers.agent_run.get_redis",
         return_value=FakeRedisCtx(redis_mock),
     ):
-        await consumer.process_message(
-            {
-                "run_id": str(uuid4()),
-                "agent_id": str(uuid4()),
-                "trigger_type": "manual",
-            }
-        )
+        await consumer.process_message({"run_id": run_id})
 
-    redis_mock.get.assert_called_once()
     assert queued_run.status == "failed"
-    assert queued_run.error == "Agent run context was unavailable"
-    mock_session.commit.assert_awaited_once()
+    assert "snapshots" in queued_run.error
+    assert queued_run.completed_at is not None
 
 
 @pytest.mark.asyncio
 async def test_agent_not_found_returns_early(consumer):
     """When the agent doesn't exist in the DB, process_message logs and returns without crashing."""
     run_id = str(uuid4())
+    agent_id = uuid4()
 
-    # Redis returns valid context
     redis_mock = AsyncMock()
-    redis_mock.get.return_value = json.dumps({"org_id": str(uuid4()), "input": "hello"})
+    redis_mock.get.return_value = None
 
     queued_run = MagicMock(status="queued")
+    queued_run.trigger_type = "manual"
+    queued_run.agent_id = agent_id
+    queued_run.execution_snapshot = {"format_version": 1}
+    queued_run.org_id = None
+    queued_run.caller_user_id = None
+    queued_run.caller_email = None
+    queued_run.caller_name = None
+    queued_run.event_delivery_id = None
+    queued_run.conversation_id = None
+    queued_run.trigger_source = None
 
     # DB session where the durable run exists but the agent no longer does.
     mock_result = MagicMock()
@@ -162,19 +176,11 @@ async def test_agent_not_found_returns_early(consumer):
 
     consumer._session_factory = MagicMock(return_value=mock_session_ctx)
 
-    # get_redis is called multiple times (initial context read, then inside finally block)
-    # We need it to work for both calls
     with patch(
         "src.jobs.consumers.agent_run.get_redis",
         return_value=FakeRedisCtx(redis_mock),
     ):
-        await consumer.process_message(
-            {
-                "run_id": run_id,
-                "agent_id": str(uuid4()),
-                "trigger_type": "manual",
-            }
-        )
+        await consumer.process_message({"run_id": run_id})
 
     # Verify the agent query was executed
     mock_session.execute.assert_called_once()
@@ -194,20 +200,15 @@ async def test_pre_cancel_updates_existing_queued_run(consumer):
     mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
     consumer._session_factory = MagicMock(return_value=mock_session_ctx)
 
+    # Pre-cancel is signalled by the dedicated cancel flag, not a context blob.
     redis_mock = AsyncMock()
-    redis_mock.get.return_value = json.dumps({"cancelled": True})
+    redis_mock.get.return_value = "1"
 
     with patch(
         "src.jobs.consumers.agent_run.get_redis",
         return_value=FakeRedisCtx(redis_mock),
     ):
-        await consumer.process_message(
-            {
-                "run_id": run_id,
-                "agent_id": str(uuid4()),
-                "trigger_type": "manual",
-            }
-        )
+        await consumer.process_message({"run_id": run_id})
 
     assert queued_run.status == "cancelled"
     assert queued_run.completed_at is not None
@@ -232,6 +233,15 @@ async def test_late_terminalized_run_is_not_overwritten(
         iterations_used=0,
         tokens_used=0,
         created_at=datetime.now(timezone.utc),
+        execution_snapshot={
+            "format_version": 1,
+            "system_prompt": "You are a test agent.",
+            "model": {"profile_id": None, "provider": "test", "model": "test"},
+            "tools": [],
+            "delegated_agents": [],
+            "system_tools": [],
+            "limits": {},
+        },
     )
     db_session.add(run)
     await db_session.commit()
@@ -279,6 +289,97 @@ async def test_late_terminalized_run_is_not_overwritten(
     sync_payload = sync_mock.await_args.args[1]
     assert sync_payload["status"] == "timeout"
     assert sync_payload["error"] == "scheduler terminalized the run"
+
+
+class FakeSnapshotExecutor:
+    """Executor stub recording the snapshot-driven invocation."""
+
+    seen_kwargs: dict = {}
+
+    def __init__(self, session_factory, redis_client):
+        self._session_factory = session_factory
+
+    async def run(self, **kwargs):
+        FakeSnapshotExecutor.seen_kwargs = kwargs
+        return {
+            "output": {"text": "executed from snapshot"},
+            "iterations_used": 1,
+            "tokens_used": 5,
+            "status": "completed",
+            "llm_model": "test-model",
+        }
+
+    async def flush_to_db(self, db):
+        return None
+
+
+@pytest.mark.asyncio
+async def test_executes_from_postgres_after_redis_loss(
+    consumer,
+    db_session,
+    async_session_factory,
+    seed_agent,
+):
+    """An admitted run executes from its PG snapshot with no Redis state."""
+    run_id = uuid4()
+    snapshot = {
+        "format_version": 1,
+        "system_prompt": "Pinned prompt.",
+        "model": {"profile_id": None, "provider": "test", "model": "test"},
+        "tools": [],
+        "delegated_agents": [],
+        "system_tools": [],
+        "limits": {},
+    }
+    run = AgentRun(
+        id=run_id,
+        agent_id=seed_agent.id,
+        trigger_type="manual",
+        status="queued",
+        input={"task": "from pg"},
+        output_schema={"type": "object"},
+        iterations_used=0,
+        tokens_used=0,
+        created_at=datetime.now(timezone.utc),
+        execution_snapshot=snapshot,
+    )
+    db_session.add(run)
+    await db_session.commit()
+
+    consumer._session_factory = async_session_factory
+    FakeSnapshotExecutor.seen_kwargs = {}
+
+    # Redis lost everything: no cancel flag, no legacy context.
+    redis_mock = AsyncMock()
+    redis_mock.get.return_value = None
+
+    with (
+        patch("src.jobs.consumers.agent_run.get_redis", return_value=FakeRedisCtx(redis_mock)),
+        patch(
+            "src.services.execution.autonomous_agent_executor.AutonomousAgentExecutor",
+            FakeSnapshotExecutor,
+        ),
+        patch("src.jobs.consumers.agent_run.publish_agent_run_update", AsyncMock()),
+        patch("src.jobs.consumers.agent_run._publish_sync_result", AsyncMock()) as sync_mock,
+        patch(
+            "src.services.execution.run_summarizer.enqueue_summarize",
+            AsyncMock(),
+        ),
+    ):
+        # Nudge carries only the run ID.
+        await consumer.process_message({"run_id": str(run_id)})
+
+    seen = FakeSnapshotExecutor.seen_kwargs
+    assert seen["run_id"] == str(run_id)
+    assert seen["input_data"] == {"task": "from pg"}
+    assert seen["output_schema"] == {"type": "object"}
+    assert seen["execution_snapshot"] == snapshot
+
+    refreshed = await _load_run(async_session_factory, run_id)
+    assert refreshed.status == "completed"
+    assert refreshed.output == {"text": "executed from snapshot"}
+    sync_payload = sync_mock.await_args.args[1]
+    assert sync_payload["status"] == "completed"
 
 
 @pytest.mark.asyncio
@@ -572,7 +673,25 @@ async def test_agentless_chat_skips_agent_lookup_and_socket_dependencies(
     consumer,
 ):
     run_id = str(uuid4())
+    conversation_id = uuid4()
+    caller_id = uuid4()
     queued_run = MagicMock(status="queued")
+    queued_run.trigger_type = "chat"
+    queued_run.trigger_source = None
+    queued_run.agent_id = None
+    queued_run.org_id = None
+    queued_run.input = {
+        "conversation_id": str(conversation_id),
+        "content": "Hello",
+        "client_run_id": str(uuid4()),
+    }
+    queued_run.output_schema = None
+    queued_run.caller_user_id = str(caller_id)
+    queued_run.caller_email = "caller@example.com"
+    queued_run.caller_name = "Caller"
+    queued_run.event_delivery_id = None
+    queued_run.conversation_id = conversation_id
+    queued_run.execution_snapshot = None
     mock_session = AsyncMock()
     mock_session.get.return_value = queued_run
     mock_session.execute = AsyncMock(side_effect=AssertionError("agent lookup should be skipped for chat"))
@@ -583,21 +702,7 @@ async def test_agentless_chat_skips_agent_lookup_and_socket_dependencies(
     consumer._session_factory = MagicMock(return_value=mock_session_ctx)
 
     redis_mock = AsyncMock()
-    redis_mock.get.return_value = json.dumps(
-        {
-            "trigger_type": "chat",
-            "input": {
-                "conversation_id": str(uuid4()),
-                "content": "Hello",
-                "client_run_id": str(uuid4()),
-            },
-            "caller": {
-                "user_id": str(uuid4()),
-                "email": "caller@example.com",
-                "name": "Caller",
-            },
-        }
-    )
+    redis_mock.get.return_value = None
 
     process_chat = AsyncMock()
 
@@ -608,13 +713,7 @@ async def test_agentless_chat_skips_agent_lookup_and_socket_dependencies(
         patch("src.jobs.consumers.agent_run.publish_agent_run_update", AsyncMock()),
         patch.object(consumer, "_process_chat_run", process_chat),
     ):
-        await consumer.process_message(
-            {
-                "run_id": run_id,
-                "agent_id": None,
-                "trigger_type": "chat",
-            }
-        )
+        await consumer.process_message({"run_id": run_id})
 
     mock_session.execute.assert_not_called()
     process_chat.assert_awaited_once()
@@ -632,6 +731,21 @@ async def test_chat_outer_failure_publishes_terminal_error_envelope(
     run_id = str(uuid4())
     conversation_id = uuid4()
     queued_run = MagicMock(status="queued", conversation_id=conversation_id)
+    queued_run.trigger_type = "chat"
+    queued_run.trigger_source = None
+    queued_run.agent_id = None
+    queued_run.org_id = None
+    queued_run.input = {
+        "conversation_id": str(conversation_id),
+        "content": "Hello",
+        "client_run_id": str(uuid4()),
+    }
+    queued_run.output_schema = None
+    queued_run.caller_user_id = str(uuid4())
+    queued_run.caller_email = "caller@example.com"
+    queued_run.caller_name = "Caller"
+    queued_run.event_delivery_id = None
+    queued_run.execution_snapshot = None
     mock_session = AsyncMock()
     mock_session.get.return_value = queued_run
     mock_session.execute = AsyncMock(side_effect=AssertionError("agent lookup should be skipped for chat"))
@@ -642,21 +756,7 @@ async def test_chat_outer_failure_publishes_terminal_error_envelope(
     consumer._session_factory = MagicMock(return_value=mock_session_ctx)
 
     redis_mock = AsyncMock()
-    redis_mock.get.return_value = json.dumps(
-        {
-            "trigger_type": "chat",
-            "input": {
-                "conversation_id": str(conversation_id),
-                "content": "Hello",
-                "client_run_id": str(uuid4()),
-            },
-            "caller": {
-                "user_id": str(uuid4()),
-                "email": "caller@example.com",
-                "name": "Caller",
-            },
-        }
-    )
+    redis_mock.get.return_value = None
 
     publish_chat = AsyncMock()
     publish_run = AsyncMock()

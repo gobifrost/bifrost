@@ -150,6 +150,7 @@ class AutonomousAgentExecutor:
         input_data: dict | None = None,
         output_schema: dict | None = None,
         run_id: str | None = None,
+        execution_snapshot: dict[str, Any] | None = None,
         _caller: dict | None = None,
         _shared_usage: RunUsage | None = None,
         _shared_budget: AgentRunBudget | None = None,
@@ -161,6 +162,10 @@ class AutonomousAgentExecutor:
             input_data: Input payload (serialized as JSON in the user message).
             output_schema: Optional JSON Schema the agent should conform its output to.
             run_id: External run ID (generates one if not provided).
+            execution_snapshot: Immutable configuration pinned at enqueue.
+                When present, prompt, model identity, tool set, and limits
+                come from the snapshot instead of the live Agent row, so a
+                resumed run never silently adopts an edited Agent.
             _caller: Optional caller metadata for context.
             _shared_usage: Internal cumulative usage ledger inherited from a
                 parent run during delegation.
@@ -194,14 +199,35 @@ class AutonomousAgentExecutor:
         self._caller_user_id = caller_user_id
         self._caller = dict(_caller) if _caller else None
 
+        if execution_snapshot is not None:
+            from src.services.agent_runtime.execution_snapshot import (
+                validate_snapshot,
+            )
+
+            execution_snapshot = validate_snapshot(execution_snapshot)
+            snapshot_model = execution_snapshot["model"]
+            snapshot_limits = execution_snapshot.get("limits", {})
+            profile_id = (
+                UUID(snapshot_model["profile_id"])
+                if snapshot_model.get("profile_id")
+                else None
+            )
+        else:
+            snapshot_model = None
+            snapshot_limits = {}
+            profile_id = agent.llm_profile_id
+
         async with self._session_factory() as db:
-            llm_configs = await get_llm_configs(db, profile_id=agent.llm_profile_id)
-        llm_config = llm_configs[0]
-        model_name = llm_config.model
+			llm_config = await get_llm_config(db, profile_id=profile_id)
+		model_name = (
+			snapshot_model["model"] if snapshot_model else llm_config.model
+		)
 
         # Short-circuit if agent is paused. Runs already past this point continue
-        # normally — this check only gates new runs at entry.
-        if not agent.is_active:
+        # normally — this check only gates new runs at entry. Snapshot-backed
+        # runs were admitted against an active Agent; resume must not die
+        # because someone paused mid-run.
+        if not agent.is_active and execution_snapshot is None:
             return {
                 "output": None,
                 "iterations_used": 0,
@@ -213,8 +239,12 @@ class AutonomousAgentExecutor:
             }
 
         step_number = 0
-        configured_iterations = agent.max_iterations
-        configured_tokens = agent.max_token_budget
+        configured_iterations = snapshot_limits.get(
+            "max_iterations", agent.max_iterations
+        )
+        configured_tokens = snapshot_limits.get(
+            "max_token_budget", agent.max_token_budget
+        )
         usage = _shared_usage or RunUsage()
         usage_start_requests = usage.requests
         usage_start_tokens = usage.total_tokens
@@ -242,12 +272,33 @@ class AutonomousAgentExecutor:
 
         # Resolve tools in one short DB lease. No DB
         # connection is held across model requests or tool execution.
-        async with self._session_factory() as db:
-            tool_definitions, self._tool_workflow_id_map = await resolve_agent_tools(
-                agent,
-                db,
-                caller_user_id=caller_user_id,
+        # Snapshot-backed runs rebuild definitions from the pinned snapshot
+        # so post-enqueue Agent edits cannot change the executed tool set.
+        if execution_snapshot is not None:
+            from src.services.agent_runtime.execution_snapshot import (
+                snapshot_tool_targets,
             )
+            from src.services.llm.base import ToolDefinition
+
+            tool_definitions = [
+                ToolDefinition(
+                    name=tool["name"],
+                    description=tool.get("description") or "",
+                    parameters=tool.get("parameters")
+                    or {"type": "object", "properties": {}},
+                )
+                for tool in execution_snapshot.get("tools", [])
+            ]
+            self._tool_workflow_id_map = snapshot_tool_targets(execution_snapshot)
+        else:
+            async with self._session_factory() as db:
+                tool_definitions, self._tool_workflow_id_map = (
+                    await resolve_agent_tools(
+                        agent,
+                        db,
+                        caller_user_id=caller_user_id,
+                    )
+                )
         last_response_content = ""
 
         async def record_model_event(event: ModelCallEvent) -> None:
@@ -397,18 +448,34 @@ class AutonomousAgentExecutor:
         # Usage for every attempt — including rejected ones — is already
         # charged to the shared UsageLimits ledger by ObservedModel.
         empty_output_guard = EmptyOutputCircuitBreaker()
-        runtime = PydanticAgent(
-            chain.model,
-            system_prompt=build_agent_system_prompt(
-                agent,
-                execution_context={"mode": "autonomous"},
-            ),
+		runtime = PydanticAgent(
+			observed_model,
+			system_prompt=(
+				execution_snapshot["system_prompt"]
+                if execution_snapshot is not None
+                else build_agent_system_prompt(
+					agent,
+					execution_context={"mode": "autonomous"},
+				)
+			),
             toolsets=[toolset] if tool_definitions else [],
             capabilities=[
                 *build_runtime_capabilities(budget),
                 empty_output_guard,
             ],
-            model_settings=chain.primary_settings,
+			model_settings=agent_model_settings(
+                llm_config,
+                max_tokens=(
+                    snapshot_model["llm_max_tokens"]
+                    if snapshot_model
+                    else agent.llm_max_tokens
+                ),
+                session_id=run_id,
+                # llm_config already carries the resolved profile's
+                # default_max_tokens; agent.llm_max_tokens wins when set,
+                # otherwise the profile default (or provider default) applies.
+				agent_kind="worker",
+			),
             # One bounded correction for malformed tool names/arguments. The
             # shared UsageLimits ledger charges the retry to the parent run.
             retries=1,

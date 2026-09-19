@@ -137,43 +137,21 @@ class AgentRunConsumer(BaseConsumer):
 
     async def process_message(self, body: dict) -> None:
         run_id = body["run_id"]
-        agent_id = body.get("agent_id")
-        trigger_type = body["trigger_type"]
-        sync = body.get("sync", False)
 
-        logger.info(f"Processing agent run {run_id} (agent={agent_id}, trigger={trigger_type})")
+        logger.info(f"Processing agent run {run_id}")
 
-        # Read full context from Redis
-        redis_key = f"{REDIS_PREFIX}:{run_id}:context"
-        async with get_redis() as redis:
-            context_raw = await redis.get(redis_key)
-
-        if not context_raw:
-            logger.error(f"Agent run {run_id}: context not found in Redis")
-            async with self._session_factory() as db:
-                queued_run = await db.get(AgentRun, UUID(run_id))
-                if queued_run is not None and queued_run.status == "queued":
-                    queued_run.status = "failed"
-                    queued_run.error = "Agent run context was unavailable"
-                    queued_run.completed_at = datetime.now(timezone.utc)
-                    await db.commit()
-            if sync:
-                await _publish_sync_result(
-                    run_id,
-                    {
-                        "output": None,
-                        "status": "failed",
-                        "error": "Agent run context was unavailable",
-                    },
-                )
-            return
-
-        context = json.loads(context_raw)
-
+        # PostgreSQL is authoritative: the admitted row carries the immutable
+        # execution snapshot, invocation input, output schema, and caller
+        # context. The queue message is only a nudge. Legacy publishers may
+        # still attach agent_id/trigger_type/sync; the row wins when present.
         start_time = time.time()
         agent_run: AgentRun | None = None
         agent: Agent | None = None
         executor = None
+        context: dict[str, Any] | None = None
+        execution_snapshot: dict[str, Any] | None = None
+        trigger_type: str | None = body.get("trigger_type")
+        sync = body.get("sync", False)
 
         try:
             # Atomically claim the durable queued row and load the agent.
@@ -197,21 +175,73 @@ class AgentRunConsumer(BaseConsumer):
                         agent_run.status,
                     )
                     return
-                if context.get("cancelled"):
+
+                # Best-effort pre-cancel via the dedicated cancel flag. The
+                # legacy Redis execution context no longer exists.
+                cancelled = False
+                try:
+                    async with get_redis() as redis:
+                        cancelled = bool(
+                            await redis.get(f"{REDIS_PREFIX}:{run_id}:cancel")
+                        )
+                except Exception:
+                    logger.debug(
+                        "Agent run %s: cancel-flag check unavailable", run_id
+                    )
+                if cancelled:
                     logger.info(
                         f"Agent run {run_id}: pre-cancelled, skipping execution"
                     )
                     agent_run.status = "cancelled"
                     agent_run.completed_at = datetime.now(timezone.utc)
                     await db.commit()
-                    if sync:
-                        await _publish_sync_result(
-                            run_id,
-                            {"output": None, "status": "cancelled", "error": None},
-                        )
+                    await _publish_sync_result(
+                        run_id,
+                        {"output": None, "status": "cancelled", "error": None},
+                    )
                     return
 
-                is_chat_trigger = trigger_type == "chat" or context.get("trigger_type") == "chat"
+                trigger_type = agent_run.trigger_type or trigger_type
+                execution_snapshot = agent_run.execution_snapshot
+                context = {
+                    "run_id": run_id,
+                    "agent_id": (
+                        str(agent_run.agent_id) if agent_run.agent_id else None
+                    ),
+                    "trigger_type": trigger_type,
+                    "trigger_source": agent_run.trigger_source,
+                    "input": agent_run.input,
+                    "output_schema": agent_run.output_schema,
+                    "org_id": (
+                        str(agent_run.org_id) if agent_run.org_id else None
+                    ),
+                    "caller": {
+                        "user_id": agent_run.caller_user_id,
+                        "email": agent_run.caller_email,
+                        "name": agent_run.caller_name,
+                        "organization_id": (
+                            str(agent_run.org_id) if agent_run.org_id else None
+                        ),
+                        "is_superuser": False,
+                        "is_external": False,
+                        "is_provider_org": False,
+                        "roles": [],
+                    },
+                    "event_delivery_id": (
+                        str(agent_run.event_delivery_id)
+                        if agent_run.event_delivery_id
+                        else None
+                    ),
+                    "conversation_id": (
+                        str(agent_run.conversation_id)
+                        if agent_run.conversation_id
+                        else None
+                    ),
+                    "sync": sync,
+                    "cancelled": False,
+                }
+
+                is_chat_trigger = trigger_type == "chat"
                 if is_chat_trigger:
                     agent_run.status = "running"
                     agent_run.started_at = datetime.now(timezone.utc)
@@ -240,23 +270,66 @@ class AgentRunConsumer(BaseConsumer):
                     )
                     return
 
+                # Non-chat runs execute from the immutable snapshot. A legacy
+                # row without one may still carry an in-flight Redis context
+                # from before the upgrade; use it once rather than guessing.
+                # Otherwise fail closed with a recovery reason.
+                agent_id = context["agent_id"] or body.get("agent_id")
                 if agent_id is None:
                     logger.error(f"Agent run {run_id}: agent id missing for non-chat run")
                     agent_run.status = "failed"
                     agent_run.error = "Agent id missing"
                     agent_run.completed_at = datetime.now(timezone.utc)
                     await db.commit()
-                    if sync:
+                    await _publish_sync_result(
+                        run_id,
+                        {
+                            "output": None,
+                            "status": "failed",
+                            "error": "Agent id missing",
+                        },
+                    )
+                    return
+                if execution_snapshot is None:
+                    legacy_context = await self._load_legacy_context(run_id)
+                    if legacy_context is not None:
+                        logger.info(
+                            "Agent run %s: executing from legacy Redis context",
+                            run_id,
+                        )
+                        context = legacy_context
+                        context["run_id"] = run_id
+                        trigger_type = (
+                            legacy_context.get("trigger_type") or trigger_type
+                        )
+                    else:
+                        from src.services.agent_runtime.execution_snapshot import (
+                            SnapshotError,
+                        )
+
+                        logger.error(
+                            f"Agent run {run_id}: no execution snapshot"
+                        )
+                        agent_run.status = "failed"
+                        agent_run.error = str(
+                            SnapshotError(
+                                "AgentRun predates durable execution snapshots; "
+                                "re-enqueue the work."
+                            )
+                        )
+                        agent_run.completed_at = datetime.now(timezone.utc)
+                        await db.commit()
                         await _publish_sync_result(
                             run_id,
                             {
                                 "output": None,
                                 "status": "failed",
-                                "error": "Agent id missing",
+                                "error": agent_run.error,
                             },
                         )
-                    return
+                        return
 
+                assert context is not None
                 result = await db.execute(
                     select(Agent)
                     .options(
@@ -273,15 +346,14 @@ class AgentRunConsumer(BaseConsumer):
                     agent_run.error = "Agent no longer exists"
                     agent_run.completed_at = datetime.now(timezone.utc)
                     await db.commit()
-                    if sync:
-                        await _publish_sync_result(
-                            run_id,
-                            {
-                                "output": None,
-                                "status": "failed",
-                                "error": "Agent no longer exists",
-                            },
-                        )
+                    await _publish_sync_result(
+                        run_id,
+                        {
+                            "output": None,
+                            "status": "failed",
+                            "error": "Agent no longer exists",
+                        },
+                    )
                     return
 
                 agent_run.status = "running"
@@ -292,7 +364,9 @@ class AgentRunConsumer(BaseConsumer):
 
             await publish_agent_run_update(agent_run, agent.name if agent else "Unknown")
 
-            if trigger_type == "chat" or context.get("trigger_type") == "chat":
+            # Chat was already handled above from the durable row; reaching
+            # here with a chat trigger means legacy context took over.
+            if trigger_type == "chat" or (context or {}).get("trigger_type") == "chat":
                 await self._process_chat_run(
                     run_id=run_id,
                     context=context,
@@ -325,6 +399,7 @@ class AgentRunConsumer(BaseConsumer):
                     input_data=context.get("input"),
                     output_schema=context.get("output_schema"),
                     run_id=run_id,
+                    execution_snapshot=execution_snapshot,
                     _caller=context.get("caller"),
                 ))
 
@@ -450,7 +525,7 @@ class AgentRunConsumer(BaseConsumer):
                     )
 
             # Update event delivery status if triggered by event
-            if context.get("event_delivery_id"):
+            if (context or {}).get("event_delivery_id"):
                 async with self._session_factory() as db:
                     await self._update_event_delivery(
                         db,
@@ -460,8 +535,9 @@ class AgentRunConsumer(BaseConsumer):
                         error_message=agent_run.error,
                     )
 
-            # If sync, push result for BLPOP waiter
-            if sync:
+            # Always publish the terminal result: sync SDK callers BLPOP on
+            # this key and async callers simply never listen (300s TTL).
+            if trigger_type != "chat":
                 await _publish_sync_result(
                     run_id,
                     {
@@ -516,10 +592,12 @@ class AgentRunConsumer(BaseConsumer):
                     # Stream cleanup is best-effort
                     logger.debug(f"failed to delete agent_run steps stream for {run_id}: {cleanup_err}")
 
-                if trigger_type == "chat" or context.get("trigger_type") == "chat":
+                if trigger_type == "chat" or (context or {}).get(
+                    "trigger_type"
+                ) == "chat":
                     chat_conversation_id = (
-                        context.get("input", {}).get("conversation_id")
-                        or context.get("conversation_id")
+                        (context or {}).get("input", {}).get("conversation_id")
+                        or (context or {}).get("conversation_id")
                         or (agent_run.conversation_id if agent_run else None)
                     )
                     if chat_conversation_id is not None:
@@ -550,7 +628,7 @@ class AgentRunConsumer(BaseConsumer):
                     # Pubsub notify is a UI hint; the DB row already reflects the failure
                     logger.debug(f"failed to publish agent_run failure update for {run_id}: {pub_err}")
 
-            if sync:
+            if trigger_type != "chat":
                 await _publish_sync_result(
                     run_id,
                     {
@@ -561,12 +639,33 @@ class AgentRunConsumer(BaseConsumer):
                 )
 
         finally:
+            # Legacy publishers wrote the full execution context to Redis;
+            # the key is no longer written at enqueue. Deleting is harmless.
             try:
                 async with get_redis() as r:
                     await r.delete(f"{REDIS_PREFIX}:{run_id}:context")
             except Exception as e:
                 # Context key has a TTL; leaking one for a few minutes is harmless
                 logger.debug(f"failed to delete agent_run context key for {run_id}: {e}")
+
+    @staticmethod
+    async def _load_legacy_context(run_id: str) -> dict[str, Any] | None:
+        """Load a pre-upgrade Redis execution context, if one is in flight."""
+        try:
+            async with get_redis() as redis:
+                context_raw = await redis.get(f"{REDIS_PREFIX}:{run_id}:context")
+        except Exception:
+            logger.debug(
+                "Agent run %s: legacy context check unavailable", run_id
+            )
+            return None
+        if not context_raw:
+            return None
+        try:
+            return json.loads(context_raw)
+        except (TypeError, ValueError):
+            logger.warning("Agent run %s: legacy context is not JSON", run_id)
+            return None
 
     async def _process_chat_run(
         self,

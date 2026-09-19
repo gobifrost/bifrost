@@ -3,6 +3,7 @@ import asyncio
 import json
 
 import pytest
+from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.usage import RunUsage
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -1661,3 +1662,79 @@ class TestAutonomousAgentExecutor:
         )
 
         assert result["status"] == "completed"
+
+    @pytest.mark.asyncio
+    async def test_run_uses_snapshot_over_edited_live_agent(
+        self, mock_session, mock_agent, mock_runtime_config
+    ):
+        """Post-enqueue Agent edits must not affect a snapshot-backed run."""
+        mock_agent.system_prompt = "EDITED AFTER ENQUEUE"
+        mock_agent.max_iterations = 99
+        mock_agent.max_token_budget = 999999
+        snapshot = {
+            "format_version": 1,
+            "system_prompt": "PINNED PROMPT",
+            "model": {
+                "profile_id": None,
+                "provider": "openai",
+                "model": "snapshot-model",
+                "llm_max_tokens": 123,
+            },
+            "tools": [
+                {
+                    "name": "pinned_tool",
+                    "description": "Pinned tool",
+                    "parameters": {"type": "object", "properties": {}},
+                    "target_id": str(uuid4()),
+                }
+            ],
+            "delegated_agents": [],
+            "system_tools": [],
+            "limits": {"max_iterations": 3, "max_token_budget": 1000},
+        }
+        captured: dict = {}
+        created_models: dict = {}
+
+        def _fake_create_model(config, *, model=None):
+            created_models["model"] = model
+            return FunctionModel(lambda messages, info: "unused")
+
+        class _StubRuntime:
+            def __init__(self, model, **kwargs):
+                captured.update(kwargs)
+
+            async def run(self, *args, **kwargs):
+                result = MagicMock()
+                result.output = "done"
+                return result
+
+        def _forbid_live_resolution(*args, **kwargs):
+            raise AssertionError("live tool resolution must not run for snapshots")
+
+        executor = AutonomousAgentExecutor(mock_session)
+        with (
+            patch(
+                "src.services.execution.autonomous_agent_executor.create_agent_model",
+                side_effect=_fake_create_model,
+            ),
+            patch(
+                "src.services.execution.autonomous_agent_executor.resolve_agent_tools",
+                side_effect=_forbid_live_resolution,
+            ),
+            patch(
+                "src.services.execution.autonomous_agent_executor.PydanticAgent",
+                _StubRuntime,
+            ),
+        ):
+            result = await executor.run(
+                mock_agent,
+                run_id=str(uuid4()),
+                execution_snapshot=snapshot,
+            )
+
+        assert result["status"] == "completed"
+        assert captured["system_prompt"] == "PINNED PROMPT"
+        assert created_models["model"] == "snapshot-model"
+        toolsets = captured["toolsets"]
+        assert len(toolsets) == 1
+        assert [d.name for d in toolsets[0]._definitions] == ["pinned_tool"]
