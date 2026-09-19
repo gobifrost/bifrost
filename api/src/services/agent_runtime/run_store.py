@@ -326,6 +326,8 @@ async def finish_run(
     tokens_used: int | None = None,
     duration_ms: int | None = None,
     llm_model: str | None = None,
+    contract_valid: bool | None = None,
+    contract_errors: list[str] | None = None,
 ) -> AgentRun:
     """Terminalize a run; marks completion-event pending in the same txn."""
     if status not in rt.TERMINAL_STATUSES:
@@ -347,6 +349,10 @@ async def finish_run(
         run.duration_ms = duration_ms
     if llm_model is not None:
         run.llm_model = llm_model
+    if contract_valid is not None:
+        run.contract_valid = contract_valid
+    if contract_errors is not None:
+        run.contract_errors = contract_errors
     run.completed_at = now
     run.lease_owner = None
     run.lease_token = None

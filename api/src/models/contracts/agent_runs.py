@@ -63,6 +63,11 @@ class AgentRunResponse(BaseModel):
     started_at: datetime | None = None
     completed_at: datetime | None = None
     parent_run_id: UUID | None = None
+    output_schema: dict | None = None
+    # Invocation-owned output contract outcome. None when the invocation
+    # carried no output_schema; otherwise the engine-side validation verdict.
+    contract_valid: bool | None = None
+    contract_errors: list[str] | None = None
 
 
 class AgentRunChildResponse(BaseModel):

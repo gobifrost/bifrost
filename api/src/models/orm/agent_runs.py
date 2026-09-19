@@ -158,6 +158,11 @@ class AgentRun(Base):
     completion_event_last_error: Mapped[str | None] = mapped_column(
         Text, default=None
     )
+    # Invocation-owned output contract outcome. NULL when the invocation
+    # carried no output_schema; otherwise the engine-side validation verdict
+    # plus violations. Invalid output itself is preserved in ``output``.
+    contract_valid: Mapped[bool | None] = mapped_column(default=None)
+    contract_errors: Mapped[list | None] = mapped_column(JSONB, default=None)
 
     # Relationships
     agent = relationship("Agent", lazy="joined")

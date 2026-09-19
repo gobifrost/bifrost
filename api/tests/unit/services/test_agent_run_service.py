@@ -139,6 +139,24 @@ class TestEnqueueAgentRun:
 
     @pytest.mark.asyncio
     @patch("src.services.execution.agent_run_service.publish_message")
+    async def test_enqueue_rejects_invalid_output_schema(
+        self, mock_publish, db_session, snapshot_agent
+    ):
+        from src.services.agent_runtime.output_contract import ContractError
+
+        with pytest.raises(ContractError):
+            await enqueue_agent_run(
+                agent_id=str(uuid4()),
+                trigger_type="sdk",
+                output_schema={"type": "not-a-type"},
+            )
+
+        db_session.add.assert_not_called()
+        mock_publish.assert_not_called()
+        snapshot_agent.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("src.services.execution.agent_run_service.publish_message")
     async def test_enqueue_uses_provided_run_id(
         self, mock_publish, db_session, snapshot_agent
     ):

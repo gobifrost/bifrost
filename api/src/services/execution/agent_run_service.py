@@ -65,6 +65,10 @@ async def enqueue_agent_run(
     if run_id is None:
         run_id = str(uuid4())
 
+    from src.services.agent_runtime.output_contract import validate_output_schema
+
+    validate_output_schema(output_schema)
+
     run_uuid = UUID(run_id)
     session_factory = get_session_factory()
     async with session_factory() as db:

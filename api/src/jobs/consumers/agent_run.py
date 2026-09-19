@@ -652,6 +652,8 @@ class AgentRunConsumer(BaseConsumer):
                             tokens_used=run_result.get("tokens_used", 0),
                             duration_ms=duration_ms,
                             llm_model=run_result.get("llm_model"),
+                            contract_valid=run_result.get("contract_valid"),
+                            contract_errors=run_result.get("contract_errors"),
                         )
                     except (
                         runtime_types.LeaseMismatchError,

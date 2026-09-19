@@ -610,6 +610,8 @@ class AutonomousAgentExecutor:
         status = "completed"
         final_content = ""
         error: str | None = None
+        contract_valid: bool | None = None
+        contract_errors: list[str] = []
         try:
             # capture_run_messages feeds the durable checkpoint encoder: at
             # every committed boundary the full history-so-far is available
@@ -636,7 +638,23 @@ class AutonomousAgentExecutor:
                         usage=usage,
                         conversation_id=run_id,
                     )
-            final_content = result.output
+                final_content = result.output
+                if status == "completed" and output_schema and final_content:
+                    (
+                        final_content,
+                        contract_valid,
+                        contract_errors,
+                        status,
+                    ) = await self._enforce_output_contract(
+                        final_content,
+                        output_schema,
+                        runtime=runtime,
+                        usage=usage,
+                        budget=budget,
+                        usage_start_requests=usage_start_requests,
+                        usage_start_tokens=usage_start_tokens,
+                        run_id=run_id,
+                    )
             if empty_output_guard.handoff_triggered:
                 step_number += 1
                 await self._record_step(
@@ -706,7 +724,9 @@ class AutonomousAgentExecutor:
             error = str(exc)
 
         output: str | dict = final_content
-        if output_schema and final_content:
+        if contract_valid is None and output_schema and final_content:
+            # No contract enforcement ran (non-completed path or empty
+            # output): preserve the legacy best-effort JSON coercion.
             try:
                 output = json.loads(final_content)
             except json.JSONDecodeError as exc:
@@ -718,12 +738,95 @@ class AutonomousAgentExecutor:
             "tokens_used": usage.total_tokens - usage_start_tokens,
             "status": status,
             "llm_model": model_name,
+            "contract_valid": contract_valid,
+            "contract_errors": contract_errors,
         }
         if error and status == "failed":
             response["error"] = error
-        if chain.failover is not None and (path := chain.failover.fallback_path()):
-            response["failover_path"] = path
+		if chain.failover is not None and (path := chain.failover.fallback_path()):
+			response["failover_path"] = path
+		if status == "contract_failed":
+			response["error"] = (
+				"Output did not satisfy the caller's output contract: "
+				+ "; ".join(contract_errors[:5])
+			)
         return response
+
+    async def _enforce_output_contract(
+        self,
+        final_text: str,
+        output_schema: dict[str, Any],
+        *,
+        runtime: PydanticAgent,
+        usage: RunUsage,
+        budget: AgentRunBudget,
+        usage_start_requests: int,
+        usage_start_tokens: int,
+        run_id: str,
+    ) -> tuple[Any, bool, list[str], str]:
+        """Validate final output; one bounded correction turn when affordable.
+
+        Returns ``(output, valid, errors, status)``. Invalid output is
+        preserved and the run becomes ``contract_failed`` unless a single
+        correction turn fits the remaining iteration/token budget.
+        """
+        from src.services.agent_runtime.output_contract import (
+            contract_correction_prompt,
+            correction_allowed,
+            parse_final_output,
+            validate_output,
+            validate_output_schema,
+        )
+
+        validate_output_schema(output_schema)
+        parsed, was_json = parse_final_output(final_text)
+        errors = (
+            validate_output(output_schema, parsed)
+            if was_json
+            else ["output is not valid JSON"]
+        )
+        if not errors:
+            return parsed, True, [], "completed"
+        if not correction_allowed(
+            iterations_used=usage.requests - usage_start_requests,
+            max_iterations=budget.max_requests,
+            tokens_used=usage.total_tokens - usage_start_tokens,
+            max_tokens=budget.max_total_tokens,
+        ):
+            return {"text": final_text}, False, errors, "contract_failed"
+
+        with capture_run_messages() as correction_history:
+            correction_result = await runtime.run(
+                contract_correction_prompt(errors),
+                message_history=list(self._durable_history or []),
+                usage_limits=budget.usage_limits(),
+                usage=usage,
+                conversation_id=run_id,
+            )
+        if self._durable_history is not None:
+            self._durable_history.extend(correction_history)
+        corrected_text = correction_result.output or ""
+        reparsed, was_json = parse_final_output(corrected_text)
+        new_errors = (
+            validate_output(output_schema, reparsed)
+            if was_json
+            else ["output is not valid JSON"]
+        )
+        await self._durable_checkpoint(
+            run_id=run_id,
+            journal_kind="validation",
+            journal_data={
+                "valid": not new_errors,
+                "errors": new_errors[:10],
+                "corrected": True,
+            },
+            step=None,
+            iterations_used=usage.requests - usage_start_requests,
+            tokens_used=usage.total_tokens - usage_start_tokens,
+        )
+        if not new_errors:
+            return reparsed, True, [], "completed"
+        return {"text": corrected_text}, False, new_errors, "contract_failed"
 
     # ------------------------------------------------------------------
     # DB flush (called by consumer after run completes)
@@ -1358,10 +1461,17 @@ class AutonomousAgentExecutor:
         parent_run_id: str | None = None,
         conversation_id: UUID | None = None,
         caller: dict[str, Any] | None = None,
+        output_schema: dict[str, Any] | None = None,
         _shared_usage: RunUsage | None = None,
         _shared_budget: AgentRunBudget | None = None,
     ) -> DelegationOutcome:
-        """Run one delegated child with a durable, caller-neutral lifecycle."""
+        """Run one delegated child with a durable, caller-neutral lifecycle.
+
+        ``output_schema`` is the parent-selected contract for this child
+        invocation (Task 8 wires parent choice through the deferred tool;
+        until then callers may pass it explicitly). The child enforces the
+        same contract path as a direct run.
+        """
         if parent_run_id and await self._check_cancelled(parent_run_id):
             raise ToolError("Agent run was cancelled")
         if self._delegation_depth >= MAX_DELEGATION_DEPTH:
@@ -1451,6 +1561,7 @@ class AutonomousAgentExecutor:
                 ),
                 conversation_id=conversation_id,
                 input={"task": task, "_delegated_from": parent_agent.name},
+                output_schema=output_schema,
                 status="running",
                 org_id=delegation_org_id,
                 caller_user_id=caller.get("user_id") if caller else None,
@@ -1491,6 +1602,7 @@ class AutonomousAgentExecutor:
                         "task": task,
                         "_delegated_from": parent_agent.name,
                     },
+                    output_schema=output_schema,
                     run_id=str(sub_run_id),
                     _caller=caller,
                     _shared_usage=shared_usage,
@@ -1547,6 +1659,7 @@ class AutonomousAgentExecutor:
             "paused",
             "budget_exceeded",
             "timeout",
+            "contract_failed",
         }:
             sub_result = {
                 **sub_result,
@@ -1582,12 +1695,14 @@ class AutonomousAgentExecutor:
             sub_run_obj.duration_ms = duration_ms
             sub_run_obj.completed_at = datetime.now(timezone.utc)
             sub_run_obj.error = error
-            if sub_result.get("failover_path"):
-                sub_run_obj.run_metadata = {
+			if sub_result.get("failover_path"):
+				sub_run_obj.run_metadata = {
                     **(sub_run_obj.run_metadata or {}),
                     # String-valued map on the wire; encode the path.
-                    "failover_path": json.dumps(sub_result["failover_path"]),
-                }
+					"failover_path": json.dumps(sub_result["failover_path"]),
+				}
+			sub_run_obj.contract_valid = sub_result.get("contract_valid")
+			sub_run_obj.contract_errors = sub_result.get("contract_errors")
 
             await sub_executor.flush_to_db(db)
             await db.commit()
@@ -1641,6 +1756,11 @@ class AutonomousAgentExecutor:
             return f"Delegated agent {agent_name} is paused"
         if status == "budget_exceeded":
             return f"Delegated agent {agent_name} exceeded its budget"
+        if status == "contract_failed":
+            return (
+                f"Delegated agent {agent_name} violated its output contract: "
+                f"{sub_result.get('error') or 'validation failed'}"
+            )
         if status == "timeout":
             return f"Delegation to {agent_name} timed out"
         return f"Delegation to {agent_name} failed"

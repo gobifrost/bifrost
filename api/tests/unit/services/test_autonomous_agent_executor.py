@@ -283,6 +283,7 @@ class TestAutonomousAgentExecutor:
                 "task": "Investigate the request",
                 "_delegated_from": mock_agent.name,
             },
+            output_schema=None,
             run_id=str(child_run.id),
             _caller=caller,
             _shared_usage=shared_usage,
