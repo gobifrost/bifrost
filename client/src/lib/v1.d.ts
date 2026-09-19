@@ -5824,6 +5824,92 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/agent-runs/{run_id}/tree": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Agent Run Tree
+         * @description Delegation tree for a run. Only runs visible to the caller appear.
+         *
+         *     Returns 404 (rather than leaking existence) when the run is missing or
+         *     invisible to the caller under the exact detail-route visibility checks.
+         */
+        get: operations["get_agent_run_tree_api_agent_runs__run_id__tree_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-runs/{run_id}/timeline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Agent Run Timeline
+         * @description Cursor-page the durable journal timeline. The journal is canonical.
+         */
+        get: operations["get_agent_run_timeline_api_agent_runs__run_id__timeline_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-runs/{run_id}/snapshot": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Agent Run Snapshot
+         * @description Immutable execution-snapshot identity plus live lifecycle/lease state.
+         *
+         *     Exposes configuration identity and hashes — never caller_context,
+         *     credentials, tokens, or unredacted secrets.
+         */
+        get: operations["get_agent_run_snapshot_api_agent_runs__run_id__snapshot_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-runs/{run_id}/checkpoints": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Agent Run Checkpoints
+         * @description Cursor-page checkpoint summaries (metadata only), oldest first.
+         */
+        get: operations["get_agent_run_checkpoints_api_agent_runs__run_id__checkpoints_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/agent-runs/{run_id}/rerun": {
         parameters: {
             query?: never;
@@ -6150,6 +6236,236 @@ export interface paths {
          * @description Apply a consolidated tuning proposal: update prompt, write history, clear verdicts.
          */
         post: operations["apply_tuning_session_api_agents__agent_id__tuning_session_apply_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-evaluations/suites": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Suites */
+        get: operations["list_suites_api_agent_evaluations_suites_get"];
+        put?: never;
+        /** Create Suite */
+        post: operations["create_suite_api_agent_evaluations_suites_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-evaluations/suites/{suite_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Suite */
+        get: operations["get_suite_api_agent_evaluations_suites__suite_id__get"];
+        /** Update Suite */
+        put: operations["update_suite_api_agent_evaluations_suites__suite_id__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-evaluations/suites/{suite_id}/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Publish Suite */
+        post: operations["publish_suite_api_agent_evaluations_suites__suite_id__publish_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-evaluations/suites/{suite_id}/cases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Cases */
+        get: operations["list_cases_api_agent_evaluations_suites__suite_id__cases_get"];
+        put?: never;
+        /** Create Case */
+        post: operations["create_case_api_agent_evaluations_suites__suite_id__cases_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-evaluations/suites/{suite_id}/cases/{case_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update Case */
+        put: operations["update_case_api_agent_evaluations_suites__suite_id__cases__case_id__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-evaluations/candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Candidate Endpoint */
+        post: operations["create_candidate_endpoint_api_agent_evaluations_candidates_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-evaluations/candidates/{candidate_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Candidate */
+        get: operations["get_candidate_api_agent_evaluations_candidates__candidate_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-evaluations/suites/{suite_id}/designer/drafts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Designer Drafts
+         * @description Start a real, server-authorized Test Designer AgentRun.
+         */
+        post: operations["designer_drafts_api_agent_evaluations_suites__suite_id__designer_drafts_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-evaluations/suites/{suite_id}/cases/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Accept Case
+         * @description Explicitly accept a draft: freeze a new accepted case version.
+         */
+        post: operations["accept_case_api_agent_evaluations_suites__suite_id__cases_accept_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-evaluations/executions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Execution */
+        post: operations["create_execution_api_agent_evaluations_executions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-evaluations/executions/{execution_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Execution */
+        get: operations["get_execution_api_agent_evaluations_executions__execution_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-evaluations/executions/{execution_id}/results": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Results */
+        get: operations["list_results_api_agent_evaluations_executions__execution_id__results_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-evaluations/executions/{execution_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel Execution */
+        post: operations["cancel_execution_api_agent_evaluations_executions__execution_id__cancel_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -10845,7 +11161,7 @@ export interface components {
              * Assignment Key
              * @enum {string}
              */
-            assignment_key: "primary" | "summarization" | "tuning" | "image_generation" | "video_generation" | "chat_default";
+            assignment_key: "primary" | "summarization" | "testing" | "tuning" | "image_generation" | "video_generation" | "chat_default";
             /**
              * Profile Id
              * Format: uuid
@@ -11096,7 +11412,7 @@ export interface components {
             /** Reassigned Agent Count */
             reassigned_agent_count: number;
             /** Reassigned Assignment Keys */
-            reassigned_assignment_keys: ("primary" | "summarization" | "tuning" | "image_generation" | "video_generation" | "chat_default")[];
+            reassigned_assignment_keys: ("primary" | "summarization" | "testing" | "tuning" | "image_generation" | "video_generation" | "chat_default")[];
         };
         /** AIModelProfileResponse */
         AIModelProfileResponse: {
@@ -11125,7 +11441,7 @@ export interface components {
             failover_profile_name?: string | null;
             connection: components["schemas"]["AIProviderConnectionSummary"];
             /** Assignment Keys */
-            assignment_keys?: ("primary" | "summarization" | "tuning" | "image_generation" | "video_generation" | "chat_default")[];
+            assignment_keys?: ("primary" | "summarization" | "testing" | "tuning" | "image_generation" | "video_generation" | "chat_default")[];
             /**
              * Referenced Agent Count
              * @default 0
@@ -11414,6 +11730,51 @@ export interface components {
          */
         AgentChannel: "chat" | "voice" | "teams" | "slack";
         /**
+         * AgentCheckpointPage
+         * @description One cursor page of checkpoint summaries, oldest first.
+         */
+        AgentCheckpointPage: {
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            /** Checkpoints */
+            checkpoints?: components["schemas"]["AgentCheckpointSummary"][];
+            /** Next Cursor */
+            next_cursor?: string | null;
+        };
+        /**
+         * AgentCheckpointSummary
+         * @description Bounded checkpoint metadata. State payloads stay server-side.
+         */
+        AgentCheckpointSummary: {
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            /** Sequence */
+            sequence: number;
+            /** Format Version */
+            format_version: number;
+            /** Attempt */
+            attempt: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Message Count */
+            message_count?: number | null;
+            /** Has Pending Tool Calls */
+            has_pending_tool_calls?: boolean | null;
+            /** Has Pending Join */
+            has_pending_join?: boolean | null;
+            /** Has Pending Timer */
+            has_pending_timer?: boolean | null;
+        };
+        /**
          * AgentCreate
          * @description Request model for creating an agent.
          */
@@ -11483,6 +11844,20 @@ export interface components {
              * @description Max token budget for autonomous runs
              */
             max_token_budget?: number | null;
+        };
+        /**
+         * AgentDebuggerLinks
+         * @description Relative debugger URLs for a run. Additive navigation only.
+         */
+        AgentDebuggerLinks: {
+            /** Tree */
+            tree: string;
+            /** Timeline */
+            timeline: string;
+            /** Snapshot */
+            snapshot: string;
+            /** Checkpoints */
+            checkpoints: string;
         };
         /**
          * AgentPromoteRequest
@@ -11733,6 +12108,7 @@ export interface components {
             /** Ai Usage */
             ai_usage?: components["schemas"]["AIUsagePublicSimple"][] | null;
             ai_totals?: components["schemas"]["AIUsageTotalsSimple"] | null;
+            debug_links?: components["schemas"]["AgentDebuggerLinks"] | null;
         };
         /** AgentRunEnqueueRequest */
         AgentRunEnqueueRequest: {
@@ -11872,6 +12248,69 @@ export interface components {
             /** Parent Run Id */
             parent_run_id?: string | null;
         };
+        /**
+         * AgentRunSnapshotView
+         * @description Immutable configuration identity plus live lifecycle/lease state.
+         *
+         *     Never returns ``caller_context``, decrypted credentials, stored
+         *     authorization tokens, lease tokens, or unredacted secret-bearing tool
+         *     arguments. The system prompt is identified by hash, not content.
+         */
+        AgentRunSnapshotView: {
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            /** Agent Id */
+            agent_id?: string | null;
+            /** Agent Name */
+            agent_name?: string | null;
+            /** Snapshot Version */
+            snapshot_version?: number | null;
+            /** Agent Updated At */
+            agent_updated_at?: string | null;
+            /** System Prompt Sha256 */
+            system_prompt_sha256?: string | null;
+            model?: components["schemas"]["AgentSnapshotModel"];
+            /** Tool Names */
+            tool_names?: string[];
+            /** Delegated Agents */
+            delegated_agents?: {
+                [key: string]: string;
+            }[];
+            /** System Tools */
+            system_tools?: string[];
+            /** Limits */
+            limits?: {
+                [key: string]: unknown;
+            };
+            /** Correlation */
+            correlation?: {
+                [key: string]: unknown;
+            };
+            /** Status */
+            status: string;
+            /**
+             * Attempt
+             * @default 0
+             */
+            attempt: number;
+            /**
+             * Checkpoint Sequence
+             * @default 0
+             */
+            checkpoint_sequence: number;
+            /** Wake At */
+            wake_at?: string | null;
+            lease?: components["schemas"]["AgentSnapshotLease"];
+            /** Usage */
+            usage?: {
+                [key: string]: unknown;
+            };
+            contract?: components["schemas"]["AgentSnapshotContract"];
+            completion_event?: components["schemas"]["AgentSnapshotCompletionEvent"];
+        };
         /** AgentRunStepResponse */
         AgentRunStepResponse: {
             /**
@@ -11901,6 +12340,120 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+        };
+        /**
+         * AgentRunTree
+         * @description Delegation tree rooted at the requested run's root run.
+         */
+        AgentRunTree: {
+            /**
+             * Requested Run Id
+             * Format: uuid
+             */
+            requested_run_id: string;
+            /**
+             * Root Run Id
+             * Format: uuid
+             */
+            root_run_id: string;
+            root: components["schemas"]["AgentRunTreeNode"];
+            /** Total Runs */
+            total_runs: number;
+            /**
+             * Truncated
+             * @default false
+             */
+            truncated: boolean;
+        };
+        /**
+         * AgentRunTreeNode
+         * @description One run in a delegation tree. Recursive via ``children``.
+         */
+        AgentRunTreeNode: {
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            /** Agent Id */
+            agent_id?: string | null;
+            /** Agent Name */
+            agent_name?: string | null;
+            /** Status */
+            status: string;
+            /** Parent Run Id */
+            parent_run_id?: string | null;
+            /**
+             * Depth
+             * @default 0
+             */
+            depth: number;
+            /**
+             * Attempt
+             * @default 0
+             */
+            attempt: number;
+            /** Created At */
+            created_at?: string | null;
+            /** Completed At */
+            completed_at?: string | null;
+            /** Diagnostic */
+            diagnostic?: string | null;
+            /** Children */
+            children?: components["schemas"]["AgentRunTreeNode"][];
+        };
+        /**
+         * AgentSnapshotCompletionEvent
+         * @description At-least-once terminal-event publication state.
+         */
+        AgentSnapshotCompletionEvent: {
+            /** Pending At */
+            pending_at?: string | null;
+            /** Emitted At */
+            emitted_at?: string | null;
+            /**
+             * Attempts
+             * @default 0
+             */
+            attempts: number;
+            /** Last Error */
+            last_error?: string | null;
+        };
+        /**
+         * AgentSnapshotContract
+         * @description Invocation-owned output-contract outcome.
+         */
+        AgentSnapshotContract: {
+            /** Valid */
+            valid?: boolean | null;
+            /** Errors */
+            errors?: string[] | null;
+        };
+        /**
+         * AgentSnapshotLease
+         * @description Crash-detection lease state. The lease token is never exposed.
+         */
+        AgentSnapshotLease: {
+            /** Owner */
+            owner?: string | null;
+            /** Expires At */
+            expires_at?: string | null;
+            /** Last Progress At */
+            last_progress_at?: string | null;
+        };
+        /**
+         * AgentSnapshotModel
+         * @description Model identity pinned at enqueue. No credentials travel here.
+         */
+        AgentSnapshotModel: {
+            /** Profile Id */
+            profile_id?: string | null;
+            /** Provider */
+            provider?: string | null;
+            /** Model */
+            model?: string | null;
+            /** Llm Max Tokens */
+            llm_max_tokens?: number | null;
         };
         /** AgentStatsResponse */
         AgentStatsResponse: {
@@ -12017,6 +12570,70 @@ export interface components {
              * @default
              */
             reason: string;
+        };
+        /**
+         * AgentTimelineEntry
+         * @description One ordered journal event projected for debugging.
+         */
+        AgentTimelineEntry: {
+            /** Sequence */
+            sequence: number;
+            /** Kind */
+            kind: string;
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            /** Root Run Id */
+            root_run_id?: string | null;
+            /** Parent Run Id */
+            parent_run_id?: string | null;
+            /** Attempt */
+            attempt?: number | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Duration Ms */
+            duration_ms?: number | null;
+            /** Input Tokens */
+            input_tokens?: number | null;
+            /** Output Tokens */
+            output_tokens?: number | null;
+            /** Summary */
+            summary: string;
+            /** Detail */
+            detail?: {
+                [key: string]: unknown;
+            };
+            /** Operation Id */
+            operation_id?: string | null;
+            /** Child Run Id */
+            child_run_id?: string | null;
+            /** Join Id */
+            join_id?: string | null;
+        };
+        /**
+         * AgentTimelinePage
+         * @description One cursor page of the run (and optionally descendant) timeline.
+         */
+        AgentTimelinePage: {
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            /**
+             * Include Descendants
+             * @default false
+             */
+            include_descendants: boolean;
+            /** Entries */
+            entries?: components["schemas"]["AgentTimelineEntry"][];
+            /** Next Cursor */
+            next_cursor?: string | null;
         };
         /**
          * AgentUpdate
@@ -13969,6 +14586,82 @@ export interface components {
              */
             logs?: components["schemas"]["CLISessionLogRequest"][];
         };
+        /** CandidateCreate */
+        CandidateCreate: {
+            /**
+             * Base Agent Id
+             * Format: uuid
+             */
+            base_agent_id: string;
+            /** Name */
+            name?: string | null;
+            overlays?: components["schemas"]["CandidateOverlay"];
+            /** Organization Id */
+            organization_id?: string | null;
+        };
+        /**
+         * CandidateOverlay
+         * @description Optional overrides applied to the base Agent inside test runs only.
+         */
+        CandidateOverlay: {
+            /** System Prompt */
+            system_prompt?: string | null;
+            /** Llm Profile Id */
+            llm_profile_id?: string | null;
+            /** Llm Max Tokens */
+            llm_max_tokens?: number | null;
+            /** Tool Ids */
+            tool_ids?: string[] | null;
+            /** Delegated Agent Ids */
+            delegated_agent_ids?: string[] | null;
+            /** System Tools */
+            system_tools?: string[] | null;
+            /** Max Iterations */
+            max_iterations?: number | null;
+            /** Max Token Budget */
+            max_token_budget?: number | null;
+            /** Max Run Timeout */
+            max_run_timeout?: number | null;
+            /** Output Schema */
+            output_schema?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /** CandidatePublic */
+        CandidatePublic: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Org Id */
+            org_id?: string | null;
+            /** Base Agent Id */
+            base_agent_id?: string | null;
+            /** Base Agent Updated At */
+            base_agent_updated_at?: string | null;
+            /** Name */
+            name?: string | null;
+            /** Overlays */
+            overlays?: {
+                [key: string]: unknown;
+            };
+            /** Snapshot */
+            snapshot?: {
+                [key: string]: unknown;
+            };
+            /** Snapshot Hash */
+            snapshot_hash?: string | null;
+            /**
+             * Evaluation Only
+             * @default true
+             */
+            evaluation_only: boolean;
+            /** Created By */
+            created_by?: string | null;
+            /** Created At */
+            created_at?: string | null;
+        };
         /**
          * ChatArtifactPublic
          * @description A durable Chat file with enough context for the user's artifact library.
@@ -15225,6 +15918,35 @@ export interface components {
              */
             in_selection: boolean;
         };
+        /** DesignerDraftAccepted */
+        DesignerDraftAccepted: {
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            /**
+             * Status
+             * @default queued
+             * @constant
+             */
+            status: "queued";
+        };
+        /**
+         * DesignerDraftRequest
+         * @description Server-authorized asynchronous Test Designer request.
+         */
+        DesignerDraftRequest: {
+            /** Suite Goal */
+            suite_goal: string;
+            /**
+             * Requested Count
+             * @default 4
+             */
+            requested_count: number;
+            /** Historical Run Ids */
+            historical_run_ids?: string[];
+        };
         /**
          * DetailedHealthCheck
          * @description Detailed health check with component status.
@@ -16289,6 +17011,368 @@ export interface components {
              * @description Number of workflows referenced by this entity
              */
             workflow_count: number;
+        };
+        /**
+         * EvaluationAssertion
+         * @description One check evaluated against a finished synthetic AgentRun.
+         *
+         *     ``type`` selects the evaluator; ``params`` carries its configuration.
+         *     Unknown types fail closed at case save time, never at result time.
+         */
+        EvaluationAssertion: {
+            /**
+             * Type
+             * @description Assertion type: terminal_status, output_schema, output_path, tool_called, tool_not_called, tool_count, tool_order, tool_args, simulator_state, delegation_tree, max_iterations, max_tokens, max_cost_usd, max_latency_ms, no_real_tools, and llm_judge. llm_judge is a platform-admin-only, non-authoritative semantic observation configured by judge_profile_id and frozen on save.
+             */
+            type: string;
+            /** Params */
+            params?: {
+                [key: string]: unknown;
+            };
+            /** Label */
+            label?: string | null;
+        };
+        /** EvaluationCaseCreate */
+        EvaluationCaseCreate: {
+            /** Name */
+            name: string;
+            /**
+             * Position
+             * @default 0
+             */
+            position: number;
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+            /** Input */
+            input?: {
+                [key: string]: unknown;
+            } | null;
+            /** Fixture */
+            fixture?: {
+                [key: string]: unknown;
+            };
+            /** Simulator Policy */
+            simulator_policy?: {
+                [key: string]: unknown;
+            };
+            /** Assertions */
+            assertions?: components["schemas"]["EvaluationAssertion"][];
+            /** Expected Tools */
+            expected_tools?: string[];
+            /** Forbidden Tools */
+            forbidden_tools?: string[];
+            /** Output Schema */
+            output_schema?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Repetitions
+             * @default 1
+             */
+            repetitions: number;
+            /** Scoring Policy */
+            scoring_policy?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Provenance
+             * @default manual
+             * @enum {string}
+             */
+            provenance: "manual" | "generated" | "historical_inspiration";
+            /** Provenance Run Ids */
+            provenance_run_ids?: string[];
+            /** Tags */
+            tags?: string[];
+        };
+        /** EvaluationCasePublic */
+        EvaluationCasePublic: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Suite Id
+             * Format: uuid
+             */
+            suite_id: string;
+            /** Name */
+            name: string;
+            /** Position */
+            position: number;
+            /** Enabled */
+            enabled: boolean;
+            /** Version */
+            version: number;
+            /** Input */
+            input?: {
+                [key: string]: unknown;
+            } | null;
+            /** Fixture */
+            fixture?: {
+                [key: string]: unknown;
+            };
+            /** Simulator Policy */
+            simulator_policy?: {
+                [key: string]: unknown;
+            };
+            /** Assertions */
+            assertions?: {
+                [key: string]: unknown;
+            }[];
+            /** Expected Tools */
+            expected_tools?: string[];
+            /** Forbidden Tools */
+            forbidden_tools?: string[];
+            /** Output Schema */
+            output_schema?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Repetitions
+             * @default 1
+             */
+            repetitions: number;
+            /** Scoring Policy */
+            scoring_policy?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Provenance
+             * @default manual
+             */
+            provenance: string;
+            /** Provenance Run Ids */
+            provenance_run_ids?: string[];
+            /** Tags */
+            tags?: string[];
+            /**
+             * Accepted
+             * @default true
+             */
+            accepted: boolean;
+            /** Created At */
+            created_at?: string | null;
+            /** Updated At */
+            updated_at?: string | null;
+        };
+        /** EvaluationCaseUpdate */
+        EvaluationCaseUpdate: {
+            /** Name */
+            name?: string | null;
+            /** Position */
+            position?: number | null;
+            /** Enabled */
+            enabled?: boolean | null;
+            /** Input */
+            input?: {
+                [key: string]: unknown;
+            } | null;
+            /** Fixture */
+            fixture?: {
+                [key: string]: unknown;
+            } | null;
+            /** Simulator Policy */
+            simulator_policy?: {
+                [key: string]: unknown;
+            } | null;
+            /** Assertions */
+            assertions?: components["schemas"]["EvaluationAssertion"][] | null;
+            /** Expected Tools */
+            expected_tools?: string[] | null;
+            /** Forbidden Tools */
+            forbidden_tools?: string[] | null;
+            /** Output Schema */
+            output_schema?: {
+                [key: string]: unknown;
+            } | null;
+            /** Repetitions */
+            repetitions?: number | null;
+            /** Scoring Policy */
+            scoring_policy?: {
+                [key: string]: unknown;
+            } | null;
+            /** Tags */
+            tags?: string[] | null;
+            /** Expected Version */
+            expected_version?: number | null;
+        };
+        /** EvaluationExecutionCreate */
+        EvaluationExecutionCreate: {
+            /**
+             * Suite Id
+             * Format: uuid
+             */
+            suite_id: string;
+            /**
+             * Candidate Id
+             * @description Null runs the baseline Agent alone.
+             */
+            candidate_id?: string | null;
+            /** Repetitions Override */
+            repetitions_override?: number | null;
+        };
+        /** EvaluationExecutionPublic */
+        EvaluationExecutionPublic: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Suite Id
+             * Format: uuid
+             */
+            suite_id: string;
+            /** Suite Version */
+            suite_version: number;
+            /** Candidate Id */
+            candidate_id?: string | null;
+            /** Baseline Agent Id */
+            baseline_agent_id?: string | null;
+            /** Status */
+            status: string;
+            /**
+             * Total Cases
+             * @default 0
+             */
+            total_cases: number;
+            /**
+             * Completed Cases
+             * @default 0
+             */
+            completed_cases: number;
+            /**
+             * Passed Cases
+             * @default 0
+             */
+            passed_cases: number;
+            /**
+             * Failed Cases
+             * @default 0
+             */
+            failed_cases: number;
+            /** Platform Job Id */
+            platform_job_id?: string | null;
+            /** Error */
+            error?: string | null;
+            /** Created By */
+            created_by?: string | null;
+            /** Created At */
+            created_at?: string | null;
+            /** Completed At */
+            completed_at?: string | null;
+        };
+        /** EvaluationResultPublic */
+        EvaluationResultPublic: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Execution Id
+             * Format: uuid
+             */
+            execution_id: string;
+            /**
+             * Case Id
+             * Format: uuid
+             */
+            case_id: string;
+            /** Case Version */
+            case_version: number;
+            /**
+             * Repetition Index
+             * @default 0
+             */
+            repetition_index: number;
+            /** Baseline Run Id */
+            baseline_run_id?: string | null;
+            /** Candidate Run Id */
+            candidate_run_id?: string | null;
+            /** Status */
+            status: string;
+            /** Assertion Results */
+            assertion_results?: {
+                [key: string]: unknown;
+            }[];
+            /** Comparison */
+            comparison?: {
+                [key: string]: unknown;
+            } | null;
+            /** Tokens Used */
+            tokens_used?: number | null;
+            /** Turns Used */
+            turns_used?: number | null;
+            /** Duration Ms */
+            duration_ms?: number | null;
+            /** Cost Usd */
+            cost_usd?: string | null;
+            /** Simulator State Hash */
+            simulator_state_hash?: string | null;
+            /** Error */
+            error?: string | null;
+            /** Created At */
+            created_at?: string | null;
+        };
+        /** EvaluationSuiteCreate */
+        EvaluationSuiteCreate: {
+            /** Name */
+            name: string;
+            /** Description */
+            description?: string | null;
+            /**
+             * Agent Id
+             * @description Baseline target Agent for this suite.
+             */
+            agent_id?: string | null;
+            /** Organization Id */
+            organization_id?: string | null;
+        };
+        /** EvaluationSuitePublic */
+        EvaluationSuitePublic: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Org Id */
+            org_id?: string | null;
+            /** Agent Id */
+            agent_id?: string | null;
+            /** Name */
+            name: string;
+            /** Description */
+            description?: string | null;
+            /** Status */
+            status: string;
+            /** Version */
+            version: number;
+            /** Created By */
+            created_by?: string | null;
+            /** Created At */
+            created_at?: string | null;
+            /** Updated At */
+            updated_at?: string | null;
+        };
+        /** EvaluationSuiteUpdate */
+        EvaluationSuiteUpdate: {
+            /** Name */
+            name?: string | null;
+            /** Description */
+            description?: string | null;
+            /** Agent Id */
+            agent_id?: string | null;
+            /**
+             * Expected Version
+             * @description Optimistic concurrency guard for mutable drafts.
+             */
+            expected_version?: number | null;
         };
         /**
          * EventDeliveryListResponse
@@ -38688,6 +39772,143 @@ export interface operations {
             };
         };
     };
+    get_agent_run_tree_api_agent_runs__run_id__tree_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentRunTree"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_agent_run_timeline_api_agent_runs__run_id__timeline_get: {
+        parameters: {
+            query?: {
+                /** @description Opaque page position from a previous next_cursor. */
+                cursor?: string | null;
+                limit?: number;
+                /** @description Filter to one journal event kind. */
+                kind?: string | null;
+                attempt?: number | null;
+                /** @description Merge visible descendant runs into one ordered timeline. */
+                include_descendants?: boolean;
+            };
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentTimelinePage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_agent_run_snapshot_api_agent_runs__run_id__snapshot_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentRunSnapshotView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_agent_run_checkpoints_api_agent_runs__run_id__checkpoints_get: {
+        parameters: {
+            query?: {
+                /** @description Opaque page position from a previous next_cursor. */
+                cursor?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentCheckpointPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     rerun_agent_run_api_agent_runs__run_id__rerun_post: {
         parameters: {
             query?: never;
@@ -39203,6 +40424,539 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApplyTuningResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_suites_api_agent_evaluations_suites_get: {
+        parameters: {
+            query?: {
+                status?: string | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvaluationSuitePublic"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_suite_api_agent_evaluations_suites_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EvaluationSuiteCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvaluationSuitePublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_suite_api_agent_evaluations_suites__suite_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                suite_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvaluationSuitePublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_suite_api_agent_evaluations_suites__suite_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                suite_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EvaluationSuiteUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvaluationSuitePublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    publish_suite_api_agent_evaluations_suites__suite_id__publish_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                suite_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvaluationSuitePublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_cases_api_agent_evaluations_suites__suite_id__cases_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                suite_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvaluationCasePublic"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_case_api_agent_evaluations_suites__suite_id__cases_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                suite_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EvaluationCaseCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvaluationCasePublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_case_api_agent_evaluations_suites__suite_id__cases__case_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                suite_id: string;
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EvaluationCaseUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvaluationCasePublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_candidate_endpoint_api_agent_evaluations_candidates_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CandidateCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CandidatePublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_candidate_api_agent_evaluations_candidates__candidate_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                candidate_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CandidatePublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    designer_drafts_api_agent_evaluations_suites__suite_id__designer_drafts_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                suite_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DesignerDraftRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DesignerDraftAccepted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    accept_case_api_agent_evaluations_suites__suite_id__cases_accept_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                suite_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvaluationCasePublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_execution_api_agent_evaluations_executions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EvaluationExecutionCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformJobAccepted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_execution_api_agent_evaluations_executions__execution_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                execution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvaluationExecutionPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_results_api_agent_evaluations_executions__execution_id__results_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                execution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvaluationResultPublic"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_execution_api_agent_evaluations_executions__execution_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                execution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvaluationExecutionPublic"];
                 };
             };
             /** @description Validation Error */
@@ -40352,7 +42106,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                assignment_key: "primary" | "summarization" | "tuning" | "image_generation" | "video_generation" | "chat_default";
+                assignment_key: "primary" | "summarization" | "testing" | "tuning" | "image_generation" | "video_generation" | "chat_default";
             };
             cookie?: never;
         };
@@ -40387,7 +42141,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                assignment_key: "primary" | "summarization" | "tuning" | "image_generation" | "video_generation" | "chat_default";
+                assignment_key: "primary" | "summarization" | "testing" | "tuning" | "image_generation" | "video_generation" | "chat_default";
             };
             cookie?: never;
         };

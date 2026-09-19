@@ -45,7 +45,9 @@ class EvaluationAssertion(BaseModel):
             "Assertion type: terminal_status, output_schema, output_path, "
             "tool_called, tool_not_called, tool_count, tool_order, tool_args, "
             "simulator_state, delegation_tree, max_iterations, max_tokens, "
-            "max_cost_usd, max_latency_ms, no_real_tools, llm_judge."
+            "max_cost_usd, max_latency_ms, no_real_tools, and llm_judge. "
+            "llm_judge is a platform-admin-only, non-authoritative semantic "
+            "observation configured by judge_profile_id and frozen on save."
         ),
     )
     params: dict[str, Any] = Field(default_factory=dict)
@@ -222,6 +224,21 @@ class CandidatePublic(BaseModel):
     evaluation_only: bool = True
     created_by: str | None = None
     created_at: datetime | None = None
+
+
+class DesignerDraftRequest(BaseModel):
+    """Server-authorized asynchronous Test Designer request."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    suite_goal: str = Field(..., min_length=1, max_length=4000)
+    requested_count: int = Field(default=4, ge=1, le=10)
+    historical_run_ids: list[UUID] = Field(default_factory=list, max_length=20)
+
+
+class DesignerDraftAccepted(BaseModel):
+    run_id: UUID
+    status: Literal["queued"] = "queued"
 
 
 # -----------------------------------------------------------------------------

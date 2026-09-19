@@ -219,7 +219,8 @@ class AgentCheckpointSummary(BaseModel):
     format_version: int
     attempt: int
     created_at: datetime
-    # Derived shape hints from the stored state (keys only, no content).
+    # Derived from serialized message tool-call and tool-return IDs when the
+    # checkpoint uses a readable runtime codec; otherwise ``None``.
     message_count: int | None = None
     has_pending_tool_calls: bool | None = None
     has_pending_join: bool | None = None

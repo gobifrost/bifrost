@@ -13,9 +13,17 @@ import concurrent.futures
 import logging
 import os
 import time
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
+import pytest_asyncio
+from sqlalchemy import delete, select
+
+from src.models.orm.ai_models import (
+    AIModelAssignment,
+    AIModelProfile,
+    AIProviderConnection,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -27,12 +35,30 @@ pytestmark = [
 ]
 
 
-@pytest.fixture(scope="module")
-def _llm_configured(e2e_client, platform_admin):
-    """Configure LLM provider for the module (required for agent runs)."""
+@pytest_asyncio.fixture(scope="function")
+async def _llm_configured(e2e_client, platform_admin, async_session_factory):
+    """Configure LLM provider for one test and own its exact resources.
+
+    Snapshots previous assignments before creation so the first-profile
+    bootstrap (which seeds every assignment key) and the explicit primary
+    reassignment can be restored without touching unrelated resources.
+    """
     api_key = os.environ.get("ANTHROPIC_API_TEST_KEY")
     if not api_key:
         pytest.skip("ANTHROPIC_API_TEST_KEY not configured")
+
+    async with async_session_factory() as db:
+        rows = (
+            await db.execute(
+                select(
+                    AIModelAssignment.assignment_key,
+                    AIModelAssignment.profile_id,
+                )
+            )
+        ).all()
+        previous_assignments = {
+            row.assignment_key: row.profile_id for row in rows
+        }
 
     suffix = uuid4().hex[:8]
     response = e2e_client.post(
@@ -41,27 +67,59 @@ def _llm_configured(e2e_client, platform_admin):
         headers=platform_admin.headers,
     )
     assert response.status_code == 201, f"Failed to configure provider: {response.text}"
+    connection_id = UUID(response.json()["id"])
     profile_response = e2e_client.post(
         "/api/admin/ai/profiles",
         json={
             "name": f"Connection pressure {suffix}",
-            "connection_id": response.json()["id"],
+            "connection_id": str(connection_id),
             "model": "claude-haiku-4-5-20251001",
             "enabled_for_chat": False,
         },
         headers=platform_admin.headers,
     )
     assert profile_response.status_code == 201, profile_response.text
+    profile_id = UUID(profile_response.json()["id"])
     assignment_response = e2e_client.put(
         "/api/admin/ai/assignments/primary",
-        json={"profile_id": profile_response.json()["id"]},
+        json={"profile_id": str(profile_id)},
         headers=platform_admin.headers,
     )
     assert assignment_response.status_code == 200, assignment_response.text
-    yield profile_response.json()
+    try:
+        yield profile_response.json()
+    finally:
+        async with async_session_factory() as db:
+            await db.execute(
+                delete(AIModelAssignment).where(
+                    AIModelAssignment.profile_id == profile_id
+                )
+            )
+            await db.flush()
+            for assignment_key, previous_profile_id in previous_assignments.items():
+                existing = await db.get(AIModelAssignment, assignment_key)
+                if existing is None:
+                    db.add(
+                        AIModelAssignment(
+                            assignment_key=assignment_key,
+                            profile_id=previous_profile_id,
+                        )
+                    )
+                elif existing.profile_id != previous_profile_id:
+                    existing.profile_id = previous_profile_id
+            await db.flush()
+            await db.execute(
+                delete(AIModelProfile).where(AIModelProfile.id == profile_id)
+            )
+            await db.execute(
+                delete(AIProviderConnection).where(
+                    AIProviderConnection.id == connection_id
+                )
+            )
+            await db.commit()
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="function")
 def simple_agent(e2e_client, platform_admin, _llm_configured):
     """Create a minimal agent for connection pressure testing.
 
@@ -87,15 +145,11 @@ def simple_agent(e2e_client, platform_admin, _llm_configured):
 
     yield agent
 
-    # Cleanup
-    try:
-        e2e_client.delete(
-            f"/api/agents/{agent['id']}",
-            headers=platform_admin.headers,
-        )
-    except Exception as e:
-        # Best-effort fixture cleanup; teardown shouldn't fail the test
-        logger.debug(f"fixture cleanup error: {e}")
+    delete_response = e2e_client.delete(
+        f"/api/agents/{agent['id']}",
+        headers=platform_admin.headers,
+    )
+    assert delete_response.status_code in (200, 204), delete_response.text
 
 
 class TestConcurrentAgentRuns:

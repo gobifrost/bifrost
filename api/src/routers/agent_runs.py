@@ -11,10 +11,11 @@ from decimal import Decimal
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
-from sqlalchemy import desc, func, literal_column, or_, select, update
+from sqlalchemy import desc, func, literal_column, or_, select
 from sqlalchemy.orm import joinedload, selectinload
 
 from src.core.auth import CurrentActiveUser
+from shared.scope_resolver import has_scope_bypass
 from src.core.cache.keys import agent_run_steps_stream_key
 from src.core.cache.redis_client import get_redis
 from src.core.database import get_session_factory
@@ -59,6 +60,7 @@ from src.models.orm.agent_run_verdict_history import AgentRunVerdictHistory
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.ai_usage import AIUsage
 from src.models.orm.agents import Agent
+from src.repositories.agents import AgentRepository
 from src.models.orm.solutions import Solution
 from src.models.orm.summary_backfill_job import SummaryBackfillJob
 from src.core.redis_client import get_redis_client
@@ -69,6 +71,8 @@ from src.services.agent_runtime.debugger import (
 from src.services.agent_runtime.debugger import get_run_tree as _debug_tree
 from src.services.agent_runtime.debugger import get_snapshot as _debug_snapshot
 from src.services.agent_runtime.debugger import get_timeline as _debug_timeline
+from src.services.agent_runtime import run_store
+from src.services.agent_runtime import types as runtime_types
 from src.services.execution.agent_run_access import agent_run_visibility_conditions
 from src.services.execution.agent_run_service import (
     enqueue_agent_run,
@@ -88,11 +92,23 @@ router = APIRouter(prefix="/api/agent-runs", tags=["Agent Runs"])
 
 async def _get_executable_agent(
     db: DbSession,
+    user: CurrentActiveUser,
     agent_name: str,
 ) -> Agent:
-    """Resolve an agent and enforce solution execution availability."""
-    result = await db.execute(select(Agent).where(Agent.name.ilike(agent_name)))
-    agent = result.scalar_one_or_none()
+    """Resolve a visible agent by name and enforce execution availability."""
+    repository = AgentRepository(
+        db,
+        org_id=user.organization_id,
+        user_id=user.user_id,
+        is_superuser=has_scope_bypass(
+            is_platform_admin=user.is_platform_admin,
+            is_provider_org=user.is_provider_org,
+        ),
+        is_external=user.is_external,
+    )
+    # Name lookup intentionally follows the SDK's established org-cascade
+    # semantics.  An inaccessible agent is indistinguishable from absent.
+    agent = await repository.get(name=agent_name)
 
     if agent is None:
         raise HTTPException(
@@ -128,6 +144,9 @@ def _run_to_response(run: AgentRun) -> AgentRunResponse:
         event_delivery_id=run.event_delivery_id,
         input=run.input,
         output=run.output,
+        output_schema=run.output_schema,
+        contract_valid=run.contract_valid,
+        contract_errors=run.contract_errors,
         status=run.status,
         error=run.error,
         org_id=run.org_id,
@@ -663,6 +682,9 @@ async def get_agent_run(
         event_delivery_id=run.event_delivery_id,
         input=run.input,
         output=run.output,
+        output_schema=run.output_schema,
+        contract_valid=run.contract_valid,
+        contract_errors=run.contract_errors,
         status=run.status,
         error=run.error,
         org_id=run.org_id,
@@ -850,20 +872,15 @@ async def rerun_agent_run(
         caller_user_id=str(user.user_id),
         caller_email=user.email,
         caller_name=getattr(user, "name", None),
+        caller_is_superuser=user.is_superuser,
+        caller_is_platform_admin=user.has_platform_admin_grant(),
+        caller_is_external=user.is_external,
+        caller_is_provider_org=user.is_provider_org,
+        caller_roles=user.roles,
         sync=False,
     )
 
     return AgentRunRerunResponse(run_id=UUID(new_run_id))
-
-
-TERMINAL_STATUSES = {
-    "completed",
-    "failed",
-    "cancelled",
-    "paused",
-    "budget_exceeded",
-    "timeout",
-}
 
 
 @router.post("/{run_id}/cancel")
@@ -886,84 +903,26 @@ async def cancel_agent_run(
             detail=f"Agent run {run_id} not found",
         )
 
-    if agent_run.status in TERMINAL_STATUSES:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Cannot cancel agent run with status '{agent_run.status}'",
-        )
-
-    if agent_run.status == "cancelling":
-        # Already cancelling — idempotent
-        return {"run_id": str(run_id), "status": "cancelling"}
-
     redis_client = get_redis_client()
-
-    if agent_run.status == "queued":
-        # Claim cancellation only while the run is still queued. If the worker
-        # wins this transition, refresh and continue through running cancel.
-        cancelled_at = datetime.now(timezone.utc)
-        cancel_result = await db.execute(
-            update(AgentRun)
-            .where(AgentRun.id == run_id, AgentRun.status == "queued")
-            .values(status="cancelled", completed_at=cancelled_at)
-            .returning(AgentRun.id)
-        )
-        if cancel_result.scalar_one_or_none() is None:
-            await db.refresh(agent_run)
-        else:
-            await db.commit()
-
-            # Also mark the Redis context so a worker holding the message skips it.
-            redis_key = f"bifrost:agent_run:{run_id}:context"
-            async with get_redis() as r:
-                context_raw = await r.get(redis_key)
-                if context_raw:
-                    ctx = json.loads(context_raw)
-                    ctx["cancelled"] = True
-                    ttl = await r.ttl(redis_key)
-                    await r.set(redis_key, json.dumps(ctx), ex=max(ttl, 60))
-
-            return {"run_id": str(run_id), "status": "cancelled"}
-
-    if agent_run.status in TERMINAL_STATUSES:
+    agent_name = agent_run.agent.name if agent_run.agent else "Unknown"
+    try:
+        # The visible read above is authorization only. State is decided by
+        # this fresh row lock so a racing worker completion cannot be
+        # resurrected as ``cancelling``.
+        agent_run = await run_store.request_cancellation(db, run_id)
+    except runtime_types.InvalidTransitionError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Cannot cancel agent run with status '{agent_run.status}'",
+            detail="Cannot cancel an already-terminal agent run",
         )
 
-    # Waiting/sleeping parents hold no worker: terminalize immediately and
-    # cascade through the delegation tree. Running descendants get the Redis
-    # flag so their workers stop; queued/waiting ones terminalize at once.
-    if agent_run.status in ("waiting_child", "waiting_children", "sleeping"):
-        agent_run.status = "cancelled"
-        agent_run.error = "Cancelled by user"
-        agent_run.completed_at = datetime.now(timezone.utc)
-        agent_run.lease_owner = None
-        agent_run.lease_token = None
-        agent_run.lease_expires_at = None
-        await db.commit()
-        try:
-            from src.services.agent_runtime.delegation import cascade_cancel
+    if agent_run.status == runtime_types.CANCELLING:
+        await redis_client.set_agent_run_cancel_flag(str(run_id))
+        logger.info(f"Set cancel flag for agent run {log_safe(run_id)}")
 
-            async with get_redis() as cascade_redis:
-                await cascade_cancel(
-                    get_session_factory(),
-                    cascade_redis,
-                    agent_run.root_run_id or agent_run.id,
-                )
-        except Exception as e:
-            logger.debug(f"cascade cancel failed for {log_safe(run_id)}: {log_safe(e)}")
-        return {"run_id": str(run_id), "status": "cancelled"}
-
-    # Running — set to cancelling and signal via Redis
-    agent_run.status = "cancelling"
-    await db.commit()
-
-    await redis_client.set_agent_run_cancel_flag(str(run_id))
-    logger.info(f"Set cancel flag for agent run {log_safe(run_id)}")
-
-    # Cascade through the delegation tree: running descendants stop at
-    # their next boundary; queued/waiting ones terminalize at once.
+    # Cancel only the requested run's descendants. ``root_run_id`` identifies
+    # the tree for observability, not a cancellation scope: using it here
+    # would let cancelling one child cancel every sibling.
     try:
         from src.services.agent_runtime.delegation import cascade_cancel
 
@@ -971,19 +930,27 @@ async def cancel_agent_run(
             await cascade_cancel(
                 get_session_factory(),
                 cascade_redis,
-                agent_run.root_run_id or agent_run.id,
+                run_id,
             )
     except Exception as e:
         logger.debug(f"cascade cancel failed for {log_safe(run_id)}: {log_safe(e)}")
 
+    if agent_run.status == runtime_types.CANCELLED:
+        try:
+            from src.services.agent_runtime.delegation import notify_parent_of_completion
+
+            await notify_parent_of_completion(get_session_factory(), run_id)
+        except Exception as e:
+            logger.debug(f"parent wake after cancel failed for {log_safe(run_id)}: {log_safe(e)}")
+
     try:
         from src.core.pubsub import publish_agent_run_update
-        await publish_agent_run_update(agent_run, agent_run.agent.name if agent_run.agent else "Unknown")
+        await publish_agent_run_update(agent_run, agent_name)
     except Exception as e:
         # Cancel flag already set; pubsub notify is best-effort UI hint
         logger.debug(f"failed to publish agent_run cancel update for {log_safe(run_id)}: {log_safe(e)}")
 
-    return {"run_id": str(run_id), "status": "cancelling"}
+    return {"run_id": str(run_id), "status": agent_run.status}
 
 
 @router.post("/{run_id}/verdict", response_model=VerdictResponse)
@@ -1252,7 +1219,7 @@ async def enqueue_agent_run_request(
     user: CurrentActiveUser,
 ) -> AgentRunEnqueueResponse | PausedResponse:
     """Queue an agent run and return without waiting for execution."""
-    agent = await _get_executable_agent(db, request.agent_name)
+    agent = await _get_executable_agent(db, user, request.agent_name)
 
     if not agent.is_active:
         response.status_code = status.HTTP_200_OK
@@ -1270,6 +1237,11 @@ async def enqueue_agent_run_request(
         caller_user_id=str(user.user_id),
         caller_email=user.email,
         caller_name=getattr(user, "name", None),
+        caller_is_superuser=user.is_superuser,
+        caller_is_platform_admin=user.has_platform_admin_grant(),
+        caller_is_external=user.is_external,
+        caller_is_provider_org=user.is_provider_org,
+        caller_roles=user.roles,
         sync=False,
     )
     return AgentRunEnqueueResponse(run_id=UUID(run_id))
@@ -1282,7 +1254,7 @@ async def execute_agent_run(
     user: CurrentActiveUser,
 ) -> dict:
     """Execute an agent synchronously via the SDK."""
-    agent = await _get_executable_agent(db, request.agent_name)
+    agent = await _get_executable_agent(db, user, request.agent_name)
 
     # Paused agents short-circuit gracefully — HTTP 200 with structured body.
     # Downstream consumers (webhook senders, SDK) discriminate on status="paused".
@@ -1304,6 +1276,11 @@ async def execute_agent_run(
         caller_user_id=str(user.user_id),
         caller_email=user.email,
         caller_name=getattr(user, "name", None),
+        caller_is_superuser=user.is_superuser,
+        caller_is_platform_admin=user.has_platform_admin_grant(),
+        caller_is_external=user.is_external,
+        caller_is_provider_org=user.is_provider_org,
+        caller_roles=user.roles,
         sync=True,
     )
 

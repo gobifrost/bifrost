@@ -408,17 +408,17 @@ async def resolve_agent_tools(
                     "type": "object",
                     "properties": {
                         "wake_at": {
-                            "type": "string",
+                            "type": ["string", "null"],
                             "description": (
-                                "Absolute ISO-8601 wake time (one of "
-                                "wake_at/seconds is required)."
+                                "Absolute ISO-8601 wake time. Set to null "
+                                "when using seconds. Exactly one must be non-null."
                             ),
                         },
                         "seconds": {
-                            "type": "integer",
+                            "type": ["integer", "null"],
                             "description": (
-                                "Wake after this many seconds (one of "
-                                "wake_at/seconds is required)."
+                                "Wake after this many seconds. Set to null "
+                                "when using wake_at. Exactly one must be non-null."
                             ),
                         },
                         "reason": {

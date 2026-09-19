@@ -218,6 +218,7 @@ async def admit_delegated_child(
     own configuration is snapshotted at admission.
     """
     from src.services.execution.agent_run_service import enqueue_agent_run
+    from src.services.agent_runtime.execution_snapshot import is_synthetic_snapshot
 
     child_id = delegation_child_id(parent_run_id, spec.tool_call_id)
     async with session_factory() as session:
@@ -240,6 +241,24 @@ async def admit_delegated_child(
 
     child_correlation = dict(correlation or {})
     child_correlation.setdefault("parent_run_id", str(parent_run_id))
+    async with session_factory() as session:
+        parent = await session.get(AgentRun, parent_run_id)
+        synthetic_parent = parent is not None and is_synthetic_snapshot(
+            parent.execution_snapshot
+        )
+    if synthetic_parent:
+        await _admit_synthetic_delegated_child(
+            session_factory,
+            child_id=child_id,
+            parent_run_id=parent_run_id,
+            root_run_id=root_run_id,
+            spec=spec,
+            org_id=org_id,
+            caller=caller,
+            caller_context=caller_context,
+            correlation=child_correlation,
+        )
+        return child_id
     await enqueue_agent_run(
         agent_id=str(spec.target_agent_id),
         trigger_type="delegation",
@@ -254,6 +273,21 @@ async def admit_delegated_child(
         caller_user_id=(caller or {}).get("user_id"),
         caller_email=(caller or {}).get("email"),
         caller_name=(caller or {}).get("name"),
+        caller_is_superuser=bool(
+            (caller or {}).get(
+                "is_superuser", (caller or {}).get("is_platform_admin", False)
+            )
+        ),
+        caller_is_platform_admin=bool(
+            (caller or {}).get(
+                "is_platform_admin", (caller or {}).get("is_superuser", False)
+            )
+        ),
+        caller_is_external=bool((caller or {}).get("is_external", False)),
+        caller_is_provider_org=bool(
+            (caller or {}).get("is_provider_org", False)
+        ),
+        caller_roles=list((caller or {}).get("roles") or []),
         caller_context=caller_context,
         correlation=child_correlation,
         parent_run_id=str(parent_run_id),
@@ -261,6 +295,114 @@ async def admit_delegated_child(
         run_id=str(child_id),
     )
     return child_id
+
+
+async def _admit_synthetic_delegated_child(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    child_id: UUID,
+    parent_run_id: UUID,
+    root_run_id: UUID,
+    spec: DelegationSpec,
+    org_id: UUID | None,
+    caller: dict[str, Any] | None,
+    caller_context: dict[str, Any] | None,
+    correlation: dict[str, Any],
+) -> None:
+    """Admit a synthetic child without ever routing it through production enqueue.
+
+    The parent's evaluation marker and correlation identify the durable
+    simulator session; the Studio loader reconstructs that session by walking
+    the parent chain.  The target Agent is snapshotted normally, then marked
+    synthetic before the row is made queueable.
+    """
+    from src.services.execution.agent_run_service import (
+        _trusted_caller_auth_context,
+    )
+    from src.services.agent_runtime.execution_snapshot import snapshot_agent
+
+    async with session_factory() as session:
+        existing = await session.get(AgentRun, child_id)
+        if existing is not None:
+            return
+        parent = await session.get(AgentRun, parent_run_id)
+        if parent is None or not parent.execution_snapshot:
+            raise ToolSuspendError("Synthetic delegation parent is unavailable.")
+        target = (
+            await session.execute(
+                select(Agent)
+                .options(
+                    selectinload(Agent.tools),
+                    selectinload(Agent.delegated_agents),
+                    selectinload(Agent.roles),
+                )
+                .where(Agent.id == spec.target_agent_id)
+            )
+        ).scalar_one_or_none()
+        if target is None:
+            raise ToolSuspendError("Synthetic delegation target is unavailable.")
+        caller_user_id = (caller or {}).get("user_id")
+        snapshot = await snapshot_agent(
+            session,
+            target,
+            caller_user_id=UUID(str(caller_user_id)) if caller_user_id else None,
+        )
+        snapshot["evaluation"] = dict(
+            (parent.execution_snapshot.get("evaluation") or {})
+        )
+        snapshot["evaluation"]["mode"] = "evaluation_synthetic"
+        snapshot["evaluation"]["evaluation_only"] = True
+        session.add(
+            AgentRun(
+                id=child_id,
+                agent_id=target.id,
+                trigger_type="evaluation_synthetic",
+                trigger_source=f"agent-run:{parent_run_id}",
+                input={
+                    "task": spec.task,
+                    "_delegated_from_run_id": str(parent_run_id),
+                    "locators": dict(caller_context or {}),
+                },
+                output_schema=spec.output_schema,
+                status=rt.QUEUED,
+                org_id=org_id,
+                caller_user_id=caller_user_id,
+                caller_email=(caller or {}).get("email"),
+                caller_name=(caller or {}).get("name"),
+                caller_auth_context=_trusted_caller_auth_context(
+                    org_id=str(org_id) if org_id else None,
+                    caller_user_id=(caller or {}).get("user_id"),
+                    caller_email=(caller or {}).get("email"),
+                    caller_name=(caller or {}).get("name"),
+                    caller_is_superuser=bool(
+                        (caller or {}).get(
+                            "is_superuser",
+                            (caller or {}).get("is_platform_admin", False),
+                        )
+                    ),
+                    caller_is_platform_admin=bool(
+                        (caller or {}).get(
+                            "is_platform_admin",
+                            (caller or {}).get("is_superuser", False),
+                        )
+                    ),
+                    caller_is_external=bool((caller or {}).get("is_external", False)),
+                    caller_is_provider_org=bool(
+                        (caller or {}).get("is_provider_org", False)
+                    ),
+                    caller_roles=list((caller or {}).get("roles") or []),
+                ),
+                caller_context=caller_context,
+                correlation=correlation,
+                execution_snapshot=snapshot,
+                parent_run_id=parent_run_id,
+                root_run_id=root_run_id,
+            )
+        )
+        await session.commit()
+    from src.jobs.rabbitmq import publish_message
+
+    await publish_message("agent-runs", {"run_id": str(child_id)})
 
 
 async def suspend_for_deferred_calls(
@@ -357,6 +499,7 @@ async def suspend_for_deferred_calls(
                 select(AgentRun)
                 .where(AgentRun.id == parent_run_id)
                 .with_for_update(of=AgentRun)
+                .execution_options(populate_existing=True)
             )
         ).scalar_one_or_none()
         if locked is None:
@@ -782,6 +925,11 @@ async def suspend_for_fanout(
     await _ensure_join_members(
         session_factory, join.id, child_ids, [t.name for _, t in resolved]
     )
+    # A child can terminalize between queue admission and member insertion.
+    # Reconcile each member after it exists so that notification is never
+    # lost; the function is idempotent for ordinary later completions.
+    for child_id in child_ids.values():
+        await record_join_member_completion(session_factory, child_id)
 
     async with session_factory() as session:
         locked = (
@@ -789,6 +937,7 @@ async def suspend_for_fanout(
                 select(AgentRun)
                 .where(AgentRun.id == parent_run_id)
                 .with_for_update(of=AgentRun)
+                .execution_options(populate_existing=True)
             )
         ).scalar_one_or_none()
         if locked is None:
@@ -998,7 +1147,10 @@ async def record_join_member_completion(
         member.completed_at = datetime.now(timezone.utc)
         await session.flush()
         join = await session.get(
-            AgentRunJoin, member.join_id, with_for_update={"of": AgentRunJoin}
+            AgentRunJoin,
+            member.join_id,
+            with_for_update={"of": AgentRunJoin},
+            populate_existing=True,
         )
         if join is None:
             await session.commit()
@@ -1133,47 +1285,55 @@ async def find_fanout_intent(
     return None
 
 
-async def cascade_cancel(    session_factory: async_sessionmaker[AsyncSession],
+async def cascade_cancel(
+    session_factory: async_sessionmaker[AsyncSession],
     redis_client,
-    root_run_id: UUID,
+    ancestor_run_id: UUID,
 ) -> int:
-    """Cancel every unfinished descendant of a run; returns rows touched.
+    """Cancel every unfinished descendant of one run; returns rows touched.
 
     Queued/waiting rows (no worker) terminalize immediately; running rows
     get the Redis cancel flag so their worker stops at the next boundary.
     """
-    touched = 0
+    descendants = select(AgentRun.id).where(
+        AgentRun.parent_run_id == ancestor_run_id
+    ).cte("agent_run_cancel_descendants", recursive=True)
+    descendants = descendants.union(
+        select(AgentRun.id).join(
+            descendants, AgentRun.parent_run_id == descendants.c.id
+        )
+    )
     async with session_factory() as session:
-        rows = (
+        descendant_ids = list(
             await session.execute(
-                select(AgentRun).where(AgentRun.root_run_id == root_run_id)
+                select(descendants.c.id)
             )
-        ).scalars().all()
-        descendants = [row for row in rows if row.id != root_run_id]
-        now = datetime.now(timezone.utc)
-        for row in descendants:
-            if row.status in rt.TERMINAL_STATUSES:
+        )
+    touched = 0
+    flags: list[str] = []
+    terminalized_ids: list[UUID] = []
+    for (descendant_id,) in descendant_ids:
+        async with session_factory() as session:
+            try:
+                row = await run_store.request_cancellation(
+                    session,
+                    descendant_id,
+                    error=f"Cancelled with ancestor run {ancestor_run_id}",
+                )
+            except rt.InvalidTransitionError:
                 continue
-            if row.status in ("queued", *rt.INACTIVE_WAIT_STATUSES):
-                row.status = "cancelled"
-                row.error = f"Cancelled with parent run {root_run_id}"
-                row.completed_at = now
-                row.lease_owner = None
-                row.lease_token = None
-                row.lease_expires_at = None
-                touched += 1
-            elif row.status == "running":
-                row.status = "cancelling"
-                touched += 1
-        await session.commit()
-        flags = [
-            f"bifrost:agent_run:{row.id}:cancel"
-            for row in descendants
-            if row.status in ("cancelling", "running")
-        ]
+        touched += 1
+        if row.status == rt.CANCELLING:
+            flags.append(f"bifrost:agent_run:{row.id}:cancel")
+        elif row.status == rt.CANCELLED:
+            terminalized_ids.append(row.id)
     for flag in flags:
         try:
             await redis_client.set(flag, "1", ex=3600)
         except Exception:
             logger.debug("Failed to set cascade cancel flag %s", flag)
+    for run_id in terminalized_ids:
+        # Completion remains durable through the outbox; this eager wake
+        # preserves the normal parent-notification path when it is available.
+        await notify_parent_of_completion(session_factory, run_id)
     return touched

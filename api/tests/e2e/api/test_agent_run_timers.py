@@ -21,7 +21,7 @@ from sqlalchemy.orm import selectinload
 from src.models.orm.agent_runs import AgentRun, AgentRunJournalEntry
 from src.models.orm.agents import Agent
 from src.services.agent_runtime import run_store
-from src.services.agent_runtime.resume import prepare_resume
+from src.services.agent_runtime.resume import prepare_resume, restore_pending_wait
 from src.services.agent_runtime.timers import (
     MAX_TIMER_SECONDS,
     TIMER_FIRED_TEXT,
@@ -189,6 +189,46 @@ class TestTimerParsing:
 
 
 class TestDurableTimer:
+    async def test_reclaim_restores_sleep_when_intent_committed_before_wait(
+        self, async_session_factory
+    ):
+        """A crash after timer intent must re-park, not re-offer the tool call."""
+        run_id = await _create_row(async_session_factory)
+        wake_at = datetime.now(timezone.utc) + timedelta(minutes=10)
+        try:
+            async with async_session_factory() as session:
+                claimed = await run_store.claim_run(session, run_id, "worker-a")
+                assert claimed.lease_token is not None
+                await run_store.append_journal(
+                    session,
+                    run_id,
+                    claimed.lease_token,
+                    "timer",
+                    {"tool_call_id": CALL_ID, "wake_at": wake_at.isoformat()},
+                )
+                claimed.lease_expires_at = datetime.now(timezone.utc) - timedelta(
+                    seconds=1
+                )
+                await session.commit()
+            async with async_session_factory() as session:
+                reclaimed = await run_store.claim_run(session, run_id, "worker-b")
+                assert reclaimed.lease_token is not None
+                restored = await restore_pending_wait(
+                    async_session_factory,
+                    run_id,
+                    reclaimed.lease_token,
+                    {CALL_ID},
+                )
+                assert restored == "sleeping"
+            async with async_session_factory() as session:
+                row = await session.get(AgentRun, run_id)
+                assert row is not None
+                assert row.status == "sleeping"
+                assert row.wake_at == wake_at
+                assert row.lease_token is None
+        finally:
+            await _cleanup(async_session_factory, run_id)
+
     async def test_sleep_wake_resume_same_run(self, async_session_factory):
         run_id = await _create_row(async_session_factory)
         try:

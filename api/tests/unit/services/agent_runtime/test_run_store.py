@@ -17,6 +17,7 @@ from src.models.orm.agent_runs import (
 )
 from src.services.agent_runtime import run_store
 from src.services.agent_runtime import types as rt
+from src.services.agent_runtime.resume import active_seconds_used
 
 asyncio_mark = pytest.mark.asyncio
 
@@ -150,6 +151,72 @@ class TestLeaseFencing:
             await _cleanup_run(async_session_factory, run_id)
 
 
+class TestCancellationFencing:
+    @asyncio_mark
+    async def test_stale_cancellation_cannot_resurrect_completed_run(
+        self, async_session_factory
+    ):
+        async with async_session_factory() as setup:
+            run = await _create_queued_run(setup)
+            run_id = run.id
+        try:
+            async with async_session_factory() as worker:
+                claimed = await run_store.claim_run(worker, run_id, "worker-a")
+                token = claimed.lease_token
+                assert token
+
+            # Simulate the router's old authorization/visibility read. The
+            # completion wins before cancellation takes its authoritative lock.
+            async with async_session_factory() as stale_session:
+                stale = await stale_session.get(AgentRun, run_id)
+                assert stale is not None and stale.status == rt.RUNNING
+                async with async_session_factory() as worker:
+                    await run_store.finish_run(
+                        worker, run_id, token, rt.COMPLETED, output={"text": "done"}
+                    )
+                with pytest.raises(rt.InvalidTransitionError):
+                    await run_store.request_cancellation(stale_session, run_id)
+
+            async with async_session_factory() as session:
+                stored = await session.get(AgentRun, run_id)
+                assert stored is not None
+                assert stored.status == rt.COMPLETED
+                assert stored.output == {"text": "done"}
+        finally:
+            await _cleanup_run(async_session_factory, run_id)
+
+    @asyncio_mark
+    async def test_expired_token_cannot_write_before_another_worker_claims(
+        self, async_session_factory
+    ):
+        async with async_session_factory() as setup:
+            run = await _create_queued_run(setup)
+            run_id = run.id
+        try:
+            async with async_session_factory() as session:
+                claimed = await run_store.claim_run(session, run_id, "worker-a")
+                token = claimed.lease_token
+                assert token
+            async with async_session_factory() as session:
+                stored = await session.get(AgentRun, run_id)
+                assert stored is not None
+                stored.lease_expires_at = datetime.now(timezone.utc) - timedelta(
+                    seconds=1
+                )
+                await session.commit()
+            async with async_session_factory() as session:
+                with pytest.raises(rt.LeaseMismatchError):
+                    await run_store.commit_checkpoint(
+                        session, run_id, token, {"format_version": 1, "messages": []}
+                    )
+                with pytest.raises(rt.LeaseMismatchError):
+                    await run_store.finish_run(
+                        session, run_id, token, rt.COMPLETED
+                    )
+        finally:
+            await _cleanup_run(async_session_factory, run_id)
+
+
 class TestCheckpointAndJournal:
     @asyncio_mark
     async def test_commit_checkpoint_advances_run_and_projects_steps(
@@ -216,6 +283,52 @@ class TestCheckpointAndJournal:
             await _cleanup_run(async_session_factory, run_id)
 
     @asyncio_mark
+    async def test_checkpoint_counters_survive_nested_lock_with_autoflush_off(
+        self, async_session_factory
+    ):
+        """A lock refresh cannot discard this transaction's unflushed state."""
+        async with async_session_factory() as setup:
+            run = await _create_queued_run(setup)
+            run_id = run.id
+        try:
+            async with async_session_factory() as session:
+                session.autoflush = False
+                claimed = await run_store.claim_run(session, run_id, "worker-a")
+                assert claimed.lease_token is not None
+                await run_store.commit_checkpoint(
+                    session,
+                    run_id,
+                    claimed.lease_token,
+                    {"format_version": 1, "messages": []},
+                    iterations_used=1,
+                    tokens_used=10,
+                )
+                await run_store.commit_checkpoint(
+                    session,
+                    run_id,
+                    claimed.lease_token,
+                    {"format_version": 1, "messages": []},
+                    iterations_used=2,
+                    tokens_used=20,
+                )
+            async with async_session_factory() as session:
+                stored = await session.get(AgentRun, run_id)
+                assert stored is not None
+                assert stored.checkpoint_sequence == 2
+                assert stored.iterations_used == 2
+                assert stored.tokens_used == 20
+                checkpoints = (
+                    await session.execute(
+                        select(AgentRunCheckpoint)
+                        .where(AgentRunCheckpoint.run_id == run_id)
+                        .order_by(AgentRunCheckpoint.sequence)
+                    )
+                ).scalars().all()
+                assert [checkpoint.sequence for checkpoint in checkpoints] == [1, 2]
+        finally:
+            await _cleanup_run(async_session_factory, run_id)
+
+    @asyncio_mark
     async def test_journal_redacts_secrets(self, async_session_factory):
         async with async_session_factory() as setup:
             run = await _create_queued_run(setup)
@@ -266,6 +379,7 @@ class TestWaitingAndFinish:
         finally:
             await _cleanup_run(async_session_factory, run_id)
 
+
     @asyncio_mark
     async def test_wake_from_running_is_rejected(self, async_session_factory):
         async with async_session_factory() as setup:
@@ -277,6 +391,88 @@ class TestWaitingAndFinish:
             async with async_session_factory() as session:
                 with pytest.raises(rt.InvalidTransitionError):
                     await run_store.wake_run(session, run_id, reason="bogus")
+        finally:
+            await _cleanup_run(async_session_factory, run_id)
+
+
+class TestActiveRuntimeAccounting:
+    @asyncio_mark
+    async def test_waiting_period_is_excluded_between_attempts(
+        self, async_session_factory
+    ):
+        async with async_session_factory() as session:
+            run = await _create_queued_run(session)
+            run_id = run.id
+            start = datetime.now(timezone.utc)
+            session.add_all(
+                [
+                    AgentRunJournalEntry(
+                        run_id=run_id,
+                        sequence=1,
+                        kind=rt.JOURNAL_RESUME,
+                        data={"attempt": 1},
+                        created_at=start,
+                    ),
+                    AgentRunJournalEntry(
+                        run_id=run_id,
+                        sequence=2,
+                        kind=rt.JOURNAL_WAIT,
+                        data={"target": rt.SLEEPING},
+                        created_at=start + timedelta(seconds=3),
+                    ),
+                    AgentRunJournalEntry(
+                        run_id=run_id,
+                        sequence=3,
+                        kind=rt.JOURNAL_RESUME,
+                        data={"attempt": 2},
+                        created_at=start + timedelta(hours=2),
+                    ),
+                ]
+            )
+            await session.commit()
+        try:
+            async with async_session_factory() as session:
+                assert await active_seconds_used(session, run_id, 2) == pytest.approx(3)
+        finally:
+            await _cleanup_run(async_session_factory, run_id)
+
+    @asyncio_mark
+    async def test_crash_downtime_is_capped_at_prior_lease_expiration(
+        self, async_session_factory
+    ):
+        async with async_session_factory() as session:
+            run = await _create_queued_run(session)
+            run_id = run.id
+            start = datetime.now(timezone.utc)
+            lease_end = start + timedelta(seconds=9)
+            session.add_all(
+                [
+                    AgentRunJournalEntry(
+                        run_id=run_id,
+                        sequence=1,
+                        kind=rt.JOURNAL_RESUME,
+                        data={"attempt": 1},
+                        created_at=start,
+                    ),
+                    # The cluster was down for a day before attempt two
+                    # reclaimed this run. Only the original lease window was
+                    # active work; the rest is not chargeable timeout.
+                    AgentRunJournalEntry(
+                        run_id=run_id,
+                        sequence=2,
+                        kind=rt.JOURNAL_LEASE_RECOVERY,
+                        data={
+                            "attempt": 2,
+                            "prior_lease_expires_at": lease_end.isoformat(),
+                        },
+                        created_at=start + timedelta(days=1),
+                    ),
+                ]
+            )
+            await session.commit()
+        try:
+            async with async_session_factory() as session:
+                assert await active_seconds_used(session, run_id, 2) == pytest.approx(9)
         finally:
             await _cleanup_run(async_session_factory, run_id)
 

@@ -8,6 +8,7 @@ until a human explicitly accepts it.
 
 - The target Agent's prompt and configuration snapshot (read-only).
 - Published tool schemas the Agent may call (names, arguments, results).
+- A deterministic assertion catalog with valid parameter examples and guidance.
 - A suite goal and the number of cases requested.
 - Optionally: redacted historical AgentRuns and tool results as *inspiration*
   for realistic shapes. These are examples, never frozen replays.
@@ -26,7 +27,8 @@ cases, each with:
    update/delete chains stay coherent.
 4. `simulator_policy` — bounds for the run (e.g. timer caps).
 5. `assertions` — exact, predicate, and budget checks with stable types.
-   Only use assertion types from the provided list.
+   Choose only types in `assertion_catalog`, and follow its parameter names,
+   value shapes, and guidance. `llm_judge` is not available.
 6. `expected_tools` / `forbidden_tools` — trajectory expectations.
 7. `coverage` — one of `success`, `failure`, `safety`, `edge`. Propose
    materially distinct cases across these labels; do not repeat a tool
@@ -40,6 +42,10 @@ cases, each with:
   referenced by an assertion or rule must exist in the fixture's initial
   state or be allocated deterministically by a simulated create.
 - Never invent assertion types. Never invent tool names.
+- Each fixture rule is an object with `tool`; use optional `match_args` as a
+  map of dot-separated argument paths to exact values. When generic CRUD
+  behavior is insufficient, use deterministic `return` and optional `mutate`
+  entries; never invent a rule schema.
 - Never include secrets, credentials, tokens, or personal data in fixtures
   or assertions, even if a historical example contained them.
 - The evaluated agent never defines its own passing criteria: assertions

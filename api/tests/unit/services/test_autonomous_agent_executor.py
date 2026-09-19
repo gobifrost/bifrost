@@ -1,8 +1,10 @@
 """Unit tests for AutonomousAgentExecutor."""
 import asyncio
 import json
+from types import SimpleNamespace
 
 import pytest
+from pydantic_ai.messages import ModelResponse as PydanticModelResponse, TextPart
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.usage import RunUsage
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -92,6 +94,37 @@ def mock_agent():
 
 
 class TestAutonomousAgentExecutor:
+    @pytest.mark.asyncio
+    async def test_synthetic_sleep_uses_persisted_router_clock(
+        self, mock_session, mock_agent
+    ):
+        """Synthetic timer validation never derives time from the worker wall clock."""
+        from datetime import datetime, timezone
+
+        executor = AutonomousAgentExecutor(mock_session)
+        router = MagicMock()
+        router.validate_and_advance_timer = AsyncMock(
+            return_value=datetime(2026, 9, 18, 0, 1, tzinfo=timezone.utc)
+        )
+        executor._synthetic_router = router
+        executor._synthetic_timer_max_seconds = 300
+
+        result = await executor._execute_sleep(
+            ToolCallRequest(
+                id="sleep-1",
+                name="sleep_until",
+                arguments={"seconds": 60, "reason": "wait for replication"},
+            ),
+            mock_agent,
+        )
+
+        assert result == "Synthetic timer fired (deterministic wake)."
+        router.validate_and_advance_timer.assert_awaited_once_with(
+            {"seconds": 60, "reason": "wait for replication"},
+            max_seconds=300,
+            tool_call_id="sleep-1",
+        )
+
     @pytest.mark.asyncio
     async def test_knowledge_search_deduplicates_evidence_across_queries(
         self,
@@ -1690,6 +1723,11 @@ class TestAutonomousAgentExecutor:
                 "provider": "openai",
                 "model": "snapshot-model",
                 "llm_max_tokens": 123,
+                "endpoint": "https://pinned.example/v1",
+                "openai_transport": "chat_completions",
+                "anthropic_prompt_cache_supported": False,
+                "default_max_tokens": 321,
+                "extra_params": {"reasoning_effort": "high"},
             },
             "tools": [
                 {
@@ -1708,6 +1746,7 @@ class TestAutonomousAgentExecutor:
 
         def _fake_create_model(config, *, model=None):
             created_models["model"] = model
+            created_models["config"] = config
             return FunctionModel(lambda messages, info: "unused")
 
         class _StubRuntime:
@@ -1746,6 +1785,70 @@ class TestAutonomousAgentExecutor:
         assert result["status"] == "completed"
         assert captured["system_prompt"] == "PINNED PROMPT"
         assert created_models["model"] == "snapshot-model"
+        assert created_models["config"].endpoint == "https://pinned.example/v1"
+        assert created_models["config"].openai_transport == "chat_completions"
+        assert created_models["config"].default_max_tokens == 321
+        assert created_models["config"].extra_params == {"reasoning_effort": "high"}
         toolsets = captured["toolsets"]
         assert len(toolsets) == 1
         assert [d.name for d in toolsets[0]._definitions] == ["pinned_tool"]
+
+    @pytest.mark.asyncio
+    async def test_resume_finishes_committed_final_response_without_provider_call(
+        self, mock_session, mock_agent
+    ):
+        """A crash after final-response checkpoint must not buy a second call."""
+        snapshot = {
+            "format_version": 1,
+            "system_prompt": "Pinned prompt.",
+            "model": {
+                "profile_id": None,
+                "provider": "openai",
+                "model": "snapshot-model",
+                "llm_max_tokens": None,
+            },
+            "tools": [],
+            "delegated_agents": [],
+            "system_tools": [],
+            "knowledge_sources": [],
+            "limits": {},
+        }
+
+        class _NoProviderRuntime:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def run(self, *args, **kwargs):
+                raise AssertionError("committed final response must not call provider")
+
+        executor = AutonomousAgentExecutor(mock_session)
+        mock_session._mock_session.get.return_value = SimpleNamespace(
+            iterations_used=4,
+            tokens_used=80,
+        )
+        with (
+            patch(
+                "src.services.execution.autonomous_agent_executor.create_agent_model",
+                return_value=FunctionModel(lambda messages, info: "unused"),
+            ),
+            patch(
+                "src.services.execution.autonomous_agent_executor.PydanticAgent",
+                _NoProviderRuntime,
+            ),
+        ):
+            result = await executor.run(
+                mock_agent,
+                run_id=str(uuid4()),
+                execution_snapshot=snapshot,
+                resume_history=[
+                    PydanticModelResponse(
+                        parts=[TextPart(content="already committed")],
+                        model_name="snapshot-model",
+                    )
+                ],
+            )
+
+        assert result["status"] == "completed"
+        assert result["output"] == "already committed"
+        assert result["iterations_used"] == 4
+        assert result["tokens_used"] == 80

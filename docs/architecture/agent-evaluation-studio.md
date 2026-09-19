@@ -49,7 +49,11 @@ Studio v1 never invokes real workflow, MCP, or system tools:
   trigger keys (`ticket_id`, `production_trigger`, …).
 - Timers never wall-clock wait: `validate_synthetic_timer` enforces
   `MAX_SYNTHETIC_TIMER_SECONDS` (300s default) and the engine resolves
-  admitted timers with a deterministic wake result.
+  admitted timers against the locked, persisted fixture clock. Timer operation
+  identity survives restart, so replay cannot advance the clock twice.
+- Simulator state, failure records, clock advances, and version increments
+  commit together. Fresh routers and delegated children share that durable
+  state; provider call IDs are scoped by run ID.
 
 ## Candidate isolation
 
@@ -83,7 +87,14 @@ execution ID only; `jobs/platform/agent_evaluation.py`):
    batches, and finishes deferred jobs through the shared service.
 4. Cancellation marks the execution cancelled and cancels only unfinished
    synthetic AgentRuns; the shared PlatformJob cancel API is also
-   requested.
+   requested. The execution is fenced before cleanup starts; a null completion
+   timestamp on a cancelled execution makes interrupted cleanup recoverable.
+   Cancellation through the shared job API reaches the same cleanup path.
+
+The reconciler revisits completed executions whose jobs are still waiting,
+covering completion before deferral and crashes between the completion commits.
+Missing or invalid durable evidence produces an explicit result error and a
+failed job once its result sides are finished.
 
 Status, retry, notifications, and the `platform_job_updated` WebSocket
 event all use the shared contract. Enqueue returns `202
@@ -101,6 +112,15 @@ browser must not add polling.
 - Historical runs are inspiration, never replay: `redact_history` omits
   runs the caller cannot access and redacts secret-bearing values before
   the designer sees them.
+- The Designer uses the dedicated `testing` AI model assignment. Its profile
+  ID and settings are frozen before admission; evaluated baseline/candidate
+  profiles remain unchanged. Migration initializes testing from the existing
+  primary assignment once; an explicitly missing testing assignment fails
+  with configuration guidance rather than substituting another model.
+- Selected history includes durable tool arguments, results, and errors;
+  older step-based histories remain supported. JSON-encoded legacy results
+  are decoded before redaction. Projection caps are 20 runs, 50 tool records
+  and 64 KiB per run, and 512 KiB overall; trimmed evidence is marked.
 - Output validation fails closed with a repair-oriented problem list
   (unknown tools/assertions, unresolved entity IDs, incoherent chains).
 - Proposals deduplicate by stable signature across coverage labels
@@ -119,6 +139,16 @@ without it. Every outcome carries a stable code, redacted
 expected/actual, and evidence journal sequence IDs. Comparison reports
 regressions, improvements, unchanged failures, trajectory deltas, output
 deltas, and usage deltas with a deterministic verdict — prose never gates.
+Journal links include both run ID and sequence, including engine-owned
+delegation and timer calls. Repeated attempt checkpoints do not count as new
+logical tool invocations. Latency is root wall duration; provider-call duration
+is separate. Semantic judges use explicitly authorized, frozen model settings;
+changed settings fail closed rather than changing an existing assertion.
+Per-side usage remains available in `comparison.usage`, including baseline-only
+results. It records input/output tokens, cache reads/writes, and
+`cache_hit_fraction = cache_read_tokens / input_tokens` (null without observed
+input). Input tokens already include cached tokens. This fraction is measured
+token reuse, not a claim about cost savings or provider cache eligibility.
 
 ## Quotas and retention
 
@@ -167,3 +197,18 @@ work, and must honor the evidence-first requirements:
 Regenerate web types against a running stack before UI work:
 `cd client && npm run generate:types` (requires `./debug.sh` up).
 OpenAPI digest: `.claude/skills/bifrost-build/generated/openapi-digest.md`.
+
+Runtime usage in comparisons excludes automatic run summaries: summarizer
+AIUsage records reserve sequence 0, while runtime checkpoint projections use
+positive sequences. Summaries continue contributing to overall Agent spend.
+Cache hit fraction is runtime cache-read tokens divided by runtime input
+tokens (null for no observed input), and total tokens are input plus output,
+without adding cache tokens again.
+
+Designer input includes the supported deterministic assertion catalog and
+fixture rule syntax. Unsupported fixture rule fields fail at save time.
+Invalid immutable Designer output records a materialization error once so
+it cannot occupy the scheduler's bounded scan indefinitely. Draft acceptance
+revalidates stored fixtures and keeps historical provenance. Suite mutations
+serialize against publication, and draft edits advance their optimistic
+version.

@@ -30,6 +30,7 @@ class ToolEvent:
     result: Any | None = None
     error: str | None = None
     duration_ms: int | None = None
+    tool_call_id: str | None = None
 
 
 ToolEventHandler = Callable[[ToolEvent], Awaitable[None]]
@@ -120,7 +121,10 @@ class BifrostToolset(AbstractToolset[object]):
         started = time.monotonic()
         if self._event_handler:
             await self._event_handler(
-                ToolEvent(type="tool_call", tool_name=name, arguments=tool_args)
+                ToolEvent(
+                    type="tool_call", tool_name=name, arguments=tool_args,
+                    tool_call_id=ctx.tool_call_id,
+                )
             )
         schema = next(
             (definition.parameters for definition in self._definitions if definition.name == name),
@@ -136,6 +140,7 @@ class BifrostToolset(AbstractToolset[object]):
                             type="tool_error",
                             tool_name=name,
                             arguments=tool_args,
+                            tool_call_id=ctx.tool_call_id,
                             error=message,
                             duration_ms=int((time.monotonic() - started) * 1_000),
                         )
@@ -152,6 +157,7 @@ class BifrostToolset(AbstractToolset[object]):
                             type="tool_error",
                             tool_name=name,
                             arguments=tool_args,
+                            tool_call_id=ctx.tool_call_id,
                             error=message,
                             duration_ms=int((time.monotonic() - started) * 1_000),
                         )
@@ -159,6 +165,10 @@ class BifrostToolset(AbstractToolset[object]):
                 return message
         try:
             result = await self._executor(name, tool_args, ctx.tool_call_id or "")
+        except CallDeferred:
+            # A parked child/timer is control flow, not a failed tool result.
+            # Its eventual return is recorded when the durable wait resolves.
+            raise
         except Exception as exc:
             if self._event_handler:
                 await self._event_handler(
@@ -166,15 +176,12 @@ class BifrostToolset(AbstractToolset[object]):
                         type="tool_error",
                         tool_name=name,
                         arguments=tool_args,
+                        tool_call_id=ctx.tool_call_id,
                         error=str(exc),
                         duration_ms=int((time.monotonic() - started) * 1_000),
                     )
                 )
             if isinstance(exc, AgentRunCancelled):
-                raise
-            # Suspension is control flow, not failure: the engine admits the
-            # deferred work and parks the run. Never convert it to text.
-            if isinstance(exc, CallDeferred):
                 raise
             return f"Error: {exc}"
 
@@ -184,6 +191,7 @@ class BifrostToolset(AbstractToolset[object]):
                     type="tool_result",
                     tool_name=name,
                     arguments=tool_args,
+                    tool_call_id=ctx.tool_call_id,
                     result=result,
                     duration_ms=int((time.monotonic() - started) * 1_000),
                 )

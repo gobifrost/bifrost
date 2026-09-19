@@ -22,6 +22,7 @@ never repeats.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -37,7 +38,7 @@ from pydantic_ai.messages import (
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from src.models.orm.agent_runs import AgentRun, AgentRunJournalEntry
+from src.models.orm.agent_runs import AgentRun, AgentRunJoin, AgentRunJournalEntry
 from src.services.agent_runtime import run_store
 from src.services.agent_runtime import types as rt
 from src.services.agent_runtime.checkpoint_codec import decode_messages
@@ -46,6 +47,8 @@ from src.services.agent_runtime.tool_invocations import (
     list_invocations,
     reclaim_in_flight,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -67,7 +70,8 @@ def append_missing_tool_returns(
 ) -> list[ModelMessage]:
     """Replay stored results for tool calls missing returns in history.
 
-    ``completed`` maps provider tool-call ID to the stored result string.
+    ``completed`` maps provider tool-call ID to a lossless model-history
+    rendering of the stored result.
     Calls already answered in history are untouched; anything else gets a
     synthetic ``ToolReturnPart`` so the resumed model request observes the
     committed outcome instead of re-emitting the call.
@@ -142,12 +146,10 @@ async def prepare_resume(
         )
         deferred_results.update(timer_results)
         deferred_pending |= timer_pending
+    from src.services.agent_runtime.tool_invocations import invocation_result_text
+
     completed = {
-        inv.provider_tool_call_id: (
-            (inv.result or {}).get("text", "")
-            if isinstance(inv.result, dict)
-            else str(inv.result)
-        )
+        inv.provider_tool_call_id: invocation_result_text(inv.result)
         for inv in invocations
         if inv.state == "completed" and inv.provider_tool_call_id
     }
@@ -167,6 +169,100 @@ async def prepare_resume(
     )
 
 
+async def restore_pending_wait(
+    session_factory: async_sessionmaker[AsyncSession],
+    run_id: UUID,
+    lease_token: str,
+    pending_call_ids: set[str],
+) -> str | None:
+    """Re-park a reclaimed run interrupted between intent and wait commit.
+
+    A deferred intent is durable before its inactive transition.  Recovery
+    must therefore restore that inactive state rather than offering an
+    unfinished call to the model or failing the run.
+    """
+    from src.services.agent_runtime.delegation import FANOUT_KIND
+    from src.services.agent_runtime.timers import TIMER_KIND
+
+    async with session_factory() as session:
+        entries = (
+            await session.execute(
+                select(AgentRunJournalEntry)
+                .where(AgentRunJournalEntry.run_id == run_id)
+                .order_by(AgentRunJournalEntry.sequence.desc())
+            )
+        ).scalars().all()
+        for entry in entries:
+            data = entry.data or {}
+            tool_call_id = str(data.get("tool_call_id") or "")
+            if tool_call_id not in pending_call_ids:
+                continue
+            # Hold the parent lock while checking completion and parking it.
+            # A terminal child/join that commits after this check then blocks
+            # on that same parent lock and wakes it after the wait commits;
+            # one that finished earlier is observed here and replayed instead.
+            parent = (
+                await session.execute(
+                    select(AgentRun)
+                    .where(AgentRun.id == run_id)
+                    .with_for_update(of=AgentRun)
+                    .execution_options(populate_existing=True)
+                )
+            ).scalar_one_or_none()
+            if parent is None:
+                return None
+            run_store.require_lease(parent, lease_token)
+            if entry.kind == TIMER_KIND and data.get("wake_at"):
+                try:
+                    wake_at = datetime.fromisoformat(str(data["wake_at"]))
+                    if wake_at.tzinfo is None:
+                        wake_at = wake_at.replace(tzinfo=timezone.utc)
+                except ValueError:
+                    return None
+                await run_store.transition_waiting(
+                    session,
+                    run_id,
+                    lease_token,
+                    rt.SLEEPING,
+                    wake_at=wake_at,
+                    journal_data={"tool_call_id": tool_call_id, "recovered": True},
+                )
+                return rt.SLEEPING
+            if entry.kind == FANOUT_KIND:
+                try:
+                    join_id = UUID(str(data["join_id"]))
+                except (KeyError, TypeError, ValueError):
+                    return None
+                join = await session.get(AgentRunJoin, join_id)
+                if join is not None and join.status == "complete":
+                    continue
+                await run_store.transition_waiting(
+                    session,
+                    run_id,
+                    lease_token,
+                    rt.WAITING_CHILDREN,
+                    journal_data={"tool_call_id": tool_call_id, "recovered": True},
+                )
+                return rt.WAITING_CHILDREN
+            if entry.kind == rt.JOURNAL_DELEGATION:
+                try:
+                    child_id = UUID(str(data["child_run_id"]))
+                except (KeyError, TypeError, ValueError):
+                    return None
+                child = await session.get(AgentRun, child_id)
+                if child is not None and child.status in rt.TERMINAL_STATUSES:
+                    continue
+                await run_store.transition_waiting(
+                    session,
+                    run_id,
+                    lease_token,
+                    rt.WAITING_CHILD,
+                    journal_data={"tool_call_id": tool_call_id, "recovered": True},
+                )
+                return rt.WAITING_CHILD
+    return None
+
+
 async def active_seconds_used(
     session: AsyncSession, run_id: UUID, current_attempt: int
 ) -> float:
@@ -182,7 +278,7 @@ async def active_seconds_used(
             .order_by(AgentRunJournalEntry.sequence)
         )
     ).scalars().all()
-    starts: dict[int, datetime] = {}
+    starts: dict[int, tuple[int, datetime, dict[str, Any]]] = {}
     for entry in entries:
         data = entry.data or {}
         if entry.kind in (rt.JOURNAL_RESUME, rt.JOURNAL_LEASE_RECOVERY):
@@ -192,14 +288,46 @@ async def active_seconds_used(
                 if created is not None:
                     if created.tzinfo is None:
                         created = created.replace(tzinfo=timezone.utc)
-                    starts[attempt] = created
+                    starts[attempt] = (entry.sequence, created, data)
     ordered = sorted(starts)
     total = 0.0
     for index, attempt in enumerate(ordered):
         if attempt >= current_attempt:
             break
-        begin = starts[attempt]
-        end = starts[ordered[index + 1]] if index + 1 < len(ordered) else None
+        start_sequence, begin, _start_data = starts[attempt]
+        next_claim = (
+            starts[ordered[index + 1]] if index + 1 < len(ordered) else None
+        )
+        end_sequence = next_claim[0] if next_claim is not None else None
+        end = next_claim[1] if next_claim is not None else None
+        # A wait boundary ends active time. Without one, the next reclaim
+        # records the previous worker's final lease expiration; cap there so
+        # stopped-cluster downtime cannot consume active timeout.
+        if next_claim is not None:
+            prior_expiry = next_claim[2].get("prior_lease_expires_at")
+            if isinstance(prior_expiry, str):
+                try:
+                    lease_end = datetime.fromisoformat(prior_expiry)
+                    if lease_end.tzinfo is None:
+                        lease_end = lease_end.replace(tzinfo=timezone.utc)
+                    end = min(end, lease_end) if end is not None else lease_end
+                except ValueError:
+                    logger.warning(
+                        "Ignoring malformed prior lease expiry for run %s attempt %s",
+                        run_id,
+                        attempt,
+                    )
+        for entry in entries:
+            if entry.sequence <= start_sequence:
+                continue
+            if end_sequence is not None and entry.sequence >= end_sequence:
+                break
+            if entry.kind == rt.JOURNAL_WAIT and entry.created_at is not None:
+                wait_end = entry.created_at
+                if wait_end.tzinfo is None:
+                    wait_end = wait_end.replace(tzinfo=timezone.utc)
+                end = min(end, wait_end) if end is not None else wait_end
+                break
         if end is not None:
             total += max(0.0, (end - begin).total_seconds())
     return total

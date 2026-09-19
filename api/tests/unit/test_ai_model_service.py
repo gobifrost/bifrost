@@ -58,12 +58,42 @@ async def test_first_profile_bootstraps_every_assignment(db_session):
     assert {assignment.assignment_key for assignment in assignments} == {
         "primary",
         "summarization",
+        "testing",
         "tuning",
         "image_generation",
         "video_generation",
         "chat_default",
     }
     assert {assignment.profile_id for assignment in assignments} == {profile.id}
+
+
+@pytest.mark.asyncio
+async def test_testing_assignment_resolves_configured_profile(db_session):
+    service = AIModelService(db_session)
+    await _profile(service)
+
+    config = await service.resolve_config(assignment_key="testing")
+
+    assert config.model == "openai/gpt-4o-mini"
+
+
+@pytest.mark.asyncio
+async def test_missing_testing_assignment_reports_actionable_error(db_session):
+    from sqlalchemy import delete
+
+    from src.models.orm.ai_models import AIModelAssignment
+
+    service = AIModelService(db_session)
+    await _profile(service)
+    await db_session.execute(
+        delete(AIModelAssignment).where(
+            AIModelAssignment.assignment_key == "testing"
+        )
+    )
+    await db_session.flush()
+
+    with pytest.raises(ValueError, match="testing.*not configured"):
+        await service.resolve_config(assignment_key="testing")
 
 
 @pytest.mark.asyncio

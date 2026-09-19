@@ -8,6 +8,7 @@ payload keys consistent across event families.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
@@ -416,29 +417,28 @@ AGENT_TOPIC_FOR_STATUS = {
     "completed": "agent.completed",
     "failed": "agent.failed",
     "cancelled": "agent.cancelled",
-    "timeout": "agent.timeout",
+    "timeout": "agent.timed_out",
     "budget_exceeded": "agent.failed",
-    "contract_failed": "agent.contract_failed",
+    "contract_failed": "agent.failed",
 }
 """Terminal AgentRun status -> built-in topic. Non-success statuses without a
 dedicated topic map to ``agent.failed`` with the exact status in the payload."""
 
-MAX_EVENT_OUTPUT_CHARS = 32_000
+_CORRELATION_SECRET_KEY = re.compile(
+    r"password|passwd|secret|token|api[_-]?key|auth|credential|cookie|private[_-]?key",
+    re.IGNORECASE,
+)
 
 
-def _bounded_output(output: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Bound success payloads; consumers fetch the full run if they need it."""
-    if output is None:
-        return None
-    import json as _json
-
-    serialized = _json.dumps(output, default=str)
-    if len(serialized) <= MAX_EVENT_OUTPUT_CHARS:
-        return output
+def _agent_event_correlation(value: dict[str, Any] | None) -> dict[str, Any]:
+    """Publish bounded scalar locators, never arbitrary nested run content."""
     return {
-        "truncated": True,
-        "head": serialized[:MAX_EVENT_OUTPUT_CHARS],
-        "chars": len(serialized),
+        key: item[:256] if isinstance(item, str) else item
+        for key, item in list((value or {}).items())[:32]
+        if isinstance(key, str)
+        and len(key) <= 128
+        and not _CORRELATION_SECRET_KEY.search(key)
+        and (item is None or isinstance(item, (str, int, float, bool)))
     }
 
 
@@ -451,10 +451,17 @@ def agent_completion_payload(run) -> tuple[str, dict[str, Any]]:
     """Build the canonical (topic, body) for a terminal AgentRun.
 
     Bounded identifiers, status, timestamps, correlation, counters, contract
-    validity — plus output for success or a structured error for failure.
-    Never the full transcript: consumers fetch the authoritative run.
+    validity only. Output and validation evidence stay on the authorized run
+    API. Synthetic completions use separate topics so they cannot invoke
+    production subscribers merely by sharing the published Agent ID.
     """
     topic = agent_completion_topic(run.status)
+    evaluation = (run.execution_snapshot or {}).get("evaluation") or {}
+    if (
+        run.trigger_type == "evaluation_synthetic"
+        or evaluation.get("mode") == "evaluation_synthetic"
+    ):
+        topic = topic.replace("agent.", "agent.evaluation.", 1)
     body = {
         **_base_body(
             organization_id=run.org_id,
@@ -473,7 +480,7 @@ def agent_completion_payload(run) -> tuple[str, dict[str, Any]]:
             "attempt": run.attempt or 0,
             "trigger_type": run.trigger_type,
         },
-        "correlation": dict(run.correlation or {}),
+        "correlation": _agent_event_correlation(run.correlation),
         "counters": {
             "iterations_used": run.iterations_used or 0,
             "tokens_used": run.tokens_used or 0,
@@ -484,18 +491,13 @@ def agent_completion_payload(run) -> tuple[str, dict[str, Any]]:
             "started_at": _iso(run.started_at),
             "completed_at": _iso(run.completed_at),
         },
-        "contract": {
-            "valid": run.contract_valid,
-            "errors": list(run.contract_errors or []),
-        },
+        "contract": {"valid": run.contract_valid},
     }
-    if run.status == "completed":
-        body["output"] = _bounded_output(run.output)
-    else:
+    if run.status != "completed":
         body["error"] = {
             "type": run.status,
             "code": None,
-            "message": (run.error or f"Agent run {run.status}.")[:2000],
+            "message": f"Agent run {run.status}.",
             "retryable": False,
         }
     return topic, body

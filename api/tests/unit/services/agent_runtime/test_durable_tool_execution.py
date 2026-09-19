@@ -2,14 +2,23 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
-from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.messages import (
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
 from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.usage import RunUsage
 from sqlalchemy import delete, select
 
+from src.core.secret_string import REDACTED, SecretString
 from src.models.orm.agent_runs import (
     AgentRun,
     AgentRunCheckpoint,
@@ -18,7 +27,10 @@ from src.models.orm.agent_runs import (
     AgentToolInvocation,
 )
 from src.services.agent_runtime import run_store
+from src.services.agent_runtime import AgentRunBudget
 from src.services.agent_runtime import types as rt
+from src.services.agent_runtime.checkpoint_codec import encode_messages
+from src.services.agent_runtime.resume import prepare_resume
 from src.services.agent_runtime.tool_invocations import (
     RECONCILIATION_REGISTRY,
     ReconcileDecision,
@@ -132,6 +144,44 @@ class TestInvocationLifecycle:
         finally:
             await _cleanup(async_session_factory, run_id)
 
+    @asyncio_mark
+    async def test_secret_wrappers_are_redacted_before_invocation_persistence(
+        self, async_session_factory
+    ):
+        run_id = await _create_run(async_session_factory)
+        secret = SecretString("durable-secret-value")
+        try:
+            token = await _claim(async_session_factory, run_id)
+            async with async_session_factory() as session:
+                plan_kwargs = _plan_kwargs(
+                    run_id,
+                    token,
+                    call_id="secret-call",
+                )
+                plan_kwargs["arguments"] = {"token": secret}
+                await plan_invocation(
+                    session,
+                    **plan_kwargs,
+                    secrets={secret.get_secret_value()},
+                )
+                await complete_invocation(
+                    session,
+                    run_id=run_id,
+                    lease_token=token,
+                    provider_tool_call_id="secret-call",
+                    result={"token": secret},
+                    secrets={secret.get_secret_value()},
+                )
+            async with async_session_factory() as session:
+                invocation = await get_invocation(
+                    session, run_id, "secret-call"
+                )
+                assert invocation is not None
+                assert invocation.arguments == {"token": REDACTED}
+                assert invocation.result == {"token": REDACTED}
+        finally:
+            await _cleanup(async_session_factory, run_id)
+
 
 class TestReclaim:
     @asyncio_mark
@@ -222,6 +272,81 @@ class TestReclaim:
                 assert invocation is not None
                 assert invocation.state == "completed"
                 assert invocation.result == {"ticket": 7}
+                await run_store.commit_checkpoint(
+                    session,
+                    run_id,
+                    token,
+                    encode_messages(
+                        [
+                            ModelResponse(
+                                parts=[
+                                    ToolCallPart(
+                                        tool_name="create_ticket",
+                                        args={},
+                                        tool_call_id="call-1",
+                                    )
+                                ]
+                            )
+                        ]
+                    ),
+                    journal_kind=rt.JOURNAL_MODEL_RESPONSE,
+                )
+            plan, _, unrecoverable = await prepare_resume(
+                async_session_factory, run_id, token
+            )
+            assert unrecoverable is None
+            assert plan is not None
+            replay_request = plan.history[-1]
+            assert isinstance(replay_request, ModelRequest)
+            replay_part = replay_request.parts[0]
+            assert isinstance(replay_part, ToolReturnPart)
+            assert replay_part.content == '{"ticket": 7}'
+
+            executor = AutonomousAgentExecutor(async_session_factory)
+            executor._durable_lease_token = token
+            assert await executor._execute_tool_durable(
+                "create_ticket",
+                {},
+                "call-1",
+                run_id=str(run_id),
+                agent=_mock_agent(),
+            ) == {"ticket": 7}
+        finally:
+            await _cleanup(async_session_factory, run_id)
+
+    @asyncio_mark
+    async def test_reconciliation_redacts_explicit_secret_output(
+        self, async_session_factory
+    ):
+        registry = ReconciliationRegistry()
+
+        async def _hook(_data):
+            return ReconcileDecision.recovered(
+                {"token": SecretString("reconciliation-secret")}
+            )
+
+        registry.register("create_ticket", _hook)
+        run_id = await _create_run(async_session_factory)
+        try:
+            token = await _claim(async_session_factory, run_id)
+            async with async_session_factory() as session:
+                await plan_invocation(
+                    session, **_plan_kwargs(run_id, token, tool="create_ticket")
+                )
+                await mark_running(
+                    session,
+                    run_id=run_id,
+                    lease_token=token,
+                    provider_tool_call_id="call-1",
+                )
+            await reclaim_in_flight(
+                async_session_factory, run_id, token, registry=registry
+            )
+            async with async_session_factory() as session:
+                invocation = await get_invocation(session, run_id, "call-1")
+                assert invocation is not None
+                assert invocation.result == {"token": REDACTED}
+                assert "reconciliation-secret" not in str(invocation.result)
         finally:
             await _cleanup(async_session_factory, run_id)
 
@@ -244,7 +369,8 @@ def _mock_agent():
     agent.max_token_budget = 50000
     agent.llm_profile_id = None
     agent.llm_max_tokens = None
-    agent.organization_id = uuid4()
+    # These runs are global; usage rows must not reference a nonexistent org.
+    agent.organization_id = None
     agent.is_active = True
     return agent
 
@@ -355,6 +481,18 @@ class TestDurableExecutorBoundaries:
                 ).scalars().all()
                 kinds = {j.kind for j in journals}
                 assert {"model_response", "tool_call", "tool_result"} <= kinds
+                assert {
+                    journal.data["tool_call_id"]
+                    for journal in journals
+                    if journal.kind in {"tool_call", "tool_result"}
+                } == {"call-1"}
+                model_boundaries = [
+                    journal
+                    for journal in journals
+                    if journal.kind == "model_response"
+                ]
+                assert model_boundaries
+                assert all("usage" in (journal.data or {}) for journal in model_boundaries)
                 steps = (
                     await session.execute(
                         select(AgentRunStep)
@@ -431,6 +569,121 @@ class TestDurableExecutorBoundaries:
                     delete(AIUsage).where(AIUsage.agent_run_id == run_id)
                 )
                 await session.commit()
+            await _cleanup(async_session_factory, run_id)
+
+    @asyncio_mark
+    async def test_checkpoint_usage_evidence_recovers_once_after_crash_window(
+        self, async_session_factory
+    ):
+        """A committed boundary can recreate AIUsage without another model call."""
+        from src.models.orm.ai_usage import AIUsage
+
+        run_id = await _create_run(async_session_factory)
+        try:
+            token = await _claim(async_session_factory, run_id)
+            async with async_session_factory() as session:
+                await run_store.commit_checkpoint(
+                    session,
+                    run_id,
+                    token,
+                    {"format_version": 1, "messages": []},
+                    journal_kind="model_response",
+                    journal_data={
+                        "usage": {
+                            "provider": "openai",
+                            "model": "test-model",
+                            "input_tokens": 13,
+                            "output_tokens": 8,
+                            "cache_read_tokens": 2,
+                            "cache_write_tokens": 1,
+                            "provider_cost": "0.00001000",
+                            "duration_ms": 21,
+                        }
+                    },
+                )
+
+            redis_mock = AsyncMock()
+            redis_mock.get.return_value = None
+            executor = AutonomousAgentExecutor(
+                async_session_factory, redis_client=redis_mock
+            )
+            recorded: list[dict] = []
+
+            async def record_usage(**kwargs):
+                recorded.append(kwargs)
+
+            with patch(
+                "src.services.ai_usage_service.record_ai_usage",
+                new_callable=AsyncMock,
+                side_effect=record_usage,
+            ):
+                await executor.recover_durable_usage(
+                    agent=_mock_agent(), run_id=str(run_id)
+                )
+                # A later reclaim sees the projection and does not count it
+                # again, even though it is replaying the same checkpoint.
+                await executor.recover_durable_usage(
+                    agent=_mock_agent(), run_id=str(run_id)
+                )
+
+            assert len(recorded) == 1
+            assert recorded[0]["sequence"] == 1
+            assert recorded[0]["input_tokens"] == 13
+            assert recorded[0]["provider_cost"] == Decimal("0.00001000")
+            async with async_session_factory() as session:
+                usage_rows = (
+                    await session.execute(
+                        select(AIUsage).where(AIUsage.agent_run_id == run_id)
+                    )
+                ).scalars().all()
+            assert len(usage_rows) == 1
+            assert usage_rows[0].sequence == 1
+            assert usage_rows[0].provider_cost == Decimal("0.00001000")
+        finally:
+            async with async_session_factory() as session:
+                await session.execute(
+                    delete(AIUsage).where(AIUsage.agent_run_id == run_id)
+                )
+                await session.commit()
+            await _cleanup(async_session_factory, run_id)
+
+    @asyncio_mark
+    async def test_reclaimed_contract_correction_intent_never_calls_provider_twice(
+        self, async_session_factory
+    ):
+        """A crash after correction intent spends the bounded retry once."""
+        run_id = await _create_run(async_session_factory)
+        try:
+            token = await _claim(async_session_factory, run_id)
+            async with async_session_factory() as session:
+                await run_store.commit_checkpoint(
+                    session,
+                    run_id,
+                    token,
+                    {"format_version": 1, "messages": []},
+                    journal_kind="validation",
+                    journal_data={"correction_intent": True, "valid": False},
+                )
+            executor = AutonomousAgentExecutor(async_session_factory)
+            executor._durable_lease_token = token
+            runtime = MagicMock()
+            runtime.run = AsyncMock()
+            output, valid, errors, status = await executor._enforce_output_contract(
+                "not json",
+                {"type": "object"},
+                runtime=runtime,
+                usage=RunUsage(),
+                budget=AgentRunBudget(max_requests=5, max_total_tokens=100),
+                usage_start_requests=0,
+                usage_start_tokens=0,
+                run_id=str(run_id),
+            )
+            assert output == {"text": "not json"}
+            assert valid is False
+            assert errors
+            assert status == "contract_failed"
+            runtime.run.assert_not_awaited()
+        finally:
             await _cleanup(async_session_factory, run_id)
 
     @asyncio_mark

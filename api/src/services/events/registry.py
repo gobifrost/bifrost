@@ -300,8 +300,7 @@ CURATED_TOPICS = [
                 "started_at": "2026-05-28T12:34:57Z",
                 "completed_at": "2026-05-28T12:35:42Z",
             },
-            contract={"valid": None, "errors": []},
-            output={"text": "Ticket triaged and assigned."},
+            contract={"valid": None},
         ),
     },
     {
@@ -331,7 +330,7 @@ CURATED_TOPICS = [
                 "started_at": "2026-05-28T12:34:57Z",
                 "completed_at": "2026-05-28T12:36:57Z",
             },
-            contract={"valid": None, "errors": []},
+            contract={"valid": None},
             error={
                 "type": "budget_exceeded",
                 "code": None,
@@ -367,7 +366,7 @@ CURATED_TOPICS = [
                 "started_at": "2026-05-28T12:34:57Z",
                 "completed_at": "2026-05-28T12:35:02Z",
             },
-            contract={"valid": None, "errors": []},
+            contract={"valid": None},
             error={
                 "type": "cancelled",
                 "code": None,
@@ -377,7 +376,7 @@ CURATED_TOPICS = [
         ),
     },
     {
-        "topic": "agent.timeout",
+        "topic": "agent.timed_out",
         "description": "Fired when an autonomous agent run times out.",
         "category": "Agents",
         "emitted_by": "Agent runtime outbox",
@@ -403,47 +402,11 @@ CURATED_TOPICS = [
                 "started_at": "2026-05-28T12:34:57Z",
                 "completed_at": "2026-05-28T13:04:57Z",
             },
-            contract={"valid": None, "errors": []},
+            contract={"valid": None},
             error={
                 "type": "timeout",
                 "code": None,
                 "message": "Agent run timed out.",
-                "retryable": False,
-            },
-        ),
-    },
-    {
-        "topic": "agent.contract_failed",
-        "description": "Fired when an agent run's output violates the caller's output contract.",
-        "category": "Agents",
-        "emitted_by": "Agent runtime outbox",
-        "example_body": _body(
-            actor=_SYSTEM_ACTOR,
-            run={
-                "id": "550e8400-e29b-41d4-a716-4466554400c0",
-                "agent_id": "550e8400-e29b-41d4-a716-4466554400d0",
-                "root_run_id": "550e8400-e29b-41d4-a716-4466554400c0",
-                "parent_run_id": None,
-                "status": "contract_failed",
-                "attempt": 1,
-                "trigger_type": "api",
-            },
-            correlation={},
-            counters={
-                "iterations_used": 2,
-                "tokens_used": 900,
-                "duration_ms": 20000,
-            },
-            timestamps={
-                "created_at": "2026-05-28T12:34:56Z",
-                "started_at": "2026-05-28T12:34:57Z",
-                "completed_at": "2026-05-28T12:35:17Z",
-            },
-            contract={"valid": False, "errors": ["ticket_id: not an integer"]},
-            error={
-                "type": "contract_failed",
-                "code": None,
-                "message": "Output did not satisfy the caller's output contract.",
                 "retryable": False,
             },
         ),
@@ -472,3 +435,19 @@ CURATED_TOPICS = [
         ),
     },
 ]
+
+# Synthetic completion is observable without matching production Agent topics.
+CURATED_TOPICS.extend(
+    {
+        **topic,
+        "topic": topic["topic"].replace("agent.", "agent.evaluation.", 1),
+        "description": topic["description"].replace("autonomous agent", "synthetic evaluation agent"),
+        "example_body": {
+            **topic["example_body"],
+            "run": {**topic["example_body"]["run"], "trigger_type": "evaluation_synthetic"},
+            "correlation": {"evaluation_mode": "evaluation_synthetic"},
+        },
+    }
+    for topic in list(CURATED_TOPICS)
+    if topic["topic"].startswith("agent.")
+)

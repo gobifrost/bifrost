@@ -12,10 +12,10 @@ optimistic version checks.
 from __future__ import annotations
 
 import logging
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import selectinload
 
 from src.core.auth import CurrentActiveUser
@@ -32,6 +32,8 @@ from src.models.contracts.agent_evaluations import (
     EvaluationSuiteCreate,
     EvaluationSuitePublic,
     EvaluationSuiteUpdate,
+    DesignerDraftAccepted,
+    DesignerDraftRequest,
 )
 from src.models.contracts.platform_jobs import PlatformJobAccepted
 from src.models.orm.agent_evaluations import (
@@ -42,6 +44,8 @@ from src.models.orm.agent_evaluations import (
     AgentEvaluationSuite,
 )
 from src.models.orm.agents import Agent
+from src.models.orm.workflows import Workflow
+from src.services.agent_evaluations.simulator_models import redact_value
 
 logger = logging.getLogger(__name__)
 
@@ -62,11 +66,55 @@ def _org_id_for(user: CurrentActiveUser, requested: UUID | None) -> UUID | None:
 def _scope_check(user: CurrentActiveUser, org_id: UUID | None) -> None:
     if user.is_superuser:
         return
-    # Org users see their org's records plus global (NULL-org) records.
-    if org_id is not None and org_id != user.organization_id:
+    # Studio records are tenant-owned. Unlike reusable global platform
+    # resources, a NULL-org suite/candidate/execution must never be mutable
+    # by every tenant user.
+    if org_id != user.organization_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Not found."
         )
+
+
+async def _entity_access_allowed(entity, user: CurrentActiveUser, db: DbSession) -> bool:
+    """Apply the same user-facing access level/role gate to Studio refs."""
+    if user.is_superuser:
+        return True
+    if entity.organization_id not in (None, user.organization_id):
+        return False
+    raw_level = getattr(entity, "access_level", "authenticated")
+    level = getattr(raw_level, "value", str(raw_level)).lower()
+    if level == "everyone":
+        return True
+    if level == "authenticated":
+        return not user.is_external
+    if level == "private":
+        return getattr(entity, "owner_user_id", None) == user.user_id
+    if level == "role_based":
+        from shared.role_cache import get_user_roles
+
+        role_ids, _ = await get_user_roles(user.user_id, db)
+        return bool(
+            set(role_ids)
+            & {getattr(role, "id", None) for role in (getattr(entity, "roles", []) or [])}
+        )
+    return False
+
+
+async def _authorized_agent(
+    db: DbSession, user: CurrentActiveUser, agent_id: UUID, *, org_id: UUID | None
+) -> Agent | None:
+    agent = (
+        await db.execute(
+            select(Agent)
+            .options(selectinload(Agent.roles))
+            .where(Agent.id == agent_id)
+        )
+    ).scalar_one_or_none()
+    if agent is None or (
+        not user.is_superuser and agent.organization_id not in (None, org_id)
+    ):
+        return None
+    return agent if await _entity_access_allowed(agent, user, db) else None
 
 
 # -----------------------------------------------------------------------------
@@ -79,6 +127,10 @@ async def create_suite(
     body: EvaluationSuiteCreate, db: DbSession, user: CurrentActiveUser
 ) -> EvaluationSuitePublic:
     org_id = _org_id_for(user, body.organization_id)
+    if body.agent_id is not None:
+        agent = await _authorized_agent(db, user, body.agent_id, org_id=org_id)
+        if agent is None:
+            raise HTTPException(status_code=404, detail="Baseline agent not found.")
     suite = AgentEvaluationSuite(
         org_id=org_id,
         agent_id=body.agent_id,
@@ -131,10 +183,7 @@ async def update_suite(
     db: DbSession,
     user: CurrentActiveUser,
 ) -> EvaluationSuitePublic:
-    suite = await db.get(AgentEvaluationSuite, suite_id)
-    if suite is None:
-        raise HTTPException(status_code=404, detail="Suite not found.")
-    _scope_check(user, suite.org_id)
+    suite = await _locked_suite_or_404(db, user, suite_id)
     if suite.status == "published":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -145,12 +194,21 @@ async def update_suite(
             status_code=status.HTTP_409_CONFLICT,
             detail="Suite version changed; reload and retry.",
         )
+    changed = False
     if body.name is not None:
         suite.name = body.name
+        changed = True
     if body.description is not None:
         suite.description = body.description
+        changed = True
     if body.agent_id is not None:
-        suite.agent_id = body.agent_id
+        agent = await _authorized_agent(db, user, body.agent_id, org_id=suite.org_id)
+        if agent is None:
+            raise HTTPException(status_code=404, detail="Baseline agent not found.")
+        suite.agent_id = agent.id
+        changed = True
+    if changed:
+        suite.version += 1
     await db.commit()
     await db.refresh(suite)
     return EvaluationSuitePublic.model_validate(suite)
@@ -160,10 +218,7 @@ async def update_suite(
 async def publish_suite(
     suite_id: UUID, db: DbSession, user: CurrentActiveUser
 ) -> EvaluationSuitePublic:
-    suite = await db.get(AgentEvaluationSuite, suite_id)
-    if suite is None:
-        raise HTTPException(status_code=404, detail="Suite not found.")
-    _scope_check(user, suite.org_id)
+    suite = await _locked_suite_or_404(db, user, suite_id)
     if suite.status == "published":
         return EvaluationSuitePublic.model_validate(suite)
     suite.status = "published"
@@ -185,8 +240,8 @@ def _case_to_public(case: AgentEvaluationCase) -> EvaluationCasePublic:
         position=case.position,
         enabled=case.enabled,
         version=case.version,
-        input=case.input,
-        fixture=case.fixture or {},
+        input=redact_value(case.input),
+        fixture=redact_value(case.fixture or {}),
         simulator_policy=case.simulator_policy or {},
         assertions=list(case.assertions or []),
         expected_tools=list(case.expected_tools or []),
@@ -213,6 +268,22 @@ async def _suite_or_404(
     return suite
 
 
+async def _locked_suite_or_404(
+    db: DbSession, user: CurrentActiveUser, suite_id: UUID
+) -> AgentEvaluationSuite:
+    """Load the current suite state while serializing a suite mutation."""
+    suite = await db.scalar(
+        select(AgentEvaluationSuite)
+        .where(AgentEvaluationSuite.id == suite_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if suite is None:
+        raise HTTPException(status_code=404, detail="Suite not found.")
+    _scope_check(user, suite.org_id)
+    return suite
+
+
 @router.post("/suites/{suite_id}/cases", response_model=EvaluationCasePublic)
 async def create_case(
     suite_id: UUID,
@@ -223,14 +294,14 @@ async def create_case(
     from src.services.agent_evaluations import quotas as eval_quotas
     from src.services.agent_evaluations.assertions import (
         AssertionDefinitionError,
-        validate_assertions,
+        freeze_semantic_judges,
     )
     from src.services.agent_evaluations.simulator_models import (
         FixtureError,
         validate_fixture,
     )
 
-    suite = await _suite_or_404(db, user, suite_id)
+    suite = await _locked_suite_or_404(db, user, suite_id)
     if suite.status == "published":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -257,7 +328,11 @@ async def create_case(
         ) from exc
     try:
         validate_fixture({"version": 1, **body.fixture})
-        validate_assertions([a.model_dump() for a in body.assertions])
+        assertions = await freeze_semantic_judges(
+            db,
+            [a.model_dump() for a in body.assertions],
+            is_superuser=user.is_superuser,
+        )
     except (FixtureError, AssertionDefinitionError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     case = AgentEvaluationCase(
@@ -267,9 +342,9 @@ async def create_case(
         enabled=body.enabled,
         version=1,
         input=body.input,
-        fixture=dict(body.fixture),
+        fixture=redact_value(dict(body.fixture)),
         simulator_policy=dict(body.simulator_policy),
-        assertions=[a.model_dump() for a in body.assertions],
+        assertions=assertions,
         expected_tools=list(body.expected_tools),
         forbidden_tools=list(body.forbidden_tools),
         output_schema=body.output_schema,
@@ -319,11 +394,11 @@ async def update_case(
     db: DbSession,
     user: CurrentActiveUser,
 ) -> EvaluationCasePublic:
-    suite = await _suite_or_404(db, user, suite_id)
+    suite = await _locked_suite_or_404(db, user, suite_id)
     case = await db.get(AgentEvaluationCase, case_id)
     if case is None or case.suite_id != suite.id:
         raise HTTPException(status_code=404, detail="Case not found.")
-    if suite.status == "published" or not case.accepted:
+    if suite.status == "published" or case.accepted:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Only accepted draft-suite cases are editable; "
@@ -334,6 +409,24 @@ async def update_case(
             status_code=status.HTTP_409_CONFLICT,
             detail="Case version changed; reload and retry.",
         )
+    from src.services.agent_evaluations.assertions import (
+        freeze_semantic_judges,
+    )
+    from src.services.agent_evaluations.simulator_models import validate_fixture
+    if body.fixture is not None:
+        try:
+            validate_fixture({"version": 1, **body.fixture})
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if body.assertions is not None:
+        try:
+            frozen_assertions = await freeze_semantic_judges(
+                db,
+                [item.model_dump() for item in body.assertions],
+                is_superuser=user.is_superuser,
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
     for field in (
         "name", "position", "enabled", "input", "fixture", "simulator_policy",
         "assertions", "expected_tools", "forbidden_tools", "output_schema",
@@ -342,7 +435,9 @@ async def update_case(
         value = getattr(body, field)
         if value is not None:
             if field == "assertions":
-                value = [a.model_dump() for a in value]
+                value = frozen_assertions
+            elif field == "fixture":
+                value = redact_value(dict(value))
             setattr(case, field, value)
     await db.commit()
     await db.refresh(case)
@@ -367,49 +462,129 @@ async def create_candidate_endpoint(
     agent = (
         await db.execute(
             select(Agent)
-            .options(selectinload(Agent.tools), selectinload(Agent.delegated_agents))
+            .options(
+                selectinload(Agent.roles),
+                selectinload(Agent.tools).selectinload(Workflow.roles),
+                selectinload(Agent.delegated_agents).selectinload(Agent.roles),
+            )
             .where(Agent.id == body.base_agent_id)
         )
     ).scalar_one_or_none()
     if agent is None:
         raise HTTPException(status_code=404, detail="Base agent not found.")
     if (
-        not user.is_superuser
-        and agent.organization_id is not None
-        and agent.organization_id != org_id
+        (not user.is_superuser and agent.organization_id not in (None, org_id))
+        or not await _entity_access_allowed(agent, user, db)
     ):
         raise HTTPException(status_code=404, detail="Base agent not found.")
     if not agent.is_active:
         raise HTTPException(
             status_code=422, detail="Base agent is paused."
         )
+    overlay_model = None
+    if body.overlays.llm_profile_id is not None:
+        from src.models.orm.ai_models import AIModelProfile
+        profile = await db.get(AIModelProfile, body.overlays.llm_profile_id)
+        if profile is None:
+            raise HTTPException(status_code=422, detail="Model profile not found.")
+        if (
+            not user.is_superuser
+            and profile.id != agent.llm_profile_id
+            and not profile.enabled_for_chat
+        ):
+            raise HTTPException(status_code=403, detail="Model profile is unavailable to this caller.")
+        from src.services.llm.factory import get_llm_config
+        model_config = await get_llm_config(db, profile_id=profile.id)
+        overlay_model = {
+            "profile_id": str(profile.id),
+            "provider": model_config.provider,
+            "model": model_config.model,
+            "endpoint": model_config.endpoint,
+            "openai_transport": model_config.openai_transport,
+            "anthropic_prompt_cache_supported": model_config.anthropic_prompt_cache_supported,
+            "default_max_tokens": model_config.default_max_tokens,
+            "extra_params": dict(model_config.extra_params or {}),
+        }
+    if body.overlays.system_tools is not None:
+        from src.routers.tools import get_system_tool_ids
+        unknown_system_tools = set(body.overlays.system_tools) - set(get_system_tool_ids())
+        if unknown_system_tools:
+            raise HTTPException(status_code=422, detail="Unknown system-tool grant.")
+        ungranted_system_tools = set(body.overlays.system_tools) - set(agent.system_tools or [])
+        if ungranted_system_tools:
+            raise HTTPException(
+                status_code=403,
+                detail="Candidate cannot add system tools not granted to its base agent.",
+            )
+    inaccessible_base_tools = [
+        tool.name for tool in (agent.tools or []) if not await _entity_access_allowed(tool, user, db)
+    ]
+    inaccessible_base_delegates = [
+        delegate.name
+        for delegate in (agent.delegated_agents or [])
+        if not await _entity_access_allowed(delegate, user, db)
+    ]
+    if inaccessible_base_tools or inaccessible_base_delegates:
+        raise HTTPException(
+            status_code=403,
+            detail="Base agent references resources unavailable to this caller.",
+        )
     resolvable_tools = {str(t.id) for t in (agent.tools or [])}
-    if body.overlays.tool_ids:
-        from sqlalchemy import select as _select
-        from src.models.orm.workflows import Workflow
-
-        rows = (
-            await db.execute(
-                _select(Workflow).where(
-                    Workflow.id.in_(list(body.overlays.tool_ids))
-                )
-            )
-        ).scalars().all()
-        resolvable_tools |= {str(w.id) for w in rows}
-    resolvable_delegates = {str(d.id) for d in (agent.delegated_agents or [])}
+    from src.services.tool_registry import ToolRegistry
+    base_tool_definitions = [
+        {
+            "name": definition.name,
+            "description": definition.description,
+            "parameters": definition.parameters,
+            "target_id": str(definition.id),
+        }
+        for definition in await ToolRegistry(db).get_tool_definitions(
+            [tool.id for tool in (agent.tools or [])]
+        )
+    ]
+    from src.services.agent_runtime.execution_snapshot import snapshot_agent
+    base_execution_snapshot = await snapshot_agent(
+        db, agent, caller_user_id=user.user_id
+    )
     overlay_tools = None
-    if body.overlays.tool_ids:
-        from sqlalchemy import select as _select2
-        from src.models.orm.workflows import Workflow as _Workflow
-
+    if body.overlays.tool_ids is not None:
         rows = (
             await db.execute(
-                _select2(_Workflow).where(
-                    _Workflow.id.in_(list(body.overlays.tool_ids))
+                select(Workflow).options(selectinload(Workflow.roles)).where(
+                    Workflow.id.in_(list(body.overlays.tool_ids)),
+                    Workflow.type == "tool",
+                    Workflow.is_active.is_(True),
+                    or_(Workflow.organization_id.is_(None), Workflow.organization_id == org_id),
                 )
             )
         ).scalars().all()
-        overlay_tools = [{"name": w.name, "target_id": str(w.id)} for w in rows]
+        rows = [workflow for workflow in rows if await _entity_access_allowed(workflow, user, db)]
+        resolvable_tools |= {str(w.id) for w in rows}
+        definitions = await ToolRegistry(db).get_tool_definitions([w.id for w in rows])
+        overlay_tools = [
+            {
+                "name": definition.name,
+                "description": definition.description,
+                "parameters": definition.parameters,
+                "target_id": str(definition.id),
+            }
+            for definition in definitions
+        ]
+    resolvable_delegates = {str(d.id) for d in (agent.delegated_agents or [])}
+    overlay_delegates = None
+    if body.overlays.delegated_agent_ids is not None:
+        delegates = (
+            await db.execute(
+                select(Agent).options(selectinload(Agent.roles)).where(
+                    Agent.id.in_(list(body.overlays.delegated_agent_ids)),
+                    Agent.is_active.is_(True),
+                    or_(Agent.organization_id.is_(None), Agent.organization_id == org_id),
+                )
+            )
+        ).scalars().all()
+        delegates = [delegate for delegate in delegates if await _entity_access_allowed(delegate, user, db)]
+        resolvable_delegates |= {str(delegate.id) for delegate in delegates}
+        overlay_delegates = [{"id": str(d.id), "name": d.name} for d in delegates]
     try:
         candidate = await create_candidate(
             db,
@@ -418,6 +593,11 @@ async def create_candidate_endpoint(
             resolvable_tool_ids=resolvable_tools,
             resolvable_delegate_ids=resolvable_delegates,
             overlay_tool_definitions=overlay_tools,
+            base_tool_definitions=base_tool_definitions,
+            overlay_delegated_agents=overlay_delegates,
+            base_execution_snapshot=base_execution_snapshot,
+            overlay_model=overlay_model,
+            owner_org_id=org_id,
             name=body.name,
             created_by=user.email,
         )
@@ -435,7 +615,8 @@ async def get_candidate(
     candidate = await db.get(AgentCandidateSnapshot, candidate_id)
     if candidate is None:
         raise HTTPException(status_code=404, detail="Candidate not found.")
-    _scope_check(user, candidate.org_id)
+    if not user.is_superuser and candidate.org_id != user.organization_id:
+        raise HTTPException(status_code=404, detail="Candidate not found.")
     return CandidatePublic.model_validate(candidate)
 
 
@@ -447,101 +628,126 @@ async def get_candidate(
 @router.post("/suites/{suite_id}/designer/drafts")
 async def designer_drafts(
     suite_id: UUID,
-    body: dict,
+    body: DesignerDraftRequest,
     db: DbSession,
     user: CurrentActiveUser,
-) -> dict:
-    """Validate designer output and persist drafts (never auto-approve).
-
-    Accepts the caller-owned designer output object plus the tool schemas
-    and allowed historical run IDs used for provenance. Returns drafts with
-    coverage labels; drafts never run until explicitly accepted.
-    """
+) -> DesignerDraftAccepted:
+    """Start a real, server-authorized Test Designer AgentRun."""
     from src.services.agent_evaluations import quotas as eval_quotas
     from src.services.agent_evaluations.test_designer import (
         DesignerError,
-        deduplicate_proposals,
-        redact_history,
-        validate_designer_output,
+        TESTING_ASSIGNMENT_HELP,
+        TESTING_ASSIGNMENT_KEY,
+        build_designer_input,
+        build_designer_snapshot,
+        designer_testing_model,
+        load_designer_history,
     )
 
-    suite = await _suite_or_404(db, user, suite_id)
-    tool_schemas = body.get("tool_schemas") or {}
+    suite = await _locked_suite_or_404(db, user, suite_id)
+    if suite.status == "published":
+        raise HTTPException(status_code=409, detail="Published suites are immutable.")
     try:
-        eval_quotas.check_designer_proposal_count(
-            len((body.get("designer_output") or {}).get("proposals", []))
-        )
+        eval_quotas.check_designer_proposal_count(body.requested_count)
     except eval_quotas.QuotaExceeded as exc:
         raise HTTPException(
             status_code=exc.status_code, detail=str(exc)
         ) from exc
-    allowed_runs = set(body.get("allowed_run_ids") or [])
-    history = redact_history(body.get("historical_runs") or [], allowed_run_ids=allowed_runs)
-    try:
-        proposals = validate_designer_output(
-            body.get("designer_output") or {}, tool_schemas=tool_schemas
-        )
-    except DesignerError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    existing = (
+    from src.models.orm.agent_runs import AgentRun
+    if len(body.historical_run_ids) != len(set(body.historical_run_ids)):
+        raise HTTPException(status_code=422, detail="Historical run IDs must be unique.")
+    from src.services.execution.agent_run_access import agent_run_visibility_conditions
+
+    source_runs = (
         await db.execute(
-            select(AgentEvaluationCase).where(
-                AgentEvaluationCase.suite_id == suite.id
+            select(AgentRun).where(
+                AgentRun.id.in_(body.historical_run_ids),
+                *agent_run_visibility_conditions(user),
+                AgentRun.org_id == suite.org_id,
             )
         )
     ).scalars().all()
-    proposals = deduplicate_proposals(
-        proposals,
-        [
-            {
-                "assertions": list(c.assertions or []),
-                "input": c.input,
-                "coverage": (c.tags or ["edge"])[0],
-            }
-            for c in existing
-        ],
-    )
-    drafts = []
-    for position, proposal in enumerate(proposals):
-        max_version = (
-            await db.execute(
-                select(func.max(AgentEvaluationCase.version)).where(
-                    AgentEvaluationCase.suite_id == suite.id,
-                    AgentEvaluationCase.name == proposal["name"],
-                )
+    if len(source_runs) != len(set(body.historical_run_ids)):
+        raise HTTPException(status_code=404, detail="Historical run not found.")
+    agent = (
+        await db.execute(
+            select(Agent)
+            .options(
+                selectinload(Agent.tools),
+                selectinload(Agent.delegated_agents),
+                selectinload(Agent.roles),
             )
-        ).scalar() or 0
-        draft = AgentEvaluationCase(
-            suite_id=suite.id,
-            name=proposal["name"],
-            position=position,
-            enabled=False,
-            version=max_version + 1,
-            input=proposal.get("input"),
-            fixture=proposal.get("fixture", {}),
-            simulator_policy=proposal.get("simulator_policy", {}),
-            assertions=proposal.get("assertions", []),
-            expected_tools=proposal.get("expected_tools", []),
-            forbidden_tools=proposal.get("forbidden_tools", []),
-            output_schema=proposal.get("output_schema"),
-            repetitions=1,
-            scoring_policy={},
-            provenance="generated",
-            provenance_run_ids=[
-                str(r.get("run_id")) for r in history if r.get("run_id")
-            ],
-            tags=[proposal.get("coverage", "edge")],
-            accepted=False,
+            .where(Agent.id == suite.agent_id)
         )
-        db.add(draft)
-        drafts.append(draft)
-    await db.commit()
-    for draft in drafts:
-        await db.refresh(draft)
-    return {
-        "drafts": [_case_to_public(d).model_dump(mode="json") for d in drafts],
-        "coverage": [d.tags[0] if d.tags else "edge" for d in drafts],
+    ).scalar_one_or_none()
+    if agent is None or not await _entity_access_allowed(agent, user, db):
+        raise HTTPException(status_code=422, detail="Suite baseline agent is unavailable.")
+    from src.services.agent_runtime.execution_snapshot import snapshot_agent
+    target_snapshot = await snapshot_agent(db, agent, caller_user_id=user.user_id)
+    tool_schemas = {
+        tool["name"]: dict(tool.get("parameters") or {})
+        for tool in target_snapshot.get("tools", [])
     }
+    # Resolve the configured testing profile before admitting the run and
+    # freeze its exact profile id/settings into the Designer snapshot. The
+    # runtime re-resolves only credentials from the live profile; a missing
+    # assignment is an actionable configuration error, never a silent
+    # substitution for another assignment.
+    from src.models.orm.ai_models import AIModelAssignment
+    testing_assignment = await db.scalar(
+        select(AIModelAssignment).where(
+            AIModelAssignment.assignment_key == TESTING_ASSIGNMENT_KEY
+        )
+    )
+    if testing_assignment is None:
+        raise HTTPException(status_code=422, detail=TESTING_ASSIGNMENT_HELP)
+    from src.services.ai_model_service import AIModelService
+    try:
+        testing_config = await AIModelService(db).resolve_config(
+            profile_id=testing_assignment.profile_id
+        )
+    except (LookupError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    designer_model = designer_testing_model(
+        profile_id=testing_assignment.profile_id, config=testing_config
+    )
+    try:
+        history = await load_designer_history(db, list(source_runs))
+    except DesignerError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    try:
+        designer_input = build_designer_input(
+            agent_snapshot=target_snapshot, tool_schemas=tool_schemas,
+            suite_goal=body.suite_goal, requested_count=body.requested_count,
+            historical_examples=history,
+        )
+    except DesignerError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    from src.jobs.rabbitmq import publish_message
+    from src.models.orm.agent_evaluations import AgentSimulationSession
+    from src.services.agent_evaluations.runner import admit_synthetic_run, build_synthetic_correlation
+    from src.services.agent_evaluations.simulator_models import canonical_hash, fresh_state
+    designer_snapshot = build_designer_snapshot(model=designer_model)
+    run = await admit_synthetic_run(
+        db, candidate_snapshot=designer_snapshot, case_input=designer_input,
+        output_schema=designer_snapshot["output_schema"], agent_id=agent.id,
+        org_id=suite.org_id,
+        correlation={
+            **build_synthetic_correlation(suite_id=suite.id, case_id=uuid4(), execution_id=uuid4(), side="baseline"),
+            "evaluation_designer": True, "designer_suite_id": str(suite.id),
+            "designer_tool_schemas": tool_schemas,
+            "designer_history_ids": [str(run.id) for run in source_runs],
+        },
+    )
+    fixture = {"version": 1, "entities": {}, "allowed_tools": [], "rules": []}
+    db.add(AgentSimulationSession(
+        case_id=None, case_version=1, run_id=run.id, root_run_id=run.id,
+        fixture=fixture, tool_schemas={}, state=fresh_state(fixture),
+        initial_state_hash=canonical_hash({}), side="designer",
+    ))
+    await db.commit()
+    await publish_message("agent-runs", {"run_id": str(run.id)})
+    return DesignerDraftAccepted(run_id=run.id)
 
 
 @router.post(
@@ -554,9 +760,22 @@ async def accept_case(
     user: CurrentActiveUser,
 ) -> EvaluationCasePublic:
     """Explicitly accept a draft: freeze a new accepted case version."""
+    from src.services.agent_evaluations.assertions import (
+        AssertionDefinitionError,
+        validate_assertions,
+    )
+    from src.services.agent_evaluations.simulator_models import (
+        FixtureError,
+        validate_fixture,
+    )
     from src.services.agent_evaluations.test_designer import accept_proposal
 
-    suite = await _suite_or_404(db, user, suite_id)
+    suite = await _locked_suite_or_404(db, user, suite_id)
+    if suite.status == "published":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Published suites are immutable.",
+        )
     draft_id = body.get("draft_id")
     if not draft_id:
         raise HTTPException(status_code=422, detail="draft_id is required.")
@@ -568,6 +787,11 @@ async def accept_case(
             status_code=status.HTTP_409_CONFLICT,
             detail="Case version is already accepted; reruns never regenerate it.",
         )
+    try:
+        validate_fixture({"version": 1, **(draft.fixture or {})})
+        validate_assertions(list(draft.assertions or []))
+    except (FixtureError, AssertionDefinitionError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     siblings = (
         await db.execute(
             select(AgentEvaluationCase).where(
@@ -603,9 +827,10 @@ async def accept_case(
     }
     case = accept_proposal(
         proposal, suite_id=suite.id, position=draft.position,
-        provenance_run_ids=[],
+        provenance_run_ids=list(draft.provenance_run_ids or []),
     )
     case.version = max_version + 1
+    case.provenance = draft.provenance
     db.add(case)
     await db.commit()
     await db.refresh(case)
@@ -642,7 +867,15 @@ async def create_execution(
         publish_platform_job_update,
     )
 
-    suite = await _suite_or_404(db, user, body.suite_id)
+    suite = await _locked_suite_or_404(db, user, body.suite_id)
+    # Serialize same-suite dedupe and same-organization quota decisions.
+    await db.execute(
+        select(
+            func.pg_advisory_xact_lock(
+                func.hashtext(str(suite.org_id) if suite.org_id is not None else "global")
+            )
+        )
+    )
     if suite.status != "published":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -675,11 +908,43 @@ async def create_execution(
             status_code=exc.status_code, detail=str(exc)
         ) from exc
     candidate_id = body.candidate_id
+    baseline_agent = None
+    if suite.agent_id is not None:
+        baseline_agent = (
+            await db.execute(
+                select(Agent)
+                .options(
+                    selectinload(Agent.tools),
+                    selectinload(Agent.delegated_agents),
+                    selectinload(Agent.roles),
+                )
+                .where(Agent.id == suite.agent_id)
+            )
+        ).scalar_one_or_none()
+    if (
+        baseline_agent is None
+        or not baseline_agent.is_active
+        or not await _entity_access_allowed(baseline_agent, user, db)
+    ):
+        raise HTTPException(status_code=422, detail="Suite baseline agent is unavailable.")
+    from src.services.agent_runtime.execution_snapshot import snapshot_agent
+    baseline_snapshot = await snapshot_agent(db, baseline_agent, caller_user_id=user.user_id)
+    baseline_snapshot["evaluation"] = {
+        "mode": "evaluation_synthetic", "evaluation_only": True,
+    }
+    candidate_snapshot = None
     if candidate_id is not None:
         candidate = await db.get(AgentCandidateSnapshot, candidate_id)
         if candidate is None:
             raise HTTPException(status_code=404, detail="Candidate not found.")
-        _scope_check(user, candidate.org_id)
+        if not user.is_superuser and candidate.org_id != user.organization_id:
+            raise HTTPException(status_code=404, detail="Candidate not found.")
+        if candidate.base_agent_id != suite.agent_id:
+            raise HTTPException(
+                status_code=422,
+                detail="Candidate must be derived from this suite's baseline agent.",
+            )
+        candidate_snapshot = dict(candidate.snapshot or {})
     cases = (
         await db.execute(
             select(AgentEvaluationCase).where(
@@ -721,6 +986,8 @@ async def create_execution(
         include_candidate=candidate_id is not None,
         repetitions_override=body.repetitions_override,
         created_by=user.email,
+        baseline_snapshot=baseline_snapshot,
+        candidate_snapshot=candidate_snapshot,
     )
     db.add(execution)
     db.add_all(results)
@@ -764,8 +1031,9 @@ async def get_execution(
     if execution is None:
         raise HTTPException(status_code=404, detail="Execution not found.")
     suite = await db.get(AgentEvaluationSuite, execution.suite_id)
-    if suite is not None:
-        _scope_check(user, suite.org_id)
+    if suite is None:
+        raise HTTPException(status_code=404, detail="Execution not found.")
+    _scope_check(user, suite.org_id)
     return EvaluationExecutionPublic.model_validate(execution)
 
 
@@ -784,8 +1052,9 @@ async def list_results(
     if execution is None:
         raise HTTPException(status_code=404, detail="Execution not found.")
     suite = await db.get(AgentEvaluationSuite, execution.suite_id)
-    if suite is not None:
-        _scope_check(user, suite.org_id)
+    if suite is None:
+        raise HTTPException(status_code=404, detail="Execution not found.")
+    _scope_check(user, suite.org_id)
     rows = (
         await db.execute(
             select(AgentEvaluationResult)
@@ -815,10 +1084,12 @@ async def cancel_execution(
     if execution is None:
         raise HTTPException(status_code=404, detail="Execution not found.")
     suite = await db.get(AgentEvaluationSuite, execution.suite_id)
-    if suite is not None:
-        _scope_check(user, suite.org_id)
+    if suite is None:
+        raise HTTPException(status_code=404, detail="Execution not found.")
+    _scope_check(user, suite.org_id)
     await cancel_evaluation_execution(execution_id)
-    if execution.platform_job_id is not None:
+    await db.refresh(execution)
+    if execution.status == "cancelled" and execution.platform_job_id is not None:
         from src.models.orm.platform_jobs import PlatformJob
         from src.services.platform_jobs import request_platform_job_cancel
 

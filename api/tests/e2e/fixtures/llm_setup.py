@@ -12,11 +12,15 @@ Environment variables:
 
 import logging
 import os
-from collections.abc import Generator
+from collections.abc import AsyncGenerator, Generator
 from typing import Any
 from uuid import uuid4
 
 import pytest
+import pytest_asyncio
+from sqlalchemy import delete, select
+
+from src.models.orm.ai_models import AIModelAssignment, AIModelProfile, AIProviderConnection
 
 logger = logging.getLogger(__name__)
 
@@ -79,16 +83,26 @@ def llm_test_custom_config() -> dict[str, str] | None:
     return None
 
 
-@pytest.fixture(scope="function")
-def llm_config_cleanup(e2e_client, platform_admin) -> Generator[None, None, None]:
-    """
-    Ensure LLM config is cleaned up after test.
-
-    This fixture ensures tests start with a clean state and
-    cleans up any configuration created during the test.
-    """
-    del e2e_client, platform_admin
-    yield
+@pytest_asyncio.fixture
+async def llm_config_cleanup(async_session_factory) -> AsyncGenerator[None, None]:
+    """Own test model configuration and restore assignments after each test."""
+    async with async_session_factory() as db:
+        assignments = [dict(row._mapping) for row in (await db.execute(
+            select(AIModelAssignment.assignment_key, AIModelAssignment.profile_id)
+        )).all()]
+        profile_ids = list((await db.scalars(select(AIModelProfile.id))).all())
+        connection_ids = list((await db.scalars(select(AIProviderConnection.id))).all())
+        await db.execute(delete(AIModelAssignment))
+        await db.commit()
+    try:
+        yield
+    finally:
+        async with async_session_factory() as db:
+            await db.execute(delete(AIModelAssignment))
+            await db.execute(delete(AIModelProfile).where(AIModelProfile.id.not_in(profile_ids)))
+            await db.execute(delete(AIProviderConnection).where(AIProviderConnection.id.not_in(connection_ids)))
+            db.add_all([AIModelAssignment(**assignment) for assignment in assignments])
+            await db.commit()
 
 
 @pytest.fixture(scope="function")
@@ -96,6 +110,7 @@ def llm_anthropic_configured(
     e2e_client,
     platform_admin,
     llm_test_anthropic_key,
+    llm_config_cleanup,
 ) -> Generator[dict[str, Any], None, None]:
     """
     Configure Anthropic as the LLM provider for a test.
@@ -126,6 +141,7 @@ def llm_openai_configured(
     e2e_client,
     platform_admin,
     llm_test_openai_key,
+    llm_config_cleanup,
 ) -> Generator[dict[str, Any], None, None]:
     """
     Configure OpenAI as the LLM provider for a test.

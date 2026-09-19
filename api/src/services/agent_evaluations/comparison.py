@@ -25,20 +25,23 @@ def compare_runs(
     candidate_usage: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Deterministic baseline/candidate delta over stored outcomes."""
-    base = {_outcome_key(o): o for o in baseline_outcomes}
-    cand = {_outcome_key(o): o for o in candidate_outcomes}
+    base = _index_outcomes(baseline_outcomes)
+    cand = _index_outcomes(candidate_outcomes)
+    repeated = {name for name, occurrence in set(base) | set(cand) if occurrence > 1}
     regressions: list[str] = []
     improvements: list[str] = []
     unchanged_failures: list[str] = []
     for key in sorted(set(base) | set(cand)):
         b_passed = base.get(key, {}).get("passed")
         c_passed = cand.get(key, {}).get("passed")
+        name, occurrence = key
+        label = f"{name}#{occurrence}" if name in repeated else name
         if b_passed is True and c_passed is False:
-            regressions.append(key)
+            regressions.append(label)
         elif b_passed is False and c_passed is True:
-            improvements.append(key)
+            improvements.append(label)
         elif b_passed is False and c_passed is False:
-            unchanged_failures.append(key)
+            unchanged_failures.append(label)
     trajectory = _trajectory_differences(baseline_tools or [], candidate_tools or [])
     output_diffs = _output_differences(baseline_output, candidate_output)
     usage_delta = _usage_delta(baseline_usage or {}, candidate_usage or {})
@@ -64,6 +67,20 @@ def compare_runs(
 def _outcome_key(outcome: dict[str, Any]) -> str:
     label = outcome.get("label")
     return f"{outcome.get('code')}:{label}" if label else str(outcome.get("code"))
+
+
+def _index_outcomes(
+    outcomes: list[dict[str, Any]],
+) -> dict[tuple[str, int], dict[str, Any]]:
+    # Both sides evaluate the same frozen ordered assertion list. A type or
+    # optional label is not a unique assertion identity: retain each occurrence.
+    counts: dict[str, int] = {}
+    indexed = {}
+    for outcome in outcomes:
+        name = _outcome_key(outcome)
+        counts[name] = counts.get(name, 0) + 1
+        indexed[(name, counts[name])] = outcome
+    return indexed
 
 
 def _trajectory_differences(

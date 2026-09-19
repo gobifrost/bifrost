@@ -10,11 +10,16 @@ from __future__ import annotations
 
 import copy
 import hashlib
+from datetime import datetime
 from typing import Any
 
 FIXTURE_VERSION = 1
 
 SECRET_KEY_HINTS = ("secret", "token", "password", "api_key", "apikey", "credential")
+TOKEN_COUNTER_KEYS = frozenset({
+    "tokens", "input_tokens", "output_tokens", "total_tokens", "max_tokens",
+    "default_max_tokens", "cache_read_tokens", "cache_write_tokens", "max_token_budget",
+})
 
 
 def canonical_hash(value: Any) -> str:
@@ -32,6 +37,10 @@ def redact_value(value: Any) -> Any:
             key: (
                 "[REDACTED]"
                 if any(hint in key.lower() for hint in SECRET_KEY_HINTS)
+                and not (
+                    key in TOKEN_COUNTER_KEYS
+                    and (item is None or isinstance(item, (int, float)))
+                )
                 else redact_value(item)
             )
             for key, item in value.items()
@@ -51,6 +60,16 @@ def validate_fixture(fixture: dict[str, Any]) -> dict[str, Any]:
             f"Unsupported fixture version {version!r}; simulator supports "
             f"{FIXTURE_VERSION}."
         )
+    if "seed_time" in fixture:
+        try:
+            seed_time = datetime.fromisoformat(fixture["seed_time"])
+        except (TypeError, ValueError) as exc:
+            raise FixtureError("Fixture seed_time must be an ISO timestamp.") from exc
+        if seed_time.tzinfo is None:
+            raise FixtureError("Fixture seed_time must include a timezone.")
+    ticks = fixture.get("clock_ticks", 0)
+    if not isinstance(ticks, int) or isinstance(ticks, bool) or ticks < 0:
+        raise FixtureError("Fixture clock_ticks must be a nonnegative integer.")
     entities = fixture.get("entities", {})
     if not isinstance(entities, dict):
         raise FixtureError("Fixture 'entities' must be an object of collections.")
@@ -68,6 +87,15 @@ def validate_fixture(fixture: dict[str, Any]) -> dict[str, Any]:
     for rule in rules:
         if not isinstance(rule, dict) or "tool" not in rule:
             raise FixtureError("Every fixture rule must be an object with a 'tool'.")
+        unknown = set(rule) - {"tool", "match_args", "return", "mutate"}
+        if unknown:
+            raise FixtureError(f"Unsupported fixture rule fields: {', '.join(sorted(unknown))}.")
+        if not isinstance(rule["tool"], str) or not rule["tool"].strip():
+            raise FixtureError("Fixture rule tool must be a nonempty name.")
+        if not isinstance(rule.get("match_args", {}), dict):
+            raise FixtureError("Fixture rule match_args must be an object.")
+        if not isinstance(rule.get("mutate", []), list):
+            raise FixtureError("Fixture rule mutate must be a list.")
     return fixture
 
 

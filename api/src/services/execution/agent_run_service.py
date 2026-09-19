@@ -28,6 +28,49 @@ QUEUE_NAME = "agent-runs"
 REDIS_PREFIX = "bifrost:agent_run"
 
 
+def _trusted_caller_auth_context(
+    *,
+    org_id: str | None,
+    caller_user_id: str | None,
+    caller_email: str | None,
+    caller_name: str | None,
+    caller_is_superuser: bool,
+    caller_is_platform_admin: bool | None,
+    caller_is_external: bool,
+    caller_is_provider_org: bool,
+    caller_roles: list[str] | None,
+) -> dict | None:
+    """Return the bounded authorization snapshot accepted at admission.
+
+    ``caller_context`` is application input and must never be treated as an
+    authorization source.  Only the explicit parameters supplied by a trusted
+    server-side caller become durable principal facts.  Tokens, credential
+    claims unrelated to authorization, and arbitrary request fields are never
+    stored here.
+    """
+    if caller_user_id is None and caller_email is None:
+        return None
+
+    return {
+        "user_id": caller_user_id,
+        "email": caller_email,
+        "name": caller_name,
+        "organization_id": org_id,
+        "is_superuser": bool(caller_is_superuser),
+        # Platform-admin role grants are resolved at the authenticated entry
+        # point.  Roles alone are never interpreted here, because this service
+        # must not turn arbitrary caller-supplied role strings into privilege.
+        "is_platform_admin": bool(
+            caller_is_superuser
+            if caller_is_platform_admin is None
+            else caller_is_platform_admin
+        ),
+        "is_external": bool(caller_is_external),
+        "is_provider_org": bool(caller_is_provider_org),
+        "roles": [str(role) for role in (caller_roles or [])],
+    }
+
+
 async def enqueue_agent_run(
     agent_id: str | None,
     trigger_type: str,
@@ -40,6 +83,7 @@ async def enqueue_agent_run(
     caller_email: str | None = None,
     caller_name: str | None = None,
     caller_is_superuser: bool = False,
+    caller_is_platform_admin: bool | None = None,
     caller_is_external: bool = False,
     caller_is_provider_org: bool = False,
     caller_roles: list[str] | None = None,
@@ -76,6 +120,17 @@ async def enqueue_agent_run(
     validate_output_schema(output_schema)
 
     run_uuid = UUID(run_id)
+    caller_auth_context = _trusted_caller_auth_context(
+        org_id=org_id,
+        caller_user_id=caller_user_id,
+        caller_email=caller_email,
+        caller_name=caller_name,
+        caller_is_superuser=caller_is_superuser,
+        caller_is_platform_admin=caller_is_platform_admin,
+        caller_is_external=caller_is_external,
+        caller_is_provider_org=caller_is_provider_org,
+        caller_roles=caller_roles,
+    )
     session_factory = get_session_factory()
     async with session_factory() as db:
         agent: Agent | None = None
@@ -124,6 +179,7 @@ async def enqueue_agent_run(
                 caller_email=caller_email,
                 caller_name=caller_name,
                 caller_context=caller_context,
+                caller_auth_context=caller_auth_context,
                 correlation=correlation,
                 execution_snapshot=execution_snapshot,
                 parent_run_id=UUID(parent_run_id) if parent_run_id else None,

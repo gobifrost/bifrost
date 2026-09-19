@@ -19,6 +19,7 @@ Security posture:
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import re
 from base64 import urlsafe_b64decode, urlsafe_b64encode
@@ -27,9 +28,10 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import func, select
+from pydantic_ai.messages import ToolCallPart, ToolReturnPart
+from sqlalchemy import func, literal, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import aliased, joinedload
 
 from src.core.principal import UserPrincipal
 from src.models.contracts.agent_debugger import (
@@ -56,6 +58,10 @@ from src.models.orm.agent_runs import (
     AgentToolInvocation,
 )
 from src.services.agent_runtime import types as rt
+from src.services.agent_runtime.checkpoint_codec import (
+    CheckpointDecodeError,
+    decode_messages,
+)
 from src.services.execution.agent_run_access import (
     agent_run_visibility_conditions,
 )
@@ -276,9 +282,15 @@ async def get_run_tree(
             (AgentRun.id == root_id) | (AgentRun.root_run_id == root_id),
             *agent_run_visibility_conditions(user),
         )
-        .order_by(AgentRun.created_at, AgentRun.id)
+        # Keep the root in a bounded result even if corrupt timestamps put a
+        # descendant before it. Fetch one sentinel row to report truncation
+        # without materializing an unbounded delegation tree.
+        .order_by((AgentRun.id == root_id).desc(), AgentRun.created_at, AgentRun.id)
+        .limit(MAX_TREE_NODES + 1)
     )
     rows = list(result.scalars().unique().all())
+    has_more_rows = len(rows) > MAX_TREE_NODES
+    rows = rows[:MAX_TREE_NODES]
     by_id = {row.id: row for row in rows}
     if root_id not in by_id:
         # The root itself is invisible: reveal nothing about the tree.
@@ -290,9 +302,16 @@ async def get_run_tree(
         if parent_id is not None and parent_id in by_id and parent_id != row.id:
             children[parent_id].append(row)
 
-    truncated = len(rows) >= MAX_TREE_NODES
+    truncated = has_more_rows
+    represented: set[UUID] = set()
+
+    def add_diagnostic(node: AgentRunTreeNode, message: str) -> None:
+        node.diagnostic = (
+            f"{node.diagnostic}; {message}" if node.diagnostic else message
+        )
 
     def build(node_run: AgentRun, depth: int, path: set[UUID]) -> AgentRunTreeNode:
+        represented.add(node_run.id)
         node = AgentRunTreeNode(
             run_id=node_run.id,
             agent_id=node_run.agent_id,
@@ -305,71 +324,37 @@ async def get_run_tree(
             completed_at=node_run.completed_at,
         )
         if depth >= MAX_TREE_DEPTH:
-            node.diagnostic = "maximum tree depth reached; subtree truncated"
+            add_diagnostic(node, "maximum tree depth reached; subtree truncated")
             return node
         path = path | {node_run.id}
         for child in children.get(node_run.id, []):
             if child.id in path:
-                node.children.append(
-                    AgentRunTreeNode(
-                        run_id=child.id,
-                        agent_id=child.agent_id,
-                        agent_name=(
-                            child.agent.name if child.agent else None
-                        ),
-                        status=child.status,
-                        parent_run_id=child.parent_run_id,
-                        depth=depth + 1,
-                        attempt=child.attempt or 0,
-                        created_at=child.created_at,
-                        completed_at=child.completed_at,
-                        diagnostic=(
-                            "parent cycle detected; "
-                            "subtree truncated to break the loop"
-                        ),
-                    )
+                add_diagnostic(
+                    node, "parent cycle detected; subtree truncated to break the loop"
+                )
+                continue
+            if child.id in represented:
+                add_diagnostic(
+                    node, "child already represented; subtree truncated to keep nodes unique"
                 )
                 continue
             node.children.append(build(child, depth + 1, path))
         return node
 
-    # Visible runs whose parent is invisible (or self-parented) attach under
-    # the root so no visible run silently disappears from the tree.
     root = by_id[root_id]
-    extra_roots = [
-        row
-        for row in rows
-        if row.id != root_id
-        and (
-            row.parent_run_id is None
-            or row.parent_run_id not in by_id
-            or row.parent_run_id == row.id
-        )
-    ]
     root_node = build(root, 0, set())
-    for orphan in extra_roots:
-        if orphan.parent_run_id == orphan.id:
-            root_node.children.append(
-                AgentRunTreeNode(
-                    run_id=orphan.id,
-                    agent_id=orphan.agent_id,
-                    agent_name=(
-                        orphan.agent.name if orphan.agent else None
-                    ),
-                    status=orphan.status,
-                    parent_run_id=orphan.parent_run_id,
-                    depth=1,
-                    attempt=orphan.attempt or 0,
-                    created_at=orphan.created_at,
-                    completed_at=orphan.completed_at,
-                    diagnostic=(
-                        "run lists itself as its own parent; "
-                        "shown here instead of recursing"
-                    ),
-                )
-            )
-        else:
-            root_node.children.append(build(orphan, 1, {root_id}))
+    # Disconnected corrupt components and rows omitted by a depth boundary
+    # still appear once under the requested root. ``rows`` is already capped,
+    # so this attachment cannot exceed MAX_TREE_NODES.
+    for row in rows:
+        if row.id in represented:
+            continue
+        detached = build(row, 1, set())
+        add_diagnostic(
+            detached,
+            "disconnected parent component; shown under the requested root",
+        )
+        root_node.children.append(detached)
 
     def _has_diagnostic(node: AgentRunTreeNode) -> bool:
         return node.diagnostic is not None or any(
@@ -391,7 +376,14 @@ async def get_run_tree(
 
 
 def encode_timeline_cursor(
-    scope_run_id: UUID, run_id: UUID, sequence: int, created_at: datetime
+    scope_run_id: UUID,
+    run_id: UUID,
+    sequence: int,
+    created_at: datetime,
+    *,
+    include_descendants: bool,
+    kind: str | None,
+    attempt: int | None,
 ) -> str:
     """Encode an opaque timeline cursor.
 
@@ -399,17 +391,29 @@ def encode_timeline_cursor(
     cursor to its scope); ``(run_id, sequence, created_at)`` is the position
     of the last returned entry and yields a total order across descendants.
     """
-    payload = (
-        f"{scope_run_id}:{run_id}:{sequence}:{created_at.isoformat()}"
+    payload = json.dumps(
+        {
+            "scope_run_id": str(scope_run_id),
+            "run_id": str(run_id),
+            "sequence": sequence,
+            "created_at": created_at.isoformat(),
+            "include_descendants": include_descendants,
+            "kind": kind,
+            "attempt": attempt,
+        },
+        separators=(",", ":"),
     ).encode()
     return urlsafe_b64encode(payload).decode().rstrip("=")
 
 
-def decode_timeline_cursor(cursor: str, scope_run_id: UUID) -> tuple[
-    UUID | None,
-    int,
-    datetime | None,
-]:
+def decode_timeline_cursor(
+    cursor: str,
+    scope_run_id: UUID,
+    *,
+    include_descendants: bool,
+    kind: str | None,
+    attempt: int | None,
+) -> tuple[UUID, int, datetime]:
     """Decode a cursor into ``(last_run_id, last_sequence, last_created_at)``.
 
     Raises ``ValueError`` for malformed cursors or cursors bound to a
@@ -417,14 +421,148 @@ def decode_timeline_cursor(cursor: str, scope_run_id: UUID) -> tuple[
     """
     padded = cursor + "=" * (-len(cursor) % 4)
     try:
-        scope_raw, run_raw, seq_raw, created_raw = (
-            urlsafe_b64decode(padded).decode().split(":", 3)
-        )
-        if UUID(scope_raw) != scope_run_id:
+        payload = json.loads(urlsafe_b64decode(padded).decode())
+        if (
+            UUID(str(payload["scope_run_id"])) != scope_run_id
+            or payload["include_descendants"] is not include_descendants
+            or payload["kind"] != kind
+            or payload["attempt"] != attempt
+        ):
             raise ValueError("cursor is invalid")
-        return UUID(run_raw), int(seq_raw), datetime.fromisoformat(created_raw)
-    except (ValueError, BinasciiError) as exc:
+        return (
+            UUID(str(payload["run_id"])),
+            int(payload["sequence"]),
+            datetime.fromisoformat(str(payload["created_at"])),
+        )
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError, BinasciiError) as exc:
         raise ValueError("cursor is invalid") from exc
+
+
+def _journal_attempt_expression() -> Any:
+    """Resolve the claim attempt for journal rows that do not repeat it.
+
+    Runtime writers put ``attempt`` on claim/recovery entries, while normal
+    model, tool, wait, and completion entries are only bounded by that claim.
+    The debugger therefore derives their attempt from the latest preceding
+    claim rather than requiring every durable writer to duplicate metadata.
+    """
+    claim = aliased(AgentRunJournalEntry)
+    claim_attempt = (
+        select(claim.data.op("->>")("attempt"))
+        .where(
+            claim.run_id == AgentRunJournalEntry.run_id,
+            claim.sequence <= AgentRunJournalEntry.sequence,
+            claim.kind.in_((rt.JOURNAL_RESUME, rt.JOURNAL_LEASE_RECOVERY)),
+            claim.data.op("->>")("attempt").is_not(None),
+        )
+        .order_by(claim.sequence.desc())
+        .limit(1)
+        .correlate(AgentRunJournalEntry)
+        .scalar_subquery()
+    )
+    return func.coalesce(
+        AgentRunJournalEntry.data.op("->>")("attempt"), claim_attempt
+    )
+
+
+def _as_uuid(value: Any) -> UUID | None:
+    """Return a UUID only for a valid UUID-shaped journal value."""
+    try:
+        return UUID(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+async def _visible_child_run_ids(
+    session: AsyncSession,
+    entries: list[AgentRunJournalEntry],
+    user: UserPrincipal,
+) -> set[UUID]:
+    """Batch-check journal child references under the normal visibility rule."""
+    candidates: set[UUID] = set()
+    for entry in entries:
+        data = entry.data or {}
+        child_id = _as_uuid(data.get("child_run_id"))
+        if child_id is not None:
+            candidates.add(child_id)
+        child_ids = data.get("child_run_ids")
+        if isinstance(child_ids, list):
+            for value in child_ids:
+                child_id = _as_uuid(value)
+                if child_id is not None:
+                    candidates.add(child_id)
+    if not candidates:
+        return set()
+    result = await session.execute(
+        select(AgentRun.id).where(
+            AgentRun.id.in_(candidates), *agent_run_visibility_conditions(user)
+        )
+    )
+    return set(result.scalars().all())
+
+
+async def _visible_descendants(
+    session: AsyncSession, requested: AgentRun, user: UserPrincipal
+) -> list[AgentRun]:
+    """Load only the requested run and its visible descendants.
+
+    ``root_run_id`` identifies a broad delegation tree, not a subtree. A
+    bounded recursive CTE follows ``parent_run_id`` downward from the request
+    so inspecting a nested child cannot pull in its ancestors or siblings.
+    """
+    descendants = (
+        select(AgentRun.id.label("run_id"), literal(0).label("depth"))
+        .where(AgentRun.id == requested.id, *agent_run_visibility_conditions(user))
+        .cte("visible_agent_run_descendants", recursive=True)
+    )
+    descendants = descendants.union_all(
+        select(AgentRun.id, descendants.c.depth + 1).where(
+            AgentRun.parent_run_id == descendants.c.run_id,
+            descendants.c.depth < MAX_TREE_DEPTH,
+            *agent_run_visibility_conditions(user),
+        )
+    )
+    descendant_ids = (
+        select(descendants.c.run_id)
+        .group_by(descendants.c.run_id)
+        .order_by(func.min(descendants.c.depth), descendants.c.run_id)
+        .limit(MAX_TREE_NODES)
+    )
+    result = await session.execute(
+        select(AgentRun)
+        .options(joinedload(AgentRun.agent))
+        .where(AgentRun.id.in_(descendant_ids))
+    )
+    return list(result.scalars().unique().all())
+
+
+def _visible_entry_data(
+    data: dict[str, Any], visible_child_ids: set[UUID]
+) -> dict[str, Any]:
+    """Remove delegation references that cannot be read directly.
+
+    ``detail`` and ``summary`` must use the same scrubbed payload. Projecting
+    the typed ``child_run_id`` alone is insufficient because journal detail
+    and the human summary would otherwise still disclose the hidden run.
+    """
+    visible = dict(data)
+    child_id = _as_uuid(data.get("child_run_id"))
+    if child_id not in visible_child_ids:
+        for key in (
+            "child_run_id",
+            "target_agent_id",
+            "target_agent_name",
+            "task",
+        ):
+            visible.pop(key, None)
+    child_ids = data.get("child_run_ids")
+    if isinstance(child_ids, list):
+        visible["child_run_ids"] = [
+            str(child_id)
+            for value in child_ids
+            if (child_id := _as_uuid(value)) in visible_child_ids
+        ]
+    return visible
 
 
 # -----------------------------------------------------------------------------
@@ -607,16 +745,7 @@ async def get_timeline(
     scope_ids: set[UUID] = {requested.id}
     run_meta: dict[UUID, AgentRun] = {requested.id: requested}
     if include_descendants:
-        root_id = requested.root_run_id or requested.id
-        desc_result = await session.execute(
-            select(AgentRun)
-            .options(joinedload(AgentRun.agent))
-            .where(
-                (AgentRun.id == root_id) | (AgentRun.root_run_id == root_id),
-                *agent_run_visibility_conditions(user),
-            )
-        )
-        for row in desc_result.scalars().unique().all():
+        for row in await _visible_descendants(session, requested, user):
             scope_ids.add(row.id)
             run_meta[row.id] = row
 
@@ -625,29 +754,32 @@ async def get_timeline(
     after_created: datetime | None = None
     if cursor is not None:
         after_run, after_sequence, after_created = decode_timeline_cursor(
-            cursor, requested.id
+            cursor,
+            requested.id,
+            include_descendants=include_descendants,
+            kind=kind,
+            attempt=attempt,
         )
 
-    stmt = select(AgentRunJournalEntry).where(
+    journal_attempt = _journal_attempt_expression()
+    stmt = select(
+        AgentRunJournalEntry, journal_attempt.label("resolved_attempt")
+    ).where(
         AgentRunJournalEntry.run_id.in_(scope_ids)
     )
     if kind is not None:
         stmt = stmt.where(AgentRunJournalEntry.kind == kind)
     if attempt is not None:
-        stmt = stmt.where(
-            func.coalesce(
-                (AgentRunJournalEntry.data.op("->>")("attempt")), ""
-            )
-            == str(attempt)
-        )
+        stmt = stmt.where(journal_attempt == str(attempt))
     if after_created is not None and include_descendants:
+        assert after_run is not None
         stmt = stmt.where(
-            (
+            tuple_(
                 AgentRunJournalEntry.created_at,
                 AgentRunJournalEntry.run_id,
                 AgentRunJournalEntry.sequence,
             )
-            > (after_created, after_run, after_sequence)
+            > tuple_(after_created, after_run, after_sequence)
         )
     elif cursor is not None:
         stmt = stmt.where(AgentRunJournalEntry.sequence > after_sequence)
@@ -662,26 +794,31 @@ async def get_timeline(
         stmt = stmt.order_by(AgentRunJournalEntry.sequence)
     stmt = stmt.limit(limit + 1)
 
-    entries = list((await session.execute(stmt)).scalars().all())
-    has_more = len(entries) > limit
-    entries = entries[:limit]
+    result_rows = list((await session.execute(stmt)).all())
+    has_more = len(result_rows) > limit
+    result_rows = result_rows[:limit]
+    entries = [row[0] for row in result_rows]
+    attempts_by_entry_id = {
+        entry.id: int(resolved_attempt)
+        if isinstance(resolved_attempt, str) and resolved_attempt.isdigit()
+        else None
+        for entry, resolved_attempt in result_rows
+    }
 
     # Descendant runs referenced by delegation entries may not be visible;
     # resolve child metadata only inside the visible scope.
-    visible_children = scope_ids | {entry.run_id for entry in entries}
+    visible_children = scope_ids | await _visible_child_run_ids(
+        session, entries, user
+    )
 
     projected: list[AgentTimelineEntry] = []
     for entry in entries:
         meta = run_meta.get(entry.run_id)
-        data = entry.data or {}
+        data = _visible_entry_data(entry.data or {}, visible_children)
         child_run_id = None
-        if isinstance(data.get("child_run_id"), str):
-            try:
-                candidate = UUID(str(data["child_run_id"]))
-            except ValueError:
-                candidate = None
-            if candidate is not None and candidate in visible_children:
-                child_run_id = candidate
+        candidate = _as_uuid(data.get("child_run_id"))
+        if candidate is not None and candidate in visible_children:
+            child_run_id = candidate
         join_id = None
         if isinstance(data.get("join_id"), str):
             try:
@@ -695,11 +832,7 @@ async def get_timeline(
                 run_id=entry.run_id,
                 root_run_id=meta.root_run_id if meta else None,
                 parent_run_id=meta.parent_run_id if meta else None,
-                attempt=(
-                    int(data["attempt"])
-                    if isinstance(data.get("attempt"), int)
-                    else None
-                ),
+                attempt=attempts_by_entry_id[entry.id],
                 created_at=entry.created_at,
                 duration_ms=(
                     data.get("duration_ms")
@@ -716,7 +849,9 @@ async def get_timeline(
                     if isinstance(data.get("output_tokens"), int)
                     else None
                 ),
-                summary=summarize_entry(entry.kind, data),
+                summary=summarize_entry(
+                    entry.kind, redact_detail(entry.kind, data)
+                ),
                 detail=redact_detail(entry.kind, data),
                 operation_id=(
                     data.get("operation_id")
@@ -735,7 +870,13 @@ async def get_timeline(
     if has_more and entries:
         last = entries[-1]
         next_cursor = encode_timeline_cursor(
-            requested.id, last.run_id, last.sequence, last.created_at
+            requested.id,
+            last.run_id,
+            last.sequence,
+            last.created_at,
+            include_descendants=include_descendants,
+            kind=kind,
+            attempt=attempt,
         )
 
     return AgentTimelinePage(
@@ -768,6 +909,12 @@ def _snapshot_identity(snapshot: dict[str, Any] | None) -> dict[str, Any]:
     model = snapshot.get("model") or {}
     return {
         "version": snapshot.get("format_version"),
+        "agent_id": _as_uuid(snapshot.get("agent_id")),
+        "agent_name": (
+            str(snapshot["agent_name"])
+            if isinstance(snapshot.get("agent_name"), str)
+            else None
+        ),
         "agent_updated_at": snapshot.get("agent_updated_at"),
         "prompt_hash": prompt_hash,
         "model": {
@@ -813,8 +960,9 @@ async def get_snapshot(
 
     return AgentRunSnapshotView(
         run_id=run.id,
-        agent_id=run.agent_id,
-        agent_name=run.agent.name if run.agent else None,
+        # These are immutable snapshot fields, not mutable live Agent fields.
+        agent_id=identity["agent_id"],
+        agent_name=identity["agent_name"],
         snapshot_version=identity["version"],
         agent_updated_at=agent_updated_at,
         system_prompt_sha256=identity["prompt_hash"],
@@ -828,7 +976,10 @@ async def get_snapshot(
         delegated_agents=identity["delegated_agents"],
         system_tools=identity["system_tools"],
         limits={str(k): v for k, v in identity["limits"].items()},
-        correlation={str(k): _redact_any(v) for k, v in correlation.items()},
+        correlation={
+            str(key): _redact_value(str(key), value)
+            for key, value in correlation.items()
+        },
         status=run.status,
         attempt=run.attempt or 0,
         checkpoint_sequence=run.checkpoint_sequence or 0,
@@ -863,11 +1014,51 @@ async def get_snapshot(
 # -----------------------------------------------------------------------------
 
 
+def _checkpoint_pending_state(
+    state: dict[str, Any],
+) -> tuple[bool | None, bool | None, bool | None]:
+    """Derive pending engine work from the versioned message codec.
+
+    Checkpoints do not carry ad-hoc ``pending_*`` keys. When the stored codec
+    can be decoded, a tool call remains pending exactly until its matching
+    tool return is present. A corrupt or legacy shape cannot establish that
+    fact, so the public hints remain ``None`` rather than guessing.
+    """
+    if not isinstance(state.get("messages"), list):
+        return None, None, None
+    try:
+        messages = decode_messages(state)
+    except CheckpointDecodeError:  # Codec data is untrusted historical state.
+        return None, None, None
+
+    calls: dict[str, str] = {}
+    returns: set[str] = set()
+    for message in messages:
+        for part in message.parts:
+            if isinstance(part, ToolCallPart):
+                if not part.tool_call_id or not part.tool_name:
+                    return None, None, None
+                calls[part.tool_call_id] = part.tool_name
+            elif isinstance(part, ToolReturnPart):
+                if not part.tool_call_id:
+                    return None, None, None
+                returns.add(part.tool_call_id)
+
+    pending_names = {
+        tool_name for call_id, tool_name in calls.items() if call_id not in returns
+    }
+    return (
+        bool(pending_names),
+        "delegate_agents" in pending_names,
+        "sleep_until" in pending_names,
+    )
+
+
 def summarize_checkpoint(row: AgentRunCheckpoint) -> AgentCheckpointSummary:
     """Project one checkpoint row to bounded metadata (keys only)."""
     state = row.state or {}
     messages = state.get("messages")
-    pending_calls = state.get("pending_tool_calls")
+    pending_tools, pending_join, pending_timer = _checkpoint_pending_state(state)
     return AgentCheckpointSummary(
         run_id=row.run_id,
         sequence=row.sequence,
@@ -875,19 +1066,9 @@ def summarize_checkpoint(row: AgentRunCheckpoint) -> AgentCheckpointSummary:
         attempt=row.attempt or 0,
         created_at=row.created_at,
         message_count=len(messages) if isinstance(messages, list) else None,
-        has_pending_tool_calls=(
-            bool(pending_calls) if pending_calls is not None else None
-        ),
-        has_pending_join=(
-            ("pending_join" in state or "join" in state)
-            if isinstance(state, dict)
-            else None
-        ),
-        has_pending_timer=(
-            ("pending_timer" in state or "wake_at" in state)
-            if isinstance(state, dict)
-            else None
-        ),
+        has_pending_tool_calls=pending_tools,
+        has_pending_join=pending_join,
+        has_pending_timer=pending_timer,
     )
 
 
@@ -932,4 +1113,3 @@ async def get_checkpoints(
         checkpoints=[summarize_checkpoint(row) for row in rows],
         next_cursor=next_cursor,
     )
-

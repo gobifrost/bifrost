@@ -41,6 +41,27 @@ def test_scheduler_uses_internal_platform_job_concurrency() -> None:
 
 
 @pytest.mark.asyncio
+async def test_durable_recovery_is_scheduled_independently_of_workflow_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.jobs.schedulers.execution_cleanup import recover_durable_agent_runs
+    from src.scheduler.registry import SCHEDULED_TASKS_BY_ID
+
+    scheduler = Scheduler(leadership_lease=FakeLeadershipLease())  # type: ignore[arg-type]
+    scheduled = MagicMock()
+    monkeypatch.setattr("src.scheduler.main.AsyncIOScheduler", lambda: scheduled)
+    scheduler._publish_task_states = AsyncMock()  # type: ignore[method-assign]
+    await scheduler._start_scheduler()
+    recovery = next(
+        call for call in scheduled.add_job.call_args_list
+        if call.kwargs.get("id") == "agent_run_recovery"
+    )
+    assert recovery.args[1].interval.total_seconds() == 15
+    assert recovery.kwargs["args"] == ["agent_run_recovery", recover_durable_agent_runs]
+    assert "agent_run_recovery" in SCHEDULED_TASKS_BY_ID
+
+
+@pytest.mark.asyncio
 async def test_trigger_services_run_only_while_lease_is_held(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

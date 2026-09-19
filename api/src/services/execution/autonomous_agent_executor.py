@@ -13,14 +13,14 @@ import asyncio
 import json
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
 import redis.asyncio as aioredis
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 from pydantic_ai import (
@@ -34,8 +34,9 @@ from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.usage import RunUsage
 
 from src.models.orm.agents import Agent, AgentDelegation
-from src.models.orm.agent_runs import AgentRun, AgentRunStep
+from src.models.orm.agent_runs import AgentRun, AgentRunJournalEntry, AgentRunStep
 from src.core.constants import SYSTEM_USER_ID, SYSTEM_USER_EMAIL
+from src.core.secret_string import SecretString
 from src.core.cache.keys import agent_run_steps_stream_key
 from src.core.pubsub import publish_agent_run_step
 from src.services.execution.agent_helpers import (
@@ -81,6 +82,41 @@ from src.services.mcp_client.errors import (
 logger = logging.getLogger(__name__)
 
 MAX_DELEGATION_DEPTH = 5  # Prevent infinite delegation chains
+
+
+def _secret_values(value: Any) -> set[str]:
+    """Collect explicitly marked secrets before durable serialization."""
+    values: set[str] = set()
+
+    def visit(item: Any) -> None:
+        if isinstance(item, SecretString):
+            values.add(item.get_secret_value())
+        elif isinstance(item, dict):
+            for nested in item.values():
+                visit(nested)
+        elif isinstance(item, (list, tuple, set)):
+            for nested in item:
+                visit(nested)
+        elif hasattr(item, "model_dump"):
+            visit(item.model_dump())
+
+    visit(value)
+    return values
+
+
+def _committed_final_response(history: list) -> str | None:
+    """Return a durable final text response, if the checkpoint ends in one."""
+    from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
+
+    if not history or not isinstance(history[-1], ModelResponse):
+        return None
+    parts = history[-1].parts
+    if any(isinstance(part, ToolCallPart) for part in parts):
+        return None
+    text = "".join(
+        part.content for part in parts if isinstance(part, TextPart)
+    )
+    return text
 
 
 class ToolError(Exception):
@@ -146,12 +182,16 @@ class AutonomousAgentExecutor:
         # PostgreSQL immediately instead of buffered to end of run.
         self._durable_lease_token: str | None = None
         self._durable_history: list | None = None
+        self._durable_history_prefix: list | None = None
+        self._durable_secret_values: set[str] = set()
         self._last_checkpoint_sequence: int | None = None
         # Engine operation ID for the tool call currently dispatching,
         # exposed to workflow/system tools as an idempotency key.
         self._current_operation_id: str | None = None
         # Immutable snapshot retained for deferral-time grant checks.
         self._snapshot_for_deferral: dict[str, Any] | None = None
+        self._snapshot_system_tools: set[str] | None = None
+        self._snapshot_knowledge_sources: list[str] | None = None
         # Evaluation-synthetic routing (Studio v1). ``None`` in production.
         # When attached by the Evaluation service, every non-engine tool
         # call routes to the case simulator; engine-owned delegation and
@@ -223,6 +263,9 @@ class AutonomousAgentExecutor:
         run_id = run_id or str(uuid4())
         self._current_run_id = run_id
         self._durable_lease_token = lease_token
+        self._durable_secret_values = _secret_values(
+            [input_data, caller_context, _caller]
+        )
         self._snapshot_for_deferral = execution_snapshot
         self._knowledge_search_budget.reset()
         if deferred_pending:
@@ -269,8 +312,23 @@ class AutonomousAgentExecutor:
             snapshot_limits = {}
             profile_id = agent.llm_profile_id
 
-        async with self._session_factory() as db:
+		async with self._session_factory() as db:
 			llm_config = await get_llm_config(db, profile_id=profile_id)
+        if snapshot_model is not None:
+            # Re-resolve only credentials from the live profile.  Endpoint,
+            # transport, caps, and provider tuning stay pinned at enqueue.
+            llm_config = replace(
+                llm_config,
+                provider=snapshot_model["provider"],
+                model=snapshot_model["model"],
+                endpoint=snapshot_model.get("endpoint"),
+                openai_transport=snapshot_model.get("openai_transport"),
+                anthropic_prompt_cache_supported=snapshot_model.get(
+                    "anthropic_prompt_cache_supported"
+                ),
+                default_max_tokens=snapshot_model.get("default_max_tokens"),
+                extra_params=dict(snapshot_model.get("extra_params") or {}),
+            )
 		model_name = (
 			snapshot_model["model"] if snapshot_model else llm_config.model
 		)
@@ -309,10 +367,30 @@ class AutonomousAgentExecutor:
                 if prior is not None:
                     seed_requests = prior.iterations_used or 0
                     seed_tokens = prior.tokens_used or 0
+                # Step rows are a durable compatibility projection and must
+                # remain monotonic across reclaimed attempts.
+                step_number = int(
+                    (
+                        await db.scalar(
+                            select(func.max(AgentRunStep.step_number)).where(
+                                AgentRunStep.run_id == UUID(run_id)
+                            )
+                        )
+                    )
+                    or 0
+                )
             usage = RunUsage(requests=seed_requests, input_tokens=seed_tokens)
         usage = usage or RunUsage()
-        usage_start_requests = usage.requests
-        usage_start_tokens = usage.total_tokens
+        # A resumed root seeds ``usage`` from its durable counters. Keep the
+        # checkpoint/result counters and correction budget cumulative across
+        # attempts; child executors sharing a parent's ledger still report
+        # only their own delta.
+        if resume_history is not None and _shared_usage is None:
+            usage_start_requests = 0
+            usage_start_tokens = 0
+        else:
+            usage_start_requests = usage.requests
+            usage_start_tokens = usage.total_tokens
 
         # A child gets at most its own configured allowance, but never escapes
         # the ceiling inherited from its parent. Grandchildren inherit the
@@ -334,6 +412,16 @@ class AutonomousAgentExecutor:
         max_tokens = budget.max_total_tokens
         self._active_usage = usage
         self._active_budget = budget
+        self._snapshot_system_tools = (
+            set(execution_snapshot.get("system_tools") or [])
+            if execution_snapshot is not None
+            else None
+        )
+        self._snapshot_knowledge_sources = (
+            list(execution_snapshot.get("knowledge_sources") or [])
+            if execution_snapshot is not None
+            else None
+        )
 
         # Resolve tools in one short DB lease. No DB
         # connection is held across model requests or tool execution.
@@ -452,6 +540,22 @@ class AutonomousAgentExecutor:
                         "tool_calls": [
                             call.tool_name for call in response.tool_calls
                         ],
+                        # This evidence is committed atomically with the
+                        # checkpoint. If the worker dies before the derived
+                        # AIUsage row commits, the next consumer claim can
+                        # restore it idempotently by checkpoint sequence.
+                        "usage": {
+                            **{
+                                key: value
+                                for key, value in usage_kwargs.items()
+                                if key != "provider_cost"
+                            },
+                            "provider_cost": (
+                                str(usage_kwargs["provider_cost"])
+                                if usage_kwargs["provider_cost"] is not None
+                                else None
+                            ),
+                        },
                     },
                     step={
                         "step_number": step_number,
@@ -519,7 +623,14 @@ class AutonomousAgentExecutor:
                     await self._durable_checkpoint(
                         run_id=run_id,
                         journal_kind="tool_call",
-                        journal_data={"tool_name": event.tool_name},
+                        journal_data={
+                            "tool_name": event.tool_name,
+                            "tool_call_id": event.tool_call_id,
+                            # This is the evidence source for engine-owned
+                            # calls (delegation/fan-out/timers), which never
+                            # create a simulator operation record.
+                            "arguments": event.arguments,
+                        },
                         step={
                             "step_number": step_number,
                             "type": "tool_call",
@@ -564,7 +675,10 @@ class AutonomousAgentExecutor:
                     journal_kind=(
                         "tool_error" if event.type == "tool_error" else "tool_result"
                     ),
-                    journal_data={"tool_name": event.tool_name},
+                    journal_data={
+                            "tool_name": event.tool_name,
+                            "tool_call_id": event.tool_call_id,
+                        },
                     step={
                         "step_number": step_number,
                         "type": event.type,
@@ -661,18 +775,29 @@ class AutonomousAgentExecutor:
                         agent=agent,
                         deferred_tool_call_ids=set(deferred_results or {}),
                     )
-                    result = await runtime.run(
-                        None,
-                        message_history=resumed_messages,
-                        deferred_tool_results=(
-                            DeferredToolResults(calls=dict(deferred_results))
-                            if deferred_results
-                            else None
-                        ),
-                        usage_limits=budget.usage_limits(),
-                        usage=usage,
-                        conversation_id=run_id,
-                    )
+                    # ``capture_run_messages`` only observes this invocation;
+                    # seed it so a correction checkpoint retains the full
+                    # recovered history. A committed final response is
+                    # already a durable answer, not a reason to call the
+                    # provider again after a worker crash.
+                    durable_history.extend(resumed_messages)
+                    committed_final = _committed_final_response(resumed_messages)
+                    if committed_final is not None and not deferred_results:
+                        result = None
+                        final_content = committed_final
+                    else:
+                        result = await runtime.run(
+                            None,
+                            message_history=resumed_messages,
+                            deferred_tool_results=(
+                                DeferredToolResults(calls=dict(deferred_results))
+                                if deferred_results
+                                else None
+                            ),
+                            usage_limits=budget.usage_limits(),
+                            usage=usage,
+                            conversation_id=run_id,
+                        )
                 else:
                     result = await runtime.run(
                         user_content,
@@ -680,7 +805,7 @@ class AutonomousAgentExecutor:
                         usage=usage,
                         conversation_id=run_id,
                     )
-                if isinstance(result.output, DeferredToolRequests):
+                if result is not None and isinstance(result.output, DeferredToolRequests):
                     suspension_or_text = await self._handle_deferred_requests(
                         result.output,
                         runtime=runtime,
@@ -697,7 +822,15 @@ class AutonomousAgentExecutor:
                         return suspension_or_text
                     # Legacy inline fallback: the loop already continued.
                     final_content = suspension_or_text
-                else:
+                elif result is not None:
+                    # ``DeferredToolRequests`` is handled above. A terminal
+                    # autonomous model response must be text; accepting an
+                    # unexpected deferred/object value here would skip the
+                    # durable suspension path and corrupt the final contract.
+                    if not isinstance(result.output, str):
+                        raise RuntimeError(
+                            "Agent runtime returned a non-text terminal output."
+                        )
                     final_content = result.output
                 if status == "completed" and output_schema and final_content:
                     (
@@ -847,6 +980,11 @@ class AutonomousAgentExecutor:
         )
         if not errors:
             return parsed, True, [], "completed"
+        if await self._correction_was_attempted(run_id):
+            # A durable correction intent is a one-shot provider boundary.
+            # If a worker died after recording it, do not buy another
+            # correction request merely because this attempt was reclaimed.
+            return {"text": final_text}, False, errors, "contract_failed"
         if not correction_allowed(
             iterations_used=usage.requests - usage_start_requests,
             max_iterations=budget.max_requests,
@@ -855,16 +993,42 @@ class AutonomousAgentExecutor:
         ):
             return {"text": final_text}, False, errors, "contract_failed"
 
+        # Commit the attempt intent before provider dispatch. The intent's
+        # checkpoint includes the original invalid final response, so a crash
+        # cannot turn one correction allowance into one per reclaim.
+        await self._durable_checkpoint(
+            run_id=run_id,
+            journal_kind="validation",
+            journal_data={
+                "correction_intent": True,
+                "valid": False,
+                "errors": errors[:10],
+            },
+            step=None,
+            iterations_used=usage.requests - usage_start_requests,
+            tokens_used=usage.total_tokens - usage_start_tokens,
+        )
+
+        outer_history = self._durable_history
+        self._durable_history_prefix = list(outer_history or [])
         with capture_run_messages() as correction_history:
-            correction_result = await runtime.run(
-                contract_correction_prompt(errors),
-                message_history=list(self._durable_history or []),
-                usage_limits=budget.usage_limits(),
-                usage=usage,
-                conversation_id=run_id,
-            )
-        if self._durable_history is not None:
-            self._durable_history.extend(correction_history)
+            # Model callbacks checkpoint the correction response too. Point
+            # them at this capture and retain the outer history as a prefix so
+            # every committed correction boundary remains replayable.
+            self._durable_history = correction_history
+            try:
+                correction_result = await runtime.run(
+                    contract_correction_prompt(errors),
+                    message_history=list(outer_history or []),
+                    usage_limits=budget.usage_limits(),
+                    usage=usage,
+                    conversation_id=run_id,
+                )
+            finally:
+                self._durable_history_prefix = None
+                self._durable_history = outer_history
+        if outer_history is not None:
+            outer_history.extend(correction_history)
         corrected_text = correction_result.output or ""
         reparsed, was_json = parse_final_output(corrected_text)
         new_errors = (
@@ -894,6 +1058,24 @@ class AutonomousAgentExecutor:
             },
         )
         return {"text": corrected_text}, False, new_errors, "contract_failed"
+
+    async def _correction_was_attempted(self, run_id: str) -> bool:
+        """Whether this durable run already spent its correction allowance."""
+        if self._durable_lease_token is None:
+            return False
+        async with self._session_factory() as db:
+            entries = (
+                await db.execute(
+                    select(AgentRunJournalEntry.data).where(
+                        AgentRunJournalEntry.run_id == UUID(run_id),
+                        AgentRunJournalEntry.kind == "validation",
+                    )
+                )
+            ).scalars().all()
+        return any(
+            isinstance(data, dict) and data.get("correction_intent") is True
+            for data in entries
+        )
 
     # ------------------------------------------------------------------
     # DB flush (called by consumer after run completes)
@@ -959,18 +1141,27 @@ class AutonomousAgentExecutor:
             encode_messages,
         )
 
+        checkpoint_history = [
+            *(self._durable_history_prefix or []),
+            *history,
+        ]
+        self._durable_secret_values.update(
+            _secret_values([checkpoint_history, journal_data, step])
+        )
+
         async with self._session_factory() as db:
             checkpoint = await run_store.commit_checkpoint(
                 db,
                 UUID(run_id),
                 token,
-                encode_messages(history),
+                encode_messages(checkpoint_history),
                 format_version=CHECKPOINT_MESSAGE_FORMAT_VERSION,
                 journal_kind=journal_kind,
                 journal_data=journal_data,
                 steps=[step] if step is not None else None,
                 iterations_used=iterations_used,
                 tokens_used=tokens_used,
+                secrets=self._durable_secret_values,
             )
         self._last_checkpoint_sequence = checkpoint.sequence
 
@@ -987,6 +1178,7 @@ class AutonomousAgentExecutor:
         cache_write_tokens: int = 0,
         provider_cost: Decimal | None = None,
         duration_ms: int | None = None,
+        sequence: int | None = None,
     ) -> None:
         """Write one model-boundary usage row, idempotent on retry.
 
@@ -994,12 +1186,23 @@ class AutonomousAgentExecutor:
         restarted worker re-committing the same boundary cannot double-count
         committed usage.
         """
-        sequence = getattr(self, "_last_checkpoint_sequence", None)
+        sequence = sequence or getattr(self, "_last_checkpoint_sequence", None)
         if sequence is None:
             return
         from src.models.orm.ai_usage import AIUsage
 
         async with self._session_factory() as db:
+            # The usage projection is derived from an immutable checkpoint,
+            # not lease ownership. Serialize competing reclaimed workers on
+            # the run row so their check-then-insert is actually idempotent.
+            # (There is no database uniqueness constraint on AIUsage's
+            # optional agent_run_id/sequence pair.)
+            await db.get(
+                AgentRun,
+                UUID(run_id),
+                with_for_update={"of": AgentRun},
+                populate_existing=True,
+            )
             existing = (
                 await db.execute(
                     select(AIUsage.id).where(
@@ -1027,9 +1230,110 @@ class AutonomousAgentExecutor:
                 sequence=sequence,
                 duration_ms=duration_ms,
                 agent_run_id=UUID(run_id),
-                organization_id=agent.organization_id,
+                organization_id=getattr(agent, "organization_id", None),
             )
+            # ``record_ai_usage`` intentionally treats pricing/cache outages
+            # as non-fatal and therefore may return without adding a row.
+            # A durable checkpoint cannot silently lose its accounting
+            # projection: retain raw provider identity/cost as the canonical
+            # fallback in that case. A later pricing/cache refresh can still
+            # enrich aggregates, but this boundary is now durably accounted.
+            projected = (
+                await db.execute(
+                    select(AIUsage.id).where(
+                        AIUsage.agent_run_id == UUID(run_id),
+                        AIUsage.sequence == sequence,
+                    )
+                )
+            ).scalar_one_or_none()
+            if projected is None:
+                db.add(
+                    AIUsage(
+                        provider=provider,
+                        model=model,
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                        cache_read_tokens=cache_read_tokens,
+                        cache_write_tokens=cache_write_tokens,
+                        provider_cost=provider_cost,
+                        cost=provider_cost,
+                        duration_ms=duration_ms,
+                        agent_run_id=UUID(run_id),
+                        organization_id=getattr(agent, "organization_id", None),
+                        sequence=sequence,
+                    )
+                )
+                await db.flush()
             await db.commit()
+
+    async def recover_durable_usage(self, *, agent: Agent, run_id: str) -> None:
+        """Project checkpoint-bound model usage missing after a worker crash.
+
+        AIUsage is a derived accounting projection, while the model-boundary
+        journal is committed with its checkpoint. Re-reading that evidence on
+        every durable claim closes the commit-then-crash window without ever
+        replaying a provider request. ``_persist_usage_durable`` fences each
+        projection by ``(agent_run_id, checkpoint_sequence)``.
+        """
+        if not self.redis_client:
+            return
+        async with self._session_factory() as db:
+            entries = (
+                await db.execute(
+                    select(AgentRunJournalEntry).where(
+                        AgentRunJournalEntry.run_id == UUID(run_id),
+                        AgentRunJournalEntry.kind == "model_response",
+                        AgentRunJournalEntry.checkpoint_sequence.is_not(None),
+                    )
+                    .order_by(AgentRunJournalEntry.checkpoint_sequence)
+                )
+            ).scalars().all()
+
+        for entry in entries:
+            evidence = (entry.data or {}).get("usage")
+            if not isinstance(evidence, dict):
+                # Entries written before usage evidence was introduced cannot
+                # be reconstructed safely. New checkpoint boundaries always
+                # include it before model execution can advance.
+                continue
+            required = ("provider", "model", "input_tokens", "output_tokens")
+            if any(not isinstance(evidence.get(key), (str, int)) for key in required):
+                logger.warning(
+                    "Skipping malformed durable usage evidence for run %s checkpoint %s",
+                    run_id,
+                    entry.checkpoint_sequence,
+                )
+                continue
+            provider_cost = evidence.get("provider_cost")
+            try:
+                await self._persist_usage_durable(
+                    agent=agent,
+                    run_id=run_id,
+                    provider=str(evidence["provider"]),
+                    model=str(evidence["model"]),
+                    input_tokens=int(evidence["input_tokens"]),
+                    output_tokens=int(evidence["output_tokens"]),
+                    cache_read_tokens=int(evidence.get("cache_read_tokens") or 0),
+                    cache_write_tokens=int(evidence.get("cache_write_tokens") or 0),
+                    provider_cost=(
+                        Decimal(str(provider_cost))
+                        if provider_cost is not None
+                        else None
+                    ),
+                    duration_ms=(
+                        int(evidence["duration_ms"])
+                        if evidence.get("duration_ms") is not None
+                        else None
+                    ),
+                    sequence=entry.checkpoint_sequence,
+                )
+            except (TypeError, ValueError, ArithmeticError) as exc:
+                logger.warning(
+                    "Skipping malformed durable usage evidence for run %s checkpoint %s: %s",
+                    run_id,
+                    entry.checkpoint_sequence,
+                    exc,
+                )
 
     async def _execute_tool_durable(
         self,
@@ -1059,11 +1363,15 @@ class AutonomousAgentExecutor:
         operation_id = durable_operation_id(run_id, tool_call_id)
         self._current_operation_id = operation_id
         try:
+            self._durable_secret_values.update(_secret_values(arguments))
             async with self._session_factory() as db:
                 existing = await get_invocation(db, UUID(run_id), tool_call_id)
                 if existing is not None and existing.state == "completed":
-                    stored = existing.result or {}
-                    return stored.get("text", "")
+                    from src.services.agent_runtime.tool_invocations import (
+                        invocation_result_value,
+                    )
+
+                    return invocation_result_value(existing.result)
                 await plan_invocation(
                     db,
                     run_id=UUID(run_id),
@@ -1071,6 +1379,7 @@ class AutonomousAgentExecutor:
                     provider_tool_call_id=tool_call_id,
                     tool_name=name,
                     arguments=arguments,
+                    secrets=self._durable_secret_values,
                 )
                 await mark_running(
                     db,
@@ -1089,7 +1398,9 @@ class AutonomousAgentExecutor:
                 # the model loop return DeferredToolRequests.
                 async with self._session_factory() as db:
                     try:
-                        await delete_invocation(db, UUID(run_id), tool_call_id)
+                        await delete_invocation(
+                            db, UUID(run_id), token, tool_call_id
+                        )
                         await db.commit()
                     except Exception:
                         logger.debug(
@@ -1106,6 +1417,7 @@ class AutonomousAgentExecutor:
                         lease_token=token,
                         provider_tool_call_id=tool_call_id,
                         error=f"cancelled: {exc}",
+                        secrets=self._durable_secret_values,
                     )
                 raise
             except Exception as exc:
@@ -1116,15 +1428,18 @@ class AutonomousAgentExecutor:
                         lease_token=token,
                         provider_tool_call_id=tool_call_id,
                         error=str(exc),
+                        secrets=self._durable_secret_values,
                     )
                 raise
             async with self._session_factory() as db:
+                self._durable_secret_values.update(_secret_values(result))
                 await complete_invocation(
                     db,
                     run_id=UUID(run_id),
                     lease_token=token,
                     provider_tool_call_id=tool_call_id,
                     result=result,
+                    secrets=self._durable_secret_values,
                 )
             return result
         finally:
@@ -1434,7 +1749,8 @@ class AutonomousAgentExecutor:
             if raw_org_id is None:
                 return None
             return UUID(str(raw_org_id))
-        return agent.organization_id
+        snapshot_org_id = (self._snapshot_for_deferral or {}).get("organization_id")
+        return UUID(str(snapshot_org_id)) if snapshot_org_id else agent.organization_id
 
     async def _execute_tool(self, tool_call: ToolCallRequest, agent: Agent) -> str:
         """Execute a tool call, mirroring AgentExecutor's dispatch logic."""
@@ -1449,8 +1765,13 @@ class AutonomousAgentExecutor:
                     tool_call.name, tool_call.arguments or {}, tool_call.id
                 )
         # Knowledge search
-        if tool_call.name == "search_knowledge" and agent.knowledge_sources:
-            return await self._execute_knowledge_search(tool_call, agent)
+        knowledge_sources = self._snapshot_knowledge_sources
+        if tool_call.name == "search_knowledge" and (
+            knowledge_sources if knowledge_sources is not None else agent.knowledge_sources
+        ):
+            return await self._execute_knowledge_search(
+                tool_call, agent, knowledge_sources=knowledge_sources
+            )
 
         # Delegation
         if tool_call.name.startswith("delegate_to_"):
@@ -1465,7 +1786,10 @@ class AutonomousAgentExecutor:
             return await self._execute_sleep(tool_call, agent)
 
         # System tools
-        if tool_call.name in (agent.system_tools or []):
+        system_tools = self._snapshot_system_tools
+        if tool_call.name in (
+            system_tools if system_tools is not None else set(agent.system_tools or [])
+        ):
             return await self._execute_system_tool(tool_call, agent)
 
         # External MCP tools — namespaced ``mcp__<connection_id>__<tool>``.
@@ -1608,7 +1932,13 @@ class AutonomousAgentExecutor:
 
         return json.dumps(envelope, default=str)
 
-    async def _execute_knowledge_search(self, tool_call: ToolCallRequest, agent: Agent) -> str:
+    async def _execute_knowledge_search(
+        self,
+        tool_call: ToolCallRequest,
+        agent: Agent,
+        *,
+        knowledge_sources: list[str] | None = None,
+    ) -> str:
         """Execute knowledge search using the agent's configured namespaces.
 
         Compact default: ranked id + title + confidence + bounded excerpt.
@@ -1627,7 +1957,11 @@ class AutonomousAgentExecutor:
             )
             doc_id, include_full = parse_knowledge_followup(arguments)
 
-            namespaces = agent.knowledge_sources
+            namespaces = (
+                knowledge_sources
+                if knowledge_sources is not None
+                else agent.knowledge_sources
+            )
             if not namespaces:
                 return "No knowledge sources configured for this agent"
 
@@ -2251,19 +2585,19 @@ class AutonomousAgentExecutor:
         _ = agent
         arguments = tool_call.arguments or {}
         if self._synthetic_router is not None:
-            # Synthetic timers never wall-clock wait: validate the
-            # deterministic cap, then resolve immediately with a
-            # deterministic wake result.
+            # Synthetic timers never wall-clock wait. The persistent router
+            # owns the shared fixture clock and advances it under the same
+            # simulation-session lock used by synthetic tool calls.
             from src.services.agent_evaluations.runner import (
                 SYNTHETIC_TIMER_FIRED_TEXT,
                 SyntheticRunnerError,
-                validate_synthetic_timer,
             )
 
             try:
-                validate_synthetic_timer(
+                await self._synthetic_router.validate_and_advance_timer(
                     arguments,
                     max_seconds=self._synthetic_timer_max_seconds,
+                    tool_call_id=tool_call.id,
                 )
             except SyntheticRunnerError as exc:
                 raise ToolError(str(exc)) from exc

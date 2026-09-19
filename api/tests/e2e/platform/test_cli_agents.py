@@ -82,6 +82,7 @@ class TestCliAgents:
         e2e_client,
         platform_admin,
         tmp_path,
+        llm_config_cleanup,
     ) -> None:
         """Create via @file prompt → update llm-model → delete."""
         name = f"cli-agent-{uuid4().hex[:8]}"
@@ -131,8 +132,8 @@ class TestCliAgents:
         assert profiles_resp.status_code == 200, profiles_resp.text
         if not profiles_resp.json():
             # The first profile becomes the required platform default and cannot
-            # be deleted. Seed that durable global state separately so the
-            # profile owned by this CRUD test remains safe to clean up.
+            # be deleted through the API while assigned. The cleanup fixture
+            # owns this bootstrap too and restores the prior global state.
             bootstrap_connection_resp = e2e_client.post(
                 "/api/admin/ai/connections",
                 headers=platform_admin.headers,

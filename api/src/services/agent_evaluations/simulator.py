@@ -23,6 +23,7 @@ budgets, debugger, and scoring exercise the real runtime.
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from typing import Any
 
 from src.services.agent_evaluations.simulator_models import (
@@ -92,7 +93,6 @@ class Simulator:
         self._tool_schemas = dict(tool_schemas or {})
         self._records: list[dict[str, Any]] = []
         self._sequence = 0
-        self._tick = 0
 
     @property
     def state(self) -> dict[str, Any]:
@@ -118,6 +118,7 @@ class Simulator:
 
     def call(self, tool_name: str, arguments: dict[str, Any] | None) -> Any:
         """Execute one synthetic tool call against the locked case state."""
+        self._check_record_capacity()
         args = dict(arguments or {})
         if tool_name not in self.allowed_tools():
             raise SyntheticToolError(
@@ -127,6 +128,7 @@ class Simulator:
         schema = self._tool_schemas.get(tool_name)
         if schema is not None:
             self._validate_against_schema(tool_name, schema, args)
+        self._state["clock_time"] = self.now_iso()
         try:
             result = self._dispatch(tool_name, args)
         except SyntheticToolError:
@@ -246,10 +248,15 @@ class Simulator:
         return f"{prefix}-{nxt:04d}"
 
     def now_iso(self) -> str:
-        """Deterministic clock: seeded start plus one tick per call."""
-        base = self._fixture.get("seed_time", "2026-09-18T00:00:00+00:00")
-        self._tick += 1
-        return f"{base}+{self._tick:06d}"
+        """Advance the persisted clock, including prior engine timer advances."""
+        base = self._state.get("clock_time") or self._fixture.get(
+            "seed_time", "2026-09-18T00:00:00+00:00"
+        )
+        tick = int(self._state.get("clock_ticks", 0)) + 1
+        self._state["clock_ticks"] = tick
+        current = (datetime.fromisoformat(base) + timedelta(seconds=1)).isoformat()
+        self._state["clock_time"] = current
+        return current
 
     # -- fixture rules ----------------------------------------------------
 
@@ -279,13 +286,6 @@ class Simulator:
     def _record(
         self, tool_name: str, args: dict[str, Any], *, result: Any
     ) -> None:
-        from src.services.agent_evaluations.quotas import MAX_SIM_RECORDS_PER_RUN
-
-        if len(self._records) >= MAX_SIM_RECORDS_PER_RUN:
-            raise SyntheticToolError(
-                f"Simulation exceeded {MAX_SIM_RECORDS_PER_RUN} tool records.",
-                code="quota_exceeded",
-            )
         self._records.append(
             {
                 "sequence": self._sequence,
@@ -298,6 +298,7 @@ class Simulator:
         self._sequence += 1
 
     def record_failure(self, tool_name: str, args: dict[str, Any], error: str) -> None:
+        self._check_record_capacity()
         self._records.append(
             {
                 "sequence": self._sequence,
@@ -308,3 +309,14 @@ class Simulator:
             }
         )
         self._sequence += 1
+
+    def _check_record_capacity(self) -> None:
+        from src.services.agent_evaluations.quotas import MAX_SIM_RECORDS_PER_RUN
+
+        # Persistent routers restore sequence from PostgreSQL, while their
+        # in-memory record list starts empty. Count the entire session history.
+        if self._sequence >= MAX_SIM_RECORDS_PER_RUN:
+            raise SyntheticToolError(
+                f"Simulation exceeded {MAX_SIM_RECORDS_PER_RUN} tool records.",
+                code="quota_exceeded",
+            )

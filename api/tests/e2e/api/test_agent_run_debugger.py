@@ -50,6 +50,8 @@ async def _seed_tree(e2e_client, platform_admin, db_session) -> dict:
             root_run_id=root_id,
             execution_snapshot={
                 "format_version": 1,
+                "agent_id": root_agent["id"],
+                "agent_name": root_agent["name"],
                 "system_prompt": "root prompt",
                 "model": {"provider": "anthropic", "model": "m"},
                 "tools": [{"name": "search"}],
@@ -125,7 +127,7 @@ async def _seed_tree(e2e_client, platform_admin, db_session) -> dict:
             run_id=root_id,
             sequence=1,
             format_version=1,
-            state={"messages": [{"role": "user"}]},
+            state={"format_version": 1, "messages": [{"role": "user"}]},
             attempt=1,
         )
     )
@@ -241,6 +243,17 @@ async def test_debugger_tree_timeline_snapshot_checkpoints(
         cp_body = checkpoints.json()
         assert len(cp_body["checkpoints"]) == 1
         assert cp_body["checkpoints"][0]["message_count"] == 1
+        assert set(cp_body["checkpoints"][0]) == {
+            "run_id",
+            "sequence",
+            "format_version",
+            "attempt",
+            "created_at",
+            "message_count",
+            "has_pending_tool_calls",
+            "has_pending_join",
+            "has_pending_timer",
+        }
     finally:
         await _teardown(e2e_client, platform_admin, db_session, seed)
 

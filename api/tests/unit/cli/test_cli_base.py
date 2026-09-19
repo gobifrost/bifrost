@@ -237,3 +237,18 @@ class TestSubgroupRegistration:
 
         code = dispatch_entity_subgroup("nonexistent", ["list"])
         assert code == 1
+
+
+def test_dispatch_formats_operational_click_errors_without_traceback(monkeypatch, capsys):
+    import click
+    from bifrost.commands import ENTITY_GROUPS, dispatch_entity_subgroup
+
+    @click.command()
+    def failed_job():
+        raise click.ClickException("Evaluating suite failed: candidate regression")
+
+    monkeypatch.setitem(ENTITY_GROUPS, "failed-job", failed_job)
+    assert dispatch_entity_subgroup("failed-job", []) == 1
+    captured = capsys.readouterr()
+    assert "Error: Evaluating suite failed: candidate regression" in captured.err
+    assert "Traceback" not in captured.err

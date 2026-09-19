@@ -1,9 +1,10 @@
-"""Deterministic evaluation assertions over synthetic run evidence.
+"""Evaluation assertions over synthetic run evidence.
 
-Every assertion produces a stable code, pass/fail, redacted
-expected/actual values, and evidence journal sequence IDs. Exact and
-predicate failures are authoritative; semantic (LLM-judge) scoring is
-explicitly labeled nondeterministic and never gates a core v1 suite.
+Every assertion produces a stable code, pass/fail, redacted expected/actual
+values, and evidence journal sequence IDs. Semantic rubric assertions are
+optional, non-authoritative observations: their model identity is frozen at
+case-save time and their redacted evidence, rationale, score, and usage are
+persisted alongside deterministic verdicts.
 
 Malformed assertions fail at case save time via :func:`validate_assertions`,
 never at result time.
@@ -11,7 +12,10 @@ never at result time.
 
 from __future__ import annotations
 
-from typing import Any, Callable
+import json
+import math
+from typing import Any, Awaitable, Callable
+from uuid import UUID
 
 from src.services.agent_evaluations.simulator_models import redact_value
 
@@ -48,7 +52,7 @@ def validate_assertions(assertions: list[dict[str, Any]]) -> None:
         if not isinstance(assertion, dict):
             raise AssertionDefinitionError(f"Assertion {index} must be an object.")
         atype = assertion.get("type")
-        if atype not in KNOWN_ASSERTION_TYPES:
+        if not isinstance(atype, str) or atype not in KNOWN_ASSERTION_TYPES:
             raise AssertionDefinitionError(
                 f"Assertion {index} has unknown type {atype!r}."
             )
@@ -71,13 +75,87 @@ def _require_params(index: int, atype: str, params: dict[str, Any]) -> None:
         "tool_order": ("tools",),
         "tool_args": ("tool",),
         "simulator_state": ("path",),
-        "llm_judge": ("model", "prompt_version", "threshold"),
+        "llm_judge": ("rubric", "prompt_version", "threshold"),
     }
     for key in required.get(atype, ()):
         if key not in params:
             raise AssertionDefinitionError(
                 f"Assertion {index} ({atype}) is missing required param {key!r}."
             )
+    for key in ("tool", "path", "status", "rubric"):
+        if key in params and (not isinstance(params[key], str) or not params[key].strip()):
+            raise AssertionDefinitionError(f"Assertion {index} {key} must be a nonempty string.")
+    for key in ("count", "min_children", "max_children"):
+        if key in params and (
+            not isinstance(params[key], int) or isinstance(params[key], bool) or params[key] < 0
+        ):
+            raise AssertionDefinitionError(f"Assertion {index} {key} must be a nonnegative integer.")
+    for key in ("tools", "agents"):
+        if key in params and (
+            not isinstance(params[key], list)
+            or any(not isinstance(value, str) or not value for value in params[key])
+        ):
+            raise AssertionDefinitionError(f"Assertion {index} {key} must be a list of names.")
+    if "args" in params and not isinstance(params["args"], dict):
+        raise AssertionDefinitionError(f"Assertion {index} args must be an object.")
+    if atype.startswith("max_") or atype == "llm_judge":
+        value = params.get("threshold") if atype == "llm_judge" else params.get("limit", params.get("max"))
+        if (
+            not isinstance(value, (int, float)) or isinstance(value, bool)
+            or not math.isfinite(value) or value < 0
+            or (atype == "llm_judge" and value > 1)
+        ):
+            raise AssertionDefinitionError(f"Assertion {index} has an invalid numeric limit or threshold.")
+    if atype == "llm_judge" and not (
+        params.get("judge_profile_id") or params.get("judge_snapshot")
+    ):
+        raise AssertionDefinitionError(
+            f"Assertion {index} (llm_judge) requires judge_profile_id."
+        )
+
+
+async def freeze_semantic_judges(
+    session, assertions: list[dict[str, Any]], *, is_superuser: bool
+) -> list[dict[str, Any]]:
+    """Replace an authorized judge profile reference with its frozen identity."""
+    from src.services.llm.factory import get_llm_config
+
+    validate_assertions(assertions)
+    frozen: list[dict[str, Any]] = []
+    for assertion in assertions:
+        item = dict(assertion)
+        params = dict(item.get("params") or {})
+        if item.get("type") == "llm_judge":
+            if not is_superuser:
+                raise AssertionDefinitionError(
+                    "Semantic judge assertions require a platform administrator."
+                )
+            if params.get("judge_snapshot"):
+                raise AssertionDefinitionError(
+                    "judge_snapshot is server-managed; provide judge_profile_id instead."
+                )
+            try:
+                profile_id = UUID(str(params.pop("judge_profile_id")))
+            except (KeyError, TypeError, ValueError) as exc:
+                raise AssertionDefinitionError(
+                    "llm_judge judge_profile_id must be a UUID."
+                ) from exc
+            config = await get_llm_config(session, profile_id=profile_id)
+            params["judge_snapshot"] = {
+                "profile_id": str(profile_id),
+                "provider": config.provider,
+                "model": config.model,
+                "endpoint": config.endpoint,
+                "openai_transport": config.openai_transport,
+                "anthropic_prompt_cache_supported": config.anthropic_prompt_cache_supported,
+                "default_max_tokens": config.default_max_tokens,
+                "extra_params": dict(config.extra_params),
+                "prompt_version": params["prompt_version"],
+            }
+        item["params"] = params
+        frozen.append(item)
+    validate_assertions(frozen)
+    return frozen
 
 
 def _get_path(value: Any, path: str) -> Any:
@@ -113,14 +191,9 @@ def _outcome(
     }
 
 
-JudgeFn = Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]]
-
-
 def evaluate_assertions(
     assertions: list[dict[str, Any]],
     evidence: dict[str, Any],
-    *,
-    judge_fn: JudgeFn | None = None,
 ) -> list[dict[str, Any]]:
     """Evaluate validated assertions against finished-run evidence.
 
@@ -136,12 +209,127 @@ def evaluate_assertions(
         atype = assertion["type"]
         params = assertion.get("params", {})
         label = assertion.get("label")
-        evaluator = _EVALUATORS[atype]
         if atype == "llm_judge":
-            outcomes.append(evaluator(params, evidence, label, judge_fn))
+            outcomes.append(_pending_judge_outcome(params, evidence, label))
         else:
-            outcomes.append(evaluator(params, evidence, label))
+            outcome = _EVALUATORS[atype](params, evidence, label)
+            sequences = set(outcome["evidence_sequences"])
+            outcome["evidence_references"] = [
+                reference
+                for call in evidence.get("tool_calls", [])
+                if call.get("sequence") in sequences
+                for reference in call.get("journal_references", [])
+            ]
+            outcomes.append(outcome)
     return outcomes
+
+
+AsyncJudgeFn = Callable[[dict[str, Any], dict[str, Any]], Awaitable[dict[str, Any]]]
+
+
+async def evaluate_assertions_async(
+    assertions: list[dict[str, Any]],
+    evidence: dict[str, Any],
+    *,
+    judge_fn: AsyncJudgeFn,
+) -> list[dict[str, Any]]:
+    """Evaluate deterministic checks plus configured semantic observations."""
+    validate_assertions(assertions)
+    outcomes = []
+    for assertion in assertions:
+        params = assertion.get("params", {})
+        if assertion["type"] == "llm_judge":
+            outcomes.append(await judge_fn(params, evidence))
+        else:
+            outcomes.extend(evaluate_assertions([assertion], evidence))
+    return outcomes
+
+
+def _pending_judge_outcome(params, evidence, label):
+    snapshot = params.get("judge_snapshot") or {}
+    return {
+        **_outcome(
+            "llm_judge", "llm_judge", True, label=label,
+            expected=f"score >= {params['threshold']}", actual="pending",
+            detail="semantic judge pending durable evaluation",
+        ),
+        "authoritative": False,
+        "nondeterministic": True,
+        "judge_snapshot": redact_value(snapshot),
+        "judge_rubric": redact_value(params["rubric"]),
+        "judge_threshold": params["threshold"],
+    }
+
+
+async def execute_semantic_judge(session, params: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
+    """Run a frozen-profile semantic judge over redacted terminal evidence."""
+    from src.services.agent_evaluations.simulator_models import canonical_hash
+    from src.services.llm import LLMMessage
+    from src.services.llm.factory import get_llm_config
+    from src.services.llm.pydantic_client import PydanticAIClient
+
+    snapshot = dict(params["judge_snapshot"])
+    evidence_for_judge = redact_value(evidence)
+    try:
+        profile_id = UUID(str(snapshot["profile_id"]))
+        config = await get_llm_config(session, profile_id=profile_id)
+        for field in (
+            "provider", "model", "endpoint", "openai_transport",
+            "anthropic_prompt_cache_supported", "default_max_tokens", "extra_params",
+        ):
+            if getattr(config, field) != snapshot.get(field):
+                raise ValueError("configured judge no longer matches frozen snapshot")
+        # Construct from the configuration just checked. A second profile
+        # read could race an edit and silently use different judge settings.
+        client = PydanticAIClient(config)
+        response = await client.complete(
+            [
+                LLMMessage(
+                    role="system",
+                    content=(
+                        "Evaluate the rubric against the redacted evidence. "
+                        "Return JSON only: {\"score\": number 0..1, \"rationale\": string}."
+                    ),
+                ),
+                LLMMessage(
+                    role="user",
+                    content=json.dumps(
+                        {"rubric": params["rubric"], "evidence": evidence_for_judge},
+                        default=str,
+                    ),
+                ),
+            ],
+            model=snapshot["model"],
+        )
+        verdict = json.loads(response.content or "{}")
+        score = float(verdict["score"])
+        if not 0 <= score <= 1:
+            raise ValueError("judge score must be between 0 and 1")
+        detail = str(verdict.get("rationale") or "")
+        usage = {
+            "input_tokens": response.input_tokens,
+            "output_tokens": response.output_tokens,
+            "cost_usd": str(response.provider_cost) if response.provider_cost is not None else None,
+        }
+        passed = score >= float(params["threshold"])
+    except Exception as exc:
+        score, detail, usage, passed = None, str(exc), {}, False
+    return {
+        **_outcome(
+            "llm_judge", "llm_judge", passed,
+            expected=f"score >= {params['threshold']}", actual=score, detail=detail,
+        ),
+        "authoritative": False,
+        "nondeterministic": True,
+        "judge_snapshot": redact_value(snapshot),
+        # Preserve the exact redacted input alongside its hash. This is the
+        # reasoning-independent evidence an operator can audit later.
+        "judge_evidence": evidence_for_judge,
+        "judge_rubric": redact_value(params["rubric"]),
+        "judge_threshold": params["threshold"],
+        "judge_usage": usage,
+        "evidence_hash": canonical_hash(evidence_for_judge),
+    }
 
 
 def _ev_terminal_status(params, evidence, label):
@@ -180,7 +368,10 @@ def _ev_output_path(params, evidence, label):
         passed = actual == params["equals"]
         expected: Any = params["equals"]
     elif "contains" in params:
-        passed = params["contains"] in (actual or [])
+        try:
+            passed = isinstance(actual, (str, list, dict)) and params["contains"] in actual
+        except TypeError:
+            passed = False
         expected = params["contains"]
     else:
         passed = actual is not None
@@ -307,7 +498,7 @@ def _ev_delegation_tree(params, evidence, label):
             actual=f"{len(children)} children",
         )
     if "agents" in params:
-        actual_agents = sorted(c.get("agent_name") for c in children)
+        actual_agents = sorted(str(c.get("agent_name") or "") for c in children)
         passed = actual_agents == sorted(params["agents"])
         return _outcome(
             "delegation_tree", "delegation_tree", passed, label=label,
@@ -348,31 +539,6 @@ def _ev_no_real_tools(params, evidence, label):
     )
 
 
-def _ev_llm_judge(params, evidence, label, judge_fn):
-    if judge_fn is None:
-        return _outcome(
-            "llm_judge", "llm_judge", False, label=label,
-            expected=f"score >= {params['threshold']}",
-            actual="judge not configured",
-            detail="nondeterministic: llm_judge requires an explicit judge",
-        )
-    verdict = judge_fn(params, evidence)
-    score = verdict.get("score")
-    passed = score is not None and float(score) >= float(params["threshold"])
-    return {
-        **_outcome(
-            "llm_judge", "llm_judge", passed, label=label,
-            expected=f"score >= {params['threshold']} (nondeterministic)",
-            actual=score,
-            detail=verdict.get("rationale"),
-        ),
-        "judge_model": params["model"],
-        "judge_prompt_version": params["prompt_version"],
-        "judge_usage": verdict.get("usage", {}),
-        "nondeterministic": True,
-    }
-
-
 _EVALUATORS = {
     "terminal_status": _ev_terminal_status,
     "output_schema": _ev_output_schema,
@@ -390,5 +556,4 @@ _EVALUATORS = {
     "max_cost_usd": _budget_checker("cost_usd", "max_cost_usd"),
     "max_latency_ms": _budget_checker("latency_ms", "max_latency_ms"),
     "no_real_tools": _ev_no_real_tools,
-    "llm_judge": _ev_llm_judge,
 }

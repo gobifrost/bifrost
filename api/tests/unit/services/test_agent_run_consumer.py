@@ -16,6 +16,8 @@ from src.models.contracts.agents import ChatStreamChunk
 from src.models.enums import MessageRole
 from src.models.orm.agents import Conversation
 from src.models.orm.agent_runs import AgentRun
+from src.services.execution import agent_run_service
+from src.services.execution.agent_run_service import enqueue_agent_run
 
 
 class FakeRedisCtx:
@@ -55,6 +57,9 @@ class FakeLateExecutor:
         }
 
     async def flush_to_db(self, db):
+        return None
+
+    async def recover_durable_usage(self, *, agent, run_id):
         return None
 
 
@@ -130,9 +135,21 @@ async def test_missing_snapshot_and_context_fails_closed(consumer):
     redis_mock = AsyncMock()
     redis_mock.get.return_value = None
 
-    with patch(
-        "src.jobs.consumers.agent_run.get_redis",
-        return_value=FakeRedisCtx(redis_mock),
+    async def terminalize(_session, _run_id, status, *, error=None, **_kwargs):
+        queued_run.status = status
+        queued_run.error = error
+        queued_run.completed_at = datetime.now(timezone.utc)
+        return queued_run
+
+    with (
+        patch(
+            "src.jobs.consumers.agent_run.get_redis",
+            return_value=FakeRedisCtx(redis_mock),
+        ),
+        patch(
+            "src.jobs.consumers.agent_run.run_store.terminalize_unleased",
+            new=AsyncMock(side_effect=terminalize),
+        ),
     ):
         await consumer.process_message({"run_id": run_id})
 
@@ -180,6 +197,11 @@ async def test_agent_not_found_returns_early(consumer):
     claimed.lease_token = "tok-1"
     claimed.attempt = 1
 
+    async def terminalize(_session, _run_id, status, *, error=None, **_kwargs):
+        queued_run.status = status
+        queued_run.error = error
+        return queued_run
+
     with (
         patch(
             "src.jobs.consumers.agent_run.get_redis",
@@ -188,6 +210,10 @@ async def test_agent_not_found_returns_early(consumer):
         patch(
             "src.jobs.consumers.agent_run.run_store.claim_run",
             new=AsyncMock(return_value=claimed),
+        ),
+        patch(
+            "src.jobs.consumers.agent_run.run_store.terminalize_unleased",
+            new=AsyncMock(side_effect=terminalize),
         ),
     ):
         await consumer.process_message({"run_id": run_id})
@@ -214,9 +240,21 @@ async def test_pre_cancel_updates_existing_queued_run(consumer):
     redis_mock = AsyncMock()
     redis_mock.get.return_value = "1"
 
-    with patch(
-        "src.jobs.consumers.agent_run.get_redis",
-        return_value=FakeRedisCtx(redis_mock),
+    async def terminalize(_session, _run_id, status, *, error=None, **_kwargs):
+        queued_run.status = status
+        queued_run.error = error
+        queued_run.completed_at = datetime.now(timezone.utc)
+        return queued_run
+
+    with (
+        patch(
+            "src.jobs.consumers.agent_run.get_redis",
+            return_value=FakeRedisCtx(redis_mock),
+        ),
+        patch(
+            "src.jobs.consumers.agent_run.run_store.terminalize_unleased",
+            new=AsyncMock(side_effect=terminalize),
+        ),
     ):
         await consumer.process_message({"run_id": run_id})
 
@@ -322,6 +360,19 @@ class FakeSnapshotExecutor:
     async def flush_to_db(self, db):
         return None
 
+    async def recover_durable_usage(self, *, agent, run_id):
+        return None
+
+
+class FakeSyntheticSnapshotExecutor(FakeSnapshotExecutor):
+    """Snapshot stub that proves the consumer attached the persisted router."""
+
+    loaded_router = None
+
+    async def run(self, **kwargs):
+        type(self).loaded_router = getattr(self, "_synthetic_router", None)
+        return await super().run(**kwargs)
+
 
 @pytest.mark.asyncio
 async def test_executes_from_postgres_after_redis_loss(
@@ -390,6 +441,296 @@ async def test_executes_from_postgres_after_redis_loss(
     assert refreshed.output == {"text": "executed from snapshot"}
     sync_payload = sync_mock.await_args.args[1]
     assert sync_payload["status"] == "completed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    (
+        "is_superuser",
+        "is_external",
+        "is_provider_org",
+        "roles",
+        "is_platform_admin",
+    ),
+    [
+        (False, False, True, [], False),
+        (False, True, False, [], False),
+        (True, False, False, [], True),
+        (False, False, False, ["Support"], False),
+        (False, False, False, ["Platform Admin"], True),
+    ],
+    ids=("provider-org", "external", "superuser", "roles", "role-admin"),
+)
+async def test_enqueue_to_consumer_preserves_trusted_caller_authorization(
+    consumer,
+    db_session,
+    async_session_factory,
+    seed_agent,
+    is_superuser,
+    is_external,
+    is_provider_org,
+    roles,
+    is_platform_admin,
+):
+    """The queue nudge cannot erase caller authorization facts."""
+    caller_id = uuid4()
+    # enqueue_agent_run opens its own session, so make the seeded FK visible.
+    await db_session.commit()
+    snapshot = {
+        "format_version": 1,
+        "system_prompt": "Pinned prompt.",
+        "model": {"profile_id": None, "provider": "test", "model": "test"},
+        "tools": [],
+        "delegated_agents": [],
+        "system_tools": [],
+        "limits": {},
+    }
+    with (
+        patch.object(
+            agent_run_service,
+            "get_session_factory",
+            return_value=async_session_factory,
+        ),
+        patch.object(agent_run_service, "publish_message", AsyncMock()),
+        patch(
+            "src.services.agent_runtime.execution_snapshot.snapshot_agent",
+            new=AsyncMock(return_value=snapshot),
+        ),
+    ):
+        run_id = await enqueue_agent_run(
+            agent_id=str(seed_agent.id),
+            trigger_type="api",
+            input_data={"task": "preserve authorization"},
+            org_id=None,
+            caller_user_id=str(caller_id),
+            caller_email="caller@example.test",
+            caller_name="Caller",
+            caller_is_superuser=is_superuser,
+            caller_is_platform_admin=is_platform_admin,
+            caller_is_external=is_external,
+            caller_is_provider_org=is_provider_org,
+            caller_roles=roles,
+        )
+
+    consumer._session_factory = async_session_factory
+    FakeSnapshotExecutor.seen_kwargs = {}
+    redis_mock = AsyncMock()
+    redis_mock.get.return_value = None
+    with (
+        patch("src.jobs.consumers.agent_run.get_redis", return_value=FakeRedisCtx(redis_mock)),
+        patch(
+            "src.services.execution.autonomous_agent_executor.AutonomousAgentExecutor",
+            FakeSnapshotExecutor,
+        ),
+        patch("src.jobs.consumers.agent_run.publish_agent_run_update", AsyncMock()),
+        patch("src.jobs.consumers.agent_run._publish_sync_result", AsyncMock()),
+        patch("src.services.execution.run_summarizer.enqueue_summarize", AsyncMock()),
+    ):
+        await consumer.process_message({"run_id": run_id})
+
+    caller = FakeSnapshotExecutor.seen_kwargs["_caller"]
+    assert caller["user_id"] == str(caller_id)
+    assert caller["is_superuser"] is is_superuser
+    assert caller["is_platform_admin"] is is_platform_admin
+    assert caller["is_external"] is is_external
+    assert caller["is_provider_org"] is is_provider_org
+    assert caller["roles"] == roles
+
+
+@pytest.mark.asyncio
+async def test_reclaims_running_expired_lease_from_run_id_nudge(
+    consumer,
+    db_session,
+    async_session_factory,
+    seed_agent,
+):
+    """Recovery nudges must reach the fenced claim, not be rejected as running."""
+    from datetime import timedelta
+
+    run_id = uuid4()
+    snapshot = {
+        "format_version": 1,
+        "system_prompt": "Pinned prompt.",
+        "model": {"profile_id": None, "provider": "test", "model": "test"},
+        "tools": [],
+        "delegated_agents": [],
+        "system_tools": [],
+        "knowledge_sources": [],
+        "limits": {},
+    }
+    db_session.add(
+        AgentRun(
+            id=run_id,
+            agent_id=seed_agent.id,
+            trigger_type="manual",
+            status="running",
+            input={"task": "recover"},
+            execution_snapshot=snapshot,
+            attempt=1,
+            lease_owner="lost-worker",
+            lease_token="expired-token",
+            lease_expires_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+        )
+    )
+    await db_session.commit()
+    consumer._session_factory = async_session_factory
+    FakeSnapshotExecutor.seen_kwargs = {}
+    redis_mock = AsyncMock()
+    redis_mock.get.return_value = None
+
+    with (
+        patch("src.jobs.consumers.agent_run.get_redis", return_value=FakeRedisCtx(redis_mock)),
+        patch(
+            "src.services.execution.autonomous_agent_executor.AutonomousAgentExecutor",
+            FakeSnapshotExecutor,
+        ),
+        patch("src.jobs.consumers.agent_run.publish_agent_run_update", AsyncMock()),
+        patch("src.jobs.consumers.agent_run._publish_sync_result", AsyncMock()),
+        patch("src.services.execution.run_summarizer.enqueue_summarize", AsyncMock()),
+    ):
+        await consumer.process_message({"run_id": str(run_id)})
+
+    refreshed = await _load_run(async_session_factory, run_id)
+    assert refreshed.status == "completed"
+    assert refreshed.attempt == 2
+
+
+@pytest.mark.asyncio
+async def test_synthetic_marker_mismatch_fails_closed(
+    consumer,
+    db_session,
+    async_session_factory,
+    seed_agent,
+):
+    """Evaluation execution may not proceed without matching durable markers."""
+    run_id = uuid4()
+    snapshot = {
+        "format_version": 1,
+        "system_prompt": "Pinned prompt.",
+        "model": {"profile_id": None, "provider": "test", "model": "test"},
+        "tools": [],
+        "delegated_agents": [],
+        "system_tools": [],
+        "knowledge_sources": [],
+        "limits": {},
+        "evaluation": {
+            "mode": "evaluation_synthetic",
+            "evaluation_only": True,
+        },
+    }
+    db_session.add(
+        AgentRun(
+            id=run_id,
+            agent_id=seed_agent.id,
+            trigger_type="evaluation_synthetic",
+            status="queued",
+            input={"task": "synthetic"},
+            execution_snapshot=snapshot,
+            correlation={"evaluation_mode": "production"},
+        )
+    )
+    await db_session.commit()
+    consumer._session_factory = async_session_factory
+    redis_mock = AsyncMock()
+    redis_mock.get.return_value = None
+
+    with (
+        patch("src.jobs.consumers.agent_run.get_redis", return_value=FakeRedisCtx(redis_mock)),
+        patch(
+            "src.services.execution.autonomous_agent_executor.AutonomousAgentExecutor",
+            FakeSnapshotExecutor,
+        ),
+        patch("src.jobs.consumers.agent_run.publish_agent_run_update", AsyncMock()),
+        patch("src.jobs.consumers.agent_run._publish_sync_result", AsyncMock()),
+    ):
+        await consumer.process_message({"run_id": str(run_id)})
+
+    refreshed = await _load_run(async_session_factory, run_id)
+    assert refreshed.status == "failed"
+    assert "marker, trigger type, and correlation disagree" in (refreshed.error or "")
+
+
+@pytest.mark.asyncio
+async def test_synthetic_run_loads_persisted_router_before_execution(
+    consumer,
+    db_session,
+    async_session_factory,
+    seed_agent,
+):
+    """A valid synthetic row loads its durable simulator, never a real router."""
+    from src.models.orm.agent_evaluations import AgentSimulationSession
+
+    run_id = uuid4()
+    simulation_id = uuid4()
+    snapshot = {
+        "format_version": 1,
+        "system_prompt": "Pinned synthetic prompt.",
+        "model": {"profile_id": None, "provider": "test", "model": "test"},
+        "tools": [],
+        "delegated_agents": [],
+        "system_tools": [],
+        "knowledge_sources": [],
+        "limits": {},
+        "evaluation": {
+            "mode": "evaluation_synthetic",
+            "evaluation_only": True,
+        },
+    }
+    correlation = {
+        "evaluation_mode": "evaluation_synthetic",
+        "evaluation_suite_id": str(uuid4()),
+        "evaluation_case_id": str(uuid4()),
+        "evaluation_execution_id": str(uuid4()),
+        "evaluation_side": "candidate",
+        "evaluation_repetition": 0,
+    }
+    db_session.add(
+        AgentRun(
+            id=run_id,
+            agent_id=seed_agent.id,
+            trigger_type="evaluation_synthetic",
+            status="queued",
+            input={"task": "synthetic"},
+            execution_snapshot=snapshot,
+            correlation=correlation,
+        )
+    )
+    await db_session.flush()
+    db_session.add(
+        AgentSimulationSession(
+            id=simulation_id,
+            case_version=1,
+            root_run_id=run_id,
+            state={},
+            fixture={},
+            tool_schemas={},
+        )
+    )
+    await db_session.commit()
+
+    consumer._session_factory = async_session_factory
+    FakeSyntheticSnapshotExecutor.loaded_router = None
+    redis_mock = AsyncMock()
+    redis_mock.get.return_value = None
+
+    with (
+        patch("src.jobs.consumers.agent_run.get_redis", return_value=FakeRedisCtx(redis_mock)),
+        patch(
+            "src.services.execution.autonomous_agent_executor.AutonomousAgentExecutor",
+            FakeSyntheticSnapshotExecutor,
+        ),
+        patch("src.jobs.consumers.agent_run.publish_agent_run_update", AsyncMock()),
+        patch("src.jobs.consumers.agent_run._publish_sync_result", AsyncMock()),
+        patch("src.services.execution.run_summarizer.enqueue_summarize", AsyncMock()),
+    ):
+        await consumer.process_message({"run_id": str(run_id)})
+
+    router = FakeSyntheticSnapshotExecutor.loaded_router
+    assert router is not None
+    assert router._simulation_session_id == simulation_id
+    assert router._run_id == run_id
+    assert router.correlation == correlation
+    assert (await _load_run(async_session_factory, run_id)).status == "completed"
 
 
 @pytest.mark.asyncio
@@ -848,10 +1189,20 @@ async def test_chat_outer_failure_publishes_terminal_error_envelope(
     publish_chat = AsyncMock()
     publish_run = AsyncMock()
 
+    async def terminalize(_session, _run_id, status, *, error=None, **_kwargs):
+        queued_run.status = status
+        queued_run.error = error
+        queued_run.completed_at = datetime.now(timezone.utc)
+        return queued_run
+
     with (
         patch("src.jobs.consumers.agent_run.get_redis", return_value=FakeRedisCtx(redis_mock)),
         patch("src.jobs.consumers.agent_run.publish_chat_run_event", publish_chat),
         patch("src.jobs.consumers.agent_run.publish_agent_run_update", publish_run),
+        patch(
+            "src.jobs.consumers.agent_run.run_store.terminalize_unleased",
+            new=AsyncMock(side_effect=terminalize),
+        ),
         patch.object(
             consumer,
             "_process_chat_run",

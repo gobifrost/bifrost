@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
@@ -12,7 +13,7 @@ from sqlalchemy import delete
 from src.jobs.schedulers.agent_completion_events import (
     publish_pending_agent_completions,
 )
-from src.models.orm.agent_runs import AgentRun
+from src.models.orm.agent_runs import AgentRun, AgentRunJournalEntry
 from src.services.events import builtins
 from src.services.events.registry import CURATED_TOPICS
 
@@ -43,9 +44,9 @@ class TestTopicMapping:
         assert builtins.agent_completion_topic("completed") == "agent.completed"
         assert builtins.agent_completion_topic("failed") == "agent.failed"
         assert builtins.agent_completion_topic("cancelled") == "agent.cancelled"
-        assert builtins.agent_completion_topic("timeout") == "agent.timeout"
+        assert builtins.agent_completion_topic("timeout") == "agent.timed_out"
         assert builtins.agent_completion_topic("contract_failed") == (
-            "agent.contract_failed"
+            "agent.failed"
         )
         assert builtins.agent_completion_topic("budget_exceeded") == "agent.failed"
         assert builtins.agent_completion_topic("weird") == "agent.failed"
@@ -56,23 +57,23 @@ class TestTopicMapping:
             "agent.completed",
             "agent.failed",
             "agent.cancelled",
-            "agent.timeout",
-            "agent.contract_failed",
+            "agent.timed_out",
+            "agent.failed",
             "workflow.completed",
         } <= topics
 
 
 class TestPayloadShape:
-    def test_success_carries_output_not_error(self):
+    def test_success_carries_metadata_without_output_or_error(self):
         topic, body = builtins.agent_completion_payload(_run())
         assert topic == "agent.completed"
         assert body["run"]["status"] == "completed"
-        assert body["output"] == {"text": "done"}
+        assert "output" not in body
         assert "error" not in body
         assert body["correlation"] == {"ticket_id": "7", "kind": "ticket"}
         assert body["counters"]["iterations_used"] == 3
         assert body["run"]["attempt"] == 0
-        assert body["contract"] == {"valid": None, "errors": []}
+        assert body["contract"] == {"valid": None}
 
     def test_failure_carries_structured_error_not_output(self):
         topic, body = builtins.agent_completion_payload(
@@ -80,15 +81,35 @@ class TestPayloadShape:
         )
         assert topic == "agent.failed"
         assert body["run"]["status"] == "budget_exceeded"
-        assert body["error"]["message"] == "ran out of budget"
+        assert body["error"]["message"] == "Agent run budget_exceeded."
         assert body["error"]["type"] == "budget_exceeded"
         assert "output" not in body
 
-    def test_output_is_bounded(self):
-        big = {"text": "x" * (builtins.MAX_EVENT_OUTPUT_CHARS + 100)}
-        _, body = builtins.agent_completion_payload(_run(output=big))
-        assert body["output"]["truncated"] is True
-        assert len(body["output"]["head"]) == builtins.MAX_EVENT_OUTPUT_CHARS
+    def test_event_excludes_output_and_validation_values(self):
+        _, body = builtins.agent_completion_payload(
+            _run(output={"secret": "do-not-publish"},
+                 contract_errors=["do-not-publish"], error="do-not-publish")
+        )
+        assert "do-not-publish" not in str(body)
+        assert "output" not in body
+
+    def test_correlation_is_bounded_and_secret_keys_are_removed(self):
+        _, body = builtins.agent_completion_payload(_run(correlation={
+            "ticket_id": "7", "api_key": "do-not-publish",
+            "authorization": "do-not-publish", "nested": {"value": "do-not-publish"},
+            "oversized": "x" * 10000,
+        }))
+        assert body["correlation"]["ticket_id"] == "7"
+        assert "do-not-publish" not in str(body)
+        assert len(str(body["correlation"])) < 2000
+
+    def test_synthetic_completion_cannot_match_production_topic(self):
+        topic, body = builtins.agent_completion_payload(_run(
+            trigger_type="evaluation_synthetic",
+            execution_snapshot={"evaluation": {"mode": "evaluation_synthetic", "evaluation_only": True}},
+        ))
+        assert topic == "agent.evaluation.completed"
+        assert body["run"]["trigger_type"] == "evaluation_synthetic"
 
     def test_payload_carries_filterable_keys(self):
         agent_id = uuid4()
@@ -124,7 +145,9 @@ class TestOutboxScanner:
     async def _seed_pending(self, async_session_factory, **overrides):
         async with async_session_factory() as session:
             run = _run(**overrides)
-            run.completion_event_pending_at = datetime.now(timezone.utc)
+            run.completion_event_pending_at = (
+                run.completion_event_pending_at or datetime.now(timezone.utc)
+            )
             session.add(run)
             await session.commit()
             return run.id
@@ -158,7 +181,7 @@ class TestOutboxScanner:
             reloaded = await self._load(async_session_factory, run_id)
             assert reloaded is not None
             assert reloaded.completion_event_emitted_at is not None
-            assert reloaded.completion_event_attempts == 0
+            assert reloaded.completion_event_attempts == 1
         finally:
             await self._cleanup(async_session_factory, run_id)
 
@@ -186,6 +209,96 @@ class TestOutboxScanner:
             assert emit.await_count >= 1
         finally:
             await self._cleanup(async_session_factory, run_id)
+
+    @asyncio_mark
+    async def test_failed_completion_does_not_starve_later_runs(self, async_session_factory):
+        failed_id = await self._seed_pending(
+            async_session_factory,
+            completion_event_pending_at=datetime(2000, 1, 1, tzinfo=timezone.utc),
+        )
+        later_id = await self._seed_pending(
+            async_session_factory,
+            completion_event_pending_at=datetime(2001, 1, 1, tzinfo=timezone.utc),
+        )
+
+        async def emit(topic, body, **kwargs):
+            if body["run"]["id"] == str(failed_id):
+                raise RuntimeError("This completion cannot be delivered yet")
+
+        try:
+            with patch("src.services.events.emit_event", side_effect=emit):
+                await publish_pending_agent_completions(batch_size=1)
+                await publish_pending_agent_completions(batch_size=1)
+            later = await self._load(async_session_factory, later_id)
+            assert later.completion_event_emitted_at is not None
+        finally:
+            await self._cleanup(async_session_factory, failed_id)
+            await self._cleanup(async_session_factory, later_id)
+
+    @asyncio_mark
+    async def test_overlapping_scanner_keeps_claim_until_emit_commits(
+        self, async_session_factory
+    ):
+        run_id = await self._seed_pending(async_session_factory)
+        emitting = asyncio.Event()
+        release = asyncio.Event()
+        calls = 0
+
+        async def emit(topic, body, **kwargs):
+            nonlocal calls
+            if body["run"]["id"] == str(run_id):
+                calls += 1
+                if calls == 1:
+                    emitting.set()
+                    await release.wait()
+
+        task = None
+        try:
+            with patch("src.services.events.emit_event", side_effect=emit):
+                task = asyncio.create_task(publish_pending_agent_completions())
+                await asyncio.wait_for(emitting.wait(), timeout=5)
+                await publish_pending_agent_completions()
+                assert calls == 1
+                release.set()
+                await task
+        finally:
+            release.set()
+            if task is not None:
+                await task
+            await self._cleanup(async_session_factory, run_id)
+
+    @asyncio_mark
+    async def test_scanner_recovers_parent_wake_after_child_terminal_commit(
+        self, async_session_factory
+    ):
+        async with async_session_factory() as db:
+            parent = _run(status="waiting_child")
+            db.add(parent)
+            await db.flush()
+            child = _run(parent_run_id=parent.id)
+            child.completion_event_pending_at = datetime.now(timezone.utc)
+            db.add(child)
+            await db.flush()
+            db.add(AgentRunJournalEntry(
+                run_id=parent.id, sequence=1, kind="delegation",
+                data={"child_run_id": str(child.id), "tool_call_id": "child-call"},
+            ))
+            await db.commit()
+            parent_id, child_id = parent.id, child.id
+        try:
+            with (
+                patch("src.services.events.emit_event", new=AsyncMock()),
+                patch("src.jobs.rabbitmq.publish_message", new=AsyncMock()),
+            ):
+                await publish_pending_agent_completions()
+            parent = await self._load(async_session_factory, parent_id)
+            child = await self._load(async_session_factory, child_id)
+            assert parent.status == "running"
+            assert parent.lease_token is None
+            assert child.completion_event_emitted_at is not None
+        finally:
+            await self._cleanup(async_session_factory, child_id)
+            await self._cleanup(async_session_factory, parent_id)
 
     @asyncio_mark
     async def test_terminalization_marks_pending_in_same_transaction(

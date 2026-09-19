@@ -826,10 +826,17 @@ async def push_files(
             # dirtying the Application row, so the before_flush backstop never
             # fires for them (criterion 6). Reject the whole batch if ANY pushed
             # file lands under a solution-managed app's repo_path.
-            all_apps = (await db.execute(select(Application))).scalars().all()
+            # Independent v2 apps intentionally have no workspace source.
+            # They cannot own a repository prefix, so exclude them at query
+            # time from both the managed-prefix guard and preview compilation.
+            repo_apps = (
+                await db.execute(
+                    select(Application).where(Application.repo_path.is_not(None))
+                )
+            ).scalars().all()
             managed_prefixes = [
                 app_obj.repo_path.rstrip("/") + "/"
-                for app_obj in all_apps
+                for app_obj in repo_apps
                 if is_solution_managed(app_obj)
             ]
             blocked = sorted(
@@ -917,7 +924,7 @@ async def push_files(
 
             # Build prefix -> app mapping
             app_by_prefix: dict[str, Application] = {}
-            for app_obj in all_apps:
+            for app_obj in repo_apps:
                 prefix = app_obj.repo_path.rstrip("/") + "/"
                 app_by_prefix[prefix] = app_obj
 
@@ -936,7 +943,7 @@ async def push_files(
                 from src.services.app_compiler import AppCompilerService
 
                 compiler = AppCompilerService()
-                app_lookup = {str(a.id): a for a in all_apps}
+                app_lookup = {str(a.id): a for a in repo_apps}
                 for app_id_str, app_files in app_file_groups.items():
                     app = app_lookup.get(app_id_str)
                     if not app:

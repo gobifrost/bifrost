@@ -87,6 +87,17 @@ class TestResolveAgentTools:
         tools, id_map = await resolve_agent_tools(mock_agent, mock_session)
         assert [tool.name for tool in tools] == ["sleep_until"]
         assert id_map == {}
+        # Strict providers require every property on a tool call. The unused
+        # alternative must be representable as null, not an invented empty
+        # timestamp that the timer correctly rejects as a second input.
+        from src.services.tool_schema import validate_arguments_against_schema
+
+        issues, schema_error = validate_arguments_against_schema(
+            tools[0].parameters,
+            {"seconds": 45, "wake_at": None, "reason": "resume verification"},
+        )
+        assert schema_error is None
+        assert issues == []
 
     @pytest.mark.asyncio
     @patch("src.services.mcp_server.server.get_system_tools", return_value=[])

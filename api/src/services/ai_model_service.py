@@ -45,6 +45,7 @@ PROVIDER_DEFAULT_ENDPOINTS: dict[AIProviderKind, str] = {
 ASSIGNMENT_KEYS: tuple[AIModelAssignmentKey, ...] = (
     "primary",
     "summarization",
+    "testing",
     "tuning",
     "image_generation",
     "video_generation",

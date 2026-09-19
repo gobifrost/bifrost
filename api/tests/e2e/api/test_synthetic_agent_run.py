@@ -329,26 +329,47 @@ async def test_timer_cap_rejects_long_sleeps():
         )
 
 
-async def test_executor_sleep_resolves_deterministically_without_waiting():
-    executor = AutonomousAgentExecutor(MagicMock(), redis_client=_redis())
-    router = SimulatorToolRouter(Simulator(_fixture(), tool_schemas=_schemas()))
-    attach_synthetic(executor, router, timer_max_seconds=300)
-    result = await executor._execute_sleep(
-        ToolCallRequest(
-            id="t1", name="sleep_until",
-            arguments={"seconds": 60, "reason": "poll again soon"},
-        ),
-        _mock_agent(),
+async def test_executor_sleep_resolves_deterministically_without_waiting(
+    db_session, async_session_factory,
+):
+    from src.models.orm.agent_evaluations import AgentSimulationSession
+    from src.services.agent_evaluations.runner import PersistentSimulatorToolRouter
+
+    run = AgentRun(id=uuid4(), trigger_type="evaluation_synthetic", status="queued")
+    db_session.add(run)
+    await db_session.flush()
+    simulation = AgentSimulationSession(
+        root_run_id=run.id, run_id=run.id, case_version=1,
+        fixture=_fixture(), state=_fixture(), tool_schemas=_schemas(),
     )
-    assert result == SYNTHETIC_TIMER_FIRED_TEXT
-    with pytest.raises(Exception, match="synthetic maximum"):
-        await executor._execute_sleep(
+    db_session.add(simulation)
+    await db_session.commit()
+    try:
+        executor = AutonomousAgentExecutor(async_session_factory, redis_client=_redis())
+        router = PersistentSimulatorToolRouter(
+            async_session_factory, simulation.id, run_id=run.id, correlation={},
+        )
+        attach_synthetic(executor, router, timer_max_seconds=300)
+        result = await executor._execute_sleep(
             ToolCallRequest(
-                id="t2", name="sleep_until",
-                arguments={"seconds": 900, "reason": "long poll"},
+                id="t1", name="sleep_until",
+                arguments={"seconds": 60, "reason": "poll again soon"},
             ),
             _mock_agent(),
         )
+        assert result == SYNTHETIC_TIMER_FIRED_TEXT
+        with pytest.raises(Exception, match="synthetic maximum"):
+            await executor._execute_sleep(
+                ToolCallRequest(
+                    id="t2", name="sleep_until",
+                    arguments={"seconds": 900, "reason": "long poll"},
+                ),
+                _mock_agent(),
+            )
+    finally:
+        await db_session.delete(simulation)
+        await db_session.delete(run)
+        await db_session.commit()
 
 
 # -----------------------------------------------------------------------------

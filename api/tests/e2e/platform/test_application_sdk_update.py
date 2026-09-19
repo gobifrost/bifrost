@@ -7,7 +7,8 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import select
+import pytest_asyncio
+from sqlalchemy import delete, select
 
 from src.models.orm.applications import Application
 from src.models.orm.platform_jobs import PlatformJob
@@ -15,6 +16,32 @@ from src.models.orm.solutions import Solution
 from src.services.application_source_artifact import ApplicationSourceArtifactStorage
 
 pytestmark = pytest.mark.e2e
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _cleanup_sdk_update_rows(db_session):
+    """Restore the shared E2E DB after SDK-update tests commit seed rows.
+
+    These tests intentionally use durable PlatformJobs and therefore commit
+    their seeded standalone apps.  Leaving those apps behind lets later MCP
+    tests encounter unrelated rows with ``repo_path=None``.
+    """
+    existing_app_ids = set(await db_session.scalars(select(Application.id)))
+    existing_solution_ids = set(await db_session.scalars(select(Solution.id)))
+    existing_job_ids = set(await db_session.scalars(select(PlatformJob.id)))
+    try:
+        yield
+    finally:
+        await db_session.execute(
+            delete(PlatformJob).where(PlatformJob.id.not_in(existing_job_ids))
+        )
+        await db_session.execute(
+            delete(Application).where(Application.id.not_in(existing_app_ids))
+        )
+        await db_session.execute(
+            delete(Solution).where(Solution.id.not_in(existing_solution_ids))
+        )
+        await db_session.commit()
 
 
 async def _seed_app(

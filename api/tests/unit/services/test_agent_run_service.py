@@ -98,6 +98,41 @@ class TestEnqueueAgentRun:
 
     @pytest.mark.asyncio
     @patch("src.services.execution.agent_run_service.publish_message")
+    async def test_enqueue_persists_only_trusted_caller_authorization_context(
+        self, mock_publish, db_session, snapshot_agent
+    ):
+        user_id = str(uuid4())
+        await enqueue_agent_run(
+            agent_id=str(uuid4()),
+            trigger_type="chat",
+            org_id=str(uuid4()),
+            caller_user_id=user_id,
+            caller_email="operator@example.test",
+            caller_name="Operator",
+            caller_is_superuser=True,
+            caller_is_platform_admin=True,
+            caller_is_external=True,
+            caller_is_provider_org=True,
+            caller_roles=["Platform Admin", "Support"],
+            caller_context={"is_superuser": False, "token": "untrusted"},
+        )
+
+        queued_run = db_session.add.call_args.args[0]
+        assert queued_run.caller_auth_context == {
+            "user_id": user_id,
+            "email": "operator@example.test",
+            "name": "Operator",
+            "organization_id": str(queued_run.org_id),
+            "is_superuser": True,
+            "is_platform_admin": True,
+            "is_external": True,
+            "is_provider_org": True,
+            "roles": ["Platform Admin", "Support"],
+        }
+        assert "token" not in queued_run.caller_auth_context
+
+    @pytest.mark.asyncio
+    @patch("src.services.execution.agent_run_service.publish_message")
     async def test_runs_lifecycle_hook_before_queue_publish(
         self, mock_publish, db_session, snapshot_agent
     ):

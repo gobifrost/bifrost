@@ -13,6 +13,7 @@ AIProviderKind = Literal["openai", "anthropic", "google", "openrouter", "openai_
 AIModelAssignmentKey = Literal[
     "primary",
     "summarization",
+    "testing",
     "tuning",
     "image_generation",
     "video_generation",

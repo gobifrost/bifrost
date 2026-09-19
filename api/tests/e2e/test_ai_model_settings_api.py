@@ -21,7 +21,9 @@ def test_failed_provider_verification_does_not_save(e2e_client, platform_admin):
     assert all(connection["name"] != "Unsaved Provider" for connection in connections)
 
 
-def test_ai_model_settings_crud_and_assignment(e2e_client, platform_admin):
+def test_ai_model_settings_crud_and_assignment(
+    e2e_client, platform_admin, llm_config_cleanup
+):
     existing_profiles_resp = e2e_client.get(
         "/api/admin/ai/profiles",
         headers=platform_admin.headers,
@@ -78,13 +80,17 @@ def test_ai_model_settings_crud_and_assignment(e2e_client, platform_admin):
         assert seeded_assignment_keys == {
             "primary",
             "summarization",
+            "testing",
             "tuning",
             "image_generation",
             "video_generation",
             "chat_default",
         }
     else:
-        assert seeded_assignment_keys == set()
+        # The fixture clears assignments while preserving pre-existing
+        # profiles. Creating an enabled profile then establishes the missing
+        # chat default even though it is not the platform's first profile.
+        assert seeded_assignment_keys == {"chat_default"}
     previous_assignment_resp = e2e_client.put(
         "/api/admin/ai/assignments/chat_default",
         headers=platform_admin.headers,
@@ -137,7 +143,9 @@ def test_ai_model_settings_crud_and_assignment(e2e_client, platform_admin):
     assert "model profiles" in delete_connection_in_use_resp.text
 
 
-def test_ai_model_profiles_can_be_merged(e2e_client, platform_admin):
+def test_ai_model_profiles_can_be_merged(
+    e2e_client, platform_admin, llm_config_cleanup
+):
     connection_resp = e2e_client.post(
         "/api/admin/ai/connections",
         headers=platform_admin.headers,
@@ -168,12 +176,15 @@ def test_ai_model_profiles_can_be_merged(e2e_client, platform_admin):
         assert profile_resp.status_code == 201, profile_resp.text
         profiles.append(profile_resp.json())
 
-    assignment_resp = e2e_client.put(
-        "/api/admin/ai/assignments/primary",
-        headers=platform_admin.headers,
-        json={"profile_id": profiles[1]["id"]},
-    )
-    assert assignment_resp.status_code == 200, assignment_resp.text
+    # Own both assignments explicitly. Whether a first-profile default was
+    # seeded depends on pre-existing profiles, not on the merge contract.
+    for assignment_key in ("primary", "chat_default"):
+        assignment_resp = e2e_client.put(
+            f"/api/admin/ai/assignments/{assignment_key}",
+            headers=platform_admin.headers,
+            json={"profile_id": profiles[1]["id"]},
+        )
+        assert assignment_resp.status_code == 200, assignment_resp.text
 
     merge_resp = e2e_client.post(
         "/api/admin/ai/profiles/merge",
@@ -190,7 +201,7 @@ def test_ai_model_profiles_can_be_merged(e2e_client, platform_admin):
     assert result["profile"]["enabled_for_chat"] is True
     assert result["merged_profile_ids"] == [profiles[1]["id"]]
     assert result["reassigned_agent_count"] == 0
-    assert result["reassigned_assignment_keys"] == ["primary"]
+    assert result["reassigned_assignment_keys"] == ["chat_default", "primary"]
 
     remaining_profiles = e2e_client.get(
         "/api/admin/ai/profiles",

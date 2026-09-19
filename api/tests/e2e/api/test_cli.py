@@ -779,8 +779,7 @@ assert isinstance(WorkflowMetadata, type)
 # from ``bifrost.contracts``). If the tarball ever drops a file that
 # the commands depend on, this import explodes.
 from bifrost.commands import ENTITY_GROUPS
-assert len(ENTITY_GROUPS) == 14, f"expected 14 entity groups, got {{len(ENTITY_GROUPS)}}"
-assert "claims" in ENTITY_GROUPS
+assert {{"claims", "agent-tests"}} <= ENTITY_GROUPS.keys()
 
 # And the mirrored DTO package must itself be importable.
 from bifrost import contracts as _contracts

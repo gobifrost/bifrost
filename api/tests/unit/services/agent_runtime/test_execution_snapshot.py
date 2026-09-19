@@ -41,6 +41,11 @@ def test_build_snapshot_pins_prompt_model_tools_and_limits():
         llm_provider="openai",
         llm_model="gpt-5",
         llm_max_tokens=512,
+        llm_endpoint="https://gateway.example/v1",
+        llm_openai_transport="responses",
+        llm_anthropic_prompt_cache_supported=True,
+        llm_default_max_tokens=2048,
+        llm_extra_params={"reasoning_effort": "high"},
         tool_definitions=[
             ToolDefinition(
                 name="lookup",
@@ -51,9 +56,21 @@ def test_build_snapshot_pins_prompt_model_tools_and_limits():
         tool_id_map={"lookup": tool_id},
     )
     assert snapshot["format_version"] == EXECUTION_SNAPSHOT_VERSION
+    assert snapshot["organization_id"] is None
     assert snapshot["system_prompt"] == "Pinned instructions."
     assert snapshot["model"]["model"] == "gpt-5"
     assert snapshot["model"]["llm_max_tokens"] == 512
+    assert snapshot["model"] == {
+        "profile_id": None,
+        "provider": "openai",
+        "model": "gpt-5",
+        "llm_max_tokens": 512,
+        "endpoint": "https://gateway.example/v1",
+        "openai_transport": "responses",
+        "anthropic_prompt_cache_supported": True,
+        "default_max_tokens": 2048,
+        "extra_params": {"reasoning_effort": "high"},
+    }
     assert snapshot["tools"][0]["target_id"] == str(tool_id)
     assert snapshot["limits"] == {
         "max_iterations": 25,

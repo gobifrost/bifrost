@@ -305,28 +305,26 @@ async def candidates_get(
 
 @agent_tests_group.command("designer-drafts")
 @click.argument("suite_id")
-@click.option("--designer-output", "designer_raw", required=True, help="Designer output JSON or @file.")
-@click.option("--tool-schemas", "schemas_raw", required=True, help="Tool schemas object JSON or @file.")
+@click.option("--goal", required=True, help="What the generated cases should cover.")
+@click.option("--count", "requested_count", type=click.IntRange(1, 10), default=4)
+@click.option("--historical-run", "historical_run_ids", multiple=True, help="Authorized historical AgentRun UUID.")
 @click.pass_context
 @pass_resolver
 @run_async
 async def designer_drafts(
     ctx: click.Context,
     suite_id: str,
-    designer_raw: str,
-    schemas_raw: str,
+    goal: str,
+    requested_count: int,
+    historical_run_ids: tuple[str, ...],
     *,
     client: BifrostClient,
     resolver: RefResolver,
 ) -> None:
-    """Validate designer output and persist drafts (never auto-approve)."""
+    """Start the server-authorized Test Designer AgentRun."""
     del resolver
-    body = {
-        "designer_output": _load_any_value(designer_raw),
-        "tool_schemas": load_dict_value(schemas_raw) or {},
-        "allowed_run_ids": [],
-        "historical_runs": [],
-    }
+    body = {"suite_goal": goal, "requested_count": requested_count,
+            "historical_run_ids": list(historical_run_ids)}
     response = await client.post(
         f"{_BASE}/suites/{suite_id}/designer/drafts", json=body
     )

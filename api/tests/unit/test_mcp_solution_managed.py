@@ -294,11 +294,25 @@ async def test_mcp_push_files_delete_sweep_allows_unmanaged(db_session, monkeypa
 
 
 async def test_mcp_push_files_allows_unmanaged(db_session, monkeypatch):
-    """An ad-hoc (non-managed) app's files still push — the guard is a no-op for them."""
+    """Standalone apps without repo source do not block an unmanaged push."""
+    from src.models.orm.applications import Application
     from src.services.app_storage import AppStorageService
     from src.services.file_storage import FileStorageService
     from src.services.mcp_server.tools import apps as mcp_apps
 
+    # Independent V2 apps deliberately have no ``repo_path``. Their presence
+    # must not make the repository-prefix scan crash or affect its guard.
+    db_session.add(
+        Application(
+            id=uuid.uuid4(),
+            name=f"standalone_{uuid.uuid4().hex[:8]}",
+            slug=f"standalone-{uuid.uuid4().hex[:8]}",
+            repo_path=None,
+            app_model="standalone_v2",
+            created_by="system",
+        )
+    )
+    await db_session.flush()
     monkeypatch.setattr(mcp_apps, "get_tool_db", _fake_db_cm(db_session))
 
     wrote = {"repo": False}

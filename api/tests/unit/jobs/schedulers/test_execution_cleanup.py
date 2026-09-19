@@ -197,6 +197,65 @@ class TestExecutionCleanupAgentRuns:
 
 
 class TestExecutionCleanupLeaseRecovery:
+    async def test_fast_recovery_retries_publish_without_losing_due_run(
+        self, db_session, async_session_factory, seed_agent, monkeypatch
+    ) -> None:
+        from sqlalchemy.ext.asyncio import async_sessionmaker
+
+        async_session_factory = async_sessionmaker(
+            db_session.bind, expire_on_commit=False, autoflush=False,
+        )
+        _patch_cleanup_dependencies(monkeypatch, async_session_factory)
+        now = datetime.now(timezone.utc)
+        run = AgentRun(
+            id=uuid4(), agent_id=seed_agent.id, trigger_type="api",
+            status="sleeping", execution_snapshot={"format_version": 1},
+            created_at=now - timedelta(minutes=1), started_at=now - timedelta(minutes=1),
+            wake_at=now - timedelta(seconds=1),
+        )
+        db_session.add(run)
+        await db_session.commit()
+        try:
+            cleanup.publish_message.side_effect = RuntimeError("queue unavailable")
+            first = await cleanup.recover_durable_agent_runs()
+            assert first["publish_errors"] == 1
+            reloaded = await _load_run(async_session_factory, run.id)
+            assert reloaded.status == "running"
+            assert reloaded.lease_token is None
+
+            cleanup.publish_message.side_effect = None
+            cleanup.publish_message.reset_mock()
+            second = await cleanup.recover_durable_agent_runs()
+            assert second["woken"] == 0
+            assert second["published"] == 1
+            assert self._published_ids() == [str(run.id)]
+        finally:
+            await self._delete_run(async_session_factory, run.id)
+
+    async def test_durable_sleep_age_does_not_consume_active_timeout(
+        self, db_session, async_session_factory, seed_agent, monkeypatch
+    ) -> None:
+        _patch_cleanup_dependencies(monkeypatch, async_session_factory)
+        now = datetime.now(timezone.utc)
+        seed_agent.max_run_timeout = 60
+        run = AgentRun(
+            id=uuid4(), agent_id=seed_agent.id, trigger_type="api",
+            status="sleeping", execution_snapshot={"format_version": 1},
+            created_at=now - timedelta(days=1),
+            started_at=now - timedelta(days=1),
+            wake_at=now - timedelta(seconds=1),
+        )
+        db_session.add(run)
+        await db_session.commit()
+        try:
+            await cleanup.cleanup_stuck_executions()
+            reloaded = await _load_run(async_session_factory, run.id)
+            assert reloaded.status == "running"
+            assert reloaded.completed_at is None
+            assert str(run.id) in self._published_ids()
+        finally:
+            await self._delete_run(async_session_factory, run.id)
+
     async def _delete_run(self, async_session_factory, run_id):
         from sqlalchemy import delete as sa_delete
 
@@ -276,9 +335,15 @@ class TestExecutionCleanupLeaseRecovery:
         finally:
             await self._delete_run(async_session_factory, run.id)
 
+    @pytest.mark.parametrize("autoflush", [False, True])
     async def test_due_sleeping_run_is_woken_and_republished(
-        self, db_session, async_session_factory, seed_agent, monkeypatch
+        self, db_session, async_session_factory, seed_agent, monkeypatch, autoflush
     ) -> None:
+        from sqlalchemy.ext.asyncio import async_sessionmaker
+
+        async_session_factory = async_sessionmaker(
+            db_session.bind, expire_on_commit=False, autoflush=autoflush,
+        )
         _patch_cleanup_dependencies(monkeypatch, async_session_factory)
         now = datetime.now(timezone.utc)
         run = AgentRun(

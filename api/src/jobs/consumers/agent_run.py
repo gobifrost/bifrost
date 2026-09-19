@@ -115,6 +115,23 @@ def _caller_to_principal(caller: dict[str, Any]) -> UserPrincipal:
     )
 
 
+def _durable_caller_context(agent_run: AgentRun) -> dict[str, Any]:
+    """Reconstruct a caller only from the admission-time auth snapshot.
+
+    Legacy rows did not persist privilege facts.  They may still execute as
+    autonomous work, but a caller-bearing row cannot be silently downgraded to
+    false/empty authorization after a queue delay or recovery.
+    """
+    stored = agent_run.caller_auth_context
+    if stored is not None:
+        return dict(stored)
+    if agent_run.caller_user_id is not None or agent_run.caller_email is not None:
+        raise ValueError(
+            "AgentRun predates durable caller authorization context; re-enqueue the work."
+        )
+    return {}
+
+
 async def _generate_conversation_title(
     db,
     conversation: Conversation,
@@ -178,6 +195,7 @@ class AgentRunConsumer(BaseConsumer):
         executor = None
         context: dict[str, Any] | None = None
         execution_snapshot: dict[str, Any] | None = None
+        lease_token: str | None = None
         trigger_type: str | None = body.get("trigger_type")
         sync = body.get("sync", False)
 
@@ -192,11 +210,16 @@ class AgentRunConsumer(BaseConsumer):
                     # outer join, which PostgreSQL rejects. Lock only the run
                     # row that participates in the claim/cancel race.
                     with_for_update={"of": AgentRun},
+                    populate_existing=True,
                 )
                 if agent_run is None:
                     logger.error(f"Agent run {run_id}: queued record not found")
                     return
-                if agent_run.status != "queued":
+                # A queue message is only a nudge.  A recovered, timer-woken,
+                # or child-woken run is ``running`` without a lease and must
+                # reach the atomic claim below.  Refresh under the lock so a
+                # stale identity-map instance cannot reject that claim.
+                if agent_run.status not in ("queued", "running"):
                     logger.info(
                         "Agent run %s: skipping message for status %s",
                         run_id,
@@ -216,13 +239,16 @@ class AgentRunConsumer(BaseConsumer):
                     logger.debug(
                         "Agent run %s: cancel-flag check unavailable", run_id
                     )
-                if cancelled:
+                if cancelled and agent_run.status == "queued":
                     logger.info(
                         f"Agent run {run_id}: pre-cancelled, skipping execution"
                     )
-                    agent_run.status = "cancelled"
-                    agent_run.completed_at = datetime.now(timezone.utc)
-                    await db.commit()
+                    agent_run = await run_store.terminalize_unleased(
+                        db,
+                        UUID(run_id),
+                        runtime_types.CANCELLED,
+                        allowed_statuses=frozenset({runtime_types.QUEUED}),
+                    )
                     await _publish_sync_result(
                         run_id,
                         {"output": None, "status": "cancelled", "error": None},
@@ -243,18 +269,7 @@ class AgentRunConsumer(BaseConsumer):
                     "org_id": (
                         str(agent_run.org_id) if agent_run.org_id else None
                     ),
-                    "caller": {
-                        "user_id": agent_run.caller_user_id,
-                        "email": agent_run.caller_email,
-                        "name": agent_run.caller_name,
-                        "organization_id": (
-                            str(agent_run.org_id) if agent_run.org_id else None
-                        ),
-                        "is_superuser": False,
-                        "is_external": False,
-                        "is_provider_org": False,
-                        "roles": [],
-                    },
+                    "caller": _durable_caller_context(agent_run),
                     "event_delivery_id": (
                         str(agent_run.event_delivery_id)
                         if agent_run.event_delivery_id
@@ -273,6 +288,9 @@ class AgentRunConsumer(BaseConsumer):
 
                 is_chat_trigger = trigger_type == "chat"
                 if is_chat_trigger:
+                    if agent_run.status != "queued":
+                        logger.info("Chat run %s is already %s", run_id, agent_run.status)
+                        return
                     agent_run.status = "running"
                     agent_run.started_at = datetime.now(timezone.utc)
                     await db.commit()
@@ -307,10 +325,13 @@ class AgentRunConsumer(BaseConsumer):
                 agent_id = context["agent_id"] or body.get("agent_id")
                 if agent_id is None:
                     logger.error(f"Agent run {run_id}: agent id missing for non-chat run")
-                    agent_run.status = "failed"
-                    agent_run.error = "Agent id missing"
-                    agent_run.completed_at = datetime.now(timezone.utc)
-                    await db.commit()
+                    agent_run = await run_store.terminalize_unleased(
+                        db,
+                        UUID(run_id),
+                        runtime_types.FAILED,
+                        error="Agent id missing",
+                        allowed_statuses=frozenset({runtime_types.QUEUED}),
+                    )
                     await _publish_sync_result(
                         run_id,
                         {
@@ -340,15 +361,18 @@ class AgentRunConsumer(BaseConsumer):
                         logger.error(
                             f"Agent run {run_id}: no execution snapshot"
                         )
-                        agent_run.status = "failed"
-                        agent_run.error = str(
-                            SnapshotError(
-                                "AgentRun predates durable execution snapshots; "
-                                "re-enqueue the work."
-                            )
+                        agent_run = await run_store.terminalize_unleased(
+                            db,
+                            UUID(run_id),
+                            runtime_types.FAILED,
+                            error=str(
+                                SnapshotError(
+                                    "AgentRun predates durable execution snapshots; "
+                                    "re-enqueue the work."
+                                )
+                            ),
+                            allowed_statuses=frozenset({runtime_types.QUEUED}),
                         )
-                        agent_run.completed_at = datetime.now(timezone.utc)
-                        await db.commit()
                         await _publish_sync_result(
                             run_id,
                             {
@@ -372,10 +396,13 @@ class AgentRunConsumer(BaseConsumer):
                 agent = result.scalar_one_or_none()
                 if agent is None:
                     logger.error(f"Agent run {run_id}: agent {agent_id} not found")
-                    agent_run.status = "failed"
-                    agent_run.error = "Agent no longer exists"
-                    agent_run.completed_at = datetime.now(timezone.utc)
-                    await db.commit()
+                    agent_run = await run_store.terminalize_unleased(
+                        db,
+                        UUID(run_id),
+                        runtime_types.FAILED,
+                        error="Agent no longer exists",
+                        allowed_statuses=frozenset({runtime_types.QUEUED, runtime_types.RUNNING}),
+                    )
                     await _publish_sync_result(
                         run_id,
                         {
@@ -438,6 +465,7 @@ class AgentRunConsumer(BaseConsumer):
             from src.services.agent_runtime.resume import (
                 active_seconds_used,
                 prepare_resume,
+                restore_pending_wait,
             )
 
             resume_plan, _reclaim_report, unrecoverable = await prepare_resume(
@@ -462,6 +490,47 @@ class AgentRunConsumer(BaseConsumer):
                     },
                 )
                 return
+            if resume_plan is not None and resume_plan.deferred_pending:
+                restored_wait = await restore_pending_wait(
+                    self._session_factory,
+                    UUID(run_id),
+                    lease_token,
+                    resume_plan.deferred_pending,
+                )
+                if restored_wait is not None:
+                    async with self._session_factory() as db:
+                        restored_run = await db.get(AgentRun, UUID(run_id))
+                    if restored_run is not None:
+                        await publish_agent_run_update(restored_run, agent.name)
+                    return
+                # A child/join may have terminalized while recovery was
+                # deciding whether to re-park the parent. Rebuild the plan
+                # once under the same lease before declaring an uncertain
+                # wait: completed durable results are safe to replay.
+                resume_plan, _reclaim_report, unrecoverable = await prepare_resume(
+                    self._session_factory, UUID(run_id), lease_token
+                )
+                if (
+                    unrecoverable is not None
+                    or resume_plan is None
+                    or resume_plan.deferred_pending
+                ):
+                    async with self._session_factory() as db:
+                        recovered_run = await run_store.mark_recovery_required(
+                            db,
+                            UUID(run_id),
+                            lease_token,
+                            reason="Deferred wait intent could not be restored safely.",
+                            evidence={
+                                "pending_calls": sorted(
+                                    resume_plan.deferred_pending
+                                    if resume_plan is not None
+                                    else []
+                                )
+                            },
+                        )
+                    await publish_agent_run_update(recovered_run, agent.name)
+                    return
 
             # Fresh Pydantic invocation ID for this attempt, recorded in the
             # journal. The Bifrost AgentRun ID stays the same across attempts.
@@ -534,6 +603,40 @@ class AgentRunConsumer(BaseConsumer):
                     self._session_factory,
                     redis_client=redis_for_executor,
                 )
+                # A checkpoint commits an immutable usage evidence record in
+                # the same transaction as its model boundary.  Rebuild any
+                # missing AIUsage projections before another provider request
+                # (including the no-request committed-final replay path).
+                await executor.recover_durable_usage(agent=agent, run_id=run_id)
+                from src.services.agent_runtime.execution_snapshot import (
+                    is_synthetic_snapshot,
+                )
+
+                synthetic_snapshot = is_synthetic_snapshot(execution_snapshot)
+                synthetic_trigger = trigger_type == "evaluation_synthetic"
+                synthetic_correlation = (context.get("correlation") or {}).get(
+                    "evaluation_mode"
+                ) == "evaluation_synthetic"
+                if synthetic_snapshot != synthetic_trigger or (
+                    synthetic_snapshot and not synthetic_correlation
+                ):
+                    raise RuntimeError(
+                        "Synthetic execution marker, trigger type, and correlation disagree."
+                    )
+                if synthetic_snapshot:
+                    from src.services.agent_evaluations.runner import (
+                        attach_synthetic,
+                        load_synthetic_router,
+                    )
+
+                    router = await load_synthetic_router(
+                        self._session_factory, UUID(run_id)
+                    )
+                    if router is None:
+                        raise RuntimeError(
+                            "Synthetic run has no durable simulator session."
+                        )
+                    attach_synthetic(executor, router)
 
                 # Create executor task so cancel watcher can cancel it
                 executor_task = asyncio.ensure_future(executor.run(
@@ -785,13 +888,36 @@ class AgentRunConsumer(BaseConsumer):
                             with_for_update={"of": AgentRun},
                         )
                         if run_obj:
-                            if run_obj.status == "running":
-                                run_obj.status = "failed"
-                                run_obj.error = str(e)
-                                run_obj.duration_ms = int(
-                                    (time.time() - start_time) * 1000
+                            if run_obj.status in ("running", "cancelling"):
+                                if lease_token:
+                                    agent_run = await run_store.finish_run(
+                                        db,
+                                        UUID(run_id),
+                                        lease_token,
+                                        runtime_types.FAILED,
+                                        error=str(e),
+                                        duration_ms=int(
+                                            (time.time() - start_time) * 1000
+                                        ),
+                                    )
+                                else:
+                                    agent_run = await run_store.terminalize_unleased(
+                                        db,
+                                        UUID(run_id),
+                                        runtime_types.FAILED,
+                                        error=str(e),
+                                        allowed_statuses=frozenset({runtime_types.RUNNING}),
+                                    )
+                            elif run_obj.status == runtime_types.QUEUED:
+                                agent_run = await run_store.terminalize_unleased(
+                                    db,
+                                    UUID(run_id),
+                                    runtime_types.FAILED,
+                                    error=str(e),
+                                    allowed_statuses=frozenset(
+                                        {runtime_types.QUEUED}
+                                    ),
                                 )
-                                run_obj.completed_at = datetime.now(timezone.utc)
                             else:
                                 logger.info(
                                     "Agent run %s: failure update skipped because current status is %s",
@@ -804,7 +930,14 @@ class AgentRunConsumer(BaseConsumer):
                                 await executor.flush_to_db(db)
 
                             await db.commit()
-                            agent_run = run_obj
+                            # ``finish_run`` uses a separate fenced refresh;
+                            # never publish the stale pre-terminal instance
+                            # this outer error handler originally locked.
+                            reloaded = await db.get(
+                                AgentRun, UUID(run_id), populate_existing=True
+                            )
+                            if reloaded is not None:
+                                agent_run = reloaded
                 except Exception:
                     logger.exception(f"Failed to update agent_run {run_id} after error")
 

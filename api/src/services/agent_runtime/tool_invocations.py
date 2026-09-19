@@ -9,6 +9,7 @@ their stored result, planned-but-unstarted calls execute, and calls left
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -18,6 +19,7 @@ from uuid import UUID, uuid5, NAMESPACE_URL
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from src.core.secret_string import SecretString, redact_secrets
 from src.models.orm.agent_runs import AgentRun, AgentToolInvocation
 from src.services.agent_runtime import types as rt
 
@@ -82,12 +84,46 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _reconciliation_secret_values(value: Any) -> set[str]:
+    """Collect explicit secret wrappers returned by a reconciliation hook."""
+    values: set[str] = set()
+
+    def visit(item: Any) -> None:
+        if isinstance(item, SecretString):
+            values.add(item.get_secret_value())
+        elif isinstance(item, dict):
+            for nested in item.values():
+                visit(nested)
+        elif isinstance(item, (list, tuple, set)):
+            for nested in item:
+                visit(nested)
+
+    visit(value)
+    return values
+
+
+def invocation_result_value(result: Any) -> Any:
+    """Return the exact structured invocation result to direct tool callers."""
+    if isinstance(result, dict) and set(result) == {"text"}:
+        return result["text"]
+    return result
+
+
+def invocation_result_text(result: Any) -> str:
+    """Serialize an invocation result losslessly for model message history."""
+    value = invocation_result_value(result)
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, sort_keys=True, default=str)
+
+
 async def _locked_run(session: AsyncSession, run_id: UUID) -> AgentRun:
     run = (
         await session.execute(
             select(AgentRun)
             .where(AgentRun.id == run_id)
             .with_for_update(of=AgentRun)
+            .execution_options(populate_existing=True)
         )
     ).scalar_one_or_none()
     if run is None:
@@ -96,10 +132,9 @@ async def _locked_run(session: AsyncSession, run_id: UUID) -> AgentRun:
 
 
 def _require_lease(run: AgentRun, lease_token: str | None) -> None:
-    if not run.lease_token or run.lease_token != lease_token:
-        raise rt.LeaseMismatchError(
-            f"AgentRun {run.id}: stale or missing lease token"
-        )
+    from src.services.agent_runtime.run_store import require_lease
+
+    require_lease(run, lease_token)
 
 
 async def get_invocation(
@@ -116,9 +151,14 @@ async def get_invocation(
 
 
 async def delete_invocation(
-    session: AsyncSession, run_id: UUID, provider_tool_call_id: str
+    session: AsyncSession,
+    run_id: UUID,
+    lease_token: str,
+    provider_tool_call_id: str,
 ) -> None:
     """Remove a provisional invocation row (deferral supersedes dispatch)."""
+    run = await _locked_run(session, run_id)
+    _require_lease(run, lease_token)
     invocation = await get_invocation(session, run_id, provider_tool_call_id)
     if invocation is not None:
         await session.delete(invocation)
@@ -150,6 +190,7 @@ async def plan_invocation(
     tool_version: str | None = None,
     tool_schema: dict | None = None,
     arguments: dict | None = None,
+    secrets: set[str] | None = None,
     commit: bool = True,
 ) -> AgentToolInvocation:
     """Persist a ``planned`` invocation; return the existing one on re-plan."""
@@ -166,7 +207,7 @@ async def plan_invocation(
         tool_name=tool_name,
         tool_version=tool_version,
         tool_schema=tool_schema,
-        arguments=arguments,
+        arguments=redact_secrets(arguments, secrets or set()),
         state="planned",
         idempotency_key=f"{run_id}:{operation_id}",
     )
@@ -207,6 +248,7 @@ async def complete_invocation(
     lease_token: str,
     provider_tool_call_id: str,
     result: Any,
+    secrets: set[str] | None = None,
     commit: bool = True,
 ) -> AgentToolInvocation:
     run = await _locked_run(session, run_id)
@@ -217,7 +259,10 @@ async def complete_invocation(
             f"No planned invocation for tool call {provider_tool_call_id}"
         )
     invocation.state = "completed"
-    invocation.result = result if isinstance(result, dict) else {"text": str(result)}
+    invocation.result = redact_secrets(
+        result if isinstance(result, dict) else {"text": str(result)},
+        secrets or set(),
+    )
     invocation.completed_at = _now()
     await session.flush()
     if commit:
@@ -232,6 +277,7 @@ async def fail_invocation(
     lease_token: str,
     provider_tool_call_id: str,
     error: str,
+    secrets: set[str] | None = None,
     commit: bool = True,
 ) -> AgentToolInvocation:
     run = await _locked_run(session, run_id)
@@ -242,7 +288,7 @@ async def fail_invocation(
             f"No planned invocation for tool call {provider_tool_call_id}"
         )
     invocation.state = "failed"
-    invocation.error = error
+    invocation.error = redact_secrets(error, secrets or set())
     invocation.completed_at = _now()
     await session.flush()
     if commit:
@@ -327,14 +373,22 @@ async def reclaim_in_flight(
                     "idempotency_key": invocation.idempotency_key,
                 }
             )
+            secret_values = _reconciliation_secret_values(
+                [decision.result, decision.reason]
+            )
             if decision.action == "recovered":
                 invocation.state = "completed"
                 result = decision.result
                 invocation.result = (
-                    result if isinstance(result, dict) else {"text": str(result)}
+                    redact_secrets(result, secret_values)
+                    if isinstance(result, dict)
+                    else {"text": redact_secrets(str(result), secret_values)}
                 )
                 invocation.completed_at = _now()
-                invocation.reconciliation = {"hook": "recovered"}
+                invocation.reconciliation = {
+                    "hook": "recovered",
+                    "result_redacted": bool(secret_values),
+                }
                 await session.flush()
                 report.recovered.append(invocation)
             elif decision.action == "retry":
@@ -346,10 +400,12 @@ async def reclaim_in_flight(
             else:
                 invocation.reconciliation = {
                     "hook": "unrecoverable",
-                    "reason": decision.reason,
+                    "reason": redact_secrets(decision.reason, secret_values),
                 }
                 await session.flush()
-                report.unrecoverable_reason = decision.reason or (
+                report.unrecoverable_reason = redact_secrets(
+                    decision.reason, secret_values
+                ) or (
                     f"Tool '{invocation.tool_name}' reconciliation refused replay."
                 )
         await session.commit()

@@ -453,6 +453,9 @@ class SolutionDependencyWalker:
             await self.db.execute(
                 select(Application).where(
                     Application.solution_id.is_(None),
+                    # Independent V2 deployments keep retained source outside
+                    # the workspace repository this preview scans.
+                    Application.repo_path.is_not(None),
                     self._scope(Application, org_id),
                 )
             )

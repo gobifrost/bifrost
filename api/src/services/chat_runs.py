@@ -325,6 +325,7 @@ async def create_chat_run(
             caller_email=user.email,
             caller_name=user.name,
             caller_is_superuser=user.is_superuser,
+            caller_is_platform_admin=user.has_platform_admin_grant(),
             caller_is_external=user.is_external,
             caller_is_provider_org=user.is_provider_org,
             caller_roles=user.roles,

@@ -29,11 +29,11 @@ Public statuses: `queued`, `running`, `waiting_child`, `waiting_children`,
 - Lease TTL: `AGENT_RUN_LEASE_TTL_SECONDS` (120s) in
   `jobs/consumers/agent_run.py`; heartbeat every
   `AGENT_RUN_LEASE_HEARTBEAT_SECONDS` (30s). Renewals and all writes require
-  the current lease token — stale workers cannot checkpoint, journal, or
+  the current, unexpired lease token — stale workers cannot checkpoint, journal, or
   terminalize (`LeaseMismatchError`).
 - Losing a lease mid-attempt stops the attempt without terminalizing; the new
   owner continues the same run.
-- Tune via environment only if crash detection lags real outages: shorter TTL
+- The consumer constants control crash detection: a shorter TTL
   reclaims faster but risks duplicate nudges under GC pauses (safe:
   at-least-once nudges, fenced claims).
 
@@ -108,17 +108,23 @@ preserved (`contract_valid`/`contract_errors` on the run and API response).
 
 ## Completion events (at-least-once)
 
-Topics: `agent.completed`, `agent.failed` (also carries `budget_exceeded`),
-`agent.cancelled`, `agent.timeout`, `agent.contract_failed`, and
+Topics: `agent.completed`, `agent.failed` (also carries `budget_exceeded` and
+`contract_failed`), `agent.cancelled`, `agent.timed_out`, and
 `workflow.completed` beside `workflow.failed`. Payloads carry IDs, status,
-timestamps, correlation, counters, and contract validity — bounded output for
-success, structured error otherwise. Subscribe with `filter_expression` on
+timestamps, bounded scalar correlation, counters, and contract validity.
+Output, validation evidence, and detailed errors stay on the authorized run
+API; failure events carry a generic status error. Synthetic completions use
+the separate `agent.evaluation.*` namespace so production subscribers do not
+execute from synthetic runs. Subscribe with `filter_expression` on
 `run.agent_id`, `run.status`, `run.root_run_id`, or `correlation.*`; no new
 topic syntax was added.
 
 Terminalization marks `completion_event_pending_at` in the same transaction.
 The `agent_completion_events` scheduler (every 60s) emits through
 `emit_event` and stamps success, or records attempts/errors for retry.
+It reconciles parent wakes before locking a completion outbox row, holds that
+row through emission and acknowledgement, and prioritizes lower-attempt rows
+so repeatedly failing deliveries cannot starve later completions.
 Duplicate delivery is safe (coordinators key on run/correlation IDs). If no
 event source exists for a topic, emission is a no-op success, matching
 existing built-in topic semantics. Watch `agent_completion_outbox`
@@ -133,8 +139,16 @@ existing built-in topic semantics. Watch `agent_completion_outbox`
   on resume.
 - `agents.run(timeout=...)` is caller wait only. Workflow `timeout_seconds`
   scopes one tool execution. No hardcoded delegation timeout remains.
-- Active time excludes `waiting_*`/`sleeping` (journal-derived); the
-  scheduler still enforces total safety age on expired leases.
+- Active time excludes `waiting_*`/`sleeping` (journal-derived). Expired durable
+  leases are reclaimed so the worker can enforce that active budget; elapsed
+  calendar age never substitutes for it. Legacy unsnapshotted rows retain the
+  historical cleanup timeout policy.
+- A leader-owned scheduler task scans due timers and expired durable leases
+  every 15 seconds in bounded batches, using the existing execution queue.
+  A failed queue publish leaves the unleased run eligible for the next scan.
+  Timer wake and fired journal entries share one transaction; the wake entry
+  is flushed before allocating the next sequence, including with autoflush
+  disabled in production sessions.
 
 ## Debugger (journal-backed inspection)
 
@@ -164,10 +178,15 @@ Migrations (all forward-only, additive):
   invocation/join tables and columns; backfills `root_run_id=id`,
   `attempt=0`, `checkpoint_sequence=0`.
 - `20260918_agent_output_contract` — `contract_valid`, `contract_errors`.
+- `20260919_runtime_caller_auth` — trusted caller authorization snapshot,
+  following the Studio hardening migration `20260919_eval_hardening`.
 
 Old queued rows without snapshots fail closed with a recovery reason
 ("predates durable execution snapshots; re-enqueue"); in-flight legacy Redis
-contexts are honored once during rolling upgrades. Rollback: new columns and
-tables are unused by old code paths except the consumer's snapshot gate —
-downgrade the migrations to restore pre-runtime behavior. The `v1.d.ts`
+contexts are honored once during rolling upgrades. Caller-bearing durable runs
+without the trusted authorization snapshot also fail closed and require
+re-enqueue; their history remains readable. Before rolling back worker code,
+drain or cancel work admitted by the durable runtime. Keep the additive schema
+for an application rollback; migration downgrades remove durable state and
+must not be used while its runs remain active. The `v1.d.ts`
 client types are regenerated from the running API after contract changes.

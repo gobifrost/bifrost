@@ -236,6 +236,15 @@ class AgentEvaluationExecution(Base):
     candidate_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("agent_candidate_snapshots.id", ondelete="SET NULL"), default=None
     )
+    # Execution inputs are copied at enqueue.  Result rows point at these
+    # definitions rather than re-reading mutable suite/candidate records.
+    baseline_snapshot: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    candidate_snapshot: Mapped[dict | None] = mapped_column(JSONB, default=None)
+    case_definitions: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
     baseline_agent_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("agents.id", ondelete="SET NULL"), default=None
     )
@@ -369,10 +378,20 @@ class AgentSimulationSession(Base):
     __tablename__ = "agent_simulation_sessions"
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    case_id: Mapped[UUID] = mapped_column(
-        ForeignKey("agent_evaluation_cases.id", ondelete="CASCADE"), nullable=False
+    case_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("agent_evaluation_cases.id", ondelete="CASCADE"), nullable=True
     )
     case_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    execution_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("agent_evaluation_executions.id", ondelete="CASCADE"), default=None
+    )
+    result_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("agent_evaluation_results.id", ondelete="CASCADE"), default=None
+    )
+    side: Mapped[str | None] = mapped_column(String(16), default=None)
+    root_run_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("agent_runs.id", ondelete="SET NULL"), default=None
+    )
     run_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("agent_runs.id", ondelete="SET NULL"),
@@ -383,6 +402,12 @@ class AgentSimulationSession(Base):
     # Current locked fixture state. Fixture secrets stay redacted; the raw
     # payload policy matches durable job payloads (bounded JSON, no creds).
     state: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    fixture: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    tool_schemas: Mapped[dict] = mapped_column(
         JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
     )
     version: Mapped[int] = mapped_column(
@@ -407,6 +432,8 @@ class AgentSimulationSession(Base):
     __table_args__ = (
         Index("ix_sim_sessions_case_id", "case_id"),
         Index("ix_sim_sessions_run_id", "run_id"),
+        Index("ix_sim_sessions_root_run_id", "root_run_id"),
+        UniqueConstraint("result_id", "side", name="uq_sim_sessions_result_side"),
     )
 
 
@@ -418,6 +445,7 @@ class AgentSimulationToolRecord(Base):
         ForeignKey("agent_simulation_sessions.id", ondelete="CASCADE"), nullable=False
     )
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    operation_id: Mapped[str | None] = mapped_column(String(255), default=None)
     tool_name: Mapped[str] = mapped_column(String(255), nullable=False)
     arguments: Mapped[dict | None] = mapped_column(JSONB, default=None)
     result: Mapped[dict | None] = mapped_column(JSONB, default=None)
@@ -437,5 +465,6 @@ class AgentSimulationToolRecord(Base):
         UniqueConstraint(
             "session_id", "sequence", name="uq_sim_tool_records_session_sequence"
         ),
+        UniqueConstraint("session_id", "operation_id", name="uq_sim_tool_records_operation"),
         Index("ix_sim_tool_records_session_id", "session_id"),
     )

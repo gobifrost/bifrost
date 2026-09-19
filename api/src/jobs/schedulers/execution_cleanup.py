@@ -5,9 +5,10 @@ Cleans up stuck workflow executions and stale autonomous agent runs.
 
 Agent runs are durable: an expired worker lease makes the SAME run
 claimable again, so the scheduler requeues expired leases instead of
-terminalizing them. Terminalization is reserved for runs past their total
-safety age, stale queued rows that never started, and due sleeping rows
-are woken through the fenced wake transaction.
+terminalizing them. Durable workers enforce active-time budgets after reclaim.
+Legacy unsnapshotted rows retain the historical stale-run timeout policy;
+stale queued rows that never started may fail. Due sleeping rows are woken
+through the fenced wake transaction.
 
 Runs every 5 minutes to find and timeout stuck executions.
 """
@@ -17,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, or_, select
 
 from src.core.database import get_session_factory
 from src.core.pubsub import (
@@ -32,6 +33,8 @@ from src.models.orm.agent_runs import AgentRun
 from src.models.orm.agents import Agent
 from src.models import Execution as ExecutionModel, ExecutionLog
 from src.models.orm.workflows import Workflow
+from src.services.agent_runtime import run_store
+from src.services.agent_runtime import types as runtime_types
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +44,42 @@ RUNNING_TIMEOUT_MINUTES = 30  # If RUNNING for 30+ minutes, worker likely crashe
 CANCELLING_TIMEOUT_MINUTES = 3  # If CANCELLING for 3+ minutes, worker failed to cancel
 DEFAULT_AGENT_RUN_TIMEOUT_SECONDS = 30 * 60
 AGENT_RUN_TIMEOUT_GRACE_SECONDS = 5 * 60
+AGENT_RECOVERY_BATCH_SIZE = 100
+
+
+async def recover_durable_agent_runs() -> dict[str, Any]:
+    """Nudge due timers and expired durable leases on the fast scheduler tick.
+
+    This uses the existing execution queue. Admission/claim transactions fence
+    overlapping scans; a publish failure remains discoverable as unleased
+    running state on the next tick.
+    """
+    from src.services.agent_runtime.timers import promote_due_timers
+
+    now = datetime.now(timezone.utc)
+    session_factory = get_session_factory()
+    promoted = await promote_due_timers(
+        session_factory, now, limit=AGENT_RECOVERY_BATCH_SIZE
+    )
+    async with session_factory() as session:
+        expired = list((await session.scalars(
+            select(AgentRun.id).where(
+                AgentRun.execution_snapshot.is_not(None),
+                AgentRun.status == runtime_types.RUNNING,
+                or_(AgentRun.lease_expires_at.is_(None), AgentRun.lease_expires_at <= now),
+            ).order_by(
+                AgentRun.last_progress_at.asc().nullsfirst(), AgentRun.id,
+            ).limit(AGENT_RECOVERY_BATCH_SIZE)
+        )).all())
+    run_ids = list(dict.fromkeys([*promoted, *expired]))
+    published = 0
+    for run_id in run_ids:
+        try:
+            await publish_message("agent-runs", {"run_id": str(run_id)})
+            published += 1
+        except Exception:
+            logger.exception("Durable agent recovery publish failed for %s", run_id)
+    return {"woken": len(promoted), "published": published, "publish_errors": len(run_ids) - published}
 
 
 async def cleanup_stuck_executions() -> dict[str, Any]:
@@ -287,13 +326,13 @@ def _agent_run_timeout_seconds(agent: Agent | None) -> int:
 
 
 async def _cleanup_stale_agent_runs(now: datetime) -> dict[str, Any]:
-    """Requeue reclaimable AgentRuns; terminalize only past safety age.
+    """Requeue durable AgentRuns; retain legacy and queue timeout policies.
 
     - ``running`` with a live lease: untouched (a worker owns it).
-    - ``running`` with an expired (or legacy absent) lease inside the total
-      safety age: republish the run-ID nudge so the same run is claimed
-      again. At-least-once nudges are safe; an owned run's consumer skips.
-    - ``running`` with an expired lease past safety age: ``timeout``.
+    - Durable ``running`` with an expired lease: republish the run-ID nudge.
+      The worker enforces the immutable active-time budget after reclaim.
+      At-least-once nudges are safe; an owned run's consumer skips.
+    - Legacy unsnapshotted ``running`` past its stale threshold: ``timeout``.
     - ``queued`` past safety age: ``failed`` (never started; queue stall).
     - ``sleeping`` with ``wake_at`` due: fenced wake + republish once.
     """
@@ -329,7 +368,7 @@ async def _cleanup_stale_agent_runs(now: datetime) -> dict[str, Any]:
                 select(AgentRun, Agent)
                 .outerjoin(Agent, AgentRun.agent_id == Agent.id)
                 .where(
-                    AgentRun.status.in_(("queued", "running", "sleeping"))
+                    AgentRun.status.in_(("queued", "running", "cancelling", "sleeping"))
                 )
                 .order_by(AgentRun.created_at.asc())
             )
@@ -366,6 +405,7 @@ async def _cleanup_stale_agent_runs(now: datetime) -> dict[str, Any]:
                             AgentRun.status == candidate.status,
                         )
                         .with_for_update(skip_locked=True, of=AgentRun)
+                        .execution_options(populate_existing=True)
                     )
                 ).scalar_one_or_none()
                 if run is None:
@@ -386,12 +426,17 @@ async def _cleanup_stale_agent_runs(now: datetime) -> dict[str, Any]:
                     if elapsed <= timeout_with_grace:
                         continue
                     agent_name = agent.name if agent is not None else "Chat"
-                    run.status = "failed"
-                    run.error = (
+                    timeout_reason = (
                         "Agent run timed out waiting in queue after "
                         f"{timeout_with_grace} seconds."
                     )
-                    run.completed_at = now
+                    run = await run_store.terminalize_unleased(
+                        db,
+                        run.id,
+                        runtime_types.FAILED,
+                        error=timeout_reason,
+                        allowed_statuses=frozenset({runtime_types.QUEUED}),
+                    )
                     results["agent_run_queued_timeouts"] += 1
                     results["agent_run_total_cleaned"] += 1
                     if run.parent_run_id is not None:
@@ -405,7 +450,7 @@ async def _cleanup_stale_agent_runs(now: datetime) -> dict[str, Any]:
                                     "conversation_id": run.conversation_id,
                                     "run_id": str(run.id),
                                     "status": "failed",
-                                    "error": run.error,
+                                    "error": timeout_reason,
                                 }
                                 if run.trigger_type == "chat"
                                 and run.conversation_id is not None
@@ -422,7 +467,29 @@ async def _cleanup_stale_agent_runs(now: datetime) -> dict[str, Any]:
                 )
                 if not lease_expired:
                     continue
-                if elapsed <= timeout_with_grace:
+                if run.status == runtime_types.CANCELLING:
+                    run = await run_store.terminalize_unleased(
+                        db,
+                        run.id,
+                        runtime_types.CANCELLED,
+                        error="Cancellation worker lease expired.",
+                        allowed_statuses=frozenset({runtime_types.CANCELLING}),
+                    )
+                    results["agent_run_total_cleaned"] += 1
+                    if run.parent_run_id is not None:
+                        wake_parents_for.append(str(run.id))
+                    updates.append(
+                        {
+                            "run": run,
+                            "agent_name": agent.name if agent is not None else "Chat",
+                            "chat_event": None,
+                        }
+                    )
+                    continue
+                # Durable workers enforce snapshotted active-time budgets
+                # from attempt/wait boundaries. Wall age includes sleeping,
+                # child waits and downtime, and cannot terminalize these runs.
+                if run.execution_snapshot is not None or elapsed <= timeout_with_grace:
                     logger.info(
                         "agent_run_requeued",
                         extra={
@@ -450,9 +517,13 @@ async def _cleanup_stale_agent_runs(now: datetime) -> dict[str, Any]:
                         "timeout_with_grace": timeout_with_grace,
                     },
                 )
-                run.status = "timeout"
-                run.error = timeout_reason
-                run.completed_at = now
+                run = await run_store.terminalize_unleased(
+                    db,
+                    run.id,
+                    runtime_types.TIMEOUT,
+                    error=timeout_reason,
+                    allowed_statuses=frozenset({runtime_types.RUNNING}),
+                )
                 results["agent_run_running_timeouts"] += 1
                 results["agent_run_total_cleaned"] += 1
                 if run.parent_run_id is not None:

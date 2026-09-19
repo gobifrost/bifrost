@@ -126,7 +126,8 @@ async def test_summarize_run_populates_asked_did_confidence(
             .scalars()
             .all()
         )
-        assert any(u.model == "claude-haiku-4-5" for u in usages)
+        summary_usage = next(u for u in usages if u.model == "claude-haiku-4-5")
+        assert summary_usage.sequence == 0
 
 
 @pytest.mark.asyncio

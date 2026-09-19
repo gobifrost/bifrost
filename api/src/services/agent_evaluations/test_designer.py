@@ -26,6 +26,109 @@ DESIGNER_VERSION = 1
 DESIGNER_AGENT_NAME = "test_designer"
 COVERAGE_LABELS = ("success", "failure", "safety", "edge")
 
+TESTING_ASSIGNMENT_KEY = "testing"
+TESTING_ASSIGNMENT_HELP = (
+    "The 'testing' AI model assignment is not configured. "
+    "Configure an AI model profile in System Settings > AI Configuration."
+)
+
+MAX_DESIGNER_HISTORY_RUNS = 20
+MAX_DESIGNER_HISTORY_TOOL_RECORDS_PER_RUN = 50
+MAX_DESIGNER_HISTORY_BYTES_PER_RUN = 64 * 1024
+MAX_DESIGNER_HISTORY_TOTAL_BYTES = 512 * 1024
+
+LEGACY_HISTORY_STEP_TYPES = frozenset({"tool_call", "tool_result", "tool_error"})
+
+# This is deliberately a concrete prompt contract rather than an inferred list:
+# the Designer needs valid parameter shapes, not just assertion names. Keep it in
+# sync with ``assertions.validate_assertions``; the unit test verifies coverage
+# and validates every example.
+DETERMINISTIC_ASSERTION_CATALOG: tuple[dict[str, Any], ...] = (
+    {
+        "type": "terminal_status",
+        "params": {"status": "completed"},
+        "guidance": "Use the terminal run status, such as completed or failed.",
+    },
+    {
+        "type": "output_schema",
+        "params": {},
+        "guidance": "Uses the case output schema when provided, otherwise the run output schema.",
+    },
+    {
+        "type": "output_path",
+        "params": {"path": "summary", "equals": "ticket resolved"},
+        "guidance": "Use a dot-separated output path; optionally use equals or contains.",
+    },
+    {
+        "type": "tool_called",
+        "params": {"tool": "get_ticket"},
+        "guidance": "The named published tool must be called at least once.",
+    },
+    {
+        "type": "tool_not_called",
+        "params": {"tool": "delete_ticket"},
+        "guidance": "The named published tool must never be called.",
+    },
+    {
+        "type": "forbidden_tool",
+        "params": {"tool": "delete_ticket"},
+        "guidance": "Equivalent trajectory guard for a named published tool.",
+    },
+    {
+        "type": "tool_count",
+        "params": {"tool": "get_ticket", "count": 1},
+        "guidance": "Require an exact nonnegative call count for a published tool.",
+    },
+    {
+        "type": "tool_order",
+        "params": {"tools": ["get_ticket", "update_ticket"], "exact": False},
+        "guidance": (
+            "Require this ordered subsequence; set exact true only to require "
+            "the whole call order."
+        ),
+    },
+    {
+        "type": "tool_args",
+        "params": {"tool": "get_ticket", "args": {"id": "ticket-0001"}},
+        "guidance": "Match dot-separated argument paths on at least one call to a published tool.",
+    },
+    {
+        "type": "simulator_state",
+        "params": {"path": "entities.ticket.ticket-0001.status", "equals": "resolved"},
+        "guidance": "Use a dot-separated simulator-state path; equals is optional.",
+    },
+    {
+        "type": "delegation_tree",
+        "params": {"max_children": 0},
+        "guidance": "Optionally constrain min_children, max_children, or the exact agents list.",
+    },
+    {
+        "type": "max_iterations",
+        "params": {"limit": 5},
+        "guidance": "Set a nonnegative numeric limit for total iterations.",
+    },
+    {
+        "type": "max_tokens",
+        "params": {"limit": 2000},
+        "guidance": "Set a nonnegative numeric limit for total tokens.",
+    },
+    {
+        "type": "max_cost_usd",
+        "params": {"limit": 0.05},
+        "guidance": "Set a nonnegative numeric USD cost limit.",
+    },
+    {
+        "type": "max_latency_ms",
+        "params": {"limit": 5000},
+        "guidance": "Set a nonnegative numeric latency limit in milliseconds.",
+    },
+    {
+        "type": "no_real_tools",
+        "params": {},
+        "guidance": "Require that no real tool executions occurred.",
+    },
+)
+
 
 class DesignerError(Exception):
     """Designer input or output cannot be used safely."""
@@ -90,8 +193,6 @@ def build_designer_input(
     """Assemble the redacted designer input (target + tools + goal + history)."""
     if requested_count < 1 or requested_count > 10:
         raise DesignerError("requested_count must be between 1 and 10.")
-    if not tool_schemas:
-        raise DesignerError("Designer requires at least one published tool schema.")
     return {
         "agent": {
             "name": agent_snapshot.get("agent_name"),
@@ -102,6 +203,7 @@ def build_designer_input(
         "tool_schemas": copy.deepcopy(tool_schemas),
         "suite_goal": suite_goal,
         "requested_count": requested_count,
+        "assertion_catalog": copy.deepcopy(list(DETERMINISTIC_ASSERTION_CATALOG)),
         "historical_examples": list(historical_examples or []),
         "designer_version": DESIGNER_VERSION,
     }
@@ -134,6 +236,206 @@ def redact_history(
     return redacted
 
 
+def designer_testing_model(*, profile_id: UUID, config) -> dict[str, Any]:
+    """Freeze the resolved testing profile into the Designer snapshot model.
+
+    Uses the existing execution-snapshot model shape (profile id plus every
+    resolved non-credential setting) so the runtime re-resolves only
+    credentials from the live profile while prompt/transport/caps stay
+    pinned at admission. The Designer has no agent-level token override.
+    """
+    return {
+        "profile_id": str(profile_id),
+        "provider": config.provider,
+        "model": config.model,
+        "llm_max_tokens": None,
+        "endpoint": config.endpoint,
+        "openai_transport": config.openai_transport,
+        "anthropic_prompt_cache_supported": config.anthropic_prompt_cache_supported,
+        "default_max_tokens": config.default_max_tokens,
+        "extra_params": dict(config.extra_params or {}),
+    }
+
+
+async def load_designer_history(session, runs: list) -> list[dict[str, Any]]:
+    """Project explicitly selected historical runs into redacted designer input.
+
+    The caller (route) has already applied run visibility and tenant scoping
+    before this query runs; only these run IDs are projected — descendants
+    are never expanded, so a hidden child is never smuggled in. Tool
+    evidence comes from durable ``agent_tool_invocations`` rows (actual
+    arguments/result/error); runs that predate invocations fall back to
+    legacy ``agent_run_steps`` rows. Redaction happens before the designer
+    receives anything; oversized projections trim tool calls (marked with
+    ``truncated``) instead of failing or silently dropping selected runs.
+    """
+    ordered = sorted(
+        runs,
+        key=lambda run: (run.created_at is None, run.created_at or 0, run.id),
+    )[:MAX_DESIGNER_HISTORY_RUNS]
+    if not ordered:
+        return []
+    raw_items = []
+    for run in ordered:
+        tool_calls, truncated = await _history_tool_calls(session, run)
+        raw_items.append(
+            {
+                "run_id": str(run.id),
+                "input": run.input,
+                "output": run.output,
+                "tool_calls": tool_calls,
+                "_truncated": truncated,
+            }
+        )
+    allowed = {item["run_id"] for item in raw_items}
+    redacted = redact_history(raw_items, allowed_run_ids=allowed)
+    by_id = {item["run_id"]: item for item in redacted}
+    fitted = []
+    for raw in raw_items:
+        item = by_id.get(raw["run_id"])
+        if item is None:  # pragma: no cover — redact_history keeps allowed runs.
+            continue
+        item = _fit_history_item(item, truncated=raw["_truncated"])
+        fitted.append(item)
+    _fit_history_total(fitted)
+    return fitted
+
+
+async def _history_tool_calls(session, run) -> tuple[list[dict[str, Any]], bool]:
+    """Durable invocations first, legacy steps only when invocations are absent."""
+    from sqlalchemy import select
+
+    from src.models.orm.agent_runs import AgentRunStep, AgentToolInvocation
+
+    invocations = (
+        await session.execute(
+            select(AgentToolInvocation)
+            .where(AgentToolInvocation.run_id == run.id)
+            .order_by(
+                AgentToolInvocation.started_at,
+                AgentToolInvocation.completed_at,
+                AgentToolInvocation.operation_id,
+            )
+            .limit(MAX_DESIGNER_HISTORY_TOOL_RECORDS_PER_RUN + 1)
+        )
+    ).scalars().all()
+    if invocations:
+        truncated = len(invocations) > MAX_DESIGNER_HISTORY_TOOL_RECORDS_PER_RUN
+        return [
+            _invocation_history_item(invocation)
+            for invocation in invocations[:MAX_DESIGNER_HISTORY_TOOL_RECORDS_PER_RUN]
+        ], truncated
+    steps = (
+        await session.execute(
+            select(AgentRunStep)
+            .where(
+                AgentRunStep.run_id == run.id,
+                AgentRunStep.type.in_(LEGACY_HISTORY_STEP_TYPES),
+            )
+            .order_by(AgentRunStep.step_number)
+            .limit(MAX_DESIGNER_HISTORY_TOOL_RECORDS_PER_RUN + 1)
+        )
+    ).scalars().all()
+    truncated = len(steps) > MAX_DESIGNER_HISTORY_TOOL_RECORDS_PER_RUN
+    calls = []
+    for step in steps[:MAX_DESIGNER_HISTORY_TOOL_RECORDS_PER_RUN]:
+        item = _legacy_step_history_item(step)
+        if item is not None:
+            calls.append(item)
+    return calls, truncated
+
+
+def _invocation_history_item(invocation) -> dict[str, Any]:
+    """Preserve the structured invocation shape; redaction happens later."""
+    item: dict[str, Any] = {
+        "tool_name": invocation.tool_name,
+        "arguments": copy.deepcopy(invocation.arguments or {}),
+    }
+    if invocation.result is not None:
+        item["result"] = copy.deepcopy(invocation.result)
+    if invocation.error is not None:
+        item["error"] = invocation.error
+    return item
+
+
+def _legacy_step_history_item(step) -> dict[str, Any] | None:
+    """Project one legacy step row; malformed rows are skipped, not guessed."""
+    content = step.content if isinstance(step.content, dict) else None
+    if content is None:
+        return None
+    tool_name = content.get("tool_name")
+    if not isinstance(tool_name, str) or not tool_name:
+        return None
+    item: dict[str, Any] = {"tool_name": tool_name}
+    if step.type == "tool_call":
+        item["arguments"] = copy.deepcopy(content.get("arguments") or {})
+    elif step.type == "tool_result":
+        if content.get("arguments") is not None:
+            item["arguments"] = copy.deepcopy(content.get("arguments"))
+        if content.get("result") is not None:
+            result = content["result"]
+            # Legacy steps serialized structured tool results as JSON text.
+            # Decode before redaction so nested credential keys remain
+            # protected and the Designer sees the actual response shape.
+            if isinstance(result, str):
+                try:
+                    result = json.loads(result)
+                except (ValueError, TypeError):
+                    pass
+            item["result"] = result
+    elif step.type == "tool_error":
+        if content.get("arguments") is not None:
+            item["arguments"] = copy.deepcopy(content.get("arguments"))
+        if content.get("error") is not None:
+            item["error"] = content.get("error")
+    else:  # pragma: no cover — caller filters to known step types.
+        return None
+    return item
+
+
+def _history_item_size(item: dict[str, Any]) -> int:
+    return len(json.dumps(item, default=str, sort_keys=True).encode())
+
+
+def _fit_history_item(item: dict[str, Any], *, truncated: bool) -> dict[str, Any]:
+    """Trim one run's tool calls until it fits the per-run byte budget."""
+    while (item.get("tool_calls") or []) and (
+        _history_item_size(item) > MAX_DESIGNER_HISTORY_BYTES_PER_RUN
+    ):
+        item["tool_calls"] = item["tool_calls"][:-1]
+        truncated = True
+    if _history_item_size(item) > MAX_DESIGNER_HISTORY_BYTES_PER_RUN:
+        raise DesignerError(
+            f"Historical run {item.get('run_id')} input/output alone exceeds "
+            f"{MAX_DESIGNER_HISTORY_BYTES_PER_RUN} bytes; deselect it or "
+            "narrow the selected history."
+        )
+    if truncated:
+        item["truncated"] = True
+    return item
+
+
+def _fit_history_total(items: list[dict[str, Any]]) -> None:
+    """Trim trailing tool calls across runs until the total payload fits."""
+    total = sum(_history_item_size(item) for item in items)
+    while total > MAX_DESIGNER_HISTORY_TOTAL_BYTES:
+        widest = None
+        for item in items:
+            calls = item.get("tool_calls") or []
+            if calls and (widest is None or len(calls) > len(widest.get("tool_calls") or [])):
+                widest = item
+        if widest is None:
+            raise DesignerError(
+                "Selected history inputs/outputs alone exceed "
+                f"{MAX_DESIGNER_HISTORY_TOTAL_BYTES} bytes; deselect runs "
+                "or narrow the selected history."
+            )
+        calls = widest["tool_calls"]
+        widest["tool_calls"] = calls[:-1]
+        widest["truncated"] = True
+        total = sum(_history_item_size(item) for item in items)
+
+
 def validate_designer_output(
     output: dict[str, Any],
     *,
@@ -146,7 +448,7 @@ def validate_designer_output(
     malformed output never becomes a case.
     """
     from src.services.agent_evaluations.assertions import validate_assertions
-    from src.services.agent_evaluations.simulator_models import validate_fixture
+    from src.services.agent_evaluations.simulator_models import FixtureError, validate_fixture
 
     problems: list[str] = []
     if not isinstance(output, dict) or not isinstance(output.get("proposals"), list):
@@ -155,6 +457,18 @@ def validate_designer_output(
     if not (1 <= len(proposals) <= 10):
         raise DesignerError("Designer must propose 1-10 cases.")
     for index, proposal in enumerate(proposals):
+        if isinstance(proposal, dict) and "fixture" in proposal:
+            try:
+                validate_fixture(proposal["fixture"])
+            except FixtureError as exc:
+                raise DesignerError(f"Proposal {index} has an invalid fixture: {exc}") from exc
+        if isinstance(proposal, dict) and "assertions" in proposal:
+            assertions = proposal["assertions"]
+            if not isinstance(assertions, list) or any(
+                not isinstance(item, dict) or not isinstance(item.get("params", {}), dict)
+                for item in assertions
+            ):
+                raise DesignerError(f"Proposal {index} has malformed assertions.")
         problems.extend(_validate_proposal(index, proposal, tool_schemas))
     if problems:
         raise DesignerError(
@@ -204,6 +518,13 @@ def _validate_proposal(
         if atype not in KNOWN_ASSERTION_TYPES:
             problems.append(
                 f"proposal {index} uses unknown assertion type {atype!r}"
+            )
+        # A semantic judge consumes a cost-bearing platform model profile.
+        # It is configured and frozen only by an authorized human at case
+        # save time, never smuggled into a generated proposal.
+        if atype == "llm_judge":
+            problems.append(
+                f"proposal {index} cannot configure an llm_judge assertion"
             )
         if atype in ("tool_called", "tool_not_called", "forbidden_tool", "tool_count", "tool_args"):
             tool = (assertion.get("params") or {}).get("tool")
@@ -334,3 +655,86 @@ def accept_proposal(
         tags=[proposal.get("coverage", "edge")],
         accepted=True,
     )
+
+
+async def materialize_designer_drafts(session, run) -> int:
+    """Persist a completed Designer AgentRun as review-only draft cases.
+
+    The completion path is intentionally server-owned: only output produced
+    under the immutable Designer snapshot can reach this function.
+    """
+    from sqlalchemy import func, select
+
+    from src.models.orm.agent_evaluations import AgentEvaluationCase, AgentEvaluationSuite
+    from src.models.orm.agent_runs import AgentRun
+    from src.services.agent_evaluations.assertions import AssertionDefinitionError
+    from src.services.agent_evaluations.simulator_models import FixtureError
+
+    run = await session.scalar(
+        select(AgentRun)
+        .where(AgentRun.id == run.id)
+        .with_for_update(of=AgentRun)
+        .execution_options(populate_existing=True)
+    )
+    if run is None:
+        return 0
+
+    correlation = dict(run.correlation or {})
+    if not correlation.get("evaluation_designer") or correlation.get("designer_materialized"):
+        return 0
+    if run.status != "completed" or not isinstance(run.output, dict):
+        return 0
+    suite = await session.scalar(
+        select(AgentEvaluationSuite)
+        .where(AgentEvaluationSuite.id == UUID(correlation["designer_suite_id"]))
+        .with_for_update()
+    )
+    if suite is None or suite.status == "published":
+        correlation["designer_materialized"] = True
+        correlation["designer_error"] = "The destination suite is unavailable or already published."
+        run.correlation = correlation
+        return 0
+    try:
+        proposals = validate_designer_output(
+            run.output, tool_schemas=dict(correlation.get("designer_tool_schemas") or {})
+        )
+    except (DesignerError, FixtureError, AssertionDefinitionError):
+        # Immutable malformed output will not improve on the next sweep. Record
+        # the outcome once so invalid runs cannot starve the bounded queue.
+        correlation["designer_materialized"] = True
+        correlation["designer_error"] = (
+            "Generated cases failed validation. Review the Designer output and request corrected drafts."
+        )
+        run.correlation = correlation
+        return 0
+    existing = (
+        await session.execute(select(AgentEvaluationCase).where(AgentEvaluationCase.suite_id == suite.id))
+    ).scalars().all()
+    proposals = deduplicate_proposals(
+        proposals,
+        [{"assertions": list(case.assertions or []), "input": case.input,
+          "coverage": (case.tags or ["edge"])[0]} for case in existing],
+    )
+    for position, proposal in enumerate(proposals):
+        version = (
+            await session.scalar(select(func.max(AgentEvaluationCase.version)).where(
+                AgentEvaluationCase.suite_id == suite.id,
+                AgentEvaluationCase.name == proposal["name"],
+            ))
+        ) or 0
+        session.add(AgentEvaluationCase(
+            suite_id=suite.id, name=proposal["name"], position=position,
+            enabled=False, version=version + 1, input=redact_value(proposal.get("input")),
+            fixture=redact_value(proposal.get("fixture", {})),
+            simulator_policy=proposal.get("simulator_policy", {}),
+            assertions=proposal.get("assertions", []),
+            expected_tools=proposal.get("expected_tools", []),
+            forbidden_tools=proposal.get("forbidden_tools", []),
+            output_schema=proposal.get("output_schema"), repetitions=1,
+            scoring_policy={}, provenance="generated",
+            provenance_run_ids=list(correlation.get("designer_history_ids") or []),
+            tags=[proposal.get("coverage", "edge")], accepted=False,
+        ))
+    correlation["designer_materialized"] = True
+    run.correlation = correlation
+    return len(proposals)

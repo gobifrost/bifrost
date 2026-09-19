@@ -41,6 +41,7 @@ async def _locked_run(session: AsyncSession, run_id: UUID) -> AgentRun:
             select(AgentRun)
             .where(AgentRun.id == run_id)
             .with_for_update(of=AgentRun)
+            .execution_options(populate_existing=True)
         )
     ).scalar_one_or_none()
     if run is None:
@@ -50,7 +51,13 @@ async def _locked_run(session: AsyncSession, run_id: UUID) -> AgentRun:
 
 def require_lease(run: AgentRun, lease_token: str | None) -> None:
     """Fencing: a writer must present the run's current lease token."""
-    if not run.lease_token or run.lease_token != lease_token:
+    now = _now()
+    if (
+        not run.lease_token
+        or run.lease_token != lease_token
+        or run.lease_expires_at is None
+        or run.lease_expires_at <= now
+    ):
         raise rt.LeaseMismatchError(
             f"AgentRun {run.id}: stale or missing lease token"
         )
@@ -103,6 +110,7 @@ async def claim_run(
             f"AgentRun {run_id} is {run.status} with a live lease; not claimable"
         )
     reclaimed = run.status == rt.RUNNING and run.attempt > 0
+    prior_lease_expires_at = run.lease_expires_at if reclaimed else None
     run.status = rt.RUNNING
     run.lease_owner = owner
     run.lease_token = _new_lease_token()
@@ -117,7 +125,18 @@ async def claim_run(
         run_id,
         run.lease_token,
         rt.JOURNAL_LEASE_RECOVERY if reclaimed else rt.JOURNAL_RESUME,
-        {"owner": owner, "attempt": run.attempt, "reclaimed": reclaimed},
+        {
+            "owner": owner,
+            "attempt": run.attempt,
+            "reclaimed": reclaimed,
+            # Later timeout accounting caps an unclosed attempt at this
+            # durable boundary rather than charging cluster downtime.
+            "prior_lease_expires_at": (
+                prior_lease_expires_at.isoformat()
+                if prior_lease_expires_at is not None
+                else None
+            ),
+        },
     )
     await session.commit()
     logger.info(
@@ -245,6 +264,10 @@ async def commit_checkpoint(
     if tokens_used is not None:
         run.tokens_used = tokens_used
     run.last_progress_at = now
+    # ``append_journal`` re-locks with ``populate_existing`` to defeat stale
+    # identity-map writers. Persist this transaction's own checkpoint/counter
+    # changes first: production sessions deliberately run with autoflush off.
+    await session.flush()
     # Journal boundary stays in the same transaction (no intermediate commit).
     await append_journal(
         session,
@@ -324,6 +347,7 @@ async def wake_run(
     run_id: UUID,
     *,
     reason: str,
+    commit: bool = True,
 ) -> AgentRun:
     """Wake a waiting/sleeping run back to claimable ``running`` (no lease).
 
@@ -346,8 +370,121 @@ async def wake_run(
         checkpoint_sequence=run.checkpoint_sequence,
     )
     session.add(entry)
-    await session.commit()
+    if commit:
+        await session.commit()
     return run
+
+
+async def terminalize_unleased(
+    session: AsyncSession,
+    run_id: UUID,
+    status: str,
+    *,
+    error: str | None = None,
+    allowed_statuses: frozenset[str] | None = None,
+    commit: bool = True,
+) -> AgentRun:
+    """Terminalize a row that has no live worker lease.
+
+    This is deliberately narrower than ``finish_run``: queue cancellation and
+    scheduler cleanup may use it, but a live worker can only terminalize via
+    its lease token.  It keeps every terminal path on the completion outbox.
+    """
+    if status not in rt.TERMINAL_STATUSES:
+        raise rt.RunStoreError(f"Not a terminal status: {status!r}")
+    run = await _locked_run(session, run_id)
+    if allowed_statuses is not None and run.status not in allowed_statuses:
+        raise rt.InvalidTransitionError(
+            f"AgentRun {run.id}: {run.status} is not eligible for unleased terminalization"
+        )
+    if run.lease_token and run.lease_expires_at and run.lease_expires_at > _now():
+        raise rt.LeaseMismatchError(
+            f"AgentRun {run.id}: cannot terminalize while another worker owns a live lease"
+        )
+    _check_transition(run, status)
+    now = _now()
+    run.status = status
+    if error is not None:
+        run.error = error
+    run.completed_at = now
+    run.lease_owner = None
+    run.lease_token = None
+    run.lease_expires_at = None
+    run.last_progress_at = now
+    run.completion_event_pending_at = now
+    session.add(
+        AgentRunJournalEntry(
+            run_id=run_id,
+            sequence=await next_journal_sequence(session, run_id),
+            kind=rt.JOURNAL_COMPLETION,
+            data={"status": status, "unleased": True},
+            checkpoint_sequence=run.checkpoint_sequence,
+        )
+    )
+    if commit:
+        await session.commit()
+    return run
+
+
+async def request_cancellation(
+    session: AsyncSession,
+    run_id: UUID,
+    *,
+    error: str = "Cancelled by user",
+) -> AgentRun:
+    """Apply one fresh, locked cancellation transition.
+
+    The caller may have read a run for authorization, but cancellation state
+    is decided only after this ``FOR UPDATE``/``populate_existing`` reload.
+    This prevents a completed worker result from being resurrected as
+    ``cancelling`` by a stale HTTP or Studio identity-map object.
+    """
+    run = await _locked_run(session, run_id)
+    if run.status in rt.TERMINAL_STATUSES:
+        raise rt.InvalidTransitionError(
+            f"AgentRun {run.id}: cannot cancel terminal status {run.status}"
+        )
+    if run.status == rt.CANCELLING:
+        return run
+    if run.status == rt.RUNNING:
+        _check_transition(run, rt.CANCELLING)
+        run.status = rt.CANCELLING
+        run.last_progress_at = _now()
+        session.add(
+            AgentRunJournalEntry(
+                run_id=run_id,
+                sequence=await next_journal_sequence(session, run_id),
+                kind=rt.JOURNAL_CANCELLATION,
+                data={"status": rt.CANCELLING, "reason": error},
+                checkpoint_sequence=run.checkpoint_sequence,
+            )
+        )
+        await session.commit()
+        return run
+    if run.status in {
+        rt.QUEUED,
+        *rt.INACTIVE_WAIT_STATUSES,
+        rt.RECOVERY_REQUIRED,
+    }:
+        # Re-locking inside terminalize is safe: this transaction has not
+        # mutated ``run`` and the helper keeps outbox + completion journal
+        # semantics identical for REST, Studio, and cascade callers.
+        return await terminalize_unleased(
+            session,
+            run_id,
+            rt.CANCELLED,
+            error=error,
+            allowed_statuses=frozenset(
+                {
+                    rt.QUEUED,
+                    *rt.INACTIVE_WAIT_STATUSES,
+                    rt.RECOVERY_REQUIRED,
+                }
+            ),
+        )
+    raise rt.InvalidTransitionError(
+        f"AgentRun {run.id}: cannot cancel status {run.status}"
+    )
 
 
 async def finish_run(
@@ -455,31 +592,6 @@ async def latest_checkpoint(
     ).scalar_one_or_none()
 
 
-async def claim_completion_events(
-    session: AsyncSession, *, batch_size: int = 50
-) -> list[AgentRun]:
-    """Claim terminal runs still needing their completion event.
-
-    Fenced with FOR UPDATE SKIP LOCKED so overlapping scanner passes never
-    double-process a row. Callers must resolve (emit or record the failure)
-    through ``resolve_completion_event`` in the same pass.
-    """
-    return list(
-        (
-            await session.execute(
-                select(AgentRun)
-                .where(
-                    AgentRun.completion_event_pending_at.is_not(None),
-                    AgentRun.completion_event_emitted_at.is_(None),
-                )
-                .order_by(AgentRun.completion_event_pending_at)
-                .limit(batch_size)
-                .with_for_update(skip_locked=True, of=AgentRun)
-            )
-        ).scalars().all()
-    )
-
-
 async def resolve_completion_event(
     session: AsyncSession,
     run_id: UUID,
@@ -491,10 +603,10 @@ async def resolve_completion_event(
     run = await session.get(AgentRun, run_id)
     if run is None:
         return
+    run.completion_event_attempts = (run.completion_event_attempts or 0) + 1
     if emitted:
         run.completion_event_emitted_at = _now()
         run.completion_event_last_error = None
     else:
-        run.completion_event_attempts = (run.completion_event_attempts or 0) + 1
         run.completion_event_last_error = (error or "emit failed")[:2000]
     await session.commit()

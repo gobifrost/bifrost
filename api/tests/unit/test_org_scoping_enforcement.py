@@ -65,6 +65,8 @@ _INLINE_ORG_RE = re.compile(
 # be rare and obvious in code review. Removing an entry signals migration
 # progress.
 ALLOW_LIST_INLINE_ORG: set[tuple[str, str, str]] = {
+    ('routers/agent_evaluations.py', 'or_(Workflow.organization_id.is_(None), Workflow.organization_id == org_id),', 'Immutable candidate overlay references are limited to the selected candidate tenant plus global tools; live caller role access is checked separately'),
+    ('routers/agent_evaluations.py', 'or_(Agent.organization_id.is_(None), Agent.organization_id == org_id),', 'Immutable candidate delegation references are limited to the selected candidate tenant plus global agents; live caller role access is checked separately'),
     ('routers/agents.py', 'MCPConnection.organization_id == agent_data.organization_id,', 'agents MCPConnection lookup; phase 6 migrates via MCPConnectionRepository'),
     # ApplicationRepository entries removed in phase 6 — repository relocated
     # from routers/applications.py to repositories/applications.py.

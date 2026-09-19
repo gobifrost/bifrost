@@ -44,6 +44,7 @@ def test_agent_run_durable_defaults():
     assert run.root_run_id is None
     assert run.execution_snapshot is None
     assert run.caller_context is None
+    assert run.caller_auth_context is None
     assert run.lease_owner is None
     assert run.lease_token is None
     assert run.lease_expires_at is None
@@ -86,9 +87,15 @@ def test_agent_run_snapshot_and_correlation_json_round_trip():
     }
     run.correlation = {"ticket_id": "7", "kind": "ticket"}
     run.caller_context = {"ticket_id": 7}
+    run.caller_auth_context = {
+        "user_id": str(uuid4()),
+        "is_provider_org": True,
+        "roles": ["Support"],
+    }
     assert run.execution_snapshot["tools"][0]["name"] == "lookup"
     assert run.correlation["ticket_id"] == "7"
     assert run.caller_context["ticket_id"] == 7
+    assert run.caller_auth_context["is_provider_org"] is True
 
 
 def test_checkpoint_uniqueness_and_defaults():
@@ -158,6 +165,12 @@ MIGRATION_PATH = (
     / "versions"
     / "20260918_durable_agent_runtime.py"
 )
+CALLER_AUTH_MIGRATION_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "alembic"
+    / "versions"
+    / "20260919_runtime_caller_auth_context.py"
+)
 
 
 def _load_migration():
@@ -189,6 +202,18 @@ def test_migration_revision_chain():
     module = _load_migration()
     assert module.revision == "20260918_durable_agent_runtime"
     assert module.down_revision == "20260918_merge_plat_prof_heads"
+
+
+def test_caller_auth_context_migration_follows_current_head():
+    assert CALLER_AUTH_MIGRATION_PATH.exists()
+    spec = importlib.util.spec_from_file_location(
+        "runtime_caller_auth_migration", CALLER_AUTH_MIGRATION_PATH
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.revision == "20260919_runtime_caller_auth"
+    assert module.down_revision == "20260919_eval_hardening"
 
 
 def test_migration_creates_expected_tables_and_backfills():

@@ -55,6 +55,13 @@ async def snapshot_agent(
         llm_provider=llm_config.provider,
         llm_model=llm_config.model,
         llm_max_tokens=agent.llm_max_tokens,
+        llm_endpoint=llm_config.endpoint,
+        llm_openai_transport=llm_config.openai_transport,
+        llm_anthropic_prompt_cache_supported=(
+            llm_config.anthropic_prompt_cache_supported
+        ),
+        llm_default_max_tokens=llm_config.default_max_tokens,
+        llm_extra_params=llm_config.extra_params,
         tool_definitions=tool_definitions,
         tool_id_map=tool_id_map,
     )
@@ -70,8 +77,14 @@ def build_execution_snapshot(
     llm_max_tokens: int | None,
     tool_definitions: Any,
     tool_id_map: dict[str, UUID],
+    llm_endpoint: str | None = None,
+    llm_openai_transport: str | None = None,
+    llm_anthropic_prompt_cache_supported: bool | None = None,
+    llm_default_max_tokens: int | None = None,
+    llm_extra_params: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Assemble the immutable snapshot dict from resolved pieces."""
+    organization_id = getattr(agent, "organization_id", None)
     return {
         "format_version": EXECUTION_SNAPSHOT_VERSION,
         "agent_id": str(agent.id),
@@ -87,6 +100,15 @@ def build_execution_snapshot(
             "provider": llm_provider,
             "model": llm_model,
             "llm_max_tokens": llm_max_tokens,
+            # Credentials deliberately remain live, but every other resolved
+            # profile setting is part of this immutable execution contract.
+            "endpoint": llm_endpoint,
+            "openai_transport": llm_openai_transport,
+            "anthropic_prompt_cache_supported": (
+                llm_anthropic_prompt_cache_supported
+            ),
+            "default_max_tokens": llm_default_max_tokens,
+            "extra_params": dict(llm_extra_params or {}),
         },
         "tools": [
             {
@@ -107,6 +129,10 @@ def build_execution_snapshot(
         "system_tools": list(agent.system_tools or []),
         "knowledge_sources": list(agent.knowledge_sources or []),
         "roles": sorted(str(role.id) for role in (agent.roles or [])),
+        # Snapshot construction is also used by bounded admission fixtures.
+        # Older/partial Agent projections do not always include this optional
+        # relationship key; absence means no organization scope, not a crash.
+        "organization_id": str(organization_id) if organization_id else None,
         "limits": {
             "max_iterations": agent.max_iterations,
             "max_token_budget": agent.max_token_budget,
@@ -186,6 +212,7 @@ def synthetic_snapshot_from_candidate(
             candidate_snapshot.get("knowledge_sources") or []
         ),
         "roles": list(candidate_snapshot.get("roles") or []),
+        "organization_id": candidate_snapshot.get("organization_id"),
         "limits": dict(candidate_snapshot.get("limits") or {}),
         "evaluation": {
             "mode": "evaluation_synthetic",

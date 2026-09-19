@@ -18,6 +18,15 @@ PYPROJECT = API_DIR / "pyproject.toml"
 _SKIP_PARTS = {"__pycache__", "node_modules"}
 
 
+def test_downloadable_cli_declares_its_startup_version_parser():
+    """A clean standalone install must import the CLI without API extras."""
+    from packaging.requirements import Requirement
+
+    config = tomllib.loads((API_DIR / "bifrost" / "pyproject.toml").read_text())
+    dependencies = {Requirement(value).name for value in config["project"]["dependencies"]}
+    assert "packaging" in dependencies
+
+
 def test_pyproject_uses_find_directive_not_explicit_list():
     config = tomllib.loads(PYPROJECT.read_text())
     setuptools_cfg = config.get("tool", {}).get("setuptools", {})

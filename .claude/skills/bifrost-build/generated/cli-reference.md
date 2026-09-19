@@ -22,7 +22,7 @@ Commands:
   cases-list         List cases in a suite.
   compare            Summarize regressions, failures, usage deltas, and...
   designer-accept    Explicitly accept a draft, freezing a new case version.
-  designer-drafts    Validate designer output and persist drafts (never...
+  designer-drafts    Start the server-authorized Test Designer AgentRun.
   results            List per-case results with linked debugger run IDs.
   run                Enqueue a suite execution (202 + shared PlatformJob...
   status             Show execution counters and per-case results.
@@ -146,13 +146,14 @@ Options:
 ```
 Usage: agent-tests designer-drafts [OPTIONS] SUITE_ID
 
-  Validate designer output and persist drafts (never auto-approve).
+  Start the server-authorized Test Designer AgentRun.
 
 Options:
-  --designer-output TEXT  Designer output JSON or @file.  [required]
-  --tool-schemas TEXT     Tool schemas object JSON or @file.  [required]
-  --json                  Emit JSON instead of human-readable output.
-  --help                  Show this message and exit.
+  --goal TEXT            What the generated cases should cover.  [required]
+  --count INTEGER RANGE  [1<=x<=10]
+  --historical-run TEXT  Authorized historical AgentRun UUID.
+  --json                 Emit JSON instead of human-readable output.
+  --help                 Show this message and exit.
 ```
 
 ### `agent-tests results`

@@ -76,8 +76,8 @@ def _call_gateway(token: str, name: str, arguments: dict) -> dict:
 
 @pytest.mark.e2e
 class TestMCPAgentGateway:
-    @pytest.fixture(autouse=True, scope="class")
-    def gateway_fixture(self, request, platform_admin):
+    @pytest.fixture(autouse=True)
+    def gateway_fixture(self, request, platform_admin, llm_config_cleanup):
         suffix = uuid.uuid4().hex[:8]
         function_name = f"gateway_echo_{suffix}"
         path = f"workflows/{function_name}.py"
@@ -106,6 +106,23 @@ class TestMCPAgentGateway:
         assert register_response.status_code == 201, register_response.text
         workflow_id = register_response.json()["id"]
 
+        # Admission now freezes a resolved model; this transport test owns its
+        # inert profile rather than relying on earlier live-chat test state.
+        model_connection = requests.post(
+            f"{TEST_API_URL}/api/admin/ai/connections", headers=headers,
+            json={"name": f"Gateway model {suffix}", "provider": "openai_compatible",
+                  "api_key": "fixture-key", "endpoint": "http://scheduler-fixtures:8080/v1"},
+        )
+        assert model_connection.status_code == 201, model_connection.text
+        model_connection_id = model_connection.json()["id"]
+        model_profile = requests.post(
+            f"{TEST_API_URL}/api/admin/ai/profiles", headers=headers,
+            json={"name": f"Gateway model {suffix}", "connection_id": model_connection_id,
+                  "model": "fixture-agent", "enabled_for_chat": False},
+        )
+        assert model_profile.status_code == 201, model_profile.text
+        model_profile_id = model_profile.json()["id"]
+
         delegated_agent_name = f"Gateway Delegate {suffix}"
         delegated_agent_response = requests.post(
             f"{TEST_API_URL}/api/agents",
@@ -113,6 +130,8 @@ class TestMCPAgentGateway:
             json={
                 "name": delegated_agent_name,
                 "description": "Agent used to prove async MCP delegation.",
+                "llm_profile_id": model_profile_id,
+                "max_run_timeout": 5,
                 "system_prompt": "Return a concise result without using tools.",
                 "channels": ["chat"],
             },
@@ -166,6 +185,9 @@ class TestMCPAgentGateway:
             headers=headers,
             params={"path": path},
         )
+
+        # llm_config_cleanup restores assignments before removing this
+        # fixture's profiles, including first-profile bootstrap assignments.
 
     def test_default_and_agent_scoped_surfaces_are_distinct(self):
         initialize = _mcp_request(

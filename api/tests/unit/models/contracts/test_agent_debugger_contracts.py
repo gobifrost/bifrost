@@ -145,6 +145,7 @@ def test_checkpoint_summary_serializes() -> None:
     page = AgentCheckpointPage(run_id=run_id, checkpoints=[summary], next_cursor=None)
     payload = page.model_dump(mode="json")
     assert payload["checkpoints"][0]["sequence"] == 4
+    assert payload["checkpoints"][0]["message_count"] == 9
     assert payload["checkpoints"][0]["has_pending_timer"] is True
     assert payload["next_cursor"] is None
 

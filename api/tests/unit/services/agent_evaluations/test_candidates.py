@@ -15,6 +15,7 @@ from src.services.agent_evaluations.candidates import (
     create_candidate,
     is_evaluation_snapshot,
     snapshot_hash,
+    validate_overlay_delegate_ids,
     validate_overlay_tool_ids,
 )
 
@@ -68,6 +69,16 @@ def test_tool_only_overlay_replaces_tool_set():
     assert [t["name"] for t in snap["tools"]] == ["list_tickets"]
 
 
+def test_empty_tool_overlay_removes_base_tool_grants():
+    snap = build_candidate_snapshot(
+        **_base_kwargs(
+            overlays=CandidateOverlay(tool_ids=[]),
+            overlay_tool_definitions=[],
+        )
+    )
+    assert snap["tools"] == []
+
+
 def test_model_only_overlay_keeps_prompt_and_tools():
     profile_id = uuid4()
     snap = build_candidate_snapshot(
@@ -76,6 +87,26 @@ def test_model_only_overlay_keeps_prompt_and_tools():
     assert snap["model"]["profile_id"] == str(profile_id)
     assert snap["system_prompt"] == "Be helpful."
     assert [t["name"] for t in snap["tools"]] == ["get_ticket"]
+
+
+def test_candidate_preserves_resolved_tool_and_model_snapshot():
+    snap = build_candidate_snapshot(
+        **_base_kwargs(
+            base_model={"profile_id": "base", "provider": "openai", "model": "gpt"},
+            base_tool_definitions=[
+                {
+                    "name": "get_ticket",
+                    "description": "Fetch a ticket.",
+                    "parameters": {"type": "object"},
+                    "target_id": str(_TOOL_ID),
+                }
+            ],
+            overlay_model={"profile_id": "judge", "provider": "openai", "model": "gpt-next"},
+            overlays=CandidateOverlay(llm_profile_id=uuid4()),
+        )
+    )
+    assert snap["model"]["model"] == "gpt-next"
+    assert snap["tools"][0]["parameters"] == {"type": "object"}
 
 
 def test_combined_overlays_apply_limits_and_schema():
@@ -102,6 +133,15 @@ def test_snapshot_is_stable_and_frozen():
 def test_unknown_tool_overlay_rejected():
     with pytest.raises(CandidateError, match="inaccessible"):
         validate_overlay_tool_ids([uuid4()], resolvable_tool_ids=set())
+
+
+def test_delegate_overlay_requires_a_resolved_grant():
+    delegate_id = uuid4()
+    validate_overlay_delegate_ids(
+        [delegate_id], resolvable_delegate_ids={str(delegate_id)}
+    )
+    with pytest.raises(CandidateError, match="inaccessible"):
+        validate_overlay_delegate_ids([delegate_id], resolvable_delegate_ids=set())
 
 
 def test_production_enqueue_rejects_candidates():
@@ -155,6 +195,7 @@ def test_create_candidate_does_not_mutate_base_agent():
             overlays=CandidateOverlay(system_prompt="Be brief."),
             resolvable_tool_ids=set(),
             resolvable_delegate_ids=set(),
+            owner_org_id=agent.organization_id,
             name="brief",
             created_by="tester",
         )
@@ -181,3 +222,21 @@ def test_create_candidate_cross_tenant_denied():
                 resolvable_delegate_ids=set(),
             )
         )
+
+
+def test_create_candidate_persists_authorized_owner_org():
+    import asyncio
+
+    agent = _agent()
+    session = _FakeSession()
+    candidate = asyncio.get_event_loop().run_until_complete(
+        create_candidate(
+            session,
+            base_agent=agent,
+            overlays=CandidateOverlay(),
+            resolvable_tool_ids=set(),
+            resolvable_delegate_ids=set(),
+            owner_org_id=agent.organization_id,
+        )
+    )
+    assert candidate.org_id == agent.organization_id

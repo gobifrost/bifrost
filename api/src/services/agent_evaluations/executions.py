@@ -73,6 +73,33 @@ def next_batch(
     return batch
 
 
+def plan_result_work_items(results: list, *, include_candidate: bool) -> list[dict[str, Any]]:
+    """Rebuild dispatch work from durable result rows without losing repeats."""
+    items = []
+    for result in sorted(
+        results,
+        key=lambda row: (str(row.case_id), row.case_version, row.repetition_index),
+    ):
+        items.append(
+            {
+                "case_id": str(result.case_id),
+                "case_version": result.case_version,
+                "repetition_index": result.repetition_index,
+                "side": "baseline",
+            }
+        )
+        if include_candidate:
+            items.append(
+                {
+                    "case_id": str(result.case_id),
+                    "case_version": result.case_version,
+                    "repetition_index": result.repetition_index,
+                    "side": "candidate",
+                }
+            )
+    return items
+
+
 def apply_terminal_event(
     result,
     *,
@@ -93,7 +120,12 @@ def apply_terminal_event(
     and consider dispatching more work); False for duplicate deliveries.
     """
     run_field = "baseline_run_id" if side == "baseline" else "candidate_run_id"
-    if getattr(result, run_field) == run_id and _side_recorded(result, side):
+    recorded_run_id = getattr(result, run_field)
+    if recorded_run_id is not None and recorded_run_id != run_id:
+        # A late duplicate dispatch/event must never replace the side that was
+        # admitted under the result's durable fence.
+        return False
+    if recorded_run_id == run_id and _side_recorded(result, side):
         return False
     if result.status in TERMINAL_RESULT_STATUSES:
         # A scored result is frozen: scoring pops the staged evidence out
@@ -133,6 +165,7 @@ def _score_result(result) -> None:
     """Evaluate assertions per side and compare once both sides are in."""
     from src.services.agent_evaluations.assertions import evaluate_assertions
     from src.services.agent_evaluations.comparison import compare_runs
+    from src.services.agent_evaluations.simulator_models import redact_value
 
     staging = dict(result.comparison or {})
     baseline_entry = staging.pop("_evidence_baseline", {})
@@ -141,6 +174,19 @@ def _score_result(result) -> None:
     definitions = [
         a.get("definition", a) if isinstance(a, dict) else a for a in assertions
     ]
+    evidence_errors = {
+        side: entry["evidence"]["evidence_error"]
+        for side, entry in (("baseline", baseline_entry), ("candidate", candidate_entry))
+        if entry is not None and entry.get("evidence", {}).get("evidence_error")
+    }
+    if evidence_errors:
+        # Incomplete evidence is an explicit infrastructure error, never a
+        # passing empty assertion set or an indefinitely deferred result.
+        result.status = "error"
+        result.error = "Evaluation evidence could not be loaded."
+        result.comparison = {**staging, "evidence_errors": evidence_errors}
+        result.assertion_results = []
+        return
     baseline_evidence = baseline_entry.get("evidence", {})
     baseline_outcomes = evaluate_assertions(definitions, baseline_evidence)
     if candidate_entry is None:
@@ -168,6 +214,38 @@ def _score_result(result) -> None:
                 candidate_usage=candidate_entry.get("evidence", {}).get("usage"),
             ),
         }
+    semantic_definitions = [
+        definition for definition in definitions
+        if isinstance(definition, dict) and definition.get("type") == "llm_judge"
+    ]
+    if semantic_definitions:
+        comparison = dict(result.comparison or {})
+        comparison["_semantic_pending"] = {
+            "definitions": semantic_definitions,
+            # These immutable, redacted evidence snapshots are the exact
+            # judge inputs. Never keep raw terminal output in durable Studio
+            # comparison JSON while a semantic observation is pending.
+            "baseline_evidence": redact_value(baseline_evidence),
+            "candidate_evidence": (
+                redact_value(candidate_entry.get("evidence", {}))
+                if candidate_entry is not None
+                else None
+            ),
+        }
+        result.comparison = comparison
+    # Preserve per-side usage under ``comparison["usage"]`` for evidence-first
+    # views — including baseline-only results. The generic usage_delta above
+    # already carries the counts/fraction; no result-table columns needed.
+    baseline_usage = baseline_evidence.get("usage") or {}
+    if candidate_entry is not None:
+        candidate_usage: dict[str, Any] | None = (
+            candidate_entry.get("evidence", {}).get("usage") or {}
+        )
+    else:
+        candidate_usage = None
+    comparison = dict(result.comparison or {})
+    comparison["usage"] = {"baseline": baseline_usage, "candidate": candidate_usage}
+    result.comparison = comparison
     failed = [
         o
         for o in result.assertion_results
@@ -182,6 +260,62 @@ def _score_result(result) -> None:
         result.status = "error"
     else:
         result.status = "failed"
+    usage = baseline_evidence.get("usage") or {}
+    if candidate_entry is not None:
+        candidate_usage = candidate_entry.get("evidence", {}).get("usage") or {}
+        usage = candidate_usage or usage
+    result.tokens_used = _as_int(usage.get("tokens"))
+    result.turns_used = _as_int(usage.get("iterations"))
+    result.duration_ms = _as_int(usage.get("latency_ms"))
+    result.cost_usd = (
+        str(usage["cost_usd"]) if usage.get("cost_usd") is not None else None
+    )
+    result.simulator_state_hash = baseline_evidence.get("simulator_state_hash") or None
+
+
+async def resolve_semantic_assertions(session, result) -> None:
+    """Persist optional non-authoritative judge observations after scoring."""
+    from src.services.agent_evaluations.assertions import (
+        evaluate_assertions_async,
+        execute_semantic_judge,
+    )
+
+    comparison = dict(result.comparison or {})
+    pending = comparison.pop("_semantic_pending", None)
+    if not pending:
+        return
+    definitions = list(pending["definitions"])
+    sides = [("baseline", pending["baseline_evidence"])]
+    if pending.get("candidate_evidence") is not None:
+        sides.append(("candidate", pending["candidate_evidence"]))
+    resolved = {}
+    for side, evidence in sides:
+        outcomes = await evaluate_assertions_async(
+            definitions,
+            evidence,
+            judge_fn=lambda params, judge_evidence: execute_semantic_judge(
+                session, params, judge_evidence
+            ),
+        )
+        resolved[side] = outcomes
+    queues = {side: iter(outcomes) for side, outcomes in resolved.items()}
+    replaced = []
+    for outcome in result.assertion_results or []:
+        if outcome.get("type") == "llm_judge":
+            side = outcome.get("side", "baseline")
+            judged = next(queues[side])
+            replaced.append({**judged, "side": side, "label": outcome.get("label")})
+        else:
+            replaced.append(outcome)
+    result.assertion_results = replaced
+    result.comparison = comparison
+
+
+def _as_int(value: Any) -> int | None:
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _tool_names(evidence: dict[str, Any]) -> list[str]:
@@ -233,6 +367,8 @@ def create_execution_objects(
     include_candidate: bool,
     repetitions_override: int | None,
     created_by: str | None,
+    baseline_snapshot: dict[str, Any] | None = None,
+    candidate_snapshot: dict[str, Any] | None = None,
     execution_id: UUID | None = None,
 ):
     """Build the execution + pending result rows (caller persists)."""
@@ -254,6 +390,9 @@ def create_execution_objects(
         status="queued",
         dedupe_key=dedupe_key,
         created_by=created_by,
+        baseline_snapshot=baseline_snapshot or {},
+        candidate_snapshot=candidate_snapshot,
+        case_definitions=[_case_definition(case) for case in cases],
     )
     planned = plan_work_items(
         [
@@ -287,8 +426,29 @@ def create_execution_objects(
                 status="pending",
                 assertion_results=[
                     {"definition": dict(a)} if isinstance(a, dict) else a
-                    for a in (case.assertions or [])
+                    for a in (
+                        list(case.assertions or [])
+                        + [{"type": "tool_called", "params": {"tool": tool}}
+                           for tool in (case.expected_tools or [])]
+                        + [{"type": "forbidden_tool", "params": {"tool": tool}}
+                           for tool in (case.forbidden_tools or [])]
+                    )
                 ],
             )
         )
     return execution, results, planned
+
+
+def _case_definition(case) -> dict[str, Any]:
+    """Fully frozen case data used by dispatch and scoring after enqueue."""
+    return {
+        "id": str(case.id), "version": case.version, "name": case.name,
+        "position": case.position, "input": dict(case.input or {}),
+        "fixture": dict(case.fixture or {}),
+        "simulator_policy": dict(case.simulator_policy or {}),
+        "assertions": list(case.assertions or []),
+        "expected_tools": list(case.expected_tools or []),
+        "forbidden_tools": list(case.forbidden_tools or []),
+        "output_schema": case.output_schema,
+        "repetitions": case.repetitions,
+    }

@@ -11,6 +11,7 @@ from sqlalchemy import delete
 
 from src.models.orm.agent_runs import AgentRun, AgentRunJournalEntry
 from src.services.agent_runtime import run_store
+from src.services.agent_runtime.resume import prepare_resume, restore_pending_wait
 from src.services.agent_runtime.delegation import (
     cascade_cancel,
     child_result_text,
@@ -164,6 +165,53 @@ class TestWakeOnce:
         )
         assert child_result_text(failed) == "Error: boom"
 
+    @asyncio_mark
+    async def test_recovery_replays_child_completed_before_parent_reparks(
+        self, async_session_factory
+    ):
+        """A completion in the collect-before-park window must not strand parent."""
+        parent_id = uuid4()
+        child_id = uuid4()
+        async with async_session_factory() as session:
+            session.add_all(
+                [
+                    AgentRun(id=parent_id, trigger_type="test", status="queued"),
+                    AgentRun(
+                        id=child_id,
+                        trigger_type="delegation",
+                        status="completed",
+                        output={"text": "done"},
+                        parent_run_id=parent_id,
+                    ),
+                ]
+            )
+            await session.commit()
+        await _intent(async_session_factory, parent_id, "call-1", child_id)
+        try:
+            async with async_session_factory() as session:
+                claimed = await run_store.claim_run(session, parent_id, "worker")
+                assert claimed.lease_token is not None
+                restored = await restore_pending_wait(
+                    async_session_factory,
+                    parent_id,
+                    claimed.lease_token,
+                    {"call-1"},
+                )
+                assert restored is None
+            plan, _, unrecoverable = await prepare_resume(
+                async_session_factory, parent_id, claimed.lease_token
+            )
+            assert unrecoverable is None
+            assert plan is not None
+            assert plan.deferred_pending == set()
+            assert plan.deferred_results == {"call-1": "done"}
+            async with async_session_factory() as session:
+                parent = await session.get(AgentRun, parent_id)
+                assert parent is not None
+                assert parent.status == "running"
+        finally:
+            await _cleanup(async_session_factory, parent_id, child_id)
+
 
 class TestCascadeCancel:
     @asyncio_mark
@@ -238,8 +286,10 @@ class TestCascadeCancel:
                 done = await session.get(AgentRun, done_id)
                 root = await session.get(AgentRun, root_id)
                 assert queued is not None and queued.status == "cancelled"
+                assert queued.completion_event_pending_at is not None
                 assert running is not None and running.status == "cancelling"
                 assert waiting is not None and waiting.status == "cancelled"
+                assert waiting.completion_event_pending_at is not None
                 assert done is not None and done.status == "completed"
                 assert root is not None and root.status == "waiting_child"
             redis_mock.set.assert_awaited_once()
@@ -253,6 +303,66 @@ class TestCascadeCancel:
                 running_id,
                 waiting_id,
                 done_id,
+            )
+
+    @asyncio_mark
+    async def test_cancelling_child_only_touches_its_descendants(
+        self, async_session_factory
+    ):
+        root_id = uuid4()
+        target_child_id = uuid4()
+        grandchild_id = uuid4()
+        sibling_id = uuid4()
+        async with async_session_factory() as session:
+            session.add_all(
+                [
+                    AgentRun(id=root_id, trigger_type="test", status="running"),
+                    AgentRun(
+                        id=target_child_id,
+                        trigger_type="delegation",
+                        status="running",
+                        parent_run_id=root_id,
+                        root_run_id=root_id,
+                    ),
+                    AgentRun(
+                        id=grandchild_id,
+                        trigger_type="delegation",
+                        status="queued",
+                        parent_run_id=target_child_id,
+                        root_run_id=root_id,
+                    ),
+                    AgentRun(
+                        id=sibling_id,
+                        trigger_type="delegation",
+                        status="queued",
+                        parent_run_id=root_id,
+                        root_run_id=root_id,
+                    ),
+                ]
+            )
+            await session.commit()
+        redis_mock = AsyncMock()
+        try:
+            touched = await cascade_cancel(
+                async_session_factory, redis_mock, target_child_id
+            )
+            assert touched == 1
+            async with async_session_factory() as session:
+                root = await session.get(AgentRun, root_id)
+                target = await session.get(AgentRun, target_child_id)
+                grandchild = await session.get(AgentRun, grandchild_id)
+                sibling = await session.get(AgentRun, sibling_id)
+                assert root is not None and root.status == "running"
+                assert target is not None and target.status == "running"
+                assert grandchild is not None and grandchild.status == "cancelled"
+                assert sibling is not None and sibling.status == "queued"
+        finally:
+            await _cleanup(
+                async_session_factory,
+                root_id,
+                target_child_id,
+                grandchild_id,
+                sibling_id,
             )
 
 

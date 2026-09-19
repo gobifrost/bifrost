@@ -120,6 +120,11 @@ class AgentRun(Base):
     execution_snapshot: Mapped[dict | None] = mapped_column(JSONB, default=None)
     # Caller-supplied durable locators (e.g. ticket ID) for coordinators.
     caller_context: Mapped[dict | None] = mapped_column(JSONB, default=None)
+    # Trusted authorization facts captured by the admission boundary. This is
+    # deliberately distinct from ``caller_context``: callers may supply the
+    # latter as domain data, while this is derived only from the authenticated
+    # principal passed to enqueue_agent_run.
+    caller_auth_context: Mapped[dict | None] = mapped_column(JSONB, default=None)
     # Latest committed checkpoint number. Backfilled to 0.
     checkpoint_sequence: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default=text("0")

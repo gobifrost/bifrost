@@ -136,6 +136,7 @@ async def suspend_for_timer(
                 select(AgentRun)
                 .where(AgentRun.id == run_id)
                 .with_for_update(of=AgentRun)
+                .execution_options(populate_existing=True)
             )
         ).scalar_one_or_none()
         if locked is None:
@@ -197,8 +198,10 @@ async def suspend_for_timer(
 async def promote_due_timers(
     session_factory: async_sessionmaker[AsyncSession],
     now: datetime,
+    *,
+    limit: int = 100,
 ) -> list[UUID]:
-    """Wake every due sleeping run exactly once with one fired entry.
+    """Wake a bounded batch of due runs with exactly one fired entry each.
 
     Database-time fenced update: only the first promotion transitions the
     row, so overlapping scheduler scans are no-ops for already-woken runs.
@@ -212,7 +215,7 @@ async def promote_due_timers(
                     AgentRun.status == rt.SLEEPING,
                     AgentRun.wake_at.is_not(None),
                     AgentRun.wake_at <= now,
-                )
+                ).order_by(AgentRun.wake_at, AgentRun.id).limit(limit)
             )
         ).scalars().all()
         candidates = [row.id for row in rows]
@@ -226,6 +229,7 @@ async def promote_due_timers(
                         AgentRun.status == rt.SLEEPING,
                     )
                     .with_for_update(skip_locked=True, of=AgentRun)
+                    .execution_options(populate_existing=True)
                 )
             ).scalar_one_or_none()
             if locked is None:
@@ -234,10 +238,17 @@ async def promote_due_timers(
                 continue
             try:
                 await run_store.wake_run(
-                    session, run_id, reason="sleeping timer due"
+                    session,
+                    run_id,
+                    reason="sleeping timer due",
+                    commit=False,
                 )
             except rt.InvalidTransitionError:
                 continue
+            # wake_run adds its journal row without committing. Production
+            # sessions disable autoflush, so persist that sequence before
+            # allocating the fired entry inside this same transaction.
+            await session.flush()
             intent = await find_timer_intent_for_promotion(session, run_id)
             entry = AgentRunJournalEntry(
                 run_id=run_id,

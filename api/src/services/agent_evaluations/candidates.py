@@ -48,7 +48,9 @@ def build_candidate_snapshot(
     base_limits: dict[str, Any],
     overlays: CandidateOverlay,
     overlay_tool_definitions: list[dict[str, Any]] | None = None,
+    base_tool_definitions: list[dict[str, Any]] | None = None,
     overlay_delegated_agents: list[dict[str, str]] | None = None,
+    overlay_model: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Freeze the complete candidate snapshot. Pure function of its inputs.
 
@@ -56,7 +58,7 @@ def build_candidate_snapshot(
     is resolved here and the result is hashed by the caller.
     """
     system_prompt = overlays.system_prompt or base_system_prompt
-    model = dict(base_model)
+    model = dict(overlay_model if overlay_model is not None else base_model)
     if overlays.llm_profile_id is not None:
         model["profile_id"] = str(overlays.llm_profile_id)
     if overlays.llm_max_tokens is not None:
@@ -64,7 +66,7 @@ def build_candidate_snapshot(
     tools = (
         list(overlay_tool_definitions)
         if overlay_tool_definitions is not None
-        else list(base_tools)
+        else list(base_tool_definitions if base_tool_definitions is not None else base_tools)
     )
     delegated = (
         list(overlay_delegated_agents)
@@ -164,7 +166,11 @@ async def create_candidate(
     resolvable_tool_ids: set[str],
     resolvable_delegate_ids: set[str],
     overlay_tool_definitions: list[dict[str, Any]] | None = None,
+    base_tool_definitions: list[dict[str, Any]] | None = None,
     overlay_delegated_agents: list[dict[str, str]] | None = None,
+    base_execution_snapshot: dict[str, Any] | None = None,
+    overlay_model: dict[str, Any] | None = None,
+    owner_org_id: UUID | None = None,
     name: str | None = None,
     created_by: str | None = None,
 ):
@@ -176,9 +182,7 @@ async def create_candidate(
     """
     from src.models.orm.agent_evaluations import AgentCandidateSnapshot
 
-    if base_agent.organization_id is not None and getattr(
-        session, "_candidate_org_id", None
-    ) not in (None, base_agent.organization_id):
+    if base_agent.organization_id is not None and owner_org_id != base_agent.organization_id:
         raise CandidateError("Cross-tenant candidate creation is denied.")
     validate_overlay_tool_ids(overlays.tool_ids, resolvable_tool_ids)
     validate_overlay_delegate_ids(
@@ -193,33 +197,32 @@ async def create_candidate(
             else None
         ),
         base_system_prompt=base_agent.system_prompt,
-        base_model={
-            "profile_id": (
-                str(base_agent.llm_profile_id)
-                if base_agent.llm_profile_id
-                else None
-            ),
+        base_model=dict((base_execution_snapshot or {}).get("model") or {
+            "profile_id": str(base_agent.llm_profile_id) if base_agent.llm_profile_id else None,
             "llm_max_tokens": base_agent.llm_max_tokens,
-        },
-        base_tools=[
+        }),
+        base_tools=list((base_execution_snapshot or {}).get("tools") or [
             {"name": t.name, "target_id": str(t.id)} for t in (base_agent.tools or [])
-        ],
+        ]),
         base_delegated_agents=[
             {"id": str(d.id), "name": d.name}
             for d in (base_agent.delegated_agents or [])
         ],
-        base_system_tools=list(base_agent.system_tools or []),
-        base_limits={
+        base_system_tools=list((base_execution_snapshot or {}).get("system_tools") or base_agent.system_tools or []),
+        base_limits=dict((base_execution_snapshot or {}).get("limits") or {
             "max_iterations": base_agent.max_iterations,
             "max_token_budget": base_agent.max_token_budget,
             "max_run_timeout": base_agent.max_run_timeout,
-        },
+        }),
         overlays=overlays,
         overlay_tool_definitions=overlay_tool_definitions,
+        base_tool_definitions=base_tool_definitions,
         overlay_delegated_agents=overlay_delegated_agents,
+        overlay_model=overlay_model,
     )
     candidate = AgentCandidateSnapshot(
-        org_id=base_agent.organization_id,
+        # Global base Agents still yield tenant-private candidate material.
+        org_id=owner_org_id,
         base_agent_id=base_agent.id,
         base_agent_updated_at=getattr(base_agent, "updated_at", None),
         name=name,

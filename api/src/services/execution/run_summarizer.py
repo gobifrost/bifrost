@@ -399,6 +399,10 @@ async def summarize_run(
             cache_read_tokens=response.cache_read_tokens,
             cache_write_tokens=response.cache_write_tokens,
             provider_cost=response.provider_cost,
+            # Sequence zero is reserved for post-run summarization. Durable
+            # execution checkpoints use positive sequences, which lets
+            # evaluation evidence exclude this accounting-only model call.
+            sequence=0,
         )
         await db.commit()
         await _broadcast_run(run, db)

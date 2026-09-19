@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from uuid import uuid4
+
 import pytest
 
 from src.services.agent_evaluations.simulator import (
@@ -11,8 +14,23 @@ from src.services.agent_evaluations.simulator import (
 from src.services.agent_evaluations.simulator_models import (
     FixtureError,
     canonical_hash,
+    redact_value,
     validate_fixture,
 )
+
+from src.services.agent_evaluations.runner import (
+    EVALUATION_SYNTHETIC_MODE,
+    load_synthetic_router,
+    synthetic_operation_id,
+)
+
+
+def test_redaction_preserves_numeric_usage_without_exposing_tokens():
+    assert redact_value({
+        "tokens": 42, "max_tokens": 100, "api_token": "secret", "input_tokens": "secret",
+    }) == {
+        "tokens": 42, "max_tokens": 100, "api_token": "[REDACTED]", "input_tokens": "[REDACTED]",
+    }
 
 
 def _fixture(**over) -> dict:
@@ -210,5 +228,61 @@ def test_malformed_fixtures_fail_at_save_time():
         validate_fixture({"entities": {}, "allowed_tools": [], "rules": [{}]})
 
 
+@pytest.mark.parametrize("fields", [
+    {"when": {"args": {"id": "expected"}}, "then": {"return": {"title": "expected"}}},
+    {"match_args": []},
+    {"mutate": {}},
+    {"tool": ""},
+])
+def test_unsupported_rule_shapes_fail_before_simulation(fields):
+    with pytest.raises(FixtureError):
+        validate_fixture({"rules": [{"tool": "read_ticket", **fields}]})
+
+
 def test_canonical_hash_stable():
     assert canonical_hash({"b": 1, "a": 2}) == canonical_hash({"a": 2, "b": 1})
+
+
+def test_operation_ids_scope_replayed_provider_ids_to_each_child_run():
+    provider_call_id = "call_123"
+    assert synthetic_operation_id(uuid4(), provider_call_id) != synthetic_operation_id(
+        uuid4(), provider_call_id
+    )
+
+
+@pytest.mark.asyncio
+async def test_synthetic_router_rejects_cyclic_parent_chain():
+    """Malformed parent links must fail closed before a simulator is loaded."""
+    first_id, second_id = uuid4(), uuid4()
+    marker = {"evaluation": {"mode": EVALUATION_SYNTHETIC_MODE, "evaluation_only": True}}
+    correlation = {"evaluation_mode": EVALUATION_SYNTHETIC_MODE}
+    rows = {
+        first_id: SimpleNamespace(
+            id=first_id,
+            parent_run_id=second_id,
+            root_run_id=None,
+            trigger_type=EVALUATION_SYNTHETIC_MODE,
+            execution_snapshot=marker,
+            correlation=correlation,
+        ),
+        second_id: SimpleNamespace(
+            id=second_id,
+            parent_run_id=first_id,
+            root_run_id=None,
+            trigger_type=EVALUATION_SYNTHETIC_MODE,
+            execution_snapshot=marker,
+            correlation=correlation,
+        ),
+    }
+
+    class Session:
+        async def get(self, _model, row_id):
+            return rows.get(row_id)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+    assert await load_synthetic_router(lambda: Session(), first_id) is None

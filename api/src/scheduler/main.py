@@ -31,7 +31,10 @@ from src.config import get_settings
 from src.core.database import init_db, close_db, get_db_context
 from src.core.pubsub import publish_git_op_completed
 from src.jobs.schedulers.cron_scheduler import process_schedule_sources
-from src.jobs.schedulers.execution_cleanup import cleanup_stuck_executions
+from src.jobs.schedulers.execution_cleanup import (
+    cleanup_stuck_executions,
+    recover_durable_agent_runs,
+)
 from src.jobs.schedulers.platform_jobs import platform_job_worker_loop
 from src.scheduler.health import heartbeat_loop, write_heartbeat
 from src.scheduler.leadership import SchedulerLeadershipLease
@@ -303,6 +306,19 @@ class Scheduler:
             **misfire_options,
         )
         logger.info("Logo thumbnail backfill scheduled (every 60s)")
+
+        # Durable timers and crashed workers need a prompt queue nudge, not
+        # the five-minute workflow timeout sweep.
+        scheduler.add_job(
+            self._run_scheduled_task,
+            IntervalTrigger(seconds=15),
+            id="agent_run_recovery",
+            name="Resume due or interrupted agent runs",
+            replace_existing=True,
+            next_run_time=datetime.now(timezone.utc),
+            args=["agent_run_recovery", recover_durable_agent_runs],
+            **misfire_options,
+        )
 
         # Execution cleanup - every 5 minutes (run immediately at startup)
         scheduler.add_job(

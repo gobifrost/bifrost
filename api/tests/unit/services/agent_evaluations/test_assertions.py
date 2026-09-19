@@ -6,7 +6,10 @@ import pytest
 
 from src.services.agent_evaluations.assertions import (
     AssertionDefinitionError,
+    execute_semantic_judge,
+    evaluate_assertions_async,
     evaluate_assertions,
+    freeze_semantic_judges,
     validate_assertions,
 )
 from src.services.agent_evaluations.comparison import compare_runs
@@ -148,30 +151,120 @@ def test_malformed_assertions_fail_at_save_time():
         evaluate_assertions([{"type": "tool_count", "params": {"tool": "x"}}], _evidence())
 
 
-def test_llm_judge_labeled_nondeterministic_and_optional():
+def test_llm_judge_uses_a_frozen_snapshot_and_is_nondeterministic():
+    import asyncio
+
     assertion = [
         {
             "type": "llm_judge",
             "params": {
-                "model": "judge-v1",
+                "rubric": "The answer is helpful.",
                 "prompt_version": "3",
                 "threshold": 0.7,
+                "judge_snapshot": {
+                    "profile_id": "00000000-0000-0000-0000-000000000001",
+                    "provider": "openai",
+                    "model": "judge-v1",
+                    "endpoint": None,
+                    "openai_transport": None,
+                    "prompt_version": "3",
+                },
             },
         }
     ]
-    without_judge = evaluate_assertions(assertion, _evidence())
-    assert without_judge[0]["passed"] is False
-    assert "nondeterministic" in (without_judge[0]["detail"] or "")
+    pending = evaluate_assertions(assertion, _evidence())
+    assert pending[0]["actual"] == "pending"
 
-    def judge(params, evidence):
-        assert params["model"] == "judge-v1"
-        return {"score": 0.9, "rationale": "helpful", "usage": {"tokens": 50}}
+    async def judge(params, evidence):
+        assert params["judge_snapshot"]["model"] == "judge-v1"
+        assert evidence["output"]["answer"] == "reset your password"
+        return {"type": "llm_judge", "passed": True, "score": 0.9}
 
-    with_judge = evaluate_assertions(assertion, _evidence(), judge_fn=judge)
-    assert with_judge[0]["passed"] is True
-    assert with_judge[0]["nondeterministic"] is True
-    assert with_judge[0]["judge_model"] == "judge-v1"
-    assert with_judge[0]["judge_usage"] == {"tokens": 50}
+    outcomes = asyncio.get_event_loop().run_until_complete(
+        evaluate_assertions_async(assertion, _evidence(), judge_fn=judge)
+    )
+    assert outcomes[0]["score"] == 0.9
+
+
+def test_semantic_judge_profile_cannot_be_frozen_by_non_admin():
+    import asyncio
+
+    with pytest.raises(AssertionDefinitionError, match="platform administrator"):
+        asyncio.get_event_loop().run_until_complete(
+            freeze_semantic_judges(
+                None,
+                [{"type": "llm_judge", "params": {
+                    "rubric": "helpful", "prompt_version": "1", "threshold": 0.5,
+                    "judge_profile_id": "00000000-0000-0000-0000-000000000001",
+                }}],
+                is_superuser=False,
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_semantic_judge_uses_frozen_profile_and_redacted_evidence(monkeypatch):
+    from decimal import Decimal
+
+    from src.services.llm import LLMResponse
+    from src.services.llm.base import LLMConfig
+
+    profile_id = "00000000-0000-0000-0000-000000000001"
+    config = LLMConfig(provider="openai", model="judge-v1", api_key="test")
+
+    async def fake_config(_session, *, profile_id, **_kwargs):
+        assert str(profile_id) == "00000000-0000-0000-0000-000000000001"
+        return config
+
+    class Judge:
+        async def complete(self, messages, *, model, **_kwargs):
+            assert model == "judge-v1"
+            payload = messages[-1].content
+            assert "[REDACTED]" in payload
+            assert "live-secret" not in payload
+            return LLMResponse(
+                content='{"score": 0.9, "rationale": "meets rubric"}',
+                input_tokens=12,
+                output_tokens=4,
+                provider_cost=Decimal("0.001"),
+            )
+
+    def fake_client(resolved):
+        assert resolved is config
+        return Judge()
+
+    monkeypatch.setattr("src.services.llm.factory.get_llm_config", fake_config)
+    monkeypatch.setattr("src.services.llm.pydantic_client.PydanticAIClient", fake_client)
+    outcome = await execute_semantic_judge(
+        None,
+        {
+            "rubric": "Helpful response",
+            "prompt_version": "5",
+            "threshold": 0.8,
+            "judge_snapshot": {
+                "profile_id": profile_id,
+                "provider": "openai",
+                "model": "judge-v1",
+                "endpoint": None,
+                "openai_transport": None,
+                "prompt_version": "5",
+                "anthropic_prompt_cache_supported": None,
+                "default_max_tokens": None,
+                "extra_params": {},
+            },
+        },
+        _evidence(output={"answer": "ok", "api_token": "live-secret"}),
+    )
+    assert outcome["passed"] is True
+    assert outcome["actual"] == 0.9
+    assert outcome["judge_usage"] == {
+        "input_tokens": 12,
+        "output_tokens": 4,
+        "cost_usd": "0.001",
+    }
+    assert outcome["judge_snapshot"]["model"] == "judge-v1"
+    assert outcome["judge_evidence"]["output"]["api_token"] == "[REDACTED]"
+    assert outcome["judge_rubric"] == "Helpful response"
 
 
 def test_comparison_verdicts():
@@ -187,6 +280,63 @@ def test_comparison_verdicts():
         [{"code": "a", "passed": False}, {"code": "b", "passed": True}],
     )
     assert mixed["verdict"] == "mixed"
+
+
+@pytest.mark.parametrize("definition", [
+    {"type": "output_path", "params": {"path": None}},
+    {"type": "tool_count", "params": {"tool": "read", "count": -1}},
+    {"type": "tool_args", "params": {"tool": "read", "args": []}},
+    {"type": "tool_order", "params": {"tools": "read"}},
+    {"type": "max_tokens", "params": {"limit": "unbounded"}},
+])
+def test_malformed_assertion_params_are_rejected_before_execution(definition):
+    with pytest.raises(AssertionDefinitionError):
+        validate_assertions([definition])
+
+
+def test_contains_assertion_fails_on_scalar_output_instead_of_crashing():
+    outcomes = evaluate_assertions(
+        [{"type": "output_path", "params": {"path": "answer", "contains": "yes"}}],
+        _evidence(output={"answer": 42}),
+    )
+    assert outcomes[0]["passed"] is False
+
+
+def test_tool_assertions_link_to_the_correct_run_and_journal_sequence():
+    reference = {"run_id": "child-run", "sequence": 7, "kind": "tool_result"}
+    outcomes = evaluate_assertions(
+        [{"type": "tool_called", "params": {"tool": "read"}}],
+        _evidence(tool_calls=[{
+            "name": "read", "sequence": 0, "journal_references": [reference],
+        }]),
+    )
+    assert outcomes[0]["evidence_references"] == [reference]
+
+
+@pytest.mark.asyncio
+async def test_semantic_judge_rejects_changed_sampling_settings(monkeypatch):
+    from src.services.llm.base import LLMConfig
+
+    config = LLMConfig(provider="openai", model="judge-v1", api_key="test",
+                       extra_params={"temperature": 0})
+
+    async def resolve(*args, **kwargs):
+        return config
+
+    monkeypatch.setattr("src.services.llm.factory.get_llm_config", resolve)
+    frozen = await freeze_semantic_judges(None, [{"type": "llm_judge", "params": {
+        "rubric": "Be helpful", "prompt_version": "1", "threshold": 0.8,
+        "judge_profile_id": "00000000-0000-0000-0000-000000000001",
+    }}], is_superuser=True)
+    config.extra_params["temperature"] = 1
+
+    def unexpected_client(*args, **kwargs):
+        pytest.fail("Changed judge settings must not reach the provider")
+
+    monkeypatch.setattr("src.services.llm.pydantic_client.PydanticAIClient", unexpected_client)
+    outcome = await execute_semantic_judge(None, frozen[0]["params"], _evidence())
+    assert outcome["passed"] is False
+    assert "no longer matches frozen snapshot" in outcome["detail"]
 
 
 def test_comparison_trajectory_output_usage():

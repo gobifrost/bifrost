@@ -9,6 +9,7 @@ from __future__ import annotations
 
 QUEUED = "queued"
 RUNNING = "running"
+CANCELLING = "cancelling"
 WAITING_CHILD = "waiting_child"
 WAITING_CHILDREN = "waiting_children"
 SLEEPING = "sleeping"
@@ -41,6 +42,7 @@ TRANSITIONS: dict[str, frozenset[str]] = {
     QUEUED: frozenset({RUNNING, CANCELLED, FAILED}),
     RUNNING: frozenset(
         {
+            CANCELLING,
             WAITING_CHILD,
             WAITING_CHILDREN,
             SLEEPING,
@@ -53,6 +55,7 @@ TRANSITIONS: dict[str, frozenset[str]] = {
             RECOVERY_REQUIRED,
         }
     ),
+    CANCELLING: frozenset({CANCELLED, FAILED, TIMEOUT}),
     # Waiting states wake only through their child/timer transaction.
     WAITING_CHILD: frozenset({RUNNING, CANCELLED, FAILED}),
     WAITING_CHILDREN: frozenset({RUNNING, CANCELLED, FAILED}),

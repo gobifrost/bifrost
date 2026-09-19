@@ -273,3 +273,17 @@ async def test_form_resolves_workflow_ref_stored_as_pathfn(db_session) -> None:
         sol, forms=[form.id]
     )
     assert ("workflow", str(wf.id)) in {(d.kind, d.ref) for d in preview.pulled_in}
+
+
+async def test_independent_v2_app_does_not_break_repo_dependency_preview(db_session):
+    sol = await _solution(db_session)
+    wf = await _wf(db_session, path="workflows/isolated_preview.py", name="isolated-preview")
+    table = await _table(db_session, f"preview_{uuid.uuid4().hex}")
+    db_session.add(Application(
+        id=uuid.uuid4(), name="Independent V2", slug=f"independent-{uuid.uuid4().hex}",
+        app_model="standalone_v2", repo_path=None, organization_id=None, solution_id=None,
+    ))
+    await db_session.flush()
+    repo = _FakeRepo({wf.path: f'await tables.get("{table.name}")'.encode()})
+    preview = await SolutionDependencyWalker(db_session, repo=repo).preview(sol, workflows=[wf.id])
+    assert ("table", str(table.id)) in {(ref.kind, ref.ref) for ref in preview.pulled_in}
