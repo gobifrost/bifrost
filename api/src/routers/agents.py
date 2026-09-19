@@ -269,6 +269,7 @@ def _agent_to_public(agent: Agent) -> AgentPublic:
         llm_max_tokens=agent.llm_max_tokens,
         max_iterations=agent.max_iterations,
         max_token_budget=agent.max_token_budget,
+        max_run_timeout=agent.max_run_timeout,
         logo=_logo_data_url(
             agent.logo_thumbnail_data or agent.logo_data,
             agent.logo_thumbnail_content_type or agent.logo_content_type,
@@ -469,6 +470,7 @@ async def create_agent(
         llm_max_tokens=agent_data.llm_max_tokens,
         max_iterations=agent_data.max_iterations,
         max_token_budget=agent_data.max_token_budget,
+        max_run_timeout=agent_data.max_run_timeout,
         created_by=user.email,
         created_at=now,
         updated_at=now,
@@ -725,7 +727,7 @@ async def update_agent(
         # the user owns the agent or not (no information leak about ownership).
         budget_fields_set = [
             f
-            for f in ("max_iterations", "max_token_budget", "llm_max_tokens")
+            for f in ("max_iterations", "max_token_budget", "llm_max_tokens", "max_run_timeout")
             if f in agent_data.model_fields_set
         ]
         if budget_fields_set:
@@ -802,6 +804,8 @@ async def update_agent(
         agent.max_iterations = agent_data.max_iterations
     if "max_token_budget" in agent_data.model_fields_set:
         agent.max_token_budget = agent_data.max_token_budget
+    if "max_run_timeout" in agent_data.model_fields_set:
+        agent.max_run_timeout = agent_data.max_run_timeout
 
     agent.updated_at = datetime.now(timezone.utc)
 

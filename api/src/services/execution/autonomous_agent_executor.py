@@ -81,7 +81,6 @@ from src.services.mcp_client.errors import (
 logger = logging.getLogger(__name__)
 
 MAX_DELEGATION_DEPTH = 5  # Prevent infinite delegation chains
-DELEGATION_TIMEOUT_SECONDS = 600  # 10 minutes per delegation
 
 
 class ToolError(Exception):
@@ -1887,37 +1886,20 @@ class AutonomousAgentExecutor:
             str(target_agent.llm_profile_id) if target_agent.llm_profile_id else None
         )
         try:
-            sub_result = await asyncio.wait_for(
-                sub_executor.run(
-                    agent=target_agent,
-                    input_data={
-                        "task": task,
-                        "_delegated_from": parent_agent.name,
-                    },
-                    output_schema=output_schema,
-                    run_id=str(sub_run_id),
-                    _caller=caller,
-                    _shared_usage=shared_usage,
-                    _shared_budget=shared_budget,
-                ),
-                timeout=DELEGATION_TIMEOUT_SECONDS,
+            # No hardcoded child timeout: parent and child each enforce their
+            # own snapshotted max_run_timeout; waiting time is excluded.
+            sub_result = await sub_executor.run(
+                agent=target_agent,
+                input_data={
+                    "task": task,
+                    "_delegated_from": parent_agent.name,
+                },
+                output_schema=output_schema,
+                run_id=str(sub_run_id),
+                _caller=caller,
+                _shared_usage=shared_usage,
+                _shared_budget=shared_budget,
             )
-        except asyncio.TimeoutError:
-            logger.error(
-                f"Delegation to '{target_agent.name}' timed out after "
-                f"{DELEGATION_TIMEOUT_SECONDS}s"
-            )
-            sub_result = {
-                "output": None,
-                "iterations_used": 0,
-                "tokens_used": 0,
-                "status": "timeout",
-                "llm_profile_id": target_profile_id,
-                "error": (
-                    f"Delegation to {target_agent.name} timed out after "
-                    f"{DELEGATION_TIMEOUT_SECONDS}s"
-                ),
-            }
         except asyncio.CancelledError as exc:
             cancellation = exc
             sub_result = {

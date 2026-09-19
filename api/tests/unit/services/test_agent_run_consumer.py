@@ -393,6 +393,83 @@ async def test_executes_from_postgres_after_redis_loss(
 
 
 @pytest.mark.asyncio
+async def test_legacy_redis_context_still_executes_without_snapshot(
+    consumer,
+    db_session,
+    async_session_factory,
+    seed_agent,
+):
+    """Rolling upgrade: a pre-snapshot row with in-flight Redis context runs live."""
+    import json as json_module
+
+    run_id = uuid4()
+    run = AgentRun(
+        id=run_id,
+        agent_id=seed_agent.id,
+        trigger_type="manual",
+        status="queued",
+        input={"task": "legacy"},
+        iterations_used=0,
+        tokens_used=0,
+        created_at=datetime.now(timezone.utc),
+        execution_snapshot=None,
+    )
+    db_session.add(run)
+    await db_session.commit()
+
+    consumer._session_factory = async_session_factory
+    FakeSnapshotExecutor.seen_kwargs = {}
+
+    legacy_context = {
+        "run_id": str(run_id),
+        "agent_id": str(seed_agent.id),
+        "trigger_type": "manual",
+        "input": {"task": "legacy"},
+        "output_schema": None,
+        "org_id": None,
+        "caller": {},
+        "event_delivery_id": None,
+        "conversation_id": None,
+        "sync": False,
+        "cancelled": False,
+    }
+    context_key = f"bifrost:agent_run:{run_id}:context"
+
+    async def _redis_get(key):
+        if key == context_key:
+            return json_module.dumps(legacy_context)
+        return None
+
+    redis_mock = AsyncMock()
+    redis_mock.get.side_effect = _redis_get
+
+    with (
+        patch("src.jobs.consumers.agent_run.get_redis", return_value=FakeRedisCtx(redis_mock)),
+        patch(
+            "src.services.execution.autonomous_agent_executor.AutonomousAgentExecutor",
+            FakeSnapshotExecutor,
+        ),
+        patch("src.jobs.consumers.agent_run.publish_agent_run_update", AsyncMock()),
+        patch("src.jobs.consumers.agent_run._publish_sync_result", AsyncMock()) as sync_mock,
+        patch(
+            "src.services.execution.run_summarizer.enqueue_summarize",
+            AsyncMock(),
+        ),
+    ):
+        await consumer.process_message({"run_id": str(run_id)})
+
+    seen = FakeSnapshotExecutor.seen_kwargs
+    assert seen["run_id"] == str(run_id)
+    assert seen["input_data"] == {"task": "legacy"}
+    assert seen["execution_snapshot"] is None
+
+    refreshed = await _load_run(async_session_factory, run_id)
+    assert refreshed.status == "completed"
+    sync_payload = sync_mock.await_args.args[1]
+    assert sync_payload["status"] == "completed"
+
+
+@pytest.mark.asyncio
 async def test_chat_run_publishes_stream_chunks_and_terminal_completion(
     consumer,
 ):
@@ -631,7 +708,7 @@ async def test_chat_run_interruption_persists_partial_output_and_terminal_event(
             ),
         ),
         patch("src.services.agent_executor.AgentExecutor", return_value=fake_executor),
-        patch("src.jobs.consumers.agent_run.DEFAULT_RUN_TIMEOUT", 0.001),
+        patch("src.jobs.consumers.agent_run.DEFAULT_RUN_TIMEOUT_SECONDS", 0.001),
         patch("src.jobs.consumers.agent_run.publish_chat_run_event", publish_chat),
         patch("src.jobs.consumers.agent_run.publish_agent_run_update", publish_run),
     ):

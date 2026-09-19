@@ -29,12 +29,15 @@ from src.models.orm.agent_runs import AgentRun
 from src.services.agent_runtime import run_store
 from src.services.agent_runtime import types as runtime_types
 from src.services.agent_runtime.resume import active_seconds_used, prepare_resume
+from src.services.agent_runtime.settings import (
+    DEFAULT_RUN_TIMEOUT_SECONDS,
+    effective_run_timeout_seconds,
+)
 
 logger = logging.getLogger(__name__)
 
 QUEUE_NAME = "agent-runs"
 REDIS_PREFIX = "bifrost:agent_run"
-DEFAULT_RUN_TIMEOUT = 1800  # 30 minutes
 CANCEL_CHECK_INTERVAL = 2  # seconds between cancel flag checks
 AGENT_RUN_LEASE_TTL_SECONDS = 120  # crash-detection lease, not a user limit
 AGENT_RUN_LEASE_HEARTBEAT_SECONDS = 30  # renewal cadence while executing
@@ -473,21 +476,20 @@ class AgentRunConsumer(BaseConsumer):
             # execution across attempts counts toward max_run_timeout.
             # max_run_timeout=0 means disabled.
             snapshot_timeout = snapshot_limits.get("max_run_timeout")
-            configured_timeout = (
-                snapshot_timeout
-                if snapshot_timeout is not None
-                else agent.max_run_timeout
+            base_timeout = effective_run_timeout_seconds(
+                snapshot_timeout,
+                agent.max_run_timeout,
+                default=DEFAULT_RUN_TIMEOUT_SECONDS,
             )
             run_timeout: float | None
-            if configured_timeout == 0:
+            if base_timeout is None:
                 run_timeout = None
             else:
                 async with self._session_factory() as db:
                     spent = await active_seconds_used(
                         db, UUID(run_id), attempt
                     )
-                configured_timeout = configured_timeout or DEFAULT_RUN_TIMEOUT
-                remaining = configured_timeout - spent
+                remaining = base_timeout - spent
                 if remaining <= 0:
                     async with self._session_factory() as db:
                         timed_out = await run_store.finish_run(
@@ -497,7 +499,7 @@ class AgentRunConsumer(BaseConsumer):
                             runtime_types.TIMEOUT,
                             error=(
                                 "Agent run exceeded max_run_timeout "
-                                f"({configured_timeout}s active)"
+                                f"({base_timeout}s active)"
                             ),
                             duration_ms=int((time.time() - start_time) * 1000),
                         )
@@ -971,7 +973,7 @@ class AgentRunConsumer(BaseConsumer):
         run_timeout = (
             chat_agent.max_run_timeout
             if chat_agent is not None and chat_agent.max_run_timeout
-            else DEFAULT_RUN_TIMEOUT
+            else DEFAULT_RUN_TIMEOUT_SECONDS
         )
         from src.services.agent_executor import AgentExecutor
 

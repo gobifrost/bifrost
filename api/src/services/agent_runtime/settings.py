@@ -35,3 +35,27 @@ def fanout_policy_snapshot() -> dict[str, int]:
         "max_active_children": MAX_FANOUT_ACTIVE_CHILDREN,
         "max_depth": MAX_DELEGATION_DEPTH,
     }
+
+
+DEFAULT_RUN_TIMEOUT_SECONDS = 1800
+"""Per-attempt safety net when neither snapshot nor Agent sets a timeout."""
+
+
+def effective_run_timeout_seconds(
+    snapshot_timeout: int | float | None,
+    agent_timeout: int | float | None,
+    *,
+    default: float = DEFAULT_RUN_TIMEOUT_SECONDS,
+) -> float | None:
+    """Resolve the active-run safety limit for one attempt.
+
+    Snapshot wins over live Agent configuration. ``0`` disables the timeout
+    (consistent with workflow timeouts); unset falls back to ``default``.
+    ``None`` means disabled — the caller waits on cancellation only.
+    """
+    configured = snapshot_timeout if snapshot_timeout is not None else agent_timeout
+    if configured is None:
+        return float(default)
+    if configured <= 0:
+        return None
+    return float(configured)

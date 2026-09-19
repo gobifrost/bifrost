@@ -80,6 +80,7 @@ class AgentCreate(BaseModel):
     llm_max_tokens: int | None = Field(default=None, ge=1, le=200000, description="Override max tokens")
     max_iterations: int | None = Field(default=None, ge=1, le=200, description="Max LLM iterations for autonomous runs")
     max_token_budget: int | None = Field(default=None, ge=1000, le=1000000, description="Max token budget for autonomous runs")
+    max_run_timeout: int | None = Field(default=None, ge=0, le=86400, description="Max active seconds per autonomous run; 0 disables the timeout")
 
 
 class AgentUpdate(BaseModel):
@@ -111,6 +112,7 @@ class AgentUpdate(BaseModel):
     llm_max_tokens: int | None = Field(default=None, ge=1, le=200000, description="Override max tokens")
     max_iterations: int | None = Field(default=None, ge=1, le=200, description="Max LLM iterations for autonomous runs")
     max_token_budget: int | None = Field(default=None, ge=1000, le=1000000, description="Max token budget for autonomous runs")
+    max_run_timeout: int | None = Field(default=None, ge=0, le=86400, description="Max active seconds per autonomous run; 0 disables the timeout")
 
 
 class AgentPromoteRequest(BaseModel):
@@ -173,6 +175,7 @@ class AgentPublic(BaseModel):
     llm_max_tokens: int | None = None
     max_iterations: int | None = None
     max_token_budget: int | None = None
+    max_run_timeout: int | None = None
     logo: str | None = Field(
         default=None,
         description="Inline presentation logo as a data URL on single-agent responses.",

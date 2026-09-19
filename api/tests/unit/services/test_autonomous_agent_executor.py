@@ -18,7 +18,6 @@ from src.services.agent_runtime import AgentRunBudget
 from src.services.execution.agent_helpers import find_delegated_agent
 from src.services.execution.autonomous_agent_executor import (
     AutonomousAgentExecutor,
-    DELEGATION_TIMEOUT_SECONDS,
     DelegationOutcome,
     MAX_DELEGATION_DEPTH,
     ToolError,
@@ -1379,10 +1378,12 @@ class TestAutonomousAgentExecutor:
     @pytest.mark.asyncio
     @patch("src.services.agent_runtime.model_factory.create_agent_model")
     @patch("src.services.execution.autonomous_agent_executor.resolve_agent_tools")
-    async def test_delegation_timeout(
-        self, mock_resolve_tools, mock_create_model, mock_session, mock_agent
+	async def test_delegation_cancellation_marks_child_cancelled(
+		self, mock_resolve_tools, mock_create_model, mock_session, mock_agent
     ):
-        """Delegation returns timeout error when sub-executor takes too long."""
+        """Parent cancellation marks the inline child cancelled, never timed out."""
+        from src.models.orm.agent_runs import AgentRun
+
         delegated = MagicMock()
         delegated.id = uuid4()
         delegated.name = "Slow Agent"
@@ -1409,47 +1410,56 @@ class TestAutonomousAgentExecutor:
         mock_result.scalar_one_or_none.return_value = delegated
         mock_session._mock_session.execute = AsyncMock(return_value=mock_result)
 
-        mock_llm = AsyncMock()
-        mock_llm.complete = AsyncMock(side_effect=[
-            LLMResponse(
-                content=None,
-                tool_calls=[ToolCallRequest(
-                    id="tc1", name="delegate_to_slow_agent",
-                    arguments={"task": "Take forever"},
-                )],
-                finish_reason="tool_use",
-                input_tokens=100, output_tokens=50,
-            ),
-            # After timeout error, LLM responds
-            LLMResponse(
-                content="The delegation timed out",
-                tool_calls=None, finish_reason="end_turn",
-                input_tokens=200, output_tokens=100,
-            ),
-        ])
-        mock_create_model.return_value = LegacyMockModel(mock_llm)
+        stored_rows: list = []
+        mock_session._mock_session.add = MagicMock(
+            side_effect=lambda row: stored_rows.append(row)
+        )
+
+        async def _get_row(model, row_id):
+            for row in stored_rows:
+                if isinstance(row, AgentRun) and row.id == row_id:
+                    return row
+            return None
+
+        mock_session._mock_session.get = AsyncMock(side_effect=_get_row)
+
+		mock_llm = AsyncMock()
+		mock_llm.complete = AsyncMock(
+            side_effect=[
+                LLMResponse(
+                    content=None,
+                    tool_calls=[
+                        ToolCallRequest(
+                            id="tc1",
+                            name="delegate_to_slow_agent",
+                            arguments={"task": "Take forever"},
+                        )
+                    ],
+                    finish_reason="tool_use",
+                    input_tokens=100,
+                    output_tokens=50,
+                ),
+                asyncio.CancelledError("parent gone"),
+			]
+		)
+		mock_create_model.return_value = LegacyMockModel(mock_llm)
 
         executor = AutonomousAgentExecutor(mock_session)
-
-        # Patch only the delegation deadline. Patching every asyncio.wait_for
-        # call also intercepts Redis transport waits and leaks their coroutine.
-        original_wait_for = asyncio.wait_for
-
-        async def mock_wait_for(coro, timeout):
-            if timeout == DELEGATION_TIMEOUT_SECONDS:
-                coro.close()
-                raise asyncio.TimeoutError()
-            return await original_wait_for(coro, timeout)
-
-        with patch("src.services.execution.autonomous_agent_executor.asyncio.wait_for", mock_wait_for):
-            result = await executor.run(
+        with pytest.raises(asyncio.CancelledError):
+            await executor.run(
                 agent=mock_agent,
                 input_data={"task": "Delegate to slow agent"},
                 run_id=str(uuid4()),
             )
 
-        assert result["status"] == "completed"
-        assert "timed out" in result["output"].lower() or result["output"] == "The delegation timed out"
+        child_runs = [
+            row
+            for row in stored_rows
+            if isinstance(row, AgentRun) and row.trigger_type == "delegation"
+        ]
+        assert len(child_runs) == 1
+        assert child_runs[0].status == "cancelled"
+        assert "cancelled" in (child_runs[0].error or "")
 
     @pytest.mark.asyncio
     @patch("src.services.agent_runtime.model_factory.create_agent_model")

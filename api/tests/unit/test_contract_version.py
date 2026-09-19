@@ -246,7 +246,11 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     #
     # PlatformJobPublic gained execution_backend (2026-09-17). ADDITIVE: old
     # clients ignore the placement detail and keep polling status as before.
-    "2c73f2dc8656f083d92b9bc25cceeb327f580428f1063b968ab077b92675660c"
+    #
+    # AgentCreate/AgentUpdate gained optional max_run_timeout (2026-09-18).
+    # ADDITIVE: old CLIs omit it and keep the default active-run safety
+    # limit; 0 disables the timeout. Fingerprint refreshed only.
+    "3aa8dfdf6c4195d9503f7c5bc84c8f6e625479d02a943c583661c90f3c07ca19"
 )
 
 
