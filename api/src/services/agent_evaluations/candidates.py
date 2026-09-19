@@ -15,13 +15,11 @@ synthetic runner can feed the same resume/contract machinery.
 
 from __future__ import annotations
 
-import hashlib
 from typing import Any
 from uuid import UUID
 
-import pydantic_core
-
 from src.models.contracts.agent_evaluations import CandidateOverlay
+from src.services.agent_evaluations.simulator_models import canonical_hash
 
 CANDIDATE_SNAPSHOT_VERSION = 1
 
@@ -34,8 +32,7 @@ class CandidateError(Exception):
 
 def snapshot_hash(snapshot: dict[str, Any]) -> str:
     """Canonical SHA-256 over the frozen snapshot (base revision + overlays)."""
-    canonical = pydantic_core.to_json(snapshot, fallback=str).decode()
-    return hashlib.sha256(canonical.encode()).hexdigest()
+    return canonical_hash(snapshot)
 
 
 def build_candidate_snapshot(
