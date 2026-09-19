@@ -413,3 +413,34 @@ with zero errors/warnings and clean Ruff checks; `./test.sh all` passed all
 at `/tmp/durable-backend-full-final5.xml`. Backend source stayed frozen during
 this run. Astra UI implementation and its browser/client gates are next;
 the overall feature is not complete.
+
+### UI contract correction: Designer materialization notification
+
+Astra identified a concrete completed-before-materialized ordering: the browser
+could consume the model-completion event before draft persistence, then receive
+no further hint to refetch. Reconciliation now claims the current Designer row
+under an AgentRun-only lock, commits each materialization, and publishes the
+existing AgentRun update for success, zero deduplicated drafts, and terminal
+validation/published-destination errors. No DTO, endpoint, or transport changed.
+Rollback preserves the pending marker; commit failures reset the session;
+pubsub failure does not undo committed drafts. Error logging uses a stable ID
+instead of accessing an expired row after rollback.
+
+The pre-fix regression produced three missing-notification failures and exposed
+the rollback logging error. The initial repair test caught and corrected a
+PostgreSQL lock targeting a nullable joined relationship. The focused 48-test
+batch then passed 47; its remaining published-suite test lacked its setup
+assignment, which was fixed. All seven new notification regressions now pass,
+including separate-session visibility, repeat-sweep idempotence, rollback,
+commit failure, and pubsub failure. Existing reconciliation, completion-race,
+and Designer coverage passed in the focused batch. Exact commands:
+
+```bash
+./test.sh tests/unit/jobs/platform/test_agent_evaluation_designer_notifications.py tests/unit/jobs/platform/test_agent_evaluation.py tests/unit/jobs/platform/test_agent_evaluation_completion_race.py tests/unit/services/agent_evaluations/test_test_designer.py
+./test.sh tests/unit/jobs/platform/test_agent_evaluation_designer_notifications.py
+./test.sh quality api
+```
+
+API quality passed (zero Pyright errors/warnings; Ruff clean). Full backend
+8,645-pass evidence precedes this small correction; the full suite was not
+rerun for it. Astra UI implementation continues, with browser gates pending.

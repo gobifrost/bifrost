@@ -669,6 +669,8 @@ async def reconcile_agent_evaluation_jobs() -> int:
     terminal executions finish their deferred PlatformJob.
     """
     from src.core.database import get_db_context
+    from src.core.pubsub import publish_agent_run_update
+    from src.models.orm.agents import Agent
     from src.models.orm.agent_evaluations import AgentEvaluationExecution
     from src.models.orm.agent_runs import AgentRun
     from src.models.orm.platform_jobs import PlatformJob
@@ -681,9 +683,9 @@ async def reconcile_agent_evaluation_jobs() -> int:
         # contract-validated output into drafts on the same scheduler pass.
         from src.models.orm.agent_runs import AgentRun
         from src.services.agent_evaluations.test_designer import materialize_designer_drafts
-        designer_runs = (
-            await db.execute(
-                select(AgentRun)
+        designer_run_ids = (
+            await db.scalars(
+                select(AgentRun.id)
                 .where(
                     AgentRun.trigger_type == "evaluation_synthetic",
                     AgentRun.status == "completed",
@@ -693,19 +695,62 @@ async def reconcile_agent_evaluation_jobs() -> int:
                 .order_by(AgentRun.completed_at, AgentRun.id)
                 .limit(DESIGNER_RECONCILIATION_BATCH)
             )
-        ).scalars().all()
-        for designer_run in designer_runs:
+        ).all()
+        for designer_run_id in designer_run_ids:
+            materialized_run = None
+            agent_name = "Test Designer"
             try:
                 # A malformed proposal must not poison the scheduler's outer
                 # transaction or prevent the bounded evaluation sweep below.
                 async with db.begin_nested():
-                    healed += await materialize_designer_drafts(db, designer_run)
+                    # Claim and predicate the current row under the same lock:
+                    # a concurrent reconciliation must see the committed
+                    # materialization rather than infer a transition from a
+                    # stale pre-lock identity map or a zero draft count.
+                    materialized_run = await db.scalar(
+                        select(AgentRun)
+                        .where(
+                            AgentRun.id == designer_run_id,
+                            AgentRun.trigger_type == "evaluation_synthetic",
+                            AgentRun.status == "completed",
+                            AgentRun.correlation["evaluation_designer"].as_boolean().is_(True),
+                            AgentRun.correlation["designer_materialized"].as_boolean().is_not(True),
+                        )
+                        .with_for_update(of=AgentRun, skip_locked=True)
+                        .execution_options(populate_existing=True)
+                    )
+                    if materialized_run is None:
+                        continue
+                    draft_count = await materialize_designer_drafts(db, materialized_run)
+                    if not (materialized_run.correlation or {}).get("designer_materialized"):
+                        materialized_run = None
+                        continue
+                    if materialized_run.agent_id is not None:
+                        agent_name = await db.scalar(
+                            select(Agent.name).where(Agent.id == materialized_run.agent_id)
+                        ) or agent_name
+                # Materialization is its own committed boundary. The event is
+                # only a UI hint, so publishing it must neither precede this
+                # durable state nor let a pubsub outage break the sweep.
+                if materialized_run is None:
+                    continue
+                await db.commit()
+                healed += draft_count
+                try:
+                    await publish_agent_run_update(materialized_run, agent_name)
+                except Exception:
+                    logger.exception(
+                        "Test Designer materialization update failed for synthetic run %s",
+                        materialized_run.id,
+                    )
             except Exception:
+                # A failed commit can invalidate the outer transaction too.
+                await db.rollback()
                 # Leave the correlation unmarked so the next reconciliation
                 # retries after an operator-visible run failure is repaired.
                 logger.exception(
                     "Test Designer materialization failed for synthetic run %s",
-                    designer_run.id,
+                    designer_run_id,
                 )
                 continue
         active = (
