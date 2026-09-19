@@ -18,6 +18,7 @@ import sys
 import click
 
 from .agents import agents_group
+from .agent_tests import agent_tests_group
 from .apps import apps_group
 from .claims import claims_group
 from .configs import configs_group
@@ -40,6 +41,7 @@ ENTITY_GROUPS: dict[str, click.Group] = {
     "workflows": workflows_group,
     "forms": forms_group,
     "agents": agents_group,
+    "agent-tests": agent_tests_group,
     "apps": apps_group,
     "claims": claims_group,
     "integrations": integrations_group,

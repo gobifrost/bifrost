@@ -2,6 +2,257 @@
 
 > Regenerate: `python api/scripts/skill-truth/generate.py`. CI enforces freshness.
 
+## `agent-tests`
+
+```
+Usage: agent-tests [OPTIONS] COMMAND [ARGS]...
+
+  Manage agent evaluation suites.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+
+Commands:
+  cancel             Cancel an execution (only unfinished synthetic runs...
+  candidates-create  Create an immutable evaluation-only candidate snapshot.
+  candidates-get     Get a candidate snapshot by UUID.
+  cases-create       Create a case from inline JSON or @file payloads.
+  cases-export       Export all cases of a suite as machine-readable JSON.
+  cases-list         List cases in a suite.
+  compare            Summarize regressions, failures, usage deltas, and...
+  designer-accept    Explicitly accept a draft, freezing a new case version.
+  designer-drafts    Validate designer output and persist drafts (never...
+  results            List per-case results with linked debugger run IDs.
+  run                Enqueue a suite execution (202 + shared PlatformJob...
+  status             Show execution counters and per-case results.
+  suites-create      Create a draft evaluation suite.
+  suites-get         Get one suite by UUID.
+  suites-list        List evaluation suites.
+  suites-publish     Publish a suite (published suites are immutable).
+```
+
+### `agent-tests cancel`
+
+```
+Usage: agent-tests cancel [OPTIONS] EXECUTION_ID
+
+  Cancel an execution (only unfinished synthetic runs are cancelled).
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `agent-tests candidates-create`
+
+```
+Usage: agent-tests candidates-create [OPTIONS]
+
+  Create an immutable evaluation-only candidate snapshot.
+
+Options:
+  --agent TEXT          Base agent name or UUID.  [required]
+  --name TEXT           Candidate label.
+  --overlays TEXT       Overlay object JSON or @file.
+  --system-prompt TEXT  Prompt override (or @file).
+  --json                Emit JSON instead of human-readable output.
+  --help                Show this message and exit.
+```
+
+### `agent-tests candidates-get`
+
+```
+Usage: agent-tests candidates-get [OPTIONS] CANDIDATE_ID
+
+  Get a candidate snapshot by UUID.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `agent-tests cases-create`
+
+```
+Usage: agent-tests cases-create [OPTIONS] SUITE_ID
+
+  Create a case from inline JSON or @file payloads.
+
+Options:
+  --name TEXT             Case name.  [required]
+  --input TEXT            Invocation input JSON or @file.
+  --fixture TEXT          Fixture object JSON or @file.  [required]
+  --assertions TEXT       Assertions array JSON or @file.
+  --expected-tools TEXT   Comma-separated expected tool names.
+  --forbidden-tools TEXT  Comma-separated forbidden tool names.
+  --output-schema TEXT    Output schema JSON or @file.
+  --repetitions INTEGER   Repetitions per side (1-10).
+  --json                  Emit JSON instead of human-readable output.
+  --help                  Show this message and exit.
+```
+
+### `agent-tests cases-export`
+
+```
+Usage: agent-tests cases-export [OPTIONS] SUITE_ID
+
+  Export all cases of a suite as machine-readable JSON.
+
+Options:
+  --output TEXT  Write JSON to PATH instead of stdout.
+  --json         Emit JSON instead of human-readable output.
+  --help         Show this message and exit.
+```
+
+### `agent-tests cases-list`
+
+```
+Usage: agent-tests cases-list [OPTIONS] SUITE_ID
+
+  List cases in a suite.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `agent-tests compare`
+
+```
+Usage: agent-tests compare [OPTIONS] EXECUTION_ID
+
+  Summarize regressions, failures, usage deltas, and linked runs.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `agent-tests designer-accept`
+
+```
+Usage: agent-tests designer-accept [OPTIONS] SUITE_ID DRAFT_ID
+
+  Explicitly accept a draft, freezing a new case version.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `agent-tests designer-drafts`
+
+```
+Usage: agent-tests designer-drafts [OPTIONS] SUITE_ID
+
+  Validate designer output and persist drafts (never auto-approve).
+
+Options:
+  --designer-output TEXT  Designer output JSON or @file.  [required]
+  --tool-schemas TEXT     Tool schemas object JSON or @file.  [required]
+  --json                  Emit JSON instead of human-readable output.
+  --help                  Show this message and exit.
+```
+
+### `agent-tests results`
+
+```
+Usage: agent-tests results [OPTIONS] EXECUTION_ID
+
+  List per-case results with linked debugger run IDs.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `agent-tests run`
+
+```
+Usage: agent-tests run [OPTIONS]
+
+  Enqueue a suite execution (202 + shared PlatformJob observation).
+
+Options:
+  --suite TEXT           Suite UUID.  [required]
+  --candidate TEXT       Candidate UUID (omit for baseline-only).
+  --repetitions INTEGER  Override repetitions (1-10).
+  --wait / --no-wait     Poll the shared PlatformJob until terminal.
+  --timeout INTEGER      Client-side wait deadline in seconds.
+  --json                 Emit JSON instead of human-readable output.
+  --help                 Show this message and exit.
+```
+
+### `agent-tests status`
+
+```
+Usage: agent-tests status [OPTIONS] EXECUTION_ID
+
+  Show execution counters and per-case results.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `agent-tests suites-create`
+
+```
+Usage: agent-tests suites-create [OPTIONS]
+
+  Create a draft evaluation suite.
+
+Options:
+  --name TEXT                     Suite name.  [required]
+  --description TEXT              Suite description.
+  --agent TEXT                    Baseline agent name or UUID.
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
+```
+
+### `agent-tests suites-get`
+
+```
+Usage: agent-tests suites-get [OPTIONS] SUITE_ID
+
+  Get one suite by UUID.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `agent-tests suites-list`
+
+```
+Usage: agent-tests suites-list [OPTIONS]
+
+  List evaluation suites.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `agent-tests suites-publish`
+
+```
+Usage: agent-tests suites-publish [OPTIONS] SUITE_ID
+
+  Publish a suite (published suites are immutable).
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
 ## `agents`
 
 ```
@@ -14,11 +265,15 @@ Options:
   --help  Show this message and exit.
 
 Commands:
-  create  Create a new agent.
-  delete  Permanently delete an agent.
-  get     Get a single agent by UUID or name.
-  list    List active agents by default.
-  update  Update an agent.
+  create           Create a new agent.
+  delete           Permanently delete an agent.
+  get              Get a single agent by UUID or name.
+  list             List active agents by default.
+  run-checkpoints  List checkpoint summaries for RUN_ID (metadata only).
+  run-snapshot     Show the execution snapshot and live state for RUN_ID.
+  run-timeline     Show the journal timeline for RUN_ID.
+  run-tree         Show the delegation tree for RUN_ID (visible runs only).
+  update           Update an agent.
 ```
 
 ### `agents create`
@@ -107,6 +362,66 @@ Options:
   --include-inactive  Include inactive agents.
   --json              Emit JSON instead of human-readable output.
   --help              Show this message and exit.
+```
+
+### `agents run-checkpoints`
+
+```
+Usage: agents run-checkpoints [OPTIONS] RUN_ID
+
+  List checkpoint summaries for RUN_ID (metadata only).
+
+Options:
+  --limit INTEGER  Checkpoints per page.
+  --cursor TEXT    Resume from a previous cursor.
+  --json           Emit JSON instead of human-readable output.
+  --help           Show this message and exit.
+```
+
+### `agents run-snapshot`
+
+```
+Usage: agents run-snapshot [OPTIONS] RUN_ID
+
+  Show the execution snapshot and live state for RUN_ID.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `agents run-timeline`
+
+```
+Usage: agents run-timeline [OPTIONS] RUN_ID
+
+  Show the journal timeline for RUN_ID. Read-only; never mutates runs.
+
+Options:
+  --kind TEXT            Filter to one journal event kind.
+  --attempt INTEGER      Filter to one attempt.
+  --include-descendants  Merge visible descendant runs into one ordered
+                         timeline.
+  --limit INTEGER        Entries per page.
+  --cursor TEXT          Resume from a previous cursor.
+  --follow               Poll for new entries until the run reaches a terminal
+                         state.
+  --poll-interval FLOAT  Seconds between follow polls.
+  --max-polls INTEGER    Maximum follow polls before exiting.
+  --json                 Emit JSON instead of human-readable output.
+  --help                 Show this message and exit.
+```
+
+### `agents run-tree`
+
+```
+Usage: agents run-tree [OPTIONS] RUN_ID
+
+  Show the delegation tree for RUN_ID (visible runs only).
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
 ```
 
 ### `agents update`
