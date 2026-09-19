@@ -434,3 +434,224 @@ async def test_chat_executor_receives_durable_child_callback(
                 f"/api/agents/{agent['id']}",
                 headers=platform_admin.headers,
             )
+
+
+async def test_durable_delegation_suspends_wakes_and_resumes_same_parent(
+    e2e_client,
+    platform_admin,
+    db_session,
+    async_session_factory,
+):
+    """Durable delegation: suspend, independent child, wake once, resume."""
+    from src.services.agent_runtime import run_store
+    from src.services.agent_runtime.delegation import wake_parent_for_child
+    from src.services.agent_runtime.resume import prepare_resume
+
+    child = _create_agent(
+        e2e_client,
+        platform_admin,
+        f"Durable Child {uuid4().hex[:8]}",
+    )
+    parent = _create_agent(
+        e2e_client,
+        platform_admin,
+        f"Durable Parent {uuid4().hex[:8]}",
+    )
+    try:
+        db_session.add(
+            AgentDelegation(
+                parent_agent_id=UUID(parent["id"]),
+                child_agent_id=UUID(child["id"]),
+            )
+        )
+        parent_run = AgentRun(
+            agent_id=UUID(parent["id"]),
+            trigger_type="manual",
+            status="queued",
+            input={"task": "Delegate this request."},
+        )
+        db_session.add(parent_run)
+        await db_session.commit()
+        parent_id = parent_run.id
+
+        async with async_session_factory() as session:
+            claimed = await run_store.claim_run(session, parent_id, "worker-a")
+            lease_token = claimed.lease_token
+            assert lease_token is not None
+
+        async with async_session_factory() as session:
+            agent_result = await session.execute(
+                select(Agent)
+                .options(
+                    selectinload(Agent.tools),
+                    selectinload(Agent.delegated_agents),
+                    selectinload(Agent.roles),
+                )
+                .where(Agent.id == UUID(parent["id"]))
+            )
+            agent = agent_result.scalar_one()
+
+        slug = agent_delegation_slug(child["name"])
+        executor = AutonomousAgentExecutor(async_session_factory)
+        with (
+            patch(
+                "src.services.execution.autonomous_agent_executor.create_agent_model",
+                return_value=DelegatingTestModel(slug),
+            ),
+            patch(
+                "src.services.execution.autonomous_agent_executor.get_llm_config",
+                new_callable=AsyncMock,
+                return_value=LLMConfig(
+                    provider="openai", model="test-parent", api_key="test-key"
+                ),
+            ),
+            patch(
+                "src.services.agent_runtime.execution_snapshot.get_llm_config",
+                new_callable=AsyncMock,
+                return_value=LLMConfig(
+                    provider="openai", model="test-parent", api_key="test-key"
+                ),
+            ),
+            patch(
+                "src.services.execution.run_summarizer.enqueue_summarize",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "src.jobs.rabbitmq.publish_message", new=AsyncMock()
+            ),
+            patch(
+                "src.services.execution.agent_run_service.publish_message",
+                new=AsyncMock(),
+            ) as enqueue_nudges,
+        ):
+            suspended = await executor.run(
+                agent,
+                input_data={"task": "Delegate this request."},
+                run_id=str(parent_id),
+                lease_token=lease_token,
+                caller_context={"ticket_id": 7},
+                correlation={"kind": "ticket", "ticket_id": "7"},
+            )
+        assert suspended["status"] == "suspended"
+        child_ids = suspended["suspended"]["child_run_ids"]
+        assert len(child_ids) == 1
+        child_id = UUID(child_ids[0])
+        assert enqueue_nudges.await_count >= 1
+        assert enqueue_nudges.await_args.args[1] == {"run_id": str(child_id)}
+
+        async with async_session_factory() as session:
+            parent_row = await session.get(AgentRun, parent_id)
+            assert parent_row is not None
+            assert parent_row.status == "waiting_child"
+            assert parent_row.lease_token is None
+            child_row = await session.get(AgentRun, child_id)
+            assert child_row is not None
+            assert child_row.status == "queued"
+            assert child_row.parent_run_id == parent_id
+            assert child_row.root_run_id == parent_id
+            assert child_row.input["task"] == "Return the durable callback"
+            assert child_row.input["locators"] == {"ticket_id": 7}
+            assert child_row.correlation["kind"] == "ticket"
+            assert child_row.output_schema is None
+            assert child_row.execution_snapshot is not None
+
+        # Parent consumes no worker while waiting; the child terminalizes
+        # independently and wakes the same parent exactly once.
+        async with async_session_factory() as session:
+            child_claimed = await run_store.claim_run(
+                session, child_id, "worker-b"
+            )
+            assert child_claimed.lease_token is not None
+            await run_store.finish_run(
+                session,
+                child_id,
+                child_claimed.lease_token,
+                "completed",
+                output={"text": "Durable child answer"},
+            )
+        with patch(
+            "src.jobs.rabbitmq.publish_message", new=AsyncMock()
+        ) as wake_nudges:
+            assert await wake_parent_for_child(
+                async_session_factory, child_id
+            ) is True
+            assert await wake_parent_for_child(
+                async_session_factory, child_id
+            ) is False
+        wake_nudges.assert_awaited_once_with(
+            "agent-runs", {"run_id": str(parent_id)}
+        )
+
+        async with async_session_factory() as session:
+            resumed_claim = await run_store.claim_run(
+                session, parent_id, "worker-c"
+            )
+            resume_token = resumed_claim.lease_token
+            assert resume_token is not None
+            assert resumed_claim.attempt == 2
+        plan, _, unrecoverable = await prepare_resume(
+            async_session_factory, parent_id, resume_token
+        )
+        assert unrecoverable is None
+        assert plan is not None
+        assert plan.deferred_results == {
+            "parent-delegation-call": "Durable child answer"
+        }
+
+        resumed_executor = AutonomousAgentExecutor(async_session_factory)
+        with (
+            patch(
+                "src.services.execution.autonomous_agent_executor.create_agent_model",
+                return_value=DelegatingTestModel(slug),
+            ),
+            patch(
+                "src.services.execution.autonomous_agent_executor.get_llm_config",
+                new_callable=AsyncMock,
+                return_value=LLMConfig(
+                    provider="openai", model="test-parent", api_key="test-key"
+                ),
+            ),
+            patch(
+                "src.services.execution.run_summarizer.enqueue_summarize",
+                new_callable=AsyncMock,
+            ),
+        ):
+            result = await resumed_executor.run(
+                agent,
+                input_data={"task": "Delegate this request."},
+                run_id=str(parent_id),
+                lease_token=resume_token,
+                resume_history=plan.history or None,
+                deferred_results=plan.deferred_results or None,
+            )
+        assert result["status"] == "completed"
+        assert result["output"] == "Parent received the durable callback."
+
+        async with async_session_factory() as session:
+            finished = await run_store.finish_run(
+                session,
+                parent_id,
+                resume_token,
+                "completed",
+                output=(
+                    result["output"]
+                    if isinstance(result["output"], dict)
+                    else {"text": result["output"]}
+                ),
+            )
+            assert finished.status == "completed"
+
+        # The durable child remains visible through the run-detail tree.
+        detail_response = e2e_client.get(
+            f"/api/agent-runs/{parent_id}",
+            headers=platform_admin.headers,
+        )
+        assert detail_response.status_code == 200, detail_response.text
+        child_runs = detail_response.json()["child_runs"]
+        assert [run["id"] for run in child_runs] == [str(child_id)]
+    finally:
+        for agent in (parent, child):
+            e2e_client.delete(
+                f"/api/agents/{agent['id']}",
+                headers=platform_admin.headers,
+            )

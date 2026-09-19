@@ -57,6 +57,8 @@ class ResumePlan:
     attempt: int
     history: list[ModelMessage] = field(default_factory=list)
     checkpoint_sequence: int = 0
+    deferred_results: dict[str, str] = field(default_factory=dict)
+    deferred_pending: set[str] = field(default_factory=set)
 
 
 def append_missing_tool_returns(
@@ -116,6 +118,11 @@ async def prepare_resume(
     report = await reclaim_in_flight(session_factory, run_id, lease_token)
     if report.unrecoverable_reason is not None:
         return None, report, report.unrecoverable_reason
+    from src.services.agent_runtime.delegation import (
+        collect_deferred_results,
+        deferred_tool_call_ids,
+    )
+
     async with session_factory() as session:
         checkpoint = await run_store.latest_checkpoint(session, run_id)
         history: list[ModelMessage] = (
@@ -125,6 +132,10 @@ async def prepare_resume(
         invocations = await list_invocations(session, run_id)
         run_row = await session.get(AgentRun, run_id)
         attempt = run_row.attempt if run_row is not None else 0
+        deferred_results = await collect_deferred_results(session, run_id)
+        deferred_pending = (
+            await deferred_tool_call_ids(session, run_id)
+        ) - set(deferred_results)
     completed = {
         inv.provider_tool_call_id: (
             (inv.result or {}).get("text", "")
@@ -142,6 +153,8 @@ async def prepare_resume(
             attempt=attempt or 0,
             history=history,
             checkpoint_sequence=sequence,
+            deferred_results=deferred_results,
+            deferred_pending=deferred_pending,
         ),
         report,
         None,

@@ -15,6 +15,7 @@ Runs every 5 minutes to find and timeout stuck executions.
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from uuid import UUID
 
 from sqlalchemy import and_, select
 
@@ -301,6 +302,7 @@ async def _cleanup_stale_agent_runs(now: datetime) -> dict[str, Any]:
     session_factory = get_session_factory()
     updates: list[dict[str, Any]] = []
     requeued: list[str] = []
+    wake_parents_for: list[str] = []
     results: dict[str, Any] = {
         "agent_run_queued_timeouts": 0,
         "agent_run_running_timeouts": 0,
@@ -390,6 +392,8 @@ async def _cleanup_stale_agent_runs(now: datetime) -> dict[str, Any]:
                     run.completed_at = now
                     results["agent_run_queued_timeouts"] += 1
                     results["agent_run_total_cleaned"] += 1
+                    if run.parent_run_id is not None:
+                        wake_parents_for.append(str(run.id))
                     updates.append(
                         {
                             "run": run,
@@ -449,6 +453,8 @@ async def _cleanup_stale_agent_runs(now: datetime) -> dict[str, Any]:
                 run.completed_at = now
                 results["agent_run_running_timeouts"] += 1
                 results["agent_run_total_cleaned"] += 1
+                if run.parent_run_id is not None:
+                    wake_parents_for.append(str(run.id))
                 updates.append(
                     {
                         "run": run,
@@ -478,6 +484,23 @@ async def _cleanup_stale_agent_runs(now: datetime) -> dict[str, Any]:
                     extra={"agent_run_id": run_id},
                     exc_info=True,
                 )
+
+        # Terminalized children wake waiting parents so delegation trees
+        # cannot hang on a swept child. The wake is idempotent.
+        if wake_parents_for:
+            from src.services.agent_runtime.delegation import (
+                wake_parent_for_child,
+            )
+
+            for child_id in wake_parents_for:
+                try:
+                    await wake_parent_for_child(session_factory, UUID(child_id))
+                except Exception:
+                    logger.warning(
+                        "Failed to wake parent for swept child",
+                        extra={"agent_run_id": child_id},
+                        exc_info=True,
+                    )
 
         for update in updates:
             try:

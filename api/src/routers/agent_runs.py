@@ -779,7 +779,6 @@ async def cancel_agent_run(
             await db.commit()
 
             # Also mark the Redis context so a worker holding the message skips it.
-            from src.core.cache.redis_client import get_redis
             redis_key = f"bifrost:agent_run:{run_id}:context"
             async with get_redis() as r:
                 context_raw = await r.get(redis_key)
@@ -797,12 +796,50 @@ async def cancel_agent_run(
             detail=f"Cannot cancel agent run with status '{agent_run.status}'",
         )
 
+    # Waiting/sleeping parents hold no worker: terminalize immediately and
+    # cascade through the delegation tree. Running descendants get the Redis
+    # flag so their workers stop; queued/waiting ones terminalize at once.
+    if agent_run.status in ("waiting_child", "waiting_children", "sleeping"):
+        agent_run.status = "cancelled"
+        agent_run.error = "Cancelled by user"
+        agent_run.completed_at = datetime.now(timezone.utc)
+        agent_run.lease_owner = None
+        agent_run.lease_token = None
+        agent_run.lease_expires_at = None
+        await db.commit()
+        try:
+            from src.services.agent_runtime.delegation import cascade_cancel
+
+            async with get_redis() as cascade_redis:
+                await cascade_cancel(
+                    get_session_factory(),
+                    cascade_redis,
+                    agent_run.root_run_id or agent_run.id,
+                )
+        except Exception as e:
+            logger.debug(f"cascade cancel failed for {log_safe(run_id)}: {log_safe(e)}")
+        return {"run_id": str(run_id), "status": "cancelled"}
+
     # Running — set to cancelling and signal via Redis
     agent_run.status = "cancelling"
     await db.commit()
 
     await redis_client.set_agent_run_cancel_flag(str(run_id))
     logger.info(f"Set cancel flag for agent run {log_safe(run_id)}")
+
+    # Cascade through the delegation tree: running descendants stop at
+    # their next boundary; queued/waiting ones terminalize at once.
+    try:
+        from src.services.agent_runtime.delegation import cascade_cancel
+
+        async with get_redis() as cascade_redis:
+            await cascade_cancel(
+                get_session_factory(),
+                cascade_redis,
+                agent_run.root_run_id or agent_run.id,
+            )
+    except Exception as e:
+        logger.debug(f"cascade cancel failed for {log_safe(run_id)}: {log_safe(e)}")
 
     try:
         from src.core.pubsub import publish_agent_run_update

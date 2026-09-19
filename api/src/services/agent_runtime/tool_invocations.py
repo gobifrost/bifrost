@@ -115,6 +115,16 @@ async def get_invocation(
     ).scalar_one_or_none()
 
 
+async def delete_invocation(
+    session: AsyncSession, run_id: UUID, provider_tool_call_id: str
+) -> None:
+    """Remove a provisional invocation row (deferral supersedes dispatch)."""
+    invocation = await get_invocation(session, run_id, provider_tool_call_id)
+    if invocation is not None:
+        await session.delete(invocation)
+        await session.flush()
+
+
 async def list_invocations(
     session: AsyncSession, run_id: UUID
 ) -> list[AgentToolInvocation]:

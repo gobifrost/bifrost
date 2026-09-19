@@ -263,6 +263,8 @@ class AgentRunConsumer(BaseConsumer):
                         if agent_run.conversation_id
                         else None
                     ),
+                    "caller_context": agent_run.caller_context,
+                    "correlation": agent_run.correlation,
                     "sync": sync,
                     "cancelled": False,
                 }
@@ -535,6 +537,14 @@ class AgentRunConsumer(BaseConsumer):
                     resume_history=(
                         resume_plan.history if resume_plan is not None else None
                     ) or None,
+                    caller_context=context.get("caller_context"),
+                    correlation=context.get("correlation"),
+                    deferred_results=(
+                        resume_plan.deferred_results if resume_plan is not None else None
+                    ) or None,
+                    deferred_pending=(
+                        resume_plan.deferred_pending if resume_plan is not None else None
+                    ) or None,
                     _caller=context.get("caller"),
                 ))
 
@@ -629,6 +639,10 @@ class AgentRunConsumer(BaseConsumer):
             consumer_applied_result = False
             raw_status = run_result.get("status", "completed")
             terminal_status = _TERMINAL_STATUS_MAP.get(raw_status)
+			# A suspended parent parked itself in waiting_child and released
+            # the worker: the sync waiter keeps waiting for the final
+            # terminal result, and event delivery completes with it.
+			suspended = raw_status == "suspended"
 			async with self._session_factory() as db:
 				# Flush metering and steps even when another worker won the
                 # terminal-state race; completed provider work still incurred
@@ -701,8 +715,9 @@ class AgentRunConsumer(BaseConsumer):
                         f"Failed to enqueue summarizer for run {run_id}"
                     )
 
-            # Update event delivery status if triggered by event
-            if (context or {}).get("event_delivery_id"):
+            # Update event delivery status if triggered by event. Suspended
+            # parents deliver with their final terminal result instead.
+            if (context or {}).get("event_delivery_id") and not suspended:
                 async with self._session_factory() as db:
                     await self._update_event_delivery(
                         db,
@@ -714,7 +729,9 @@ class AgentRunConsumer(BaseConsumer):
 
             # Always publish the terminal result: sync SDK callers BLPOP on
             # this key and async callers simply never listen (300s TTL).
-            if trigger_type != "chat":
+            # Suspended parents publish nothing; the waiter stays blocked
+            # until the delegation tree completes.
+            if trigger_type != "chat" and not suspended:
                 await _publish_sync_result(
                     run_id,
                     {
@@ -726,6 +743,26 @@ class AgentRunConsumer(BaseConsumer):
                         "llm_model": agent_run.llm_model,
                     },
                 )
+
+            # A terminal child wakes its waiting parent exactly once. The
+            # wake is idempotent: late duplicates find a non-waiting parent.
+            if (
+                not suspended
+                and consumer_applied_result
+                and agent_run.parent_run_id is not None
+            ):
+                try:
+                    from src.services.agent_runtime.delegation import (
+                        wake_parent_for_child,
+                    )
+
+                    await wake_parent_for_child(
+                        self._session_factory, UUID(run_id)
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to wake parent for child %s", run_id
+                    )
 
         except Exception as e:
             logger.exception(f"Agent run {run_id} failed: {e}")

@@ -23,7 +23,13 @@ import redis.asyncio as aioredis
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
-from pydantic_ai import Agent as PydanticAgent, capture_run_messages
+from pydantic_ai import (
+    Agent as PydanticAgent,
+    CallDeferred,
+    DeferredToolRequests,
+    DeferredToolResults,
+    capture_run_messages,
+)
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.usage import RunUsage
 
@@ -145,6 +151,8 @@ class AutonomousAgentExecutor:
         # Engine operation ID for the tool call currently dispatching,
         # exposed to workflow/system tools as an idempotency key.
         self._current_operation_id: str | None = None
+        # Immutable snapshot retained for deferral-time grant checks.
+        self._snapshot_for_deferral: dict[str, Any] | None = None
         self._knowledge_search_budget = KnowledgeSearchBudget()
         # Delegated executors receive these same objects. Pydantic AI mutates
         # RunUsage in place, so every model request in the delegation tree is
@@ -162,6 +170,10 @@ class AutonomousAgentExecutor:
         execution_snapshot: dict[str, Any] | None = None,
         lease_token: str | None = None,
         resume_history: list | None = None,
+        caller_context: dict[str, Any] | None = None,
+        correlation: dict[str, Any] | None = None,
+        deferred_results: dict[str, str] | None = None,
+        deferred_pending: set[str] | None = None,
         _caller: dict | None = None,
         _shared_usage: RunUsage | None = None,
         _shared_budget: AgentRunBudget | None = None,
@@ -184,6 +196,15 @@ class AutonomousAgentExecutor:
                 attempt. Planned calls execute in a pre-pass; committed
                 results replay without re-execution; then the model loop
                 continues from the completed history.
+            caller_context: Minimal durable locators (e.g. ticket ID) handed
+                to delegated children with the parent-selected task.
+            correlation: Bounded correlation metadata copied to children.
+            deferred_results: tool_call_id -> result text for children that
+                terminalized while the parent was suspended. Skipped by the
+                pre-pass and delivered through DeferredToolResults.
+            deferred_pending: journaled delegation calls with no terminal
+                child yet. Non-empty here means a bad wake; the attempt fails
+                loudly instead of continuing on a dangling tool call.
             _caller: Optional caller metadata for context.
             _shared_usage: Internal cumulative usage ledger inherited from a
                 parent run during delegation.
@@ -196,7 +217,13 @@ class AutonomousAgentExecutor:
         run_id = run_id or str(uuid4())
         self._current_run_id = run_id
         self._durable_lease_token = lease_token
+        self._snapshot_for_deferral = execution_snapshot
         self._knowledge_search_budget.reset()
+        if deferred_pending:
+            raise ToolError(
+                "Cannot resume: delegated children "
+                f"{sorted(deferred_pending)} have no terminal result yet."
+            )
 
         # Resolve caller_user_id from _caller metadata. If a webhook ran
         # without a signed user claim, _caller is either absent or has no
@@ -571,6 +598,9 @@ class AutonomousAgentExecutor:
         empty_output_guard = EmptyOutputCircuitBreaker()
 		runtime = PydanticAgent(
 			observed_model,
+            # DeferredToolRequests stays a legal output so system tools can
+            # suspend (delegation, fan-out, timers) instead of erroring.
+			output_type=[DeferredToolRequests, str],
 			system_prompt=(
 				execution_snapshot["system_prompt"]
                 if execution_snapshot is not None
@@ -623,10 +653,16 @@ class AutonomousAgentExecutor:
                         resume_history,
                         run_id=run_id,
                         agent=agent,
+                        deferred_tool_call_ids=set(deferred_results or {}),
                     )
                     result = await runtime.run(
                         None,
                         message_history=resumed_messages,
+                        deferred_tool_results=(
+                            DeferredToolResults(calls=dict(deferred_results))
+                            if deferred_results
+                            else None
+                        ),
                         usage_limits=budget.usage_limits(),
                         usage=usage,
                         conversation_id=run_id,
@@ -638,7 +674,25 @@ class AutonomousAgentExecutor:
                         usage=usage,
                         conversation_id=run_id,
                     )
-                final_content = result.output
+                if isinstance(result.output, DeferredToolRequests):
+                    suspension_or_text = await self._handle_deferred_requests(
+                        result.output,
+                        runtime=runtime,
+                        agent=agent,
+                        run_id=run_id,
+                        caller_context=caller_context,
+                        correlation=correlation,
+                        usage=usage,
+                        usage_start_requests=usage_start_requests,
+                        usage_start_tokens=usage_start_tokens,
+                    )
+                    # Durable park: the parent is waiting; release the worker.
+                    if isinstance(suspension_or_text, dict):
+                        return suspension_or_text
+                    # Legacy inline fallback: the loop already continued.
+                    final_content = suspension_or_text
+                else:
+                    final_content = result.output
                 if status == "completed" and output_schema and final_content:
                     (
                         final_content,
@@ -979,6 +1033,7 @@ class AutonomousAgentExecutor:
         """
         from src.services.agent_runtime.tool_invocations import (
             complete_invocation,
+            delete_invocation,
             durable_operation_id,
             fail_invocation,
             get_invocation,
@@ -1015,6 +1070,21 @@ class AutonomousAgentExecutor:
                     ToolCallRequest(id=tool_call_id, name=name, arguments=arguments),
                     agent,
                 )
+            except CallDeferred:
+                # Suspension, not failure: drop the provisional invocation
+                # record (the deferral is journaled at suspend time) and let
+                # the model loop return DeferredToolRequests.
+                async with self._session_factory() as db:
+                    try:
+                        await delete_invocation(db, UUID(run_id), tool_call_id)
+                        await db.commit()
+                    except Exception:
+                        logger.debug(
+                            "Failed to drop provisional invocation for %s",
+                            tool_call_id,
+                            exc_info=True,
+                        )
+                raise
             except AgentRunCancelled as exc:
                 async with self._session_factory() as db:
                     await fail_invocation(
@@ -1047,12 +1117,133 @@ class AutonomousAgentExecutor:
         finally:
             self._current_operation_id = None
 
+    async def _handle_deferred_requests(
+        self,
+        deferred: DeferredToolRequests,
+        *,
+        runtime: PydanticAgent,
+        agent: Agent,
+        run_id: str,
+        caller_context: dict[str, Any] | None,
+        correlation: dict[str, Any] | None,
+        usage: RunUsage,
+        usage_start_requests: int,
+        usage_start_tokens: int,
+    ) -> dict | str:
+        """Resolve a suspension: durable park or legacy inline fallback.
+
+        Returns a response dict for a durable park (the caller returns it
+        to release the worker), or the continued final text for the legacy
+        inline fallback so the same frame proceeds to contract enforcement.
+        """
+        if self._durable_lease_token is None:
+            return await self._resolve_deferred_inline(
+                deferred,
+                runtime=runtime,
+                agent=agent,
+                run_id=run_id,
+                usage=usage,
+            )
+        from src.services.agent_runtime.delegation import (
+            suspend_for_deferred_calls,
+        )
+
+        for call in (*deferred.calls, *deferred.approvals):
+            if not call.tool_name.startswith("delegate_to_"):
+                raise ToolError(
+                    f"Deferred tool '{call.tool_name}' has no durable "
+                    "suspension handler in this runtime version."
+                )
+        if deferred.approvals:
+            raise ToolError("Deferred approvals are not supported.")
+        outcome = await suspend_for_deferred_calls(
+            session_factory=self._session_factory,
+            parent_run_id=UUID(run_id),
+            lease_token=self._durable_lease_token,
+            agent=agent,
+            execution_snapshot=getattr(self, "_snapshot_for_deferral", None),
+            tool_calls=list(deferred.calls),
+            caller=self._caller,
+            caller_context=caller_context,
+            correlation=correlation,
+        )
+        return {
+            "output": None,
+            "iterations_used": usage.requests - usage_start_requests,
+            "tokens_used": usage.total_tokens - usage_start_tokens,
+            "status": "suspended",
+            "llm_model": None,
+            "contract_valid": None,
+            "contract_errors": [],
+            "suspended": outcome,
+        }
+
+    async def _resolve_deferred_inline(
+        self,
+        deferred: DeferredToolRequests,
+        *,
+        runtime: PydanticAgent,
+        agent: Agent,
+        run_id: str,
+        usage: RunUsage,
+    ) -> str:
+        """Legacy fallback: run deferred delegations inline and continue."""
+        from src.services.llm.base import ToolCallRequest as LlmToolCallRequest
+
+        results: dict[str, Any] = {}
+        for call in deferred.calls:
+            if not call.tool_name.startswith("delegate_to_"):
+                raise ToolError(
+                    f"Deferred tool '{call.tool_name}' cannot run inline."
+                )
+            outcome = await self.run_delegation(
+                parent_agent=agent,
+                tool_call=LlmToolCallRequest(
+                    id=call.tool_call_id,
+                    name=call.tool_name,
+                    arguments=(
+                        call.args_as_dict()
+                        if hasattr(call, "args_as_dict")
+                        else dict(call.args or {})
+                    ),
+                ),
+                parent_run_id=self._current_run_id or run_id,
+                caller=self._caller,
+                _shared_usage=usage,
+                _shared_budget=self._active_budget,
+            )
+            if not outcome.succeeded:
+                raise ToolError(
+                    outcome.error or f"Delegation ended with {outcome.status}"
+                )
+            results[call.tool_call_id] = (
+                json.dumps(outcome.output, default=str)
+                if isinstance(outcome.output, dict)
+                else str(outcome.output or "Delegation completed.")
+            )
+        resumed = await runtime.run(
+            None,
+            message_history=list(self._durable_history or []),
+            deferred_tool_results=DeferredToolResults(calls=results),
+            usage_limits=(
+                self._active_budget.usage_limits()
+                if self._active_budget
+                else None
+            ),
+            usage=usage,
+            conversation_id=run_id,
+        )
+        if isinstance(resumed.output, DeferredToolRequests):
+            raise ToolError("Inline delegation did not resolve; still deferred.")
+        return resumed.output
+
     async def _resume_pre_pass(
         self,
         history: list,
         *,
         run_id: str,
         agent: Agent,
+        deferred_tool_call_ids: set[str] | None = None,
     ) -> list:
         """Execute planned-but-unanswered calls before the model continues.
 
@@ -1060,7 +1251,8 @@ class AutonomousAgentExecutor:
         planner; this pass only dispatches calls with no stored outcome and
         appends their results (or error envelopes) as one request. Failed
         calls surface their recorded error; uncertain calls fail the attempt
-        loudly instead of guessing.
+        loudly instead of guessing. Suspended delegation calls are skipped:
+        their results arrive through DeferredToolResults.
         """
         from pydantic_ai.messages import (
             ModelRequest,
@@ -1070,7 +1262,7 @@ class AutonomousAgentExecutor:
         )
         from src.services.agent_runtime.tool_invocations import get_invocation
 
-        answered: set[str] = set()
+        answered: set[str] = set(deferred_tool_call_ids or set())
         ordered_calls: list = []
         for message in history:
             if isinstance(message, ModelRequest):
@@ -1770,7 +1962,64 @@ class AutonomousAgentExecutor:
         tool_call: ToolCallRequest,
         agent: Agent,
     ) -> str:
-        """Execute delegation for an autonomous parent run."""
+        """Execute delegation: suspend durably when leased, inline otherwise.
+
+        Leased runs raise ``CallDeferred`` so the engine admits an
+        independent child and parks the parent. Unleased runs (tests, legacy
+        direct calls) keep the historical inline nested execution.
+        """
+        if self._durable_lease_token is not None:
+            task = (tool_call.arguments or {}).get("task", "")
+            if not task:
+                raise ToolError("No task provided for delegation")
+            target = find_delegated_agent(agent, tool_call.name)
+            target_id: UUID | None = target.id if target is not None else None
+            if target is None and self._snapshot_for_deferral is not None:
+                # Fail fast against the immutable grant set; the suspending
+                # transaction re-validates authoritatively.
+                from src.services.execution.agent_helpers import (
+                    agent_delegation_slug,
+                )
+
+                for delegate in self._snapshot_for_deferral.get(
+                    "delegated_agents", []
+                ):
+                    if agent_delegation_slug(
+                        delegate.get("name", "")
+                    ) == tool_call.name and delegate.get("id"):
+                        target_id = UUID(str(delegate["id"]))
+                        break
+            if target_id is None:
+                raise ToolError(
+                    f"Delegation target for '{tool_call.name}' not found."
+                )
+            if (
+                target is not None
+                and target.organization_id is not None
+                and target.organization_id != agent.organization_id
+            ):
+                raise ToolError(
+                    f"Delegation target '{target.name}' is outside the "
+                    "parent agent's organization."
+                )
+            from src.services.agent_runtime.delegation import (
+                DelegationSpec,
+                delegation_call_metadata,
+            )
+
+            raise CallDeferred(
+                delegation_call_metadata(
+                    DelegationSpec(
+                        tool_call_id=tool_call.id,
+                        tool_name=tool_call.name,
+                        target_agent_id=target_id,
+                        task=task,
+                        output_schema=(tool_call.arguments or {}).get(
+                            "output_schema"
+                        ),
+                    )
+                )
+            )
         outcome = await self.run_delegation(
             parent_agent=agent,
             tool_call=tool_call,

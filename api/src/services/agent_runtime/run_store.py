@@ -48,7 +48,7 @@ async def _locked_run(session: AsyncSession, run_id: UUID) -> AgentRun:
     return run
 
 
-def _require_lease(run: AgentRun, lease_token: str | None) -> None:
+def require_lease(run: AgentRun, lease_token: str | None) -> None:
     """Fencing: a writer must present the run's current lease token."""
     if not run.lease_token or run.lease_token != lease_token:
         raise rt.LeaseMismatchError(
@@ -64,7 +64,7 @@ def _check_transition(run: AgentRun, target: str) -> None:
         )
 
 
-async def _next_journal_sequence(session: AsyncSession, run_id: UUID) -> int:
+async def next_journal_sequence(session: AsyncSession, run_id: UUID) -> int:
     current = (
         await session.execute(
             select(func.max(AgentRunJournalEntry.sequence)).where(
@@ -135,7 +135,7 @@ async def renew_lease(
 ) -> AgentRun:
     """Renew a live lease. Stale tokens are rejected without side effects."""
     run = await _locked_run(session, run_id)
-    _require_lease(run, lease_token)
+    require_lease(run, lease_token)
     now = _now()
     run.lease_expires_at = now + timedelta(seconds=lease_ttl_seconds)
     run.last_progress_at = now
@@ -159,10 +159,10 @@ async def append_journal(
     if kind not in rt.JOURNAL_EVENT_KINDS:
         raise rt.RunStoreError(f"Unknown journal event kind: {kind!r}")
     run = await _locked_run(session, run_id)
-    _require_lease(run, lease_token)
+    require_lease(run, lease_token)
     entry = AgentRunJournalEntry(
         run_id=run_id,
-        sequence=await _next_journal_sequence(session, run_id),
+        sequence=await next_journal_sequence(session, run_id),
         kind=kind,
         data=redact_secrets(dict(data or {}), secrets or set()),
         provider_invocation_id=provider_invocation_id,
@@ -200,7 +200,7 @@ async def commit_checkpoint(
     last-progress in the same transaction.
     """
     run = await _locked_run(session, run_id)
-    _require_lease(run, lease_token)
+    require_lease(run, lease_token)
     now = _now()
     next_sequence = (run.checkpoint_sequence or 0) + 1
     checkpoint = AgentRunCheckpoint(
@@ -258,7 +258,7 @@ async def transition_waiting(
     if target not in rt.INACTIVE_WAIT_STATUSES:
         raise rt.RunStoreError(f"Not a waiting state: {target!r}")
     run = await _locked_run(session, run_id)
-    _require_lease(run, lease_token)
+    require_lease(run, lease_token)
     _check_transition(run, target)
     run.status = target
     run.wake_at = wake_at if target == rt.SLEEPING else None
@@ -271,7 +271,7 @@ async def transition_waiting(
     # cannot be used for this boundary entry.
     entry = AgentRunJournalEntry(
         run_id=run_id,
-        sequence=await _next_journal_sequence(session, run_id),
+        sequence=await next_journal_sequence(session, run_id),
         kind=rt.JOURNAL_WAIT,
         data=redact_secrets(
             {"target": target, **(journal_data or {})}, secrets or set()
@@ -304,7 +304,7 @@ async def wake_run(
     run.last_progress_at = _now()
     entry = AgentRunJournalEntry(
         run_id=run_id,
-        sequence=await _next_journal_sequence(session, run_id),
+        sequence=await next_journal_sequence(session, run_id),
         kind=rt.JOURNAL_RESUME,
         data={"reason": reason},
         checkpoint_sequence=run.checkpoint_sequence,
@@ -333,7 +333,7 @@ async def finish_run(
     if status not in rt.TERMINAL_STATUSES:
         raise rt.RunStoreError(f"Not a terminal status: {status!r}")
     run = await _locked_run(session, run_id)
-    _require_lease(run, lease_token)
+    require_lease(run, lease_token)
     _check_transition(run, status)
     now = _now()
     run.status = status
@@ -361,7 +361,7 @@ async def finish_run(
     run.completion_event_pending_at = now
     entry = AgentRunJournalEntry(
         run_id=run_id,
-        sequence=await _next_journal_sequence(session, run_id),
+        sequence=await next_journal_sequence(session, run_id),
         kind=rt.JOURNAL_COMPLETION,
         data={"status": status},
         checkpoint_sequence=run.checkpoint_sequence,
@@ -385,7 +385,7 @@ async def mark_recovery_required(
     reconciliation hook could prove it did not occur.
     """
     run = await _locked_run(session, run_id)
-    _require_lease(run, lease_token)
+    require_lease(run, lease_token)
     _check_transition(run, rt.RECOVERY_REQUIRED)
     run.status = rt.RECOVERY_REQUIRED
     run.error = reason
@@ -395,7 +395,7 @@ async def mark_recovery_required(
     run.last_progress_at = _now()
     entry = AgentRunJournalEntry(
         run_id=run_id,
-        sequence=await _next_journal_sequence(session, run_id),
+        sequence=await next_journal_sequence(session, run_id),
         kind=rt.JOURNAL_VALIDATION,
         data={"status": rt.RECOVERY_REQUIRED, "reason": reason, **(evidence or {})},
         checkpoint_sequence=run.checkpoint_sequence,

@@ -199,6 +199,13 @@ async def resolve_agent_tools(
                                     "type": "string",
                                     "description": "The task or question to delegate to this agent",
                                 },
+                                "output_schema": {
+                                    "type": "object",
+                                    "description": (
+                                        "Optional JSON Schema constraining "
+                                        "the delegated result for this call"
+                                    ),
+                                },
                             },
                             "required": ["task"],
                         },

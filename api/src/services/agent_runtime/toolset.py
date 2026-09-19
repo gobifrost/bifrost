@@ -4,7 +4,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from pydantic_ai import RunContext
+from pydantic_ai import CallDeferred, RunContext
 from pydantic_ai.tools import ToolDefinition as PydanticToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets.abstract import ToolsetTool
@@ -168,6 +168,10 @@ class BifrostToolset(AbstractToolset[object]):
                     )
                 )
             if isinstance(exc, AgentRunCancelled):
+                raise
+            # Suspension is control flow, not failure: the engine admits the
+            # deferred work and parks the run. Never convert it to text.
+            if isinstance(exc, CallDeferred):
                 raise
             return f"Error: {exc}"
 
