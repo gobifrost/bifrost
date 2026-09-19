@@ -39,6 +39,7 @@ class RabbitMQConnection:
             cls._instance = super().__new__(cls)
             cls._instance._publish_topology_ready = set()
             cls._instance._publish_topology_locks = {}
+            cls._instance._pool_loop = None
         return cls._instance
 
     def get_connection(self):
@@ -96,10 +97,29 @@ class RabbitMQConnection:
         self._publish_topology_ready.discard(queue_name)
 
     async def init_pools(self) -> None:
-        """Initialize connection and channel pools. Must be called before using the connection."""
+        """Initialize connection and channel pools. Must be called before using the connection.
+
+        The pools (and the aio-pika robust connections they hand out) are
+        pinned to the asyncio loop that created them. When the running loop
+        differs from the recorded one — the normal case for pytest-asyncio's
+        function-scoped test loops, and impossible in the single-loop worker
+        and scheduler processes — the stale pools are dropped first so the
+        current loop rebuilds them instead of deadlocking on a dead loop's
+        connection-ready future. See ``reset_pools``.
+        """
         if self._connection_pool is not None:
-            return  # Already initialized
+            try:
+                running_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                running_loop = None
+            if running_loop is None or running_loop is self._pool_loop:
+                return  # Already initialized on this loop
+            self.reset_pools()
         await self._init_pools()
+        try:
+            self._pool_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._pool_loop = None
 
     async def _init_pools(self) -> None:
         """Initialize connection and channel pools."""
@@ -128,6 +148,7 @@ class RabbitMQConnection:
             await self._connection_pool.close()
         self._channel_pool = None
         self._connection_pool = None
+        self._pool_loop = None
         self._publish_topology_ready.clear()
         self._publish_topology_locks.clear()
         logger.info("RabbitMQ connections closed")
@@ -147,6 +168,7 @@ class RabbitMQConnection:
         """
         self._connection_pool = None
         self._channel_pool = None
+        self._pool_loop = None
         self._publish_topology_ready.clear()
         self._publish_topology_locks.clear()
 

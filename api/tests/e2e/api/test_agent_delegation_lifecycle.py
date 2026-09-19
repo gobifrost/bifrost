@@ -33,6 +33,20 @@ from src.services.model_capabilities import manual_capabilities
 pytestmark = pytest.mark.asyncio
 
 
+@pytest.fixture(autouse=True)
+def _mock_rabbitmq_publish():
+    """Keep durable queue nudges in-process.
+
+    Delegation admits and child completions publish a RabbitMQ nudge via
+    ``src.jobs.rabbitmq.publish_message``. Every run in this file executes
+    in-process, so a real publish would disturb the shared stack worker and
+    pin the process-wide publisher pools to one test's function-scoped loop
+    (see ``RabbitMQConnection.reset_pools``). Swallow the nudges.
+    """
+    with patch("src.jobs.rabbitmq.publish_message", new_callable=AsyncMock) as mock:
+        yield mock
+
+
 class DelegatingTestModel(TestModel):
     """Emit one explicit delegation followed by the parent's final answer."""
 

@@ -22,11 +22,11 @@ def conn():
     other tests in the same process; save and restore them.
     """
     c = RabbitMQConnection()
-    saved = (c._connection_pool, c._channel_pool)
+    saved = (c._connection_pool, c._channel_pool, c._pool_loop)
     try:
         yield c
     finally:
-        c._connection_pool, c._channel_pool = saved
+        c._connection_pool, c._channel_pool, c._pool_loop = saved
 
 
 def test_reset_pools_clears_both_pools(conn):
@@ -60,3 +60,44 @@ def test_reset_pools_does_not_touch_stale_pool(conn):
 
     assert conn._connection_pool is None
     assert conn._channel_pool is None
+
+
+def test_init_pools_rebuilds_on_loop_change(conn):
+    """init_pools must not hand a new loop pools pinned to a dead loop.
+
+    Regression coverage for the full-suite hang: an in-process publish on one
+    function-scoped test loop built the singleton pools; the next test's loop
+    short-circuited ``init_pools`` on the stale pool and deadlocked inside
+    aio-pika's connection-ready wait. ``init_pools`` now records the building
+    loop and rebuilds when the running loop differs.
+    """
+    import asyncio
+    from unittest.mock import patch
+
+    async def _fake_init(self):
+        self._connection_pool = object()
+        self._channel_pool = object()
+
+    async def _scenario_same_loop():
+        with patch.object(RabbitMQConnection, "_init_pools", _fake_init):
+            await conn.init_pools()
+            pool_a = conn._connection_pool
+            assert pool_a is not None
+            assert conn._pool_loop is asyncio.get_running_loop()
+            await conn.init_pools()
+            assert conn._connection_pool is pool_a
+            return pool_a
+
+    pool_on_first_loop = asyncio.run(_scenario_same_loop())
+
+    async def _scenario_new_loop():
+        with patch.object(RabbitMQConnection, "_init_pools", _fake_init):
+            await conn.init_pools()
+            assert conn._pool_loop is asyncio.get_running_loop()
+            return conn._connection_pool
+
+    pool_on_second_loop = asyncio.run(_scenario_new_loop())
+
+    # The second loop must have rebuilt, not reused the first loop's pools.
+    assert pool_on_second_loop is not None
+    assert pool_on_second_loop is not pool_on_first_loop

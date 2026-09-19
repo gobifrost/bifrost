@@ -37,6 +37,21 @@ from src.services.llm.base import LLMConfig
 pytestmark = pytest.mark.asyncio
 
 
+@pytest.fixture(autouse=True)
+def _mock_rabbitmq_publish():
+    """Keep durable queue nudges in-process.
+
+    Delegation admits and join completions publish a RabbitMQ nudge via
+    ``src.jobs.rabbitmq.publish_message``. Every run in this file executes
+    in-process, so a real publish would disturb the shared stack worker and
+    pin the process-wide publisher pools to one test's function-scoped loop
+    (see ``RabbitMQConnection.reset_pools``). Swallow the nudges, including
+    the direct ``notify_parent_of_completion`` calls below.
+    """
+    with patch("src.jobs.rabbitmq.publish_message", new_callable=AsyncMock) as mock:
+        yield mock
+
+
 def _fanout_model(children, call_id="fanout-1"):
     def _fn(messages, info):
         answered = any(
