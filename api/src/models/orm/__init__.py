@@ -10,7 +10,15 @@ For API schemas (Create/Update/Public), see schemas.py
 from src.models.orm.agent_prompt_history import AgentPromptHistory
 from src.models.orm.agent_run_flag_conversations import AgentRunFlagConversation
 from src.models.orm.agent_run_verdict_history import AgentRunVerdictHistory
-from src.models.orm.agent_runs import AgentRun, AgentRunStep
+from src.models.orm.agent_runs import (
+    AgentRun,
+    AgentRunCheckpoint,
+    AgentRunJoin,
+    AgentRunJoinMember,
+    AgentRunJournalEntry,
+    AgentRunStep,
+    AgentToolInvocation,
+)
 from src.models.orm.summary_backfill_job import SummaryBackfillJob
 from src.models.orm.agents import Agent, AgentDelegation, AgentRole, AgentTool, Conversation, Message, MessageAttachment
 from src.models.orm.ai_usage import AIModelPricing, AIUsage
@@ -105,9 +113,14 @@ __all__ = [
     "UserInvite",
     # Agent Runs
     "AgentRun",
+    "AgentRunCheckpoint",
+    "AgentRunJoin",
+    "AgentRunJoinMember",
+    "AgentRunJournalEntry",
     "AgentRunFlagConversation",
     "AgentRunStep",
     "AgentRunVerdictHistory",
+    "AgentToolInvocation",
     "SummaryBackfillJob",
     # Agents
     "Agent",

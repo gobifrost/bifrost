@@ -122,7 +122,7 @@ async def test_deferred_tool_suspends_and_resumes_with_new_invocation_id():
             model_name="fake-model",
         )
 
-    agent: Agent[None] = Agent(
+    agent = Agent(
         FunctionModel(fake_model),
         output_type=[DeferredToolRequests, str],
     )
