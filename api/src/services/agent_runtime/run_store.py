@@ -362,6 +362,40 @@ async def finish_run(
     return run
 
 
+async def mark_recovery_required(
+    session: AsyncSession,
+    run_id: UUID,
+    lease_token: str,
+    *,
+    reason: str,
+    evidence: dict[str, Any] | None = None,
+) -> AgentRun:
+    """Move a run to ``recovery_required``: automatic replay is prohibited.
+
+    Used when an external side effect's outcome is unknown and no
+    reconciliation hook could prove it did not occur.
+    """
+    run = await _locked_run(session, run_id)
+    _require_lease(run, lease_token)
+    _check_transition(run, rt.RECOVERY_REQUIRED)
+    run.status = rt.RECOVERY_REQUIRED
+    run.error = reason
+    run.lease_owner = None
+    run.lease_token = None
+    run.lease_expires_at = None
+    run.last_progress_at = _now()
+    entry = AgentRunJournalEntry(
+        run_id=run_id,
+        sequence=await _next_journal_sequence(session, run_id),
+        kind=rt.JOURNAL_VALIDATION,
+        data={"status": rt.RECOVERY_REQUIRED, "reason": reason, **(evidence or {})},
+        checkpoint_sequence=run.checkpoint_sequence,
+    )
+    session.add(entry)
+    await session.commit()
+    return run
+
+
 async def latest_checkpoint(
     session: AsyncSession, run_id: UUID
 ) -> AgentRunCheckpoint | None:

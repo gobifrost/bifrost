@@ -23,7 +23,7 @@ import redis.asyncio as aioredis
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
-from pydantic_ai import Agent as PydanticAgent
+from pydantic_ai import Agent as PydanticAgent, capture_run_messages
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.usage import RunUsage
 
@@ -136,6 +136,15 @@ class AutonomousAgentExecutor:
         # Buffers for Redis-first pattern (flushed to DB after run completes)
         self._pending_steps: list[dict[str, Any]] = []
         self._pending_ai_usage: list[dict[str, Any]] = []
+        # Durable boundary recording. When a lease token is supplied, every
+        # completed model response and tool result is checkpointed to
+        # PostgreSQL immediately instead of buffered to end of run.
+        self._durable_lease_token: str | None = None
+        self._durable_history: list | None = None
+        self._last_checkpoint_sequence: int | None = None
+        # Engine operation ID for the tool call currently dispatching,
+        # exposed to workflow/system tools as an idempotency key.
+        self._current_operation_id: str | None = None
         self._knowledge_search_budget = KnowledgeSearchBudget()
         # Delegated executors receive these same objects. Pydantic AI mutates
         # RunUsage in place, so every model request in the delegation tree is
@@ -151,6 +160,7 @@ class AutonomousAgentExecutor:
         output_schema: dict | None = None,
         run_id: str | None = None,
         execution_snapshot: dict[str, Any] | None = None,
+        lease_token: str | None = None,
         _caller: dict | None = None,
         _shared_usage: RunUsage | None = None,
         _shared_budget: AgentRunBudget | None = None,
@@ -166,6 +176,9 @@ class AutonomousAgentExecutor:
                 When present, prompt, model identity, tool set, and limits
                 come from the snapshot instead of the live Agent row, so a
                 resumed run never silently adopts an edited Agent.
+            lease_token: Current worker lease token for this run. When
+                present, model/tool boundaries checkpoint durably instead of
+                buffering to end of run.
             _caller: Optional caller metadata for context.
             _shared_usage: Internal cumulative usage ledger inherited from a
                 parent run during delegation.
@@ -177,6 +190,7 @@ class AutonomousAgentExecutor:
         """
         run_id = run_id or str(uuid4())
         self._current_run_id = run_id
+        self._durable_lease_token = lease_token
         self._knowledge_search_budget.reset()
 
         # Resolve caller_user_id from _caller metadata. If a webhook ran
@@ -338,42 +352,82 @@ class AutonomousAgentExecutor:
                 model_name = response.model_name
             if response.text:
                 last_response_content = response.text
+            response_content = {
+                "content": (response.text or "")[:20000],
+                "tool_calls": [
+                    {"name": call.tool_name, "arguments": call.args_as_dict()}
+                    for call in response.tool_calls
+                ],
+                "finish_reason": response.finish_reason,
+                "usage": {
+                    "input_tokens": request_usage.input_tokens,
+                    "output_tokens": request_usage.output_tokens,
+                    "cache_read_tokens": request_usage.cache_read_tokens,
+                    "cache_write_tokens": request_usage.cache_write_tokens,
+                    "provider_cost": (
+                        str(cost)
+                        if (cost := provider_reported_cost(response)) is not None
+                        else None
+                    ),
+                },
+            }
+            usage_kwargs = {
+                "provider": response.provider_name or llm_config.provider,
+                "model": response.model_name or model_name,
+                "input_tokens": request_usage.input_tokens,
+                "output_tokens": request_usage.output_tokens,
+                "cache_read_tokens": request_usage.cache_read_tokens,
+                "cache_write_tokens": request_usage.cache_write_tokens,
+                "provider_cost": provider_reported_cost(response),
+                "duration_ms": event.duration_ms or 0,
+            }
+            step_number += 1
+            if self._durable_lease_token is not None:
+                await self._record_step(
+                    run_id,
+                    step_number,
+                    "llm_response",
+                    response_content,
+                    tokens_used=request_usage.total_tokens,
+                    duration_ms=event.duration_ms,
+                    buffer=False,
+                )
+                await self._durable_checkpoint(
+                    run_id=run_id,
+                    journal_kind="model_response",
+                    journal_data={
+                        "model": model_name,
+                        "finish_reason": response.finish_reason,
+                        "tool_calls": [
+                            call.tool_name for call in response.tool_calls
+                        ],
+                    },
+                    step={
+                        "step_number": step_number,
+                        "type": "llm_response",
+                        "content": response_content,
+                        "tokens_used": request_usage.total_tokens,
+                        "duration_ms": event.duration_ms,
+                    },
+                    iterations_used=usage.requests - usage_start_requests,
+                    tokens_used=usage.total_tokens - usage_start_tokens,
+                )
+                await self._persist_usage_durable(
+                    agent=agent,
+                    run_id=run_id,
+                    **usage_kwargs,
+                )
+                return
             self._buffer_ai_usage(
                 agent=agent,
                 run_id=run_id,
-                provider=response.provider_name or llm_config.provider,
-                model=response.model_name or model_name,
-                input_tokens=request_usage.input_tokens,
-                output_tokens=request_usage.output_tokens,
-                cache_read_tokens=request_usage.cache_read_tokens,
-                cache_write_tokens=request_usage.cache_write_tokens,
-                provider_cost=provider_reported_cost(response),
-                duration_ms=event.duration_ms or 0,
+                **usage_kwargs,
             )
-            step_number += 1
             await self._record_step(
                 run_id,
                 step_number,
                 "llm_response",
-                {
-                    "content": (response.text or "")[:20000],
-                    "tool_calls": [
-                        {"name": call.tool_name, "arguments": call.args_as_dict()}
-                        for call in response.tool_calls
-                    ],
-                    "finish_reason": response.finish_reason,
-                    "usage": {
-                        "input_tokens": request_usage.input_tokens,
-                        "output_tokens": request_usage.output_tokens,
-                        "cache_read_tokens": request_usage.cache_read_tokens,
-                        "cache_write_tokens": request_usage.cache_write_tokens,
-                        "provider_cost": (
-                            str(cost)
-                            if (cost := provider_reported_cost(response)) is not None
-                            else None
-                        ),
-                    },
-                },
+                response_content,
                 tokens_used=request_usage.total_tokens,
                 duration_ms=event.duration_ms,
             )
@@ -385,6 +439,14 @@ class AutonomousAgentExecutor:
             self._last_workflow_execution_is_error = False
             if name.startswith("delegate_to_"):
                 self._last_delegation_run_id = None
+            if self._durable_lease_token is not None:
+                return await self._execute_tool_durable(
+                    name,
+                    arguments,
+                    tool_call_id,
+                    run_id=run_id,
+                    agent=agent,
+                )
             return await self._execute_tool(
                 ToolCallRequest(id=tool_call_id, name=name, arguments=arguments),
                 agent,
@@ -393,13 +455,33 @@ class AutonomousAgentExecutor:
         async def record_tool_event(event: ToolEvent) -> None:
             nonlocal step_number
             step_number += 1
+            durable = self._durable_lease_token is not None
             if event.type == "tool_call":
                 await self._record_step(
                     run_id,
                     step_number,
                     "tool_call",
                     {"tool_name": event.tool_name, "arguments": event.arguments},
+                    buffer=not durable,
                 )
+                if durable:
+                    await self._durable_checkpoint(
+                        run_id=run_id,
+                        journal_kind="tool_call",
+                        journal_data={"tool_name": event.tool_name},
+                        step={
+                            "step_number": step_number,
+                            "type": "tool_call",
+                            "content": {
+                                "tool_name": event.tool_name,
+                                "arguments": event.arguments,
+                            },
+                            "tokens_used": None,
+                            "duration_ms": None,
+                        },
+                        iterations_used=usage.requests - usage_start_requests,
+                        tokens_used=usage.total_tokens - usage_start_tokens,
+                    )
                 return
 
             content: dict[str, Any] = {
@@ -420,7 +502,28 @@ class AutonomousAgentExecutor:
                 event.type,
                 content,
                 duration_ms=event.duration_ms,
+                buffer=not durable,
             )
+            # The invocation result/error was already persisted before the
+            # model saw it; this checkpoint projects the step row so restart
+            # preserves observable step ordering.
+            if durable:
+                await self._durable_checkpoint(
+                    run_id=run_id,
+                    journal_kind=(
+                        "tool_error" if event.type == "tool_error" else "tool_result"
+                    ),
+                    journal_data={"tool_name": event.tool_name},
+                    step={
+                        "step_number": step_number,
+                        "type": event.type,
+                        "content": content,
+                        "tokens_used": None,
+                        "duration_ms": event.duration_ms,
+                    },
+                    iterations_used=usage.requests - usage_start_requests,
+                    tokens_used=usage.total_tokens - usage_start_tokens,
+                )
 
         chain = build_chain_model(
             llm_configs,
@@ -490,12 +593,17 @@ class AutonomousAgentExecutor:
         final_content = ""
         error: str | None = None
         try:
-            result = await runtime.run(
-                user_content,
-                usage_limits=budget.usage_limits(),
-                usage=usage,
-                conversation_id=run_id,
-            )
+            # capture_run_messages feeds the durable checkpoint encoder: at
+            # every committed boundary the full history-so-far is available
+            # for a restart to resume from.
+            with capture_run_messages() as durable_history:
+                self._durable_history = durable_history
+                result = await runtime.run(
+                    user_content,
+                    usage_limits=budget.usage_limits(),
+                    usage=usage,
+                    conversation_id=run_id,
+                )
             final_content = result.output
             if empty_output_guard.handoff_triggered:
                 step_number += 1
@@ -623,6 +731,187 @@ class AutonomousAgentExecutor:
                 except Exception as e:
                     logger.warning(f"Failed to flush AI usage record: {e}")
 
+    async def _durable_checkpoint(
+        self,
+        *,
+        run_id: str,
+        journal_kind: str,
+        journal_data: dict[str, Any] | None,
+        step: dict[str, Any] | None,
+        iterations_used: int,
+        tokens_used: int,
+    ) -> None:
+        """Commit one model/tool boundary: checkpoint + journal + step row.
+
+        No-op unless the run holds a lease token. Failures propagate — a
+        boundary that cannot be committed must fail the attempt loudly
+        rather than continue on uncommitted state.
+        """
+        token = self._durable_lease_token
+        history = self._durable_history
+        if token is None or history is None:
+            return
+        from src.services.agent_runtime import run_store
+        from src.services.agent_runtime.checkpoint_codec import (
+            CHECKPOINT_MESSAGE_FORMAT_VERSION,
+            encode_messages,
+        )
+
+        async with self._session_factory() as db:
+            checkpoint = await run_store.commit_checkpoint(
+                db,
+                UUID(run_id),
+                token,
+                encode_messages(history),
+                format_version=CHECKPOINT_MESSAGE_FORMAT_VERSION,
+                journal_kind=journal_kind,
+                journal_data=journal_data,
+                steps=[step] if step is not None else None,
+                iterations_used=iterations_used,
+                tokens_used=tokens_used,
+            )
+        self._last_checkpoint_sequence = checkpoint.sequence
+
+    async def _persist_usage_durable(
+        self,
+        *,
+        agent: Agent,
+        run_id: str,
+        provider: str,
+        model: str,
+        input_tokens: int,
+        output_tokens: int,
+        cache_read_tokens: int = 0,
+        cache_write_tokens: int = 0,
+        provider_cost: Decimal | None = None,
+        duration_ms: int | None = None,
+    ) -> None:
+        """Write one model-boundary usage row, idempotent on retry.
+
+        The usage sequence keys off the latest committed checkpoint, so a
+        restarted worker re-committing the same boundary cannot double-count
+        committed usage.
+        """
+        sequence = getattr(self, "_last_checkpoint_sequence", None)
+        if sequence is None:
+            return
+        from src.models.orm.ai_usage import AIUsage
+
+        async with self._session_factory() as db:
+            existing = (
+                await db.execute(
+                    select(AIUsage.id).where(
+                        AIUsage.agent_run_id == UUID(run_id),
+                        AIUsage.sequence == sequence,
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing is not None:
+                return
+            if not self.redis_client:
+                return
+            from src.services.ai_usage_service import record_ai_usage
+
+            await record_ai_usage(
+                session=db,
+                redis_client=self.redis_client,
+                provider=provider,
+                model=model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cache_read_tokens=cache_read_tokens,
+                cache_write_tokens=cache_write_tokens,
+                provider_cost=provider_cost,
+                sequence=sequence,
+                duration_ms=duration_ms,
+                agent_run_id=UUID(run_id),
+                organization_id=agent.organization_id,
+            )
+            await db.commit()
+
+    async def _execute_tool_durable(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        tool_call_id: str,
+        *,
+        run_id: str,
+        agent: Agent,
+    ) -> Any:
+        """Execute one tool call with planned/running/completed durability.
+
+        A committed result is replayed verbatim and never executed twice.
+        """
+        from src.services.agent_runtime.tool_invocations import (
+            complete_invocation,
+            durable_operation_id,
+            fail_invocation,
+            get_invocation,
+            mark_running,
+            plan_invocation,
+        )
+
+        token = self._durable_lease_token
+        assert token is not None
+        operation_id = durable_operation_id(run_id, tool_call_id)
+        self._current_operation_id = operation_id
+        try:
+            async with self._session_factory() as db:
+                existing = await get_invocation(db, UUID(run_id), tool_call_id)
+                if existing is not None and existing.state == "completed":
+                    stored = existing.result or {}
+                    return stored.get("text", "")
+                await plan_invocation(
+                    db,
+                    run_id=UUID(run_id),
+                    lease_token=token,
+                    provider_tool_call_id=tool_call_id,
+                    tool_name=name,
+                    arguments=arguments,
+                )
+                await mark_running(
+                    db,
+                    run_id=UUID(run_id),
+                    lease_token=token,
+                    provider_tool_call_id=tool_call_id,
+                )
+            try:
+                result = await self._execute_tool(
+                    ToolCallRequest(id=tool_call_id, name=name, arguments=arguments),
+                    agent,
+                )
+            except AgentRunCancelled as exc:
+                async with self._session_factory() as db:
+                    await fail_invocation(
+                        db,
+                        run_id=UUID(run_id),
+                        lease_token=token,
+                        provider_tool_call_id=tool_call_id,
+                        error=f"cancelled: {exc}",
+                    )
+                raise
+            except Exception as exc:
+                async with self._session_factory() as db:
+                    await fail_invocation(
+                        db,
+                        run_id=UUID(run_id),
+                        lease_token=token,
+                        provider_tool_call_id=tool_call_id,
+                        error=str(exc),
+                    )
+                raise
+            async with self._session_factory() as db:
+                await complete_invocation(
+                    db,
+                    run_id=UUID(run_id),
+                    lease_token=token,
+                    provider_tool_call_id=tool_call_id,
+                    result=result,
+                )
+            return result
+        finally:
+            self._current_operation_id = None
+
     # ------------------------------------------------------------------
     # Tool dispatch
     # ------------------------------------------------------------------
@@ -680,8 +969,7 @@ class AutonomousAgentExecutor:
                     str(self._caller_user_id)
                     if self._caller_user_id
                     else SYSTEM_USER_ID
-                ),
-                email=(
+                ),                email=(
                     str(self._caller.get("email"))
                     if self._caller_user_id
                     and self._caller
@@ -701,6 +989,7 @@ class AutonomousAgentExecutor:
                     if self._caller_user_id and self._caller
                     else False
                 ),
+                operation_id=self._current_operation_id,
             ),
             artifact_workspace_id=(
                 self._ancestor_run_ids[0]
@@ -1309,6 +1598,7 @@ class AutonomousAgentExecutor:
                         else agent.name
                     ),
                     session=db,
+                    operation_id=self._current_operation_id,
                 )
 
                 result = await func(context, **tool_call.arguments)
@@ -1396,24 +1686,29 @@ class AutonomousAgentExecutor:
         *,
         tokens_used: int | None = None,
         duration_ms: int | None = None,
+        buffer: bool = True,
     ) -> None:
         """Record a step to Redis Stream and buffer for later DB flush.
 
         Steps are NOT written to Postgres here — they are buffered in
         self._pending_steps and flushed via flush_to_db() after the run.
+        Durable runs pass ``buffer=False``: their step rows are projected
+        by the boundary checkpoint instead, while live stream/pubsub
+        updates still flow.
         """
         step_id = str(uuid4())
 
         # Buffer for later DB flush
-        self._pending_steps.append({
-            "id": step_id,
-            "run_id": run_id,
-            "step_number": step_number,
-            "type": step_type,
-            "content": content,
-            "tokens_used": tokens_used,
-            "duration_ms": duration_ms,
-        })
+        if buffer:
+            self._pending_steps.append({
+                "id": step_id,
+                "run_id": run_id,
+                "step_number": step_number,
+                "type": step_type,
+                "content": content,
+                "tokens_used": tokens_used,
+                "duration_ms": duration_ms,
+            })
 
         # Broadcast step for real-time updates
         step_data = {

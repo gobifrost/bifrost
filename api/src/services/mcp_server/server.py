@@ -150,6 +150,10 @@ class MCPContext:
     # Database session from executor context (None when running via MCP server)
     session: Any = None
 
+    # Durable engine operation ID for this tool call. System tools with
+    # side effects should use it as an idempotency or reconciliation key.
+    operation_id: str | None = None
+
     def __post_init__(self) -> None:
         # JWT claims arrive as strings; downstream comparisons (e.g. against
         # ORM UUID columns) silently fail because `UUID == str` is False.

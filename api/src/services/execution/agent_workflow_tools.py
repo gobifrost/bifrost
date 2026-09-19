@@ -16,6 +16,9 @@ class AgentWorkflowCaller:
     name: str
     organization_id: UUID | str | None
     is_platform_admin: bool = False
+    # Durable engine operation ID for this tool call. Reusable integration
+    # modules should use it as an idempotency or reconciliation key.
+    operation_id: str | None = None
 
 
 async def execute_agent_workflow_tool(
