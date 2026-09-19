@@ -29,6 +29,8 @@ generic DTO-driven surface:
 
 from __future__ import annotations
 
+import asyncio
+import json
 from pathlib import Path
 from typing import Any
 
@@ -45,7 +47,14 @@ from bifrost.org_target import org_option, resolve_org_target
 from bifrost.refs import RefResolver
 from bifrost.contracts import AgentCreate, AgentUpdate
 
-from .base import _apply_flags, entity_group, output_result, pass_resolver, run_async
+from .base import (
+    _apply_flags,
+    _json_requested,
+    entity_group,
+    output_result,
+    pass_resolver,
+    run_async,
+)
 
 agents_group = entity_group("agents", "Manage agents.")
 
@@ -307,3 +316,295 @@ async def delete_agent(
 
 
 __all__ = ["agents_group"]
+
+
+# -----------------------------------------------------------------------------
+# Agent run debugger (read-only inspection over the durable journal)
+# -----------------------------------------------------------------------------
+
+_TERMINAL_RUN_STATUSES = frozenset(
+    {
+        "completed",
+        "failed",
+        "cancelled",
+        "timeout",
+        "budget_exceeded",
+        "contract_failed",
+        "paused",
+    }
+)
+
+
+def _render_tree_node(node: dict[str, Any], depth: int = 0) -> list[str]:
+    """Render one tree node (and its children) as indented human lines."""
+    indent = "  " * depth
+    run_id = str(node.get("run_id", "?"))[:8]
+    agent = node.get("agent_name") or "unknown-agent"
+    status = node.get("status", "?")
+    lines = [f"{indent}[{status}] {run_id} {agent}"]
+    diagnostic = node.get("diagnostic")
+    if diagnostic:
+        lines.append(f"{indent}  ! {diagnostic}")
+    for child in node.get("children", []):
+        lines.extend(_render_tree_node(child, depth + 1))
+    return lines
+
+
+def _render_timeline_entry(entry: dict[str, Any]) -> str:
+    """One human line per timeline entry; full detail stays in --json."""
+    seq = entry.get("sequence", "?")
+    kind = entry.get("kind", "?")
+    summary = entry.get("summary", "")
+    line = f"#{seq} [{kind}] {summary}"
+    detail = entry.get("detail") or {}
+    state = detail.get("invocation_state")
+    if state in ("uncertain", "failed"):
+        line += f" (tool state: {state})"
+    return line
+
+
+@agents_group.command("run-tree")
+@click.argument("run_id")
+@click.pass_context
+@pass_resolver
+@run_async
+async def run_tree(
+    ctx: click.Context,
+    run_id: str,
+    *,
+    client: BifrostClient,
+    resolver: RefResolver,  # noqa: ARG001 - kept for signature parity
+) -> None:
+    """Show the delegation tree for RUN_ID (visible runs only)."""
+    response = await client.get(f"/api/agent-runs/{run_id}/tree")
+    response.raise_for_status()
+    body = response.json()
+    if _json_requested(ctx):
+        output_result(body, ctx=ctx)
+        return
+    click.echo(f"root: {body.get('root_run_id')} (total {body.get('total_runs')})")
+    for line in _render_tree_node(body.get("root", {})):
+        click.echo(line)
+    if body.get("truncated"):
+        click.echo("tree truncated; use run-timeline for the full journal")
+
+
+@agents_group.command("run-timeline")
+@click.argument("run_id")
+@click.option("--kind", default=None, help="Filter to one journal event kind.")
+@click.option("--attempt", type=int, default=None, help="Filter to one attempt.")
+@click.option(
+    "--include-descendants",
+    is_flag=True,
+    default=False,
+    help="Merge visible descendant runs into one ordered timeline.",
+)
+@click.option("--limit", type=int, default=50, help="Entries per page.")
+@click.option("--cursor", default=None, help="Resume from a previous cursor.")
+@click.option(
+    "--follow",
+    is_flag=True,
+    default=False,
+    help="Poll for new entries until the run reaches a terminal state.",
+)
+@click.option(
+    "--poll-interval",
+    type=float,
+    default=2.0,
+    help="Seconds between follow polls.",
+)
+@click.option(
+    "--max-polls",
+    type=int,
+    default=60,
+    help="Maximum follow polls before exiting.",
+)
+@click.pass_context
+@pass_resolver
+@run_async
+async def run_timeline(
+    ctx: click.Context,
+    run_id: str,
+    kind: str | None,
+    attempt: int | None,
+    include_descendants: bool,
+    limit: int,
+    cursor: str | None,
+    follow: bool,
+    poll_interval: float,
+    max_polls: int,
+    *,
+    client: BifrostClient,
+    resolver: RefResolver,  # noqa: ARG001 - kept for signature parity
+) -> None:
+    """Show the journal timeline for RUN_ID. Read-only; never mutates runs."""
+    as_json = _json_requested(ctx)
+
+    async def _fetch_page(after: str | None) -> dict[str, Any]:
+        params: dict[str, Any] = {"limit": limit}
+        if after:
+            params["cursor"] = after
+        if kind:
+            params["kind"] = kind
+        if attempt is not None:
+            params["attempt"] = attempt
+        if include_descendants:
+            params["include_descendants"] = True
+        page = await client.get(
+            f"/api/agent-runs/{run_id}/timeline", params=params
+        )
+        page.raise_for_status()
+        return page.json()
+
+    if not follow:
+        body = await _fetch_page(cursor)
+        if as_json:
+            output_result(body, ctx=ctx)
+            return
+        for entry in body.get("entries", []):
+            click.echo(_render_timeline_entry(entry))
+        if body.get("next_cursor"):
+            click.echo(f"next cursor: {body['next_cursor']}")
+        return
+
+    # --follow: bounded short polling; exits on terminal state or Ctrl-C.
+    seen: set[tuple[str, int]] = set()
+    after = cursor
+    try:
+        for _ in range(max(1, max_polls)):
+            body = await _fetch_page(after)
+            for entry in body.get("entries", []):
+                key = (str(entry.get("run_id")), int(entry.get("sequence", -1)))
+                if key in seen:
+                    continue
+                seen.add(key)
+                if as_json:
+                    click.echo(json.dumps(entry, default=str))
+                else:
+                    click.echo(_render_timeline_entry(entry))
+            after = body.get("next_cursor") or after
+            snapshot = await client.get(f"/api/agent-runs/{run_id}/snapshot")
+            snapshot.raise_for_status()
+            status = snapshot.json().get("status")
+            if status in _TERMINAL_RUN_STATUSES:
+                if not as_json:
+                    click.echo(f"run {status}")
+                return
+            await asyncio.sleep(max(0.0, poll_interval))
+    except KeyboardInterrupt:
+        if not as_json:
+            click.echo("follow interrupted")
+        return
+    if not as_json:
+        click.echo("follow poll budget exhausted; re-run with --cursor to resume")
+
+
+@agents_group.command("run-snapshot")
+@click.argument("run_id")
+@click.pass_context
+@pass_resolver
+@run_async
+async def run_snapshot(
+    ctx: click.Context,
+    run_id: str,
+    *,
+    client: BifrostClient,
+    resolver: RefResolver,  # noqa: ARG001 - kept for signature parity
+) -> None:
+    """Show the execution snapshot and live state for RUN_ID."""
+    response = await client.get(f"/api/agent-runs/{run_id}/snapshot")
+    response.raise_for_status()
+    body = response.json()
+    if _json_requested(ctx):
+        output_result(body, ctx=ctx)
+        return
+    model = body.get("model") or {}
+    lease = body.get("lease") or {}
+    contract = body.get("contract") or {}
+    completion = body.get("completion_event") or {}
+    usage = body.get("usage") or {}
+    click.echo(f"run: {body.get('run_id')}")
+    click.echo(f"agent: {body.get('agent_name')} ({body.get('agent_id')})")
+    click.echo(
+        f"status: {body.get('status')} "
+        f"(attempt {body.get('attempt')}, "
+        f"checkpoint {body.get('checkpoint_sequence')})"
+    )
+    click.echo(
+        f"model: {model.get('provider')}/{model.get('model')} "
+        f"(profile {model.get('profile_id')})"
+    )
+    click.echo(
+        f"tools: {len(body.get('tool_names', []))} "
+        f"delegated_agents: {len(body.get('delegated_agents', []))} "
+        f"system_tools: {', '.join(body.get('system_tools', [])) or 'none'}"
+    )
+    click.echo(f"limits: {json.dumps(body.get('limits', {}), default=str)}")
+    if body.get("wake_at"):
+        click.echo(f"wake_at: {body['wake_at']}")
+    if lease.get("owner") or lease.get("expires_at"):
+        click.echo(
+            f"lease: owner={lease.get('owner')} "
+            f"expires_at={lease.get('expires_at')} "
+            f"last_progress_at={lease.get('last_progress_at')}"
+        )
+    click.echo(
+        f"usage: iterations={usage.get('iterations_used')} "
+        f"tokens={usage.get('tokens_used')} "
+        f"duration_ms={usage.get('duration_ms')}"
+    )
+    if contract.get("valid") is False:
+        click.echo(f"contract_failed: {contract.get('errors')}")
+    if completion.get("emitted_at"):
+        click.echo(f"completion_event: emitted at {completion['emitted_at']}")
+    elif completion.get("pending_at"):
+        click.echo(
+            f"completion_event: pending "
+            f"(attempts {completion.get('attempts')})"
+        )
+
+
+@agents_group.command("run-checkpoints")
+@click.argument("run_id")
+@click.option("--limit", type=int, default=50, help="Checkpoints per page.")
+@click.option("--cursor", default=None, help="Resume from a previous cursor.")
+@click.pass_context
+@pass_resolver
+@run_async
+async def run_checkpoints(
+    ctx: click.Context,
+    run_id: str,
+    limit: int,
+    cursor: str | None,
+    *,
+    client: BifrostClient,
+    resolver: RefResolver,  # noqa: ARG001 - kept for signature parity
+) -> None:
+    """List checkpoint summaries for RUN_ID (metadata only)."""
+    params: dict[str, Any] = {"limit": limit}
+    if cursor:
+        params["cursor"] = cursor
+    response = await client.get(
+        f"/api/agent-runs/{run_id}/checkpoints", params=params
+    )
+    response.raise_for_status()
+    body = response.json()
+    if _json_requested(ctx):
+        output_result(body, ctx=ctx)
+        return
+    for checkpoint in body.get("checkpoints", []):
+        flags = []
+        if checkpoint.get("has_pending_tool_calls"):
+            flags.append("pending_tools")
+        if checkpoint.get("has_pending_join"):
+            flags.append("pending_join")
+        if checkpoint.get("has_pending_timer"):
+            flags.append("pending_timer")
+        suffix = f" {'+'.join(flags)}" if flags else ""
+        click.echo(
+            f"#{checkpoint.get('sequence')} "
+            f"{checkpoint.get('created_at')} "
+            f"messages={checkpoint.get('message_count')}{suffix}"
+        )
+    if body.get("next_cursor"):
+        click.echo(f"next cursor: {body['next_cursor']}")
