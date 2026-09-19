@@ -152,6 +152,13 @@ class AutonomousAgentExecutor:
         self._current_operation_id: str | None = None
         # Immutable snapshot retained for deferral-time grant checks.
         self._snapshot_for_deferral: dict[str, Any] | None = None
+        # Evaluation-synthetic routing (Studio v1). ``None`` in production.
+        # When attached by the Evaluation service, every non-engine tool
+        # call routes to the case simulator; engine-owned delegation and
+        # timer primitives keep their durable semantics. Delegated
+        # sub-executors inherit the router so children stay synthetic.
+        self._synthetic_router = None
+        self._synthetic_timer_max_seconds = 300
         self._knowledge_search_budget = KnowledgeSearchBudget()
         # Delegated executors receive these same objects. Pydantic AI mutates
         # RunUsage in place, so every model request in the delegation tree is
@@ -1431,6 +1438,16 @@ class AutonomousAgentExecutor:
 
     async def _execute_tool(self, tool_call: ToolCallRequest, agent: Agent) -> str:
         """Execute a tool call, mirroring AgentExecutor's dispatch logic."""
+        # Evaluation-synthetic seam: non-engine tools route to the case
+        # simulator. Engine-owned delegation/timer primitives fall through
+        # to their durable handlers below.
+        if self._synthetic_router is not None:
+            from src.services.agent_evaluations.runner import is_engine_tool
+
+            if not is_engine_tool(tool_call.name):
+                return await self._synthetic_router.route(
+                    tool_call.name, tool_call.arguments or {}, tool_call.id
+                )
         # Knowledge search
         if tool_call.name == "search_knowledge" and agent.knowledge_sources:
             return await self._execute_knowledge_search(tool_call, agent)
@@ -1884,6 +1901,29 @@ class AutonomousAgentExecutor:
             _delegation_depth=self._delegation_depth + 1,
             _ancestor_run_ids=ancestor_run_ids,
         )
+        if self._synthetic_router is not None:
+            # Children of a synthetic parent stay synthetic: same locked
+            # simulator family, same deterministic timer cap, and the child
+            # row is marked evaluation-only so it can never be mistaken
+            # for a production delegation.
+            from src.services.agent_evaluations.runner import (
+                EVALUATION_SYNTHETIC_MODE,
+                attach_synthetic,
+            )
+
+            attach_synthetic(
+                sub_executor,
+                self._synthetic_router,
+                timer_max_seconds=self._synthetic_timer_max_seconds,
+            )
+            async with self._session_factory() as _synthetic_db:
+                _sub_row = await _synthetic_db.get(AgentRun, sub_run_id)
+                if _sub_row is not None:
+                    _sub_row.trigger_type = EVALUATION_SYNTHETIC_MODE
+                    _sub_row.correlation = dict(
+                        self._synthetic_router.correlation
+                    )
+                    await _synthetic_db.commit()
 
         sub_start = time.time()
         cancellation: asyncio.CancelledError | None = None
@@ -2210,6 +2250,24 @@ class AutonomousAgentExecutor:
 
         _ = agent
         arguments = tool_call.arguments or {}
+        if self._synthetic_router is not None:
+            # Synthetic timers never wall-clock wait: validate the
+            # deterministic cap, then resolve immediately with a
+            # deterministic wake result.
+            from src.services.agent_evaluations.runner import (
+                SYNTHETIC_TIMER_FIRED_TEXT,
+                SyntheticRunnerError,
+                validate_synthetic_timer,
+            )
+
+            try:
+                validate_synthetic_timer(
+                    arguments,
+                    max_seconds=self._synthetic_timer_max_seconds,
+                )
+            except SyntheticRunnerError as exc:
+                raise ToolError(str(exc)) from exc
+            return SYNTHETIC_TIMER_FIRED_TEXT
         if self._durable_lease_token is not None:
             wake_at = parse_timer_args(
                 arguments, now=_datetime.now(_timezone.utc)

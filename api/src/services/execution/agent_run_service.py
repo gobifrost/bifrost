@@ -62,6 +62,12 @@ async def enqueue_agent_run(
     stays queued with a recoverable delivery error instead of being marked
     terminal; a later scheduler pass requeues it.
     """
+    if trigger_type == "evaluation_synthetic":
+        raise ValueError(
+            "trigger_type 'evaluation_synthetic' is reserved for the Evaluation "
+            "service (admit_synthetic_run). Production callers cannot enqueue "
+            "evaluation candidate snapshots."
+        )
     if run_id is None:
         run_id = str(uuid4())
 

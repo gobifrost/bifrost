@@ -141,3 +141,58 @@ def snapshot_tool_targets(snapshot: dict[str, Any]) -> dict[str, UUID]:
         if target_id is not None:
             targets[tool["name"]] = UUID(str(target_id))
     return targets
+
+
+def is_synthetic_snapshot(snapshot: dict[str, Any] | None) -> bool:
+    """True when a snapshot carries the evaluation-synthetic marker."""
+    if not snapshot:
+        return False
+    marker = snapshot.get("evaluation") or {}
+    return marker.get("mode") == "evaluation_synthetic" and bool(
+        marker.get("evaluation_only")
+    )
+
+
+def synthetic_snapshot_from_candidate(
+    candidate_snapshot: dict[str, Any],
+    *,
+    case_input_hash: str | None = None,
+) -> dict[str, Any]:
+    """Documented test-run entry point: candidate -> engine execution snapshot.
+
+    Only the Evaluation service calls this. Production enqueue
+    (``snapshot_agent``) never produces evaluation-marked snapshots, and
+    production paths reject them. The frozen candidate content — prompt,
+    model, tools, delegates, limits — is copied verbatim so a resumed
+    synthetic run never re-reads live Agent configuration.
+    """
+    if not is_synthetic_snapshot(candidate_snapshot):
+        raise SnapshotError(
+            "Synthetic execution snapshots require an evaluation-marked "
+            "candidate snapshot; production snapshots cannot run in "
+            "evaluation_synthetic mode."
+        )
+    snapshot = {
+        "format_version": EXECUTION_SNAPSHOT_VERSION,
+        "agent_id": candidate_snapshot.get("agent_id"),
+        "agent_name": candidate_snapshot.get("agent_name"),
+        "agent_updated_at": candidate_snapshot.get("agent_updated_at"),
+        "system_prompt": candidate_snapshot.get("system_prompt"),
+        "model": dict(candidate_snapshot.get("model") or {}),
+        "tools": list(candidate_snapshot.get("tools") or []),
+        "delegated_agents": list(candidate_snapshot.get("delegated_agents") or []),
+        "system_tools": list(candidate_snapshot.get("system_tools") or []),
+        "knowledge_sources": list(
+            candidate_snapshot.get("knowledge_sources") or []
+        ),
+        "roles": list(candidate_snapshot.get("roles") or []),
+        "limits": dict(candidate_snapshot.get("limits") or {}),
+        "evaluation": {
+            "mode": "evaluation_synthetic",
+            "evaluation_only": True,
+            "candidate_hash": candidate_snapshot.get("snapshot_hash"),
+            "case_input_hash": case_input_hash,
+        },
+        "snapshotted_at": datetime.now(timezone.utc).isoformat(),
+    }
+    return validate_snapshot(snapshot)
