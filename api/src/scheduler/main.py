@@ -258,6 +258,19 @@ class Scheduler:
             **misfire_options,
         )
 
+        from src.jobs.platform.agent_evaluation import reconcile_agent_evaluation_jobs
+
+        scheduler.add_job(
+            self._run_scheduled_task,
+            IntervalTrigger(seconds=60),
+            id="agent_evaluation_reconciliation",
+            name="Reconcile agent evaluation suites",
+            replace_existing=True,
+            next_run_time=datetime.now(timezone.utc),
+            args=["agent_evaluation_reconciliation", reconcile_agent_evaluation_jobs],
+            **misfire_options,
+        )
+
         # Deferred execution promoter — every 60s.
         from src.jobs.schedulers.deferred_execution_promoter import (
             promote_due_executions,
