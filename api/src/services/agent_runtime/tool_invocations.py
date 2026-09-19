@@ -115,6 +115,21 @@ async def get_invocation(
     ).scalar_one_or_none()
 
 
+async def list_invocations(
+    session: AsyncSession, run_id: UUID
+) -> list[AgentToolInvocation]:
+    """Return every durable invocation for a run, oldest first."""
+    return list(
+        (
+            await session.execute(
+                select(AgentToolInvocation)
+                .where(AgentToolInvocation.run_id == run_id)
+                .order_by(AgentToolInvocation.started_at)
+            )
+        ).scalars().all()
+    )
+
+
 async def plan_invocation(
     session: AsyncSession,
     *,

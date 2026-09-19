@@ -161,6 +161,7 @@ class AutonomousAgentExecutor:
         run_id: str | None = None,
         execution_snapshot: dict[str, Any] | None = None,
         lease_token: str | None = None,
+        resume_history: list | None = None,
         _caller: dict | None = None,
         _shared_usage: RunUsage | None = None,
         _shared_budget: AgentRunBudget | None = None,
@@ -179,6 +180,10 @@ class AutonomousAgentExecutor:
             lease_token: Current worker lease token for this run. When
                 present, model/tool boundaries checkpoint durably instead of
                 buffering to end of run.
+            resume_history: Decoded checkpoint history from a previous
+                attempt. Planned calls execute in a pre-pass; committed
+                results replay without re-execution; then the model loop
+                continues from the completed history.
             _caller: Optional caller metadata for context.
             _shared_usage: Internal cumulative usage ledger inherited from a
                 parent run during delegation.
@@ -259,7 +264,20 @@ class AutonomousAgentExecutor:
         configured_tokens = snapshot_limits.get(
             "max_token_budget", agent.max_token_budget
         )
-        usage = _shared_usage or RunUsage()
+        usage = _shared_usage
+        if usage is None and resume_history is not None:
+            # Continuing the same AgentRun: seed the ledger from stored
+            # counters so snapshot budgets apply cumulatively across attempts.
+            # Only totals survive per attempt; attribute them to input so the
+            # summed total (what limits enforce) stays exact.
+            seed_requests, seed_tokens = 0, 0
+            async with self._session_factory() as db:
+                prior = await db.get(AgentRun, UUID(run_id))
+                if prior is not None:
+                    seed_requests = prior.iterations_used or 0
+                    seed_tokens = prior.tokens_used or 0
+            usage = RunUsage(requests=seed_requests, input_tokens=seed_tokens)
+        usage = usage or RunUsage()
         usage_start_requests = usage.requests
         usage_start_tokens = usage.total_tokens
 
@@ -598,12 +616,26 @@ class AutonomousAgentExecutor:
             # for a restart to resume from.
             with capture_run_messages() as durable_history:
                 self._durable_history = durable_history
-                result = await runtime.run(
-                    user_content,
-                    usage_limits=budget.usage_limits(),
-                    usage=usage,
-                    conversation_id=run_id,
-                )
+                if resume_history is not None:
+                    resumed_messages = await self._resume_pre_pass(
+                        resume_history,
+                        run_id=run_id,
+                        agent=agent,
+                    )
+                    result = await runtime.run(
+                        None,
+                        message_history=resumed_messages,
+                        usage_limits=budget.usage_limits(),
+                        usage=usage,
+                        conversation_id=run_id,
+                    )
+                else:
+                    result = await runtime.run(
+                        user_content,
+                        usage_limits=budget.usage_limits(),
+                        usage=usage,
+                        conversation_id=run_id,
+                    )
             final_content = result.output
             if empty_output_guard.handoff_triggered:
                 step_number += 1
@@ -911,6 +943,85 @@ class AutonomousAgentExecutor:
             return result
         finally:
             self._current_operation_id = None
+
+    async def _resume_pre_pass(
+        self,
+        history: list,
+        *,
+        run_id: str,
+        agent: Agent,
+    ) -> list:
+        """Execute planned-but-unanswered calls before the model continues.
+
+        Committed results were already replayed into history by the resume
+        planner; this pass only dispatches calls with no stored outcome and
+        appends their results (or error envelopes) as one request. Failed
+        calls surface their recorded error; uncertain calls fail the attempt
+        loudly instead of guessing.
+        """
+        from pydantic_ai.messages import (
+            ModelRequest,
+            ModelResponse,
+            ToolCallPart,
+            ToolReturnPart,
+        )
+        from src.services.agent_runtime.tool_invocations import get_invocation
+
+        answered: set[str] = set()
+        ordered_calls: list = []
+        for message in history:
+            if isinstance(message, ModelRequest):
+                for part in message.parts:
+                    if isinstance(part, ToolReturnPart):
+                        answered.add(part.tool_call_id)
+            elif isinstance(message, ModelResponse):
+                for part in message.parts:
+                    if isinstance(part, ToolCallPart):
+                        ordered_calls.append(part)
+        pending = [call for call in ordered_calls if call.tool_call_id not in answered]
+        if not pending:
+            return history
+        if self._durable_lease_token is None:
+            raise ToolError("Resume requires a worker lease token")
+
+        returns: list[ToolReturnPart] = []
+        async with self._session_factory() as db:
+            states = {
+                call.tool_call_id: await get_invocation(
+                    db, UUID(run_id), call.tool_call_id
+                )
+                for call in pending
+            }
+        for call in pending:
+            invocation = states[call.tool_call_id]
+            if invocation is not None and invocation.state == "failed":
+                content: Any = f"Error: {invocation.error or 'tool failed'}"
+            elif invocation is not None and invocation.state == "uncertain":
+                raise ToolError(
+                    f"Tool call {call.tool_call_id} is uncertain and requires "
+                    "reconciliation before resume"
+                )
+            else:
+                try:
+                    content = await self._execute_tool_durable(
+                        call.tool_name,
+                        call.args_as_dict(),
+                        call.tool_call_id,
+                        run_id=run_id,
+                        agent=agent,
+                    )
+                except AgentRunCancelled:
+                    raise
+                except Exception as exc:
+                    content = f"Error: {exc}"
+            returns.append(
+                ToolReturnPart(
+                    tool_name=call.tool_name,
+                    content=content,
+                    tool_call_id=call.tool_call_id,
+                )
+            )
+        return [*history, ModelRequest(parts=returns)]
 
     # ------------------------------------------------------------------
     # Tool dispatch

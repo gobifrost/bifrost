@@ -176,9 +176,19 @@ async def test_agent_not_found_returns_early(consumer):
 
     consumer._session_factory = MagicMock(return_value=mock_session_ctx)
 
-    with patch(
-        "src.jobs.consumers.agent_run.get_redis",
-        return_value=FakeRedisCtx(redis_mock),
+    claimed = MagicMock()
+    claimed.lease_token = "tok-1"
+    claimed.attempt = 1
+
+    with (
+        patch(
+            "src.jobs.consumers.agent_run.get_redis",
+            return_value=FakeRedisCtx(redis_mock),
+        ),
+        patch(
+            "src.jobs.consumers.agent_run.run_store.claim_run",
+            new=AsyncMock(return_value=claimed),
+        ),
     ):
         await consumer.process_message({"run_id": run_id})
 

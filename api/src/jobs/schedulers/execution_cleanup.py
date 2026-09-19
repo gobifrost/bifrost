@@ -1,8 +1,13 @@
 """
 Execution Cleanup Scheduler
 
-Cleans up stuck workflow executions and stale autonomous agent runs that
-remain in in-progress states for too long.
+Cleans up stuck workflow executions and stale autonomous agent runs.
+
+Agent runs are durable: an expired worker lease makes the SAME run
+claimable again, so the scheduler requeues expired leases instead of
+terminalizing them. Terminalization is reserved for runs past their total
+safety age, stale queued rows that never started, and due sleeping rows
+are woken through the fenced wake transaction.
 
 Runs every 5 minutes to find and timeout stuck executions.
 """
@@ -20,6 +25,7 @@ from src.core.pubsub import (
     publish_execution_update,
     publish_history_update,
 )
+from src.jobs.rabbitmq import publish_message
 from src.models.contracts.agents import ChatStreamChunk
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.agents import Agent
@@ -280,12 +286,26 @@ def _agent_run_timeout_seconds(agent: Agent | None) -> int:
 
 
 async def _cleanup_stale_agent_runs(now: datetime) -> dict[str, Any]:
-    """Terminalize stale queued/running AgentRun rows without replaying them."""
+    """Requeue reclaimable AgentRuns; terminalize only past safety age.
+
+    - ``running`` with a live lease: untouched (a worker owns it).
+    - ``running`` with an expired (or legacy absent) lease inside the total
+      safety age: republish the run-ID nudge so the same run is claimed
+      again. At-least-once nudges are safe; an owned run's consumer skips.
+    - ``running`` with an expired lease past safety age: ``timeout``.
+    - ``queued`` past safety age: ``failed`` (never started; queue stall).
+    - ``sleeping`` with ``wake_at`` due: fenced wake + republish once.
+    """
+    from src.services.agent_runtime import run_store
+
     session_factory = get_session_factory()
     updates: list[dict[str, Any]] = []
+    requeued: list[str] = []
     results: dict[str, Any] = {
         "agent_run_queued_timeouts": 0,
         "agent_run_running_timeouts": 0,
+        "agent_run_requeued": 0,
+        "agent_run_woken": 0,
         "agent_run_total_cleaned": 0,
         "agent_run_errors": [],
     }
@@ -295,26 +315,14 @@ async def _cleanup_stale_agent_runs(now: datetime) -> dict[str, Any]:
             query = (
                 select(AgentRun, Agent)
                 .outerjoin(Agent, AgentRun.agent_id == Agent.id)
-                .where(AgentRun.status.in_(("queued", "running")))
+                .where(
+                    AgentRun.status.in_(("queued", "running", "sleeping"))
+                )
                 .order_by(AgentRun.created_at.asc())
             )
             runs = (await db.execute(query)).all()
 
             for candidate, agent in runs:
-                timeout_seconds = _agent_run_timeout_seconds(agent)
-                timeout_with_grace = timeout_seconds + AGENT_RUN_TIMEOUT_GRACE_SECONDS
-                reference_time = (
-                    candidate.created_at
-                    if candidate.status == "queued"
-                    else (candidate.started_at or candidate.created_at)
-                )
-                if reference_time is None:
-                    continue
-
-                elapsed = (now - reference_time).total_seconds()
-                if elapsed <= timeout_with_grace:
-                    continue
-
                 # Lock only the row already identified as stale. The status
                 # predicate is a compare-and-set guard against a worker that
                 # completed between the candidate read and this lock.
@@ -331,6 +339,36 @@ async def _cleanup_stale_agent_runs(now: datetime) -> dict[str, Any]:
                 if run is None:
                     continue
 
+                if run.status == "sleeping":
+                    if run.wake_at is None or run.wake_at > now:
+                        continue
+                    try:
+                        await run_store.wake_run(
+                            db, run.id, reason="sleeping timer due"
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "agent_run_wake_failed",
+                            extra={
+                                "agent_run_id": str(run.id),
+                                "error": str(exc),
+                            },
+                        )
+                        continue
+                    requeued.append(str(run.id))
+                    results["agent_run_woken"] += 1
+                    agent_name = agent.name if agent is not None else "Chat"
+                    updates.append(
+                        {
+                            "run": run,
+                            "agent_name": agent_name,
+                            "chat_event": None,
+                        }
+                    )
+                    continue
+
+                timeout_seconds = _agent_run_timeout_seconds(agent)
+                timeout_with_grace = timeout_seconds + AGENT_RUN_TIMEOUT_GRACE_SECONDS
                 reference_time = (
                     run.created_at
                     if run.status == "queued"
@@ -339,24 +377,61 @@ async def _cleanup_stale_agent_runs(now: datetime) -> dict[str, Any]:
                 if reference_time is None:
                     continue
                 elapsed = (now - reference_time).total_seconds()
+
+                if run.status == "queued":
+                    if elapsed <= timeout_with_grace:
+                        continue
+                    agent_name = agent.name if agent is not None else "Chat"
+                    run.status = "failed"
+                    run.error = (
+                        "Agent run timed out waiting in queue after "
+                        f"{timeout_with_grace} seconds."
+                    )
+                    run.completed_at = now
+                    results["agent_run_queued_timeouts"] += 1
+                    results["agent_run_total_cleaned"] += 1
+                    updates.append(
+                        {
+                            "run": run,
+                            "agent_name": agent_name,
+                            "chat_event": (
+                                {
+                                    "conversation_id": run.conversation_id,
+                                    "run_id": str(run.id),
+                                    "status": "failed",
+                                    "error": run.error,
+                                }
+                                if run.trigger_type == "chat"
+                                and run.conversation_id is not None
+                                else None
+                            ),
+                        }
+                    )
+                    continue
+
+                # Running: live leases are owned; only expired leases are
+                # reclaimable. Legacy rows predate leases (NULL = expired).
+                lease_expired = (
+                    run.lease_expires_at is None or run.lease_expires_at <= now
+                )
+                if not lease_expired:
+                    continue
                 if elapsed <= timeout_with_grace:
+                    logger.info(
+                        "agent_run_requeued",
+                        extra={
+                            "agent_run_id": str(run.id),
+                            "stuck_for_seconds": int(elapsed),
+                        },
+                    )
+                    requeued.append(str(run.id))
+                    results["agent_run_requeued"] += 1
                     continue
 
                 agent_name = agent.name if agent is not None else "Chat"
-                if run.status == "queued":
-                    final_status = "failed"
-                    timeout_reason = (
-                        f"Agent run timed out waiting in queue after "
-                        f"{timeout_with_grace} seconds."
-                    )
-                    results["agent_run_queued_timeouts"] += 1
-                else:
-                    final_status = "timeout"
-                    timeout_reason = (
-                        f"Agent run timed out after {timeout_with_grace} seconds."
-                    )
-                    results["agent_run_running_timeouts"] += 1
-
+                timeout_reason = (
+                    f"Agent run timed out after {timeout_with_grace} seconds."
+                )
                 logger.warning(
                     "agent_run_swept",
                     extra={
@@ -369,10 +444,11 @@ async def _cleanup_stale_agent_runs(now: datetime) -> dict[str, Any]:
                         "timeout_with_grace": timeout_with_grace,
                     },
                 )
-
-                run.status = final_status
+                run.status = "timeout"
                 run.error = timeout_reason
                 run.completed_at = now
+                results["agent_run_running_timeouts"] += 1
+                results["agent_run_total_cleaned"] += 1
                 updates.append(
                     {
                         "run": run,
@@ -381,7 +457,7 @@ async def _cleanup_stale_agent_runs(now: datetime) -> dict[str, Any]:
                             {
                                 "conversation_id": run.conversation_id,
                                 "run_id": str(run.id),
-                                "status": final_status,
+                                "status": "timeout",
                                 "error": timeout_reason,
                             }
                             if run.trigger_type == "chat"
@@ -390,9 +466,18 @@ async def _cleanup_stale_agent_runs(now: datetime) -> dict[str, Any]:
                         ),
                     }
                 )
-                results["agent_run_total_cleaned"] += 1
 
             await db.commit()
+
+        for run_id in requeued:
+            try:
+                await publish_message("agent-runs", {"run_id": run_id})
+            except Exception:
+                logger.warning(
+                    "Failed to republish agent run nudge",
+                    extra={"agent_run_id": run_id},
+                    exc_info=True,
+                )
 
         for update in updates:
             try:

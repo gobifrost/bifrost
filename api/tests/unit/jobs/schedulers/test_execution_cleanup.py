@@ -74,6 +74,7 @@ def _patch_cleanup_dependencies(monkeypatch, async_session_factory):
     monkeypatch.setattr(cleanup, "publish_history_update", AsyncMock())
     monkeypatch.setattr(cleanup, "publish_agent_run_update", AsyncMock())
     monkeypatch.setattr(cleanup, "publish_chat_run_event", AsyncMock())
+    monkeypatch.setattr(cleanup, "publish_message", AsyncMock())
 
 
 async def _load_run(async_session_factory, run_id):
@@ -193,3 +194,142 @@ class TestExecutionCleanupAgentRuns:
         assert kwargs["kind"] == "error"
         assert kwargs["status"] == "timeout"
         assert kwargs["payload"].run_status == "timeout"
+
+
+class TestExecutionCleanupLeaseRecovery:
+    async def _delete_run(self, async_session_factory, run_id):
+        from sqlalchemy import delete as sa_delete
+
+        async with async_session_factory() as session:
+            await session.execute(
+                sa_delete(AgentRun).where(AgentRun.id == run_id)
+            )
+            await session.commit()
+
+    def _published_ids(self):
+        return [
+            call.args[1]["run_id"]
+            for call in cleanup.publish_message.await_args_list
+        ]
+
+    async def test_live_lease_is_untouched(
+        self, db_session, async_session_factory, seed_agent, monkeypatch
+    ) -> None:
+        _patch_cleanup_dependencies(monkeypatch, async_session_factory)
+        now = datetime.now(timezone.utc)
+        seed_agent.max_run_timeout = 60
+        run = AgentRun(
+            id=uuid4(),
+            agent_id=seed_agent.id,
+            trigger_type="api",
+            status="running",
+            iterations_used=1,
+            tokens_used=25,
+            created_at=now - timedelta(minutes=40),
+            started_at=now - timedelta(minutes=40),
+            lease_owner="worker-a",
+            lease_token="live-token",
+            lease_expires_at=now + timedelta(minutes=2),
+        )
+        db_session.add(run)
+        await db_session.commit()
+
+        try:
+            await cleanup.cleanup_stuck_executions()
+
+            reloaded = await _load_run(async_session_factory, run.id)
+            assert reloaded.status == "running"
+            assert reloaded.lease_token == "live-token"
+            assert str(run.id) not in self._published_ids()
+        finally:
+            await self._delete_run(async_session_factory, run.id)
+
+    async def test_expired_lease_within_safety_age_is_requeued_not_terminalized(
+        self, db_session, async_session_factory, seed_agent, monkeypatch
+    ) -> None:
+        _patch_cleanup_dependencies(monkeypatch, async_session_factory)
+        now = datetime.now(timezone.utc)
+        seed_agent.max_run_timeout = 1800
+        run = AgentRun(
+            id=uuid4(),
+            agent_id=seed_agent.id,
+            trigger_type="api",
+            status="running",
+            iterations_used=1,
+            tokens_used=25,
+            created_at=now - timedelta(minutes=2),
+            started_at=now - timedelta(minutes=2),
+            lease_owner="dead-worker",
+            lease_token="expired-token",
+            lease_expires_at=now - timedelta(seconds=10),
+        )
+        db_session.add(run)
+        await db_session.commit()
+
+        try:
+            await cleanup.cleanup_stuck_executions()
+
+            reloaded = await _load_run(async_session_factory, run.id)
+            assert reloaded.status == "running"
+            assert reloaded.completed_at is None
+            assert str(run.id) in self._published_ids()
+        finally:
+            await self._delete_run(async_session_factory, run.id)
+
+    async def test_due_sleeping_run_is_woken_and_republished(
+        self, db_session, async_session_factory, seed_agent, monkeypatch
+    ) -> None:
+        _patch_cleanup_dependencies(monkeypatch, async_session_factory)
+        now = datetime.now(timezone.utc)
+        run = AgentRun(
+            id=uuid4(),
+            agent_id=seed_agent.id,
+            trigger_type="api",
+            status="sleeping",
+            iterations_used=1,
+            tokens_used=25,
+            created_at=now - timedelta(minutes=10),
+            started_at=now - timedelta(minutes=10),
+            wake_at=now - timedelta(seconds=5),
+        )
+        db_session.add(run)
+        await db_session.commit()
+
+        try:
+            results = await cleanup.cleanup_stuck_executions()
+
+            reloaded = await _load_run(async_session_factory, run.id)
+            assert reloaded.status == "running"
+            assert reloaded.wake_at is None
+            assert results["agent_run_woken"] >= 1
+            assert str(run.id) in self._published_ids()
+        finally:
+            await self._delete_run(async_session_factory, run.id)
+
+    async def test_future_sleeping_run_is_left_alone(
+        self, db_session, async_session_factory, seed_agent, monkeypatch
+    ) -> None:
+        _patch_cleanup_dependencies(monkeypatch, async_session_factory)
+        now = datetime.now(timezone.utc)
+        run = AgentRun(
+            id=uuid4(),
+            agent_id=seed_agent.id,
+            trigger_type="api",
+            status="sleeping",
+            iterations_used=1,
+            tokens_used=25,
+            created_at=now - timedelta(minutes=10),
+            started_at=now - timedelta(minutes=10),
+            wake_at=now + timedelta(hours=1),
+        )
+        db_session.add(run)
+        await db_session.commit()
+
+        try:
+            await cleanup.cleanup_stuck_executions()
+
+            reloaded = await _load_run(async_session_factory, run.id)
+            assert reloaded.status == "sleeping"
+            assert str(run.id) not in self._published_ids()
+        finally:
+            await self._delete_run(async_session_factory, run.id)

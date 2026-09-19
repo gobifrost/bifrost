@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import socket
 import time
 from datetime import datetime, timezone
 from typing import Any, Literal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -24,6 +26,9 @@ from src.models.contracts.agents import ChatStreamChunk
 from src.models.enums import MessageRole
 from src.models.orm.agents import Agent, Conversation
 from src.models.orm.agent_runs import AgentRun
+from src.services.agent_runtime import run_store
+from src.services.agent_runtime import types as runtime_types
+from src.services.agent_runtime.resume import active_seconds_used, prepare_resume
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +36,27 @@ QUEUE_NAME = "agent-runs"
 REDIS_PREFIX = "bifrost:agent_run"
 DEFAULT_RUN_TIMEOUT = 1800  # 30 minutes
 CANCEL_CHECK_INTERVAL = 2  # seconds between cancel flag checks
+AGENT_RUN_LEASE_TTL_SECONDS = 120  # crash-detection lease, not a user limit
+AGENT_RUN_LEASE_HEARTBEAT_SECONDS = 30  # renewal cadence while executing
+
+# Executor result statuses mapped onto the durable lifecycle.
+_TERMINAL_STATUS_MAP = {
+    "completed": runtime_types.COMPLETED,
+    "failed": runtime_types.FAILED,
+    "cancelled": runtime_types.CANCELLED,
+    "timeout": runtime_types.TIMEOUT,
+    "budget_exceeded": runtime_types.BUDGET_EXCEEDED,
+    "contract_failed": runtime_types.CONTRACT_FAILED,
+}
+
+
+def _worker_owner() -> str:
+    """Stable-enough owner label for lease debugging."""
+    try:
+        host = socket.gethostname()
+    except Exception:
+        host = "worker"
+    return f"{host}:{os.getpid()}"
 
 
 async def _publish_sync_result(run_id: str, result: dict) -> None:
@@ -356,12 +382,34 @@ class AgentRunConsumer(BaseConsumer):
                     )
                     return
 
-                agent_run.status = "running"
-                agent_run.budget_max_iterations = agent.max_iterations
-                agent_run.budget_max_tokens = agent.max_token_budget
-                agent_run.started_at = datetime.now(timezone.utc)
-                await db.commit()
+                # Claim the same AgentRun under a fenced worker lease. Only
+                # one worker owns a live run at a time; an expired lease
+                # makes the same run claimable again — never a new run.
+                try:
+                    claimed = await run_store.claim_run(
+                        db,
+                        UUID(run_id),
+                        _worker_owner(),
+                        lease_ttl_seconds=AGENT_RUN_LEASE_TTL_SECONDS,
+                    )
+                except runtime_types.RunNotClaimableError:
+                    logger.info(
+                        "Agent run %s: lease held by another worker, skipping",
+                        run_id,
+                    )
+                    return
+                lease_token = claimed.lease_token
+                assert lease_token is not None
+                attempt = claimed.attempt or 0
 
+                snapshot_limits = (execution_snapshot or {}).get("limits") or {}
+                agent_run.budget_max_iterations = snapshot_limits.get(
+                    "max_iterations", agent.max_iterations
+                )
+                agent_run.budget_max_tokens = snapshot_limits.get(
+                    "max_token_budget", agent.max_token_budget
+                )
+                await db.commit()
             await publish_agent_run_update(agent_run, agent.name if agent else "Unknown")
 
             # Chat was already handled above from the durable row; reaching
@@ -377,8 +425,91 @@ class AgentRunConsumer(BaseConsumer):
                 )
                 return
 
-            # Run the agent with timeout (Layer 1: hard safety net)
-            run_timeout = agent.max_run_timeout or DEFAULT_RUN_TIMEOUT
+            # Reconcile in-flight work and rebuild resume history from the
+            # latest checkpoint. An uncertain side effect without proof
+            # moves the run to recovery_required instead of replaying blindly.
+            resume_plan, _reclaim_report, unrecoverable = await prepare_resume(
+                self._session_factory, UUID(run_id), lease_token
+            )
+            if unrecoverable is not None:
+                async with self._session_factory() as db:
+                    recovered_run = await run_store.mark_recovery_required(
+                        db,
+                        UUID(run_id),
+                        lease_token,
+                        reason=unrecoverable,
+                        evidence={"attempt": attempt},
+                    )
+                await publish_agent_run_update(recovered_run, agent.name)
+                await _publish_sync_result(
+                    run_id,
+                    {
+                        "output": None,
+                        "status": runtime_types.RECOVERY_REQUIRED,
+                        "error": unrecoverable,
+                    },
+                )
+                return
+
+            # Fresh Pydantic invocation ID for this attempt, recorded in the
+            # journal. The Bifrost AgentRun ID stays the same across attempts.
+            pydantic_invocation_id = uuid4().hex
+            async with self._session_factory() as db:
+                await run_store.append_journal(
+                    db,
+                    UUID(run_id),
+                    lease_token,
+                    runtime_types.JOURNAL_RESUME,
+                    {
+                        "attempt": attempt,
+                        "pydantic_invocation_id": pydantic_invocation_id,
+                    },
+                    provider_invocation_id=pydantic_invocation_id,
+                )
+
+            # Wall-clock accounting excludes waiting/sleeping: only active
+            # execution across attempts counts toward max_run_timeout.
+            # max_run_timeout=0 means disabled.
+            snapshot_timeout = snapshot_limits.get("max_run_timeout")
+            configured_timeout = (
+                snapshot_timeout
+                if snapshot_timeout is not None
+                else agent.max_run_timeout
+            )
+            run_timeout: float | None
+            if configured_timeout == 0:
+                run_timeout = None
+            else:
+                async with self._session_factory() as db:
+                    spent = await active_seconds_used(
+                        db, UUID(run_id), attempt
+                    )
+                configured_timeout = configured_timeout or DEFAULT_RUN_TIMEOUT
+                remaining = configured_timeout - spent
+                if remaining <= 0:
+                    async with self._session_factory() as db:
+                        timed_out = await run_store.finish_run(
+                            db,
+                            UUID(run_id),
+                            lease_token,
+                            runtime_types.TIMEOUT,
+                            error=(
+                                "Agent run exceeded max_run_timeout "
+                                f"({configured_timeout}s active)"
+                            ),
+                            duration_ms=int((time.time() - start_time) * 1000),
+                        )
+                    await publish_agent_run_update(timed_out, agent.name)
+                    await _publish_sync_result(
+                        run_id,
+                        {
+                            "output": timed_out.output,
+                            "status": timed_out.status,
+                            "error": timed_out.error,
+                        },
+                    )
+                    return
+                run_timeout = remaining
 
             async with get_redis() as redis_for_executor:
                 # Agent/MCP provider clients are heavyweight and unused until an
@@ -400,12 +531,38 @@ class AgentRunConsumer(BaseConsumer):
                     output_schema=context.get("output_schema"),
                     run_id=run_id,
                     execution_snapshot=execution_snapshot,
+                    lease_token=lease_token,
+                    resume_history=(
+                        resume_plan.history if resume_plan is not None else None
+                    ) or None,
                     _caller=context.get("caller"),
                 ))
 
                 # Cancel watcher: polls Redis flag, force-cancels task if stuck
                 cancel_watcher = asyncio.ensure_future(
                     AgentRunConsumer._cancel_watcher(run_id, executor_task, redis_for_executor)
+                )
+
+                # Lease heartbeat: meaningful progress renews crash detection.
+                # Losing the lease means another worker claimed the run, so
+                # this attempt must stop rather than duplicate its work.
+                heartbeat_stop = asyncio.Event()
+                lease_lost = False
+
+                def _on_lease_lost() -> None:
+                    nonlocal lease_lost
+                    lease_lost = True
+                    executor_task.cancel()
+
+                heartbeat_task = asyncio.ensure_future(
+                    AgentRunConsumer._lease_heartbeat(
+                        self._session_factory,
+                        run_id,
+                        lease_token,
+                        AGENT_RUN_LEASE_HEARTBEAT_SECONDS,
+                        heartbeat_stop,
+                        _on_lease_lost,
+                    )
                 )
 
                 try:
@@ -429,14 +586,34 @@ class AgentRunConsumer(BaseConsumer):
                         "error": f"Agent run timed out after {run_timeout}s",
                     }
                 except asyncio.CancelledError:
-                    run_result = {
-                        "output": None,
-                        "iterations_used": 0,
-                        "tokens_used": 0,
-                        "status": "cancelled",
-                        "llm_model": None,
-                    }
+                    if lease_lost:
+                        # Another worker owns the run now; do not terminalize.
+                        # The finish path below detects the lost lease and
+                        # republishes current state without overwriting.
+                        run_result = {
+                            "output": None,
+                            "iterations_used": 0,
+                            "tokens_used": 0,
+                            "status": "running",
+                            "llm_model": None,
+                            "error": "Worker lease lost; run remains resumable",
+                        }
+                    else:
+                        run_result = {
+                            "output": None,
+                            "iterations_used": 0,
+                            "tokens_used": 0,
+                            "status": "cancelled",
+                            "llm_model": None,
+                        }
                 finally:
+                    heartbeat_stop.set()
+                    heartbeat_task.cancel()
+                    try:
+                        await heartbeat_task
+                    except asyncio.CancelledError:
+                        # Expected — we just cancelled the heartbeat
+                        pass
                     cancel_watcher.cancel()
                     try:
                         await cancel_watcher
@@ -444,61 +621,59 @@ class AgentRunConsumer(BaseConsumer):
                         # Expected — we just cancelled the watcher
                         pass
 
-            # Update run record and flush buffered steps (brief DB session)
+            # Terminalize through the fenced store: the completion event is
+            # marked pending in the same transaction. A lost lease or an
+            # already-terminal row means another worker won the race, so
+            # republish current state instead of overwriting it.
             duration_ms = int((time.time() - start_time) * 1000)
             consumer_applied_result = False
-            async with self._session_factory() as db:
-                # Re-fetch the AgentRun in this session to update it, but only
-                # if it is still live. A scheduler may have already terminalized
-                # the row; in that case we must not overwrite the final status.
-                run_obj = await db.get(
-                    AgentRun,
-                    UUID(run_id),
-                    with_for_update={"of": AgentRun},
-                )
-                if run_obj is None:
-                    logger.info(f"Agent run {run_id}: final update skipped because row disappeared")
-                    return
-                if run_obj.status == "running":
-                    run_obj.status = run_result.get("status", "completed")
-                    run_obj.output = (
-                        run_result.get("output")
-                        if isinstance(run_result.get("output"), dict)
-                        else {"text": run_result.get("output")}
-                    )
-                    run_obj.iterations_used = run_result.get("iterations_used", 0)
-                    run_obj.tokens_used = run_result.get("tokens_used", 0)
-                    run_obj.llm_model = run_result.get("llm_model")
-                    run_obj.duration_ms = duration_ms
-                    run_obj.completed_at = datetime.now(timezone.utc)
-                    if run_result.get("error"):
-                        run_obj.error = run_result["error"]
-                    if run_result.get("failover_path"):
-                        run_obj.run_metadata = {
-                            **(run_obj.run_metadata or {}),
-                            # run_metadata is a string-valued map on the wire
-                            # (AgentRunResponse.metadata); encode the path.
-                            "failover_path": json.dumps(run_result["failover_path"]),
-                        }
-                    consumer_applied_result = True
-                else:
-                    logger.info(
-                        "Agent run %s: final update skipped because current status is %s",
-                        run_id,
-                        run_obj.status,
-                    )
-
-                # Flush metering and steps even when the scheduler won the
+            raw_status = run_result.get("status", "completed")
+            terminal_status = _TERMINAL_STATUS_MAP.get(raw_status)
+			async with self._session_factory() as db:
+				# Flush metering and steps even when another worker won the
                 # terminal-state race; completed provider work still incurred
                 # cost and remains useful diagnostic evidence.
                 if executor:
                     await executor.flush_to_db(db)
+                if terminal_status is not None:
+                    try:
+                        finished = await run_store.finish_run(
+                            db,
+                            UUID(run_id),
+                            lease_token,
+                            terminal_status,
+                            output=(
+                                run_result.get("output")
+                                if isinstance(run_result.get("output"), dict)
+                                else {"text": run_result.get("output")}
+                            ),
+                            error=run_result.get("error"),
+                            iterations_used=run_result.get("iterations_used", 0),
+                            tokens_used=run_result.get("tokens_used", 0),
+                            duration_ms=duration_ms,
+                            llm_model=run_result.get("llm_model"),
+                        )
+                    except (
+                        runtime_types.LeaseMismatchError,
+                        runtime_types.InvalidTransitionError,
+                    ):
+                        await db.rollback()
+                        logger.info(
+                            "Agent run %s: finish skipped (lease lost or "
+                            "already terminal)",
+                            run_id,
+                        )
+                    else:
+                        consumer_applied_result = True
+                        agent_run = finished
+                else:
+                    # Lease lost mid-attempt or a legacy non-terminal outcome:
+                    # persist flushed evidence only.
+                    await db.commit()
 
-                await db.commit()
-
-                # Re-read for publish (need agent relationship)
-                if run_obj:
-                    agent_run = run_obj
+                reloaded = await db.get(AgentRun, UUID(run_id))
+                if reloaded is not None:
+                    agent_run = reloaded
 
             # Clean up Redis Stream now that steps are committed to DB
             try:
@@ -1029,6 +1204,46 @@ class AgentRunConsumer(BaseConsumer):
                 except asyncio.CancelledError:
                     # Expected after explicitly cancelling the watcher above.
                     pass
+
+    @staticmethod
+    async def _lease_heartbeat(
+        session_factory,
+        run_id: str,
+        lease_token: str,
+        interval_seconds: int,
+        stop_event: asyncio.Event,
+        on_lost,
+    ) -> None:
+        """Renew the worker lease until the attempt ends.
+
+        If renewal fails the lease is gone (another worker claimed the run
+        or the row terminalized); ``on_lost`` stops this attempt so work is
+        never duplicated.
+        """
+        try:
+            while not stop_event.is_set():
+                await asyncio.sleep(interval_seconds)
+                if stop_event.is_set():
+                    return
+                try:
+                    async with session_factory() as db:
+                        await run_store.renew_lease(
+                            db,
+                            UUID(run_id),
+                            lease_token,
+                            lease_ttl_seconds=AGENT_RUN_LEASE_TTL_SECONDS,
+                        )
+                except Exception as exc:
+                    logger.warning(
+                        "Agent run %s: lease renewal failed (%s); "
+                        "yielding to the new owner",
+                        run_id,
+                        exc,
+                    )
+                    on_lost()
+                    return
+        except asyncio.CancelledError:
+            pass  # Normal cleanup when the attempt finishes
 
     @staticmethod
     async def _cancel_watcher(
