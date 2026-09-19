@@ -53,6 +53,9 @@ test.describe("Organization Management", () => {
 
 		try {
 			await page.goto("/organizations");
+			await page
+				.getByRole("textbox", { name: "Search organizations" })
+				.fill(organizationName);
 			const organizationRow = page.getByRole("row", {
 				name: new RegExp(organizationName),
 			});
@@ -128,6 +131,9 @@ test.describe("Organization Management", () => {
 				page.getByRole("dialog", { name: "Create Organization" }),
 			).toBeHidden({ timeout: 10000 });
 
+			await page
+				.getByRole("textbox", { name: "Search organizations" })
+				.fill(originalName);
 			const createdRow = organizationRow(page, originalName);
 			await expect(createdRow).toBeVisible({ timeout: 10000 });
 			await expect(createdRow).toContainText(originalDomain);
@@ -153,6 +159,9 @@ test.describe("Organization Management", () => {
 			await expect(
 				page.getByRole("heading", { name: /organizations/i }).first(),
 			).toBeVisible({ timeout: 10000 });
+			await page
+				.getByRole("textbox", { name: "Search organizations" })
+				.fill(editedName);
 			const editedRow = organizationRow(page, editedName);
 			await expect(editedRow).toBeVisible({ timeout: 10000 });
 			await expect(editedRow).toContainText(editedDomain);
@@ -180,6 +189,9 @@ test.describe("Organization Management", () => {
 			await expect(
 				page.getByRole("heading", { name: /organizations/i }).first(),
 			).toBeVisible({ timeout: 10000 });
+			await page
+				.getByRole("textbox", { name: "Search organizations" })
+				.fill(editedName);
 			await page.getByRole("switch", { name: "Show Inactive" }).click();
 			await expect(
 				organizationRow(page, editedName).getByText("Inactive", {

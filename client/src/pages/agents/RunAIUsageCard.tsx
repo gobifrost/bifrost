@@ -17,6 +17,38 @@ export function RunAIUsageCard({
 	reported?: { model: string | null; tokens: number };
 	presentation?: "card" | "embedded";
 }) {
+	const runtime = usage.filter((entry) => entry.sequence !== 0);
+	const runtimeTotals = usage.some((entry) => entry.sequence === 0)
+		? {
+				call_count: runtime.length,
+				total_input_tokens: runtime.reduce(
+					(sum, entry) => sum + entry.input_tokens,
+					0,
+				),
+				total_output_tokens: runtime.reduce(
+					(sum, entry) => sum + entry.output_tokens,
+					0,
+				),
+				total_cost: String(
+					runtime.reduce(
+						(sum, entry) => sum + Number(entry.cost ?? 0),
+						0,
+					),
+				),
+			}
+		: totals;
+	const inputTokens = runtime.reduce(
+		(sum, entry) => sum + entry.input_tokens,
+		0,
+	);
+	const cacheReads = runtime.reduce(
+		(sum, entry) => sum + (entry.cache_read_tokens ?? 0),
+		0,
+	);
+	const cacheWrites = runtime.reduce(
+		(sum, entry) => sum + (entry.cache_write_tokens ?? 0),
+		0,
+	);
 	const grouped = useMemo(() => {
 		const rows = new Map<
 			string,
@@ -29,6 +61,7 @@ export function RunAIUsageCard({
 			}
 		>();
 		for (const entry of usage) {
+			if (entry.sequence === 0) continue;
 			const row = rows.get(entry.model) ?? {
 				model: entry.model,
 				calls: 0,
@@ -53,6 +86,36 @@ export function RunAIUsageCard({
 				</CardTitle>
 			</CardHeader>
 			<CardContent className="min-w-0 space-y-4">
+				<p className="text-xs text-muted-foreground">
+					Runtime usage excludes automatic summaries.
+				</p>
+				<dl className="grid grid-cols-2 gap-3 text-xs">
+					{[
+						[
+							"Cache-read tokens",
+							runtime.length
+								? formatNumber(cacheReads)
+								: "Not recorded",
+						],
+						[
+							"Cache-write tokens",
+							runtime.length
+								? formatNumber(cacheWrites)
+								: "Not recorded",
+						],
+						[
+							"Cache-hit fraction",
+							inputTokens > 0
+								? `${((100 * cacheReads) / inputTokens).toFixed(2)}%`
+								: "Not recorded",
+						],
+					].map(([label, value]) => (
+						<div key={label}>
+							<dt className="text-muted-foreground">{label}</dt>
+							<dd className="mt-1 tabular-nums">{value}</dd>
+						</div>
+					))}
+				</dl>
 				{grouped.length === 0 && reported ? (
 					<dl className="space-y-3 text-xs">
 						{reported.model ? (
@@ -89,14 +152,14 @@ export function RunAIUsageCard({
 						</li>
 					))}
 				</ul>
-				{totals ? (
+				{runtimeTotals ? (
 					<div className="space-y-3 border-t pt-3">
 						<p className="text-xs font-medium">Total</p>
 						<UsageMetrics
-							calls={totals.call_count}
-							input={totals.total_input_tokens}
-							output={totals.total_output_tokens}
-							cost={totals.total_cost}
+							calls={runtimeTotals.call_count}
+							input={runtimeTotals.total_input_tokens}
+							output={runtimeTotals.total_output_tokens}
+							cost={runtimeTotals.total_cost}
 						/>
 					</div>
 				) : null}

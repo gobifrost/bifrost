@@ -45,3 +45,35 @@ describe("RunAIUsageCard", () => {
 		expect(screen.getAllByText("Input tokens")).toHaveLength(2);
 	});
 });
+
+it("excludes automatic summaries from runtime totals and cache reuse", () => {
+	const usage = [
+		{
+			model: "runtime-model",
+			provider: "fixture",
+			input_tokens: 100,
+			output_tokens: 10,
+			cache_read_tokens: 25,
+			cache_write_tokens: 5,
+			sequence: 1,
+			cost: "1",
+			timestamp: "2026-09-19",
+		},
+		{
+			model: "summary-model",
+			provider: "fixture",
+			input_tokens: 999,
+			output_tokens: 999,
+			cache_read_tokens: 999,
+			cache_write_tokens: 999,
+			sequence: 0,
+			cost: "9",
+			timestamp: "2026-09-19",
+		},
+	];
+	renderWithProviders(<RunAIUsageCard usage={usage} totals={null} />);
+	expect(screen.queryByText("summary-model")).not.toBeInTheDocument();
+	expect(screen.getByText("25.00%")).toBeInTheDocument();
+	expect(screen.getByText("25")).toBeInTheDocument();
+	expect(screen.queryByText("999")).not.toBeInTheDocument();
+});

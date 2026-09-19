@@ -430,6 +430,7 @@ type WebSocketMessage =
 	| AppPublishedUpdate
 	| PoolMessage
 	| FileActivityEvent
+	| { type: "journal_appended"; run_id: string; sequence: number; timestamp: string }
 	| AgentRunUpdate
 	| AgentRunStepUpdate
 	| SummaryBackfillUpdate;
@@ -559,6 +560,7 @@ class WebSocketService {
 	private poolMessageCallbacks = new Set<PoolMessageCallback>();
 	private fileActivityCallbacks = new Set<FileActivityCallback>();
 	private agentRunUpdateCallbacks: Set<AgentRunUpdateCallback> = new Set();
+	private journalCallbacks = new Set<(runId: string) => void>();
 	private summaryBackfillCallbacks: Map<
 		string,
 		Set<SummaryBackfillUpdateCallback>
@@ -933,6 +935,13 @@ class WebSocketService {
 				break;
 
 			// Agent run update types
+			case "journal_appended": {
+				if (typeof message.run_id === "string") {
+					const runId = message.run_id;
+					this.journalCallbacks.forEach((callback) => callback(runId));
+				}
+				break;
+			}
 			case "agent_run_update": {
 				const agentRunUpdate = message as unknown as AgentRunUpdate;
 				this.agentRunUpdateCallbacks.forEach((cb) =>
@@ -1601,6 +1610,11 @@ class WebSocketService {
 	/**
 	 * Subscribe to agent run updates (list page)
 	 */
+	onAgentJournalAppended(callback: (runId: string) => void): () => void {
+		this.journalCallbacks.add(callback);
+		return () => { this.journalCallbacks.delete(callback); };
+	}
+
 	onAgentRunUpdate(callback: AgentRunUpdateCallback): () => void {
 		this.agentRunUpdateCallbacks.add(callback);
 		return () => {

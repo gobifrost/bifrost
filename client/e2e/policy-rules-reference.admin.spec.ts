@@ -132,7 +132,7 @@ test.describe("Policy rule reference mode", () => {
 		);
 	});
 
-	test("Files policy editor shows the rule in Insert reference dropdown", async ({
+	test("Files policy editor adds a shared rule through the Access pane", async ({
 		page,
 	}) => {
 		// Navigate to the Files explorer.
@@ -152,27 +152,27 @@ test.describe("Policy rule reference mode", () => {
 		).toBeVisible({ timeout: 10000 });
 		await page.getByRole("tab", { name: "Policies" }).click();
 		await page
-			.getByRole("button", { name: `Edit policy for ${SHARE_NAME}/` })
+			.getByRole("button", { name: `Manage policy for ${SHARE_NAME}/` })
 			.click();
 
-		// Wait for the editor dialog.
+		const policyPane = page.getByRole("region", { name: "File details" });
 		await expect(
-			page.getByRole("dialog", { name: /manage policy/i }),
-		).toBeVisible({ timeout: 10000 });
-
-		// The "Insert reference…" dropdown should appear with the file rule.
-		const refTrigger = page
-			.getByRole("dialog", { name: /manage policy/i })
-			.getByLabel(/insert reference/i);
-		await expect(refTrigger).toBeVisible({ timeout: 5000 });
-		await refTrigger.click();
+			policyPane.getByRole("heading", {
+				name: "Manage Policy",
+				exact: true,
+			}),
+		).toBeVisible();
+		await policyPane
+			.getByRole("combobox", { name: "Add Shared Rule" })
+			.click();
+		await page
+			.getByRole("option", {
+				name: new RegExp(FILE_RULE_NAME.replaceAll("-", " "), "i"),
+			})
+			.click();
 		await expect(
-			page.getByRole("option", { name: FILE_RULE_NAME }),
-		).toBeVisible({ timeout: 5000 });
-		await page.getByRole("option", { name: FILE_RULE_NAME }).click();
-		await expect
-			.poll(() => policyEditorText(page, "file-policies.yaml"))
-			.toContain(FILE_RULE_NAME);
+			policyPane.getByRole("list", { name: "Policy rules" }),
+		).toContainText(new RegExp(FILE_RULE_NAME.replaceAll("-", " "), "i"));
 	});
 
 	test("Tables policy editor shows the rule in Insert reference dropdown", async ({
@@ -205,7 +205,10 @@ test.describe("Policy rule reference mode", () => {
 			.getByRole("button", { name: `${TABLE_NAME} actions` })
 			.click();
 		await page.getByRole("menuitem", { name: "Edit" }).click();
-		const tableDialog = page.getByRole("dialog", { name: /edit table/i });
+		const tableDialog = page.getByRole("region", {
+			name: "Edit Table",
+			exact: true,
+		});
 		await expect(tableDialog).toBeVisible({ timeout: 10000 });
 
 		// The "Insert reference…" dropdown should appear with the table rule.

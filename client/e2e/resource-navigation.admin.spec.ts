@@ -33,20 +33,98 @@ async function middleClickOpens(
 	expectedPath: string,
 ) {
 	const originUrl = page.url();
-	const popupPromise = context.waitForEvent("page", { timeout: 5_000 });
-	await target.click({ button: "middle" });
-	const popup = await popupPromise;
-	await expect
-		.poll(
-			() => {
-				const url = new URL(popup.url());
-				return `${url.pathname}${url.search}`;
-			},
-			{ timeout: 10_000 },
-		)
-		.toBe(expectedPath);
-	await expect(page).toHaveURL(originUrl);
-	await popup.close();
+	const browser = context.browser();
+	expect(browser).not.toBeNull();
+	const cdp = await browser!.newBrowserCDPSession();
+	let observedTargetId: string | undefined;
+	try {
+		await cdp.send("Target.setDiscoverTargets", { discover: true });
+		const snapshotIds = new Set<string>();
+		try {
+			const { targetInfos } = await cdp.send("Target.getTargets");
+			for (const info of targetInfos) snapshotIds.add(info.targetId);
+		} catch {
+			// Target snapshot is best-effort; discovery events remain authoritative.
+		}
+		const pathOf = (url: string) => {
+			try {
+				const parsed = new URL(url);
+				return `${parsed.pathname}${parsed.search}`;
+			} catch {
+				return url;
+			}
+		};
+		type TargetEvent = {
+			targetInfo: { targetId: string; type: string; url: string };
+		};
+
+		const createdPromise = new Promise<string>((resolve, reject) => {
+			const onCreated = (payload: TargetEvent) => {
+				if (payload.targetInfo.type !== "page") return;
+				if (snapshotIds.has(payload.targetInfo.targetId)) return;
+				clearTimeout(timer);
+				cdp.off("Target.targetCreated", onCreated);
+				resolve(payload.targetInfo.targetId);
+			};
+			const timer = setTimeout(() => {
+				cdp.off("Target.targetCreated", onCreated);
+				reject(
+					new Error(
+						`Timed out waiting for Target.targetCreated after middle-click to ${expectedPath}`,
+					),
+				);
+			}, 5_000);
+			cdp.on("Target.targetCreated", onCreated);
+		});
+
+		const urlPromise = new Promise<string>((resolve, reject) => {
+			const done = (targetId: string) => {
+				clearTimeout(timer);
+				cdp.off("Target.targetInfoChanged", onChanged);
+				cdp.off("Target.targetCreated", onCreatedFastPath);
+				resolve(targetId);
+			};
+			const onChanged = (payload: TargetEvent) => {
+				if (payload.targetInfo.type !== "page") return;
+				if (snapshotIds.has(payload.targetInfo.targetId)) return;
+				if (pathOf(payload.targetInfo.url) !== expectedPath) return;
+				done(payload.targetInfo.targetId);
+			};
+			const onCreatedFastPath = (payload: TargetEvent) => {
+				if (payload.targetInfo.type !== "page") return;
+				if (snapshotIds.has(payload.targetInfo.targetId)) return;
+				if (pathOf(payload.targetInfo.url) !== expectedPath) return;
+				done(payload.targetInfo.targetId);
+			};
+			const timer = setTimeout(() => {
+				cdp.off("Target.targetInfoChanged", onChanged);
+				cdp.off("Target.targetCreated", onCreatedFastPath);
+				reject(
+					new Error(
+						`Timed out waiting for Target.targetInfoChanged to ${expectedPath}`,
+					),
+				);
+			}, 10_000);
+			cdp.on("Target.targetInfoChanged", onChanged);
+			cdp.on("Target.targetCreated", onCreatedFastPath);
+		});
+		urlPromise.catch(() => undefined);
+
+		await target.click({ button: "middle" });
+		await createdPromise;
+		observedTargetId = await urlPromise;
+		await expect(page).toHaveURL(originUrl);
+	} finally {
+		if (observedTargetId) {
+			await cdp
+				.send("Target.closeTarget", { targetId: observedTargetId })
+				.catch(() => undefined);
+		}
+		await cdp
+			.send("Target.setDiscoverTargets", { discover: false })
+			.catch(() => undefined);
+		await cdp.detach().catch(() => undefined);
+	}
 }
 
 test("resource titles and table cells support native middle-click without leaking menu actions", async ({

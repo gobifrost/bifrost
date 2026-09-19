@@ -88,6 +88,9 @@ const AgentTuneWorkbench = lazyWithReload(() =>
 		default: m.AgentTuneWorkbench,
 	})),
 );
+const EvaluationExecutionLink = lazyWithReload(() => import("@/pages/agents/EvaluationExecutionLink").then(m => ({ default: m.EvaluationExecutionLink })));
+const AgentDebuggerPage = lazyWithReload(() => import("@/pages/agents/AgentDebuggerPage").then(m => ({ default: m.AgentDebuggerPage })));
+const AgentEvaluationStudio = lazyWithReload(() => import("@/pages/agents/AgentEvaluationStudio").then(m => ({ default: m.AgentEvaluationStudio })));
 const AgentRunDetailPage = lazyWithReload(() =>
 	import("@/pages/agents/AgentRunDetailPage").then((m) => ({
 		default: m.AgentRunDetailPage,
@@ -623,6 +626,9 @@ const routeElements = (
 					</ProtectedRoute>
 				}
 			/>
+            <Route path="agents/:agentId/runs/:runId/debug" element={<ProtectedRoute><AgentDebuggerPage /></ProtectedRoute>} />
+            <Route path="agent-evaluations/executions/:executionId" element={<ProtectedRoute><EvaluationExecutionLink /></ProtectedRoute>} />
+            <Route path="agents/:id/studio" element={<ProtectedRoute><AgentEvaluationStudio /></ProtectedRoute>} />
 			{/* Knowledge - PlatformAdmin only */}
 			<Route
 				path="knowledge"

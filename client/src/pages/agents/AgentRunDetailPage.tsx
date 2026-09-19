@@ -709,6 +709,7 @@ export function AgentRunDetailPage() {
 					actionsLabel="Agent run actions"
 					actions={
 						<>
+							<Button asChild variant="outline"><Link to={`/agents/${agentId}/runs/${runId}/debug`}>Open debugger</Link></Button>
 							<Button
 								variant="ghost"
 								size="icon"

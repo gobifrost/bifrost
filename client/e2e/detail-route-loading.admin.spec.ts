@@ -25,7 +25,7 @@ test.describe("Detail route loading", () => {
 				.getByRole("heading", { name: /agents/i })
 				.first();
 			await expect(fleetHeading).toBeVisible();
-			const card = page.getByRole("link").filter({ hasText: name });
+			const card = page.getByRole("link", { name, exact: true });
 			await expect(card).toBeVisible();
 
 			let releaseNavigation!: () => void;

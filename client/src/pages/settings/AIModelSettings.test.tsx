@@ -520,3 +520,24 @@ describe("AIModelSettings", () => {
 		);
 	});
 });
+
+it("assigns the dedicated Testing profile independently of Summarization", async () => {
+	aiModels.setModelAssignment.mockResolvedValue({
+		assignment_key: "testing",
+		profile_id: profile.id,
+		profile,
+		created_at: "2026-09-19T00:00:00Z",
+		updated_at: "2026-09-19T00:00:00Z",
+	});
+	const { user } = renderWithProviders(<AIModelSettings />);
+	await user.click(
+		await screen.findByRole("button", { name: "Testing Profile" }),
+	);
+	await waitFor(() =>
+		expect(aiModels.setModelAssignment).toHaveBeenCalledWith(
+			"testing",
+			profile.id,
+		),
+	);
+	expect(screen.getByText("Summarization")).toBeVisible();
+});

@@ -168,3 +168,14 @@ describe("chat WebSocket contract", () => {
 		unsubscribe();
 	});
 });
+
+describe("durable journal hints", () => {
+ it("dispatches run identity and removes unsubscribed observers", () => {
+  const callback = vi.fn(); const off = webSocketService.onAgentJournalAppended(callback);
+  const deliver = (message: unknown) => (webSocketService as unknown as { handleMessage(message: unknown): void }).handleMessage(message);
+  deliver({ type: "journal_appended", run_id: "run", sequence: 3 });
+  expect(callback).toHaveBeenCalledWith("run"); off();
+  deliver({ type: "journal_appended", run_id: "run", sequence: 4 });
+  expect(callback).toHaveBeenCalledOnce();
+ });
+});

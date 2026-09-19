@@ -132,10 +132,25 @@ function FooterToggle({
 }
 
 function usageSummary(run: Run): string {
-	const tokens = run.ai_totals
-		? run.ai_totals.total_input_tokens + run.ai_totals.total_output_tokens
-		: run.tokens_used;
-	const cost = run.ai_totals?.total_cost;
+	const runtime = run.ai_usage?.filter((entry) => entry.sequence !== 0);
+	const hasSummaries = run.ai_usage?.some((entry) => entry.sequence === 0);
+	const tokens = hasSummaries
+		? runtime!.reduce(
+				(sum, entry) => sum + entry.input_tokens + entry.output_tokens,
+				0,
+			)
+		: run.ai_totals
+			? run.ai_totals.total_input_tokens +
+				run.ai_totals.total_output_tokens
+			: run.tokens_used;
+	const cost = hasSummaries
+		? String(
+				runtime!.reduce(
+					(sum, entry) => sum + Number(entry.cost ?? 0),
+					0,
+				),
+			)
+		: run.ai_totals?.total_cost;
 	return [
 		tokens > 0 ? `${formatNumber(tokens)} tokens` : null,
 		cost != null ? formatCost(cost) : null,

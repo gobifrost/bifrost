@@ -72,6 +72,12 @@ const ASSIGNMENTS: {
 		icon: Sparkles,
 	},
 	{
+		key: "testing",
+		label: "Testing",
+		description: "Used by Evaluation Studio’s Test Designer to propose reviewable cases. Evaluated Agents keep their own model profiles.",
+		icon: ShieldCheck,
+	},
+	{
 		key: "tuning",
 		label: "Agent Tuning",
 		description: "Used by tuning and improvement workflows.",

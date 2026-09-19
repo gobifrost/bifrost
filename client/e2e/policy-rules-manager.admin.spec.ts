@@ -84,7 +84,10 @@ test.describe("Policy rules manager", () => {
 			.getByRole("button", { name: `${TABLE_NAME} actions` })
 			.click();
 		await page.getByRole("menuitem", { name: "Edit" }).click();
-		const tableDialog = page.getByRole("dialog", { name: /edit table/i });
+		const tableDialog = page.getByRole("region", {
+			name: "Edit Table",
+			exact: true,
+		});
 		await expect(tableDialog).toBeVisible({ timeout: 10000 });
 
 		// Click "Manage rules…" inside the policy editor.
