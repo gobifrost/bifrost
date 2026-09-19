@@ -364,8 +364,7 @@ async def emit_solution_update_available(
     await _emit("solution.update_available", body, organization_id=organization_id)
 
 
-async def emit_event_delivery_retry_exhausted(
-    *,
+async def emit_event_delivery_retry_exhausted(    *,
     event_id: str | UUID,
     event_type: str | None,
     source_id: str | UUID | None,
@@ -406,4 +405,145 @@ async def emit_event_delivery_retry_exhausted(
         "event.delivery_retry_exhausted",
         body,
         organization_id=organization_id,
+    )
+
+
+# ---------------------------------------------------------------------------
+# AgentRun and workflow completion events (durable runtime outbox)
+# ---------------------------------------------------------------------------
+
+AGENT_TOPIC_FOR_STATUS = {
+    "completed": "agent.completed",
+    "failed": "agent.failed",
+    "cancelled": "agent.cancelled",
+    "timeout": "agent.timeout",
+    "budget_exceeded": "agent.failed",
+    "contract_failed": "agent.contract_failed",
+}
+"""Terminal AgentRun status -> built-in topic. Non-success statuses without a
+dedicated topic map to ``agent.failed`` with the exact status in the payload."""
+
+MAX_EVENT_OUTPUT_CHARS = 32_000
+
+
+def _bounded_output(output: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Bound success payloads; consumers fetch the full run if they need it."""
+    if output is None:
+        return None
+    import json as _json
+
+    serialized = _json.dumps(output, default=str)
+    if len(serialized) <= MAX_EVENT_OUTPUT_CHARS:
+        return output
+    return {
+        "truncated": True,
+        "head": serialized[:MAX_EVENT_OUTPUT_CHARS],
+        "chars": len(serialized),
+    }
+
+
+def agent_completion_topic(status: str) -> str:
+    """Return the built-in topic for a terminal AgentRun status."""
+    return AGENT_TOPIC_FOR_STATUS.get(status, "agent.failed")
+
+
+def agent_completion_payload(run) -> tuple[str, dict[str, Any]]:
+    """Build the canonical (topic, body) for a terminal AgentRun.
+
+    Bounded identifiers, status, timestamps, correlation, counters, contract
+    validity — plus output for success or a structured error for failure.
+    Never the full transcript: consumers fetch the authoritative run.
+    """
+    topic = agent_completion_topic(run.status)
+    body = {
+        **_base_body(
+            organization_id=run.org_id,
+            actor=_user_actor(
+                user_id=run.caller_user_id,
+                email=run.caller_email,
+                name=run.caller_name,
+            ),
+        ),
+        "run": {
+            "id": str(run.id),
+            "agent_id": str(run.agent_id) if run.agent_id else None,
+            "root_run_id": str(run.root_run_id) if run.root_run_id else None,
+            "parent_run_id": str(run.parent_run_id) if run.parent_run_id else None,
+            "status": run.status,
+            "attempt": run.attempt or 0,
+            "trigger_type": run.trigger_type,
+        },
+        "correlation": dict(run.correlation or {}),
+        "counters": {
+            "iterations_used": run.iterations_used or 0,
+            "tokens_used": run.tokens_used or 0,
+            "duration_ms": run.duration_ms,
+        },
+        "timestamps": {
+            "created_at": _iso(run.created_at),
+            "started_at": _iso(run.started_at),
+            "completed_at": _iso(run.completed_at),
+        },
+        "contract": {
+            "valid": run.contract_valid,
+            "errors": list(run.contract_errors or []),
+        },
+    }
+    if run.status == "completed":
+        body["output"] = _bounded_output(run.output)
+    else:
+        body["error"] = {
+            "type": run.status,
+            "code": None,
+            "message": (run.error or f"Agent run {run.status}.")[:2000],
+            "retryable": False,
+        }
+    return topic, body
+
+
+async def emit_agent_run_event(*, run) -> None:
+    """Emit one terminal AgentRun event through the standard pipeline."""
+    topic, body = agent_completion_payload(run)
+    await _emit(
+        topic,
+        body,
+        organization_id=run.org_id,
+        triggered_by=str(run.caller_user_id) if run.caller_user_id else None,
+    )
+
+
+async def emit_workflow_completed_event(
+    *,
+    workflow_id: str | UUID | None,
+    workflow_name: str | None,
+    execution_id: str | UUID,
+    organization_id: str | UUID | None,
+    user_id: str | UUID | None,
+    user_email: str | None,
+    user_name: str | None,
+    status: str,
+    trigger_event: dict[str, Any] | None = None,
+    duration_ms: int | None = None,
+) -> None:
+    body = {
+        **_base_body(
+            organization_id=organization_id,
+            actor=_user_actor(user_id=user_id, email=user_email, name=user_name),
+        ),
+        "workflow": {
+            "id": str(workflow_id) if workflow_id else None,
+            "name": workflow_name,
+        },
+        "execution": {
+            "id": str(execution_id),
+            "status": status,
+            "duration_ms": duration_ms,
+        },
+        "trigger": _trigger_from_event_context(trigger_event),
+    }
+    await _emit(
+        "workflow.completed",
+        body,
+        organization_id=organization_id,
+        triggered_by=str(user_id) if user_id else None,
     )

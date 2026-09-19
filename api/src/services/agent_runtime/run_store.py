@@ -417,3 +417,48 @@ async def latest_checkpoint(
             .limit(1)
         )
     ).scalar_one_or_none()
+
+
+async def claim_completion_events(
+    session: AsyncSession, *, batch_size: int = 50
+) -> list[AgentRun]:
+    """Claim terminal runs still needing their completion event.
+
+    Fenced with FOR UPDATE SKIP LOCKED so overlapping scanner passes never
+    double-process a row. Callers must resolve (emit or record the failure)
+    through ``resolve_completion_event`` in the same pass.
+    """
+    return list(
+        (
+            await session.execute(
+                select(AgentRun)
+                .where(
+                    AgentRun.completion_event_pending_at.is_not(None),
+                    AgentRun.completion_event_emitted_at.is_(None),
+                )
+                .order_by(AgentRun.completion_event_pending_at)
+                .limit(batch_size)
+                .with_for_update(skip_locked=True, of=AgentRun)
+            )
+        ).scalars().all()
+    )
+
+
+async def resolve_completion_event(
+    session: AsyncSession,
+    run_id: UUID,
+    *,
+    emitted: bool,
+    error: str | None = None,
+) -> None:
+    """Record an outbox attempt: success stamps emission, failure retries later."""
+    run = await session.get(AgentRun, run_id)
+    if run is None:
+        return
+    if emitted:
+        run.completion_event_emitted_at = _now()
+        run.completion_event_last_error = None
+    else:
+        run.completion_event_attempts = (run.completion_event_attempts or 0) + 1
+        run.completion_event_last_error = (error or "emit failed")[:2000]
+    await session.commit()

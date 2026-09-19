@@ -303,6 +303,30 @@ class Scheduler:
             **misfire_options,
         )
 
+        # Agent completion-event outbox - every minute (run immediately at
+        # startup). Terminal runs stay discoverable until their built-in
+        # agent.* event is emitted at least once.
+        try:
+            from src.jobs.schedulers.agent_completion_events import (
+                publish_pending_agent_completions,
+            )
+            scheduler.add_job(
+                self._run_scheduled_task,
+                IntervalTrigger(minutes=1),
+                id="agent_completion_events",
+                name="Publish pending agent completion events",
+                replace_existing=True,
+                next_run_time=datetime.now(timezone.utc),
+                args=[
+                    "agent_completion_events",
+                    publish_pending_agent_completions,
+                ],
+                **misfire_options,
+            )
+            logger.info("Agent completion-event outbox scheduled (every 60s)")
+        except ImportError:
+            logger.warning("Agent completion-event outbox not available")
+
         # OAuth token refresh - every 15 minutes (run immediately at startup)
         try:
             from src.jobs.platform.system_maintenance import (

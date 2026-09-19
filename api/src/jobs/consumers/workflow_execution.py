@@ -478,6 +478,30 @@ class WorkflowExecutionConsumer(BaseConsumer):
             {"duration_ms": duration_ms},
         )
 
+        # Terminal fan-out: workflow.completed complements workflow.failed so
+        # subscribers can filter on either outcome. This is the success
+        # handler; failures keep their dedicated emitter in _process_failure.
+        try:
+            from src.services.events.builtins import (
+                emit_workflow_completed_event,
+            )
+            await emit_workflow_completed_event(
+                    workflow_id=workflow_id,
+                    workflow_name=workflow_name,
+                    execution_id=execution_id,
+                    organization_id=org_id,
+                    user_id=user_id,
+                    user_email=metadata.get("user_email"),
+                    user_name=user_name,
+                    status=status.value,
+                    trigger_event=metadata.get("event"),
+                    duration_ms=duration_ms,
+                )
+        except Exception as e:
+            logger.warning(
+                f"Failed to emit workflow completion event for {execution_id[:8]}...: {e}"
+            )
+
         completed_at = datetime.now(timezone.utc)
         await publish_history_update(
             execution_id=execution_id,
