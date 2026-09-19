@@ -744,8 +744,9 @@ class AgentRunConsumer(BaseConsumer):
                     },
                 )
 
-            # A terminal child wakes its waiting parent exactly once. The
-            # wake is idempotent: late duplicates find a non-waiting parent.
+            # A terminal child wakes its waiting parent exactly once, single
+            # or fan-out. The notify is idempotent: late duplicates find a
+            # non-waiting parent or a completed join.
             if (
                 not suspended
                 and consumer_applied_result
@@ -753,10 +754,10 @@ class AgentRunConsumer(BaseConsumer):
             ):
                 try:
                     from src.services.agent_runtime.delegation import (
-                        wake_parent_for_child,
+                        notify_parent_of_completion,
                     )
 
-                    await wake_parent_for_child(
+                    await notify_parent_of_completion(
                         self._session_factory, UUID(run_id)
                     )
                 except Exception:

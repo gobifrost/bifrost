@@ -1146,16 +1146,66 @@ class AutonomousAgentExecutor:
             )
         from src.services.agent_runtime.delegation import (
             suspend_for_deferred_calls,
+            suspend_for_fanout,
         )
 
-        for call in (*deferred.calls, *deferred.approvals):
-            if not call.tool_name.startswith("delegate_to_"):
-                raise ToolError(
-                    f"Deferred tool '{call.tool_name}' has no durable "
-                    "suspension handler in this runtime version."
-                )
+        singles = [
+            call for call in (*deferred.calls, *deferred.approvals)
+            if call.tool_name.startswith("delegate_to_")
+        ]
+        fanouts = [
+            call for call in (*deferred.calls, *deferred.approvals)
+            if call.tool_name == "delegate_agents"
+        ]
+        known = len(singles) + len(fanouts)
+        if known != len(deferred.calls) + len(deferred.approvals):
+            unknown = next(
+                call.tool_name
+                for call in (*deferred.calls, *deferred.approvals)
+                if not call.tool_name.startswith("delegate_to_")
+                and call.tool_name != "delegate_agents"
+            )
+            raise ToolError(
+                f"Deferred tool '{unknown}' has no durable "
+                "suspension handler in this runtime version."
+            )
         if deferred.approvals:
             raise ToolError("Deferred approvals are not supported.")
+        if singles and fanouts:
+            raise ToolError(
+                "Single delegation and fan-out cannot suspend together; "
+                "issue one per turn."
+            )
+        if len(fanouts) > 1:
+            raise ToolError("Only one fan-out may suspend per model turn.")
+        if fanouts:
+            call = fanouts[0]
+            outcome = await suspend_for_fanout(
+                session_factory=self._session_factory,
+                parent_run_id=UUID(run_id),
+                lease_token=self._durable_lease_token,
+                agent=agent,
+                execution_snapshot=getattr(self, "_snapshot_for_deferral", None),
+                tool_call_id=call.tool_call_id,
+                arguments=(
+                    call.args_as_dict()
+                    if hasattr(call, "args_as_dict")
+                    else dict(call.args or {})
+                ),
+                caller=self._caller,
+                caller_context=caller_context,
+                correlation=correlation,
+            )
+            return {
+                "output": None,
+                "iterations_used": usage.requests - usage_start_requests,
+                "tokens_used": usage.total_tokens - usage_start_tokens,
+                "status": "suspended",
+                "llm_model": None,
+                "contract_valid": None,
+                "contract_errors": [],
+                "suspended": outcome,
+            }
         outcome = await suspend_for_deferred_calls(
             session_factory=self._session_factory,
             parent_run_id=UUID(run_id),
@@ -1192,6 +1242,21 @@ class AutonomousAgentExecutor:
 
         results: dict[str, Any] = {}
         for call in deferred.calls:
+            args = (
+                call.args_as_dict()
+                if hasattr(call, "args_as_dict")
+                else dict(call.args or {})
+            )
+            if call.tool_name == "delegate_agents":
+                results[call.tool_call_id] = await self._execute_fanout(
+                    LlmToolCallRequest(
+                        id=call.tool_call_id,
+                        name=call.tool_name,
+                        arguments=args,
+                    ),
+                    agent,
+                )
+                continue
             if not call.tool_name.startswith("delegate_to_"):
                 raise ToolError(
                     f"Deferred tool '{call.tool_name}' cannot run inline."
@@ -1201,11 +1266,7 @@ class AutonomousAgentExecutor:
                 tool_call=LlmToolCallRequest(
                     id=call.tool_call_id,
                     name=call.tool_name,
-                    arguments=(
-                        call.args_as_dict()
-                        if hasattr(call, "args_as_dict")
-                        else dict(call.args or {})
-                    ),
+                    arguments=args,
                 ),
                 parent_run_id=self._current_run_id or run_id,
                 caller=self._caller,
@@ -1340,6 +1401,10 @@ class AutonomousAgentExecutor:
         # Delegation
         if tool_call.name.startswith("delegate_to_"):
             return await self._execute_delegation(tool_call, agent)
+
+        # Fan-out across delegated agents (durable all-join)
+        if tool_call.name == "delegate_agents":
+            return await self._execute_fanout(tool_call, agent)
 
         # System tools
         if tool_call.name in (agent.system_tools or []):
@@ -2035,6 +2100,74 @@ class AutonomousAgentExecutor:
         if outcome.output is None:
             return "Delegation completed with no output."
         return str(outcome.output)
+
+    async def _execute_fanout(
+        self,
+        tool_call: ToolCallRequest,
+        agent: Agent,
+    ) -> str:
+        """Execute a fan-out: suspend durably when leased, inline otherwise."""
+        from src.services.agent_runtime.delegation import parse_fanout_args
+
+        arguments = tool_call.arguments or {}
+        if self._durable_lease_token is not None:
+            # Fail fast on malformed requests inside the loop; the suspending
+            # transaction re-validates grants, depth, cycles, and limits.
+            parse_fanout_args(arguments)
+            raise CallDeferred(
+                {
+                    "kind": "fanout",
+                    "tool_call_id": tool_call.id,
+                    "tool_name": tool_call.name,
+                    "arguments": arguments,
+                }
+            )
+        specs, _ = parse_fanout_args(arguments)
+        from src.services.llm.base import ToolCallRequest as LlmToolCallRequest
+
+        items = []
+        for spec in specs:
+            target = find_delegated_agent(
+                agent, f"delegate_to_{spec.agent_name.lower().replace(' ', '_')}"
+            )
+            if target is None:
+                raise ToolError(
+                    f"Fan-out target '{spec.agent_name}' not found."
+                )
+            outcome = await self.run_delegation(
+                parent_agent=agent,
+                tool_call=LlmToolCallRequest(
+                    id=f"{tool_call.id}:{spec.position}",
+                    name=f"delegate_to_{spec.agent_name.lower().replace(' ', '_')}",
+                    arguments={
+                        "task": spec.task,
+                        **(
+                            {"output_schema": spec.output_schema}
+                            if spec.output_schema
+                            else {}
+                        ),
+                    },
+                ),
+                parent_run_id=self._current_run_id,
+                caller=self._caller,
+                output_schema=spec.output_schema,
+                _shared_usage=self._active_usage,
+                _shared_budget=self._active_budget,
+            )
+            output = outcome.output
+            items.append(
+                {
+                    "position": spec.position,
+                    "run_id": str(outcome.child_run_id),
+                    "agent": outcome.agent_name,
+                    "status": outcome.status,
+                    "output": output,
+                    "error": outcome.error,
+                }
+            )
+        return json.dumps(
+            {"mode": "all", "children": items}, default=str, sort_keys=False
+        )
 
     async def _execute_system_tool(self, tool_call: ToolCallRequest, agent: Agent) -> str:
         """Execute a system tool."""

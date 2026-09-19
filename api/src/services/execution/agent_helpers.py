@@ -183,9 +183,8 @@ async def resolve_agent_tools(
 
     # 3. Delegation tools (use already-loaded relationship, no extra query)
     if agent.delegated_agents:
-        for delegated in agent.delegated_agents:
-            if not delegated.is_active:
-                continue
+        active_delegates = [d for d in agent.delegated_agents if d.is_active]
+        for delegated in active_delegates:
             tool_name = agent_delegation_slug(delegated.name)
             if tool_name not in seen_names:
                 tool_definitions.append(
@@ -211,6 +210,79 @@ async def resolve_agent_tools(
                         },
                     )
                 )
+        # Fan-out: one model-callable entry point for parallel delegation.
+        # The engine admits one independent child per request plus an `all`
+        # join; the model never manages runs, waits, or joins itself.
+        if "delegate_agents" not in seen_names:
+            tool_definitions.append(
+                ToolDefinition(
+                    name="delegate_agents",
+                    description=(
+                        "Delegate multiple tasks to specialist agents in "
+                        "parallel and wait for all of them. Each child runs "
+                        "independently; you receive one ordered result with "
+                        "every child's status and output."
+                    ),
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "children": {
+                                "type": "array",
+                                "description": (
+                                    "Bounded list of child requests, each "
+                                    "with a delegated agent name, a task, "
+                                    "and an optional output schema."
+                                ),
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "agent": {
+                                            "type": "string",
+                                            "description": (
+                                                "Name of a delegated agent "
+                                                "granted to this agent"
+                                            ),
+                                        },
+                                        "task": {
+                                            "type": "string",
+                                            "description": (
+                                                "The task for this child"
+                                            ),
+                                        },
+                                        "output_schema": {
+                                            "type": "object",
+                                            "description": (
+                                                "Optional JSON Schema for "
+                                                "this child's result"
+                                            ),
+                                        },
+                                    },
+                                    "required": ["agent", "task"],
+                                },
+                            },
+                            "join": {
+                                "type": "object",
+                                "description": "Join configuration (v1: all).",
+                                "properties": {
+                                    "mode": {
+                                        "type": "string",
+                                        "enum": ["all"],
+                                    },
+                                },
+                            },
+                            "failure_policy": {
+                                "type": "string",
+                                "enum": ["collect"],
+                                "description": (
+                                    "v1 collects every child's outcome "
+                                    "into the ordered aggregate."
+                                ),
+                            },
+                        },
+                        "required": ["children"],
+                    },
+                )
+            )
 
     # 4. External MCP tools — surfaced from this org's MCPConnections.
     #

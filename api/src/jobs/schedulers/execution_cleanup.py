@@ -486,21 +486,32 @@ async def _cleanup_stale_agent_runs(now: datetime) -> dict[str, Any]:
                 )
 
         # Terminalized children wake waiting parents so delegation trees
-        # cannot hang on a swept child. The wake is idempotent.
+        # cannot hang on a swept child. The notify is idempotent.
         if wake_parents_for:
             from src.services.agent_runtime.delegation import (
-                wake_parent_for_child,
+                notify_parent_of_completion,
+                wake_completed_joins,
             )
 
             for child_id in wake_parents_for:
                 try:
-                    await wake_parent_for_child(session_factory, UUID(child_id))
+                    await notify_parent_of_completion(
+                        session_factory, UUID(child_id)
+                    )
                 except Exception:
                     logger.warning(
                         "Failed to wake parent for swept child",
                         extra={"agent_run_id": child_id},
                         exc_info=True,
                     )
+            try:
+                for parent_id in await wake_completed_joins(session_factory):
+                    requeued.append(str(parent_id))
+                    results["agent_run_woken"] += 1
+            except Exception:
+                logger.warning(
+                    "Failed to sweep completed joins", exc_info=True
+                )
 
         for update in updates:
             try:
