@@ -1,20 +1,19 @@
 import { useMemo, useRef, useState, type ReactNode } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Search } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 
-import {
-	PageScrollArea,
-	PageWorkspace,
-} from "@/components/layout/PageWorkspace";
+import { PageWorkspace } from "@/components/layout/PageWorkspace";
 import { PageLoader } from "@/components/PageLoader";
 import { ModelProfileSelector } from "@/components/ai/ModelProfileSelector";
 import { QualityHeader } from "@/components/agents/QualityHeader";
+import { AgentWorkbenchFrame } from "@/components/agents/workbench/AgentWorkbenchFrame";
+import { WorkbenchCollectionToolbar } from "@/components/agents/workbench/WorkbenchCollectionToolbar";
+import { WorkbenchRow } from "@/components/agents/workbench/WorkbenchRow";
 import { ChangesWorkspace } from "@/components/agents/evaluation/ChangesWorkspace";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
 	Select,
@@ -176,6 +175,8 @@ function AgentQualityWorkbenchContent() {
 	const hasChangesContext = Boolean(candidateId || matrixId || executionId);
 
 	const [search, setSearch] = useState("");
+	const [isCreatingTest, setIsCreatingTest] = useState(false);
+	const [isInspectorDismissed, setIsInspectorDismissed] = useState(false);
 	const [selectedTests, setSelectedTests] = useState<Set<string>>(
 		() => new Set(),
 	);
@@ -318,6 +319,10 @@ function AgentQualityWorkbenchContent() {
 			return reviews.find((review) => review.id === selectedId) ?? null;
 		return runs.find((run) => run.id === selectedId) ?? null;
 	}, [collection, findings, reviews, runs, selectedKey, tests]);
+	const isTestCreationOpen =
+		collection === "tests" &&
+		!selectedItem &&
+		(isCreatingTest || Boolean(findingContext));
 
 	const filteredTests = tests.filter((test) => includesText(test, search));
 	const filteredFindings = findings.filter((finding) =>
@@ -335,6 +340,7 @@ function AgentQualityWorkbenchContent() {
 			setSituation("");
 			setExpectedBehavior("");
 			setAdvancedJson("");
+			setIsCreatingTest(false);
 			await queryClient.invalidateQueries({
 				queryKey: ["agent-platform", "agent-tests", agentId],
 			});
@@ -356,10 +362,14 @@ function AgentQualityWorkbenchContent() {
 	function selectCollection(nextCollection: Collection) {
 		updateParams({ collection: nextCollection });
 		setSearch("");
+		setIsCreatingTest(false);
+		setIsInspectorDismissed(false);
 	}
 
 	function selectListItem(kind: Collection, id: string) {
 		updateParams({ selected: `${kind}:${id}` });
+		setIsCreatingTest(false);
+		setIsInspectorDismissed(false);
 	}
 
 	function toggleTest(testId: string) {
@@ -472,78 +482,149 @@ function AgentQualityWorkbenchContent() {
 						}}
 					/>
 				)}
-				<div className="flex flex-wrap gap-2">
-					{COLLECTIONS.map((item) => (
-						<Button
-							key={item.value}
-							type="button"
-							variant={
-								item.value === collection ? "default" : "outline"
-							}
-							aria-pressed={item.value === collection}
-							onClick={() => selectCollection(item.value)}
-						>
-							{item.label}
-						</Button>
-					))}
-				</div>
 			</div>
 
-			<PageScrollArea className="min-w-0">
-				<div className="grid gap-4 lg:grid-cols-[minmax(280px,440px)_minmax(0,1fr)]">
-					<section className="space-y-4">
-						<div className="rounded-xl border bg-card p-4 shadow-sm">
-							<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-								<div>
-									<h2 className="font-display text-lg font-semibold">
-										{COLLECTIONS.find(
-											(item) => item.value === collection,
-										)?.label ?? "Tests"}
-									</h2>
-									<p className="text-sm text-muted-foreground">
-										{selectedTests.size
-											? `${selectedTests.size} selected`
-											: "Search, select, and inspect Workbench records."}
-									</p>
-								</div>
-								{collection === "tests" && (
-									<Button
-										type="button"
-										onClick={submitSimulation}
-										disabled={
-											selectedTestItems.length === 0 ||
-											runTests.isPending
-										}
-									>
-										Run Simulation
-									</Button>
-								)}
-							</div>
-							{selectionError && (
-								<p className="mt-3 text-sm text-destructive">
-									{selectionError}
-								</p>
-							)}
-							<div className="mt-4 space-y-2">
-								<Label htmlFor="quality-search">
-									Search Workbench collection
-								</Label>
-								<Input
-									id="quality-search"
-									value={search}
-									onChange={(event) =>
-										setSearch(event.target.value)
+			<AgentWorkbenchFrame
+				title={COLLECTIONS.find((item) => item.value === collection)?.label ?? "Tests"}
+				description="Search, select, and inspect Workbench records."
+				collections={COLLECTIONS}
+				collection={collection}
+				onCollectionChange={(next) => selectCollection(next as Collection)}
+				toolbar={
+					<WorkbenchCollectionToolbar
+						collectionLabel={
+							COLLECTIONS.find((item) => item.value === collection)?.label ??
+							"Tests"
+						}
+						search={search}
+						onSearchChange={setSearch}
+						selectionCount={collection === "tests" ? selectedTests.size : 0}
+						secondaryAction={
+							collection === "tests" ? (
+								<Button
+									type="button"
+									variant="outline"
+									onClick={() => {
+										setIsCreatingTest(true);
+										setIsInspectorDismissed(false);
+										updateParams({ selected: undefined });
+									}}
+								>
+									Add Test
+								</Button>
+							) : undefined
+						}
+						primaryAction={
+							collection === "tests" ? (
+								<Button
+									type="button"
+									onClick={submitSimulation}
+									disabled={
+										selectedTestItems.length === 0 || runTests.isPending
 									}
-									placeholder="Search this collection"
+								>
+									Run Simulation
+								</Button>
+							) : undefined
+						}
+					>
+						{collection === "tests" ? (
+							<div className="min-w-[12rem]">
+								<ModelProfileSelector
+									label="Profile"
+									value={profileId}
+									onValueChange={setProfileId}
+									placeholder="Default assignment"
 								/>
 							</div>
-						</div>
-
+						) : null}
+						{queuedExecution ? (
+							<span className="text-sm font-medium text-foreground">
+								Queued simulation {queuedExecution}
+							</span>
+						) : null}
+					</WorkbenchCollectionToolbar>
+				}
+				inspector={
+					recordedId ? (
+						<RecordedResultsPanel
+							results={recordedResultsQuery.data}
+							usage={recordedUsageQuery.data}
+							isLoading={
+								recordedResultsQuery.isLoading || recordedUsageQuery.isLoading
+							}
+							isError={
+								recordedResultsQuery.isError || recordedUsageQuery.isError
+							}
+							onRetry={() => {
+								void recordedResultsQuery.refetch();
+								void recordedUsageQuery.refetch();
+							}}
+						/>
+					) : hasChangesContext ? (
+						<ChangesWorkspace
+							agentId={agentId!}
+							suiteId={suiteId}
+							candidateId={candidateId}
+							profileIds={profileIds}
+							matrixId={matrixId}
+							executionId={executionId}
+							onNavigate={updateParams}
+						/>
+					) : selectedItem && !isInspectorDismissed ? (
+						<Inspector
+							collection={collection}
+							item={selectedItem}
+							agentId={agentId}
+							latestByLogicalId={latestByLogicalId}
+							onCreateTestFromFinding={(findingId) =>
+								updateParams({ collection: "tests", finding: findingId })
+							}
+							onBack={() => setIsInspectorDismissed(true)}
+						/>
+					) : isTestCreationOpen ? (
+						<TestCreationPanel
+							finding={findingContext}
+							situation={situation}
+							expectedBehavior={expectedBehavior}
+							advancedJson={advancedJson}
+							advancedJsonError={advancedJsonError}
+							createError={
+								createTest.error instanceof Error
+									? createTest.error.message
+									: createTest.isError
+										? "Could not create test."
+										: ""
+							}
+							isPending={createTest.isPending}
+							onSituationChange={setSituation}
+							onExpectedBehaviorChange={setExpectedBehavior}
+							onAdvancedJsonChange={setAdvancedJson}
+							onClearFinding={() => {
+								setIsCreatingTest(false);
+								setIsInspectorDismissed(false);
+								updateParams({ finding: undefined });
+							}}
+							onCreate={submitTest}
+						/>
+					) : undefined
+				}
+				onCloseInspector={() => {
+					setIsCreatingTest(false);
+					setIsInspectorDismissed(true);
+				}}
+			>
+				{selectionError ? (
+					<p className="border-b px-4 py-2 text-sm text-destructive">
+						{selectionError}
+					</p>
+				) : null}
 						{collection === "tests" && (
 							<TestsCollection
 								tests={filteredTests}
 								latestByLogicalId={latestByLogicalId}
 								selectedTests={selectedTests}
+								selectedKey={selectedKey}
 								isLoading={testsQuery.isLoading}
 								isError={testsQuery.isError || latestQuery.isError}
 								onRetry={() => {
@@ -562,6 +643,7 @@ function AgentQualityWorkbenchContent() {
 						{collection === "findings" && (
 							<FindingsCollection
 								findings={filteredFindings}
+								selectedKey={selectedKey}
 								isLoading={findingsQuery.isLoading}
 								isError={findingsQuery.isError}
 								onRetry={() => {
@@ -575,6 +657,7 @@ function AgentQualityWorkbenchContent() {
 						{collection === "reviews" && (
 							<ReviewsCollection
 								reviews={filteredReviews}
+								selectedKey={selectedKey}
 								isLoading={reviewsQuery.isLoading}
 								isError={reviewsQuery.isError}
 								onRetry={() => {
@@ -588,6 +671,7 @@ function AgentQualityWorkbenchContent() {
 						{collection === "runs" && (
 							<RunsCollection
 								runs={filteredRuns}
+								selectedKey={selectedKey}
 								isLoading={runsQuery.isLoading}
 								isError={runsQuery.isError}
 								onRetry={() => {
@@ -599,120 +683,16 @@ function AgentQualityWorkbenchContent() {
 							/>
 						)}
 
-						{collection === "tests" && (
-							<TestCreationPanel
-								finding={findingContext}
-								situation={situation}
-								expectedBehavior={expectedBehavior}
-								advancedJson={advancedJson}
-								advancedJsonError={advancedJsonError}
-								createError={
-									createTest.error instanceof Error
-										? createTest.error.message
-										: createTest.isError
-											? "Could not create test."
-											: ""
-								}
-								isPending={createTest.isPending}
-								onSituationChange={setSituation}
-								onExpectedBehaviorChange={setExpectedBehavior}
-								onAdvancedJsonChange={setAdvancedJson}
-								onClearFinding={() =>
-									updateParams({ finding: undefined })
-								}
-								onCreate={submitTest}
-							/>
-						)}
-					</section>
-
-					<aside className="min-w-0 space-y-4">
-						{collection === "tests" && (
-							<div className="rounded-xl border bg-card p-4 shadow-sm">
-								<h2 className="font-display text-lg font-semibold">
-									Simulation setup
-								</h2>
-								<div className="mt-3 max-w-md">
-									<ModelProfileSelector
-										label="Profile"
-										value={profileId}
-										onValueChange={setProfileId}
-										placeholder="Default assignment"
-									/>
-								</div>
-								{candidateId && (
-									<p className="mt-3 text-sm text-muted-foreground">
-										Current candidate from URL: {candidateId}
-									</p>
-								)}
-								{queuedExecution && (
-									<p className="mt-3 text-sm font-medium text-foreground">
-										Queued simulation {queuedExecution}
-									</p>
-								)}
-							</div>
-						)}
-						{recordedId ? (
-							<RecordedResultsPanel
-								results={recordedResultsQuery.data}
-								usage={recordedUsageQuery.data}
-								isLoading={
-									recordedResultsQuery.isLoading ||
-									recordedUsageQuery.isLoading
-								}
-								isError={
-									recordedResultsQuery.isError ||
-									recordedUsageQuery.isError
-								}
-								onRetry={() => {
-									void recordedResultsQuery.refetch();
-									void recordedUsageQuery.refetch();
-								}}
-							/>
-						) : hasChangesContext ? (
-							<div className="rounded-xl border bg-card p-4 shadow-sm">
-								<h2 className="font-display text-lg font-semibold">
-									Changes context
-								</h2>
-								<div className="mt-4">
-									<ChangesWorkspace
-										agentId={agentId!}
-										suiteId={suiteId}
-										candidateId={candidateId}
-										profileIds={profileIds}
-										matrixId={matrixId}
-										executionId={executionId}
-										onNavigate={updateParams}
-									/>
-								</div>
-							</div>
-						) : (
-							<Inspector
-								collection={collection}
-								item={selectedItem}
-								agentId={agentId}
-								latestByLogicalId={latestByLogicalId}
-								onCreateTestFromFinding={(findingId) =>
-									updateParams({
-										collection: "tests",
-										finding: findingId,
-									})
-								}
-								onBack={() =>
-									updateParams({ selected: undefined })
-								}
-							/>
-						)}
-					</aside>
-				</div>
-			</PageScrollArea>
-		</PageWorkspace>
-	);
+			</AgentWorkbenchFrame>
+			</PageWorkspace>
+		);
 }
 
 function TestsCollection({
 	tests,
 	latestByLogicalId,
 	selectedTests,
+	selectedKey,
 	isLoading,
 	isError,
 	onToggle,
@@ -722,6 +702,7 @@ function TestsCollection({
 	tests: AgentTest[];
 	latestByLogicalId: Map<string, AgentTestLatest>;
 	selectedTests: Set<string>;
+	selectedKey: string;
 	isLoading: boolean;
 	isError: boolean;
 	onToggle: (id: string) => void;
@@ -742,15 +723,28 @@ function TestsCollection({
 	if (tests.length === 0)
 		return <CollectionState>No saved tests yet.</CollectionState>;
 	return (
-		<div className="space-y-2">
+		<div>
 			{tests.map((test) => {
 				const latest = latestByLogicalId.get(test.logical_test_id);
 				return (
-					<div
+					<WorkbenchRow
 						key={test.logical_test_id}
-						className="rounded-xl border bg-card p-3 shadow-sm"
-					>
-						<div className="flex items-start gap-3">
+						title={test.name}
+						meta={
+							<>
+								{resultLabel(latest)}
+								<span className="mx-1">·</span>v{test.version}
+								{test.origin_suite_name ? (
+									<>
+										<span className="mx-1">·</span>
+										{test.origin_suite_name}
+									</>
+								) : null}
+							</>
+						}
+						selected={selectedKey === `tests:${test.logical_test_id}`}
+						onSelect={() => onSelect(test)}
+						selectionControl={
 							<Checkbox
 								checked={selectedTests.has(test.logical_test_id)}
 								onCheckedChange={() =>
@@ -758,28 +752,8 @@ function TestsCollection({
 								}
 								aria-label={`Select ${test.name}`}
 							/>
-							<button
-								type="button"
-								className="min-w-0 flex-1 text-left"
-								onClick={() => onSelect(test)}
-							>
-								<div className="font-medium">{test.name}</div>
-								<div className="mt-1 text-sm text-muted-foreground">
-									{resultLabel(latest)}
-								</div>
-								<div className="mt-2 flex flex-wrap gap-2">
-									<Badge variant="secondary">
-										v{test.version}
-									</Badge>
-									{test.origin_suite_name && (
-										<Badge variant="outline">
-											{test.origin_suite_name}
-										</Badge>
-									)}
-								</div>
-							</button>
-						</div>
-					</div>
+						}
+					/>
 				);
 			})}
 		</div>
@@ -788,12 +762,14 @@ function TestsCollection({
 
 function FindingsCollection({
 	findings,
+	selectedKey,
 	isLoading,
 	isError,
 	onSelect,
 	onRetry,
 }: {
 	findings: Finding[];
+	selectedKey: string;
 	isLoading: boolean;
 	isError: boolean;
 	onSelect: (finding: Finding) => void;
@@ -813,24 +789,22 @@ function FindingsCollection({
 	if (findings.length === 0)
 		return <CollectionState>No findings yet.</CollectionState>;
 	return (
-		<div className="space-y-2">
+		<div>
 			{findings.map((finding) => (
-				<button
+				<WorkbenchRow
 					key={finding.id}
-					type="button"
-					className="w-full rounded-xl border bg-card p-3 text-left shadow-sm"
-					onClick={() => onSelect(finding)}
-				>
-					<div className="font-medium">{finding.description}</div>
-					{finding.expected_behavior && (
-						<div className="mt-1 text-sm text-muted-foreground">
-							Expected: {finding.expected_behavior}
-						</div>
-					)}
-					<div className="mt-2 text-xs text-muted-foreground">
-						{finding.status}
-					</div>
-				</button>
+					title={finding.description}
+					meta={
+						<>
+							{finding.expected_behavior
+								? `Expected: ${finding.expected_behavior} · `
+								: ""}
+							{finding.status}
+						</>
+					}
+					selected={selectedKey === `findings:${finding.id}`}
+					onSelect={() => onSelect(finding)}
+				/>
 			))}
 		</div>
 	);
@@ -838,12 +812,14 @@ function FindingsCollection({
 
 function ReviewsCollection({
 	reviews,
+	selectedKey,
 	isLoading,
 	isError,
 	onSelect,
 	onRetry,
 }: {
 	reviews: Review[];
+	selectedKey: string;
 	isLoading: boolean;
 	isError: boolean;
 	onSelect: (review: Review) => void;
@@ -863,19 +839,15 @@ function ReviewsCollection({
 	if (reviews.length === 0)
 		return <CollectionState>No review runs yet.</CollectionState>;
 	return (
-		<div className="space-y-2">
+		<div>
 			{reviews.map((review) => (
-				<button
+				<WorkbenchRow
 					key={review.id}
-					type="button"
-					className="w-full rounded-xl border bg-card p-3 text-left shadow-sm"
-					onClick={() => onSelect(review)}
-				>
-					<div className="font-medium">{review.name}</div>
-					<div className="mt-1 text-sm text-muted-foreground">
-						Version {review.latest_version} · {review.status}
-					</div>
-				</button>
+					title={review.name}
+					meta={`Version ${review.latest_version} · ${review.status}`}
+					selected={selectedKey === `reviews:${review.id}`}
+					onSelect={() => onSelect(review)}
+				/>
 			))}
 		</div>
 	);
@@ -883,12 +855,14 @@ function ReviewsCollection({
 
 function RunsCollection({
 	runs,
+	selectedKey,
 	isLoading,
 	isError,
 	onSelect,
 	onRetry,
 }: {
 	runs: QualityRun[];
+	selectedKey: string;
 	isLoading: boolean;
 	isError: boolean;
 	onSelect: (run: QualityRun) => void;
@@ -908,21 +882,15 @@ function RunsCollection({
 	if (runs.length === 0)
 		return <CollectionState>No run history yet.</CollectionState>;
 	return (
-		<div className="space-y-2">
+		<div>
 			{runs.map((run) => (
-				<button
+				<WorkbenchRow
 					key={run.id}
-					type="button"
-					className="w-full rounded-xl border bg-card p-3 text-left shadow-sm"
-					onClick={() => onSelect(run)}
-				>
-					<div className="font-medium">
-						{run.asked ?? run.trigger_type}
-					</div>
-					<div className="mt-1 text-sm text-muted-foreground">
-						{run.status} · {run.created_at}
-					</div>
-				</button>
+					title={run.asked ?? run.trigger_type}
+					meta={`${run.status} · ${run.created_at}`}
+					selected={selectedKey === `runs:${run.id}`}
+					onSelect={() => onSelect(run)}
+				/>
 			))}
 		</div>
 	);
@@ -1354,6 +1322,7 @@ const FLEET_COLLECTIONS: FleetCollection[] = ["findings", "tests", "reviews"];
 
 function FleetAgentWorkbench() {
 	const [params, setParams] = useSearchParams();
+	const navigate = useNavigate();
 	const collection = fleetCollectionFromParams(params.get("collection"));
 	const selectedAgentId = params.get("agent") ?? "";
 	const search = params.get("search") ?? "";
@@ -1440,32 +1409,25 @@ function FleetAgentWorkbench() {
 					</Button>
 				</div>
 
-				<div className="flex flex-wrap items-center gap-3">
-					<Select
-						value={collection}
-						onValueChange={(value) =>
-							update({
-								collection: value,
-								agent:
-									value === "findings"
-										? selectedAgentId || undefined
-										: selectedAgentId,
-							})
-						}
-					>
-						<SelectTrigger
-							aria-label="Workbench collection"
-							className="min-h-11 w-full sm:w-[180px]"
-						>
-							<SelectValue />
-						</SelectTrigger>
-						<SelectContent>
-							<SelectItem value="findings">Findings</SelectItem>
-							<SelectItem value="tests">Tests</SelectItem>
-							<SelectItem value="reviews">Reviews</SelectItem>
-						</SelectContent>
-					</Select>
+			</div>
 
+			<AgentWorkbenchFrame
+				title={collection[0].toUpperCase() + collection.slice(1)}
+				description="Search and inspect records across the agent fleet."
+				collections={FLEET_COLLECTIONS.map((value) => ({
+					value,
+					label: value[0].toUpperCase() + value.slice(1),
+				}))}
+				collection={collection}
+				onCollectionChange={(value) =>
+					update({ collection: value, agent: selectedAgentId || undefined })
+				}
+				toolbar={
+					<WorkbenchCollectionToolbar
+						collectionLabel={collection[0].toUpperCase() + collection.slice(1)}
+						search={search}
+						onSearchChange={(value) => update({ search: value || undefined })}
+					>
 					<Select
 						value={selectedAgentId || "all"}
 						onValueChange={(value) =>
@@ -1489,28 +1451,15 @@ function FleetAgentWorkbench() {
 							))}
 						</SelectContent>
 					</Select>
-
-					<div className="relative min-w-0 flex-[1_1_14rem] max-w-sm">
-						<Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-						<Input
-							aria-label="Search Workbench"
-							value={search}
-							onChange={(event) =>
-								update({ search: event.target.value || undefined })
-							}
-							placeholder="Search Workbench"
-							className="min-h-11 pl-8"
-						/>
-					</div>
-				</div>
-			</div>
-
-			<PageScrollArea className="min-w-0 space-y-3">
+					</WorkbenchCollectionToolbar>
+				}
+			>
 				{collection === "findings" ? (
 					<FleetFindingsList
 						query={findings}
 						agentName={agentName}
 						params={params}
+						onNavigate={navigate}
 					/>
 				) : selectedAgentId ? (
 					collection === "tests" ? (
@@ -1518,12 +1467,14 @@ function FleetAgentWorkbench() {
 							query={tests}
 							agentId={selectedAgentId}
 							params={params}
+							onNavigate={navigate}
 						/>
 					) : (
 						<FleetReviewsList
 							query={reviews}
 							agentId={selectedAgentId}
 							params={params}
+							onNavigate={navigate}
 						/>
 					)
 				) : (
@@ -1531,7 +1482,7 @@ function FleetAgentWorkbench() {
 						Select an agent to view {collection}.
 					</p>
 				)}
-			</PageScrollArea>
+			</AgentWorkbenchFrame>
 		</PageWorkspace>
 	);
 }
@@ -1540,10 +1491,12 @@ function FleetFindingsList({
 	query,
 	agentName,
 	params,
+	onNavigate,
 }: {
 	query: ReturnType<typeof useQuery>;
 	agentName: (agentId: string) => string;
 	params: URLSearchParams;
+	onNavigate: (to: string) => void;
 }) {
 	if (query.isLoading) return <FleetLoadingRows />;
 	if (query.isError) return <FleetQueryError query={query} resource="findings" />;
@@ -1564,6 +1517,7 @@ function FleetFindingsList({
 						selected: `findings:${finding.id}`,
 					})}
 					label={`Open Finding ${finding.description}`}
+					onNavigate={onNavigate}
 				/>
 			))}
 		</div>
@@ -1574,10 +1528,12 @@ function FleetTestsList({
 	query,
 	agentId,
 	params,
+	onNavigate,
 }: {
 	query: ReturnType<typeof useQuery>;
 	agentId: string;
 	params: URLSearchParams;
+	onNavigate: (to: string) => void;
 }) {
 	if (query.isLoading) return <FleetLoadingRows />;
 	if (query.isError) return <FleetQueryError query={query} resource="agent tests" />;
@@ -1596,6 +1552,7 @@ function FleetTestsList({
 						test: test.logical_test_id,
 					})}
 					label={`Open Test ${test.name}`}
+					onNavigate={onNavigate}
 				/>
 			))}
 		</div>
@@ -1606,10 +1563,12 @@ function FleetReviewsList({
 	query,
 	agentId,
 	params,
+	onNavigate,
 }: {
 	query: ReturnType<typeof useQuery>;
 	agentId: string;
 	params: URLSearchParams;
+	onNavigate: (to: string) => void;
 }) {
 	if (query.isLoading) return <FleetLoadingRows />;
 	if (query.isError) return <FleetQueryError query={query} resource="agent reviews" />;
@@ -1628,6 +1587,7 @@ function FleetReviewsList({
 						review: review.id,
 					})}
 					label={`Open Review ${review.name}`}
+					onNavigate={onNavigate}
 				/>
 			))}
 		</div>
@@ -1656,26 +1616,27 @@ function FleetRow({
 	meta,
 	to,
 	label,
+	onNavigate,
 }: {
 	title: string;
 	meta: string;
 	to: string;
 	label: string;
+	onNavigate: (to: string) => void;
 }) {
 	return (
-		<div className="rounded-[var(--bf-radius-surface)] border bg-card p-4">
-			<div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
-				<div className="min-w-0">
-					<p className="font-medium [overflow-wrap:anywhere]">{title}</p>
-					<p className="mt-1 text-xs text-muted-foreground">{meta}</p>
-				</div>
-				<Button asChild variant="outline" size="sm">
+		<WorkbenchRow
+			title={title}
+			meta={meta}
+			onSelect={() => onNavigate(to)}
+			actions={
+				<Button asChild variant="ghost" size="sm">
 					<Link aria-label={label} to={to}>
 						Open
 					</Link>
 				</Button>
-			</div>
-		</div>
+			}
+		/>
 	);
 }
 

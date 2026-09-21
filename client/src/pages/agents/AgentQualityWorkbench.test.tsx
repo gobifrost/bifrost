@@ -351,8 +351,8 @@ describe("AgentQualityWorkbench", () => {
 		screen.queryByText("Search, select, and inspect quality signals."),
 	).not.toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Tests" })).toHaveAttribute(
-			"aria-pressed",
-			"true",
+			"aria-current",
+			"page",
 		);
 		expect(
 			screen.queryByRole("tab", { name: "Evidence" }),
@@ -377,7 +377,7 @@ describe("AgentQualityWorkbench", () => {
 
 		expect(
 			await screen.findByRole("button", { name: "Findings" }),
-		).toHaveAttribute("aria-pressed", "true");
+		).toHaveAttribute("aria-current", "page");
 		expect(
 			await screen.findByText("Routes without confirming."),
 		).toBeVisible();
@@ -391,7 +391,7 @@ describe("AgentQualityWorkbench", () => {
 		await screen.findByText("Should ask before routing");
 
 		await user.type(
-			screen.getByLabelText("Search Workbench collection"),
+			screen.getByLabelText("Search Tests"),
 			"routing",
 		);
 		await user.click(
@@ -400,6 +400,38 @@ describe("AgentQualityWorkbench", () => {
 
 		expect(screen.getByText("1 selected")).toBeVisible();
 		expect(screen.getByText("Should ask before routing")).toBeVisible();
+	});
+
+	it("opens test creation as an attached inspector from the toolbar", async () => {
+		const { user } = renderPage();
+		await screen.findByText("Should ask before routing");
+
+		await user.click(screen.getByRole("button", { name: "Add Test" }));
+
+		expect(screen.getByRole("heading", { name: "Improve agent" })).toBeVisible();
+		expect(
+			screen.getByRole("button", { name: "Close inspector" }),
+		).toBeVisible();
+	});
+
+	it("keeps the collection and selected inspector in one contained Workbench", async () => {
+		const { user } = renderPage("/agents/agent-1/quality?collection=findings");
+
+		await user.click(await screen.findByText("Routes without confirming."));
+
+		expect(screen.getByLabelText("Workbench collections")).toBeVisible();
+		expect(document.querySelector("[data-workspace-header]")).toBeVisible();
+		expect(
+			screen.getByRole("button", { name: "Close inspector" }),
+		).toBeVisible();
+		expect(
+			screen.getByRole("button", { name: /routes without confirming/i }),
+		).toHaveAttribute("aria-selected", "true");
+
+		await user.click(screen.getByRole("button", { name: "Close inspector" }));
+		expect(
+			screen.getByRole("button", { name: /routes without confirming/i }),
+		).toHaveAttribute("aria-selected", "true");
 	});
 
 	it("creates a plain-language test from finding context and can clear it", async () => {
@@ -450,6 +482,7 @@ describe("AgentQualityWorkbench", () => {
 	it("applies supported Advanced JSON fields instead of burying text in assertions", async () => {
 		const { user } = renderPage();
 		await screen.findByText("Should ask before routing");
+		await user.click(screen.getByRole("button", { name: "Add Test" }));
 
 		await user.type(screen.getByLabelText("Situation"), "When tools are risky");
 		await user.type(screen.getByLabelText("Expected behavior"), "Ask first");
@@ -501,6 +534,7 @@ describe("AgentQualityWorkbench", () => {
 	it("blocks create when Advanced JSON is invalid or not an object", async () => {
 		const { user } = renderPage();
 		await screen.findByText("Should ask before routing");
+		await user.click(screen.getByRole("button", { name: "Add Test" }));
 
 		await user.type(screen.getByLabelText("Situation"), "When JSON is bad");
 		await user.type(screen.getByLabelText("Expected behavior"), "Do not save");
@@ -591,8 +625,8 @@ describe("AgentQualityWorkbench", () => {
 			screen.getByRole("button", { name: "Create test from finding" }),
 		);
 		expect(screen.getByRole("button", { name: "Tests" })).toHaveAttribute(
-			"aria-pressed",
-			"true",
+			"aria-current",
+			"page",
 		);
 		expect(screen.getByText(/Drafting from finding/i)).toBeVisible();
 
@@ -601,8 +635,8 @@ describe("AgentQualityWorkbench", () => {
 		await user.click(screen.getByRole("button", { name: "Back to list" }));
 
 		expect(screen.getByRole("button", { name: "Findings" })).toHaveAttribute(
-			"aria-pressed",
-			"true",
+			"aria-current",
+			"page",
 		);
 	});
 

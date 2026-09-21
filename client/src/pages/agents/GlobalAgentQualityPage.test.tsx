@@ -131,6 +131,8 @@ describe("GlobalAgentQualityPage", () => {
 		renderPage();
 
 		expect(document.querySelector("[data-agent-workbench]")).toBeVisible();
+		expect(await screen.findByLabelText("Workbench collections")).toBeVisible();
+		expect(document.querySelector("[data-workspace-header]")).toBeVisible();
 		expect(screen.getByRole("combobox", { name: "Workbench collection" })).toHaveTextContent(
 			"Findings",
 		);
