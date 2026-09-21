@@ -98,6 +98,7 @@ const mockDownloadSolutionExportJob = vi.fn();
 const mockGetSolutionCaptureCandidates = vi.fn();
 const mockCaptureSolutionEntities = vi.fn();
 const mockSyncSolution = vi.fn();
+const mockDisconnectSolutionGit = vi.fn();
 const mockGetSolutionReadme = vi.fn();
 const mockGetSolutionSdkStatus = vi.fn();
 const mockUpdateSolutionAppSdks = vi.fn();
@@ -123,6 +124,7 @@ vi.mock("@/services/solutions", () => ({
 	downloadSolutionExportJob: (...a: unknown[]) =>
 		mockDownloadSolutionExportJob(...a),
 	syncSolution: (...a: unknown[]) => mockSyncSolution(...a),
+	disconnectSolutionGit: (...a: unknown[]) => mockDisconnectSolutionGit(...a),
 	getSolutionCaptureCandidates: (...a: unknown[]) =>
 		mockGetSolutionCaptureCandidates(...a),
 	captureSolutionEntities: (...a: unknown[]) =>
@@ -772,10 +774,62 @@ describe("SolutionDetail", () => {
 		await screen.findByTestId("solution-detail");
 
 		expect(screen.getByTestId("update-solution")).toBeInTheDocument();
+		expect(
+			screen.getByRole("button", { name: "Connect Git" }),
+		).toBeInTheDocument();
 		expect(screen.queryByTestId("update-now")).not.toBeInTheDocument();
 		expect(
 			screen.queryByTestId("update-available-badge"),
 		).not.toBeInTheDocument();
+	});
+
+	it("offers Update from the configured ref and Disconnect Git for a connected install", async () => {
+		const entities = makeEntities();
+		entities.solution = {
+			...entities.solution,
+			git_connected: true,
+			git_repo_url: "https://github.com/acme/sol",
+			git_ref: "main",
+		} as unknown as typeof entities.solution;
+		mockGetSolutionEntities.mockResolvedValue(entities);
+
+		await renderPage();
+		await screen.findByTestId("solution-detail");
+
+		expect(
+			screen.getByRole("button", { name: "Update from main" }),
+		).toBeInTheDocument();
+		expect(
+			screen.getByRole("button", { name: "Disconnect Git" }),
+		).toBeInTheDocument();
+		expect(screen.getByTestId("git-provenance")).toHaveTextContent(
+			"https://github.com/acme/sol @ main",
+		);
+	});
+
+	it("confirms disconnect before making the solution manually writable", async () => {
+		mockDisconnectSolutionGit.mockResolvedValue({ id: "sol-1" });
+		const entities = makeEntities();
+		entities.solution = {
+			...entities.solution,
+			git_connected: true,
+			git_repo_url: "https://github.com/acme/sol",
+			git_ref: "main",
+		} as unknown as typeof entities.solution;
+		mockGetSolutionEntities.mockResolvedValue(entities);
+
+		const { user } = await renderPage();
+		await screen.findByTestId("solution-detail");
+		await user.click(screen.getByRole("button", { name: "Disconnect Git" }));
+
+		expect(
+			await screen.findByRole("heading", { name: "Disconnect Git?" }),
+		).toBeInTheDocument();
+		expect(mockDisconnectSolutionGit).not.toHaveBeenCalled();
+		await user.click(screen.getByRole("button", { name: "Disconnect Git" }));
+		await waitFor(() =>
+			expect(mockDisconnectSolutionGit).toHaveBeenCalledWith("sol-1"),
+		);
 	});
 
 	it("surfaces 'Update now' + an Update-available badge for a git-connected install with an available update", async () => {

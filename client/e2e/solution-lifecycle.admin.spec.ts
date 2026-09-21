@@ -207,6 +207,24 @@ const test = base.extend<{
 });
 test.use({ viewport: { width: 1440, height: 900 } });
 
+test("opens the managed Git connection workflow for a manual solution", async ({
+	page,
+	solution: { solutionId, solutionName },
+}) => {
+	await page.goto(`/solutions/${solutionId}`);
+	await expect(page.getByRole("heading", { name: solutionName })).toBeVisible({
+		timeout: 15000,
+	});
+
+	await page.getByRole("button", { name: "Connect Git" }).click();
+	await expect(
+		page.getByRole("dialog", { name: "Edit Solution" }),
+	).toBeVisible();
+	await expect(
+		page.getByText(/repository connection/i),
+	).toBeVisible();
+});
+
 test("uninstalls a solution and reveals it with Show Inactive", async ({
 	page,
 	api,

@@ -22,6 +22,7 @@ import {
 	deleteSolution,
 	createSolutionExportJob,
 	downloadSolutionExportJob,
+	disconnectSolutionGit,
 	getSolution,
 	getSolutionEntities,
 	getSolutionExportJob,
@@ -196,7 +197,7 @@ describe("solutions service", () => {
 	it("syncs a solution by id", async () => {
 		mockPost.mockResolvedValue({ data: undefined });
 
-		await syncSolution("sol-1");
+		await expect(syncSolution("sol-1")).resolves.toBeUndefined();
 
 		expect(mockPost).toHaveBeenCalledWith(
 			"/api/solutions/{solution_id}/sync",
@@ -206,10 +207,38 @@ describe("solutions service", () => {
 		);
 	});
 
+	it("returns a shared PlatformJob acceptance when sync becomes durable", async () => {
+		mockPost.mockResolvedValue({
+			data: { job_id: "job-1", status: "queued", reused: false },
+		});
+
+		await expect(syncSolution("sol-1")).resolves.toEqual({
+			job_id: "job-1",
+			status: "queued",
+			reused: false,
+		});
+	});
+
 	it("throws when sync fails", async () => {
 		mockPost.mockResolvedValue({ error: { detail: "no remote" } });
 
 		await expect(syncSolution("sol-1")).rejects.toThrow(/no remote/);
+	});
+
+	it("disconnects a solution without changing its installed entities", async () => {
+		mockPatch.mockResolvedValue({ data: { id: "sol-1" } });
+
+		await disconnectSolutionGit("sol-1");
+
+		expect(mockPatch).toHaveBeenCalledWith("/api/solutions/{solution_id}", {
+			params: { path: { solution_id: "sol-1" } },
+			body: {
+				git_connected: false,
+				git_repo_url: null,
+				repo_subpath: null,
+				git_ref: null,
+			},
+		});
 	});
 
 	it("gets aggregate SDK status for a solution", async () => {

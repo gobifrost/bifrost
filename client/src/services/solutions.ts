@@ -192,6 +192,26 @@ export async function updateSolution(
 }
 
 /**
+ * Remove a managed Solution's Git coordinates without changing its installed
+ * entities. The install becomes manually writable again.
+ */
+export async function disconnectSolutionGit(
+	solutionId: string,
+	options: RequestOptions = {},
+): Promise<Solution> {
+	return updateSolution(
+		solutionId,
+		{
+			git_connected: false,
+			git_repo_url: null,
+			repo_subpath: null,
+			git_ref: null,
+		},
+		options,
+	);
+}
+
+/**
  * Trigger a pull/sync of a git-connected install (the "Update now" action).
  * Pulls the latest commit at the install's configured ref and re-applies the
  * solution.
@@ -199,9 +219,9 @@ export async function updateSolution(
 export async function syncSolution(
 	solutionId: string,
 	options: RequestOptions = {},
-): Promise<void> {
+): Promise<PlatformJobAccepted | undefined> {
 	const { signal } = options;
-	const { error } = await apiClient.POST(
+	const { data, error } = await apiClient.POST(
 		"/api/solutions/{solution_id}/sync",
 		{
 			params: { path: { solution_id: solutionId } },
@@ -210,6 +230,9 @@ export async function syncSolution(
 	);
 	if (error)
 		throw new Error(getErrorMessage(error, "Failed to sync solution"));
+	// The current endpoint completes synchronously. Keep the client ready for
+	// its PlatformJob response without making callers branch on a parallel API.
+	return data as unknown as PlatformJobAccepted | undefined;
 }
 
 export async function getSolutionSdkStatus(
