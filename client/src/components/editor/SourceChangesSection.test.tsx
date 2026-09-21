@@ -60,3 +60,39 @@ it("retains cached records on failure and keeps retry separate from disclosure",
 	await user.click(disclosure);
 	expect(screen.getByRole("article")).toBeVisible();
 });
+
+it("offers publication retry for a durable sync failure", async () => {
+	const user = userEvent.setup();
+	const onRetryPublication = vi.fn();
+	render(
+		<SourceChangesSection
+			syncError="remote unavailable"
+			hasLoadError={false}
+			onRetryLoad={vi.fn()}
+			changedFiles={[]}
+			conflicts={[]}
+			conflictResolutions={{}}
+			onShowConflictDiff={vi.fn()}
+			onResolveConflict={vi.fn()}
+			commitMessage=""
+			onCommitMessageChange={vi.fn()}
+			onCommit={vi.fn()}
+			onCompleteMerge={vi.fn()}
+			allConflictsResolved={false}
+			onSync={vi.fn()}
+			onShowDiff={vi.fn()}
+			onDiscardFiles={vi.fn().mockResolvedValue(undefined)}
+			commitsBehind={0}
+			commitsAhead={0}
+			needsSync={false}
+			loading={null}
+			disabled={false}
+			branch="main"
+			onRetryPublication={onRetryPublication}
+		/>,
+	);
+
+	await user.click(screen.getByRole("button", { name: "Retry publication" }));
+
+	expect(onRetryPublication).toHaveBeenCalledTimes(1);
+});

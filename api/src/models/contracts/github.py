@@ -430,6 +430,10 @@ class WorkspaceSyncPlan(BaseModel):
         default=False,
         description="Whether this plan's import and approved deletions are already committed",
     )
+    checkpoint_id: str | None = Field(
+        default=None,
+        description="Durable workspace checkpoint used for publication-only retry",
+    )
     pending_deletes: list[EntityChange] = Field(default_factory=list)
     entity_changes: list[EntityChange] = Field(default_factory=list)
     file_changes: list[WorkspaceFileChange] = Field(default_factory=list)

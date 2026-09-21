@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from uuid import UUID, uuid4
 from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -31,6 +32,7 @@ logger = logging.getLogger(__name__)
 
 GIT_LOCK_KEY = "bifrost:git-lock"
 GIT_LOCK_TIMEOUT = 300  # 5 minutes
+WORKSPACE_CHECKPOINT_PREFIX = "_workspace_sync_checkpoints"
 
 PERSISTENT_WORK_DIR = Path("/tmp/git")
 
@@ -140,6 +142,29 @@ class GitRepoManager:
         logger.info(f"sync_up: {source} -> {s3_uri}")
         await self._run_aws_cli(cmd)
 
+    async def checkpoint_workspace(self, source: Path) -> str:
+        """Persist an exact workspace snapshot for a post-DB publication retry."""
+        checkpoint_id = str(uuid4())
+        uri = self._checkpoint_uri(checkpoint_id)
+        await self._run_aws_cli(self._build_sync_cmd(str(source), uri, delete=True))
+        return checkpoint_id
+
+    async def restore_workspace_checkpoint(self, checkpoint_id: str, target: Path) -> None:
+        """Restore a checkpoint exactly, including Git objects and uncommitted files."""
+        target.mkdir(parents=True, exist_ok=True)
+        await self._run_aws_cli(
+            self._build_sync_cmd(self._checkpoint_uri(checkpoint_id), str(target), delete=True)
+        )
+
+    async def delete_workspace_checkpoint(self, checkpoint_id: str) -> None:
+        """Remove a checkpoint only after successful publication."""
+        cmd = ["aws", "s3", "rm", self._checkpoint_uri(checkpoint_id), "--recursive"]
+        endpoint_url = self._settings.s3_endpoint_url
+        if endpoint_url:
+            cmd.extend(["--endpoint-url", endpoint_url])
+        cmd.append("--only-show-errors")
+        await self._run_aws_cli(cmd)
+
     async def has_git_dir(self) -> bool:
         """Check if .git/HEAD exists in S3 _repo/ (quick existence check)."""
         from src.services.repo_storage import RepoStorage
@@ -150,6 +175,14 @@ class GitRepoManager:
         """Build the S3 URI for _repo/."""
         bucket = self._settings.s3_bucket
         return f"s3://{bucket}/_repo/"
+
+    def _checkpoint_uri(self, checkpoint_id: str) -> str:
+        """Build a bounded, validated prefix for one workspace checkpoint."""
+        try:
+            checkpoint = UUID(checkpoint_id)
+        except ValueError as error:
+            raise ValueError("Invalid workspace checkpoint ID") from error
+        return f"s3://{self._settings.s3_bucket}/{WORKSPACE_CHECKPOINT_PREFIX}/{checkpoint}/"
 
     def _build_sync_cmd(
         self,

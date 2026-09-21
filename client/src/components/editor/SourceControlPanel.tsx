@@ -207,6 +207,7 @@ function logEntityChangesToTerminal(
 async function runGitOp<T>(
 	queueFn: (jobId: string) => Promise<{ job_id: string }>,
 	resultType: string,
+	onQueued?: (jobId: string) => void,
 ): Promise<T> {
 	// Generate job_id client-side and subscribe BEFORE queueing to avoid
 	// race condition where fast operations (e.g. diff) complete before
@@ -325,7 +326,8 @@ async function runGitOp<T>(
 	});
 
 	// Now queue the operation — the WebSocket listener is already active
-	await queueFn(job_id);
+	const queued = await queueFn(job_id);
+	onQueued?.(queued.job_id);
 
 	return resultPromise;
 }
@@ -627,20 +629,24 @@ export function SourceControlPanel() {
 	}, [cleanupOp, commitOp, commitMessage, loadChanges, refreshStatus]);
 
 	const [syncError, setSyncError] = useState<string | null>(null);
+	const [retryJobId, setRetryJobId] = useState<string | null>(null);
 	const handleSync = useCallback(
-		async (confirmDeletes = false) => {
+		async (confirmDeletes = false, retryJobId?: string) => {
 			setSyncError(null);
+			if (!retryJobId) setRetryJobId(null);
 			setLoading("syncing");
+			let queuedJobId: string | null = null;
 			try {
 				const result = await runGitOp<SyncResult>(
 					(jobId) =>
 						syncOp.mutateAsync(
 							jobId,
-							confirmDeletes
-								? { confirm_deletes: true }
+							confirmDeletes || retryJobId
+								? { confirm_deletes: confirmDeletes, retry_job_id: retryJobId }
 								: undefined,
 						),
 					"sync",
+					(jobId) => { queuedJobId = jobId; },
 				);
 				if (
 					result.needs_delete_confirmation &&
@@ -651,6 +657,7 @@ export function SourceControlPanel() {
 						`${result.pending_deletes.length} entity deletion(s) require confirmation`,
 					);
 				} else if (result.success) {
+					setRetryJobId(null);
 					const parts = [];
 					if (result.pushed_commits > 0)
 						parts.push(`pushed ${result.pushed_commits} commit(s)`);
@@ -689,6 +696,7 @@ export function SourceControlPanel() {
 						`${result.conflicts.length} conflict(s) need resolution`,
 					);
 				} else {
+					if (result.retryable && queuedJobId) setRetryJobId(queuedJobId);
 					setSyncError(result.error || "Sync failed. Try again.");
 					toast.error(result.error || "Sync failed");
 				}
@@ -713,6 +721,7 @@ export function SourceControlPanel() {
 						);
 						return;
 					}
+					if (syncData.retryable && queuedJobId) setRetryJobId(queuedJobId);
 				}
 				const msg =
 					error instanceof Error ? error.message : String(error);
@@ -1057,6 +1066,7 @@ export function SourceControlPanel() {
 					onCleanupAndRetry={handleCleanupAndRetry}
 					onDismissCleanup={() => setShowCleanupPrompt(false)}
 					pendingDeletes={pendingDeletes}
+					onRetryPublication={retryJobId ? () => handleSync(false, retryJobId) : undefined}
 					onConfirmDeletes={() => handleSync(true)}
 					onDismissDeletes={() => setPendingDeletes([])}
 				/>

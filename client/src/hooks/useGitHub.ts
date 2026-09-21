@@ -148,6 +148,7 @@ export interface SyncResult {
 	entity_changes?: EntityChange[];
 	needs_delete_confirmation?: boolean;
 	pending_deletes?: EntityChange[];
+	retryable?: boolean;
 }
 
 export interface AbortMergeResult {

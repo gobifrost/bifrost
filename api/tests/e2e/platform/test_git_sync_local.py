@@ -233,9 +233,28 @@ async def sync_service(db_session: AsyncSession, bare_repo, tmp_path):
     async def noop_sync_up(source):
         sync_up_calls.append(source)
 
+    checkpoints_dir = tmp_path / "workspace_checkpoints"
+
+    async def checkpoint_workspace(source):
+        checkpoint_id = str(uuid4())
+        checkpoint = checkpoints_dir / checkpoint_id
+        checkpoint.parent.mkdir(exist_ok=True)
+        shutil.copytree(source, checkpoint)
+        return checkpoint_id
+
+    async def restore_workspace_checkpoint(checkpoint_id, target):
+        shutil.rmtree(target)
+        shutil.copytree(checkpoints_dir / checkpoint_id, target)
+
+    async def delete_workspace_checkpoint(checkpoint_id):
+        shutil.rmtree(checkpoints_dir / checkpoint_id)
+
     service.repo_manager.checkout = local_checkout  # type: ignore[assignment]
     service.repo_manager.lock = local_lock  # type: ignore[assignment]
     service.repo_manager.sync_up = noop_sync_up  # type: ignore[assignment]
+    service.repo_manager.checkpoint_workspace = checkpoint_workspace  # type: ignore[assignment]
+    service.repo_manager.restore_workspace_checkpoint = restore_workspace_checkpoint  # type: ignore[assignment]
+    service.repo_manager.delete_workspace_checkpoint = delete_workspace_checkpoint  # type: ignore[assignment]
     service._sync_up_calls = sync_up_calls  # type: ignore[attr-defined]
     # Patch the module-level PERSISTENT_WORK_DIR so is_initialized checks the test dir
     import src.services.git_repo_manager as grm_mod
@@ -5585,7 +5604,10 @@ class TestSyncPublicationOrdering:
             )
 
             assert failed.retryable is True
-            assert failed.retry_plan == plan.model_copy(update={"db_applied": True})
+            assert failed.retry_plan == plan.model_copy(
+                update={"db_applied": True, "checkpoint_id": failed.retry_plan.checkpoint_id}
+            )
+            assert failed.retry_plan.checkpoint_id is not None
             assert sync_service._sync_up_calls == []
 
             monkeypatch.setattr(sync_service, "_do_push", original_push)
@@ -5620,7 +5642,10 @@ class TestSyncPublicationOrdering:
             )
 
             assert failed.retryable is True
-            assert failed.retry_plan == plan.model_copy(update={"db_applied": True})
+            assert failed.retry_plan == plan.model_copy(
+                update={"db_applied": True, "checkpoint_id": failed.retry_plan.checkpoint_id}
+            )
+            assert failed.retry_plan.checkpoint_id is not None
 
             monkeypatch.setattr(sync_service.repo_manager, "sync_up", original_sync_up)
             retried = await sync_service.apply_desktop_sync(
@@ -5679,6 +5704,42 @@ class TestSyncPublicationOrdering:
             )
 
         assert retried.success is True
+
+    async def test_publication_retry_restores_a_durable_workspace_checkpoint(
+        self,
+        sync_service,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """A retry can publish after a new worker loses its local /tmp/git tree."""
+        import shutil
+
+        from src.models.contracts.github import PushResult
+
+        await sync_service.desktop_commit("checkpoint base")
+        assert (await sync_service.desktop_sync(confirm_deletes=True)).success
+        write_entity_to_repo(sync_service._persistent_dir, "README.md", "checkpoint retry\n")
+        assert (await sync_service.desktop_commit("checkpoint retry")).success
+
+        original_push = sync_service._do_push
+        monkeypatch.setattr(
+            sync_service,
+            "_do_push",
+            lambda *_args: PushResult(success=False, error="remote unavailable"),
+        )
+        failed = await sync_service.desktop_sync(confirm_deletes=True)
+
+        assert failed.retryable is True
+        assert failed.retry_plan is not None
+        assert failed.retry_plan.checkpoint_id is not None
+
+        shutil.rmtree(sync_service._persistent_dir)
+        sync_service._persistent_dir.mkdir()
+        monkeypatch.setattr(sync_service, "_do_push", original_push)
+
+        retried = await sync_service.desktop_sync(retry_plan=failed.retry_plan)
+
+        assert retried.success is True
+        assert sync_service._persistent_dir.joinpath("README.md").read_text() == "checkpoint retry\n"
 
     async def test_prepare_validation_rolls_back_database_mutations(
         self,

@@ -744,6 +744,7 @@ class GitHubSyncService:
         else:
             if progress_fn:
                 await progress_fn("Importing entities...")
+            checkpoint_id = None
             async with self.db.begin_nested():
                 entities_imported, entity_changes = await self._import_all_entities(
                     work_dir, progress_fn=progress_fn,
@@ -775,7 +776,14 @@ class GitHubSyncService:
                 if progress_fn:
                     await progress_fn("Updating file index...")
                 await self._update_file_index(work_dir)
-            await self.db.commit()
+                checkpoint_id = await self.repo_manager.checkpoint_workspace(work_dir)
+            try:
+                await self.db.commit()
+            except Exception:
+                if checkpoint_id:
+                    await self.repo_manager.delete_workspace_checkpoint(checkpoint_id)
+                raise
+            plan = plan.model_copy(update={"checkpoint_id": checkpoint_id})
 
         publication_plan = plan.model_copy(update={
             "db_applied": True,
@@ -811,6 +819,10 @@ class GitHubSyncService:
             if progress_fn:
                 await progress_fn("Syncing app previews...")
             await self._sync_app_previews(work_dir)
+            if publication_plan.checkpoint_id:
+                await self.repo_manager.delete_workspace_checkpoint(
+                    publication_plan.checkpoint_id
+                )
         except Exception as error:
             logger.warning(
                 "Workspace publication failed after import; retaining local dirty state for retry: %s",
@@ -857,6 +869,12 @@ class GitHubSyncService:
 
         try:
             async with self.repo_manager.lock() as work_dir:
+                if retry_plan and retry_plan.db_applied:
+                    if not retry_plan.checkpoint_id:
+                        raise SyncError("Publication retry is missing its workspace checkpoint")
+                    await self.repo_manager.restore_workspace_checkpoint(
+                        retry_plan.checkpoint_id, work_dir
+                    )
                 repo = self._open_or_init(work_dir)
                 plan = retry_plan or await self.prepare_desktop_sync(
                     work_dir, repo, progress_fn=_progress,
