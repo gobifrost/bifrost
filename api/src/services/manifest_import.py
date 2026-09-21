@@ -73,7 +73,13 @@ def rewrite_manifest_references(
 
     def rewrite(value: Any, *, field: str | None = None) -> Any:
         if isinstance(value, dict):
-            rewritten = {key: rewrite(item, field=key) for key, item in value.items()}
+            # Dict-based manifest collections are normally UUID-keyed.  Rewriting
+            # just the entry's ``id`` leaves a model whose key and identity
+            # disagree, which breaks changed-id selection and downstream callers.
+            rewritten = {
+                id_map.get(key, key): rewrite(item, field=key)
+                for key, item in value.items()
+            }
             # Environment bindings from an install must never leak into _repo.
             if "organization_id" in rewritten:
                 rewritten["organization_id"] = None
@@ -469,6 +475,11 @@ class ManifestResolver:
         # invalidate_config on each, so a renamed/moved/deleted config (or a
         # changed non-secret value) does not keep serving stale until TTL.
         self.configs_touched: set[tuple[str | None, str]] = set()
+        self._skip_role_sync = False
+        # Partial workspace-bundle imports are explicitly global and unattached.
+        # Their natural-key lookups must not adopt an org or solution row that
+        # merely happens to share a path or slug.
+        self._workspace_global_scope = False
 
     async def _prefetch_existing_entities(self) -> dict:
         """Prefetch all existing entity IDs/natural-keys in bulk queries.
@@ -520,9 +531,12 @@ class ManifestResolver:
             cache["role_by_name"][row[1]] = row[0]
 
         # Workflows: {(path, function_name): id} + {id} set
-        wf_result = await self.db.execute(
-            select(Workflow.id, Workflow.path, Workflow.function_name)
-        )
+        workflow_query = select(Workflow.id, Workflow.path, Workflow.function_name)
+        if self._workspace_global_scope:
+            workflow_query = workflow_query.where(
+                Workflow.organization_id.is_(None), Workflow.solution_id.is_(None)
+            )
+        wf_result = await self.db.execute(workflow_query)
         cache["wf_ids"] = set()
         cache["wf_by_natural"] = {}
         for row in wf_result.all():
@@ -552,7 +566,12 @@ class ManifestResolver:
             cache["integ_mappings"].setdefault(m.integration_id, {})[org_key] = m
 
         # Apps: {slug: id}
-        app_result = await self.db.execute(select(Application.id, Application.slug))
+        app_query = select(Application.id, Application.slug)
+        if self._workspace_global_scope:
+            app_query = app_query.where(
+                Application.organization_id.is_(None), Application.solution_id.is_(None)
+            )
+        app_result = await self.db.execute(app_query)
         cache["app_by_slug"] = {}
         for row in app_result.all():
             cache["app_by_slug"][row[1]] = row[0]
@@ -962,10 +981,16 @@ class ManifestResolver:
             )
             for entity in collection.values()
         }
-        ops = await self.plan_import(
-            rewritten, work_dir=work_dir, progress_fn=progress_fn,
-            changed_ids=changed_ids, install_id=None,
-        )
+        self._skip_role_sync = True
+        self._workspace_global_scope = True
+        try:
+            ops = await self.plan_import(
+                rewritten, work_dir=work_dir, progress_fn=progress_fn,
+                changed_ids=changed_ids, install_id=None,
+            )
+        finally:
+            self._skip_role_sync = False
+            self._workspace_global_scope = False
 
         async def read_workspace(path: str) -> bytes | None:
             candidate = work_dir / path
@@ -1346,7 +1371,7 @@ class ManifestResolver:
         # (full role sync). git-sync always serializes `roles` (model default []), so
         # a present-empty list reliably means "no roles" (B3). `is not None` guards a
         # hypothetical roles-less model; SyncRoles({}) deletes all rows.
-        if getattr(mwf, "roles", None) is not None:
+        if not self._skip_role_sync and getattr(mwf, "roles", None) is not None:
             role_ids = {UUID(r) for r in mwf.roles}
             ops.append(SyncRoles(
                 junction_model=WorkflowRole,
@@ -2282,7 +2307,7 @@ class ManifestResolver:
             ))
 
         # Role sync op — fire on present-empty too, to clear bindings (B3; see _resolve_workflow).
-        if getattr(mapp, "roles", None) is not None:
+        if not self._skip_role_sync and getattr(mapp, "roles", None) is not None:
             role_ids = {UUID(r) for r in mapp.roles}
             ops.append(SyncRoles(
                 junction_model=AppRole,
@@ -3092,7 +3117,7 @@ class ManifestResolver:
 
         # Role sync op (FormRole.assigned_by is NOT NULL — pass via extra_fields).
         # Fire on present-empty too, to clear bindings (B3; see _resolve_workflow).
-        if getattr(mform, "roles", None) is not None:
+        if not self._skip_role_sync and getattr(mform, "roles", None) is not None:
             role_ids = {UUID(r) for r in mform.roles}
             ops.append(SyncRoles(
                 junction_model=FormRole,
@@ -3145,7 +3170,7 @@ class ManifestResolver:
 
         # Role sync op (AgentRole.assigned_by is NOT NULL — pass via extra_fields).
         # Fire on present-empty too, to clear bindings (B3; see _resolve_workflow).
-        if getattr(magent, "roles", None) is not None:
+        if not self._skip_role_sync and getattr(magent, "roles", None) is not None:
             role_ids = {UUID(r) for r in magent.roles}
             ops.append(SyncRoles(
                 junction_model=AgentRole,

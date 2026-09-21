@@ -20,7 +20,6 @@ from bifrost.manifest import (
     ManifestAgent,
     ManifestApp,
     ManifestConfig,
-    ManifestCustomClaim,
     ManifestEventSource,
     ManifestFilePolicy,
     ManifestForm,
@@ -28,6 +27,7 @@ from bifrost.manifest import (
     ManifestWorkflow,
 )
 from src.models.contracts.solutions import WorkspaceBundleItem, WorkspaceBundlePreview
+from src.services.git_repo_manager import hash_file, iter_repo_files
 from src.services.solutions.zip_install import PreviewResult
 
 _ID_NAMESPACE = UUID("f4b9f7ce-b035-48b8-bfdd-d18a02e34731")
@@ -36,6 +36,12 @@ _CONFIG_WARNING = (
 )
 _SCOPE_WARNING = (
     "Imported entities are unattached global workspace content (organization_id and solution_id are null)."
+)
+_CLAIMS_WARNING = (
+    "Custom claims are package-scoped and have no safe global workspace representation; they were not imported."
+)
+_ROLES_WARNING = (
+    "Role bindings are environment-specific and were not imported; existing destination role assignments are preserved."
 )
 
 
@@ -53,7 +59,7 @@ def _entry(entry: dict[str, Any], *, preview_id: UUID, stable_key: str) -> dict[
     # strips that binding before any manifest model validates the entity.
     result["organization_id"] = None
     result.pop("solution_id", None)
-    result["roles"] = []
+    result.pop("roles", None)
     result.pop("role_names", None)
     return result
 
@@ -65,10 +71,11 @@ class SolutionPackageWorkspaceProjection:
     manifest: Manifest
     package_name: str
     warnings: list[str]
+    work_dir: Path | None = None
 
     @classmethod
     def from_preview(
-        cls, package: PreviewResult, *, preview_id: UUID
+        cls, package: PreviewResult, *, preview_id: UUID, work_dir: Path | None = None
     ) -> "SolutionPackageWorkspaceProjection":
         workflows: dict[str, ManifestWorkflow] = {}
         for row in package.workflows:
@@ -96,12 +103,6 @@ class SolutionPackageWorkspaceProjection:
         for row in package.agents:
             data = _entry(row, preview_id=preview_id, stable_key=f"agent:{row.get('name') or row.get('id')}")
             agents[data["id"]] = ManifestAgent.model_validate(data)
-
-        claims: dict[str, ManifestCustomClaim] = {}
-        for row in package.claims:
-            data = _entry(row, preview_id=preview_id, stable_key=f"claim:{row.get('name')}")
-            data.setdefault("name", data["id"])
-            claims[data["id"]] = ManifestCustomClaim.model_validate(data)
 
         events: dict[str, ManifestEventSource] = {}
         for row in package.events:
@@ -133,12 +134,19 @@ class SolutionPackageWorkspaceProjection:
             warnings.append(
                 "Solution connection schemas and file-location declarations are package-only and are not imported into the workspace."
             )
+        if package.claims:
+            warnings.append(_CLAIMS_WARNING)
+        if any(row.get("roles") or row.get("role_names") for rows in (
+            package.workflows, package.apps, package.tables, package.forms, package.agents,
+        ) for row in rows):
+            warnings.append(_ROLES_WARNING)
         return cls(
             manifest=Manifest(workflows=workflows, apps=apps, tables=tables, forms=forms,
-                              agents=agents, claims=claims, configs=configs, events=events,
+                              agents=agents, configs=configs, events=events,
                               file_policies=file_policies),
             package_name=package.name or package.slug or "Solution package",
             warnings=warnings,
+            work_dir=work_dir,
         )
 
 
@@ -165,14 +173,26 @@ class WorkspaceBundlePlanner:
             if item.source_id is not None and item.target_id is not None
         }
 
-    def plan_sync(self, projection: SolutionPackageWorkspaceProjection) -> PlannedWorkspaceBundle:
+    def plan_sync(
+        self,
+        projection: SolutionPackageWorkspaceProjection,
+        *,
+        existing_file_hashes: dict[str, str | None] | None = None,
+    ) -> PlannedWorkspaceBundle:
         """Plan package creation without a DB; useful for deterministic staging tests."""
-        return self._build_plan(projection, {})
+        return self._build_plan(projection, {}, existing_file_hashes or {})
 
     async def plan(self, projection: SolutionPackageWorkspaceProjection) -> PlannedWorkspaceBundle:
-        return self._build_plan(projection, await self._prefetch_existing())
+        return self._build_plan(
+            projection, await self._prefetch_existing(), await self._prefetch_existing_file_hashes()
+        )
 
-    def _build_plan(self, projection: SolutionPackageWorkspaceProjection, existing: dict[tuple[str, tuple], tuple[UUID, dict[str, Any]]]) -> PlannedWorkspaceBundle:
+    def _build_plan(
+        self,
+        projection: SolutionPackageWorkspaceProjection,
+        existing: dict[tuple[str, tuple], tuple[UUID, dict[str, Any]]],
+        existing_file_hashes: dict[str, str | None],
+    ) -> PlannedWorkspaceBundle:
         items: list[WorkspaceBundleItem] = []
         for kind, entries, key_fn in self._collections(projection.manifest):
             for entity in entries.values():
@@ -188,10 +208,29 @@ class WorkspaceBundlePlanner:
                     id=f"entity:{kind}:{source}", kind=kind, name=str(getattr(entity, "name", None) or getattr(entity, "key", source)),
                     classification=classification, match_key=str(natural_key), source_id=source, target_id=target,
                 ))
+        file_hashes: dict[str, str] = {}
+        if projection.work_dir is not None:
+            for path in iter_repo_files(projection.work_dir):
+                relative = path.relative_to(projection.work_dir).as_posix()
+                if relative == "bifrost.solution.yaml" or relative.startswith(".bifrost/"):
+                    continue
+                _size, sha256 = hash_file(path)
+                file_hashes[relative] = sha256
+                existing_hash = existing_file_hashes.get(relative)
+                # A known destination path with no indexed SHA is a conflict,
+                # never a guessed create. This makes unknown/binary content
+                # fail closed until the reviewer chooses its disposition.
+                items.append(WorkspaceBundleItem(
+                    id=f"file:{relative}", kind="file", name=relative,
+                    classification=("create" if relative not in existing_file_hashes else
+                                    "unchanged" if existing_hash == sha256 else "conflict"),
+                    match_key=relative,
+                ))
         return PlannedWorkspaceBundle(
             preview=WorkspaceBundlePreview(preview_token=str(self.preview_id), package_name=projection.package_name,
                                            package_sha256="", items=items, warnings=projection.warnings),
-            manifest=projection.manifest, id_map=self.reference_map(items), file_hashes={},
+            manifest=projection.manifest, id_map=self.reference_map(items),
+            work_dir=projection.work_dir, file_hashes=file_hashes,
         )
 
     @staticmethod
@@ -235,7 +274,7 @@ class WorkspaceBundlePlanner:
             ("config", Config, (Config.key, Config.integration_id, Config.organization_id)),
             ("claim", CustomClaim, (CustomClaim.name, CustomClaim.organization_id)),
         ):
-            query = select(model)
+            query = select(model).where(model.organization_id.is_(None))
             if "solution_id" in model.__table__.columns:
                 query = query.where(model.solution_id.is_(None))
             rows = (await self.db.execute(query)).scalars().all()
@@ -245,10 +284,28 @@ class WorkspaceBundlePlanner:
         # Forms and agents have no package-portable natural key more reliable
         # than their name.  Keep them global-only too, instead of accidentally
         # matching an identically named installed entity.
-        for kind, model in (("form", Form), ("agent", Agent)):
+        from src.services.manifest_import import _load_file_policy_model
+
+        FilePolicy = _load_file_policy_model()
+        for kind, model in (("form", Form), ("agent", Agent), ("file_policy", FilePolicy)):
             query = select(model).where(model.organization_id.is_(None))
             if "solution_id" in model.__table__.columns:
                 query = query.where(model.solution_id.is_(None))
             for row in (await self.db.execute(query)).scalars().all():
-                result[(kind, (row.name,))] = (row.id, {})
+                key = ((row.location, row.path, None) if kind == "file_policy" else (row.name,))
+                result[(kind, key)] = (row.id, {})
         return result
+
+    async def _prefetch_existing_file_hashes(self) -> dict[str, str | None]:
+        from src.services.repo_storage import RepoStorage
+
+        destination_paths = {path: None for path in await RepoStorage().list()}
+        if self.db is None:
+            return destination_paths
+        from src.models.orm.file_index import FileIndex
+
+        rows = await self.db.execute(select(FileIndex.path, FileIndex.content_hash))
+        destination_paths.update({
+            path: content_hash for path, content_hash in rows.all() if content_hash
+        })
+        return destination_paths

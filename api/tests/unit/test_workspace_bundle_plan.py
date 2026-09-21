@@ -1,6 +1,7 @@
 """The workspace import planner deliberately projects install packages first."""
 from __future__ import annotations
 
+import hashlib
 from uuid import UUID
 
 
@@ -62,3 +63,52 @@ def test_kept_conflicts_remain_in_source_to_target_reference_map() -> None:
     ])
 
     assert result == {source: target}
+
+
+def test_projection_omits_package_only_claims_and_role_bindings_with_warnings() -> None:
+    from src.services.solutions.workspace_bundle_plan import SolutionPackageWorkspaceProjection
+    from src.services.solutions.zip_install import PreviewResult
+
+    projection = SolutionPackageWorkspaceProjection.from_preview(
+        PreviewResult(
+            claims=[{"id": "11111111-1111-1111-1111-111111111111", "name": "claim", "type": "string"}],
+            workflows=[{
+                "id": "22222222-2222-2222-2222-222222222222", "name": "run",
+                "path": "workflows/run.py", "function_name": "run", "role_names": ["Operators"],
+            }],
+        ),
+        preview_id=UUID(int=7),
+    )
+
+    assert projection.manifest.claims == {}
+    assert any("Custom claims" in warning for warning in projection.warnings)
+    assert any("Role bindings" in warning for warning in projection.warnings)
+
+
+def test_planner_includes_hashed_source_files_and_detects_conflicts(tmp_path) -> None:
+    from src.services.solutions.workspace_bundle_plan import (
+        SolutionPackageWorkspaceProjection,
+        WorkspaceBundlePlanner,
+    )
+    from src.services.solutions.zip_install import PreviewResult
+
+    source = tmp_path / "modules" / "customer.py"
+    source.parent.mkdir()
+    source.write_text("value = 1\n")
+    projection = SolutionPackageWorkspaceProjection.from_preview(
+        PreviewResult(name="P"), preview_id=UUID(int=7), work_dir=tmp_path,
+    )
+    source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
+
+    planned = WorkspaceBundlePlanner(None, preview_id=UUID(int=7)).plan_sync(
+        projection, existing_file_hashes={"modules/customer.py": "different"},
+    )
+    item = next(item for item in planned.preview.items if item.kind == "file")
+
+    assert item.classification == "conflict"
+    assert planned.file_hashes == {"modules/customer.py": source_hash}
+
+    unknown_destination = WorkspaceBundlePlanner(None, preview_id=UUID(int=7)).plan_sync(
+        projection, existing_file_hashes={"modules/customer.py": None},
+    )
+    assert next(item for item in unknown_destination.preview.items if item.kind == "file").classification == "conflict"
