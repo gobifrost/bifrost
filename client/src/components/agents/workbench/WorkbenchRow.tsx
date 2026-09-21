@@ -9,7 +9,6 @@ type WorkbenchRowProps = {
 	onSelect: () => void;
 	selectionControl?: ReactNode;
 	actions?: ReactNode;
-	children?: ReactNode;
 	className?: string;
 };
 
@@ -21,7 +20,6 @@ export function WorkbenchRow({
 	onSelect,
 	selectionControl,
 	actions,
-	children,
 	className,
 }: WorkbenchRowProps) {
 	return (
@@ -44,13 +42,12 @@ export function WorkbenchRow({
 				onClick={onSelect}
 				className="flex min-w-0 flex-1 flex-col items-start rounded-[var(--bf-radius-control)] text-left outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset active:bg-muted"
 			>
-				<div className="font-medium [overflow-wrap:anywhere]">{title}</div>
+				<span className="font-medium [overflow-wrap:anywhere]">{title}</span>
 				{meta ? (
-					<div className="mt-1 text-sm text-muted-foreground [overflow-wrap:anywhere]">
+					<span className="mt-1 text-sm text-muted-foreground [overflow-wrap:anywhere]">
 						{meta}
-					</div>
+					</span>
 				) : null}
-				{children}
 			</button>
 			{actions ? (
 				<div className="shrink-0">

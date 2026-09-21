@@ -33,6 +33,7 @@ describe("WorkbenchRow", () => {
 		expect(item.parentElement).toBe(list);
 		expect(item).toHaveClass("tree-row-selected");
 		expect(primaryButton).toHaveAttribute("aria-current", "true");
+		expect(primaryButton.querySelectorAll("div")).toHaveLength(0);
 
 		await user.tab();
 		expect(screen.getByRole("checkbox", { name: "Select test" })).toHaveFocus();
