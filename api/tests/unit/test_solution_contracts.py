@@ -16,6 +16,10 @@ from src.models.contracts.solutions import (
     Solution as SolutionDTO,
     SolutionSdkUpdateBatchRequest,
     SolutionSdkUpdateBatchResponse,
+    WorkspaceBundleDecision,
+    WorkspaceBundleImportRequest,
+    WorkspaceBundleItem,
+    WorkspaceBundlePreview,
 )
 
 
@@ -90,6 +94,37 @@ def test_solution_sdk_update_batch_response_contains_per_app_results() -> None:
     assert response.accepted[0].job_id == job_id
     assert response.skipped[0].application_id == skipped_app_id
     assert response.skipped[0].reason == "current"
+
+
+def test_workspace_bundle_preview_counts_only_conflicts() -> None:
+    preview = WorkspaceBundlePreview(
+        preview_token="token",
+        package_name="Customer operations",
+        package_sha256="a" * 64,
+        items=[
+            WorkspaceBundleItem(
+                id="entity:app:dashboard", kind="app", name="Dashboard",
+                classification="conflict", match_key="slug", target_id=uuid.uuid4(),
+            ),
+            WorkspaceBundleItem(
+                id="file:modules/new.py", kind="file", name="modules/new.py",
+                classification="create",
+            ),
+        ],
+    )
+
+    assert preview.conflict_count == 1
+
+
+def test_workspace_bundle_import_rejects_duplicate_decisions() -> None:
+    with pytest.raises(ValidationError, match="decisions must be unique"):
+        WorkspaceBundleImportRequest(
+            preview_token="token",
+            decisions=[
+                WorkspaceBundleDecision(item_id="entity:app:dashboard", action="keep"),
+                WorkspaceBundleDecision(item_id="entity:app:dashboard", action="replace"),
+            ],
+        )
 
 
 class _FakeScalarResult:

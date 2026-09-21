@@ -149,6 +149,62 @@ class SolutionSdkUpdateBatchResponse(BaseModel):
     skipped: list[ApplicationSdkUpdateSkipped] = Field(default_factory=list)
 
 
+class WorkspaceBundleDiffLine(BaseModel):
+    """One portable field difference shown before importing a bundle."""
+
+    field: str
+    existing: Any | None = None
+    incoming: Any | None = None
+
+
+class WorkspaceBundleItem(BaseModel):
+    """One entity or source file considered by a workspace-bundle preview."""
+
+    id: str
+    kind: Literal[
+        "workflow", "integration", "config", "app", "table", "event", "form",
+        "agent", "claim", "policy_rule", "file_policy", "file",
+    ]
+    name: str
+    classification: Literal["create", "unchanged", "conflict"]
+    match_key: str | None = None
+    source_id: UUID | None = None
+    target_id: UUID | None = None
+    diff: list[WorkspaceBundleDiffLine] = Field(default_factory=list)
+
+
+class WorkspaceBundlePreview(BaseModel):
+    """A deterministic, staged workspace-bundle import preview."""
+
+    preview_token: str
+    package_name: str
+    package_sha256: str
+    items: list[WorkspaceBundleItem]
+    warnings: list[str] = Field(default_factory=list)
+
+    @computed_field
+    @property
+    def conflict_count(self) -> int:
+        return sum(item.classification == "conflict" for item in self.items)
+
+
+class WorkspaceBundleDecision(BaseModel):
+    item_id: str
+    action: Literal["keep", "replace"]
+
+
+class WorkspaceBundleImportRequest(BaseModel):
+    preview_token: str
+    decisions: list[WorkspaceBundleDecision]
+
+    @model_validator(mode="after")
+    def _unique_decisions(self) -> "WorkspaceBundleImportRequest":
+        ids = [decision.item_id for decision in self.decisions]
+        if len(ids) != len(set(ids)):
+            raise ValueError("workspace import decisions must be unique")
+        return self
+
+
 class SolutionEntityCounts(BaseModel):
     """Per-install inventory counts for lightweight list/catalog views."""
 

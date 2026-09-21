@@ -8,9 +8,10 @@ ManifestResolver class and standalone import functions.
 
 import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Mapping
 from uuid import UUID
 
 import yaml
@@ -27,6 +28,69 @@ from bifrost.manifest import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class PartialImportSelection:
+    """The explicit, non-destructive subset of a workspace manifest import.
+
+    ``target_ids`` maps package UUIDs to the stable IDs selected by the collision
+    plan.  It includes kept conflicts so references to a kept destination remain
+    valid when another selected item points to it.
+    """
+
+    included_source_ids: frozenset[str]
+    target_ids: Mapping[UUID, UUID]
+    solution_id: None = None
+
+
+def filter_partial_manifest(manifest: Manifest, selection: PartialImportSelection) -> Manifest:
+    """Keep only selected package entities; this function never implies deletion."""
+    ids = selection.included_source_ids
+
+    def selected(entries: Mapping[str, Any]) -> dict[str, Any]:
+        # Manifest maps are keyed by an author-facing name in a few cases
+        # (notably configs), so selection must be based on the entity UUID.
+        return {key: entry for key, entry in entries.items() if entry.id in ids}
+
+    return Manifest(
+        organizations=[entry for entry in manifest.organizations if entry.id in ids],
+        roles=[entry for entry in manifest.roles if entry.id in ids],
+        workflows=selected(manifest.workflows), integrations=selected(manifest.integrations),
+        configs=selected(manifest.configs), claims=selected(manifest.claims),
+        policy_rules=selected(manifest.policy_rules), tables=selected(manifest.tables),
+        file_policies=selected(manifest.file_policies), events=selected(manifest.events),
+        forms=selected(manifest.forms), agents=selected(manifest.agents),
+        apps=selected(manifest.apps), mcp_servers=selected(manifest.mcp_servers),
+    )
+
+
+def rewrite_manifest_references(
+    manifest: Manifest, selection: PartialImportSelection
+) -> Manifest:
+    """Apply the planner's UUID map and force the global, unattached scope."""
+    id_map = {str(source): str(target) for source, target in selection.target_ids.items()}
+
+    def rewrite(value: Any, *, field: str | None = None) -> Any:
+        if isinstance(value, dict):
+            rewritten = {key: rewrite(item, field=key) for key, item in value.items()}
+            # Environment bindings from an install must never leak into _repo.
+            if "organization_id" in rewritten:
+                rewritten["organization_id"] = None
+            if "solution_id" in rewritten:
+                rewritten["solution_id"] = None
+            if "roles" in rewritten:
+                rewritten["roles"] = []
+            if "role_names" in rewritten:
+                rewritten.pop("role_names")
+            return rewritten
+        if isinstance(value, list):
+            return [rewrite(item, field=field) for item in value]
+        if isinstance(value, str):
+            return id_map.get(value, value)
+        return value
+
+    return Manifest.model_validate(rewrite(manifest.model_dump(mode="json", by_alias=True)))
 
 
 def _load_file_policy_model() -> Any:
@@ -870,6 +934,48 @@ class ManifestResolver:
             )
 
         return all_ops
+
+    async def plan_partial_import(
+        self,
+        manifest: "Manifest",
+        *,
+        selection: PartialImportSelection,
+        work_dir: Path,
+        progress_fn=None,
+    ) -> "list[SyncOp]":
+        """Apply a selected workspace bundle subset without a stale-row sweep.
+
+        This intentionally does not delegate to a convenience full-sync method:
+        those methods pair entity import with ``_resolve_deletions``.  A package
+        import is additive/explicit-replace only, so absent package entities must
+        remain untouched.
+        """
+        selected = filter_partial_manifest(manifest, selection)
+        rewritten = rewrite_manifest_references(selected, selection)
+        changed_ids = {
+            entity.id
+            for collection in (
+                rewritten.workflows, rewritten.integrations, rewritten.configs,
+                rewritten.claims, rewritten.policy_rules, rewritten.tables,
+                rewritten.file_policies, rewritten.events, rewritten.forms,
+                rewritten.agents, rewritten.apps, rewritten.mcp_servers,
+            )
+            for entity in collection.values()
+        }
+        ops = await self.plan_import(
+            rewritten, work_dir=work_dir, progress_fn=progress_fn,
+            changed_ids=changed_ids, install_id=None,
+        )
+
+        async def read_workspace(path: str) -> bytes | None:
+            candidate = work_dir / path
+            return candidate.read_bytes() if candidate.is_file() else None
+
+        # Unlike full git sync, this bounded entry point owns its indexer phase.
+        await self._index_workflows_from_manifest(rewritten, read_workspace, changed_ids)
+        await self._index_forms_from_manifest(rewritten, read_workspace, changed_ids)
+        await self._index_agents_from_manifest(rewritten, read_workspace, changed_ids)
+        return ops
 
     async def _index_forms_from_manifest(
         self,
@@ -2967,21 +3073,22 @@ class ManifestResolver:
         form_id = UUID(mform.id)
         ops: list[SyncOp] = []
 
-        if org_id:
-            form_values: dict = {
-                "name": data.get("name", ""),
-                "is_active": True,
-                "created_by": "git-sync",
-                "organization_id": org_id,
-            }
-            if mform.access_level is not None:
-                form_values["access_level"] = mform.access_level
-            ops.append(Upsert(
-                model=Form,
-                id=form_id,
-                values=form_values,
-                match_on="id",
-            ))
+        # Global forms are first-class workspace content too.  The old guard
+        # silently dropped them because ``None`` is falsy.
+        form_values: dict = {
+            "name": data.get("name", ""),
+            "is_active": True,
+            "created_by": "git-sync",
+            "organization_id": org_id,
+        }
+        if mform.access_level is not None:
+            form_values["access_level"] = mform.access_level
+        ops.append(Upsert(
+            model=Form,
+            id=form_id,
+            values=form_values,
+            match_on="id",
+        ))
 
         # Role sync op (FormRole.assigned_by is NOT NULL — pass via extra_fields).
         # Fire on present-empty too, to clear bindings (B3; see _resolve_workflow).
@@ -3016,24 +3123,25 @@ class ManifestResolver:
         agent_id = UUID(magent.id)
         ops: list[SyncOp] = []
 
-        if org_id:
-            agent_values: dict = {
-                "name": data.get("name", ""),
-                "system_prompt": data.get("system_prompt", ""),
-                "is_active": True,
-                "created_by": "git-sync",
-                "organization_id": org_id,
-                "max_iterations": data.get("max_iterations"),
-                "max_token_budget": data.get("max_token_budget"),
-            }
-            if magent.access_level is not None:
-                agent_values["access_level"] = magent.access_level
-            ops.append(Upsert(
-                model=Agent,
-                id=agent_id,
-                values=agent_values,
-                match_on="id",
-            ))
+        # Global agents are first-class workspace content too.  The old guard
+        # silently dropped them because ``None`` is falsy.
+        agent_values: dict = {
+            "name": data.get("name", ""),
+            "system_prompt": data.get("system_prompt", ""),
+            "is_active": True,
+            "created_by": "git-sync",
+            "organization_id": org_id,
+            "max_iterations": data.get("max_iterations"),
+            "max_token_budget": data.get("max_token_budget"),
+        }
+        if magent.access_level is not None:
+            agent_values["access_level"] = magent.access_level
+        ops.append(Upsert(
+            model=Agent,
+            id=agent_id,
+            values=agent_values,
+            match_on="id",
+        ))
 
         # Role sync op (AgentRole.assigned_by is NOT NULL — pass via extra_fields).
         # Fire on present-empty too, to clear bindings (B3; see _resolve_workflow).
