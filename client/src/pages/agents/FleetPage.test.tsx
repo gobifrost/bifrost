@@ -196,7 +196,7 @@ describe("FleetPage — header + fleet stats", () => {
 		});
 		await renderPage();
 		expect(
-			screen.getByText(/4 flagged runs in tuning queue/i),
+			screen.getByText(/4 flagged runs to review/i),
 		).toBeInTheDocument();
 	});
 });

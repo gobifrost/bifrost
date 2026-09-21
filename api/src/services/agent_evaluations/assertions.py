@@ -12,9 +12,8 @@ never at result time.
 
 from __future__ import annotations
 
-import json
 import math
-from typing import Any, Awaitable, Callable
+from typing import Any
 from uuid import UUID
 
 from src.services.agent_evaluations.simulator_models import redact_value
@@ -106,12 +105,39 @@ def _require_params(index: int, atype: str, params: dict[str, Any]) -> None:
             or (atype == "llm_judge" and value > 1)
         ):
             raise AssertionDefinitionError(f"Assertion {index} has an invalid numeric limit or threshold.")
-    if atype == "llm_judge" and not (
-        params.get("judge_profile_id") or params.get("judge_snapshot")
-    ):
-        raise AssertionDefinitionError(
-            f"Assertion {index} (llm_judge) requires judge_profile_id."
-        )
+    if atype == "llm_judge":
+        if not (params.get("judge_profile_id") or params.get("judge_snapshot")):
+            raise AssertionDefinitionError(
+                f"Assertion {index} (llm_judge) requires judge_profile_id."
+            )
+        requirements = params.get("recorded_evidence_requirements")
+        if requirements is not None:
+            allowed = {
+                "terminal_status",
+                "output",
+                "tool_calls",
+                "tool_order",
+                "tool_arguments",
+                "delegation",
+                "real_tool_executions",
+                "usage.iterations",
+                "usage.tokens",
+                "usage.cost_usd",
+                "usage.latency_ms",
+            }
+            if (
+                not isinstance(requirements, list)
+                or not requirements
+                or any(
+                    not isinstance(item, str) or item not in allowed
+                    for item in requirements
+                )
+                or len(set(requirements)) != len(requirements)
+            ):
+                raise AssertionDefinitionError(
+                    f"Assertion {index} recorded_evidence_requirements must be a "
+                    "nonempty unique list of recognized recorded evidence dimensions."
+                )
 
 
 async def freeze_semantic_judges(
@@ -224,27 +250,6 @@ def evaluate_assertions(
     return outcomes
 
 
-AsyncJudgeFn = Callable[[dict[str, Any], dict[str, Any]], Awaitable[dict[str, Any]]]
-
-
-async def evaluate_assertions_async(
-    assertions: list[dict[str, Any]],
-    evidence: dict[str, Any],
-    *,
-    judge_fn: AsyncJudgeFn,
-) -> list[dict[str, Any]]:
-    """Evaluate deterministic checks plus configured semantic observations."""
-    validate_assertions(assertions)
-    outcomes = []
-    for assertion in assertions:
-        params = assertion.get("params", {})
-        if assertion["type"] == "llm_judge":
-            outcomes.append(await judge_fn(params, evidence))
-        else:
-            outcomes.extend(evaluate_assertions([assertion], evidence))
-    return outcomes
-
-
 def _pending_judge_outcome(params, evidence, label):
     snapshot = params.get("judge_snapshot") or {}
     return {
@@ -258,77 +263,6 @@ def _pending_judge_outcome(params, evidence, label):
         "judge_snapshot": redact_value(snapshot),
         "judge_rubric": redact_value(params["rubric"]),
         "judge_threshold": params["threshold"],
-    }
-
-
-async def execute_semantic_judge(session, params: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
-    """Run a frozen-profile semantic judge over redacted terminal evidence."""
-    from src.services.agent_evaluations.simulator_models import canonical_hash
-    from src.services.llm import LLMMessage
-    from src.services.llm.factory import get_llm_config
-    from src.services.llm.pydantic_client import PydanticAIClient
-
-    snapshot = dict(params["judge_snapshot"])
-    evidence_for_judge = redact_value(evidence)
-    try:
-        profile_id = UUID(str(snapshot["profile_id"]))
-        config = await get_llm_config(session, profile_id=profile_id)
-        for field in (
-            "provider", "model", "endpoint", "openai_transport",
-            "anthropic_prompt_cache_supported", "default_max_tokens", "extra_params",
-        ):
-            if getattr(config, field) != snapshot.get(field):
-                raise ValueError("configured judge no longer matches frozen snapshot")
-        # Construct from the configuration just checked. A second profile
-        # read could race an edit and silently use different judge settings.
-        client = PydanticAIClient(config)
-        response = await client.complete(
-            [
-                LLMMessage(
-                    role="system",
-                    content=(
-                        "Evaluate the rubric against the redacted evidence. "
-                        "Return JSON only: {\"score\": number 0..1, \"rationale\": string}."
-                    ),
-                ),
-                LLMMessage(
-                    role="user",
-                    content=json.dumps(
-                        {"rubric": params["rubric"], "evidence": evidence_for_judge},
-                        default=str,
-                    ),
-                ),
-            ],
-            model=snapshot["model"],
-        )
-        verdict = json.loads(response.content or "{}")
-        score = float(verdict["score"])
-        if not 0 <= score <= 1:
-            raise ValueError("judge score must be between 0 and 1")
-        detail = str(verdict.get("rationale") or "")
-        usage = {
-            "input_tokens": response.input_tokens,
-            "output_tokens": response.output_tokens,
-            "cost_usd": str(response.provider_cost) if response.provider_cost is not None else None,
-        }
-        passed = score >= float(params["threshold"])
-    except Exception as exc:
-        score, detail, usage, passed = None, str(exc), {}, False
-    return {
-        **_outcome(
-            "llm_judge", "llm_judge", passed,
-            expected=f"score >= {params['threshold']}", actual=score, detail=detail,
-        ),
-        "authoritative": False,
-        "nondeterministic": True,
-        "judge_snapshot": redact_value(snapshot),
-        # Preserve the exact redacted input alongside its hash. This is the
-        # reasoning-independent evidence an operator can audit later.
-        "judge_evidence": evidence_for_judge,
-        "judge_rubric": redact_value(params["rubric"]),
-        "judge_threshold": params["threshold"],
-        "judge_usage": usage,
-        "evidence_hash": canonical_hash(evidence_for_judge),
     }
 
 

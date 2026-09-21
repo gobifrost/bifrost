@@ -7,7 +7,9 @@ import { UsageReports } from "./UsageReports";
 const mockUseAuth = vi.fn();
 const mockUseOrganizations = vi.fn();
 const mockUseUsageReport = vi.fn();
+const mockUseUsageBreakdown = vi.fn();
 const mockUsageCharts = vi.fn();
+const mockTestingReviewBreakdown = vi.fn();
 const mockWorkflowTable = vi.fn();
 const mockConversationTable = vi.fn();
 const mockAgentTable = vi.fn();
@@ -24,6 +26,7 @@ vi.mock("@/hooks/useOrganizations", () => ({
 
 vi.mock("@/services/usage", () => ({
 	useUsageReport: (...args: unknown[]) => mockUseUsageReport(...args),
+	useUsageBreakdown: (...args: unknown[]) => mockUseUsageBreakdown(...args),
 }));
 
 vi.mock("@/components/layout/ListPageHeader", () => ({
@@ -72,6 +75,13 @@ vi.mock("@/components/reports/UsageCharts", () => ({
 	UsageCharts: (props: unknown) => {
 		mockUsageCharts(props);
 		return <section aria-label="usage chart">Usage chart</section>;
+	},
+}));
+
+vi.mock("@/components/reports/TestingReviewBreakdown", () => ({
+	TestingReviewBreakdown: (props: unknown) => {
+		mockTestingReviewBreakdown(props);
+		return <section aria-label="testing review breakdown">Testing review breakdown</section>;
 	},
 }));
 
@@ -216,7 +226,76 @@ beforeEach(() => {
 		refetch: vi.fn(),
 		isFetching: false,
 	});
+	mockUseUsageBreakdown.mockReturnValue({
+		data: makeUsageBreakdown(),
+		isLoading: false,
+		error: null,
+		refetch: vi.fn(),
+		isFetching: false,
+	});
 });
+
+function makeUsageBreakdown() {
+	return {
+		overall: {
+			input_tokens: 1000,
+			output_tokens: 250,
+			cache_read_tokens: 200,
+			cache_write_tokens: 50,
+			call_count: 4,
+			duration_ms: 1250,
+			duration_missing_count: 1,
+			observed_provider_cost: "1.23",
+			estimated_cost: "1.45",
+			known_cost: "1.23",
+			missing_cost_call_count: 1,
+			legacy_call_count: 0,
+		},
+		coverage: {
+			started_attempt_count: 5,
+			unobserved_attempt_count: 1,
+			missing_cost_call_count: 1,
+			unassigned_operation_call_count: 0,
+			legacy_coverage_unknown: false,
+			legacy_call_count: 0,
+		},
+		by_purpose: {
+			items: [],
+			total_groups: 0,
+			limit: 50,
+			offset: 0,
+			omitted_group_count: 0,
+		},
+		by_provider_model: {
+			items: [],
+			total_groups: 0,
+			limit: 50,
+			offset: 0,
+			omitted_group_count: 0,
+		},
+		by_profile: {
+			items: [],
+			total_groups: 0,
+			limit: 50,
+			offset: 0,
+			omitted_group_count: 0,
+		},
+		by_organization: {
+			items: [],
+			total_groups: 0,
+			limit: 50,
+			offset: 0,
+			omitted_group_count: 0,
+		},
+		by_operation: {
+			items: [],
+			total_groups: 0,
+			limit: 50,
+			offset: 0,
+			omitted_group_count: 0,
+		},
+	};
+}
 
 describe("UsageReports", () => {
 	it("shows retry instead of empty report claims when the first read fails", async () => {
@@ -324,5 +403,62 @@ describe("UsageReports", () => {
 		expect(
 			screen.queryByRole("region", { name: "organization usage" }),
 		).not.toBeInTheDocument();
+	});
+
+	it("passes usage breakdown filters from report filters and user-selected quality filters", async () => {
+		const user = userEvent.setup();
+		const { rerender } = await renderPage();
+
+		expect(mockUseUsageBreakdown).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				start_date: expect.any(String),
+				end_date: expect.any(String),
+				source: "all",
+			}),
+		);
+		expect(mockUseUsageBreakdown.mock.calls.at(-1)?.[0]).not.toHaveProperty(
+			"org_id",
+		);
+
+		const lastProps = mockTestingReviewBreakdown.mock.calls.at(-1)?.[0] as {
+			onFiltersChange: (filters: {
+				purpose?: string | null;
+				provider?: string | null;
+				model?: string | null;
+				profile_id?: string | null;
+				profile_fingerprint?: string | null;
+			}) => void;
+		};
+		lastProps.onFiltersChange({
+			purpose: "synthetic_judge",
+			provider: "openai",
+			model: "gpt-5-mini",
+			profile_id: "profile-1",
+			profile_fingerprint: "fingerprint-1",
+		});
+		rerender(<UsageReports />);
+
+		expect(mockUseUsageBreakdown).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				source: "all",
+				purpose: "synthetic_judge",
+				provider: "openai",
+				model: "gpt-5-mini",
+				profile_id: "profile-1",
+				profile_fingerprint: "fingerprint-1",
+			}),
+		);
+
+		await user.click(screen.getByRole("tab", { name: "Agents" }));
+		await user.click(screen.getByRole("button", { name: "Choose Acme" }));
+		rerender(<UsageReports />);
+
+		expect(mockUseUsageBreakdown).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				source: "agents",
+				org_id: "org-1",
+				purpose: "synthetic_judge",
+			}),
+		);
 	});
 });

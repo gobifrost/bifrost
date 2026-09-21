@@ -25,12 +25,27 @@ from src.models.orm.agent_evaluations import (
     AgentEvaluationExecution,
     AgentEvaluationResult,
     AgentEvaluationSuite,
+    AgentEvaluationMatrix,
     AgentSimulationSession,
     AgentSimulationToolRecord,
 )
+from src.models.orm.agent_recorded_evaluations import (
+    AgentRecordedEvaluation,
+    AgentRecordedEvaluationResult,
+)
+from src.models.orm.agent_findings import AgentFinding
+from src.models.orm.agent_reviews import (
+    AgentReviewDefinition,
+    AgentReviewRun,
+    AgentReviewVersion,
+)
+from src.models.orm.recurring_triggers import (
+    RecurringPlatformJobTrigger,
+    RecurringTriggerFire,
+)
 from src.models.orm.summary_backfill_job import SummaryBackfillJob
 from src.models.orm.agents import Agent, AgentDelegation, AgentRole, AgentTool, Conversation, Message, MessageAttachment
-from src.models.orm.ai_usage import AIModelPricing, AIUsage
+from src.models.orm.ai_usage import AIModelPricing, AIUsage, AIUsageAttempt
 from src.models.orm.ai_models import AIEmbeddingConfig, AIModelAssignment, AIModelProfile, AIProviderConnection
 from src.models.orm.app_embed_secrets import AppEmbedSecret
 from src.models.orm.artifacts import Artifact
@@ -133,12 +148,21 @@ __all__ = [
     "SummaryBackfillJob",
     # Agent Evaluation Studio
     "AgentEvaluationSuite",
+    "AgentEvaluationMatrix",
     "AgentEvaluationCase",
     "AgentCandidateSnapshot",
     "AgentEvaluationExecution",
     "AgentEvaluationResult",
     "AgentSimulationSession",
     "AgentSimulationToolRecord",
+    "AgentRecordedEvaluation",
+    "AgentRecordedEvaluationResult",
+    "AgentFinding",
+    "AgentReviewDefinition",
+    "AgentReviewRun",
+    "AgentReviewVersion",
+    "RecurringPlatformJobTrigger",
+    "RecurringTriggerFire",
     # Agents
     "Agent",
     "AgentPromptHistory",
@@ -151,6 +175,7 @@ __all__ = [
     # AI Usage
     "AIModelPricing",
     "AIUsage",
+    "AIUsageAttempt",
     "AIModelAssignment",
     "AIEmbeddingConfig",
     "AIModelProfile",

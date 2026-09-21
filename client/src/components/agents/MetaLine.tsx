@@ -13,7 +13,7 @@ export interface MetaLineProps {
 
 /**
  * Small muted inline strip like `"1h ago · 3.4s · 2 iter · 1,852 tok · $0.04"`.
- * Used on Run detail / flipbook / tune / agent headers wherever the mockup
+ * Used on Run detail / flipbook / quality / agent headers wherever the mockup
  * shows a comma-or-dot separated set of tiny run stats.
  *
  * Items separate at 13px muted. Nulls / false / empty strings are skipped so

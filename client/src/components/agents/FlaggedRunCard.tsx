@@ -113,7 +113,7 @@ export function FlaggedRunCard({ run }: FlaggedRunCardProps) {
 							hideVerdictBar
 							runNavigationOrigin={{
 								href: getLocationHref(location),
-								label: `Back to ${run.agent_name ?? "agent"} tuning`,
+								label: `Back to ${run.agent_name ?? "agent"} review`,
 							}}
 						/>
 					)}

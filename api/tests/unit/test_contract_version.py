@@ -31,6 +31,43 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
 from bifrost.contract_version import CONTRACT_VERSION as CLI_CONTRACT_VERSION  # noqa: E402
 from shared.contract_version import CONTRACT_VERSION as SERVER_CONTRACT_VERSION  # noqa: E402
+from shared.models import (  # noqa: E402
+    AgentReviewDefinitionCreate,
+    AgentReviewDefinitionPublic,
+    AgentReviewDefinitionsPage,
+    AgentReviewDefinitionUpdate,
+    AgentReviewRunAccepted,
+    AgentReviewRunCreate,
+    AgentReviewRunPublic,
+    AgentReviewRunResults,
+    AgentReviewVersionCreate,
+    AgentReviewVersionPublic,
+    AgentReviewVersionsPage,
+    AgentTestCreate,
+    AgentTestPage,
+    AgentTestPublic,
+    AgentTestUpdate,
+    TestRunSelection as AgentTestRunSelection,
+    AgentTestsRunCreate,
+    AgentTestsGenerateCreate,
+    RecordedLatestPublic,
+    SimulationLatestPublic,
+    AgentTestLatestPublic,
+    AgentTestLatestPage,
+    FindingCreate,
+    FindingPublic,
+    FindingSearchPage,
+    FindingUpdate,
+    QualityUsageBreakdownResponse,
+    RecordedEvaluationCreate,
+    RecordedEvaluationResultsPage,
+    RecurringTriggerCreate,
+    RecurringTriggerPage,
+    RecurringTriggerPublic,
+    RecurringTriggerUpdate,
+    TriggerFirePage,
+    TriggerFirePublic,
+)
 
 # DTOs the CLI sends/receives. Server-canonical classes (the wire truth).
 from src.models.contracts.agents import AgentCreate, AgentUpdate  # noqa: E402
@@ -119,6 +156,41 @@ _COMMAND_DTOS: list[type] = [
     SolutionDeployJobStatus,
     PolicyRuleCreate,
     PolicyRuleUpdate,
+    RecordedEvaluationCreate,
+    RecordedEvaluationResultsPage,
+    QualityUsageBreakdownResponse,
+    AgentReviewDefinitionCreate,
+    AgentReviewDefinitionUpdate,
+    AgentReviewDefinitionPublic,
+    AgentReviewDefinitionsPage,
+    AgentReviewVersionCreate,
+    AgentReviewVersionPublic,
+    AgentReviewVersionsPage,
+    AgentReviewRunCreate,
+    AgentReviewRunAccepted,
+    AgentReviewRunPublic,
+    AgentReviewRunResults,
+    FindingCreate,
+    FindingUpdate,
+    FindingPublic,
+    FindingSearchPage,
+    AgentTestCreate,
+    AgentTestUpdate,
+    AgentTestPublic,
+    AgentTestPage,
+    AgentTestRunSelection,
+    AgentTestsRunCreate,
+    AgentTestsGenerateCreate,
+    SimulationLatestPublic,
+    RecordedLatestPublic,
+    AgentTestLatestPublic,
+    AgentTestLatestPage,
+    RecurringTriggerCreate,
+    RecurringTriggerUpdate,
+    RecurringTriggerPublic,
+    RecurringTriggerPage,
+    TriggerFirePublic,
+    TriggerFirePage,
 ]
 
 #: Every request/response DTO the in-workflow SDK sends/parses against
@@ -250,7 +322,49 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # AgentCreate/AgentUpdate gained optional max_run_timeout (2026-09-18).
     # ADDITIVE: old CLIs omit it and keep the default active-run safety
     # limit; 0 disables the timeout. Fingerprint refreshed only.
-    "3aa8dfdf6c4195d9503f7c5bc84c8f6e625479d02a943c583661c90f3c07ca19"
+    #
+    # AgentUpdate gained optional change_reason (2026-09-19). ADDITIVE: old
+    # CLIs omit it; history rows record a default reason instead.
+    # Fingerprint refreshed only.
+    #
+    # Recorded evaluation CLI added request/results DTOs (2026-09-20). ADDITIVE:
+    # old CLIs do not call the new commands; new CLIs parse the shared recorded
+    # API shapes. Fingerprint refreshed only.
+    #
+    # Public quality-usage reporting CLI parses QualityUsageBreakdownResponse
+    # (2026-09-20). ADDITIVE: this is a new command/route; old CLIs do not call it.
+    #
+    # Agent review CLI/API DTOs added (2026-09-20). ADDITIVE: new command group;
+    # old CLIs do not call it. Fingerprint refreshed only.
+    #
+    # Agent findings additive DTO fields (2026-09-20). ADDITIVE: finding_kind,
+    # evidence_markdown, and read-only review provenance move into shared
+    # FindingPublic (parsed by review results + new agent-findings CLI); old
+    # clients omit them and keep prior behavior. Fingerprint refreshed only.
+    #
+    # Finding command DTOs fingerprinted (2026-09-20, Codex review P2):
+    # FindingCreate/FindingUpdate/FindingPublic/FindingSearchPage are now
+    # CLI-consumed by the agent-findings group. ADDITIVE list extension;
+    # fingerprint refreshed only.
+    #
+    # Recurring-trigger command DTOs (2026-09-21, S3): trigger create/update/
+    # public/page + fire public/page are CLI-consumed by recurring-triggers.
+    # ADDITIVE list extension; fingerprint refreshed only.
+    #
+    # Agent-wide test DTOs (2026-09-21, Phase 4b): create/update/public/page
+    # are CLI-consumed by agent-tests tests-* commands. ADDITIVE list
+    # extension; fingerprint refreshed only.
+    #
+    # Latest-results DTOs (2026-09-21, Phase 4c): parsed by agent-tests
+    # tests-results. ADDITIVE list extension; fingerprint refreshed only.
+    #
+    # Subset-run DTOs (2026-09-21, Phase 4d, Codex review): AgentTestsRunCreate
+    # (+ nested TestRunSelection) is sent by agent-tests tests-run. ADDITIVE
+    # list extension; fingerprint refreshed only.
+    #
+    # Generate-from-finding DTO (2026-09-21, Phase 4f): AgentTestsGenerateCreate
+    # is sent by agent-tests tests-generate. ADDITIVE list extension.
+    "c963dde1b790dbd1b2794d235182ec1cf6435b40153a0b8e59a8d86dd3514bc1"
 )
 
 

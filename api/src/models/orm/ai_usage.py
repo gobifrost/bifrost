@@ -5,6 +5,7 @@ Tracks AI provider usage across workflow executions and chat conversations.
 """
 
 from datetime import date, datetime, timezone
+from uuid import uuid4
 from decimal import Decimal
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -31,6 +32,7 @@ if TYPE_CHECKING:
     from src.models.orm.executions import Execution
     from src.models.orm.organizations import Organization
     from src.models.orm.users import User
+    from src.models.orm.platform_jobs import PlatformJob
 
 
 class AIModelPricing(Base):
@@ -71,6 +73,69 @@ class AIModelPricing(Base):
     )
 
 
+class AIUsageAttempt(Base):
+    """Durable accounting intent for quality LLM calls.
+
+    This records call accounting provenance only. It is not a job lifecycle,
+    retry queue, progress tracker, or provider request log.
+    """
+
+    __tablename__ = "ai_usage_attempts"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+
+    quality_operation_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    quality_operation_id: Mapped[UUID] = mapped_column(nullable=False)
+    quality_operation_item_id: Mapped[str | None] = mapped_column(String(255), default=None)
+    usage_purpose: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    organization_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("organizations.id", ondelete="SET NULL"), default=None
+    )
+    user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), default=None
+    )
+    platform_job_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("platform_jobs.id", ondelete="SET NULL"), default=None
+    )
+
+    profile_id: Mapped[UUID | None] = mapped_column(default=None)
+    profile_name: Mapped[str | None] = mapped_column(String(255), default=None)
+    profile_fingerprint: Mapped[str | None] = mapped_column(String(128), default=None)
+
+    provider: Mapped[str] = mapped_column(String(50), nullable=False)
+    model: Mapped[str] = mapped_column(String(100), nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(String(128), nullable=False)
+
+    state: Mapped[str] = mapped_column(String(20), nullable=False, server_default="started")
+    unobserved_reason: Mapped[str | None] = mapped_column(String(64), default=None)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=text("NOW()"),
+    )
+    observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+
+    organization: Mapped["Organization | None"] = relationship()
+    user: Mapped["User | None"] = relationship()
+    platform_job: Mapped["PlatformJob | None"] = relationship()
+
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('started', 'observed', 'unobserved')",
+            name="ai_usage_attempt_state_check",
+        ),
+        CheckConstraint(
+            "(state = 'unobserved' AND unobserved_reason IS NOT NULL) "
+            "OR (state != 'unobserved' AND unobserved_reason IS NULL)",
+            name="ai_usage_attempt_unobserved_reason_state_check",
+        ),
+        Index("ix_ai_usage_attempt_operation", "quality_operation_type", "quality_operation_id"),
+        Index("ix_ai_usage_attempt_platform_job", "platform_job_id"),
+    )
+
+
 # Identity entity — AI cost/usage telemetry, not name-cascade resolved.
 # See api/src/repositories/README.md.
 class AIUsage(Base):
@@ -94,6 +159,20 @@ class AIUsage(Base):
         ForeignKey("messages.id", ondelete="SET NULL"), default=None
     )
 
+    # Quality-operation context for non-production evaluation/review overhead.
+    quality_operation_type: Mapped[str | None] = mapped_column(String(64), default=None)
+    quality_operation_id: Mapped[UUID | None] = mapped_column(default=None)
+    quality_operation_item_id: Mapped[str | None] = mapped_column(String(255), default=None)
+    usage_purpose: Mapped[str | None] = mapped_column(String(64), default=None)
+    profile_id: Mapped[UUID | None] = mapped_column(default=None)
+    profile_name: Mapped[str | None] = mapped_column(String(255), default=None)
+    profile_fingerprint: Mapped[str | None] = mapped_column(String(128), default=None)
+    platform_job_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("platform_jobs.id", ondelete="SET NULL"), default=None
+    )
+    usage_attempt_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("ai_usage_attempts.id"), default=None, unique=True
+    )
     # Usage details
     provider: Mapped[str] = mapped_column(String(50), nullable=False)
     model: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -132,11 +211,39 @@ class AIUsage(Base):
     message: Mapped["Message | None"] = relationship()
     organization: Mapped["Organization | None"] = relationship()
     user: Mapped["User | None"] = relationship()
+    platform_job: Mapped["PlatformJob | None"] = relationship()
+    usage_attempt: Mapped["AIUsageAttempt | None"] = relationship()
 
     __table_args__ = (
         CheckConstraint(
-            "execution_id IS NOT NULL OR conversation_id IS NOT NULL OR agent_run_id IS NOT NULL",
+            "execution_id IS NOT NULL OR conversation_id IS NOT NULL OR agent_run_id IS NOT NULL "
+            "OR (quality_operation_type IS NOT NULL AND quality_operation_id IS NOT NULL)",
             name="ai_usage_context_check",
+        ),
+        CheckConstraint(
+            "(quality_operation_type IS NULL AND quality_operation_id IS NULL) "
+            "OR (quality_operation_type IS NOT NULL AND quality_operation_id IS NOT NULL)",
+            name="ai_usage_quality_operation_pair_check",
+        ),
+        CheckConstraint(
+            "quality_operation_type IS NULL OR usage_purpose IS NOT NULL",
+            name="ai_usage_quality_requires_purpose_check",
+        ),
+        CheckConstraint(
+            "usage_purpose IS NULL OR "
+            "(quality_operation_type IS NOT NULL AND quality_operation_id IS NOT NULL)",
+            name="ai_usage_purpose_requires_quality_context_check",
+        ),
+        CheckConstraint(
+            "usage_attempt_id IS NULL OR "
+            "(quality_operation_type IS NOT NULL AND quality_operation_id IS NOT NULL "
+            "AND usage_purpose IS NOT NULL)",
+            name="ai_usage_attempt_requires_quality_context_check",
+        ),
+        CheckConstraint(
+            "quality_operation_type IS NULL OR "
+            "(execution_id IS NULL AND conversation_id IS NULL AND agent_run_id IS NULL)",
+            name="ai_usage_quality_no_runtime_context_check",
         ),
         Index(
             "ix_ai_usage_execution",
@@ -155,4 +262,25 @@ class AIUsage(Base):
         ),
         Index("ix_ai_usage_org", "organization_id"),
         Index("ix_ai_usage_timestamp", "timestamp"),
+        Index(
+            "ix_ai_usage_quality_operation",
+            "quality_operation_type",
+            "quality_operation_id",
+            "timestamp",
+            postgresql_where=text("quality_operation_type IS NOT NULL"),
+        ),
+        Index(
+            "ix_ai_usage_quality_purpose",
+            "organization_id",
+            "usage_purpose",
+            "provider",
+            "model",
+            "timestamp",
+            postgresql_where=text("usage_purpose IS NOT NULL"),
+        ),
+        Index(
+            "ix_ai_usage_platform_job",
+            "platform_job_id",
+            postgresql_where=text("platform_job_id IS NOT NULL"),
+        ),
     )

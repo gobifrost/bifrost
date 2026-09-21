@@ -1,5 +1,5 @@
 /**
- * Per-flag tuning conversation.
+ * Per-flag improvement conversation.
  *
  * Presentational only — the parent owns the fetch + send mutation
  * (RunReviewSheet, AgentRunDetailPage). The component renders the message
@@ -7,9 +7,9 @@
  * while a send is in flight.
  *
  * Philosophy: every flag is a conversation, never a dead-end text box.
- * The tuning assistant always responds — diagnoses, asks clarifying
+ * The review assistant always responds — diagnoses, asks clarifying
  * questions, proposes a change when ready. Changes are NOT applied
- * from here; that happens in the consolidated "Tune agent" flow.
+ * from here; that happens in the quality workbench.
  */
 
 import { useEffect, useRef } from "react";
@@ -112,7 +112,7 @@ function EmptyState() {
 		<div className="rounded-[var(--bf-radius-surface)] border border-dashed border-border/70 bg-muted/20 px-4 py-3 text-sm leading-6 text-muted-foreground">
 			Flag this run and tell me what went wrong. I&apos;ll help diagnose
 			and propose a change — nothing touches the live prompt until you
-			decide to tune.
+			review and apply it.
 		</div>
 	);
 }

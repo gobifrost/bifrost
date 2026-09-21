@@ -39,6 +39,9 @@ MAX_ACTIVE_EXECUTIONS_PER_ORG = _int_env(
 MAX_REPETITIONS_PER_CASE = 10
 """Repetitions per case side (mirrors the contract bound)."""
 
+MAX_MATRIX_CELLS = _int_env("BIFROST_EVAL_MAX_MATRIX_CELLS", 10)
+"""Cells (candidate-or-baseline x profile pairs) per batch admission."""
+
 MAX_SYNTHETIC_TIMER_SECONDS = _int_env("BIFROST_EVAL_MAX_SYNTHETIC_TIMER_S", 300)
 """Wall-clock-free deterministic cap for synthetic ``sleep_until``."""
 

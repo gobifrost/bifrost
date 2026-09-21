@@ -3,16 +3,25 @@
  */
 
 import { useEffect } from "react";
-import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+	useInfiniteQuery,
+	useQuery,
+	useQueryClient,
+} from "@tanstack/react-query";
 import { $api, apiClient } from "@/lib/api-client";
 import type { components } from "@/lib/v1";
-import { webSocketService, type AgentRunUpdate, type AgentRunStepUpdate } from "@/services/websocket";
+import {
+	webSocketService,
+	type AgentRunUpdate,
+	type AgentRunStepUpdate,
+} from "@/services/websocket";
 import { useAgentRunStepStore } from "@/stores/agentRunStepStore";
 
 // Re-export types for new wrappers (added with T8/T9/T15-T17)
 export type VerdictRequest = components["schemas"]["VerdictRequest"];
 export type VerdictResponse = components["schemas"]["VerdictResponse"];
-export type FlagConversation = components["schemas"]["FlagConversationResponse"];
+export type FlagConversation =
+	components["schemas"]["FlagConversationResponse"];
 export type SendFlagMessageRequest =
 	components["schemas"]["SendFlagMessageRequest"];
 export type DryRunRequest = components["schemas"]["DryRunRequest"];
@@ -123,16 +132,19 @@ export function useAgentRuns(params?: {
 			const searchParams = new URLSearchParams();
 			if (params?.agentId) searchParams.set("agent_id", params.agentId);
 			if (params?.status) searchParams.set("status", params.status);
-			if (params?.triggerType) searchParams.set("trigger_type", params.triggerType);
+			if (params?.triggerType)
+				searchParams.set("trigger_type", params.triggerType);
 			if (params?.orgId) searchParams.set("org_id", params.orgId);
-			if (params?.startDate) searchParams.set("start_date", params.startDate);
+			if (params?.startDate)
+				searchParams.set("start_date", params.startDate);
 			if (params?.endDate) searchParams.set("end_date", params.endDate);
 			if (params?.q) searchParams.set("q", params.q);
 			if (params?.verdict) searchParams.set("verdict", params.verdict);
 			if (params?.metadataFilter)
 				searchParams.set("metadata_filter", params.metadataFilter);
 			if (params?.limit) searchParams.set("limit", String(params.limit));
-			if (params?.offset) searchParams.set("offset", String(params.offset));
+			if (params?.offset)
+				searchParams.set("offset", String(params.offset));
 			const qs = searchParams.toString();
 			const url = `/api/agent-runs${qs ? `?${qs}` : ""}`;
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -149,7 +161,9 @@ export function useAgentRuns(params?: {
  * Provided for clarity at call sites that want to highlight the search
  * intent (`q` / `verdict` / `metadataFilter`). Same return shape.
  */
-export function useSearchAgentRuns(params?: Parameters<typeof useAgentRuns>[0]) {
+export function useSearchAgentRuns(
+	params?: Parameters<typeof useAgentRuns>[0],
+) {
 	return useAgentRuns(params);
 }
 
@@ -182,9 +196,11 @@ export function useInfiniteAgentRuns(params?: {
 			const searchParams = new URLSearchParams();
 			if (params?.agentId) searchParams.set("agent_id", params.agentId);
 			if (params?.status) searchParams.set("status", params.status);
-			if (params?.triggerType) searchParams.set("trigger_type", params.triggerType);
+			if (params?.triggerType)
+				searchParams.set("trigger_type", params.triggerType);
 			if (params?.orgId) searchParams.set("org_id", params.orgId);
-			if (params?.startDate) searchParams.set("start_date", params.startDate);
+			if (params?.startDate)
+				searchParams.set("start_date", params.startDate);
 			if (params?.endDate) searchParams.set("end_date", params.endDate);
 			if (params?.q) searchParams.set("q", params.q);
 			if (params?.verdict) searchParams.set("verdict", params.verdict);
@@ -205,12 +221,24 @@ export function useInfiniteAgentRuns(params?: {
 	});
 }
 
-export function useAgentRun(runId: string | undefined, options?: { refetchInterval?: number | false | ((query: { state: { data: AgentRunDetail | undefined } }) => number | false) }) {
+export function useAgentRun(
+	runId: string | undefined,
+	options?: {
+		refetchInterval?:
+			| number
+			| false
+			| ((query: {
+					state: { data: AgentRunDetail | undefined };
+			  }) => number | false);
+	},
+) {
 	return useQuery({
 		queryKey: ["agent-runs", runId],
 		queryFn: async () => {
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			const { data, error } = await apiClient.GET(`/api/agent-runs/${runId}` as any, {});
+			const { data, error } = await apiClient.GET(
+				"/api/agent-runs/{run_id}",
+				{ params: { path: { run_id: runId! } } },
+			);
 			if (error) throw error;
 			return data as unknown as AgentRunDetail;
 		},
@@ -266,7 +294,9 @@ export function useAgentRunListStream(options: { enabled?: boolean } = {}) {
 							parent_run_id: null,
 						});
 
-						const patchItems = (items: AgentRun[]): { items: AgentRun[]; appended: boolean } => {
+						const patchItems = (
+							items: AgentRun[],
+						): { items: AgentRun[]; appended: boolean } => {
 							const existingIndex = items.findIndex(
 								(run) => run.id === update.run_id,
 							);
@@ -277,35 +307,51 @@ export function useAgentRunListStream(options: { enabled?: boolean } = {}) {
 									status: update.status,
 									iterations_used: update.iterations_used,
 									tokens_used: update.tokens_used,
-									duration_ms: update.duration_ms ?? next[existingIndex].duration_ms,
-									error: update.error ?? next[existingIndex].error,
+									duration_ms:
+										update.duration_ms ??
+										next[existingIndex].duration_ms,
+									error:
+										update.error ??
+										next[existingIndex].error,
 								};
 								return { items: next, appended: false };
 							}
-							return { items: [buildNewRun(), ...items], appended: true };
+							return {
+								items: [buildNewRun(), ...items],
+								appended: true,
+							};
 						};
 
 						// Flat list caches (legacy `useAgentRuns`).
-						const flatCaches = queryClient.getQueriesData<AgentRunListResponse>({
-							queryKey: ["agent-runs"],
-						});
+						const flatCaches =
+							queryClient.getQueriesData<AgentRunListResponse>({
+								queryKey: ["agent-runs"],
+							});
 						flatCaches.forEach(([queryKey, oldData]) => {
 							if (!oldData?.items) return;
-							const { items, appended } = patchItems(oldData.items);
+							const { items, appended } = patchItems(
+								oldData.items,
+							);
 							queryClient.setQueryData(queryKey, {
 								...oldData,
 								items,
-								total: appended ? oldData.total + 1 : oldData.total,
+								total: appended
+									? oldData.total + 1
+									: oldData.total,
 							});
 						});
 
 						// Infinite list caches (`useInfiniteAgentRuns`). Only patch the
 						// first page — new runs prepend there; in-place updates target
 						// whichever page the run currently lives on.
-						type InfiniteData = { pages: AgentRunListResponse[]; pageParams: unknown[] };
-						const infiniteCaches = queryClient.getQueriesData<InfiniteData>({
-							queryKey: ["agent-runs-infinite"],
-						});
+						type InfiniteData = {
+							pages: AgentRunListResponse[];
+							pageParams: unknown[];
+						};
+						const infiniteCaches =
+							queryClient.getQueriesData<InfiniteData>({
+								queryKey: ["agent-runs-infinite"],
+							});
 						infiniteCaches.forEach(([queryKey, oldData]) => {
 							if (!oldData?.pages?.length) return;
 							const pageIdx = oldData.pages.findIndex((p) =>
@@ -313,8 +359,13 @@ export function useAgentRunListStream(options: { enabled?: boolean } = {}) {
 							);
 							if (pageIdx >= 0) {
 								const nextPages = [...oldData.pages];
-								const { items } = patchItems(nextPages[pageIdx].items);
-								nextPages[pageIdx] = { ...nextPages[pageIdx], items };
+								const { items } = patchItems(
+									nextPages[pageIdx].items,
+								);
+								nextPages[pageIdx] = {
+									...nextPages[pageIdx],
+									items,
+								};
 								queryClient.setQueryData(queryKey, {
 									...oldData,
 									pages: nextPages,
@@ -337,7 +388,10 @@ export function useAgentRunListStream(options: { enabled?: boolean } = {}) {
 					},
 				);
 			} catch (error) {
-				console.error("[useAgentRunListStream] Failed to connect:", error);
+				console.error(
+					"[useAgentRunListStream] Failed to connect:",
+					error,
+				);
 			}
 		};
 
@@ -401,9 +455,17 @@ export function useAgentRunStream(
 						);
 
 						// On terminal status, refetch full data and notify
-						const isTerminal = ["completed", "failed", "budget_exceeded", "timeout", "cancelled"].includes(update.status);
+						const isTerminal = [
+							"completed",
+							"failed",
+							"budget_exceeded",
+							"timeout",
+							"cancelled",
+						].includes(update.status);
 						if (isTerminal) {
-							queryClient.invalidateQueries({ queryKey: ["agent-runs", runId] });
+							queryClient.invalidateQueries({
+								queryKey: ["agent-runs", runId],
+							});
 							onComplete?.(runId);
 						}
 					},
@@ -413,7 +475,10 @@ export function useAgentRunStream(
 				unsubStep = webSocketService.onAgentRunStep(
 					runId,
 					(update: AgentRunStepUpdate) => {
-						const step = { ...update.step, created_at: update.timestamp };
+						const step = {
+							...update.step,
+							created_at: update.timestamp,
+						};
 						useAgentRunStepStore.getState().appendStep(runId, step);
 					},
 				);
@@ -465,7 +530,7 @@ export function useRerunAgentRun() {
 }
 
 /**
- * Fetch the tuning conversation attached to a flagged run.
+ * Fetch the improvement conversation attached to a flagged run.
  *
  * Server creates an empty conversation row if none exists yet, so the UI
  * can stream messages into a stable `id`.
@@ -479,20 +544,12 @@ export function useFlagConversation(runId: string | undefined) {
 	);
 }
 
-/** Append a user turn and synchronously get the tuning-model reply. */
+/** Append a user turn and synchronously get the improvement-model reply. */
 export function useSendFlagMessage() {
 	return $api.useMutation(
 		"post",
 		"/api/agent-runs/{run_id}/flag-conversation/message",
 	);
-}
-
-/**
- * Single-run dry-run of a proposed system prompt against a past run's
- * transcript. One LLM call — does not re-execute tools.
- */
-export function useDryRunAgent() {
-	return $api.useMutation("post", "/api/agent-runs/{run_id}/dry-run");
 }
 
 /** Reset summary state and re-enqueue a summarization job. Admin-only. */
@@ -524,11 +581,9 @@ export function useSummaryBackfillJob(jobId: string | undefined) {
  * already-running job.
  */
 export function useSummaryBackfillJobs(activeOnly: boolean = false) {
-	return $api.useQuery(
-		"get",
-		"/api/agent-runs/backfill-jobs",
-		{ params: { query: { active: activeOnly } } },
-	);
+	return $api.useQuery("get", "/api/agent-runs/backfill-jobs", {
+		params: { query: { active: activeOnly } },
+	});
 }
 
 /** Cancel a stuck or unwanted backfill job. Admin-only. */
@@ -557,19 +612,15 @@ export function useBackfillEligible(
 	promptVersionBelow?: string,
 	includeCompleted?: boolean,
 ) {
-	return $api.useQuery(
-		"get",
-		"/api/agent-runs/backfill-eligible",
-		{
-			params: {
-				query: {
-					agent_id: agentId,
-					prompt_version_below: promptVersionBelow,
-					include_completed: includeCompleted,
-				},
+	return $api.useQuery("get", "/api/agent-runs/backfill-eligible", {
+		params: {
+			query: {
+				agent_id: agentId,
+				prompt_version_below: promptVersionBelow,
+				include_completed: includeCompleted,
 			},
 		},
-	);
+	});
 }
 
 /**

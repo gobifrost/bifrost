@@ -36,7 +36,6 @@ from src.services.agent_evaluations.executions import (
     finalize_execution,
     next_batch,
     plan_result_work_items,
-    resolve_semantic_assertions,
 )
 
 JOB_TYPE = "agent.evaluation_suite"
@@ -327,6 +326,40 @@ async def _dispatch_follow_up_batch(db, execution, results: list) -> int:
     return admitted
 
 
+async def _process_semantic_postprocessing(db, execution, results: list) -> bool:
+    """Recover/enqueue semantic child jobs; return True while child work is active."""
+    from shared.agent_synthetic_judge import (
+        enqueue_synthetic_semantic_judge_job,
+        has_semantic_pending,
+        reconcile_synthetic_semantic_child,
+        semantic_child_job_id,
+        synthetic_semantic_child_active,
+    )
+
+    active = False
+    for result in results:
+        if await reconcile_synthetic_semantic_child(db, result):
+            continue
+        if await synthetic_semantic_child_active(db, result):
+            active = True
+            continue
+        if has_semantic_pending(result):
+            try:
+                linked_child_id = semantic_child_job_id(result)
+            except ValueError:
+                await reconcile_synthetic_semantic_child(db, result)
+                continue
+            if linked_child_id is None:
+                child = await enqueue_synthetic_semantic_judge_job(
+                    db, execution=execution, result=result
+                )
+                if child is not None:
+                    active = True
+            elif await synthetic_semantic_child_active(db, result):
+                active = True
+    return active
+
+
 async def run_agent_evaluation_suite(
     context: PlatformJobContext,
     payload: AgentEvaluationSuitePayload,
@@ -507,8 +540,10 @@ async def apply_synthetic_terminal(
             expects_candidate=execution.candidate_id is not None,
         )
         if not advanced:
+            await _process_semantic_postprocessing(db, execution, results)
+            await db.commit()
             return False
-        await resolve_semantic_assertions(db, target)
+        semantic_active = await _process_semantic_postprocessing(db, execution, results)
         await db.commit()
         # The first commit makes the terminal delivery durable. Reacquire the
         # execution/result fence before finalizing or admitting follow-ups so
@@ -527,6 +562,13 @@ async def apply_synthetic_terminal(
             await cancel_evaluation_execution(execution_id)
             return True
         results = await _load_results(db, execution_id, lock=True)
+        semantic_active = await _process_semantic_postprocessing(db, execution, results)
+        if semantic_active:
+            await db.commit()
+            await _dispatch_follow_up_batch(db, execution, results)
+            if execution.status == "cancelled":
+                await cancel_evaluation_execution(execution_id)
+            return True
         summary = finalize_execution(execution, results)
         await db.commit()
         if summary["completed"] < summary["total"]:
@@ -562,6 +604,7 @@ async def cancel_evaluation_execution(execution_id: UUID) -> int:
     # completion outbox, parent wake, cancellation signal, and descendants.
     # Studio first snapshots its roots, then invokes that shared transition
     # for every run in each tree before terminalizing its own projection.
+    semantic_child_ids: list[UUID] = []
     async with get_db_context() as db:
         execution = await db.scalar(
             select(AgentEvaluationExecution).where(
@@ -582,6 +625,16 @@ async def cancel_evaluation_execution(execution_id: UUID) -> int:
                 if run_id is not None
             )
         )
+        from shared.agent_synthetic_judge import valid_semantic_child_job_id_for_result
+
+        semantic_child_ids = []
+        for result in results:
+            try:
+                child_id = await valid_semantic_child_job_id_for_result(db, result)
+            except ValueError:
+                child_id = None
+            if child_id is not None:
+                semantic_child_ids.append(child_id)
         # Fence admission before releasing the execution lock. A crashing
         # cancellation resumes from this durable ``cancelled + NULL`` marker.
         _mark_cancellation_pending(execution)
@@ -599,6 +652,14 @@ async def cancel_evaluation_execution(execution_id: UUID) -> int:
                 execution.completed_at = datetime.now(timezone.utc)
                 await db.commit()
         return 0
+
+    for child_id in semantic_child_ids:
+        async with get_db_context() as db:
+            from src.models.orm.platform_jobs import PlatformJob
+            from src.services.platform_jobs import request_platform_job_cancel
+            child = await db.get(PlatformJob, child_id)
+            if child is not None:
+                await request_platform_job_cancel(db, child)
 
     requested = 0
     cleanup_complete = True
@@ -827,8 +888,16 @@ async def reconcile_agent_evaluation_jobs() -> int:
                         status=evidence["terminal_status"], evidence=evidence,
                         expects_candidate=execution.candidate_id is not None,
                     ):
-                        await resolve_semantic_assertions(db, result)
                         healed += 1
+            semantic_active = await _process_semantic_postprocessing(db, execution, results)
+            if semantic_active:
+                await db.commit()
+                admitted = await _dispatch_follow_up_batch(db, execution, results)
+                if execution.status == "cancelled":
+                    cancellation_ids.add(execution.id)
+                else:
+                    healed += admitted
+                continue
             summary = finalize_execution(execution, results)
             await db.commit()
             if await _shared_job_cancel_requested(db, execution):

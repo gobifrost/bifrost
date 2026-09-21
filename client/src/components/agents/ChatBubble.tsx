@@ -19,7 +19,7 @@ export interface ChatBubbleProps {
 }
 
 /**
- * Message bubble for per-flag chat + tune conversations.
+ * Message bubble for per-flag chat and improvement conversations.
  *
  * Layout:
  *   user      → right-aligned, primary-tinted background
@@ -29,7 +29,7 @@ export interface ChatBubbleProps {
  * When `slots` is passed on an assistant bubble, each slot renders as a nested
  * block inside the same bubble below the prose — styled as a tool-result card
  * so it's visually inside the assistant's turn, not a floating sibling card.
- * This is the pattern used for ProposalTurn + DryRunTurn in tune chat.
+ * This is the pattern used for ProposalTurn + DryRunTurn in improvement chat.
  */
 export function ChatBubble({
 	kind,
@@ -41,7 +41,10 @@ export function ChatBubble({
 }: ChatBubbleProps & ComponentPropsWithoutRef<"div">) {
 	if (kind === "user") {
 		return (
-			<div className={cn("flex flex-col items-end", className)} {...props}>
+			<div
+				className={cn("flex flex-col items-end", className)}
+				{...props}
+			>
 				<div className="min-w-0 max-w-[92%] rounded-[var(--bf-radius-surface)] border border-border/70 bg-card px-3.5 py-3 text-[13.5px] leading-6 text-foreground whitespace-pre-wrap [overflow-wrap:anywhere]">
 					{children}
 				</div>

@@ -62,7 +62,7 @@ describe("Designer completion", () => {
 			await screen.findByText("Generated cases failed validation."),
 		).toBeVisible();
 		expect(
-			screen.getByRole("button", { name: "Generate review drafts" }),
+			screen.getByRole("button", { name: "Generate tests" }),
 		).toBeEnabled();
 	});
 });
@@ -88,6 +88,6 @@ it("describes a terminal model failure without claiming generation is continuing
 		),
 	).toBeVisible();
 	expect(
-		screen.getByRole("button", { name: "Generate review drafts" }),
+		screen.getByRole("button", { name: "Generate tests" }),
 	).toBeEnabled();
 });

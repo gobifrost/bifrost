@@ -26,16 +26,18 @@ export function EvaluationExecutionLink() {
 			</p>
 		);
 	const params = new URLSearchParams({
+		tab: "changes",
 		suite: execution.data.suite_id,
-		execution: executionId,
-		tab: "results",
 	});
 	if (execution.data.candidate_id)
 		params.set("candidate", execution.data.candidate_id);
+	if (execution.data.matrix_id)
+		params.set("matrix", execution.data.matrix_id);
+	else params.set("execution", executionId);
 	return (
 		<Navigate
 			replace
-			to={`/agents/${execution.data.baseline_agent_id}/studio?${params}`}
+			to={`/agents/${execution.data.baseline_agent_id}/quality?${params}`}
 		/>
 	);
 }

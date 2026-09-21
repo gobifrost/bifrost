@@ -450,6 +450,192 @@ async def test_chat_executor_receives_durable_child_callback(
             )
 
 
+async def test_child_terminal_before_parent_wait_commit_wakes_same_parent(
+    e2e_client,
+    platform_admin,
+    db_session,
+    async_session_factory,
+):
+    """Regression: a child may finish before the parent wait commit lands."""
+    from src.services.agent_runtime import run_store
+    from src.services.agent_runtime.delegation import (
+        suspend_for_deferred_calls,
+        wake_parent_for_child,
+    )
+
+    child = _create_agent(
+        e2e_client,
+        platform_admin,
+        f"Early Terminal Child {uuid4().hex[:8]}",
+    )
+    parent = _create_agent(
+        e2e_client,
+        platform_admin,
+        f"Early Terminal Parent {uuid4().hex[:8]}",
+    )
+    parent_id = None
+    early_child_id = None
+    try:
+        db_session.add(
+            AgentDelegation(
+                parent_agent_id=UUID(parent["id"]),
+                child_agent_id=UUID(child["id"]),
+            )
+        )
+        parent_run = AgentRun(
+            agent_id=UUID(parent["id"]),
+            trigger_type="manual",
+            status="queued",
+            input={"task": "Delegate while child finishes early."},
+        )
+        db_session.add(parent_run)
+        await db_session.commit()
+        parent_id = parent_run.id
+
+        async with async_session_factory() as session:
+            claimed = await run_store.claim_run(session, parent_id, "worker-parent")
+            lease_token = claimed.lease_token
+            assert lease_token is not None
+
+        async with async_session_factory() as session:
+            agent_result = await session.execute(
+                select(Agent)
+                .options(
+                    selectinload(Agent.tools),
+                    selectinload(Agent.delegated_agents),
+                    selectinload(Agent.roles),
+                )
+                .where(Agent.id == UUID(parent["id"]))
+            )
+            parent_agent = agent_result.scalar_one()
+
+        real_transition_waiting = run_store.transition_waiting
+
+        async def terminalize_child_before_parent_wait(*args, **kwargs):
+            nonlocal early_child_id
+            async with async_session_factory() as child_session:
+                parent_before_wait = await child_session.get(AgentRun, parent_id)
+                assert parent_before_wait is not None
+                assert parent_before_wait.status == "running"
+                assert parent_before_wait.lease_token == lease_token
+                child_row = (
+                    await child_session.execute(
+                        select(AgentRun).where(AgentRun.parent_run_id == parent_id)
+                    )
+                ).scalar_one()
+                early_child_id = child_row.id
+                child_claim = await run_store.claim_run(
+                    child_session, child_row.id, "worker-child"
+                )
+                assert child_claim.lease_token is not None
+                await run_store.finish_run(
+                    child_session,
+                    child_row.id,
+                    child_claim.lease_token,
+                    "completed",
+                    output={"text": "finished before parent waited"},
+                )
+            assert await wake_parent_for_child(async_session_factory, early_child_id) is False
+            return await real_transition_waiting(*args, **kwargs)
+
+        slug = agent_delegation_slug(child["name"])
+        tool_call = ToolCallPart(
+            slug,
+            {"task": "Finish before parent wait commits"},
+            tool_call_id="early-child-call",
+        )
+
+        with (
+            patch(
+                "src.services.agent_runtime.execution_snapshot.get_llm_config",
+                new_callable=AsyncMock,
+                return_value=LLMConfig(
+                    provider="openai", model="test-child", api_key="test-key"
+                ),
+            ),
+            patch(
+                "src.services.execution.agent_run_service.publish_message",
+                new=AsyncMock(),
+            ),
+            patch("src.jobs.rabbitmq.publish_message", new=AsyncMock()) as parent_nudge,
+            patch(
+                "src.services.agent_runtime.delegation.run_store.transition_waiting",
+                new=AsyncMock(side_effect=terminalize_child_before_parent_wait),
+            ),
+        ):
+            suspended = await suspend_for_deferred_calls(
+                session_factory=async_session_factory,
+                parent_run_id=parent_id,
+                lease_token=lease_token,
+                agent=parent_agent,
+                execution_snapshot=None,
+                tool_calls=[tool_call],
+                caller={
+                    "user_id": str(platform_admin.user_id),
+                    "email": platform_admin.email,
+                    "name": platform_admin.name,
+                    "organization_id": None,
+                    "is_superuser": True,
+                    "is_platform_admin": True,
+                },
+                caller_context={"ticket_id": 99},
+                correlation={"kind": "early-child"},
+            )
+
+        assert early_child_id is not None
+        assert suspended == {
+            "status": "suspended",
+            "child_run_ids": [str(early_child_id)],
+            "woken": True,
+        }
+        parent_nudge.assert_awaited_once_with(
+            "agent-runs", {"run_id": str(parent_id)}
+        )
+
+        async with async_session_factory() as session:
+            parent_after = await session.get(AgentRun, parent_id)
+            assert parent_after is not None
+            assert parent_after.status == "running"
+            assert parent_after.lease_token is None
+            child_after = await session.get(AgentRun, early_child_id)
+            assert child_after is not None
+            assert child_after.status == "completed"
+            assert child_after.parent_run_id == parent_id
+
+        assert (
+            await wake_parent_for_child(async_session_factory, early_child_id) is False
+        )
+
+        async with async_session_factory() as session:
+            resumed = await run_store.claim_run(session, parent_id, "worker-resume")
+            assert resumed.id == parent_id
+            assert resumed.lease_token is not None
+            assert resumed.attempt == 2
+    finally:
+        if parent_id is not None:
+            async with async_session_factory() as session:
+                rows = (
+                    (
+                        await session.execute(
+                            select(AgentRun).where(
+                                (AgentRun.id == parent_id)
+                                | (AgentRun.parent_run_id == parent_id)
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                for row in rows:
+                    await session.delete(row)
+                await session.commit()
+        for agent in (parent, child):
+            e2e_client.delete(
+                f"/api/agents/{agent['id']}",
+                headers=platform_admin.headers,
+            )
+
+
 async def test_durable_delegation_suspends_wakes_and_resumes_same_parent(
     e2e_client,
     platform_admin,

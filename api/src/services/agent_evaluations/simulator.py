@@ -88,9 +88,23 @@ class Simulator:
         fixture: dict[str, Any],
         tool_schemas: dict[str, dict[str, Any]] | None = None,
     ) -> None:
+        from shared.proposed_tools import ProposedToolError, validate_definitions
+
         self._fixture = validate_fixture(fixture)
         self._state = fresh_state(fixture)
         self._tool_schemas = dict(tool_schemas or {})
+        try:
+            proposed = validate_definitions(self._fixture.get("proposed_tools", []))
+        except ProposedToolError as exc:
+            raise FixtureError(f"Invalid proposed tool: {exc.detail}") from exc
+        overlap = {item["name"] for item in proposed} & set(self._tool_schemas)
+        if overlap:
+            raise FixtureError(
+                "Proposed tools collide with snapshot tools: "
+                + ", ".join(sorted(overlap))
+                + ". Proposed tools must use new names."
+            )
+        self._proposed = {item["name"]: item for item in proposed}
         self._records: list[dict[str, Any]] = []
         self._sequence = 0
 
@@ -113,8 +127,14 @@ class Simulator:
     def allowed_tools(self) -> list[str]:
         allowed = self._fixture.get("allowed_tools") or []
         if allowed:
-            return list(allowed)
-        return sorted(self._tool_schemas.keys())
+            names = list(allowed)
+        else:
+            names = sorted(self._tool_schemas.keys())
+        # Declared proposed tools are enabled by declaration.
+        for name in self._proposed:
+            if name not in names:
+                names.append(name)
+        return names
 
     def call(self, tool_name: str, arguments: dict[str, Any] | None) -> Any:
         """Execute one synthetic tool call against the locked case state."""
@@ -128,6 +148,11 @@ class Simulator:
         schema = self._tool_schemas.get(tool_name)
         if schema is not None:
             self._validate_against_schema(tool_name, schema, args)
+        proposed = self._proposed.get(tool_name)
+        if proposed is not None:
+            self._validate_against_schema(
+                tool_name, proposed["input_schema"], args
+            )
         self._state["clock_time"] = self.now_iso()
         try:
             result = self._dispatch(tool_name, args)
@@ -135,6 +160,8 @@ class Simulator:
             raise
         except Exception as exc:
             raise SyntheticToolError(str(exc), code="simulation_failed") from exc
+        if proposed is not None:
+            self._validate_output(tool_name, proposed["output_schema"], result)
         self._record(tool_name, args, result=result)
         return result
 
@@ -155,7 +182,33 @@ class Simulator:
                 code="schema_mismatch",
             )
 
+    def _validate_output(
+        self, tool_name: str, schema: dict[str, Any], result: Any
+    ) -> None:
+        from src.services.tool_schema import validate_arguments_against_schema
+
+        issues, schema_error = validate_arguments_against_schema(schema, result)
+        if schema_error:
+            raise SyntheticToolError(
+                f"Tool {tool_name!r} has an invalid output schema: {schema_error}",
+                code="invalid_tool_schema",
+            )
+        if issues:
+            raise SyntheticToolError(
+                f"Tool {tool_name!r} returned a payload outside its output contract: {issues}",
+                code="output_schema_mismatch",
+            )
+
     def _dispatch(self, tool_name: str, args: dict[str, Any]) -> Any:
+        proposed = self._proposed.get(tool_name)
+        if proposed is not None:
+            for rule in proposed["behavior"]:
+                if _rule_matches(rule, args):
+                    return self._apply_rule(rule, args)
+            raise SyntheticToolError(
+                f"Tool {tool_name!r} has no synthetic behavior for these arguments.",
+                code="unhandled_tool",
+            )
         for rule in self._fixture.get("rules", []):
             if rule.get("tool") == tool_name and _rule_matches(rule, args):
                 return self._apply_rule(rule, args)

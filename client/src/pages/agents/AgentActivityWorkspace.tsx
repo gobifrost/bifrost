@@ -3,6 +3,7 @@ import { Code2, ListTree, Maximize2, Minimize2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Timeline, AdvancedTimeline } from "@/components/agents/Timeline";
 import { RunPayloads } from "@/components/agents/RunReviewPanel";
+import { RunDurableEvidence } from "@/components/agents/RunDurableEvidence";
 import { cn } from "@/lib/utils";
 import type { components } from "@/lib/v1";
 
@@ -13,6 +14,7 @@ export function AgentActivityWorkspace({
 	expanded = false,
 	onFocusedChange,
 	onInspectionChange,
+	evidenceSequence,
 	...timelineProps
 }: {
 	run: Run;
@@ -20,8 +22,12 @@ export function AgentActivityWorkspace({
 	expanded?: boolean;
 	onFocusedChange?: (focused: boolean) => void;
 	onInspectionChange?: (inspecting: boolean) => void;
+	/** Journal sequence deep-link: opens Advanced and highlights the entry. */
+	evidenceSequence?: number;
 } & Omit<ComponentProps<typeof Timeline>, "steps">) {
-	const [advanced, setAdvanced] = useState(false);
+	const [advanced, setAdvanced] = useState(
+		() => evidenceSequence != null,
+	);
 	const heading = (
 		<div className="flex min-w-0 items-center gap-2">
 			<h2 className="flex items-center gap-2 text-sm font-medium">
@@ -93,6 +99,11 @@ export function AgentActivityWorkspace({
 							Raw executor trace
 						</h3>
 						<AdvancedTimeline steps={run.steps ?? []} />
+						<RunDurableEvidence
+							runId={run.id}
+							agentId={run.agent_id ?? ""}
+							highlightSequence={evidenceSequence}
+						/>
 					</div>
 				</div>
 			) : (

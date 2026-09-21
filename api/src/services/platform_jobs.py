@@ -8,7 +8,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import get_settings
@@ -432,6 +432,48 @@ async def defer_platform_job(
         await db.commit()
     await publish_platform_job_update(job)
     return True
+
+
+async def lock_running_platform_job_for_result_write(
+    db: AsyncSession,
+    *,
+    job_id: UUID,
+    lease_token: UUID,
+) -> PlatformJob | None:
+    """Fence domain writes to the current running PlatformJob attempt.
+
+    The caller owns the transaction and must perform its domain writes
+    before commit. Cancel-requested, expired, terminal, waiting, or stale
+    lease-token rows are rejected.
+    """
+    job = (
+        await db.execute(
+            select(PlatformJob)
+            .where(
+                PlatformJob.id == job_id,
+                PlatformJob.lease_token == lease_token,
+                PlatformJob.status == "running",
+                PlatformJob.cancel_requested_at.is_(None),
+                PlatformJob.lease_expires_at > func.clock_timestamp(),
+            )
+            .execution_options(populate_existing=True)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if job is None:
+        return None
+
+    locked_at = await db.scalar(select(func.clock_timestamp()))
+    if (
+        job.lease_token != lease_token
+        or job.status != "running"
+        or job.cancel_requested_at is not None
+        or job.lease_expires_at is None
+        or locked_at is None
+        or job.lease_expires_at <= locked_at
+    ):
+        return None
+    return job
 
 
 async def finish_deferred_platform_job(

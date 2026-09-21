@@ -403,6 +403,7 @@ client_ci_checks() {
 }
 
 repository_ci_checks() {
+    bash scripts/lib/debug_sh_test.sh
     bash scripts/lib/test_stack_lock_test.sh
     echo "Checking GitHub Action pins..."
     python3 api/scripts/check_github_action_pins.py --verify-versions

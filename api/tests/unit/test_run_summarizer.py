@@ -5,6 +5,7 @@ Validates the Task 12 implementation: ``summarize_run`` loads a completed
 extraction, and persists the parsed result onto the run record + an
 ``AIUsage`` row.
 """
+from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -54,16 +55,36 @@ async def seed_completed_run(db_session, seed_agent):
 
 def _build_mock_llm_response(
     content: str,
-    input_tokens: int = 200,
-    output_tokens: int = 40,
+    input_tokens=200,
+    output_tokens=40,
     model: str = "claude-haiku-4-5",
+    cache_read_tokens: int = 0,
+    cache_write_tokens: int = 0,
+    provider_cost: Decimal | None = None,
 ):
     """Construct the real stable response contract used by all providers."""
     return LLMResponse(
         content=content,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
+        cache_read_tokens=cache_read_tokens,
+        cache_write_tokens=cache_write_tokens,
+        provider_cost=provider_cost,
         model=model,
+    )
+
+
+async def _summary_usage_rows(db, run_id):
+    return (
+        (
+            await db.execute(
+                select(AIUsage)
+                .where(AIUsage.agent_run_id == run_id)
+                .order_by(AIUsage.id)
+            )
+        )
+        .scalars()
+        .all()
     )
 
 
@@ -86,7 +107,12 @@ async def test_summarize_run_populates_asked_did_confidence(
         '{"asked": "reset my password", "did": "routed to Support", '
         '"answered": "Sent password-reset link", '
         '"confidence": 0.9, "confidence_reason": "clear intent", '
-        '"metadata": {"intent": "password_reset"}}'
+        '"metadata": {"intent": "password_reset"}}',
+        input_tokens=200,
+        output_tokens=40,
+        cache_read_tokens=7,
+        cache_write_tokens=3,
+        provider_cost=Decimal("0.00123456"),
     )
     mock_client = _build_mock_client(mock_resp)
 
@@ -117,17 +143,16 @@ async def test_summarize_run_populates_asked_did_confidence(
         assert run.summary_prompt_version == SUMMARIZE_PROMPT_VERSION
         # Metadata merged (LLM-extracted intent)
         assert run.run_metadata.get("intent") == "password_reset"
-        usages = (
-            (
-                await db.execute(
-                    select(AIUsage).where(AIUsage.agent_run_id == run.id)
-                )
-            )
-            .scalars()
-            .all()
-        )
-        summary_usage = next(u for u in usages if u.model == "claude-haiku-4-5")
+        usages = await _summary_usage_rows(db, run.id)
+        assert len(usages) == 1
+        summary_usage = usages[0]
         assert summary_usage.sequence == 0
+        assert summary_usage.input_tokens == 200
+        assert summary_usage.output_tokens == 40
+        assert summary_usage.cache_read_tokens == 7
+        assert summary_usage.cache_write_tokens == 3
+        assert summary_usage.provider_cost == Decimal("0.00123456")
+        assert summary_usage.model == "claude-haiku-4-5"
 
 
 @pytest.mark.asyncio
@@ -171,7 +196,15 @@ async def test_summarize_run_invalid_json_marks_failed(
     """LLM returns garbage; run.summary_status = 'failed', summary_error stored."""
     from src.services.execution import run_summarizer as mod
 
-    mock_client = _build_mock_client(_build_mock_llm_response("not json at all"))
+    mock_client = _build_mock_client(
+        _build_mock_llm_response(
+            "not json at all",
+            input_tokens=31,
+            output_tokens=9,
+            cache_read_tokens=5,
+            provider_cost=Decimal("0.00004000"),
+        )
+    )
 
     with patch.object(
         mod,
@@ -189,6 +222,13 @@ async def test_summarize_run_invalid_json_marks_failed(
         assert run.summary_status == "failed"
         assert run.summary_error is not None
         assert "JSON" in run.summary_error or "json" in run.summary_error
+        usages = await _summary_usage_rows(db, run.id)
+        assert len(usages) == 1
+        assert usages[0].sequence == 0
+        assert usages[0].input_tokens == 31
+        assert usages[0].output_tokens == 9
+        assert usages[0].cache_read_tokens == 5
+        assert usages[0].provider_cost == Decimal("0.00004000")
 
 
 @pytest.mark.asyncio
@@ -201,7 +241,9 @@ async def test_summarize_run_empty_content_marks_failed_with_actionable_error(
     """
     from src.services.execution import run_summarizer as mod
 
-    mock_client = _build_mock_client(_build_mock_llm_response(""))
+    mock_client = _build_mock_client(
+        _build_mock_llm_response("", input_tokens=17, output_tokens=4)
+    )
 
     with patch.object(
         mod,
@@ -219,6 +261,11 @@ async def test_summarize_run_empty_content_marks_failed_with_actionable_error(
         assert run.summary_status == "failed"
         assert run.summary_error is not None
         assert "empty content" in run.summary_error.lower()
+        usages = await _summary_usage_rows(db, run.id)
+        assert len(usages) == 1
+        assert usages[0].sequence == 0
+        assert usages[0].input_tokens == 17
+        assert usages[0].output_tokens == 4
 
 
 @pytest.mark.asyncio
@@ -352,6 +399,107 @@ async def test_summarize_run_does_not_stack_transport_retries(
         assert run.summary_error is not None
         assert "RuntimeError" in run.summary_error
         assert "429 rate limited" in run.summary_error
+        assert await _summary_usage_rows(db, run.id) == []
+
+
+@pytest.mark.asyncio
+async def test_summarize_run_failed_then_regenerated_records_each_paid_response(
+    async_session_factory, seed_completed_run
+):
+    """A failed summary retry is another provider call and another usage row."""
+    from src.services.execution import run_summarizer as mod
+
+    failed_resp = _build_mock_llm_response(
+        "not json",
+        input_tokens=10,
+        output_tokens=2,
+        provider_cost=Decimal("0.00001000"),
+    )
+    success_resp = _build_mock_llm_response(
+        '{"asked": "x", "did": "y", "confidence": 0.5, '
+        '"confidence_reason": "z", "metadata": {}}',
+        input_tokens=11,
+        output_tokens=3,
+        provider_cost=Decimal("0.00001100"),
+    )
+    first_client = _build_mock_client(failed_resp)
+    second_client = _build_mock_client(success_resp)
+
+    with patch.object(
+        mod,
+        "get_summarization_client",
+        new=AsyncMock(
+            side_effect=[
+                (first_client, "claude-haiku-4-5"),
+                (second_client, "claude-haiku-4-5"),
+            ]
+        ),
+    ):
+        await summarize_run(seed_completed_run.id, async_session_factory)
+        await summarize_run(seed_completed_run.id, async_session_factory)
+
+    async with async_session_factory() as db:
+        run = (
+            await db.execute(
+                select(AgentRun).where(AgentRun.id == seed_completed_run.id)
+            )
+        ).scalar_one()
+        assert run.summary_status == "completed"
+        usages = await _summary_usage_rows(db, run.id)
+        assert [(u.sequence, u.input_tokens, u.output_tokens) for u in usages] == [
+            (0, 10, 2),
+            (0, 11, 3),
+        ]
+        assert [u.provider_cost for u in usages] == [
+            Decimal("0.00001000"),
+            Decimal("0.00001100"),
+        ]
+
+
+@pytest.mark.parametrize(
+    ("input_tokens", "output_tokens"),
+    [
+        (None, 40),
+        (200, None),
+        (True, 40),
+        (200, False),
+        ("200", 40),
+        (200, "40"),
+        (-1, 40),
+        (200, -1),
+    ],
+)
+@pytest.mark.asyncio
+async def test_summarize_run_missing_or_invalid_usage_counts_write_no_usage(
+    async_session_factory, seed_completed_run, input_tokens, output_tokens
+):
+    """Partial or synthetic counts cannot be represented honestly in AIUsage."""
+    from src.services.execution import run_summarizer as mod
+
+    mock_resp = _build_mock_llm_response(
+        '{"asked": "x", "did": "y", "confidence": 0.5, '
+        '"confidence_reason": "z", "metadata": {}}',
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        provider_cost=Decimal("0.50000000"),
+    )
+    mock_client = _build_mock_client(mock_resp)
+
+    with patch.object(
+        mod,
+        "get_summarization_client",
+        new=AsyncMock(return_value=(mock_client, "claude-haiku-4-5")),
+    ):
+        await summarize_run(seed_completed_run.id, async_session_factory)
+
+    async with async_session_factory() as db:
+        run = (
+            await db.execute(
+                select(AgentRun).where(AgentRun.id == seed_completed_run.id)
+            )
+        ).scalar_one()
+        assert run.summary_status == "completed"
+        assert await _summary_usage_rows(db, run.id) == []
 
 
 class TestExtractJsonObject:

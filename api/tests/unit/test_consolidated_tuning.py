@@ -1,14 +1,18 @@
-"""Consolidated tuning session service: propose / dry-run / apply.
+"""Consolidated tuning session service: propose / dry-run.
 
 Validates the Task 17 implementation:
 
 - ``propose_consolidated_tuning`` returns one prompt proposal informed by
   every flagged run.
 - A LookupError is raised when there are no flagged runs (router maps to 404).
-- ``apply_consolidated_tuning`` updates the agent prompt, writes an
-  ``AgentPromptHistory`` row, and clears verdicts on the affected runs.
 - ``dry_run_consolidated`` calls the per-run dry-run for at most
   ``CONSOLIDATED_DRY_RUN_LIMIT`` runs even when more are flagged.
+
+Applying a proposal is intentionally not covered here: the legacy
+``apply_consolidated_tuning`` cleared flagged verdicts and was removed.
+Reviewed changes apply through the normal authorized
+``PUT /api/agents/{id}`` (history + verdict preservation covered by
+``tests/e2e/api/test_agent_management_m1.py``).
 """
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -16,7 +20,7 @@ from uuid import uuid4
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import delete, select
+from sqlalchemy import delete
 
 from src.core.principal import UserPrincipal
 from src.models.orm.agent_prompt_history import AgentPromptHistory
@@ -25,7 +29,6 @@ from src.models.orm.agent_runs import AgentRun
 from src.models.orm.ai_usage import AIUsage
 from src.services.execution.tuning_service import (
     CONSOLIDATED_DRY_RUN_LIMIT,
-    apply_consolidated_tuning,
     dry_run_consolidated,
     propose_consolidated_tuning,
 )
@@ -142,66 +145,6 @@ async def test_propose_no_flagged_runs_raises(db_session, seed_agent, seed_user)
             db_session,
             _superuser_principal(seed_user),
         )
-
-
-@pytest.mark.asyncio
-async def test_apply_updates_prompt_creates_history_resets_verdicts(
-    db_session, seed_agent_with_flagged_runs, seed_user
-):
-    """Apply updates Agent.system_prompt, inserts history, and clears verdicts."""
-    agent, runs = seed_agent_with_flagged_runs
-    original_prompt = agent.system_prompt
-    new_prompt = "Be more careful in routing decisions."
-
-    applied = await apply_consolidated_tuning(
-        agent_id=agent.id,
-        new_prompt=new_prompt,
-        reason="Consolidated tuning from 3 flagged runs.",
-        user_id=seed_user.id,
-        db=db_session,
-        user=_superuser_principal(seed_user),
-    )
-    await db_session.commit()
-
-    assert applied.agent_id == agent.id
-    assert set(applied.affected_run_ids) == {r.id for r in runs}
-
-    # Verify Agent.system_prompt updated
-    refreshed_agent = (
-        await db_session.execute(
-            select(type(agent)).where(type(agent).id == agent.id)
-        )
-    ).scalar_one()
-    assert refreshed_agent.system_prompt == new_prompt
-
-    # Verify history row
-    histories = (
-        (
-            await db_session.execute(
-                select(AgentPromptHistory).where(
-                    AgentPromptHistory.agent_id == agent.id
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
-    assert len(histories) == 1
-    assert histories[0].previous_prompt == original_prompt
-    assert histories[0].new_prompt == new_prompt
-    assert histories[0].changed_by == seed_user.id
-    assert histories[0].reason == "Consolidated tuning from 3 flagged runs."
-    assert histories[0].id == applied.history_id
-
-    # Verify verdicts cleared
-    for run in runs:
-        refreshed_run = (
-            await db_session.execute(
-                select(AgentRun).where(AgentRun.id == run.id)
-            )
-        ).scalar_one()
-        assert refreshed_run.verdict is None
-        assert refreshed_run.verdict_note is None
 
 
 @pytest.mark.asyncio

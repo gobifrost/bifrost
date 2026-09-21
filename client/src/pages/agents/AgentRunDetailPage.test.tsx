@@ -2,7 +2,7 @@ import { AgentRunDetailPage } from "./AgentRunDetailPage";
 /**
  * Tests for AgentRunDetailPage.
  *
- * Mocks the run + agent + tuning hooks at module scope. RunReviewPanel and
+ * Mocks the run + agent + review hooks at module scope. RunReviewPanel and
  * FlagConversation are stubbed to thin probes — they have their own tests.
  */
 
@@ -22,6 +22,7 @@ const mockSetVerdict = vi.fn();
 const mockClearVerdict = vi.fn();
 const mockRegenSummary = vi.fn();
 const mockRerun = vi.fn();
+const mockRecordedEvaluation = vi.fn();
 let rerunPending = false;
 
 vi.mock("@/services/agentRuns", () => ({
@@ -61,6 +62,13 @@ vi.mock("@/hooks/useExecutions", () => ({
 
 vi.mock("@/hooks/useAgentRunUpdates", () => ({
 	useAgentRunUpdates: () => {},
+}));
+
+vi.mock("@/services/agentPlatform", () => ({
+	agentPlatform: {
+		recordedEvaluation: (...args: unknown[]) =>
+			mockRecordedEvaluation(...args),
+	},
 }));
 
 const mockAuth = vi.fn();
@@ -196,6 +204,11 @@ beforeEach(() => {
 	mockSetVerdict.mockReset();
 	mockClearVerdict.mockReset();
 	mockRegenSummary.mockReset();
+	mockRecordedEvaluation.mockReset();
+	mockRecordedEvaluation.mockResolvedValue({
+		evaluationId: "recorded-1",
+		job_id: "job-1",
+	});
 	mockAuth.mockReturnValue({ isPlatformAdmin: false });
 });
 
@@ -635,6 +648,70 @@ describe("AgentRunDetailPage — rerun", () => {
 				expect.any(Object),
 			);
 		});
+	});
+});
+
+describe("AgentRunDetailPage — recorded evaluation", () => {
+	it("queues the current run with exact recorded evaluation defaults", async () => {
+		const { user } = await renderPage();
+
+		await user.click(
+			screen.getByRole("button", { name: /evaluate recorded run/i }),
+		);
+
+		await waitFor(() => {
+			expect(mockRecordedEvaluation).toHaveBeenCalledWith({
+				agent_id: "agent-1",
+				run_ids: ["run-1"],
+				all_tests: true,
+				applicability: "unknown",
+				judge_mode: "exact",
+				applicability_overrides: [],
+			});
+		});
+		expect(
+			await screen.findByRole("link", {
+				name: /open recorded evaluation/i,
+			}),
+		).toHaveAttribute(
+			"href",
+			"/agents/agent-1/quality?collection=tests&recorded=recorded-1",
+		);
+	});
+
+	it("leaves recorded evaluation errors visible and retryable", async () => {
+		mockRecordedEvaluation
+			.mockRejectedValueOnce(new Error("Queue failed"))
+			.mockResolvedValueOnce({
+				evaluationId: "recorded-2",
+				job_id: "job-2",
+			});
+		const { user } = await renderPage();
+
+		await user.click(
+			screen.getByRole("button", { name: /evaluate recorded run/i }),
+		);
+		expect(
+			await screen.findByText(/could not queue recorded evaluation/i),
+		).toBeVisible();
+
+		await user.click(
+			screen.getByRole("button", {
+				name: /retry recorded evaluation/i,
+			}),
+		);
+
+		await waitFor(() => {
+			expect(mockRecordedEvaluation).toHaveBeenCalledTimes(2);
+		});
+		expect(
+			await screen.findByRole("link", {
+				name: /open recorded evaluation/i,
+			}),
+		).toHaveAttribute(
+			"href",
+			"/agents/agent-1/quality?collection=tests&recorded=recorded-2",
+		);
 	});
 });
 

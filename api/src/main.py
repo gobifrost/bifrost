@@ -61,6 +61,10 @@ from src.routers import (
     agent_runs_router,
     agent_tuning_router,
     agent_evaluations_router,
+    agent_recorded_evaluations_router,
+    agent_reviews_router,
+    agent_findings_router,
+    recurring_triggers_router,
     agents_router,
     chat_router,
     llm_config_router,
@@ -608,6 +612,10 @@ def create_app() -> FastAPI:
     app.include_router(agent_runs_router)
     app.include_router(agent_tuning_router)
     app.include_router(agent_evaluations_router)
+    app.include_router(agent_recorded_evaluations_router)
+    app.include_router(agent_reviews_router)
+    app.include_router(agent_findings_router)
+    app.include_router(recurring_triggers_router)
     app.include_router(chat_router)
     app.include_router(llm_config_router)
     app.include_router(ai_models_router)

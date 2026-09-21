@@ -1,8 +1,8 @@
 /**
- * Slide-over sheet that wraps a run's review and tuning experience.
+ * Slide-over sheet that wraps a run's review and improvement discussion.
  *
  * Mounts the shared RunReviewPanel under the Review tab and the
- * FlagConversation under the Tune tab. The parent controls open state,
+ * FlagConversation under the Discussion tab. The parent controls open state,
  * the run, and all state for verdict / note / conversation — this
  * component is purely presentational.
  */
@@ -181,7 +181,7 @@ export function RunReviewSheet({
 							Review
 						</RunReviewSheetTabTrigger>
 						<RunReviewSheetTabTrigger value="tune" icon={Sparkles}>
-							Tune
+							Discussion
 						</RunReviewSheetTabTrigger>
 					</TabsList>
 					<TabsContent
@@ -301,7 +301,8 @@ function RunReviewSheetHeader({
 				</div>
 				<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
 					<p className="max-w-2xl text-sm leading-5 text-muted-foreground">
-						Review verdicts, notes, and tuning chat for this run.
+						Review verdicts, notes, and improvement chat for this
+						run.
 					</p>
 					<Button
 						asChild

@@ -194,6 +194,28 @@ def _truncate(value: Any, max_len: int) -> str | None:
     return s or None
 
 
+def _summary_usage_tokens(response: Any) -> tuple[int, int] | None:
+    """Return complete observed summary token counts, or ``None`` if incomplete.
+
+    ``AIUsage`` cannot honestly represent partial response usage because input
+    and output token columns are non-null integers. Only persist rows when the
+    provider returned both counts as actual nonnegative ints; bools are rejected
+    because they are ints in Python but not token counts.
+    """
+    input_tokens = getattr(response, "input_tokens", None)
+    output_tokens = getattr(response, "output_tokens", None)
+    if (
+        isinstance(input_tokens, int)
+        and not isinstance(input_tokens, bool)
+        and input_tokens >= 0
+        and isinstance(output_tokens, int)
+        and not isinstance(output_tokens, bool)
+        and output_tokens >= 0
+    ):
+        return input_tokens, output_tokens
+    return None
+
+
 async def summarize_run(
     run_id: UUID, session_factory: Callable[[], AsyncSession]
 ) -> None:
@@ -271,6 +293,28 @@ async def summarize_run(
             messages=messages,
             model=resolved_model,
         )
+        usage_tokens = _summary_usage_tokens(response)
+        if usage_tokens is not None:
+            input_tokens, output_tokens = usage_tokens
+            async with session_factory() as db:
+                await record_ai_usage(
+                    session=db,
+                    redis_client=await get_shared_redis(),
+                    agent_run_id=run_id,
+                    organization_id=org_id,
+                    provider=getattr(llm_client, "provider_name", "unknown"),
+                    model=getattr(response, "model", None) or resolved_model,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    cache_read_tokens=response.cache_read_tokens,
+                    cache_write_tokens=response.cache_write_tokens,
+                    provider_cost=response.provider_cost,
+                    # Sequence zero is reserved for post-run summarization. Durable
+                    # execution checkpoints use positive sequences, which lets
+                    # evaluation evidence exclude this accounting-only model call.
+                    sequence=0,
+                )
+                await db.commit()
         raw_content = response.content or ""
         # Empty content is its own class of failure — OpenAI / reasoning models
         # sometimes return "" when the response is filtered or when token
@@ -357,7 +401,7 @@ async def summarize_run(
             await _broadcast_run(run, db)
         return
 
-    # Phase 3: persist success + AIUsage row
+    # Phase 3: persist successful summary fields
     async with session_factory() as db:
         run = (
             await db.execute(select(AgentRun).where(AgentRun.id == run_id))
@@ -385,25 +429,6 @@ async def summarize_run(
         run.summary_error = None
         run.summary_prompt_version = SUMMARIZE_PROMPT_VERSION
 
-        provider = getattr(llm_client, "provider_name", "unknown")
-        model_name = getattr(response, "model", None) or resolved_model
-        await record_ai_usage(
-            session=db,
-            redis_client=await get_shared_redis(),
-            agent_run_id=run.id,
-            organization_id=org_id,
-            provider=provider,
-            model=model_name,
-            input_tokens=response.input_tokens or 0,
-            output_tokens=response.output_tokens or 0,
-            cache_read_tokens=response.cache_read_tokens,
-            cache_write_tokens=response.cache_write_tokens,
-            provider_cost=response.provider_cost,
-            # Sequence zero is reserved for post-run summarization. Durable
-            # execution checkpoints use positive sequences, which lets
-            # evaluation evidence exclude this accounting-only model call.
-            sequence=0,
-        )
         await db.commit()
         await _broadcast_run(run, db)
 

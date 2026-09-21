@@ -1,15 +1,20 @@
-# Agent Evaluation Studio
+# Agent improvement workbench (was: Evaluation Studio)
 
-Reproducible synthetic evaluation for Agents: unpublished candidate
-snapshots, coherent stateful tool simulation, generated test cases, and
-baseline-versus-candidate comparison — all executed through the durable
-agent runtime and orchestrated by one canonical PlatformJob per suite
-execution. The integrated client exposes Studio from Agent detail and a durable
-run debugger from the existing run detail. REST API, CLI, and client consume
-the same generated contracts.
+Reproducible synthetic evaluation for Agents, consolidated into the single
+quality workbench at `/agents/:id/quality` (Tests / Findings / Reviews /
+Run history collections with a shared inspector; the retired
+`/agents/:id/tune` and `/agents/:id/studio` routes redirect there): reviewed
+findings, unpublished candidate snapshots,
+coherent stateful tool simulation, generated test cases, saved
+multi-profile comparisons, and baseline-versus-candidate comparison — all
+executed through the durable agent runtime and orchestrated through the
+canonical PlatformJob contract. REST API, CLI, and client consume the same
+generated contracts.
 
 Spec: `docs/superpowers/specs/2026-09-18-durable-agent-runtime-and-evaluation-studio-design.md`.
 Plan: `docs/superpowers/plans/2026-09-18-agent-evaluation-studio-backend.md`.
+Follow-up: `docs/superpowers/specs/2026-09-19-agent-review-testing-loop-design.md`,
+`docs/superpowers/plans/2026-09-19-replace-agent-tuning.md`.
 
 ## Concepts (stable language, spec R3)
 
@@ -27,6 +32,13 @@ CLI, docs, and UI use these words identically.
   never attached to live relationships, never runnable in production.
 - **Execution**: projection over one `agent.evaluation_suite` PlatformJob:
   suite/candidate versions, counters, terminal status.
+- **Matrix**: saved multi-profile definition (suite version, candidate
+  ids, profile ids). Fans out to one atomic execution per
+  (candidate-or-baseline, profile) cell, each with its own PlatformJob;
+  status is always computed from the cells, never stored.
+- **Finding**: reviewed, dismissable problem record (observed problem,
+  expected behavior, run/external source) linked to regression cases.
+  Passing tests never resolve findings.
 - **Result**: per-case, per-repetition outcome with assertion results,
   baseline/candidate comparison, usage, simulator hash, and debugger run
   links — summaries, never duplicated journals.
@@ -216,21 +228,35 @@ version.
 
 ## Client experience
 
-Studio lives at `/agents/:id/studio`. Suite, candidate, execution, and Designer
-run identities are retained in the URL. Cases remain inspectable before explicit
-acceptance creates a frozen version. Selected historical runs supply authorized
-evidence to Test Designer; its dedicated Testing model is configured alongside
-Summarization in AI settings. Candidate creation and successful evaluation never
-update the live Agent. Applying overlays requires reviewing the current production
-diff and an explicit action through the normal Agent update API.
+The workbench lives at `/agents/:id/quality` with Tests, Findings, Reviews,
+and Run history collections feeding a shared inspector. Suite, candidate,
+profile, matrix, execution, and
+finding identities are retained in the URL. Cases remain inspectable
+before explicit acceptance saves a new version. Selected historical runs
+supply authorized evidence to Test Designer; its dedicated Testing model
+is configured alongside Summarization in AI settings. Candidate creation
+and successful evaluation never update the live Agent. Applying overlays
+requires reviewing the current production configuration and an explicit
+action through the normal Agent update API (prompt history, stale guard,
+verdicts preserved).
 
-The debugger at `/agents/:agentId/runs/:runId/debug` preserves the original run
-detail and actions. It shows the run tree, cursor timeline, immutable snapshot,
-checkpoints, lease/wake/recovery state, and runtime-only usage. Evidence links
-retain run and sequence identity. Old runs without durable records explain the
-missing evidence and keep their original detail available.
+Durable evidence lives in the run detail Advanced view (one investigation
+view; the standalone `/debug` browser route was removed). It shows the run
+tree, cursor timeline, saved run snapshot, checkpoints, lease/wake/recovery
+state, and runtime-only usage. Evidence links retain run and sequence
+identity. Old runs without durable records explain the missing evidence and
+keep their original detail available.
 
 Both pages refresh authoritative queries from existing AgentRun and PlatformJob
 notification events and reconnect hints. There are no feature polling loops.
 Designer completion is determined by snapshot correlation materialization
 metadata, not merely by the model run reaching completion.
+
+## Deferred (explicitly out of scope)
+
+Automated finding discovery, recurring or change-triggered evaluation
+schedules, hard pre-execution spend caps, and multi-candidate comparison
+matrices are deferred. Saved suite/candidate/profile definitions and their
+provenance already support those callers, but this delivery does not enable
+background discovery, fresh scheduled runs, or automatic promotion: a
+passing test never resolves a finding, and test success never publishes.

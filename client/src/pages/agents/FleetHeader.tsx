@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { History, Plus } from "lucide-react";
+import { History, Plus, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export function FleetHeader({
@@ -27,6 +27,16 @@ export function FleetHeader({
 				</p>
 			</div>
 			<div className="flex flex-wrap items-center gap-2 [&>a]:min-h-11 [&>button]:min-h-11">
+				<Button
+					asChild
+					variant="outline"
+					className="flex-1 sm:flex-none"
+				>
+					<Link to="/agents/quality">
+						<Sparkles aria-hidden="true" className="size-4" />
+						Quality
+					</Link>
+				</Button>
 				<Button
 					asChild
 					variant="outline"

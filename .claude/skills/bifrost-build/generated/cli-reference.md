@@ -2,6 +2,277 @@
 
 > Regenerate: `python api/scripts/skill-truth/generate.py`. CI enforces freshness.
 
+## `agent-findings`
+
+```
+Usage: agent-findings [OPTIONS] COMMAND [ARGS]...
+
+  Manage agent findings.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+
+Commands:
+  create
+  get
+  list
+  search
+  update
+```
+
+### `agent-findings create`
+
+```
+Usage: agent-findings create [OPTIONS]
+
+Options:
+  --file TEXT                     JSON/YAML request body.
+  --agent TEXT                    Agent name or UUID.
+  --description TEXT              Observed problem.
+  --description-file TEXT         Read description from PATH.
+  --expected TEXT                 Expected behavior.
+  --expected-file TEXT            Read expected behavior from PATH.
+  --kind [problem|opportunity]
+  --evidence-markdown TEXT        Evidence Markdown.
+  --evidence-markdown-file TEXT   Read evidence Markdown from PATH.
+  --source-kind [run|manual|external]
+  --source-run TEXT               Source AgentRun UUID.
+  --source-sequence INTEGER
+  --external-ref TEXT
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
+```
+
+### `agent-findings get`
+
+```
+Usage: agent-findings get [OPTIONS] FINDING_ID
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `agent-findings list`
+
+```
+Usage: agent-findings list [OPTIONS]
+
+Options:
+  --agent TEXT               Agent name or UUID.  [required]
+  --status [open|dismissed]
+  --json                     Emit JSON instead of human-readable output.
+  --help                     Show this message and exit.
+```
+
+### `agent-findings search`
+
+```
+Usage: agent-findings search [OPTIONS]
+
+Options:
+  --agent TEXT                    Agent name or UUID.
+  --status [open|dismissed]
+  --kind [problem|opportunity]
+  --source-kind [run|manual|external]
+  --review TEXT                   Source review UUID.
+  --review-run TEXT               Source review run UUID.
+  --q TEXT                        Literal text search.
+  --org-id TEXT                   Organization UUID (admin only).
+  --limit INTEGER RANGE           [1<=x<=200]
+  --offset INTEGER RANGE          [x>=0]
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
+```
+
+### `agent-findings update`
+
+```
+Usage: agent-findings update [OPTIONS] FINDING_ID
+
+Options:
+  --file TEXT                    JSON/YAML request body.
+  --description TEXT
+  --description-file TEXT
+  --expected TEXT
+  --expected-file TEXT
+  --status [open|dismissed]
+  --kind [problem|opportunity]
+  --evidence-markdown TEXT
+  --evidence-markdown-file TEXT
+  --clear-evidence-markdown      Clear evidence Markdown (sends explicit
+                                 null).
+  --json                         Emit JSON instead of human-readable output.
+  --help                         Show this message and exit.
+```
+
+## `agent-reviews`
+
+```
+Usage: agent-reviews [OPTIONS] COMMAND [ARGS]...
+
+  Manage on-demand agent reviews.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+
+Commands:
+  cancel
+  create
+  get
+  list
+  results
+  run
+  status
+  update
+  usage
+  version
+  versions
+```
+
+### `agent-reviews cancel`
+
+```
+Usage: agent-reviews cancel [OPTIONS] JOB_ID
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `agent-reviews create`
+
+```
+Usage: agent-reviews create [OPTIONS]
+
+Options:
+  --file TEXT                  JSON/YAML request body.
+  --agent TEXT                 Agent name or UUID.
+  --name TEXT                  Review definition name.
+  --statement TEXT             Review statement.
+  --statement-file TEXT        Read review statement from PATH.
+  --evidence-format TEXT       Evidence formatting instructions.
+  --evidence-format-file TEXT  Read evidence formatting instructions from
+                               PATH.
+  --profile-id TEXT            Explicit model profile UUID (admin only).
+  --org-id TEXT                Organization UUID or 'global'.
+  --json                       Emit JSON instead of human-readable output.
+  --help                       Show this message and exit.
+```
+
+### `agent-reviews get`
+
+```
+Usage: agent-reviews get [OPTIONS] REVIEW_ID
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `agent-reviews list`
+
+```
+Usage: agent-reviews list [OPTIONS]
+
+Options:
+  --agent TEXT                    Agent name or UUID.  [required]
+  --status [active|disabled|all]
+  --limit INTEGER RANGE           [1<=x<=200]
+  --offset INTEGER RANGE          [x>=0]
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
+```
+
+### `agent-reviews results`
+
+```
+Usage: agent-reviews results [OPTIONS] REVIEW_RUN_ID
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `agent-reviews run`
+
+```
+Usage: agent-reviews run [OPTIONS] REVIEW_ID
+
+Options:
+  --file TEXT              JSON/YAML request body.
+  --runs TEXT              Comma-separated production AgentRun IDs.
+  --wait / --no-wait       Poll the shared PlatformJob until terminal.
+  --timeout INTEGER RANGE  Client-side wait deadline in seconds.  [x>=1]
+  --json                   Emit JSON instead of human-readable output.
+  --help                   Show this message and exit.
+```
+
+### `agent-reviews status`
+
+```
+Usage: agent-reviews status [OPTIONS] JOB_ID
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `agent-reviews update`
+
+```
+Usage: agent-reviews update [OPTIONS] REVIEW_ID
+
+Options:
+  --name TEXT
+  --status [active|disabled]
+  --json                      Emit JSON instead of human-readable output.
+  --help                      Show this message and exit.
+```
+
+### `agent-reviews usage`
+
+```
+Usage: agent-reviews usage [OPTIONS] REVIEW_RUN_ID
+
+Options:
+  --limit INTEGER RANGE   [1<=x<=200]
+  --offset INTEGER RANGE  [x>=0]
+  --json                  Emit JSON instead of human-readable output.
+  --help                  Show this message and exit.
+```
+
+### `agent-reviews version`
+
+```
+Usage: agent-reviews version [OPTIONS] REVIEW_ID
+
+Options:
+  --file TEXT                  JSON/YAML request body.
+  --statement TEXT             Review statement.
+  --statement-file TEXT        Read review statement from PATH.
+  --evidence-format TEXT       Evidence formatting instructions.
+  --evidence-format-file TEXT  Read evidence formatting instructions from
+                               PATH.
+  --profile-id TEXT            Explicit model profile UUID (admin only).
+  --json                       Emit JSON instead of human-readable output.
+  --help                       Show this message and exit.
+```
+
+### `agent-reviews versions`
+
+```
+Usage: agent-reviews versions [OPTIONS] REVIEW_ID
+
+Options:
+  --limit INTEGER RANGE   [1<=x<=200]
+  --offset INTEGER RANGE  [x>=0]
+  --json                  Emit JSON instead of human-readable output.
+  --help                  Show this message and exit.
+```
+
 ## `agent-tests`
 
 ```
@@ -23,6 +294,12 @@ Commands:
   compare            Summarize regressions, failures, usage deltas, and...
   designer-accept    Explicitly accept a draft, freezing a new case version.
   designer-drafts    Start the server-authorized Test Designer AgentRun.
+  designer-usage     Show Test Designer run usage.
+  evaluate           Evaluate exact recorded runs against published tests.
+  recorded-cancel    Request cancellation by recorded-evaluation...
+  recorded-results   Show recorded evaluation pair results by evaluation ID.
+  recorded-status    Show shared PlatformJob status by...
+  recorded-usage     Show recorded semantic judge usage by evaluation ID.
   results            List per-case results with linked debugger run IDs.
   run                Enqueue a suite execution (202 + shared PlatformJob...
   status             Show execution counters and per-case results.
@@ -30,6 +307,14 @@ Commands:
   suites-get         Get one suite by UUID.
   suites-list        List evaluation suites.
   suites-publish     Publish a suite (published suites are immutable).
+  tests-create       Create an agent-wide test (lands in the default...
+  tests-edit         Edit an agent-wide test (inserts the next accepted...
+  tests-generate     Generate tests from explicitly selected findings.
+  tests-get          Read the current version of one agent-wide test.
+  tests-list         List current agent-wide tests with origin metadata.
+  tests-results      Show latest simulation/recorded results per...
+  tests-run          Run explicitly selected accepted test versions...
+  usage              Show synthetic execution source and judge usage.
 ```
 
 ### `agent-tests cancel`
@@ -156,6 +441,97 @@ Options:
   --help                 Show this message and exit.
 ```
 
+### `agent-tests designer-usage`
+
+```
+Usage: agent-tests designer-usage [OPTIONS] RUN_ID
+
+  Show Test Designer run usage.
+
+Options:
+  --limit INTEGER   Page size.
+  --offset INTEGER  Page offset.
+  --json            Emit JSON instead of human-readable output.
+  --help            Show this message and exit.
+```
+
+### `agent-tests evaluate`
+
+```
+Usage: agent-tests evaluate [OPTIONS]
+
+  Evaluate exact recorded runs against published tests.
+
+Options:
+  --agent TEXT                    Agent name or UUID.  [required]
+  --tests TEXT                    Comma-separated case IDs or 'all'.
+                                  [required]
+  --runs TEXT                     Comma-separated production AgentRun IDs.
+                                  [required]
+  --applicability [applicable|not_applicable|unknown]
+                                  Caller-declared applicability for every
+                                  pair; default unknown cannot pass.
+                                  [default: unknown]
+  --applicability-file TEXT       JSON/YAML list of per-pair overrides.
+  --judge [exact|semantic]        Recorded assertion mode.  [default: exact]
+  --wait / --no-wait              Poll the shared PlatformJob until terminal.
+  --timeout INTEGER               Client-side wait deadline in seconds.
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
+```
+
+### `agent-tests recorded-cancel`
+
+```
+Usage: agent-tests recorded-cancel [OPTIONS] JOB_ID
+
+  Request cancellation by recorded-evaluation PlatformJob ID.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `agent-tests recorded-results`
+
+```
+Usage: agent-tests recorded-results [OPTIONS] EVALUATION_ID
+
+  Show recorded evaluation pair results by evaluation ID.
+
+Options:
+  --limit INTEGER   Page size.
+  --offset INTEGER  Page offset.
+  --json            Emit JSON instead of human-readable output.
+  --help            Show this message and exit.
+```
+
+### `agent-tests recorded-status`
+
+```
+Usage: agent-tests recorded-status [OPTIONS] JOB_ID
+
+  Show shared PlatformJob status by recorded-evaluation job ID.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `agent-tests recorded-usage`
+
+```
+Usage: agent-tests recorded-usage [OPTIONS] EVALUATION_ID
+
+  Show recorded semantic judge usage by evaluation ID.
+
+Options:
+  --limit INTEGER   Page size.
+  --offset INTEGER  Page offset.
+  --json            Emit JSON instead of human-readable output.
+  --help            Show this message and exit.
+```
+
 ### `agent-tests results`
 
 ```
@@ -252,6 +628,138 @@ Usage: agent-tests suites-publish [OPTIONS] SUITE_ID
 Options:
   --json  Emit JSON instead of human-readable output.
   --help  Show this message and exit.
+```
+
+### `agent-tests tests-create`
+
+```
+Usage: agent-tests tests-create [OPTIONS] AGENT_REF
+
+  Create an agent-wide test (lands in the default collection).
+
+Options:
+  --name TEXT             Test name.  [required]
+  --input TEXT            Invocation input JSON or @file.
+  --fixture TEXT          Fixture object JSON or @file.
+  --assertions TEXT       Assertions array JSON or @file.
+  --expected-tools TEXT   Comma-separated expected tool names.
+  --forbidden-tools TEXT  Comma-separated forbidden tool names.
+  --output-schema TEXT    Output schema JSON or @file.
+  --repetitions INTEGER   Repetitions per side (1-10).
+  --finding-id TEXT       Reviewed finding this test reproduces.
+  --json                  Emit JSON instead of human-readable output.
+  --help                  Show this message and exit.
+```
+
+### `agent-tests tests-edit`
+
+```
+Usage: agent-tests tests-edit [OPTIONS] AGENT_REF LOGICAL_TEST_ID
+
+  Edit an agent-wide test (inserts the next accepted version).
+
+Options:
+  --name TEXT                 New test name.
+  --input TEXT                Invocation input JSON or @file.
+  --fixture TEXT              Fixture object JSON or @file.
+  --assertions TEXT           Assertions array JSON or @file.
+  --expected-tools TEXT       Comma-separated expected tool names.
+  --forbidden-tools TEXT      Comma-separated forbidden tool names.
+  --output-schema TEXT        Output schema JSON or @file.
+  --repetitions INTEGER       Repetitions per side (1-10).
+  --expected-version INTEGER  Stale-write guard.
+  --enable / --disable
+  --json                      Emit JSON instead of human-readable output.
+  --help                      Show this message and exit.
+```
+
+### `agent-tests tests-generate`
+
+```
+Usage: agent-tests tests-generate [OPTIONS] AGENT_REF
+
+  Generate tests from explicitly selected findings.
+
+Options:
+  --findings TEXT  Comma-separated finding UUIDs (explicit selection is
+                   approval).  [required]
+  --count INTEGER  Requested draft count (1-10).
+  --goal TEXT      Extra goal context for the designer.
+  --json           Emit JSON instead of human-readable output.
+  --help           Show this message and exit.
+```
+
+### `agent-tests tests-get`
+
+```
+Usage: agent-tests tests-get [OPTIONS] AGENT_REF LOGICAL_TEST_ID
+
+  Read the current version of one agent-wide test.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `agent-tests tests-list`
+
+```
+Usage: agent-tests tests-list [OPTIONS] AGENT_REF
+
+  List current agent-wide tests with origin metadata.
+
+Options:
+  --limit INTEGER
+  --offset INTEGER
+  --json            Emit JSON instead of human-readable output.
+  --help            Show this message and exit.
+```
+
+### `agent-tests tests-results`
+
+```
+Usage: agent-tests tests-results [OPTIONS] AGENT_REF
+
+  Show latest simulation/recorded results per agent-wide test.
+
+Options:
+  --limit INTEGER
+  --offset INTEGER
+  --json            Emit JSON instead of human-readable output.
+  --help            Show this message and exit.
+```
+
+### `agent-tests tests-run`
+
+```
+Usage: agent-tests tests-run [OPTIONS] AGENT_REF
+
+  Run explicitly selected accepted test versions (single suite).
+
+Options:
+  --tests TEXT           Comma-separated case_id:version selections.
+                         [required]
+  --candidate TEXT       Candidate UUID (omit for baseline-only).
+  --profile TEXT         Model profile UUID.
+  --repetitions INTEGER  Override repetitions (1-10).
+  --wait / --no-wait     Poll the shared PlatformJob until terminal.
+  --timeout INTEGER      Client-side wait deadline in seconds.
+  --json                 Emit JSON instead of human-readable output.
+  --help                 Show this message and exit.
+```
+
+### `agent-tests usage`
+
+```
+Usage: agent-tests usage [OPTIONS] EXECUTION_ID
+
+  Show synthetic execution source and judge usage.
+
+Options:
+  --limit INTEGER   Page size.
+  --offset INTEGER  Page offset.
+  --json            Emit JSON instead of human-readable output.
+  --help            Show this message and exit.
 ```
 
 ## `agents`
@@ -466,6 +974,7 @@ Options:
   --max-iterations INTEGER        max_iterations
   --max-token-budget INTEGER      max_token_budget
   --max-run-timeout INTEGER       max_run_timeout
+  --change-reason TEXT            change_reason
   --global                        Target global scope (org=NULL). Alias for
                                   --org global.
   --org, --organization, --scope TEXT
@@ -2151,6 +2660,105 @@ Options:
   --help        Show this message and exit.
 ```
 
+## `recurring-triggers`
+
+```
+Usage: recurring-triggers [OPTIONS] COMMAND [ARGS]...
+
+  Manage recurring quality schedules.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+
+Commands:
+  create
+  disable
+  fires
+  get
+  list
+  update
+```
+
+### `recurring-triggers create`
+
+```
+Usage: recurring-triggers create [OPTIONS]
+
+Options:
+  --file TEXT                     JSON/YAML request body.
+  --operation [agent_review|agent_evaluation_suite]
+  --operation-id TEXT             Review definition or suite UUID.
+  --params-file TEXT              JSON/YAML operation_params object.
+  --cron TEXT                     5-field cron expression.
+  --timezone TEXT                 IANA timezone.
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
+```
+
+### `recurring-triggers disable`
+
+```
+Usage: recurring-triggers disable [OPTIONS] TRIGGER_ID
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `recurring-triggers fires`
+
+```
+Usage: recurring-triggers fires [OPTIONS] TRIGGER_ID
+
+Options:
+  --limit INTEGER RANGE   [1<=x<=200]
+  --offset INTEGER RANGE  [x>=0]
+  --json                  Emit JSON instead of human-readable output.
+  --help                  Show this message and exit.
+```
+
+### `recurring-triggers get`
+
+```
+Usage: recurring-triggers get [OPTIONS] TRIGGER_ID
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `recurring-triggers list`
+
+```
+Usage: recurring-triggers list [OPTIONS]
+
+Options:
+  --operation [agent_review|agent_evaluation_suite]
+  --org-id TEXT                   Organization UUID (admin only).
+  --enabled / --disabled
+  --limit INTEGER RANGE           [1<=x<=200]
+  --offset INTEGER RANGE          [x>=0]
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
+```
+
+### `recurring-triggers update`
+
+```
+Usage: recurring-triggers update [OPTIONS] TRIGGER_ID
+
+Options:
+  --file TEXT         JSON/YAML request body.
+  --cron TEXT
+  --timezone TEXT
+  --params-file TEXT  JSON/YAML operation_params object.
+  --enable
+  --disable
+  --json              Emit JSON instead of human-readable output.
+  --help              Show this message and exit.
+```
+
 ## `requirements`
 
 ```
@@ -2825,6 +3433,45 @@ Options:
   --policies TEXT     policies as JSON literal or @path to a YAML/JSON file.
   --json              Emit JSON instead of human-readable output.
   --help              Show this message and exit.
+```
+
+## `usage`
+
+```
+Usage: usage [OPTIONS] COMMAND [ARGS]...
+
+  Usage reporting commands.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+
+Commands:
+  report  Show testing/review-aware usage breakdown.
+```
+
+### `usage report`
+
+```
+Usage: usage report [OPTIONS]
+
+  Show testing/review-aware usage breakdown.
+
+Options:
+  --start-date TEXT               Start date in UTC, YYYY-MM-DD.  [required]
+  --end-date TEXT                 End date in UTC, YYYY-MM-DD.  [required]
+  --org-id TEXT                   Organization UUID filter.
+  --source [all|executions|chat|agents]
+                                  [default: all]
+  --purpose TEXT                  Usage purpose filter.
+  --provider TEXT                 Provider filter.
+  --model TEXT                    Model filter.
+  --profile-id TEXT               Profile UUID filter.
+  --profile-fingerprint TEXT      Profile fingerprint filter.
+  --limit INTEGER                 Dimension page size.  [default: 50]
+  --offset INTEGER                Dimension page offset.  [default: 0]
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
 ```
 
 ## `workflows`

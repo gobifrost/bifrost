@@ -769,6 +769,9 @@ Entity mutation commands (see 'bifrost <entity> --help'):
   forms        Manage forms
   agents       Manage AI agents
   agent-tests  Manage agent evaluation suites
+  agent-reviews Manage on-demand agent reviews
+  agent-findings Manage agent findings
+  recurring-triggers Manage recurring platform-job triggers
   apps         Manage applications and dependencies
   claims       Manage custom claims
   integrations Manage integrations, config schemas, and mappings
@@ -778,6 +781,7 @@ Entity mutation commands (see 'bifrost <entity> --help'):
   events       Manage event sources and subscriptions
   policy-rule  Manage reusable table/file policy rules
   requirements Manage workspace Python requirements.txt (install/list/remove)
+  usage        Inspect AI usage and cost reporting
 
 Workspace/file targets:
   _repo source files:

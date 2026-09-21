@@ -3,7 +3,7 @@ import { useMediaQuery } from "@/hooks/useMediaQuery";
  * Runs tab for an agent's detail page.
  *
  * Lists this agent's runs with a search bar + verdict filter. Clicking a
- * RunCard opens the RunReviewSheet slide-over (for verdict + tuning chat).
+ * RunCard opens the RunReviewSheet slide-over (for verdict + review chat).
  * Inline verdict toggles call `useSetVerdict` / `useClearVerdict` and
  * invalidate the run-list cache so subsequent fetches reflect the change.
  *
@@ -12,8 +12,8 @@ import { useMediaQuery } from "@/hooks/useMediaQuery";
  */
 
 import { useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
-import { Search, X } from "lucide-react";
+import { Link, useSearchParams } from "react-router-dom";
+import { Search, Sparkles, X } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
@@ -44,6 +44,7 @@ import {
 	useInfiniteAgentRuns,
 	useSetVerdict,
 } from "@/services/agentRuns";
+import { agentPlatform } from "@/services/agentPlatform";
 import type { components } from "@/lib/v1";
 
 type AgentRun = components["schemas"]["AgentRunResponse"];
@@ -74,6 +75,15 @@ export function AgentRunsTab({ agentId }: AgentRunsTabProps) {
 	const [pendingReview, setPendingReview] = useState<string | null>(null);
 	const [failedReviews, setFailedReviews] = useState<
 		Record<string, ReviewSave>
+	>({});
+	const [pendingRecordedRunId, setPendingRecordedRunId] = useState<
+		string | null
+	>(null);
+	const [failedRecordedRunId, setFailedRecordedRunId] = useState<
+		string | null
+	>(null);
+	const [recordedEvaluationLinks, setRecordedEvaluationLinks] = useState<
+		Record<string, string>
 	>({});
 
 	const metadataFilter = conditionsToQueryParam(metadataConditions);
@@ -172,6 +182,31 @@ export function AgentRunsTab({ agentId }: AgentRunsTabProps) {
 		saveReview({ runId, verdict: "down", note });
 	}
 
+	async function queueRecordedEvaluation(run: AgentRun) {
+		if (pendingRecordedRunId || !run.agent_id) return;
+		setPendingRecordedRunId(run.id);
+		setFailedRecordedRunId(null);
+		try {
+			const accepted = await agentPlatform.recordedEvaluation({
+				agent_id: run.agent_id,
+				run_ids: [run.id],
+				all_tests: true,
+				applicability: "unknown",
+				judge_mode: "exact",
+				applicability_overrides: [],
+			});
+			setRecordedEvaluationLinks((previous) => ({
+				...previous,
+				[run.id]: `/agents/${run.agent_id}/quality?collection=tests&recorded=${accepted.evaluationId}`,
+			}));
+			toast.success("Recorded evaluation queued");
+		} catch {
+			setFailedRecordedRunId(run.id);
+		} finally {
+			setPendingRecordedRunId(null);
+		}
+	}
+
 	return (
 		<div
 			className={`agent-runs-tab flex min-w-0 flex-col gap-4 ${shortDesktop ? "" : "lg:h-full lg:min-h-0"}`}
@@ -268,8 +303,8 @@ export function AgentRunsTab({ agentId }: AgentRunsTabProps) {
 			{flaggedCount > 0 ? (
 				<QueueBanner
 					count={flaggedCount}
-					actionLabel="Open tuning"
-					actionHref={`/agents/${agentId}/tune`}
+					actionLabel="Review runs"
+					actionHref={`/agents/${agentId}/quality`}
 				/>
 			) : null}
 
@@ -318,33 +353,83 @@ export function AgentRunsTab({ agentId }: AgentRunsTabProps) {
 				) : (
 					<>
 						{runs.map((r) => (
-							<RunCard
+							<div
 								key={r.id}
-								run={r}
-								verdict={(r.verdict as Verdict) ?? null}
-								highlight={query}
-								onOpen={() => setOpenRunId(r.id)}
-								onVerdict={(v) => applyVerdict(r.id, v)}
-								onNote={applyNote}
-								reviewDisabled={pendingReview !== null}
-								reviewFeedback={
-									pendingReview === r.id ||
-									Boolean(failedReviews[r.id]) ? (
-										<RunActionFeedback
-											pending={pendingReview === r.id}
-											failed={Boolean(
-												failedReviews[r.id],
-											)}
-											onRetry={() => {
-												if (failedReviews[r.id])
-													saveReview(
-														failedReviews[r.id],
-													);
-											}}
+								className="rounded-[var(--bf-radius-surface)] border bg-card"
+							>
+								<RunCard
+									run={r}
+									verdict={(r.verdict as Verdict) ?? null}
+									highlight={query}
+									onOpen={() => setOpenRunId(r.id)}
+									onVerdict={(v) => applyVerdict(r.id, v)}
+									onNote={applyNote}
+									reviewDisabled={pendingReview !== null}
+									reviewFeedback={
+										pendingReview === r.id ||
+										Boolean(failedReviews[r.id]) ? (
+											<RunActionFeedback
+												pending={pendingReview === r.id}
+												failed={Boolean(
+													failedReviews[r.id],
+												)}
+												onRetry={() => {
+													if (failedReviews[r.id])
+														saveReview(
+															failedReviews[r.id],
+														);
+												}}
+											/>
+										) : null
+									}
+								/>
+								<div className="flex flex-wrap items-center gap-2 border-t px-4 py-3">
+									<Button
+										type="button"
+										variant="outline"
+										size="sm"
+										className="min-h-11"
+										disabled={pendingRecordedRunId !== null}
+										onClick={() =>
+											void queueRecordedEvaluation(r)
+										}
+									>
+										<Sparkles
+											aria-hidden="true"
+											className="size-4"
 										/>
-									) : null
-								}
-							/>
+										Evaluate recorded run
+									</Button>
+									{recordedEvaluationLinks[r.id] ? (
+										<Button
+											asChild
+											variant="ghost"
+											size="sm"
+											className="min-h-11"
+										>
+											<Link
+												to={
+													recordedEvaluationLinks[
+														r.id
+													]
+												}
+											>
+												Open recorded evaluation
+											</Link>
+										</Button>
+									) : null}
+									<RunActionFeedback
+										pending={pendingRecordedRunId === r.id}
+										failed={failedRecordedRunId === r.id}
+										onRetry={() =>
+											void queueRecordedEvaluation(r)
+										}
+										message="Could not queue recorded evaluation. Try again when you are ready."
+										pendingLabel="Queuing recorded evaluation…"
+										retryLabel="Retry recorded evaluation"
+									/>
+								</div>
+							</div>
 						))}
 						{isFetchingNextPage ? (
 							<Skeleton className="h-20 w-full" />

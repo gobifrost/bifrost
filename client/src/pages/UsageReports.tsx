@@ -14,12 +14,21 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { DateRangePicker } from "@/components/ui/date-range-picker";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useUsageReport, type UsageSource } from "@/services/usage";
+import {
+	useUsageBreakdown,
+	useUsageReport,
+	type UsageBreakdownFilters,
+	type UsageSource,
+} from "@/services/usage";
 import { useAuth } from "@/contexts/AuthContext";
 import { useOrganizations } from "@/hooks/useOrganizations";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
 import { UsageSummaryCards } from "@/components/reports/UsageSummaryCards";
 import { UsageCharts } from "@/components/reports/UsageCharts";
+import {
+	TestingReviewBreakdown,
+	type TestingReviewFilters,
+} from "@/components/reports/TestingReviewBreakdown";
 import { generateUsageDemoData } from "./UsageReports.demo";
 import {
 	WorkflowTable,
@@ -53,6 +62,8 @@ export function UsageReports() {
 
 	// Source filter (Executions | Chat | All)
 	const [source, setSource] = useState<UsageSource>("all");
+	const [qualityFilters, setQualityFilters] =
+		useState<TestingReviewFilters>({});
 
 	// Default to last 30 days
 	const [dateRange, setDateRange] = useState<DateRange | undefined>({
@@ -93,6 +104,37 @@ export function UsageReports() {
 		refetch,
 		isFetching,
 	} = useUsageReport(startDate, endDate, source, filterOrgId);
+
+	const usageBreakdownFilters = useMemo(() => {
+		const filters: UsageBreakdownFilters = {
+			start_date: startDate,
+			end_date: endDate,
+			source,
+			limit: 50,
+			offset: 0,
+		};
+		if (typeof filterOrgId === "string") filters.org_id = filterOrgId;
+		if (filterOrgId === null) filters.global_only = true;
+		for (const key of [
+			"purpose",
+			"provider",
+			"model",
+			"profile_id",
+			"profile_fingerprint",
+		] as const) {
+			const value = qualityFilters[key];
+			if (value) filters[key] = value;
+		}
+		return filters;
+	}, [endDate, filterOrgId, qualityFilters, source, startDate]);
+
+	const {
+		data: usageBreakdown,
+		isLoading: isUsageBreakdownLoading,
+		error: usageBreakdownError,
+		refetch: refetchUsageBreakdown,
+		isFetching: isUsageBreakdownFetching,
+	} = useUsageBreakdown(usageBreakdownFilters);
 
 	// Use demo or real data
 	const data = showDemoData ? demoData : realData;
@@ -223,6 +265,20 @@ export function UsageReports() {
 						<UsageCharts
 							trends={data?.trends}
 							isLoading={isLoadingData}
+						/>
+
+						<TestingReviewBreakdown
+							data={showDemoData ? undefined : usageBreakdown}
+							isLoading={
+								showDemoData ? false : isUsageBreakdownLoading
+							}
+							error={showDemoData ? null : usageBreakdownError}
+							isFetching={
+								showDemoData ? false : isUsageBreakdownFetching
+							}
+							onRetry={() => void refetchUsageBreakdown()}
+							filters={qualityFilters}
+							onFiltersChange={setQualityFilters}
 						/>
 
 						{/* By-Workflow Table */}

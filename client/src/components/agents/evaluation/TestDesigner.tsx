@@ -62,14 +62,14 @@ export function TestDesigner({
 	].includes(snapshot.data?.status ?? "");
 	const pending = !!runId && !materialized && !terminalFailure;
 	return (
-		<section aria-label="Test Designer" className="space-y-4">
+		<section aria-label="Generate tests" className="space-y-4">
 			<div>
-				<h3 className="text-lg font-semibold">Test Designer</h3>
+				<h3 className="text-lg font-semibold">Generate tests</h3>
 				<p className="mt-1 max-w-prose text-sm text-muted-foreground">
-					Generate coherent synthetic cases using the dedicated
+					Generate coherent draft tests using the dedicated
 					Testing model. Review selected previous runs for realistic
 					tool arguments, response shapes and failures. Generated
-					cases stay disabled until you accept them.
+					tests stay disabled until you accept them.
 				</p>
 			</div>
 			<form
@@ -186,10 +186,10 @@ export function TestDesigner({
 												className="underline"
 												target="_blank"
 												rel="noreferrer"
-												to={`/agents/${agentId}/runs/${run.id}/debug`}
+												to={`/agents/${agentId}/runs/${run.id}`}
 											>
 												Review tool arguments and
-												results in debugger (new tab)
+												results in run detail (new tab)
 											</Link>
 										</details>
 									</li>
@@ -219,7 +219,7 @@ export function TestDesigner({
 						? "Queuing…"
 						: pending
 							? "Designer in progress"
-							: "Generate review drafts"}
+							: "Generate tests"}
 				</Button>
 			</form>
 			{runId && (
@@ -251,7 +251,7 @@ export function TestDesigner({
 					</div>
 					<Link
 						className="text-sm underline"
-						to={`/agents/${agentId}/runs/${runId}/debug`}
+						to={`/agents/${agentId}/runs/${runId}`}
 					>
 						Inspect Designer run
 					</Link>

@@ -39,7 +39,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from src.models.orm.base import Base
 
 EVALUATION_SUITE_STATUSES = ("draft", "published", "archived")
-EVALUATION_CASE_PROVENANCE = ("manual", "generated", "historical_inspiration")
+EVALUATION_CASE_PROVENANCE = ("manual", "generated", "historical_inspiration", "finding")
 EVALUATION_EXECUTION_STATUSES = (
     "queued",
     "running",
@@ -81,21 +81,44 @@ class AgentEvaluationSuite(Base):
         server_default=text("NOW()"),
         onupdate=lambda: datetime.now(timezone.utc),
     )
+    # Server-managed default test collection marker (Phase 4). Exactly one
+    # default suite may exist per (org, agent); defaults are published at
+    # creation and only grow through append-only version inserts.
+    is_default: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
 
     cases: Mapped[list["AgentEvaluationCase"]] = relationship(
         back_populates="suite", cascade="all, delete-orphan"
     )
 
     __table_args__ = (
-        UniqueConstraint(
-            "org_id", "name", "version", name="uq_eval_suites_org_name_version"
+        Index(
+            "uq_eval_suites_org_name_version",
+            "org_id",
+            "name",
+            "version",
+            unique=True,
+            postgresql_where=text("NOT is_default"),
+        ),
+        Index(
+            "uq_eval_suites_default_org_agent",
+            "org_id",
+            "agent_id",
+            unique=True,
+            postgresql_where=text("is_default"),
         ),
         Index("ix_eval_suites_org_id", "org_id"),
         Index("ix_eval_suites_agent_id", "agent_id"),
         Index("ix_eval_suites_status", "status"),
+        Index("ix_eval_suites_is_default", "is_default", postgresql_where=text("is_default")),
         CheckConstraint(
             "status IN ('draft', 'published', 'archived')",
             name="ck_eval_suites_status",
+        ),
+        CheckConstraint(
+            "(NOT is_default) OR (org_id IS NOT NULL AND agent_id IS NOT NULL)",
+            name="ck_eval_suites_default_scope",
         ),
     )
 
@@ -106,6 +129,12 @@ class AgentEvaluationCase(Base):
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     suite_id: Mapped[UUID] = mapped_column(
         ForeignKey("agent_evaluation_suites.id", ondelete="CASCADE"), nullable=False
+    )
+    # Stable logical test identity across accepted revisions (Phase 4).
+    # Revisions insert new rows sharing logical_test_id with incremented
+    # version; old results keep pointing at their concrete (case_id, version).
+    logical_test_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False, default=uuid4
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     position: Mapped[int] = mapped_column(
@@ -149,6 +178,11 @@ class AgentEvaluationCase(Base):
     provenance_run_ids: Mapped[list] = mapped_column(
         JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
     )
+    # Optional link to the reviewed finding this case reproduces. Set NULL on
+    # finding deletion so accepted cases survive their finding.
+    finding_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("agent_findings.id", ondelete="SET NULL"), default=None
+    )
     tags: Mapped[list] = mapped_column(
         JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
     )
@@ -175,10 +209,15 @@ class AgentEvaluationCase(Base):
         UniqueConstraint(
             "suite_id", "name", "version", name="uq_eval_cases_suite_name_version"
         ),
+        UniqueConstraint(
+            "logical_test_id", "version", name="uq_eval_cases_logical_version"
+        ),
         Index("ix_eval_cases_suite_id", "suite_id"),
         Index("ix_eval_cases_suite_position", "suite_id", "position"),
+        Index("ix_eval_cases_logical_test_id", "logical_test_id"),
+        Index("ix_eval_cases_finding_id", "finding_id"),
         CheckConstraint(
-            "provenance IN ('manual', 'generated', 'historical_inspiration')",
+            "provenance IN ('manual', 'generated', 'historical_inspiration', 'finding')",
             name="ck_eval_cases_provenance",
         ),
     )
@@ -225,6 +264,55 @@ class AgentCandidateSnapshot(Base):
     )
 
 
+class AgentEvaluationMatrix(Base):
+    """Saved multi-profile execution definition (grouping only, no status).
+
+    One matrix fans out to atomic ``AgentEvaluationExecution`` cells — one
+    per (candidate-or-baseline, profile) pair — each owned by its own
+    canonical PlatformJob. Aggregate status is always computed live from
+    the cells; this row never claims success while cells are pending,
+    failed, or cancelled.
+    """
+
+    __tablename__ = "agent_evaluation_matrixes"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    suite_id: Mapped[UUID] = mapped_column(
+        ForeignKey("agent_evaluation_suites.id", ondelete="CASCADE"), nullable=False
+    )
+    suite_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Frozen at admission: candidate ids (empty means baseline-only cells)
+    # and selected model profile ids. Never edited; re-request to change.
+    candidate_ids: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    profile_ids: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    repetitions_override: Mapped[int | None] = mapped_column(Integer, default=None)
+    # Durable cell membership: execution ids admitted (or explicitly reused)
+    # under this matrix. Reads and cancellation select by this list — never
+    # by execution.matrix_id — so a reused cell owned by an older matrix
+    # (which is never reparented) stays visible here. Never edited.
+    cell_execution_ids: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    org_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), default=None
+    )
+    created_by: Mapped[str | None] = mapped_column(String(255), default=None)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=text("NOW()"),
+    )
+
+    __table_args__ = (
+        Index("ix_eval_matrixes_suite_id", "suite_id"),
+        Index("ix_eval_matrixes_org_id", "org_id"),
+    )
+
+
 class AgentEvaluationExecution(Base):
     __tablename__ = "agent_evaluation_executions"
 
@@ -235,6 +323,16 @@ class AgentEvaluationExecution(Base):
     suite_version: Mapped[int] = mapped_column(Integer, nullable=False)
     candidate_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("agent_candidate_snapshots.id", ondelete="SET NULL"), default=None
+    )
+    # Matrix cell membership (grouping only) and the selected model profile
+    # frozen into both sides' snapshots at admission. The profile documents
+    # the baseline-under-same-profile pairing; enforcement lives in the
+    # frozen snapshots, which are copied, never mutated in place.
+    matrix_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("agent_evaluation_matrixes.id", ondelete="SET NULL"), default=None
+    )
+    profile_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("ai_model_profiles.id", ondelete="SET NULL"), default=None
     )
     # Execution inputs are copied at enqueue.  Result rows point at these
     # definitions rather than re-reading mutable suite/candidate records.
@@ -292,6 +390,7 @@ class AgentEvaluationExecution(Base):
         Index("ix_eval_executions_suite_id", "suite_id"),
         Index("ix_eval_executions_status", "status"),
         Index("ix_eval_executions_platform_job_id", "platform_job_id"),
+        Index("ix_eval_executions_matrix_id", "matrix_id"),
         Index(
             "uq_eval_executions_active_dedupe",
             "dedupe_key",

@@ -147,6 +147,41 @@ netbird_public_url() {
         | awk '/^[[:space:]]*URL:[[:space:]]+https:\/\// {url=$2} END {print url}'
 }
 
+netbird_now_seconds() {
+    date +%s
+}
+
+netbird_public_smoke_ready() {
+    local public_url="$1" auth_probe cli_probe auth_body auth_meta auth_status auth_type cli_status cli_type
+    public_url="${public_url%/}"
+
+    if ! auth_probe="$(curl -sS --connect-timeout 2 --max-time 3 \
+        -w $'\n%{http_code} %{content_type}' \
+        "$public_url/auth/status" 2>/dev/null)"; then
+        return 1
+    fi
+    auth_body="${auth_probe%$'\n'*}"
+    auth_meta="${auth_probe##*$'\n'}"
+    read -r auth_status auth_type <<< "$auth_meta"
+    if [ "$auth_status" != "200" ] || [[ "$auth_type" != application/json* ]]; then
+        return 1
+    fi
+    if [[ "$auth_body" != *'"needs_setup"'* ]] && [[ "$auth_body" != *'"password_login_enabled"'* ]]; then
+        return 1
+    fi
+
+    if ! cli_probe="$(curl -sSL --connect-timeout 2 --max-time 5 -o /dev/null -w '%{http_code} %{content_type}' \
+        "$public_url/api/cli/download/bifrost-cli.tar.gz" 2>/dev/null)"; then
+        return 1
+    fi
+    read -r cli_status cli_type <<< "$cli_probe"
+    if [ "$cli_status" != "200" ] || [[ "$cli_type" != *gzip* ]]; then
+        return 1
+    fi
+
+    return 0
+}
+
 service_public_url() {
     local service="$1" cid
     cid=$(docker ps -q \
@@ -221,7 +256,7 @@ apply_netbird_public_url() {
 }
 
 ensure_netbird_public_expose() {
-    local cid entrypoint public_url i
+    local cid entrypoint public_url i deadline
     apply_netbird_secure_credentials
     cid="$(netbird_container_id)"
     entrypoint=""
@@ -246,11 +281,14 @@ ensure_netbird_public_expose() {
     fi
 
     docker exec "$cid" touch /tmp/bifrost-netbird-expose-ready
-    for ((i=1; i<=90; i++)); do
+    deadline=$(($(netbird_now_seconds) + 90))
+    while [ "$(netbird_now_seconds)" -lt "$deadline" ]; do
         public_url="$(netbird_public_url "$cid")"
         if [ -n "$public_url" ]; then
-            apply_netbird_public_url "$public_url"
-            return 0
+            if netbird_public_smoke_ready "$public_url"; then
+                apply_netbird_public_url "$public_url"
+                return 0
+            fi
         fi
         if ! docker ps -q --filter "id=$cid" | grep -q .; then
             echo "ERROR: NetBird exited while creating the public proxy" >&2
@@ -260,7 +298,7 @@ ensure_netbird_public_expose() {
         sleep 1
     done
 
-    echo "ERROR: NetBird did not issue a public URL within 90 seconds" >&2
+    echo "ERROR: NetBird public URL did not become ready within the 90-second readiness deadline" >&2
     docker logs "$cid" >&2 2>&1 || true
     return 1
 }
@@ -420,7 +458,7 @@ cmd_status() {
             | awk -F': ' '/^FQDN:/ {print $2; exit}' | tr -d '\r')
         local public_url
         public_url="$(netbird_public_url "$nb_cid")"
-        if [ -n "$public_url" ]; then
+        if [ -n "$public_url" ] && netbird_public_smoke_ready "$public_url"; then
             echo "Open:     $public_url"
             if [ -n "$nb_fqdn" ]; then
                 echo "Private:  http://$nb_fqdn"
@@ -493,6 +531,10 @@ cmd_fixtures() {
 # =============================================================================
 
 load_env_files
+
+if [ "${BIFROST_DEBUG_SH_SOURCE_ONLY:-}" = "1" ]; then
+    return 0 2>/dev/null || exit 0
+fi
 
 if [ $# -eq 0 ]; then
     cmd_up

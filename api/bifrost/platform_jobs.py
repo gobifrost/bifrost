@@ -21,6 +21,7 @@ async def poll_platform_job(
     interval: float = 2.0,
     timeout_seconds: float = DEFAULT_PLATFORM_JOB_TIMEOUT_SECONDS,
     timeout_operation: str | None = None,
+    return_terminal_failures: bool = False,
 ) -> dict[str, Any]:
     """Poll ``/api/platform-jobs/{job_id}`` until the job reaches a terminal state.
 
@@ -50,6 +51,8 @@ async def poll_platform_job(
         if status_value == "succeeded":
             return body
         if status_value in ("failed", "cancelled"):
+            if return_terminal_failures:
+                return body
             error = body.get("error") or {}
             raise click.ClickException(
                 f"{failed_name} failed (job {job_id}): "

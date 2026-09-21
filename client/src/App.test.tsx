@@ -4,11 +4,12 @@ import {
 	Outlet,
 	RouterProvider,
 	createMemoryRouter,
+	useLocation,
 } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { AppFrame } from "./App";
+import { AppFrame, QualityRedirect } from "./App";
 
 vi.mock("@/contexts/OrgScopeContext", () => ({
 	useOrgScope: () => ({ brandingLoaded: true }),
@@ -84,7 +85,9 @@ describe("AppFrame shell lifetime", () => {
 					children: [
 						{
 							path: "/",
-							element: <PersistentLayout onMount={onLayoutMount} />,
+							element: (
+								<PersistentLayout onMount={onLayoutMount} />
+							),
 							children: [
 								{ path: "agents", element: <h1>Agents</h1> },
 								{ path: "users", element: <h1>Users</h1> },
@@ -97,12 +100,79 @@ describe("AppFrame shell lifetime", () => {
 		);
 
 		render(<RouterProvider router={router} />);
-		expect(await screen.findByRole("heading", { name: "Agents" })).toBeVisible();
+		expect(
+			await screen.findByRole("heading", { name: "Agents" }),
+		).toBeVisible();
 		expect(onLayoutMount).toHaveBeenCalledTimes(1);
 
-		await userEvent.setup().click(screen.getByRole("link", { name: "Users" }));
+		await userEvent
+			.setup()
+			.click(screen.getByRole("link", { name: "Users" }));
 
-		expect(await screen.findByRole("heading", { name: "Users" })).toBeVisible();
+		expect(
+			await screen.findByRole("heading", { name: "Users" }),
+		).toBeVisible();
 		expect(onLayoutMount).toHaveBeenCalledTimes(1);
 	});
 });
+
+describe("QualityRedirect", () => {
+	it("preserves query parameters from the retired tune route", async () => {
+		const router = createMemoryRouter(
+			[
+				{ path: "/agents/:id/tune", element: <QualityRedirect /> },
+				{
+					path: "/agents/:id/quality",
+					element: <LocationProbe />,
+				},
+			],
+			{
+				initialEntries: [
+					"/agents/agent-1/tune?tab=changes&suite=suite-1",
+				],
+			},
+		);
+
+		render(<RouterProvider router={router} />);
+
+		expect(await screen.findByTestId("location-probe")).toHaveTextContent(
+			"/agents/agent-1/quality?tab=changes&suite=suite-1",
+		);
+	});
+
+	it("forces retired studio links to the tests tab while preserving other params", async () => {
+		const router = createMemoryRouter(
+			[
+				{
+					path: "/agents/:id/studio",
+					element: <QualityRedirect defaultTab="tests" />,
+				},
+				{
+					path: "/agents/:id/quality",
+					element: <LocationProbe />,
+				},
+			],
+			{
+				initialEntries: [
+					"/agents/agent-1/studio?tab=changes&suite=suite-1",
+				],
+			},
+		);
+
+		render(<RouterProvider router={router} />);
+
+		expect(await screen.findByTestId("location-probe")).toHaveTextContent(
+			"/agents/agent-1/quality?tab=tests&suite=suite-1",
+		);
+	});
+});
+
+function LocationProbe() {
+	const location = useLocation();
+	return (
+		<div data-testid="location-probe">
+			{location.pathname}
+			{location.search}
+		</div>
+	);
+}

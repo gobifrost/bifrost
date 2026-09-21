@@ -14,7 +14,7 @@ it("guards draft edits with the version that was reviewed", async () => {
 			onSaved={saved}
 		/>,
 	);
-	fireEvent.click(screen.getByText("Edit suite details"));
+	fireEvent.click(screen.getByText("Suite settings"));
 	fireEvent.change(screen.getByLabelText("Suite name"), {
 		target: { value: "New" },
 	});

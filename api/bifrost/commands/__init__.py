@@ -18,7 +18,10 @@ import sys
 import click
 
 from .agents import agents_group
+from .agent_findings import agent_findings_group
 from .agent_tests import agent_tests_group
+from .agent_reviews import agent_reviews_group
+from .recurring_triggers import recurring_triggers_group
 from .apps import apps_group
 from .claims import claims_group
 from .configs import configs_group
@@ -31,6 +34,7 @@ from .policy_rules import policy_rule_group
 from .requirements import requirements_group
 from .roles import roles_group
 from .tables import tables_group
+from .usage import usage_group
 from .workflows import workflows_group
 
 # Map first-arg subcommand name to Click group. Argparse-style ``main`` in
@@ -42,6 +46,9 @@ ENTITY_GROUPS: dict[str, click.Group] = {
     "forms": forms_group,
     "agents": agents_group,
     "agent-tests": agent_tests_group,
+    "agent-reviews": agent_reviews_group,
+    "agent-findings": agent_findings_group,
+    "recurring-triggers": recurring_triggers_group,
     "apps": apps_group,
     "claims": claims_group,
     "integrations": integrations_group,
@@ -50,6 +57,7 @@ ENTITY_GROUPS: dict[str, click.Group] = {
     "events": events_group,
     "files": files_group,
     "requirements": requirements_group,
+    "usage": usage_group,
     "policy-rule": policy_rule_group,
 }
 

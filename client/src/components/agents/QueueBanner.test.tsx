@@ -12,14 +12,14 @@ describe("QueueBanner", () => {
 	it("renders count text and pluralizes correctly (1)", () => {
 		renderWithProviders(<QueueBanner count={1} />);
 		expect(
-			screen.getByText(/1 flagged run in tuning queue/i),
+			screen.getByText(/1 flagged run to review/i),
 		).toBeInTheDocument();
 	});
 
 	it("renders count text and pluralizes correctly (5)", () => {
 		renderWithProviders(<QueueBanner count={5} />);
 		expect(
-			screen.getByText(/5 flagged runs in tuning queue/i),
+			screen.getByText(/5 flagged runs to review/i),
 		).toBeInTheDocument();
 	});
 
@@ -28,18 +28,16 @@ describe("QueueBanner", () => {
 		const { user } = renderWithProviders(
 			<QueueBanner count={2} onAction={onAction} />,
 		);
-		await user.click(
-			screen.getByRole("button", { name: /open tuning/i }),
-		);
+		await user.click(screen.getByRole("button", { name: /review runs/i }));
 		expect(onAction).toHaveBeenCalled();
 	});
 
 	it("renders an action link when actionHref is provided", () => {
 		renderWithProviders(
-			<QueueBanner count={2} actionHref="/agents/abc/tune" />,
+			<QueueBanner count={2} actionHref="/agents/abc/quality" />,
 		);
-		const link = screen.getByRole("link", { name: /open tuning/i });
-		expect(link).toHaveAttribute("href", "/agents/abc/tune");
+		const link = screen.getByRole("link", { name: /review runs/i });
+		expect(link).toHaveAttribute("href", "/agents/abc/quality");
 	});
 
 	it("renders a dismiss button when onDismiss is provided", async () => {
@@ -53,7 +51,11 @@ describe("QueueBanner", () => {
 
 	it("uses a custom action label when provided", () => {
 		renderWithProviders(
-			<QueueBanner count={2} actionLabel="Review now" onAction={() => {}} />,
+			<QueueBanner
+				count={2}
+				actionLabel="Review now"
+				onAction={() => {}}
+			/>,
 		);
 		expect(
 			screen.getByRole("button", { name: /review now/i }),

@@ -96,6 +96,16 @@ def validate_fixture(fixture: dict[str, Any]) -> dict[str, Any]:
             raise FixtureError("Fixture rule match_args must be an object.")
         if not isinstance(rule.get("mutate", []), list):
             raise FixtureError("Fixture rule mutate must be a list.")
+    proposed = fixture.get("proposed_tools", [])
+    if not isinstance(proposed, list):
+        raise FixtureError("Fixture 'proposed_tools' must be a list.")
+    if proposed:
+        from shared.proposed_tools import ProposedToolError, validate_definitions
+
+        try:
+            validate_definitions(proposed)
+        except ProposedToolError as exc:
+            raise FixtureError(f"Invalid proposed tool: {exc.detail}") from exc
     return fixture
 
 

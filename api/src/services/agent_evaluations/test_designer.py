@@ -189,6 +189,7 @@ def build_designer_input(
     suite_goal: str,
     requested_count: int,
     historical_examples: list[dict[str, Any]] | None = None,
+    finding_evidence: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Assemble the redacted designer input (target + tools + goal + history)."""
     if requested_count < 1 or requested_count > 10:
@@ -205,6 +206,7 @@ def build_designer_input(
         "requested_count": requested_count,
         "assertion_catalog": copy.deepcopy(list(DETERMINISTIC_ASSERTION_CATALOG)),
         "historical_examples": list(historical_examples or []),
+        "finding_evidence": [dict(item) for item in (finding_evidence or [])],
         "designer_version": DESIGNER_VERSION,
     }
 
@@ -689,7 +691,7 @@ async def materialize_designer_drafts(session, run) -> int:
         .where(AgentEvaluationSuite.id == UUID(correlation["designer_suite_id"]))
         .with_for_update()
     )
-    if suite is None or suite.status == "published":
+    if suite is None or (suite.status == "published" and not suite.is_default):
         correlation["designer_materialized"] = True
         correlation["designer_error"] = "The destination suite is unavailable or already published."
         run.correlation = correlation
@@ -722,6 +724,23 @@ async def materialize_designer_drafts(session, run) -> int:
                 AgentEvaluationCase.name == proposal["name"],
             ))
         ) or 0
+        finding_ids = [
+            item for item in (correlation.get("designer_finding_ids") or []) if item
+        ]
+        linked_finding_id = None
+        if len(finding_ids) == 1:
+            # The finding may have been deleted while the designer ran.
+            # Link only a live same-agent finding, else fall back.
+            from src.models.orm.agent_findings import AgentFinding
+
+            try:
+                candidate_id = UUID(str(finding_ids[0]))
+            except (TypeError, ValueError):
+                candidate_id = None
+            if candidate_id is not None:
+                live = await session.get(AgentFinding, candidate_id)
+                if live is not None and live.agent_id == suite.agent_id:
+                    linked_finding_id = live.id
         session.add(AgentEvaluationCase(
             suite_id=suite.id, name=proposal["name"], position=position,
             enabled=False, version=version + 1, input=redact_value(proposal.get("input")),
@@ -731,7 +750,8 @@ async def materialize_designer_drafts(session, run) -> int:
             expected_tools=proposal.get("expected_tools", []),
             forbidden_tools=proposal.get("forbidden_tools", []),
             output_schema=proposal.get("output_schema"), repetitions=1,
-            scoring_policy={}, provenance="generated",
+            scoring_policy={}, provenance="finding" if linked_finding_id else "generated",
+            finding_id=UUID(str(linked_finding_id)) if linked_finding_id else None,
             provenance_run_ids=list(correlation.get("designer_history_ids") or []),
             tags=[proposal.get("coverage", "edge")], accepted=False,
         ))

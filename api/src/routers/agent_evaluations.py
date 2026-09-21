@@ -19,30 +19,52 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import selectinload
 
 from src.core.auth import CurrentActiveUser
-from src.core.db_deps import DbSession
+from src.core.db_deps import DbSession, ReadSnapshotDbSession
+from src.core.principal import UserPrincipal
 from src.models.contracts.agent_evaluations import (
     CandidateCreate,
     CandidatePublic,
+    EvaluationBatchResult,
     EvaluationCaseCreate,
     EvaluationCasePublic,
     EvaluationCaseUpdate,
+    EvaluationExecutionBatchCreate,
     EvaluationExecutionCreate,
     EvaluationExecutionPublic,
+    EvaluationMatrixPublic,
     EvaluationResultPublic,
     EvaluationSuiteCreate,
     EvaluationSuitePublic,
     EvaluationSuiteUpdate,
     DesignerDraftAccepted,
     DesignerDraftRequest,
+    MatrixCellPublic,
 )
 from src.models.contracts.platform_jobs import PlatformJobAccepted
+from shared.models import (
+    AgentTestCreate,
+    AgentTestLatestPage,
+    AgentTestPage,
+    AgentTestPublic,
+    AgentTestUpdate,
+    AgentTestsGenerateCreate,
+    AgentTestsRunCreate,
+    QualityUsageBreakdownResponse,
+)
+from shared.quality_usage_reporting import (
+    UsageReportPagination,
+    summarize_quality_operation_usage,
+)
 from src.models.orm.agent_evaluations import (
     AgentCandidateSnapshot,
     AgentEvaluationCase,
     AgentEvaluationExecution,
+    AgentEvaluationMatrix,
     AgentEvaluationResult,
     AgentEvaluationSuite,
 )
+from src.models.orm.agent_findings import AgentFinding
+from src.models.orm.agent_runs import AgentRun
 from src.models.orm.agents import Agent
 from src.models.orm.workflows import Workflow
 from src.services.agent_evaluations.simulator_models import redact_value
@@ -67,9 +89,9 @@ def _scope_check(user: CurrentActiveUser, org_id: UUID | None) -> None:
     if user.is_superuser:
         return
     # Studio records are tenant-owned. Unlike reusable global platform
-    # resources, a NULL-org suite/candidate/execution must never be mutable
-    # by every tenant user.
-    if org_id != user.organization_id:
+    # resources, a NULL-org suite/candidate/execution must never be readable or
+    # mutable by tenant users, including invalid non-admin/null-org principals.
+    if org_id is None or org_id != user.organization_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Not found."
         )
@@ -115,6 +137,135 @@ async def _authorized_agent(
     ):
         return None
     return agent if await _entity_access_allowed(agent, user, db) else None
+
+
+async def _assert_execution_accessible(
+    db: DbSession,
+    user: CurrentActiveUser,
+    *,
+    execution: AgentEvaluationExecution,
+    suite: AgentEvaluationSuite,
+    not_found_detail: str = "Execution not found.",
+) -> None:
+    _scope_check(user, suite.org_id)
+    if user.is_superuser:
+        return
+    if execution.baseline_agent_id is None:
+        raise HTTPException(status_code=404, detail=not_found_detail)
+    baseline_agent = await _authorized_agent(
+        db, user, execution.baseline_agent_id, org_id=suite.org_id
+    )
+    if baseline_agent is None or not baseline_agent.is_active:
+        raise HTTPException(status_code=404, detail=not_found_detail)
+
+
+async def _execution_and_suite_or_404(
+    db: DbSession, user: CurrentActiveUser, execution_id: UUID
+) -> tuple[AgentEvaluationExecution, AgentEvaluationSuite]:
+    execution = await db.get(AgentEvaluationExecution, execution_id)
+    if execution is None:
+        raise HTTPException(status_code=404, detail="Execution not found.")
+    suite = await db.get(AgentEvaluationSuite, execution.suite_id)
+    if suite is None:
+        raise HTTPException(status_code=404, detail="Execution not found.")
+    await _assert_execution_accessible(db, user, execution=execution, suite=suite)
+    return execution, suite
+
+
+def _with_historical_runtime_coverage_unknown(report: dict) -> dict:
+    """Flag operation reports that may include legacy runtime usage rows.
+
+    Synthetic source runs and designer runs still use the runtime AIUsage ledger.
+    A zero-row operation report therefore means no observed rows, not proven
+    complete zero spend.
+    """
+    coverage = dict(report.get("coverage") or {})
+    coverage["legacy_coverage_unknown"] = True
+    coverage.setdefault(
+        "legacy_call_count",
+        report.get("overall", {}).get("legacy_call_count", 0) or 0,
+    )
+    return {**report, "coverage": coverage}
+
+
+def _not_found(detail: str = "Not found.") -> HTTPException:
+    return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=detail)
+
+
+def _run_org_matches_suite(run, suite: AgentEvaluationSuite) -> bool:
+    return run.org_id == suite.org_id
+
+
+async def _designer_run_and_suite_or_404(
+    db: DbSession, user: CurrentActiveUser, run_id: UUID
+) -> tuple[AgentRun, AgentEvaluationSuite]:
+    from src.services.execution.agent_run_access import agent_run_visibility_conditions
+
+    run = await db.get(AgentRun, run_id)
+    if run is None:
+        raise _not_found("Designer run not found.")
+    if not isinstance(run.correlation, dict):
+        raise _not_found("Designer run not found.")
+    correlation = run.correlation
+    if (
+        run.trigger_type != "evaluation_synthetic"
+        or correlation.get("evaluation_designer") is not True
+        or run.parent_run_id is not None
+        or (run.root_run_id is not None and run.root_run_id != run.id)
+    ):
+        raise _not_found("Designer run not found.")
+    try:
+        suite_id = UUID(str(correlation["designer_suite_id"]))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise _not_found("Designer run not found.") from exc
+    suite = await db.get(AgentEvaluationSuite, suite_id)
+    if suite is None or not _run_org_matches_suite(run, suite):
+        raise _not_found("Designer run not found.")
+    _scope_check(user, suite.org_id)
+    if suite.agent_id is not None:
+        current_agent = await _authorized_agent(
+            db, user, suite.agent_id, org_id=suite.org_id
+        )
+        if current_agent is None or not current_agent.is_active:
+            raise _not_found("Designer run not found.")
+    visible_run = (
+        await db.execute(
+            select(AgentRun).where(
+                AgentRun.id == run.id, *agent_run_visibility_conditions(user)
+            )
+        )
+    ).scalar_one_or_none()
+    if visible_run is None:
+        raise _not_found("Designer run not found.")
+    if run.agent_id is None:
+        if not user.is_superuser:
+            raise _not_found("Designer run not found.")
+    else:
+        original_agent = await _authorized_agent(
+            db, user, run.agent_id, org_id=suite.org_id
+        )
+        if original_agent is None or (
+            not original_agent.is_active and not user.is_superuser
+        ):
+            raise _not_found("Designer run not found.")
+    return run, suite
+
+
+async def _assert_matrix_executions_accessible(
+    db: DbSession,
+    user: CurrentActiveUser,
+    *,
+    suite: AgentEvaluationSuite,
+    executions: list[AgentEvaluationExecution],
+) -> None:
+    for execution in executions:
+        await _assert_execution_accessible(
+            db,
+            user,
+            execution=execution,
+            suite=suite,
+            not_found_detail="Matrix not found.",
+        )
 
 
 # -----------------------------------------------------------------------------
@@ -251,6 +402,7 @@ def _case_to_public(case: AgentEvaluationCase) -> EvaluationCasePublic:
         scoring_policy=case.scoring_policy or {},
         provenance=case.provenance,
         provenance_run_ids=[str(r) for r in (case.provenance_run_ids or [])],
+        finding_id=case.finding_id,
         tags=list(case.tags or []),
         accepted=case.accepted,
         created_at=case.created_at,
@@ -282,6 +434,42 @@ async def _locked_suite_or_404(
         raise HTTPException(status_code=404, detail="Suite not found.")
     _scope_check(user, suite.org_id)
     return suite
+
+
+async def _finding_id_or_422(
+    db: DbSession,
+    user: CurrentActiveUser,
+    *,
+    suite_agent_id: UUID | None,
+    finding_id: UUID | None,
+) -> UUID | None:
+    """Validate a finding link for a new case.
+
+    The finding must exist and belong to the suite's agent (when the suite
+    targets one). Returns the id for storage; ``None`` links nothing.
+    """
+    if finding_id is None:
+        return None
+    from shared.agent_finding_visibility import visible_agent_finding_condition
+
+    finding = await db.scalar(
+        select(AgentFinding).where(
+            AgentFinding.id == finding_id,
+            visible_agent_finding_condition(user),
+        )
+    )
+    if finding is None:
+        raise HTTPException(status_code=404, detail="Finding not found.")
+    # Findings are caller-tenant scoped: linking across tenants is denied
+    # even when the suite targets a shared global agent.
+    if not user.is_superuser and finding.org_id != user.organization_id:
+        raise HTTPException(status_code=404, detail="Finding not found.")
+    if suite_agent_id is not None and finding.agent_id != suite_agent_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Finding belongs to a different agent than the suite.",
+        )
+    return finding.id
 
 
 @router.post("/suites/{suite_id}/cases", response_model=EvaluationCasePublic)
@@ -350,8 +538,11 @@ async def create_case(
         output_schema=body.output_schema,
         repetitions=body.repetitions,
         scoring_policy=dict(body.scoring_policy),
-        provenance=body.provenance,
+        provenance="finding" if body.finding_id is not None else body.provenance,
         provenance_run_ids=[str(r) for r in body.provenance_run_ids],
+        finding_id=await _finding_id_or_422(
+            db, user, suite_agent_id=suite.agent_id, finding_id=body.finding_id
+        ),
         tags=list(body.tags),
         accepted=True,
     )
@@ -853,166 +1044,37 @@ async def create_execution(
     user: CurrentActiveUser,
     response: Response,
 ) -> PlatformJobAccepted:
-    from src.jobs.platform.agent_evaluation import (
-        AGENT_EVALUATION_SUITE_DEFINITION,
-        AgentEvaluationSuitePayload,
-    )
-    from src.services.agent_evaluations import quotas as eval_quotas
-    from src.services.agent_evaluations.executions import (
-        build_dedupe_key,
-        create_execution_objects,
+    from shared.evaluation_matrix_admission import (
+        MatrixAdmissionError,
+        admit_single_execution,
     )
     from src.services.platform_jobs import (
-        enqueue_platform_job,
         publish_platform_job_update,
     )
+    from src.core.principal import UserPrincipal
 
-    suite = await _locked_suite_or_404(db, user, body.suite_id)
-    # Serialize same-suite dedupe and same-organization quota decisions.
-    await db.execute(
-        select(
-            func.pg_advisory_xact_lock(
-                func.hashtext(str(suite.org_id) if suite.org_id is not None else "global")
-            )
-        )
+    principal = UserPrincipal(
+        user_id=user.user_id,
+        email=user.email,
+        organization_id=user.organization_id,
+        name=user.name or "",
+        is_active=user.is_active,
+        is_superuser=user.is_superuser,
+        is_verified=user.is_verified,
+        is_external=user.is_external,
     )
-    if suite.status != "published":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Only published suites can execute; publish first.",
-        )
     try:
-        eval_quotas.check_repetitions(body.repetitions_override)
-    except eval_quotas.QuotaExceeded as exc:
+        execution, job, reused, _ = await admit_single_execution(
+            db,
+            principal,
+            suite_id=body.suite_id,
+            candidate_id=body.candidate_id,
+            repetitions_override=body.repetitions_override,
+        )
+    except MatrixAdmissionError as exc:
         raise HTTPException(
-            status_code=exc.status_code, detail=str(exc)
+            status_code=exc.http_status, detail=exc.public_detail
         ) from exc
-    active_count = (
-        await db.execute(
-            select(func.count())
-            .select_from(AgentEvaluationExecution)
-            .join(
-                AgentEvaluationSuite,
-                AgentEvaluationSuite.id == AgentEvaluationExecution.suite_id,
-            )
-            .where(
-                AgentEvaluationSuite.org_id == suite.org_id,
-                AgentEvaluationExecution.status.in_(("queued", "running", "waiting")),
-            )
-        )
-    ).scalar() or 0
-    try:
-        eval_quotas.check_active_executions_per_org(int(active_count))
-    except eval_quotas.QuotaExceeded as exc:
-        raise HTTPException(
-            status_code=exc.status_code, detail=str(exc)
-        ) from exc
-    candidate_id = body.candidate_id
-    baseline_agent = None
-    if suite.agent_id is not None:
-        baseline_agent = (
-            await db.execute(
-                select(Agent)
-                .options(
-                    selectinload(Agent.tools),
-                    selectinload(Agent.delegated_agents),
-                    selectinload(Agent.roles),
-                )
-                .where(Agent.id == suite.agent_id)
-            )
-        ).scalar_one_or_none()
-    if (
-        baseline_agent is None
-        or not baseline_agent.is_active
-        or not await _entity_access_allowed(baseline_agent, user, db)
-    ):
-        raise HTTPException(status_code=422, detail="Suite baseline agent is unavailable.")
-    from src.services.agent_runtime.execution_snapshot import snapshot_agent
-    baseline_snapshot = await snapshot_agent(db, baseline_agent, caller_user_id=user.user_id)
-    baseline_snapshot["evaluation"] = {
-        "mode": "evaluation_synthetic", "evaluation_only": True,
-    }
-    candidate_snapshot = None
-    if candidate_id is not None:
-        candidate = await db.get(AgentCandidateSnapshot, candidate_id)
-        if candidate is None:
-            raise HTTPException(status_code=404, detail="Candidate not found.")
-        if not user.is_superuser and candidate.org_id != user.organization_id:
-            raise HTTPException(status_code=404, detail="Candidate not found.")
-        if candidate.base_agent_id != suite.agent_id:
-            raise HTTPException(
-                status_code=422,
-                detail="Candidate must be derived from this suite's baseline agent.",
-            )
-        candidate_snapshot = dict(candidate.snapshot or {})
-    cases = (
-        await db.execute(
-            select(AgentEvaluationCase).where(
-                AgentEvaluationCase.suite_id == suite.id,
-                AgentEvaluationCase.accepted.is_(True),
-                AgentEvaluationCase.enabled.is_(True),
-            )
-        )
-    ).scalars().all()
-    if not cases:
-        raise HTTPException(
-            status_code=422, detail="Suite has no accepted enabled cases."
-        )
-    dedupe_key = build_dedupe_key(suite.id, suite.version, candidate_id)
-    existing = (
-        await db.execute(
-            select(AgentEvaluationExecution).where(
-                AgentEvaluationExecution.dedupe_key == dedupe_key,
-                AgentEvaluationExecution.status.in_(("queued", "running", "waiting")),
-            )
-        )
-    ).scalar_one_or_none()
-    if existing is not None and existing.platform_job_id is not None:
-        from src.models.orm.platform_jobs import PlatformJob
-
-        job = await db.get(PlatformJob, existing.platform_job_id)
-        if job is not None:
-            response.headers["Location"] = f"/api/platform-jobs/{job.id}"
-            response.headers["X-Evaluation-Execution-Id"] = str(existing.id)
-            return PlatformJobAccepted(
-                job_id=job.id, status=job.status, reused=True,
-                notification_id=job.notification_id,
-            )
-    execution, results, _ = create_execution_objects(
-        suite=suite,
-        candidate_id=candidate_id,
-        baseline_agent_id=suite.agent_id,
-        cases=list(cases),
-        include_candidate=candidate_id is not None,
-        repetitions_override=body.repetitions_override,
-        created_by=user.email,
-        baseline_snapshot=baseline_snapshot,
-        candidate_snapshot=candidate_snapshot,
-    )
-    db.add(execution)
-    db.add_all(results)
-    await db.flush()
-    job, reused = await enqueue_platform_job(
-        db,
-        AGENT_EVALUATION_SUITE_DEFINITION,
-        AgentEvaluationSuitePayload(execution_id=execution.id),
-        dedupe_key=dedupe_key,
-        organization_id=suite.org_id,
-        requested_by_user_id=user.user_id,
-        requested_by_email=user.email,
-        requested_by_name=user.name or user.email or "Unknown",
-        resource_type="agent_evaluation",
-        resource_id=str(execution.id),
-        title=f"Evaluating suite {suite.name}",
-        action_url=f"/agent-evaluations/executions/{execution.id}",
-    )
-    if reused and job.requested_by_user_id != str(user.user_id):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="A suite execution is already in progress.",
-        )
-    execution.platform_job_id = job.id
-    execution.status = "queued"
     await db.commit()
     await publish_platform_job_update(job)
     response.headers["Location"] = f"/api/platform-jobs/{job.id}"
@@ -1027,13 +1089,7 @@ async def create_execution(
 async def get_execution(
     execution_id: UUID, db: DbSession, user: CurrentActiveUser
 ) -> EvaluationExecutionPublic:
-    execution = await db.get(AgentEvaluationExecution, execution_id)
-    if execution is None:
-        raise HTTPException(status_code=404, detail="Execution not found.")
-    suite = await db.get(AgentEvaluationSuite, execution.suite_id)
-    if suite is None:
-        raise HTTPException(status_code=404, detail="Execution not found.")
-    _scope_check(user, suite.org_id)
+    execution, _suite = await _execution_and_suite_or_404(db, user, execution_id)
     return EvaluationExecutionPublic.model_validate(execution)
 
 
@@ -1048,13 +1104,7 @@ async def list_results(
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ) -> list[EvaluationResultPublic]:
-    execution = await db.get(AgentEvaluationExecution, execution_id)
-    if execution is None:
-        raise HTTPException(status_code=404, detail="Execution not found.")
-    suite = await db.get(AgentEvaluationSuite, execution.suite_id)
-    if suite is None:
-        raise HTTPException(status_code=404, detail="Execution not found.")
-    _scope_check(user, suite.org_id)
+    execution, _suite = await _execution_and_suite_or_404(db, user, execution_id)
     rows = (
         await db.execute(
             select(AgentEvaluationResult)
@@ -1072,6 +1122,56 @@ async def list_results(
     return [EvaluationResultPublic.model_validate(row) for row in rows]
 
 
+@router.get(
+    "/executions/{execution_id}/usage",
+    response_model=QualityUsageBreakdownResponse,
+)
+async def get_execution_usage(
+    execution_id: UUID,
+    db: ReadSnapshotDbSession,
+    user: CurrentActiveUser,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> QualityUsageBreakdownResponse:
+    execution, suite = await _execution_and_suite_or_404(db, user, execution_id)
+    report = await summarize_quality_operation_usage(
+        db,
+        scope="organization" if suite.org_id else "platform",
+        organization_id=suite.org_id,
+        operation_type="synthetic_evaluation",
+        operation_id=execution.id,
+        pagination=UsageReportPagination(limit=limit, offset=offset),
+    )
+    return QualityUsageBreakdownResponse.model_validate(
+        _with_historical_runtime_coverage_unknown(report)
+    )
+
+
+@router.get(
+    "/designer-runs/{run_id}/usage",
+    response_model=QualityUsageBreakdownResponse,
+)
+async def get_designer_run_usage(
+    run_id: UUID,
+    db: ReadSnapshotDbSession,
+    user: CurrentActiveUser,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> QualityUsageBreakdownResponse:
+    run, suite = await _designer_run_and_suite_or_404(db, user, run_id)
+    report = await summarize_quality_operation_usage(
+        db,
+        scope="organization" if suite.org_id else "platform",
+        organization_id=suite.org_id,
+        operation_type="quality_designer",
+        operation_id=run.id,
+        pagination=UsageReportPagination(limit=limit, offset=offset),
+    )
+    return QualityUsageBreakdownResponse.model_validate(
+        _with_historical_runtime_coverage_unknown(report)
+    )
+
+
 @router.post(
     "/executions/{execution_id}/cancel", response_model=EvaluationExecutionPublic
 )
@@ -1080,13 +1180,7 @@ async def cancel_execution(
 ) -> EvaluationExecutionPublic:
     from src.jobs.platform.agent_evaluation import cancel_evaluation_execution
 
-    execution = await db.get(AgentEvaluationExecution, execution_id)
-    if execution is None:
-        raise HTTPException(status_code=404, detail="Execution not found.")
-    suite = await db.get(AgentEvaluationSuite, execution.suite_id)
-    if suite is None:
-        raise HTTPException(status_code=404, detail="Execution not found.")
-    _scope_check(user, suite.org_id)
+    execution, _suite = await _execution_and_suite_or_404(db, user, execution_id)
     await cancel_evaluation_execution(execution_id)
     await db.refresh(execution)
     if execution.status == "cancelled" and execution.platform_job_id is not None:
@@ -1106,3 +1200,480 @@ async def cancel_execution(
     await db.commit()
     await db.refresh(execution)
     return EvaluationExecutionPublic.model_validate(execution)
+
+
+def _matrix_cells_aggregate(matrix, executions) -> EvaluationBatchResult:
+    """Compute the matrix aggregate live from its cells (no stored status)."""
+    ordered = sorted(
+        executions,
+        key=lambda e: (str(e.profile_id or ""), str(e.candidate_id or "")),
+    )
+    cells = [
+        MatrixCellPublic(
+            execution_id=e.id,
+            candidate_id=e.candidate_id,
+            profile_id=e.profile_id,
+            status=e.status,
+            total_cases=e.total_cases or 0,
+            completed_cases=e.completed_cases or 0,
+            passed_cases=e.passed_cases or 0,
+            failed_cases=e.failed_cases or 0,
+            platform_job_id=e.platform_job_id,
+            reused=False,
+        )
+        for e in ordered
+    ]
+    return EvaluationBatchResult(
+        matrix=EvaluationMatrixPublic.model_validate(matrix),
+        cells=cells,
+        planned_cells=len(cells),
+        planned_runs=sum(
+            c.total_cases * (2 if c.candidate_id is not None else 1)
+            for c in cells
+        ),
+        cost_estimate_usd=None,
+        cost_note=(
+            "Model spend is metered per synthetic run and reported on each "
+            "cell result; this admission returns planned run counts only, "
+            "not a spend estimate or cap. Concurrency and per-org execution "
+            "quotas are enforced at admission."
+        ),
+    )
+
+
+@router.post(
+    "/executions/batch",
+    response_model=EvaluationBatchResult,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def create_execution_batch(
+    body: EvaluationExecutionBatchCreate,
+    db: DbSession,
+    user: CurrentActiveUser,
+) -> EvaluationBatchResult:
+    """Admit a saved multi-profile matrix: one atomic execution per cell.
+
+    Cells whose inputs are already running are explicitly reused (no
+    reparenting: the older execution keeps its own matrix) and recorded
+    in this matrix's durable membership, so reads and cancellation see
+    every reported cell. Quota counts only newly admitted work.
+    """
+    from shared.evaluation_matrix_admission import (
+        MatrixAdmissionError,
+        admit_matrix_batch,
+    )
+    from src.services.platform_jobs import publish_platform_job_update
+    from src.core.principal import UserPrincipal
+
+    principal = UserPrincipal(
+        user_id=user.user_id,
+        email=user.email,
+        organization_id=user.organization_id,
+        name=user.name or "",
+        is_active=user.is_active,
+        is_superuser=user.is_superuser,
+        is_verified=user.is_verified,
+        is_external=user.is_external,
+    )
+    try:
+        matrix, admitted, published_jobs, total_runs = await admit_matrix_batch(
+            db,
+            principal,
+            suite_id=body.suite_id,
+            candidate_ids=list(body.candidate_ids),
+            profile_ids=list(body.profile_ids),
+            repetitions_override=body.repetitions_override,
+        )
+    except MatrixAdmissionError as exc:
+        raise HTTPException(
+            status_code=exc.http_status, detail=exc.public_detail
+        ) from exc
+    matrix.cell_execution_ids = [str(execution.id) for execution, _, _ in admitted]
+    await db.commit()
+    for job in published_jobs:
+        await publish_platform_job_update(job)
+    result = _matrix_cells_aggregate(
+        matrix, [execution for execution, _, _ in admitted]
+    )
+    # The aggregate sorts cells; map reuse flags by execution id so mixed
+    # reused/new batches never misattribute them.
+    reused_by_id = {
+        str(execution.id): reused for execution, _, reused in admitted
+    }
+    for cell in result.cells:
+        cell.reused = reused_by_id.get(str(cell.execution_id), False)
+    result.planned_runs = total_runs
+    return result
+
+
+async def _matrix_member_executions(db, matrix) -> list:
+    """Load a matrix's cells from its durable membership list.
+
+    Reused cells keep their original matrix_id (never reparented), so
+    membership — recorded at admission — is the only coherent selector.
+    """
+    ids = [UUID(value) for value in (matrix.cell_execution_ids or [])]
+    if not ids:
+        return []
+    rows = list(
+        (
+            await db.execute(
+                select(AgentEvaluationExecution).where(
+                    AgentEvaluationExecution.id.in_(ids)
+                )
+            )
+        ).scalars().all()
+    )
+    if {row.id for row in rows} != set(ids):
+        raise HTTPException(status_code=404, detail="Matrix not found.")
+    return rows
+
+
+@router.get(
+    "/executions/batch/{matrix_id}", response_model=EvaluationBatchResult
+)
+async def get_execution_batch(
+    matrix_id: UUID, db: DbSession, user: CurrentActiveUser
+) -> EvaluationBatchResult:
+    """Read the live matrix aggregate: per-cell status, never stored."""
+    matrix = await db.get(AgentEvaluationMatrix, matrix_id)
+    if matrix is None:
+        raise HTTPException(status_code=404, detail="Matrix not found.")
+    suite = await db.get(AgentEvaluationSuite, matrix.suite_id)
+    if suite is None:
+        raise HTTPException(status_code=404, detail="Matrix not found.")
+    _scope_check(user, suite.org_id)
+    executions = await _matrix_member_executions(db, matrix)
+    await _assert_matrix_executions_accessible(
+        db, user, suite=suite, executions=executions
+    )
+    return _matrix_cells_aggregate(matrix, list(executions))
+
+
+@router.post(
+    "/executions/batch/{matrix_id}/cancel", response_model=EvaluationBatchResult
+)
+async def cancel_execution_batch(
+    matrix_id: UUID, db: DbSession, user: CurrentActiveUser
+) -> EvaluationBatchResult:
+    """Cancel every active cell through the shared execution/job path."""
+    from src.jobs.platform.agent_evaluation import cancel_evaluation_execution
+    from src.models.orm.platform_jobs import PlatformJob
+    from src.services.platform_jobs import request_platform_job_cancel
+
+    matrix = await db.get(AgentEvaluationMatrix, matrix_id)
+    if matrix is None:
+        raise HTTPException(status_code=404, detail="Matrix not found.")
+    suite = await db.get(AgentEvaluationSuite, matrix.suite_id)
+    if suite is None:
+        raise HTTPException(status_code=404, detail="Matrix not found.")
+    _scope_check(user, suite.org_id)
+    executions = await _matrix_member_executions(db, matrix)
+    await _assert_matrix_executions_accessible(
+        db, user, suite=suite, executions=executions
+    )
+    for execution in executions:
+        if execution.status in ("queued", "running", "waiting"):
+            await cancel_evaluation_execution(execution.id)
+            await db.refresh(execution)
+            if (
+                execution.status == "cancelled"
+                and execution.platform_job_id is not None
+            ):
+                job = await db.get(PlatformJob, execution.platform_job_id)
+                if job is not None:
+                    try:
+                        await request_platform_job_cancel(db, job)
+                    except Exception:
+                        logger.warning(
+                            "Matrix cell cancelled without platform-job cancel",
+                            extra={"execution_id": str(execution.id)},
+                            exc_info=True,
+                        )
+    await db.commit()
+    executions = await _matrix_member_executions(db, matrix)
+    await _assert_matrix_executions_accessible(
+        db, user, suite=suite, executions=executions
+    )
+    return _matrix_cells_aggregate(matrix, list(executions))
+
+
+# -----------------------------------------------------------------------------
+# Agent-wide tests (default collection, logical identity)
+# -----------------------------------------------------------------------------
+
+
+def _test_to_public(case, suite) -> AgentTestPublic:
+    return AgentTestPublic(
+        logical_test_id=case.logical_test_id,
+        version=case.version,
+        origin_suite_id=suite.id,
+        origin_suite_name=suite.name,
+        origin_is_default=bool(suite.is_default),
+        case_id=case.id,
+        name=case.name,
+        position=case.position,
+        enabled=case.enabled,
+        input=redact_value(case.input),
+        fixture=redact_value(case.fixture or {}),
+        simulator_policy=case.simulator_policy or {},
+        assertions=list(case.assertions or []),
+        expected_tools=list(case.expected_tools or []),
+        forbidden_tools=list(case.forbidden_tools or []),
+        output_schema=case.output_schema,
+        repetitions=case.repetitions,
+        scoring_policy=case.scoring_policy or {},
+        provenance=case.provenance,
+        provenance_run_ids=[str(r) for r in (case.provenance_run_ids or [])],
+        finding_id=case.finding_id,
+        tags=list(case.tags or []),
+        created_at=case.created_at,
+        updated_at=case.updated_at,
+    )
+
+
+def _test_principal(user: CurrentActiveUser) -> UserPrincipal:
+    return UserPrincipal(
+        user_id=user.user_id,
+        email=user.email,
+        organization_id=user.organization_id,
+        name=user.name or "",
+        is_active=user.is_active,
+        is_superuser=user.is_superuser,
+        is_verified=user.is_verified,
+        is_external=user.is_external,
+    )
+
+
+async def _test_domain(call):
+    from shared.agent_test_service import TestServiceError
+
+    try:
+        return await call
+    except TestServiceError as exc:
+        raise HTTPException(
+            status_code=exc.http_status, detail=exc.public_detail
+        ) from exc
+
+
+@router.post(
+    "/agents/{agent_id}/tests",
+    response_model=AgentTestPublic,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_agent_test_route(
+    agent_id: UUID,
+    body: AgentTestCreate,
+    db: DbSession,
+    user: CurrentActiveUser,
+) -> AgentTestPublic:
+    from shared.agent_test_service import create_agent_test
+
+    case, suite = await _test_domain(
+        create_agent_test(db, _test_principal(user), agent_id=agent_id, body=body)
+    )
+    await db.commit()
+    await db.refresh(case)
+    return _test_to_public(case, suite)
+
+
+@router.get("/agents/{agent_id}/tests", response_model=AgentTestPage)
+async def list_agent_tests_route(
+    agent_id: UUID,
+    db: DbSession,
+    user: CurrentActiveUser,
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> AgentTestPage:
+    from shared.agent_test_service import list_agent_tests
+
+    items, total = await _test_domain(
+        list_agent_tests(
+            db, _test_principal(user), agent_id=agent_id, limit=limit, offset=offset
+        )
+    )
+    return AgentTestPage(
+        items=[_test_to_public(case, suite) for case, suite in items],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/agents/{agent_id}/tests/latest", response_model=AgentTestLatestPage)
+async def list_agent_tests_latest_route(
+    agent_id: UUID,
+    db: DbSession,
+    user: CurrentActiveUser,
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> AgentTestLatestPage:
+    from shared.agent_test_results import latest_results_for_agent
+    from shared.models import (
+        AgentTestLatestPublic,
+        RecordedLatestPublic,
+        SimulationLatestPublic,
+    )
+
+    def _sim(raw: dict | None):
+        if raw is None:
+            return None
+        return SimulationLatestPublic(**raw)
+
+    def _rec(raw: dict | None):
+        if raw is None:
+            return None
+        return RecordedLatestPublic(**raw)
+
+    items, total = await _test_domain(
+        latest_results_for_agent(
+            db, _test_principal(user), agent_id=agent_id, limit=limit, offset=offset
+        )
+    )
+    return AgentTestLatestPage(
+        items=[
+            AgentTestLatestPublic(
+                logical_test_id=item["logical_test_id"],
+                version=item["version"],
+                origin_suite_name=item["origin_suite_name"],
+                simulation=_sim(item["simulation"]),
+                recorded=_rec(item["recorded"]),
+            )
+            for item in items
+        ],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.post(
+    "/agents/{agent_id}/tests/run",
+    response_model=PlatformJobAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def run_agent_tests_subset(
+    agent_id: UUID,
+    body: AgentTestsRunCreate,
+    db: DbSession,
+    user: CurrentActiveUser,
+    response: Response,
+) -> PlatformJobAccepted:
+    """Run explicitly selected accepted test versions (single suite).
+
+    Selections carry exact versions so reruns cannot silently pick a newer
+    edited version. Cross-suite selections partition across calls.
+    """
+    from shared.evaluation_matrix_admission import (
+        MatrixAdmissionError,
+        admit_subset_execution,
+    )
+
+    try:
+        execution, job, reused = await admit_subset_execution(
+            db,
+            _test_principal(user),
+            agent_id=agent_id,
+            selections=[
+                (item.case_id, item.case_version) for item in body.selections
+            ],
+            candidate_id=body.candidate_id,
+            profile_id=body.profile_id,
+            repetitions_override=body.repetitions_override,
+        )
+    except MatrixAdmissionError as exc:
+        raise HTTPException(
+            status_code=exc.http_status, detail=exc.public_detail
+        ) from exc
+    await db.commit()
+    from src.services.platform_jobs import publish_platform_job_update
+
+    await publish_platform_job_update(job)
+    response.headers["Location"] = f"/api/platform-jobs/{job.id}"
+    response.headers["X-Evaluation-Execution-Id"] = str(execution.id)
+    return PlatformJobAccepted(
+        job_id=job.id, status=job.status, reused=reused,
+        notification_id=job.notification_id,
+    )
+
+@router.post(
+    "/agents/{agent_id}/tests/generate",
+    response_model=DesignerDraftAccepted,
+    status_code=status.HTTP_200_OK,
+)
+async def generate_agent_tests_from_findings(
+    agent_id: UUID,
+    body: AgentTestsGenerateCreate,
+    db: DbSession,
+    user: CurrentActiveUser,
+) -> DesignerDraftAccepted:
+    """Generate tests from explicitly selected findings (selection is approval).
+
+    Dismissed findings stay selectable. Every finding and source run is
+    reauthorized; revoked sources fail closed. Drafts materialize disabled
+    into the default collection for explicit acceptance.
+    """
+    from src.jobs.rabbitmq import publish_message
+    from shared.agent_test_generation import (
+        GenerationError,
+        admit_finding_generation,
+    )
+
+    try:
+        run, _suite = await admit_finding_generation(
+            db, _test_principal(user), agent_id=agent_id, body=body
+        )
+    except GenerationError as exc:
+        raise HTTPException(
+            status_code=exc.http_status, detail=exc.public_detail
+        ) from exc
+    await db.commit()
+    await publish_message("agent-runs", {"run_id": str(run.id)})
+    return DesignerDraftAccepted(run_id=run.id)
+
+@router.get(
+    "/agents/{agent_id}/tests/{logical_test_id}", response_model=AgentTestPublic
+)
+async def get_agent_test_route(
+    agent_id: UUID,
+    logical_test_id: UUID,
+    db: DbSession,
+    user: CurrentActiveUser,
+) -> AgentTestPublic:
+    from shared.agent_test_service import get_agent_test
+
+    case, suite = await _test_domain(
+        get_agent_test(
+            db,
+            _test_principal(user),
+            agent_id=agent_id,
+            logical_test_id=logical_test_id,
+        )
+    )
+    return _test_to_public(case, suite)
+
+
+@router.patch(
+    "/agents/{agent_id}/tests/{logical_test_id}", response_model=AgentTestPublic
+)
+async def edit_agent_test_route(
+    agent_id: UUID,
+    logical_test_id: UUID,
+    body: AgentTestUpdate,
+    db: DbSession,
+    user: CurrentActiveUser,
+) -> AgentTestPublic:
+    from shared.agent_test_service import edit_agent_test
+
+    case, suite = await _test_domain(
+        edit_agent_test(
+            db,
+            _test_principal(user),
+            agent_id=agent_id,
+            logical_test_id=logical_test_id,
+            body=body,
+        )
+    )
+    await db.commit()
+    await db.refresh(case)
+    return _test_to_public(case, suite)

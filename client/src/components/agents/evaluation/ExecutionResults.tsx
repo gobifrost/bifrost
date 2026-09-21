@@ -13,6 +13,16 @@ function metric(value: unknown, fraction = false): string {
 		? `${(value * 100).toFixed(2)}%`
 		: String(value);
 }
+/** Short human-readable rendering of an assertion value (never invented). */
+function formatOutcomeValue(value: unknown): string {
+	if (value == null) return "Not recorded";
+	if (typeof value === "string") return value || "Empty";
+	try {
+		return JSON.stringify(value);
+	} catch {
+		return "Unreadable value";
+	}
+}
 const metrics = [
 	["cost_usd", "Cost (USD)"],
 	["latency_ms", "Latency (ms)"],
@@ -40,16 +50,45 @@ export function ExecutionResults({
 			</p>
 		);
 	return (
-		<div className="space-y-6">
+		<div className="divide-y">
 			{results.map((result) => {
 				const comparison = result.comparison ?? {};
 				const usage = record(comparison.usage);
 				const baseline = record(usage.baseline);
 				const candidate = record(usage.candidate);
+				const comparisonLists: Array<{ key: string; count: number }> = [];
+				for (const key of [
+					"regressions",
+					"improvements",
+					"unchanged_failures",
+				]) {
+					const value = comparison[key];
+					if (Array.isArray(value))
+						comparisonLists.push({ key, count: value.length });
+				}
+				const toolDifferences = Array.isArray(
+					comparison.tool_trajectory_differences,
+				)
+					? comparison.tool_trajectory_differences
+					: null;
+				const outputDifferences = comparison.output_differences ?? null;
+				const hasDetails =
+					comparisonLists.length > 0 ||
+					Object.keys(usage).length > 0 ||
+					toolDifferences !== null ||
+					outputDifferences !== null ||
+					result.simulator_state_hash != null;
+				const orderedAssertions = [
+					...(result.assertion_results ?? []),
+				].sort((left, right) => {
+					const rank = (passed: unknown) =>
+						passed === false ? 0 : passed === true ? 2 : 1;
+					return rank(left.passed) - rank(right.passed);
+				});
 				return (
 					<article
 						key={result.id}
-						className="min-w-0 rounded-lg border p-4 sm:p-5"
+						className="min-w-0 space-y-3 py-4 first:pt-0 last:pb-0"
 					>
 						<header className="flex flex-wrap items-center justify-between gap-2">
 							<h3 className="font-semibold">
@@ -71,49 +110,171 @@ export function ExecutionResults({
 								{result.error}
 							</p>
 						)}
-						<div className="my-4 flex flex-wrap gap-x-6 gap-y-2 text-sm">
-							{[
-								"regressions",
-								"improvements",
-								"unchanged_failures",
-							].map((key) => (
-								<div key={key}>
-									<span className="font-medium">
-										{Array.isArray(comparison[key])
-											? comparison[key].length
-											: "—"}
-									</span>{" "}
-									{key.replaceAll("_", " ")}
-								</div>
-							))}
-						</div>
-						<div className="max-w-full overflow-auto">
-							<table className="w-full text-sm">
-								<caption className="mb-2 text-left text-xs text-muted-foreground">
-									Measured runtime usage. Automatic summaries
-									excluded. Cache-hit fraction is cached input
-									÷ total input.
-								</caption>
-								<thead>
-									<tr className="border-b text-left">
-										<th className="py-2 font-medium">
-											Measure
-										</th>
-										<th className="p-2 font-medium">
-											Baseline
-										</th>
-										{result.candidate_run_id && (
-											<>
-												<th className="p-2 font-medium">
-													Candidate
-												</th>
-												<th className="p-2 font-medium">
-													Change
-												</th>
-											</>
+						{comparisonLists.length > 0 && (
+							<div className="my-4 flex flex-wrap gap-x-6 gap-y-2 text-sm">
+								{comparisonLists.map(({ key, count }) => (
+									<div key={key}>
+										<span className="font-medium">
+											{count}
+										</span>{" "}
+										{key.replaceAll("_", " ")}
+									</div>
+								))}
+							</div>
+						)}
+
+						<section className="mt-5">
+							<h4 className="mb-2 text-sm font-semibold">
+								Expected behavior
+							</h4>
+							<ul className="divide-y">
+								{orderedAssertions.map((assertion, index) => (
+									<li key={index} className="py-3">
+										<div className="flex min-w-0 flex-wrap items-center gap-2 text-sm">
+											<PlatformStatus
+												status={
+													assertion.passed === true
+														? "passed"
+														: assertion.passed ===
+															  false
+															? "failed"
+															: "pending"
+												}
+											/>
+											<span className="font-medium">
+												{String(
+													assertion.label ??
+														assertion.code ??
+														"Assertion",
+												)}
+											</span>
+											<span className="text-muted-foreground">
+												{String(
+													assertion.side ??
+														"baseline",
+												) === "baseline"
+													? "Live agent"
+													: "Proposed changes"}
+											</span>
+										</div>
+										{assertion.passed === false && (
+											<dl className="mt-2 space-y-1 text-sm">
+												<div className="flex min-w-0 flex-wrap gap-x-2">
+													<dt className="text-muted-foreground">
+														Expected:
+													</dt>
+													<dd className="min-w-0 break-words">
+														{formatOutcomeValue(
+															assertion.expected,
+														)}
+													</dd>
+												</div>
+												<div className="flex min-w-0 flex-wrap gap-x-2">
+													<dt className="text-muted-foreground">
+														Actual:
+													</dt>
+													<dd className="min-w-0 break-words">
+														{formatOutcomeValue(
+															assertion.actual ??
+																assertion.detail ??
+																assertion.rationale,
+														)}
+													</dd>
+												</div>
+											</dl>
 										)}
-									</tr>
-								</thead>
+										<details className="mt-2 text-sm">
+											<summary className="cursor-pointer">
+												Evidence links and raw values
+											</summary>
+												<EvidenceJson
+													label="Assertion values"
+													value={{
+														expected:
+															assertion.expected,
+														actual: assertion.actual,
+														rationale:
+															assertion.rationale,
+													}}
+												/>
+												<div className="mt-2 flex flex-wrap gap-3">
+													{Array.isArray(
+														assertion.evidence_references,
+													) &&
+														assertion.evidence_references.map(
+															(item, index) => {
+																const ref =
+																	record(
+																		item,
+																	);
+																return typeof ref.run_id ===
+																	"string" &&
+																	typeof ref.sequence ===
+																		"number" ? (
+																	<Link
+																		className="underline"
+																		key={
+																			index
+																		}
+																		to={`/agents/${agentId}/runs/${ref.run_id}?tab=activity&sequence=${ref.sequence}`}
+																	>
+																		Sequence{" "}
+																		{
+																			ref.sequence
+																		}{" "}
+																		·{" "}
+																		{ref.run_id.slice(
+																			0,
+																			8,
+																		)}
+																	</Link>
+																) : null;
+															},
+														)}
+												</div>
+											</details>
+										</li>
+									))}
+							</ul>
+						</section>
+						{hasDetails && (
+							<details className="my-4">
+								<summary className="cursor-pointer text-sm font-medium">
+									Run details
+								</summary>
+								<div className="mt-3 space-y-5">
+									{Object.keys(usage).length > 0 && (
+										<section aria-label="Usage">
+											<h5 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+												Usage
+											</h5>
+							<div className="max-w-full overflow-auto">
+								<table className="w-full text-sm">
+									<caption className="mb-2 text-left text-xs text-muted-foreground">
+										Measured runtime usage. Automatic
+										summaries excluded. Cache-hit fraction
+										is cached input ÷ total input.
+									</caption>
+									<thead>
+										<tr className="border-b text-left">
+											<th className="py-2 font-medium">
+												Measure
+											</th>
+											<th className="p-2 font-medium">
+												Live agent
+											</th>
+											{result.candidate_run_id && (
+												<>
+													<th className="p-2 font-medium">
+														Candidate
+													</th>
+													<th className="p-2 font-medium">
+														Change
+													</th>
+												</>
+											)}
+										</tr>
+									</thead>
 								<tbody>
 									{metrics.map(([key, label]) => (
 										<tr
@@ -182,145 +343,71 @@ export function ExecutionResults({
 									))}
 								</tbody>
 							</table>
-						</div>
-						<section className="mt-5">
-							<h4 className="mb-2 text-sm font-semibold">
-								Assertions
-							</h4>
-							<ul className="divide-y">
-								{result.assertion_results?.map(
-									(assertion, index) => (
-										<li key={index} className="py-3">
-											<div className="flex flex-wrap items-center gap-2 text-sm">
-												<PlatformStatus
-													status={
-														assertion.passed ===
-														true
-															? "passed"
-															: assertion.passed ===
-																  false
-																? "failed"
-																: "pending"
-													}
-												/>
-												<span className="font-medium">
-													{String(
-														assertion.label ??
-															assertion.code ??
-															"Assertion",
-													)}
-												</span>
-												<span className="text-muted-foreground">
-													{String(
-														assertion.side ??
-															"baseline",
-													)}
-												</span>
-											</div>
-											<details className="mt-2 text-sm">
-												<summary className="cursor-pointer">
-													Expected, actual and
-													evidence
-												</summary>
-												<EvidenceJson
-													label="Assertion values"
-													value={{
-														expected:
-															assertion.expected,
-														actual: assertion.actual,
-														rationale:
-															assertion.rationale,
-													}}
-												/>
-												<div className="mt-2 flex flex-wrap gap-3">
-													{Array.isArray(
-														assertion.evidence_references,
-													) &&
-														assertion.evidence_references.map(
-															(item, index) => {
-																const ref =
-																	record(
-																		item,
-																	);
-																return typeof ref.run_id ===
-																	"string" &&
-																	typeof ref.sequence ===
-																		"number" ? (
-																	<Link
-																		className="underline"
-																		key={
-																			index
-																		}
-																		to={`/agents/${agentId}/runs/${ref.run_id}/debug?sequence=${ref.sequence}`}
-																	>
-																		Sequence{" "}
-																		{
-																			ref.sequence
-																		}{" "}
-																		·{" "}
-																		{ref.run_id.slice(
-																			0,
-																			8,
-																		)}
-																	</Link>
-																) : null;
-															},
-														)}
-												</div>
-											</details>
-										</li>
-									),
-								)}
-							</ul>
-						</section>
-						<details className="mt-4">
-							<summary className="cursor-pointer text-sm font-medium">
-								Tool-call changes
-							</summary>
-							<EvidenceJson
-								label="Tool-call changes"
-								value={
-									comparison.tool_trajectory_differences ?? []
-								}
-							/>
-						</details>
-						<details className="mt-3">
-							<summary className="cursor-pointer text-sm font-medium">
-								Output differences and assertion deltas
-							</summary>
-							<EvidenceJson
-								label="Comparison evidence"
-								value={{
-									output_differences:
-										comparison.output_differences,
-									regressions: comparison.regressions,
-									improvements: comparison.improvements,
-									unchanged_failures:
-										comparison.unchanged_failures,
-								}}
-							/>
-						</details>
+							</div>
+										</section>
+									)}
+									{toolDifferences !== null && (
+										<section aria-label="Tool-call changes">
+											<h5 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+												Tool-call changes
+											</h5>
+											<EvidenceJson
+												label="Tool-call changes"
+												value={toolDifferences}
+											/>
+										</section>
+									)}
+									{(outputDifferences !== null ||
+										comparisonLists.length > 0) && (
+										<section aria-label="Output comparison">
+											<h5 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+												Output comparison
+											</h5>
+											<EvidenceJson
+												label="Comparison evidence"
+												value={{
+													output_differences:
+														outputDifferences,
+													regressions:
+														comparison.regressions,
+													improvements:
+														comparison.improvements,
+													unchanged_failures:
+														comparison.unchanged_failures,
+												}}
+											/>
+										</section>
+									)}
+									<section aria-label="Raw evidence">
+										<h5 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+											Raw evidence
+										</h5>
+										<p className="break-all text-xs text-muted-foreground">
+											Fixture state:{" "}
+											{result.simulator_state_hash ??
+												"Not recorded"}
+										</p>
+									</section>
+								</div>
+							</details>
+						)}
 						<footer className="mt-4 flex flex-wrap gap-4 border-t pt-4 text-sm">
 							{result.baseline_run_id && (
 								<Link
 									className="underline"
-									to={`/agents/${agentId}/runs/${result.baseline_run_id}/debug`}
+									to={`/agents/${agentId}/runs/${result.baseline_run_id}`}
 								>
-									Debug baseline run
+									Inspect live-agent run
 								</Link>
 							)}
 							{result.candidate_run_id && (
 								<Link
 									className="underline"
-									to={`/agents/${agentId}/runs/${result.candidate_run_id}/debug`}
+									to={`/agents/${agentId}/runs/${result.candidate_run_id}`}
 								>
-									Debug candidate run
+									Inspect candidate run
 								</Link>
 							)}
-							<span className="break-all text-xs text-muted-foreground">
-								Fixture state:{" "}
-								{result.simulator_state_hash ?? "Not recorded"}
-							</span>
 						</footer>
 					</article>
 				);

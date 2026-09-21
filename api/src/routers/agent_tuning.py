@@ -1,15 +1,18 @@
 """Consolidated agent tuning session endpoints.
 
-Three endpoints under ``/api/agents/{id}/tuning-session``:
+Two live endpoints under ``/api/agents/{id}/tuning-session``:
 
 - ``POST /``: analyze all flagged runs + their tuning conversations,
   return a consolidated proposal (summary + proposed_prompt +
   affected_run_ids).
 - ``POST /dry-run``: evaluate a proposed prompt against each flagged run
   (capped at the first 10) and return per-run verdicts.
-- ``POST /apply``: persist the new prompt on the agent, write an
-  ``AgentPromptHistory`` row, and clear verdicts on the affected flagged
-  runs so they re-enter the unreviewed queue.
+
+``POST /apply`` is gone (410): the legacy apply cleared flagged verdicts
+so runs re-entered review under the new prompt. The replacement applies
+reviewed changes through the normal authorized ``PUT /api/agents/{id}``
+(which records ``AgentPromptHistory`` and never touches verdicts,
+findings, or evidence) with an ``If-Unmodified-Since`` stale guard.
 
 These endpoints are mounted on the same prefix as the agent CRUD router
 (``/api/agents``) but live in a separate router file because the surface
@@ -25,8 +28,6 @@ from src.core.auth import CurrentActiveUser
 from src.core.database import get_session_factory
 from src.core.db_deps import DbSession
 from src.models.contracts.agent_tuning import (
-    ApplyTuningRequest,
-    ApplyTuningResponse,
     ConsolidatedDryRunRequest,
     ConsolidatedDryRunResponse,
     ConsolidatedProposalResponse,
@@ -34,7 +35,6 @@ from src.models.contracts.agent_tuning import (
 )
 from src.models.orm.agents import Agent
 from src.services.execution.tuning_service import (
-    apply_consolidated_tuning,
     dry_run_consolidated,
     propose_consolidated_tuning,
 )
@@ -141,35 +141,28 @@ async def dry_run_tuning_session(
 
 @router.post(
     "/{agent_id}/tuning-session/apply",
-    response_model=ApplyTuningResponse,
+    status_code=status.HTTP_410_GONE,
 )
 async def apply_tuning_session(
     agent_id: UUID,
-    request: ApplyTuningRequest,
     db: DbSession,
     user: CurrentActiveUser,
-) -> ApplyTuningResponse:
-    """Apply a consolidated tuning proposal: update prompt, write history, clear verdicts."""
+) -> None:
+    """Gone: apply reviewed changes via ``PUT /api/agents/{id}``.
+
+    The legacy apply cleared flagged verdicts; the replacement preserves
+    verdicts, findings, and evidence, records ``AgentPromptHistory``
+    through the normal authorized update, and guards stale diffs with
+    ``If-Unmodified-Since``.
+    """
     await _load_agent_with_access(agent_id, db, user)
-
-    try:
-        applied = await apply_consolidated_tuning(
-            agent_id=agent_id,
-            new_prompt=request.new_prompt,
-            reason=request.reason,
-            user_id=user.user_id,
-            db=db,
-            user=user,
-        )
-    except LookupError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
-        )
-
-    await db.commit()
-
-    return ApplyTuningResponse(
-        agent_id=applied.agent_id,
-        history_id=applied.history_id,
-        affected_run_ids=applied.affected_run_ids,
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail=(
+            "The tuning-session apply endpoint was removed because it "
+            "cleared flagged verdicts. Apply reviewed changes through "
+            "PUT /api/agents/{agent_id} with change_reason and "
+            "If-Unmodified-Since; verdicts, findings, and evidence are "
+            "preserved."
+        ),
     )

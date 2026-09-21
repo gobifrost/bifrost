@@ -1,8 +1,8 @@
 /**
- * Banner for the FleetPage / agent detail page summarising the tuning queue.
+ * Banner for the FleetPage / agent detail page summarising flagged runs.
  *
- * Shown when there are flagged runs awaiting review/tuning. Renders a count,
- * a short description, and a primary action ("Open tuning" / "Review now").
+ * Shown when there are flagged runs awaiting review. Renders a count,
+ * a short description, and a primary action.
  *
  * Optionally dismissible — the parent owns dismiss state so it persists
  * across navigations / view toggles.
@@ -22,7 +22,7 @@ export interface QueueBannerProps {
 	/** Optional href for the action button. Rendered as a React Router Link so
 	 *  navigation stays in-SPA. */
 	actionHref?: string;
-	/** Action button label. Defaults to "Open tuning". */
+	/** Action button label. Defaults to "Review runs". */
 	actionLabel?: string;
 	/** Click handler. Either this or actionHref should be provided. */
 	onAction?: () => void;
@@ -35,7 +35,7 @@ export function QueueBanner({
 	count,
 	description,
 	actionHref,
-	actionLabel = "Open tuning",
+	actionLabel = "Review runs",
 	onAction,
 	onDismiss,
 	className,
@@ -43,11 +43,12 @@ export function QueueBanner({
 	if (count <= 0) return null;
 	const subtitle =
 		description ??
-		"Each flag carries its own diagnosis conversation. Open tuning to propose a unified change.";
+		"Each flag carries its own diagnosis conversation. Review the evidence before improving the agent.";
 
 	const actionContent = (
 		<>
-			<Sparkles className="size-4 shrink-0" aria-hidden="true" /> {actionLabel}
+			<Sparkles className="size-4 shrink-0" aria-hidden="true" />{" "}
+			{actionLabel}
 		</>
 	);
 
@@ -67,7 +68,7 @@ export function QueueBanner({
 				/>
 				<div className="min-w-0 [overflow-wrap:anywhere]">
 					<div className="text-sm font-medium">
-						{count} flagged run{count === 1 ? "" : "s"} in tuning queue
+						{count} flagged run{count === 1 ? "" : "s"} to review
 					</div>
 					<div className="mt-1 text-sm text-muted-foreground">
 						{subtitle}
@@ -76,7 +77,11 @@ export function QueueBanner({
 			</div>
 			<div className="flex min-w-0 shrink-0 items-center gap-2 sm:max-w-[45%]">
 				{actionHref ? (
-					<Button size="sm" className="min-h-11 h-auto flex-1 whitespace-normal py-2 text-sm sm:flex-none" asChild>
+					<Button
+						size="sm"
+						className="min-h-11 h-auto flex-1 whitespace-normal py-2 text-sm sm:flex-none"
+						asChild
+					>
 						<Link to={actionHref}>{actionContent}</Link>
 					</Button>
 				) : onAction ? (

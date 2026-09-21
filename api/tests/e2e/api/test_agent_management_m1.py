@@ -9,10 +9,11 @@ Exercises the agent management surfaces end-to-end via HTTP:
   5. Seed a flag conversation row directly (LLM-dependent POST /message is
      covered by ``tests/unit/test_tuning_service.py`` with a mocked client;
      the cross-process e2e runner cannot mock the LLM in the API container).
-  6. POST /api/agents/{id}/tuning-session/apply with a new prompt — verifies
-     shape (returns updated_agent_id, history_id, affected_run_ids).
+  6. PUT /api/agents/{id} with a new prompt + change_reason — verifies
+     shape, history write, verdict preservation, and the 410 on the legacy
+     tuning-session apply endpoint.
   7. GET /api/agents/{id} — verifies system_prompt now matches the new prompt.
-  8. GET /api/agent-runs/{id} — verifies verdict was reset to NULL by apply.
+  8. GET /api/agent-runs/{id} — verifies the verdict survived the apply.
 
 Strategy: **C** (per the task spec). LLM-dependent steps (POST flag
 conversation message, dry-run, consolidated tuning-session create) are
@@ -221,23 +222,46 @@ class TestAgentManagementLifecycle:
         assert seeded_body["messages"][0]["kind"] == "user"
         assert seeded_body["messages"][1]["kind"] == "assistant"
 
-        # Step 6: apply a new prompt via the consolidated tuning apply
-        # endpoint. This is LLM-free — it just persists ``new_prompt``,
-        # writes ``AgentPromptHistory``, and clears verdicts on flagged
-        # runs so they re-enter review.
-        apply_res = e2e_client.post(
+        # Step 6: apply a new prompt via the normal authorized update.
+        # This is LLM-free — it persists ``system_prompt``, writes
+        # ``AgentPromptHistory``, and MUST preserve the flagged verdict
+        # (the legacy tuning apply cleared verdicts; the replacement does
+        # not). The legacy endpoint now answers 410.
+        gone_res = e2e_client.post(
             f"/api/agents/{agent_id}/tuning-session/apply",
-            json={
-                "new_prompt": NEW_PROMPT,
-                "reason": "Add clarification step for ambiguous tickets.",
-            },
+            json={"new_prompt": NEW_PROMPT},
             headers=platform_admin.headers,
         )
+        assert gone_res.status_code == 410, gone_res.text
+        agent_before = e2e_client.get(
+            f"/api/agents/{agent_id}", headers=platform_admin.headers
+        )
+        assert agent_before.status_code == 200, agent_before.text
+        updated_at = agent_before.json()["updated_at"]
+        apply_res = e2e_client.put(
+            f"/api/agents/{agent_id}",
+            json={
+                "system_prompt": NEW_PROMPT,
+                "change_reason": "Add clarification step for ambiguous tickets.",
+            },
+            headers={
+                **platform_admin.headers,
+                "If-Unmodified-Since": updated_at,
+            },
+        )
         assert apply_res.status_code == 200, apply_res.text
-        apply_body = apply_res.json()
-        assert apply_body["agent_id"] == agent_id
-        assert apply_body["history_id"]  # UUID issued
-        assert run_id in apply_body["affected_run_ids"]
+        assert apply_res.json()["system_prompt"] == NEW_PROMPT
+
+        # Step 6b: a stale guard blocks overwrites of newer production state.
+        stale_res = e2e_client.put(
+            f"/api/agents/{agent_id}",
+            json={"system_prompt": "Stale overwrite attempt."},
+            headers={
+                **platform_admin.headers,
+                "If-Unmodified-Since": updated_at,
+            },
+        )
+        assert stale_res.status_code == 412, stale_res.text
 
         # Step 7: GET the agent — system_prompt should reflect the apply.
         agent_res = e2e_client.get(
@@ -246,12 +270,11 @@ class TestAgentManagementLifecycle:
         assert agent_res.status_code == 200, agent_res.text
         assert agent_res.json()["system_prompt"] == NEW_PROMPT
 
-        # Step 8: verify the run's verdict was cleared by the apply step.
+        # Step 8: verify the run's verdict was PRESERVED by the apply step.
         # Capture IDs BEFORE expire_all() — touching ORM attributes after
         # expiration would trigger a sync lazy-load that errors out on the
         # async engine.
         run_uuid = lifecycle_run.id
-        history_uuid = UUID(apply_body["history_id"])
         db_session.expire_all()
 
         run_row = (
@@ -259,17 +282,27 @@ class TestAgentManagementLifecycle:
                 select(AgentRun).where(AgentRun.id == run_uuid)
             )
         ).scalar_one()
-        assert run_row.verdict is None
-        assert run_row.verdict_note is None
+        assert run_row.verdict == "down"
+        assert run_row.verdict_note is not None
 
         # Bonus: confirm an AgentPromptHistory row was written linking the change.
-        history_row = (
-            await db_session.execute(
-                select(AgentPromptHistory).where(
-                    AgentPromptHistory.id == history_uuid
+        history_rows = (
+            (
+                await db_session.execute(
+                    select(AgentPromptHistory)
+                    .where(AgentPromptHistory.agent_id == UUID(agent_id))
+                    .order_by(AgentPromptHistory.changed_at.desc())
                 )
             )
-        ).scalar_one()
+            .scalars()
+            .all()
+        )
+        assert history_rows, "expected a prompt history row from PUT"
+        history_row = history_rows[0]
         assert history_row.previous_prompt == ORIGINAL_PROMPT
         assert history_row.new_prompt == NEW_PROMPT
         assert history_row.changed_by == platform_admin.user_id
+        assert (
+            history_row.reason
+            == "Add clarification step for ambiguous tickets."
+        )

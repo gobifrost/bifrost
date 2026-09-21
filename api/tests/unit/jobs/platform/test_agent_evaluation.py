@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 
 from src.jobs.platform.agent_evaluation import (
     AGENT_EVALUATION_SUITE_DEFINITION,
@@ -93,6 +93,21 @@ def test_registry_dispatch_and_policy():
     assert definition.policy.timeout_seconds == 30 * 60
     assert definition.policy.max_attempts == 2
     assert definition.policy.retry_on_runner_loss is True
+    assert definition.policy.allow_running_cancellation is True
+
+
+def test_synthetic_semantic_job_policy_has_no_runner_loss_retry():
+    from shared.models import SyntheticSemanticJudgePayload
+    from src.jobs.platform.agent_synthetic_judge import (
+        SYNTHETIC_SEMANTIC_JUDGE_DEFINITION,
+    )
+
+    definition = get_platform_job_definition("agent.evaluation_synthetic_semantic")
+
+    assert definition is SYNTHETIC_SEMANTIC_JUDGE_DEFINITION
+    assert definition.payload_model is SyntheticSemanticJudgePayload
+    assert definition.policy.max_attempts == 1
+    assert definition.policy.retry_on_runner_loss is False
     assert definition.policy.allow_running_cancellation is True
 
 
@@ -976,3 +991,789 @@ async def test_dispatcher_does_not_revive_execution_cancelled_after_initial_fenc
         )
         await db_session.execute(delete(Agent).where(Agent.id == agent.id))
         await db_session.commit()
+
+
+def _semantic_assertion(profile_id) -> dict:
+    return {
+        "type": "llm_judge",
+        "params": {
+            "rubric": "Helpful answer",
+            "prompt_version": "1",
+            "threshold": 0.7,
+            "judge_snapshot": {
+                "profile_id": str(profile_id),
+                "provider": "openai",
+                "model": "judge-v1",
+                "endpoint": None,
+                "openai_transport": None,
+                "anthropic_prompt_cache_supported": None,
+                "default_max_tokens": None,
+                "extra_params": {},
+            },
+        },
+    }
+
+
+async def _semantic_db_fixture(db_session, seed_user, *, child_status="running"):
+    from src.jobs.platform.base import PlatformJobContext
+
+    profile_id = uuid4()
+    assertion = _semantic_assertion(profile_id)
+    suite = AgentEvaluationSuite(
+        name=f"synthetic-semantic-{uuid4().hex}",
+        status="published",
+        version=1,
+    )
+    db_session.add(suite)
+    await db_session.flush()
+    case = AgentEvaluationCase(
+        suite_id=suite.id,
+        name="semantic case",
+        assertions=[assertion],
+    )
+    parent = PlatformJob(
+        job_type="agent.evaluation_suite",
+        payload_version=1,
+        payload={},
+        requested_by_user_id=str(seed_user.id),
+        requested_by_email=seed_user.email,
+        requested_by_name=seed_user.name or "Seed User",
+        title="Semantic parent",
+        status="waiting",
+    )
+    db_session.add_all([case, parent])
+    await db_session.flush()
+    execution = AgentEvaluationExecution(
+        suite_id=suite.id,
+        suite_version=1,
+        platform_job_id=parent.id,
+        status="running",
+        total_cases=1,
+        baseline_snapshot={},
+    )
+    db_session.add(execution)
+    await db_session.flush()
+    child_id = uuid4()
+    result = AgentEvaluationResult(
+        execution_id=execution.id,
+        case_id=case.id,
+        case_version=case.version,
+        repetition_index=0,
+        status="running",
+        assertion_results=[
+            {"type": "terminal_status", "code": "terminal_status", "passed": True, "side": "baseline"},
+            {"type": "llm_judge", "code": "llm_judge", "actual": "pending", "side": "baseline"},
+        ],
+        comparison={
+            "semantic_judge_job_id": str(child_id),
+            "_semantic_pending": {
+                "definitions": [assertion],
+                "baseline_evidence": {"output": {"answer": "ok"}},
+                "candidate_evidence": None,
+            },
+        },
+    )
+    db_session.add(result)
+    await db_session.flush()
+    lease_token = uuid4()
+    child = PlatformJob(
+        id=child_id,
+        job_type="agent.evaluation_synthetic_semantic",
+        payload_version=1,
+        payload={"execution_id": str(execution.id), "result_id": str(result.id)},
+        dedupe_key=f"synthetic-semantic-result:{result.id}",
+        resource_lock_key=f"agent-evaluation-semantic:{execution.id}",
+        organization_id=suite.org_id,
+        requested_by_user_id=str(seed_user.id),
+        requested_by_email=seed_user.email,
+        requested_by_name=seed_user.name or "Seed User",
+        resource_type="agent_evaluation",
+        resource_id=str(execution.id),
+        title="Semantic child",
+        status=child_status,
+        lease_token=lease_token,
+        lease_expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+    )
+    db_session.add(child)
+    await db_session.commit()
+    context = PlatformJobContext(
+        job_id=child.id,
+        lease_token=lease_token,
+        organization_id=suite.org_id,
+        requested_by_user_id=str(seed_user.id),
+        requested_by_email=seed_user.email,
+        requested_by_name=seed_user.name or "Seed User",
+    )
+    return SimpleNamespace(
+        suite=suite,
+        suite_id=suite.id,
+        case=case,
+        case_id=case.id,
+        case_version=case.version,
+        parent=parent,
+        parent_id=parent.id,
+        execution=execution,
+        execution_id=execution.id,
+        result=result,
+        result_id=result.id,
+        child=child,
+        child_id=child.id,
+        context=context,
+        profile_id=profile_id,
+        tracked_run_ids=[],
+    )
+
+
+async def _semantic_child_job_ids_for_fixture(db_session, fixture) -> list:
+    rows = (
+        await db_session.execute(
+            select(PlatformJob.id).where(
+                PlatformJob.job_type == "agent.evaluation_synthetic_semantic",
+                PlatformJob.payload["execution_id"].as_string() == str(fixture.execution_id),
+                PlatformJob.payload["result_id"].as_string() == str(fixture.result_id),
+            )
+        )
+    ).scalars().all()
+    ids = set(rows)
+    ids.add(fixture.child_id)
+    return list(ids)
+
+
+async def _cleanup_semantic_fixture(db_session, fixture):
+    from src.models.orm.ai_usage import AIUsageAttempt
+
+    await db_session.rollback()
+    child_ids = await _semantic_child_job_ids_for_fixture(db_session, fixture)
+    if child_ids:
+        await db_session.execute(delete(AIUsage).where(AIUsage.platform_job_id.in_(child_ids)))
+        await db_session.execute(
+            delete(AIUsageAttempt).where(AIUsageAttempt.platform_job_id.in_(child_ids))
+        )
+    tracked_run_ids = list(getattr(fixture, "tracked_run_ids", []) or [])
+    await db_session.execute(
+        delete(AgentEvaluationExecution).where(AgentEvaluationExecution.id == fixture.execution_id)
+    )
+    if tracked_run_ids:
+        await db_session.execute(delete(AgentRun).where(AgentRun.id.in_(tracked_run_ids)))
+    await db_session.execute(delete(AgentEvaluationCase).where(AgentEvaluationCase.id == fixture.case_id))
+    await db_session.execute(delete(AgentEvaluationSuite).where(AgentEvaluationSuite.id == fixture.suite_id))
+    await db_session.execute(delete(PlatformJob).where(PlatformJob.id.in_([*child_ids, fixture.parent_id])))
+    await db_session.commit()
+    remaining_child_jobs = await db_session.scalar(
+        select(func.count())
+        .select_from(PlatformJob)
+        .where(
+            PlatformJob.job_type == "agent.evaluation_synthetic_semantic",
+            PlatformJob.payload["execution_id"].as_string() == str(fixture.execution_id),
+            PlatformJob.payload["result_id"].as_string() == str(fixture.result_id),
+        )
+    )
+    remaining_usage = await db_session.scalar(
+        select(func.count()).select_from(AIUsage).where(AIUsage.platform_job_id.in_(child_ids))
+    )
+    remaining_attempts = await db_session.scalar(
+        select(func.count()).select_from(AIUsageAttempt).where(AIUsageAttempt.platform_job_id.in_(child_ids))
+    )
+    assert remaining_child_jobs == 0
+    assert remaining_usage == 0
+    assert remaining_attempts == 0
+
+
+@pytest.mark.asyncio
+async def test_synthetic_semantic_handler_rejects_mismatched_linkage(db_session, seed_user):
+    from shared.models import SyntheticSemanticJudgePayload
+    from src.jobs.platform.agent_synthetic_judge import run_synthetic_semantic_judge
+    from src.jobs.platform.base import PlatformJobFailure
+
+    fixture = await _semantic_db_fixture(db_session, seed_user)
+    try:
+        fixture.result.comparison = {
+            **fixture.result.comparison,
+            "semantic_judge_job_id": str(uuid4()),
+        }
+        await db_session.commit()
+
+        with pytest.raises(PlatformJobFailure) as exc:
+            await run_synthetic_semantic_judge(
+                fixture.context,
+                SyntheticSemanticJudgePayload(
+                    execution_id=fixture.execution.id,
+                    result_id=fixture.result.id,
+                ),
+            )
+        assert exc.value.code == "semantic_job_link_mismatch"
+    finally:
+        await _cleanup_semantic_fixture(db_session, fixture)
+
+
+@pytest.mark.asyncio
+async def test_synthetic_semantic_terminal_child_missing_verdict_settles_without_replay(
+    db_session, seed_user, monkeypatch: pytest.MonkeyPatch
+):
+    from shared.agent_synthetic_judge import reconcile_synthetic_semantic_child
+
+    fixture = await _semantic_db_fixture(db_session, seed_user, child_status="failed")
+    called = False
+
+    async def fail_if_provider_called(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("provider must not be replayed")
+
+    monkeypatch.setattr(
+        "shared.agent_synthetic_judge._execute_provider_call",
+        fail_if_provider_called,
+    )
+    try:
+        assert await reconcile_synthetic_semantic_child(db_session, fixture.result) is True
+        await db_session.commit()
+        await db_session.refresh(fixture.result)
+        assert called is False
+        assert fixture.result.assertion_results[1]["judge_execution_state"] == "ambiguous"
+        assert fixture.result.assertion_results[1]["reason"] == "judge_attempt_ambiguous"
+    finally:
+        await _cleanup_semantic_fixture(db_session, fixture)
+
+
+@pytest.mark.asyncio
+async def test_synthetic_semantic_child_payload_mismatch_not_reused_for_cancel(
+    db_session, seed_user
+):
+    from shared.agent_synthetic_judge import valid_semantic_child_job_id_for_result
+
+    fixture = await _semantic_db_fixture(db_session, seed_user)
+    try:
+        fixture.child.payload = {"execution_id": str(fixture.execution.id), "result_id": str(uuid4())}
+        await db_session.commit()
+        await db_session.refresh(fixture.result)
+
+        assert await valid_semantic_child_job_id_for_result(db_session, fixture.result) is None
+    finally:
+        await _cleanup_semantic_fixture(db_session, fixture)
+
+
+@pytest.mark.asyncio
+async def test_synthetic_semantic_cancellation_after_response_records_usage_without_stale_verdict(
+    db_session, seed_user, monkeypatch: pytest.MonkeyPatch
+):
+    from shared.models import SyntheticSemanticJudgePayload
+    from src.core.database import get_db_context
+    from src.jobs.platform.agent_synthetic_judge import run_synthetic_semantic_judge
+    from src.models.orm.ai_usage import AIUsageAttempt
+    from src.services.llm.base import LLMConfig, LLMResponse
+
+    fixture = await _semantic_db_fixture(db_session, seed_user)
+
+    async def fake_get_llm_config(_db, *, profile_id):
+        assert profile_id == fixture.profile_id
+        return LLMConfig(
+            provider="openai",
+            model="judge-v1",
+            api_key="test",
+            endpoint=None,
+            openai_transport=None,
+            anthropic_prompt_cache_supported=None,
+            default_max_tokens=None,
+            extra_params={},
+        )
+
+    class FakeClient:
+        def __init__(self, _config):
+            pass
+
+        async def complete(self, *_args, **_kwargs):
+            async with get_db_context() as competing_db:
+                parent = await competing_db.get(PlatformJob, fixture.parent.id)
+                assert parent is not None
+                parent.cancel_requested_at = datetime.now(timezone.utc)
+                parent.status = "cancel_requested"
+                await competing_db.commit()
+            return LLMResponse(
+                content='{"score": 0.9, "rationale": "ok"}',
+                input_tokens=10,
+                output_tokens=4,
+                provider_cost=Decimal("0.01"),
+            )
+
+    monkeypatch.setattr("src.services.llm.factory.get_llm_config", fake_get_llm_config)
+    monkeypatch.setattr("src.services.llm.pydantic_client.PydanticAIClient", FakeClient)
+    try:
+        result = await run_synthetic_semantic_judge(
+            fixture.context,
+            SyntheticSemanticJudgePayload(
+                execution_id=fixture.execution.id,
+                result_id=fixture.result.id,
+            ),
+        )
+        assert result["completed"] == 0
+        await db_session.refresh(fixture.result)
+        semantic = fixture.result.assertion_results[1]
+        assert semantic["judge_execution_state"] == "started"
+        assert semantic["actual"] == "pending"
+        attempt = await db_session.scalar(
+            select(AIUsageAttempt).where(AIUsageAttempt.platform_job_id == fixture.child.id)
+        )
+        assert attempt is not None
+        usage = await db_session.scalar(select(AIUsage).where(AIUsage.usage_attempt_id == attempt.id))
+        assert usage is not None
+        assert usage.input_tokens == 10
+        assert usage.output_tokens == 4
+    finally:
+        await _cleanup_semantic_fixture(db_session, fixture)
+
+
+@pytest.mark.asyncio
+async def test_synthetic_semantic_marker_mismatch_blocks_paid_start(
+    db_session, seed_user, monkeypatch: pytest.MonkeyPatch
+):
+    from shared.models import SyntheticSemanticJudgePayload
+    from src.jobs.platform.agent_synthetic_judge import run_synthetic_semantic_judge
+    from src.models.orm.ai_usage import AIUsageAttempt
+
+    fixture = await _semantic_db_fixture(db_session, seed_user)
+    try:
+        outcomes = list(fixture.result.assertion_results)
+        outcomes[1] = {
+            **outcomes[1],
+            "assertion_hash": "stale",
+            "request_fingerprint": "stale",
+        }
+        fixture.result.assertion_results = outcomes
+        await db_session.commit()
+
+        async def fail_if_provider_called(*_args, **_kwargs):
+            raise AssertionError("provider must not start after frozen marker mismatch")
+
+        monkeypatch.setattr(
+            "shared.agent_synthetic_judge._execute_provider_call",
+            fail_if_provider_called,
+        )
+        result = await run_synthetic_semantic_judge(
+            fixture.context,
+            SyntheticSemanticJudgePayload(
+                execution_id=fixture.execution.id,
+                result_id=fixture.result.id,
+            ),
+        )
+        assert result["completed"] == 0
+        assert (
+            await db_session.scalar(
+                select(AIUsageAttempt).where(AIUsageAttempt.platform_job_id == fixture.child.id)
+            )
+            is None
+        )
+    finally:
+        await _cleanup_semantic_fixture(db_session, fixture)
+
+
+@pytest.mark.asyncio
+async def test_synthetic_semantic_handler_requires_existing_child_link(db_session, seed_user):
+    from shared.models import SyntheticSemanticJudgePayload
+    from src.jobs.platform.agent_synthetic_judge import run_synthetic_semantic_judge
+    from src.jobs.platform.base import PlatformJobFailure
+
+    fixture = await _semantic_db_fixture(db_session, seed_user)
+    try:
+        comparison = dict(fixture.result.comparison)
+        comparison.pop("semantic_judge_job_id", None)
+        fixture.result.comparison = comparison
+        await db_session.commit()
+
+        with pytest.raises(PlatformJobFailure) as exc:
+            await run_synthetic_semantic_judge(
+                fixture.context,
+                SyntheticSemanticJudgePayload(
+                    execution_id=fixture.execution.id,
+                    result_id=fixture.result.id,
+                ),
+            )
+        assert exc.value.code == "semantic_job_link_mismatch"
+        await db_session.refresh(fixture.result)
+        assert "semantic_judge_job_id" not in fixture.result.comparison
+    finally:
+        await _cleanup_semantic_fixture(db_session, fixture)
+
+
+@pytest.mark.asyncio
+async def test_synthetic_semantic_actual_child_payload_mismatch_cancels_fence(
+    db_session, seed_user
+):
+    from shared.models import SyntheticSemanticJudgePayload
+    from src.jobs.platform.agent_synthetic_judge import run_synthetic_semantic_judge
+    from src.jobs.platform.base import PlatformJobCancelled
+
+    fixture = await _semantic_db_fixture(db_session, seed_user)
+    try:
+        fixture.child.payload = {
+            "execution_id": str(fixture.execution.id),
+            "result_id": str(uuid4()),
+        }
+        await db_session.commit()
+
+        with pytest.raises(PlatformJobCancelled):
+            await run_synthetic_semantic_judge(
+                fixture.context,
+                SyntheticSemanticJudgePayload(
+                    execution_id=fixture.execution.id,
+                    result_id=fixture.result.id,
+                ),
+            )
+    finally:
+        await _cleanup_semantic_fixture(db_session, fixture)
+
+
+@pytest.mark.asyncio
+async def test_synthetic_semantic_terminal_execution_blocks_paid_start(
+    db_session, seed_user, monkeypatch: pytest.MonkeyPatch
+):
+    from shared.models import SyntheticSemanticJudgePayload
+    from src.jobs.platform.agent_synthetic_judge import run_synthetic_semantic_judge
+    from src.jobs.platform.base import PlatformJobFailure
+    from src.models.orm.ai_usage import AIUsageAttempt
+
+    fixture = await _semantic_db_fixture(db_session, seed_user)
+    try:
+        fixture.execution.status = "succeeded"
+        await db_session.commit()
+
+        async def fail_if_provider_called(*_args, **_kwargs):
+            raise AssertionError("provider must not start for terminal execution")
+
+        monkeypatch.setattr(
+            "shared.agent_synthetic_judge._execute_provider_call",
+            fail_if_provider_called,
+        )
+        with pytest.raises(PlatformJobFailure) as exc:
+            await run_synthetic_semantic_judge(
+                fixture.context,
+                SyntheticSemanticJudgePayload(
+                    execution_id=fixture.execution.id,
+                    result_id=fixture.result.id,
+                ),
+            )
+        assert exc.value.code == "semantic_job_parent_not_active"
+        assert (
+            await db_session.scalar(
+                select(AIUsageAttempt).where(AIUsageAttempt.platform_job_id == fixture.child.id)
+            )
+            is None
+        )
+    finally:
+        await _cleanup_semantic_fixture(db_session, fixture)
+
+
+@pytest.mark.asyncio
+async def test_synthetic_semantic_started_row_missing_paid_identity_blocks_verdict(
+    db_session, seed_user, monkeypatch: pytest.MonkeyPatch
+):
+    from shared.models import SyntheticSemanticJudgePayload
+    from src.jobs.platform.agent_synthetic_judge import run_synthetic_semantic_judge
+    from src.services.llm.base import LLMConfig, LLMResponse
+
+    fixture = await _semantic_db_fixture(db_session, seed_user)
+
+    async def fake_get_llm_config(_db, *, profile_id):
+        assert profile_id == fixture.profile_id
+        return LLMConfig(
+            provider="openai",
+            model="judge-v1",
+            api_key="test",
+            endpoint=None,
+            openai_transport=None,
+            anthropic_prompt_cache_supported=None,
+            default_max_tokens=None,
+            extra_params={},
+        )
+
+    class FakeClient:
+        def __init__(self, _config):
+            pass
+
+        async def complete(self, *_args, **_kwargs):
+            return LLMResponse(
+                content='{"score": 0.9, "rationale": "ok"}',
+                input_tokens=5,
+                output_tokens=2,
+                provider_cost=Decimal("0.01"),
+            )
+
+    monkeypatch.setattr("src.services.llm.factory.get_llm_config", fake_get_llm_config)
+    monkeypatch.setattr("src.services.llm.pydantic_client.PydanticAIClient", FakeClient)
+    try:
+        outcomes = list(fixture.result.assertion_results)
+        outcomes[1] = {
+            **outcomes[1],
+            "judge_execution_state": "started",
+            "actual": "pending",
+        }
+        outcomes[1].pop("assertion_index", None)
+        outcomes[1].pop("assertion_hash", None)
+        outcomes[1].pop("request_fingerprint", None)
+        fixture.result.assertion_results = outcomes
+        await db_session.commit()
+
+        result = await run_synthetic_semantic_judge(
+            fixture.context,
+            SyntheticSemanticJudgePayload(
+                execution_id=fixture.execution.id,
+                result_id=fixture.result.id,
+            ),
+        )
+        assert result["completed"] == 0
+        await db_session.refresh(fixture.result)
+        semantic = fixture.result.assertion_results[1]
+        assert semantic["judge_execution_state"] == "started"
+        assert semantic["actual"] == "pending"
+    finally:
+        await _cleanup_semantic_fixture(db_session, fixture)
+
+
+@pytest.mark.asyncio
+async def test_synthetic_semantic_full_flow_defers_finalization_until_child_completes(
+    db_session, seed_user, monkeypatch: pytest.MonkeyPatch
+):
+    from shared.agent_synthetic_judge import semantic_child_job_id
+    from shared.models import SyntheticSemanticJudgePayload
+    from src.jobs.platform.agent_synthetic_judge import run_synthetic_semantic_judge
+    from src.services import platform_jobs
+    from src.services.llm.base import LLMConfig, LLMResponse
+
+    monkeypatch.setattr(platform_jobs, "publish_platform_job_update", AsyncMock())
+    fixture = await _semantic_db_fixture(db_session, seed_user, child_status="queued")
+    try:
+        source_run = AgentRun(trigger_type="evaluation_synthetic", status="completed")
+        db_session.add(source_run)
+        await db_session.flush()
+        fixture.tracked_run_ids.append(source_run.id)
+        fixture.execution.case_definitions = [
+            {
+                "id": str(fixture.case_id),
+                "version": fixture.case_version,
+                "position": 0,
+                "enabled": True,
+                "accepted": True,
+                "repetitions": 1,
+            }
+        ]
+        comparison = dict(fixture.result.comparison)
+        comparison.pop("semantic_judge_job_id", None)
+        fixture.result.comparison = comparison
+        fixture.result.baseline_run_id = source_run.id
+        fixture.result.status = "passed"
+        fixture.execution.status = "running"
+        await db_session.delete(fixture.child)
+        await db_session.commit()
+
+        assert await reconcile_agent_evaluation_jobs() >= 0
+        await db_session.refresh(fixture.execution)
+        await db_session.refresh(fixture.parent)
+        await db_session.refresh(fixture.result)
+        assert fixture.execution.status == "running"
+        assert fixture.parent.status == "waiting"
+        child_id = semantic_child_job_id(fixture.result)
+        assert child_id is not None
+        child = await db_session.get(PlatformJob, child_id)
+        assert child is not None
+        assert child.status == "queued"
+
+        lease_token = uuid4()
+        child.status = "running"
+        child.lease_token = lease_token
+        child.lease_expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+        await db_session.commit()
+        context = fixture.context.__class__(
+            job_id=child.id,
+            lease_token=lease_token,
+            organization_id=fixture.suite.org_id,
+            requested_by_user_id=str(seed_user.id),
+            requested_by_email=seed_user.email,
+            requested_by_name=seed_user.name or "Seed User",
+        )
+
+        async def fake_get_llm_config(_db, *, profile_id):
+            assert profile_id == fixture.profile_id
+            return LLMConfig(
+                provider="openai",
+                model="judge-v1",
+                api_key="test",
+                endpoint=None,
+                openai_transport=None,
+                anthropic_prompt_cache_supported=None,
+                default_max_tokens=None,
+                extra_params={},
+            )
+
+        class FakeClient:
+            def __init__(self, _config):
+                pass
+
+            async def complete(self, *_args, **_kwargs):
+                return LLMResponse(
+                    content='{"score": 0.9, "rationale": "ok"}',
+                    input_tokens=5,
+                    output_tokens=2,
+                    provider_cost=Decimal("0.01"),
+                )
+
+        monkeypatch.setattr("src.services.llm.factory.get_llm_config", fake_get_llm_config)
+        monkeypatch.setattr("src.services.llm.pydantic_client.PydanticAIClient", FakeClient)
+        handled = await run_synthetic_semantic_judge(
+            context,
+            SyntheticSemanticJudgePayload(
+                execution_id=fixture.execution.id,
+                result_id=fixture.result.id,
+            ),
+        )
+        assert handled["completed"] == 1
+        child.status = "succeeded"
+        child.result = handled
+        await db_session.commit()
+
+        assert await reconcile_agent_evaluation_jobs() >= 0
+        await db_session.refresh(fixture.execution)
+        await db_session.refresh(fixture.parent)
+        assert fixture.execution.status == "succeeded"
+        assert fixture.parent.status == "succeeded"
+    finally:
+        await _cleanup_semantic_fixture(db_session, fixture)
+
+
+@pytest.mark.asyncio
+async def test_synthetic_semantic_reconcile_enqueue_is_idempotent_for_duplicate_delivery(
+    db_session, seed_user, monkeypatch: pytest.MonkeyPatch
+):
+    from shared.agent_synthetic_judge import semantic_child_job_id
+    from src.services import platform_jobs
+
+    monkeypatch.setattr(platform_jobs, "publish_platform_job_update", AsyncMock())
+
+    async def no_follow_up_dispatch(*_args, **_kwargs):
+        return 0
+
+    monkeypatch.setattr(
+        "src.jobs.platform.agent_evaluation._dispatch_follow_up_batch",
+        no_follow_up_dispatch,
+    )
+    fixture = await _semantic_db_fixture(db_session, seed_user, child_status="queued")
+    try:
+        comparison = dict(fixture.result.comparison)
+        comparison.pop("semantic_judge_job_id", None)
+        fixture.result.comparison = comparison
+        fixture.result.status = "passed"
+        fixture.execution.status = "running"
+        await db_session.delete(fixture.child)
+        await db_session.commit()
+
+        assert await reconcile_agent_evaluation_jobs() >= 0
+        await db_session.refresh(fixture.result)
+        first_child_id = semantic_child_job_id(fixture.result)
+        assert first_child_id is not None
+        assert await reconcile_agent_evaluation_jobs() >= 0
+        await db_session.refresh(fixture.result)
+        assert semantic_child_job_id(fixture.result) == first_child_id
+        child_count = await db_session.scalar(
+            select(func.count())
+            .select_from(PlatformJob)
+            .where(
+                PlatformJob.job_type == "agent.evaluation_synthetic_semantic",
+                PlatformJob.payload["execution_id"].as_string() == str(fixture.execution.id),
+                PlatformJob.payload["result_id"].as_string() == str(fixture.result.id),
+            )
+        )
+        assert child_count == 1
+    finally:
+        await _cleanup_semantic_fixture(db_session, fixture)
+
+
+@pytest.mark.asyncio
+async def test_synthetic_semantic_scheduler_dispatches_remaining_cases_while_child_active(
+    db_session, seed_user, monkeypatch: pytest.MonkeyPatch
+):
+    from shared.agent_synthetic_judge import semantic_child_job_id
+    from src.services import platform_jobs
+
+    monkeypatch.setattr(platform_jobs, "publish_platform_job_update", AsyncMock())
+    dispatched: list[dict] = []
+
+    async def fake_dispatch(db, *, execution, result, item):
+        dispatched.append(item)
+        run = AgentRun(trigger_type="evaluation_synthetic", status="queued")
+        db.add(run)
+        await db.flush()
+        fixture.tracked_run_ids.append(run.id)
+        result.baseline_run_id = run.id
+        if result.status == "pending":
+            result.status = "running"
+        await db.commit()
+        return result.baseline_run_id
+
+    monkeypatch.setattr(
+        "src.jobs.platform.agent_evaluation._dispatch_case_run",
+        fake_dispatch,
+    )
+    fixture = await _semantic_db_fixture(db_session, seed_user, child_status="queued")
+    try:
+        second_case = AgentEvaluationCase(
+            suite_id=fixture.suite.id,
+            name="remaining semantic case",
+            assertions=[],
+        )
+        db_session.add(second_case)
+        await db_session.flush()
+        second_case_id = second_case.id
+        second_result = AgentEvaluationResult(
+            execution_id=fixture.execution.id,
+            case_id=second_case.id,
+            case_version=second_case.version,
+            repetition_index=0,
+            status="pending",
+            assertion_results=[],
+        )
+        db_session.add(second_result)
+        await db_session.flush()
+        second_result_id = second_result.id
+        fixture.execution.case_definitions = [
+            {
+                "id": str(fixture.case.id),
+                "version": fixture.case.version,
+                "position": 0,
+                "enabled": True,
+                "accepted": True,
+                "repetitions": 1,
+            },
+            {
+                "id": str(second_case.id),
+                "version": second_case.version,
+                "position": 1,
+                "enabled": True,
+                "accepted": True,
+                "repetitions": 1,
+            },
+        ]
+        source_run = AgentRun(trigger_type="evaluation_synthetic", status="completed")
+        db_session.add(source_run)
+        await db_session.flush()
+        fixture.tracked_run_ids.append(source_run.id)
+        comparison = dict(fixture.result.comparison)
+        comparison.pop("semantic_judge_job_id", None)
+        fixture.result.comparison = comparison
+        fixture.result.baseline_run_id = source_run.id
+        fixture.result.status = "passed"
+        await db_session.delete(fixture.child)
+        await db_session.commit()
+
+        assert await reconcile_agent_evaluation_jobs() >= 0
+        await db_session.refresh(fixture.result)
+        await db_session.refresh(second_result)
+        assert semantic_child_job_id(fixture.result) is not None
+        assert second_result.baseline_run_id is not None
+        assert str(second_case.id) in {item["case_id"] for item in dispatched}
+    finally:
+        await db_session.rollback()
+        if "second_result_id" in locals():
+            await db_session.execute(
+                delete(AgentEvaluationResult).where(AgentEvaluationResult.id == second_result_id)
+            )
+        if "second_case_id" in locals():
+            await db_session.execute(delete(AgentEvaluationCase).where(AgentEvaluationCase.id == second_case_id))
+        await _cleanup_semantic_fixture(db_session, fixture)

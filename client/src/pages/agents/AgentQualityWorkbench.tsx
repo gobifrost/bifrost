@@ -1,0 +1,1329 @@
+import { useMemo, useRef, useState, type ReactNode } from "react";
+import { Link, useParams, useSearchParams } from "react-router-dom";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+
+import {
+	PageScrollArea,
+	PageWorkspace,
+} from "@/components/layout/PageWorkspace";
+import { PageLoader } from "@/components/PageLoader";
+import { ModelProfileSelector } from "@/components/ai/ModelProfileSelector";
+import { QualityHeader } from "@/components/agents/QualityHeader";
+import { ChangesWorkspace } from "@/components/agents/evaluation/ChangesWorkspace";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { useAgent } from "@/hooks/useAgents";
+import { useInfiniteAgentRuns, type AgentRun } from "@/services/agentRuns";
+import { agentPlatform } from "@/services/agentPlatform";
+import type { components } from "@/lib/v1";
+
+import { FleetReadError } from "./FleetReadError";
+
+type Schema = components["schemas"];
+type AgentTest = Schema["AgentTestPublic"];
+type AgentTestLatest = Schema["AgentTestLatestPublic"];
+type Finding = Schema["FindingPublic"];
+type Review = Schema["AgentReviewDefinitionPublic"];
+type RecordedResultsPage = Schema["RecordedEvaluationResultsPage"];
+type QualityUsage = Schema["QualityUsageBreakdownResponse"];
+type QualityRun = AgentRun & {
+	asked?: string | null;
+	did?: string | null;
+};
+
+type Collection = "tests" | "findings" | "reviews" | "runs";
+
+const COLLECTIONS: { value: Collection; label: string }[] = [
+	{ value: "tests", label: "Tests" },
+	{ value: "findings", label: "Findings" },
+	{ value: "reviews", label: "Reviews" },
+	{ value: "runs", label: "Run history" },
+];
+
+function collectionFromParams(params: URLSearchParams): Collection {
+	const collection = params.get("collection");
+	if (
+		collection === "tests" ||
+		collection === "findings" ||
+		collection === "reviews" ||
+		collection === "runs"
+	) {
+		return collection;
+	}
+
+	const oldTab = params.get("tab");
+	if (oldTab === "evidence") return "findings";
+	if (oldTab === "tests" || oldTab === "changes") return "tests";
+	return "tests";
+}
+
+function lowerFirst(value: string): string {
+	return value ? value[0].toLowerCase() + value.slice(1) : value;
+}
+
+function testNameFromExpected(expected: string, situation: string): string {
+	const base = expected.trim() || situation.trim() || "match expected behavior";
+	if (/^should\b/i.test(base)) return base;
+	return `Should ${lowerFirst(base)}`;
+}
+
+function resultLabel(latest?: AgentTestLatest): string {
+	const simulation = latest?.simulation?.status ?? "none";
+	const recorded = latest?.recorded?.outcome ?? "none";
+	return `Simulation: ${simulation} · Recorded: ${recorded}`;
+}
+
+function includesText(value: unknown, query: string): boolean {
+	return JSON.stringify(value ?? "")
+		.toLowerCase()
+		.includes(query.toLowerCase());
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function stringArray(value: unknown): string[] | undefined {
+	return Array.isArray(value) && value.every((item) => typeof item === "string")
+		? value
+		: undefined;
+}
+
+function parseAdvancedJson(
+	value: string,
+): { fields: Partial<Schema["AgentTestCreate"]>; error: string | null } {
+	const trimmed = value.trim();
+	if (!trimmed) return { fields: {}, error: null };
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(trimmed);
+	} catch {
+		return { fields: {}, error: "Advanced JSON must be valid JSON." };
+	}
+	if (!isRecord(parsed)) {
+		return { fields: {}, error: "Advanced JSON must be a JSON object." };
+	}
+
+	const fields: Partial<Schema["AgentTestCreate"]> = {};
+	const expectedTools = stringArray(parsed.expected_tools);
+	if (expectedTools) fields.expected_tools = expectedTools;
+	const forbiddenTools = stringArray(parsed.forbidden_tools);
+	if (forbiddenTools) fields.forbidden_tools = forbiddenTools;
+	if (isRecord(parsed.fixture)) fields.fixture = parsed.fixture;
+	if (isRecord(parsed.simulator_policy))
+		fields.simulator_policy = parsed.simulator_policy;
+	if (
+		Array.isArray(parsed.assertions) &&
+		parsed.assertions.every(isRecord)
+	) {
+		fields.assertions = parsed.assertions;
+	}
+	if (isRecord(parsed.output_schema)) fields.output_schema = parsed.output_schema;
+	if (
+		typeof parsed.repetitions === "number" &&
+		Number.isInteger(parsed.repetitions) &&
+		parsed.repetitions > 0
+	) {
+		fields.repetitions = parsed.repetitions;
+	}
+	if (isRecord(parsed.scoring_policy))
+		fields.scoring_policy = parsed.scoring_policy;
+	const tags = stringArray(parsed.tags);
+	if (tags) fields.tags = tags;
+
+	return { fields, error: null };
+}
+
+export function AgentQualityWorkbench() {
+	const { id: agentId } = useParams<{ id: string }>();
+	const [params, setParams] = useSearchParams();
+	const queryClient = useQueryClient();
+	const collection = collectionFromParams(params);
+	const selectedKey = params.get("selected") ?? "";
+	const findingId = params.get("finding");
+	const suiteId = params.get("suite") ?? "";
+	const candidateId = params.get("candidate") ?? "";
+	const matrixId = params.get("matrix") ?? "";
+	const executionId = params.get("execution") ?? "";
+	const recordedId = params.get("recorded") ?? "";
+	const profileIds = (params.get("profiles") ?? "")
+		.split(",")
+		.filter(Boolean);
+	const hasChangesContext = Boolean(candidateId || matrixId || executionId);
+
+	const [search, setSearch] = useState("");
+	const [selectedTests, setSelectedTests] = useState<Set<string>>(
+		() => new Set(),
+	);
+	const [profileId, setProfileId] = useState("");
+	const [queuedExecution, setQueuedExecution] = useState("");
+	const [selectionError, setSelectionError] = useState("");
+	const [situation, setSituation] = useState("");
+	const [expectedBehavior, setExpectedBehavior] = useState("");
+	const [advancedJson, setAdvancedJson] = useState("");
+	const [advancedJsonError, setAdvancedJsonError] = useState("");
+	const queuedSuiteIdRef = useRef("");
+
+	function updateParams(values: Record<string, string | undefined>) {
+		const next = new URLSearchParams(params);
+		Object.entries(values).forEach(([key, value]) => {
+			if (value) next.set(key, value);
+			else next.delete(key);
+		});
+		if ("collection" in values && values.collection !== collection) {
+			next.delete("tab");
+			next.delete("selected");
+		}
+		if (
+			["suite", "candidate", "profiles"].some((key) => key in values) &&
+			!("execution" in values)
+		) {
+			next.delete("matrix");
+			next.delete("execution");
+		}
+		if (values.matrix) next.delete("execution");
+		if (values.execution) next.delete("matrix");
+		setParams(next, { replace: true });
+	}
+
+	const {
+		data: agent,
+		isLoading: agentLoading,
+		isError: agentError,
+		isFetching: agentFetching,
+		refetch: refetchAgent,
+	} = useAgent(agentId);
+
+	const testsQuery = useQuery({
+		queryKey: ["agent-platform", "agent-tests", agentId],
+		queryFn: () =>
+			agentPlatform.agentTests(agentId!, { limit: 50, offset: 0 }),
+		enabled: !!agentId,
+		retry: false,
+	});
+	const latestQuery = useQuery({
+		queryKey: ["agent-platform", "agent-tests-latest", agentId],
+		queryFn: () =>
+			agentPlatform.latestAgentTests(agentId!, { limit: 50, offset: 0 }),
+		enabled: !!agentId,
+		retry: false,
+	});
+	const findingsQuery = useQuery({
+		queryKey: ["agent-platform", "findings", agentId],
+		queryFn: () => agentPlatform.findings(agentId!),
+		enabled: !!agentId,
+		retry: false,
+	});
+	const reviewsQuery = useQuery({
+		queryKey: ["agent-platform", "reviews", agentId],
+		queryFn: () =>
+			agentPlatform.reviews({
+				agent_id: agentId!,
+				status: "active",
+				limit: 50,
+				offset: 0,
+			}),
+		enabled: !!agentId,
+		retry: false,
+	});
+	const runsQuery = useInfiniteAgentRuns({ agentId, pageSize: 50 });
+	const recordedResultsQuery = useQuery({
+		queryKey: ["agent-platform", "recorded-results", recordedId],
+		queryFn: () =>
+			agentPlatform.recordedEvaluationResults(recordedId, {
+				limit: 50,
+				offset: 0,
+			}),
+		enabled: !!recordedId,
+		retry: false,
+	});
+	const recordedUsageQuery = useQuery({
+		queryKey: ["agent-platform", "recorded-usage", recordedId],
+		queryFn: () =>
+			agentPlatform.recordedEvaluationUsage(recordedId, {
+				limit: 50,
+				offset: 0,
+			}),
+		enabled: !!recordedId,
+		retry: false,
+	});
+
+	const latestByLogicalId = useMemo(() => {
+		return new Map(
+			(latestQuery.data?.items ?? []).map((latest) => [
+				latest.logical_test_id,
+				latest,
+			]),
+		);
+	}, [latestQuery.data?.items]);
+
+	const tests = useMemo(
+		() => testsQuery.data?.items ?? [],
+		[testsQuery.data?.items],
+	);
+	const findings = useMemo(
+		() => findingsQuery.data ?? [],
+		[findingsQuery.data],
+	);
+	const reviews = useMemo(
+		() => reviewsQuery.data?.items ?? [],
+		[reviewsQuery.data?.items],
+	);
+	const runs = useMemo(
+		() =>
+			(runsQuery.data?.pages.flatMap((page) => page.items) as
+				| QualityRun[]
+				| undefined) ?? [],
+		[runsQuery.data?.pages],
+	);
+	const findingContext = findings.find((finding) => finding.id === findingId);
+	const selectedTestItems = tests.filter((test) =>
+		selectedTests.has(test.logical_test_id),
+	);
+
+	const selectedItem = useMemo(() => {
+		const [, selectedId] = selectedKey.split(":", 2);
+		if (!selectedId) return null;
+		if (collection === "tests")
+			return tests.find((test) => test.logical_test_id === selectedId) ?? null;
+		if (collection === "findings")
+			return (
+				findings.find((finding) => finding.id === selectedId) ?? null
+			);
+		if (collection === "reviews")
+			return reviews.find((review) => review.id === selectedId) ?? null;
+		return runs.find((run) => run.id === selectedId) ?? null;
+	}, [collection, findings, reviews, runs, selectedKey, tests]);
+
+	const filteredTests = tests.filter((test) => includesText(test, search));
+	const filteredFindings = findings.filter((finding) =>
+		includesText(finding, search),
+	);
+	const filteredReviews = reviews.filter((review) =>
+		includesText(review, search),
+	);
+	const filteredRuns = runs.filter((run) => includesText(run, search));
+
+	const createTest = useMutation({
+		mutationFn: (body: Schema["AgentTestCreate"]) =>
+			agentPlatform.createAgentTest(agentId!, body),
+		onSuccess: async () => {
+			setSituation("");
+			setExpectedBehavior("");
+			setAdvancedJson("");
+			await queryClient.invalidateQueries({
+				queryKey: ["agent-platform", "agent-tests", agentId],
+			});
+		},
+	});
+
+	const runTests = useMutation({
+		mutationFn: (body: Schema["AgentTestsRunCreate"]) =>
+			agentPlatform.runAgentTests(agentId!, body),
+		onSuccess: (result) => {
+			setQueuedExecution(result.executionId);
+			updateParams({
+				execution: result.executionId,
+				suite: queuedSuiteIdRef.current || undefined,
+			});
+		},
+	});
+
+	function selectCollection(nextCollection: Collection) {
+		updateParams({ collection: nextCollection });
+		setSearch("");
+	}
+
+	function selectListItem(kind: Collection, id: string) {
+		updateParams({ selected: `${kind}:${id}` });
+	}
+
+	function toggleTest(testId: string) {
+		setSelectionError("");
+		setSelectedTests((existing) => {
+			const next = new Set(existing);
+			if (next.has(testId)) next.delete(testId);
+			else next.add(testId);
+			return next;
+		});
+	}
+
+	function submitTest() {
+		if (!agentId) return;
+		const advanced = parseAdvancedJson(advancedJson);
+		if (advanced.error) {
+			setAdvancedJsonError(advanced.error);
+			return;
+		}
+		setAdvancedJsonError("");
+		const defaultAssertion = {
+			type: "terminal_status",
+			label: "Completes successfully",
+			params: { status: "completed" },
+		};
+		const body: Schema["AgentTestCreate"] = {
+			name: testNameFromExpected(expectedBehavior, situation),
+			position: tests.length,
+			enabled: true,
+			input: {
+				situation: situation.trim(),
+				expected_behavior: expectedBehavior.trim(),
+			},
+			fixture: {},
+			simulator_policy: {},
+			assertions: [defaultAssertion],
+			expected_tools: [],
+			forbidden_tools: [],
+			output_schema: null,
+			repetitions: 1,
+			scoring_policy: {},
+			provenance: findingContext ? "finding" : "manual",
+			provenance_run_ids: findingContext?.source_run_id
+				? [findingContext.source_run_id]
+				: [],
+			finding_id: findingContext?.id ?? null,
+			tags: [],
+			...advanced.fields,
+		};
+		createTest.mutate(body);
+	}
+
+	function submitSimulation() {
+		if (!agentId || selectedTestItems.length === 0) return;
+		const suiteIds = new Set(
+			selectedTestItems.map((test) => test.origin_suite_id),
+		);
+		if (suiteIds.size > 1) {
+			setSelectionError(
+				"Choose tests from one collection before running a simulation.",
+			);
+			return;
+		}
+		setSelectionError("");
+		queuedSuiteIdRef.current = selectedTestItems[0]?.origin_suite_id ?? "";
+		runTests.mutate({
+			selections: selectedTestItems.map((test) => ({
+				case_id: test.case_id,
+				case_version: test.version,
+			})),
+			profile_id: profileId || null,
+			candidate_id: candidateId || null,
+		});
+	}
+
+	if (!agent && agentLoading) return <PageLoader />;
+	if (!agent && agentError) {
+		return (
+			<div className="space-y-4">
+				<h1 className="font-display text-2xl font-semibold">
+					Quality workbench
+				</h1>
+				<FleetReadError
+					resource="agent"
+					cached={false}
+					pending={agentFetching}
+					onRetry={() => {
+						void refetchAgent();
+					}}
+				/>
+			</div>
+		);
+	}
+
+	return (
+		<PageWorkspace
+			className="mx-auto flex min-w-0 w-full max-w-[1400px] flex-col gap-5"
+			data-testid="agent-quality-workbench"
+		>
+			<div className="space-y-5" data-testid="quality-sticky-header">
+				<QualityHeader agentId={agentId} agentName={agent?.name} />
+				{agentError && (
+					<FleetReadError
+						resource="agent"
+						cached={!!agent}
+						pending={agentFetching}
+						onRetry={() => {
+							void refetchAgent();
+						}}
+					/>
+				)}
+				<div className="flex flex-wrap gap-2">
+					{COLLECTIONS.map((item) => (
+						<Button
+							key={item.value}
+							type="button"
+							variant={
+								item.value === collection ? "default" : "outline"
+							}
+							aria-pressed={item.value === collection}
+							onClick={() => selectCollection(item.value)}
+						>
+							{item.label}
+						</Button>
+					))}
+				</div>
+			</div>
+
+			<PageScrollArea className="min-w-0">
+				<div className="grid gap-4 lg:grid-cols-[minmax(280px,440px)_minmax(0,1fr)]">
+					<section className="space-y-4">
+						<div className="rounded-xl border bg-card p-4 shadow-sm">
+							<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+								<div>
+									<h2 className="font-display text-lg font-semibold">
+										{COLLECTIONS.find(
+											(item) => item.value === collection,
+										)?.label ?? "Tests"}
+									</h2>
+									<p className="text-sm text-muted-foreground">
+										{selectedTests.size
+											? `${selectedTests.size} selected`
+											: "Search, select, and inspect quality signals."}
+									</p>
+								</div>
+								{collection === "tests" && (
+									<Button
+										type="button"
+										onClick={submitSimulation}
+										disabled={
+											selectedTestItems.length === 0 ||
+											runTests.isPending
+										}
+									>
+										Run Simulation
+									</Button>
+								)}
+							</div>
+							{selectionError && (
+								<p className="mt-3 text-sm text-destructive">
+									{selectionError}
+								</p>
+							)}
+							<div className="mt-4 space-y-2">
+								<Label htmlFor="quality-search">
+									Search quality collection
+								</Label>
+								<Input
+									id="quality-search"
+									value={search}
+									onChange={(event) =>
+										setSearch(event.target.value)
+									}
+									placeholder="Search this collection"
+								/>
+							</div>
+						</div>
+
+						{collection === "tests" && (
+							<TestsCollection
+								tests={filteredTests}
+								latestByLogicalId={latestByLogicalId}
+								selectedTests={selectedTests}
+								isLoading={testsQuery.isLoading}
+								isError={testsQuery.isError || latestQuery.isError}
+								onRetry={() => {
+									void testsQuery.refetch();
+									void latestQuery.refetch();
+								}}
+								onToggle={toggleTest}
+								onSelect={(test) =>
+									selectListItem(
+										"tests",
+										test.logical_test_id,
+									)
+								}
+							/>
+						)}
+						{collection === "findings" && (
+							<FindingsCollection
+								findings={filteredFindings}
+								isLoading={findingsQuery.isLoading}
+								isError={findingsQuery.isError}
+								onRetry={() => {
+									void findingsQuery.refetch();
+								}}
+								onSelect={(finding) =>
+									selectListItem("findings", finding.id)
+								}
+							/>
+						)}
+						{collection === "reviews" && (
+							<ReviewsCollection
+								reviews={filteredReviews}
+								isLoading={reviewsQuery.isLoading}
+								isError={reviewsQuery.isError}
+								onRetry={() => {
+									void reviewsQuery.refetch();
+								}}
+								onSelect={(review) =>
+									selectListItem("reviews", review.id)
+								}
+							/>
+						)}
+						{collection === "runs" && (
+							<RunsCollection
+								runs={filteredRuns}
+								isLoading={runsQuery.isLoading}
+								isError={runsQuery.isError}
+								onRetry={() => {
+									void runsQuery.refetch();
+								}}
+								onSelect={(run) =>
+									selectListItem("runs", run.id)
+								}
+							/>
+						)}
+
+						{collection === "tests" && (
+							<TestCreationPanel
+								finding={findingContext}
+								situation={situation}
+								expectedBehavior={expectedBehavior}
+								advancedJson={advancedJson}
+								advancedJsonError={advancedJsonError}
+								createError={
+									createTest.error instanceof Error
+										? createTest.error.message
+										: createTest.isError
+											? "Could not create test."
+											: ""
+								}
+								isPending={createTest.isPending}
+								onSituationChange={setSituation}
+								onExpectedBehaviorChange={setExpectedBehavior}
+								onAdvancedJsonChange={setAdvancedJson}
+								onClearFinding={() =>
+									updateParams({ finding: undefined })
+								}
+								onCreate={submitTest}
+							/>
+						)}
+					</section>
+
+					<aside className="min-w-0 space-y-4">
+						{collection === "tests" && (
+							<div className="rounded-xl border bg-card p-4 shadow-sm">
+								<h2 className="font-display text-lg font-semibold">
+									Simulation setup
+								</h2>
+								<div className="mt-3 max-w-md">
+									<ModelProfileSelector
+										label="Profile"
+										value={profileId}
+										onValueChange={setProfileId}
+										placeholder="Default assignment"
+									/>
+								</div>
+								{candidateId && (
+									<p className="mt-3 text-sm text-muted-foreground">
+										Current candidate from URL: {candidateId}
+									</p>
+								)}
+								{queuedExecution && (
+									<p className="mt-3 text-sm font-medium text-foreground">
+										Queued simulation {queuedExecution}
+									</p>
+								)}
+							</div>
+						)}
+						{recordedId ? (
+							<RecordedResultsPanel
+								results={recordedResultsQuery.data}
+								usage={recordedUsageQuery.data}
+								isLoading={
+									recordedResultsQuery.isLoading ||
+									recordedUsageQuery.isLoading
+								}
+								isError={
+									recordedResultsQuery.isError ||
+									recordedUsageQuery.isError
+								}
+								onRetry={() => {
+									void recordedResultsQuery.refetch();
+									void recordedUsageQuery.refetch();
+								}}
+							/>
+						) : hasChangesContext ? (
+							<div className="rounded-xl border bg-card p-4 shadow-sm">
+								<h2 className="font-display text-lg font-semibold">
+									Changes context
+								</h2>
+								<div className="mt-4">
+									<ChangesWorkspace
+										agentId={agentId!}
+										suiteId={suiteId}
+										candidateId={candidateId}
+										profileIds={profileIds}
+										matrixId={matrixId}
+										executionId={executionId}
+										onNavigate={updateParams}
+									/>
+								</div>
+							</div>
+						) : (
+							<Inspector
+								collection={collection}
+								item={selectedItem}
+								agentId={agentId}
+								latestByLogicalId={latestByLogicalId}
+								onCreateTestFromFinding={(findingId) =>
+									updateParams({
+										collection: "tests",
+										finding: findingId,
+									})
+								}
+								onBack={() =>
+									updateParams({ selected: undefined })
+								}
+							/>
+						)}
+					</aside>
+				</div>
+			</PageScrollArea>
+		</PageWorkspace>
+	);
+}
+
+function TestsCollection({
+	tests,
+	latestByLogicalId,
+	selectedTests,
+	isLoading,
+	isError,
+	onToggle,
+	onSelect,
+	onRetry,
+}: {
+	tests: AgentTest[];
+	latestByLogicalId: Map<string, AgentTestLatest>;
+	selectedTests: Set<string>;
+	isLoading: boolean;
+	isError: boolean;
+	onToggle: (id: string) => void;
+	onSelect: (test: AgentTest) => void;
+	onRetry: () => void;
+}) {
+	if (isLoading) return <CollectionState>Loading tests…</CollectionState>;
+	if (isError)
+		return (
+			<CollectionState
+				tone="error"
+				actionLabel="Retry tests"
+				onAction={onRetry}
+			>
+				Could not load tests.
+			</CollectionState>
+		);
+	if (tests.length === 0)
+		return <CollectionState>No saved tests yet.</CollectionState>;
+	return (
+		<div className="space-y-2">
+			{tests.map((test) => {
+				const latest = latestByLogicalId.get(test.logical_test_id);
+				return (
+					<div
+						key={test.logical_test_id}
+						className="rounded-xl border bg-card p-3 shadow-sm"
+					>
+						<div className="flex items-start gap-3">
+							<Checkbox
+								checked={selectedTests.has(test.logical_test_id)}
+								onCheckedChange={() =>
+									onToggle(test.logical_test_id)
+								}
+								aria-label={`Select ${test.name}`}
+							/>
+							<button
+								type="button"
+								className="min-w-0 flex-1 text-left"
+								onClick={() => onSelect(test)}
+							>
+								<div className="font-medium">{test.name}</div>
+								<div className="mt-1 text-sm text-muted-foreground">
+									{resultLabel(latest)}
+								</div>
+								<div className="mt-2 flex flex-wrap gap-2">
+									<Badge variant="secondary">
+										v{test.version}
+									</Badge>
+									{test.origin_suite_name && (
+										<Badge variant="outline">
+											{test.origin_suite_name}
+										</Badge>
+									)}
+								</div>
+							</button>
+						</div>
+					</div>
+				);
+			})}
+		</div>
+	);
+}
+
+function FindingsCollection({
+	findings,
+	isLoading,
+	isError,
+	onSelect,
+	onRetry,
+}: {
+	findings: Finding[];
+	isLoading: boolean;
+	isError: boolean;
+	onSelect: (finding: Finding) => void;
+	onRetry: () => void;
+}) {
+	if (isLoading) return <CollectionState>Loading findings…</CollectionState>;
+	if (isError)
+		return (
+			<CollectionState
+				tone="error"
+				actionLabel="Retry findings"
+				onAction={onRetry}
+			>
+				Could not load findings.
+			</CollectionState>
+		);
+	if (findings.length === 0)
+		return <CollectionState>No findings yet.</CollectionState>;
+	return (
+		<div className="space-y-2">
+			{findings.map((finding) => (
+				<button
+					key={finding.id}
+					type="button"
+					className="w-full rounded-xl border bg-card p-3 text-left shadow-sm"
+					onClick={() => onSelect(finding)}
+				>
+					<div className="font-medium">{finding.description}</div>
+					{finding.expected_behavior && (
+						<div className="mt-1 text-sm text-muted-foreground">
+							Expected: {finding.expected_behavior}
+						</div>
+					)}
+					<div className="mt-2 text-xs text-muted-foreground">
+						{finding.status}
+					</div>
+				</button>
+			))}
+		</div>
+	);
+}
+
+function ReviewsCollection({
+	reviews,
+	isLoading,
+	isError,
+	onSelect,
+	onRetry,
+}: {
+	reviews: Review[];
+	isLoading: boolean;
+	isError: boolean;
+	onSelect: (review: Review) => void;
+	onRetry: () => void;
+}) {
+	if (isLoading) return <CollectionState>Loading reviews…</CollectionState>;
+	if (isError)
+		return (
+			<CollectionState
+				tone="error"
+				actionLabel="Retry reviews"
+				onAction={onRetry}
+			>
+				Could not load reviews.
+			</CollectionState>
+		);
+	if (reviews.length === 0)
+		return <CollectionState>No review runs yet.</CollectionState>;
+	return (
+		<div className="space-y-2">
+			{reviews.map((review) => (
+				<button
+					key={review.id}
+					type="button"
+					className="w-full rounded-xl border bg-card p-3 text-left shadow-sm"
+					onClick={() => onSelect(review)}
+				>
+					<div className="font-medium">{review.name}</div>
+					<div className="mt-1 text-sm text-muted-foreground">
+						Version {review.latest_version} · {review.status}
+					</div>
+				</button>
+			))}
+		</div>
+	);
+}
+
+function RunsCollection({
+	runs,
+	isLoading,
+	isError,
+	onSelect,
+	onRetry,
+}: {
+	runs: QualityRun[];
+	isLoading: boolean;
+	isError: boolean;
+	onSelect: (run: QualityRun) => void;
+	onRetry: () => void;
+}) {
+	if (isLoading) return <CollectionState>Loading run history…</CollectionState>;
+	if (isError)
+		return (
+			<CollectionState
+				tone="error"
+				actionLabel="Retry run history"
+				onAction={onRetry}
+			>
+				Could not load run history.
+			</CollectionState>
+		);
+	if (runs.length === 0)
+		return <CollectionState>No run history yet.</CollectionState>;
+	return (
+		<div className="space-y-2">
+			{runs.map((run) => (
+				<button
+					key={run.id}
+					type="button"
+					className="w-full rounded-xl border bg-card p-3 text-left shadow-sm"
+					onClick={() => onSelect(run)}
+				>
+					<div className="font-medium">
+						{run.asked ?? run.trigger_type}
+					</div>
+					<div className="mt-1 text-sm text-muted-foreground">
+						{run.status} · {run.created_at}
+					</div>
+				</button>
+			))}
+		</div>
+	);
+}
+
+function TestCreationPanel({
+	finding,
+	situation,
+	expectedBehavior,
+	advancedJson,
+	advancedJsonError,
+	createError,
+	isPending,
+	onSituationChange,
+	onExpectedBehaviorChange,
+	onAdvancedJsonChange,
+	onClearFinding,
+	onCreate,
+}: {
+	finding?: Finding;
+	situation: string;
+	expectedBehavior: string;
+	advancedJson: string;
+	advancedJsonError: string;
+	createError: string;
+	isPending: boolean;
+	onSituationChange: (value: string) => void;
+	onExpectedBehaviorChange: (value: string) => void;
+	onAdvancedJsonChange: (value: string) => void;
+	onClearFinding: () => void;
+	onCreate: () => void;
+}) {
+	const canCreate = situation.trim() && expectedBehavior.trim();
+	return (
+		<div className="rounded-xl border bg-card p-4 shadow-sm">
+			<h2 className="font-display text-lg font-semibold">Improve agent</h2>
+			{finding && (
+				<div className="mt-3 rounded-lg border bg-muted/40 p-3">
+					<div className="flex items-center justify-between gap-3">
+						<p className="text-sm font-medium">
+							Drafting from finding
+						</p>
+						<Button
+							type="button"
+							variant="ghost"
+							size="sm"
+							onClick={onClearFinding}
+						>
+							Clear finding
+						</Button>
+					</div>
+					<p className="mt-2 text-sm text-muted-foreground">
+						{finding.description}
+					</p>
+				</div>
+			)}
+			<div className="mt-4 space-y-3">
+				<div className="space-y-2">
+					<Label htmlFor="test-situation">Situation</Label>
+					<Textarea
+						id="test-situation"
+						value={situation}
+						onChange={(event) =>
+							onSituationChange(event.target.value)
+						}
+						placeholder="When the user asks…"
+					/>
+				</div>
+				<div className="space-y-2">
+					<Label htmlFor="test-expected">Expected behavior</Label>
+					<Textarea
+						id="test-expected"
+						value={expectedBehavior}
+						onChange={(event) =>
+							onExpectedBehaviorChange(event.target.value)
+						}
+						placeholder="The agent should…"
+					/>
+				</div>
+				<details className="rounded-lg border p-3">
+					<summary className="cursor-pointer text-sm font-medium">
+						Advanced JSON/checks
+					</summary>
+					<Label className="mt-3 block" htmlFor="test-advanced-json">
+						Advanced JSON
+					</Label>
+					<Textarea
+						id="test-advanced-json"
+						className="mt-2 font-mono text-xs"
+						value={advancedJson}
+						onChange={(event) =>
+							onAdvancedJsonChange(event.target.value)
+						}
+						placeholder='{"forbidden_tools":["..."]}'
+					/>
+					{advancedJsonError && (
+						<p className="mt-2 text-sm text-destructive">
+							{advancedJsonError}
+						</p>
+					)}
+				</details>
+				{createError && (
+					<p className="text-sm text-destructive" role="alert">
+						{createError}
+					</p>
+				)}
+				<Button
+					type="button"
+					onClick={onCreate}
+					disabled={!canCreate || isPending}
+				>
+					Create test
+				</Button>
+			</div>
+		</div>
+	);
+}
+
+function Inspector({
+	collection,
+	item,
+	agentId,
+	latestByLogicalId,
+	onCreateTestFromFinding,
+	onBack,
+}: {
+	collection: Collection;
+	item: AgentTest | Finding | Review | QualityRun | null;
+	agentId?: string;
+	latestByLogicalId: Map<string, AgentTestLatest>;
+	onCreateTestFromFinding: (findingId: string) => void;
+	onBack: () => void;
+}) {
+	if (!item) {
+		return (
+			<div className="rounded-xl border bg-card p-4 shadow-sm">
+				<h2 className="font-display text-lg font-semibold">Inspector</h2>
+				<p className="mt-2 text-sm text-muted-foreground">
+					Select an item to inspect its context.
+				</p>
+			</div>
+		);
+	}
+	return (
+		<div className="rounded-xl border bg-card p-4 shadow-sm">
+			<Button type="button" variant="ghost" size="sm" onClick={onBack}>
+				Back to list
+			</Button>
+			<div className="mt-4">
+				{collection === "tests" && (
+					<TestInspector
+						test={item as AgentTest}
+						agentId={agentId}
+						latest={latestByLogicalId.get(
+							(item as AgentTest).logical_test_id,
+						)}
+					/>
+				)}
+				{collection === "findings" && (
+					<FindingInspector
+						finding={item as Finding}
+						agentId={agentId}
+						onCreateTest={() =>
+							onCreateTestFromFinding((item as Finding).id)
+						}
+					/>
+				)}
+				{collection === "reviews" && (
+					<ReviewInspector review={item as Review} />
+				)}
+				{collection === "runs" && (
+					<RunInspector run={item as QualityRun} agentId={agentId} />
+				)}
+			</div>
+		</div>
+	);
+}
+
+function TestInspector({
+	test,
+	agentId,
+	latest,
+}: {
+	test: AgentTest;
+	agentId?: string;
+	latest?: AgentTestLatest;
+}) {
+	return (
+		<div className="space-y-3">
+			<h2 className="font-display text-lg font-semibold">{test.name}</h2>
+			<p className="text-sm text-muted-foreground">
+				Case {test.case_id} · version {test.version}
+			</p>
+			<pre className="max-h-80 overflow-auto rounded-lg bg-muted p-3 text-xs">
+				{JSON.stringify(test.input, null, 2)}
+			</pre>
+			{latest?.simulation && (
+				<p className="text-sm">
+					Simulation: {latest.simulation.status} · execution{" "}
+					{latest.simulation.execution_id}
+				</p>
+			)}
+			{latest?.recorded && (
+				<p className="text-sm">
+					Recorded: {latest.recorded.outcome}{" "}
+					{agentId && latest.recorded.run_id && (
+						<Link
+							className="underline"
+							to={`/agents/${agentId}/runs/${latest.recorded.run_id}`}
+						>
+							Run {latest.recorded.run_id}
+						</Link>
+					)}
+				</p>
+			)}
+		</div>
+	);
+}
+
+function FindingInspector({
+	finding,
+	agentId,
+	onCreateTest,
+}: {
+	finding: Finding;
+	agentId?: string;
+	onCreateTest: () => void;
+}) {
+	const runHref =
+		agentId && finding.source_run_id
+			? `/agents/${agentId}/runs/${finding.source_run_id}?tab=activity${
+					finding.source_sequence
+						? `&sequence=${finding.source_sequence}`
+						: ""
+				}`
+			: "";
+	return (
+		<div className="space-y-3">
+			<h2 className="font-display text-lg font-semibold">
+				Finding details
+			</h2>
+			<p>{finding.description}</p>
+			{finding.expected_behavior && (
+				<p className="text-sm text-muted-foreground">
+					Expected: {finding.expected_behavior}
+				</p>
+			)}
+			{runHref && (
+				<Link className="text-sm underline" to={runHref}>
+					Run {finding.source_run_id}
+				</Link>
+			)}
+			{finding.linked_case_ids?.length ? (
+				<p className="text-sm text-muted-foreground">
+					Linked tests: {finding.linked_case_ids.join(", ")}
+				</p>
+			) : null}
+			<Button type="button" onClick={onCreateTest}>
+				Create test from finding
+			</Button>
+		</div>
+	);
+}
+
+function ReviewInspector({ review }: { review: Review }) {
+	return (
+		<div className="space-y-3">
+			<h2 className="font-display text-lg font-semibold">Review details</h2>
+			<p>{review.name}</p>
+			<p className="text-sm text-muted-foreground">
+				Version {review.latest_version} · {review.status}
+			</p>
+		</div>
+	);
+}
+
+function RunInspector({
+	run,
+	agentId,
+}: {
+	run: QualityRun;
+	agentId?: string;
+}) {
+	return (
+		<div className="space-y-3">
+			<h2 className="font-display text-lg font-semibold">Run details</h2>
+			<p>{run.asked ?? run.trigger_type}</p>
+			{run.did && (
+				<p className="text-sm text-muted-foreground">Did: {run.did}</p>
+			)}
+			{agentId && (
+				<Link className="text-sm underline" to={`/agents/${agentId}/runs/${run.id}`}>
+					Open run
+				</Link>
+			)}
+		</div>
+	);
+}
+
+function RecordedResultsPanel({
+	results,
+	usage,
+	isLoading,
+	isError,
+	onRetry,
+}: {
+	results?: RecordedResultsPage;
+	usage?: QualityUsage;
+	isLoading: boolean;
+	isError: boolean;
+	onRetry: () => void;
+}) {
+	if (isLoading) {
+		return <CollectionState>Loading recorded results…</CollectionState>;
+	}
+	if (isError) {
+		return (
+			<CollectionState
+				tone="error"
+				actionLabel="Retry recorded results"
+				onAction={onRetry}
+			>
+				Could not load recorded results.
+			</CollectionState>
+		);
+	}
+	const recordedResults = results?.results ?? [];
+	const missingCost = usage?.coverage.missing_cost_call_count ?? 0;
+	return (
+		<div className="rounded-xl border bg-card p-4 shadow-sm">
+			<h2 className="font-display text-lg font-semibold">
+				Recorded results
+			</h2>
+			<p className="mt-2 text-sm text-muted-foreground">
+				{results?.total ?? 0} results · Unknown-cost calls: {missingCost}
+			</p>
+			{recordedResults.length === 0 ? (
+				<p className="mt-4 text-sm text-muted-foreground">
+					No recorded results have been admitted yet.
+				</p>
+			) : (
+				<div className="mt-4 space-y-3">
+					{recordedResults.map((result) => (
+						<div
+							key={result.id}
+							className="rounded-lg border bg-muted/30 p-3"
+						>
+							<div className="flex flex-wrap items-center gap-2">
+								<Badge
+									variant={
+										result.outcome === "passed"
+											? "secondary"
+											: "destructive"
+									}
+								>
+									{result.outcome}
+								</Badge>
+								<Badge variant="outline">
+									{result.complete
+										? "complete"
+										: "incomplete"}
+								</Badge>
+								<Badge variant="outline">
+									{result.applicability}
+								</Badge>
+							</div>
+							<p className="mt-2 text-sm text-muted-foreground">
+								Case {result.case_id} v{result.case_version} · Run{" "}
+								{result.run_id}
+							</p>
+							{result.limitations.length > 0 && (
+								<ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-muted-foreground">
+									{result.limitations.map((limitation) => (
+										<li key={limitation}>{limitation}</li>
+									))}
+								</ul>
+							)}
+							{result.error && (
+								<p className="mt-2 text-sm text-destructive">
+									{result.error}
+								</p>
+							)}
+						</div>
+					))}
+				</div>
+			)}
+		</div>
+	);
+}
+
+function CollectionState({
+	children,
+	tone = "default",
+	actionLabel,
+	onAction,
+}: {
+	children: ReactNode;
+	tone?: "default" | "error";
+	actionLabel?: string;
+	onAction?: () => void;
+}) {
+	return (
+		<div
+			className={`rounded-xl border bg-card p-4 text-sm shadow-sm ${
+				tone === "error" ? "text-destructive" : "text-muted-foreground"
+			}`}
+		>
+			<div className="flex flex-wrap items-center justify-between gap-3">
+				<span>{children}</span>
+				{actionLabel && onAction && (
+					<Button
+						type="button"
+						variant="outline"
+						size="sm"
+						onClick={onAction}
+					>
+						{actionLabel}
+					</Button>
+				)}
+			</div>
+		</div>
+	);
+}
+
+export default AgentQualityWorkbench;

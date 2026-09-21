@@ -14,7 +14,7 @@ import logging
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, File, Header, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
 from sqlalchemy import delete, select
 from sqlalchemy.orm import selectinload
@@ -39,6 +39,7 @@ from src.models.orm import (
     Agent,
     AgentDelegation,
     AgentMCPConnection,
+    AgentPromptHistory,
     AgentRole,
     AgentTool,
     AIModelProfile,
@@ -694,8 +695,13 @@ async def update_agent(
     agent_data: AgentUpdate,
     db: DbSession,
     user: CurrentActiveUser,
+    if_unmodified_since: str | None = Header(default=None),
 ) -> AgentPublic:
     """Update an agent. Admins can update any agent. Users can update their own private agents."""
+    # Lock the row for the whole request transaction (committed by the
+    # session dependency): concurrent updates serialize here, so the
+    # If-Unmodified-Since compare below and every related grant write are
+    # atomic — a competing update cannot slip between check and flush.
     result = await db.execute(
         select(Agent)
         .options(
@@ -707,6 +713,7 @@ async def update_agent(
             selectinload(Agent.llm_profile),
         )
         .where(Agent.id == agent_id)
+        .with_for_update()
     )
     agent = result.scalar_one_or_none()
 
@@ -718,6 +725,25 @@ async def update_agent(
 
     # Solution-managed agents are read-only here; deploy is the writer.
     assert_not_solution_managed(agent)
+
+    # Optimistic concurrency for reviewed applies: callers send back the
+    # ``updated_at`` they reviewed. A mismatch fails closed so a stale diff
+    # can never silently overwrite production configuration.
+    if if_unmodified_since is not None:
+        try:
+            since = datetime.fromisoformat(if_unmodified_since)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid If-Unmodified-Since timestamp.",
+            )
+        if since.tzinfo is None:
+            since = since.replace(tzinfo=timezone.utc)
+        if agent.updated_at != since:
+            raise HTTPException(
+                status_code=status.HTTP_412_PRECONDITION_FAILED,
+                detail="Agent changed since you read it; reload and retry.",
+            )
 
     is_admin = user.is_platform_admin
 
@@ -770,6 +796,7 @@ async def update_agent(
         await _validate_llm_profile_id(db, agent_data.llm_profile_id)
 
     was_private = agent.access_level == AgentAccessLevel.PRIVATE
+    previous_prompt = agent.system_prompt
 
     # Update fields
     if agent_data.name is not None:
@@ -915,6 +942,40 @@ async def update_agent(
             granted_by=user.user_id,
         )
 
+    # Prompt/config history through the normal authorized update: the legacy
+    # tuning apply wrote this row while clearing verdicts; the replacement
+    # records the change here and never touches verdicts, findings, or
+    # evidence. Non-admin tool/config fields are dropped above, so only
+    # effective admin config changes trigger a row.
+    prompt_changed = agent.system_prompt != previous_prompt
+    config_changed = is_admin and any(
+        field in agent_data.model_fields_set
+        for field in (
+            "tool_ids",
+            "delegated_agent_ids",
+            "system_tools",
+            "knowledge_sources",
+            "llm_profile_id",
+            "llm_max_tokens",
+            "max_iterations",
+            "max_token_budget",
+            "max_run_timeout",
+        )
+    )
+    if prompt_changed or config_changed:
+        db.add(
+            AgentPromptHistory(
+                id=uuid4(),
+                agent_id=agent.id,
+                previous_prompt=previous_prompt,
+                new_prompt=agent.system_prompt,
+                changed_by=user.user_id,
+                changed_at=datetime.now(timezone.utc),
+                reason=agent_data.change_reason
+                or ("prompt updated" if prompt_changed else "configuration updated"),
+            )
+        )
+
     await db.flush()
 
     # Reload with relationships
@@ -971,6 +1032,8 @@ async def delete_agent(
 
     # Use a SQL DELETE so database-level cascades remove run history and agent
     # memberships while SET NULL references (such as conversations) are preserved.
+    # Default test collections go with the agent via the trg_agents_delete_default_suites
+    # trigger (all deletion paths, not just this route); named suites keep SET NULL.
     await db.execute(delete(Agent).where(Agent.id == agent_id))
     await db.flush()
 

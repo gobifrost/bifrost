@@ -24,13 +24,13 @@ describe("execution notification link", () => {
 					path="/agent-evaluations/executions/:executionId"
 					element={<EvaluationExecutionLink />}
 				/>
-				<Route path="/agents/agent/studio" element={<Destination />} />
+				<Route path="/agents/agent/quality" element={<Destination />} />
 			</Routes>,
 			{ initialEntries: ["/agent-evaluations/executions/execution"] },
 		);
 		expect(
 			await screen.findByText(
-				"?suite=suite&execution=execution&tab=results&candidate=candidate",
+				"?tab=changes&suite=suite&candidate=candidate&execution=execution",
 			),
 		).toBeVisible();
 	});

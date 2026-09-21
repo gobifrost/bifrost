@@ -26,8 +26,8 @@ export function SuiteEditor({
 	});
 	return (
 		<details>
-			<summary className="cursor-pointer text-sm">
-				Edit suite details
+			<summary className="w-fit cursor-pointer text-sm font-medium">
+				Suite settings
 			</summary>
 			<form
 				className="mt-3 space-y-3"

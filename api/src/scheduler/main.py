@@ -261,6 +261,23 @@ class Scheduler:
             **misfire_options,
         )
 
+        from src.jobs.schedulers.recurring_triggers import (
+            process_recurring_platform_job_triggers,
+        )
+
+        scheduler.add_job(
+            self._run_scheduled_task,
+            IntervalTrigger(seconds=60),
+            id="recurring_trigger_processor",
+            name="Process recurring PlatformJob triggers",
+            replace_existing=True,
+            args=[
+                "recurring_trigger_processor",
+                process_recurring_platform_job_triggers,
+            ],
+            **misfire_options,
+        )
+
         from src.jobs.platform.agent_evaluation import reconcile_agent_evaluation_jobs
 
         scheduler.add_job(

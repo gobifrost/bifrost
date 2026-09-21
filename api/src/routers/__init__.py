@@ -35,6 +35,12 @@ from src.routers.agents import router as agents_router
 from src.routers.agent_runs import router as agent_runs_router
 from src.routers.agent_tuning import router as agent_tuning_router
 from src.routers.agent_evaluations import router as agent_evaluations_router
+from src.routers.agent_recorded_evaluations import (
+    router as agent_recorded_evaluations_router,
+)
+from src.routers.agent_reviews import router as agent_reviews_router
+from src.routers.agent_findings import router as agent_findings_router
+from src.routers.recurring_triggers import router as recurring_triggers_router
 from src.routers.chat import router as chat_router
 from src.routers.llm_config import router as llm_config_router
 from src.routers.ai_models import router as ai_models_router
@@ -118,6 +124,10 @@ __all__ = [
     "agent_runs_router",
     "agent_tuning_router",
     "agent_evaluations_router",
+    "agent_recorded_evaluations_router",
+    "agent_reviews_router",
+    "agent_findings_router",
+    "recurring_triggers_router",
     "chat_router",
     "llm_config_router",
     "ai_models_router",

@@ -17,7 +17,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-Provenance = Literal["manual", "generated", "historical_inspiration"]
+Provenance = Literal["manual", "generated", "historical_inspiration", "finding"]
 SuiteStatus = Literal["draft", "published", "archived"]
 ExecutionStatus = Literal[
     "queued", "running", "waiting", "succeeded", "failed", "cancelled"
@@ -131,6 +131,10 @@ class EvaluationCaseCreate(BaseModel):
     scoring_policy: dict[str, Any] = Field(default_factory=dict)
     provenance: Provenance = "manual"
     provenance_run_ids: list[UUID] = Field(default_factory=list)
+    finding_id: UUID | None = Field(
+        default=None,
+        description="Reviewed finding this case reproduces. Forces provenance to finding.",
+    )
     tags: list[str] = Field(default_factory=list)
 
 
@@ -173,6 +177,7 @@ class EvaluationCasePublic(BaseModel):
     scoring_policy: dict[str, Any] = Field(default_factory=dict)
     provenance: str = "manual"
     provenance_run_ids: list[str] = Field(default_factory=list)
+    finding_id: UUID | None = None
     tags: list[str] = Field(default_factory=list)
     accepted: bool = True
     created_at: datetime | None = None
@@ -257,6 +262,66 @@ class EvaluationExecutionCreate(BaseModel):
     repetitions_override: int | None = Field(default=None, ge=1, le=10)
 
 
+class EvaluationExecutionBatchCreate(BaseModel):
+    """Saved multi-profile matrix admission.
+
+    Fans out to one atomic execution per (candidate-or-baseline, profile)
+    cell. Every candidate cell pairs with the baseline-only cell under the
+    same profile; the selected profile is frozen into both snapshots at
+    admission and never falls back to another profile.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    suite_id: UUID
+    candidate_ids: list[UUID] = Field(default_factory=list, max_length=10)
+    profile_ids: list[UUID] = Field(min_length=1, max_length=10)
+    repetitions_override: int | None = Field(default=None, ge=1, le=10)
+
+
+class MatrixCellPublic(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    execution_id: UUID
+    candidate_id: UUID | None = None
+    profile_id: UUID | None = None
+    status: str
+    total_cases: int = 0
+    completed_cases: int = 0
+    passed_cases: int = 0
+    failed_cases: int = 0
+    platform_job_id: UUID | None = None
+    reused: bool = False
+
+
+class EvaluationMatrixPublic(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    suite_id: UUID
+    suite_version: int
+    candidate_ids: list[str] = Field(default_factory=list)
+    profile_ids: list[str] = Field(default_factory=list)
+    repetitions_override: int | None = None
+    cell_execution_ids: list[str] = Field(default_factory=list)
+    org_id: UUID | None = None
+    created_by: str | None = None
+    created_at: datetime | None = None
+
+
+class EvaluationBatchResult(BaseModel):
+    """Matrix admission aggregate. Status is computed from live cells."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    matrix: EvaluationMatrixPublic
+    cells: list[MatrixCellPublic]
+    planned_cells: int
+    planned_runs: int
+    cost_estimate_usd: float | None = None
+    cost_note: str
+
+
 class EvaluationExecutionPublic(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -265,6 +330,8 @@ class EvaluationExecutionPublic(BaseModel):
     suite_version: int
     candidate_id: UUID | None = None
     baseline_agent_id: UUID | None = None
+    matrix_id: UUID | None = None
+    profile_id: UUID | None = None
     status: str
     total_cases: int = 0
     completed_cases: int = 0

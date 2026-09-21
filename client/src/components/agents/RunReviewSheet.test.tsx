@@ -132,7 +132,7 @@ describe("RunReviewSheet", () => {
 		expect(
 			screen.getByRole("tab", { name: /^review$/i }),
 		).toBeInTheDocument();
-		expect(screen.getByRole("tab", { name: /tune/i })).toBeInTheDocument();
+		expect(screen.getByRole("tab", { name: /discussion/i })).toBeInTheDocument();
 		expect(
 			screen.getByRole("button", { name: /close run review/i }),
 		).toBeInTheDocument();
@@ -228,7 +228,7 @@ describe("RunReviewSheet", () => {
 		expect(activity).toHaveAttribute("data-highlighted", "true");
 	});
 
-	it("switches to Tune tab on click", async () => {
+	it("switches to Discussion tab on click", async () => {
 		const { user } = renderWithProviders(
 			<RunReviewSheet
 				open={true}
@@ -242,7 +242,7 @@ describe("RunReviewSheet", () => {
 				onSendChat={() => {}}
 			/>,
 		);
-		await user.click(screen.getByRole("tab", { name: /tune/i }));
+		await user.click(screen.getByRole("tab", { name: /discussion/i }));
 		// FlagConversation empty state is visible after switching
 		expect(
 			screen.getByText(/flag this run and tell me what went wrong/i),

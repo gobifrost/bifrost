@@ -153,7 +153,7 @@ export function FleetPage() {
 				{reviewOpen && (
 					<FleetReviewDialog onClose={() => setReviewOpen(false)} />
 				)}
-				{/* Tuning queue banner */}
+				{/* Flagged-run review banner */}
 				{fleetStats && fleetStats.needs_review > 0 ? (
 					<QueueBanner
 						count={fleetStats.needs_review}

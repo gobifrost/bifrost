@@ -50,7 +50,14 @@ export function AgentRunSheet({ openRunId, onClose }: AgentRunSheetProps) {
 	const detailQuery = useAgentRun(openRunId ?? undefined);
 	const runDetail = detailQuery.data as unknown as
 		components["schemas"]["AgentRunDetailResponse"] | undefined;
-	const conversationQuery = useFlagConversation(openRunId ?? undefined);
+	const verdict: Verdict =
+		runDetail?.verdict === "up" || runDetail?.verdict === "down"
+			? runDetail.verdict
+			: null;
+	const isFlagged = verdict === "down";
+	const conversationQuery = useFlagConversation(
+		isFlagged ? (openRunId ?? undefined) : undefined,
+	);
 	const conversation = conversationQuery.data;
 	const sendMessage = useSendFlagMessage();
 
@@ -128,6 +135,7 @@ export function AgentRunSheet({ openRunId, onClose }: AgentRunSheetProps) {
 		return new Promise((resolve, reject) => {
 			if (
 				!openRunId ||
+				!isFlagged ||
 				conversationQuery.isLoading ||
 				conversationQuery.isError
 			) {
@@ -151,10 +159,6 @@ export function AgentRunSheet({ openRunId, onClose }: AgentRunSheetProps) {
 	}
 
 	const open = !!openRunId;
-	const verdict: Verdict =
-		runDetail?.verdict === "up" || runDetail?.verdict === "down"
-			? runDetail.verdict
-			: null;
 
 	return (
 		<RunReviewSheet
@@ -203,7 +207,9 @@ export function AgentRunSheet({ openRunId, onClose }: AgentRunSheetProps) {
 			onSendChat={onSendChat}
 			chatPending={sendMessage.isPending}
 			chatDisabled={
-				conversationQuery.isLoading || conversationQuery.isError
+				!isFlagged ||
+				conversationQuery.isLoading ||
+				conversationQuery.isError
 			}
 			readFeedback={
 				detailQuery.isError ? (
@@ -220,11 +226,11 @@ export function AgentRunSheet({ openRunId, onClose }: AgentRunSheetProps) {
 						role="status"
 						className="p-4 text-sm text-muted-foreground"
 					>
-						Loading tuning conversation…
+						Loading improvement conversation…
 					</p>
 				) : conversationQuery.isError ? (
 					<ReadNotice
-						resource="tuning conversation"
+						resource="improvement conversation"
 						pending={conversationQuery.isFetching}
 						onRetry={() => void conversationQuery.refetch()}
 					/>

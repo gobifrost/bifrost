@@ -1,10 +1,12 @@
 import { Suspense, useEffect } from "react";
 import {
+	Navigate,
 	Route,
 	RouterProvider,
 	createBrowserRouter,
 	createRoutesFromElements,
 	useLocation,
+	useParams,
 	Outlet,
 	matchPath,
 } from "react-router-dom";
@@ -83,14 +85,35 @@ const AgentReviewPage = lazyWithReload(() =>
 		default: m.AgentReviewPage,
 	})),
 );
-const AgentTuneWorkbench = lazyWithReload(() =>
-	import("@/pages/agents/AgentTuneWorkbench").then((m) => ({
-		default: m.AgentTuneWorkbench,
+const AgentQualityWorkbench = lazyWithReload(() =>
+	import("@/pages/agents/AgentQualityWorkbench").then((m) => ({
+		default: m.AgentQualityWorkbench,
 	})),
 );
-const EvaluationExecutionLink = lazyWithReload(() => import("@/pages/agents/EvaluationExecutionLink").then(m => ({ default: m.EvaluationExecutionLink })));
-const AgentDebuggerPage = lazyWithReload(() => import("@/pages/agents/AgentDebuggerPage").then(m => ({ default: m.AgentDebuggerPage })));
-const AgentEvaluationStudio = lazyWithReload(() => import("@/pages/agents/AgentEvaluationStudio").then(m => ({ default: m.AgentEvaluationStudio })));
+const GlobalAgentQualityPage = lazyWithReload(() =>
+	import("@/pages/agents/GlobalAgentQualityPage").then((m) => ({
+		default: m.GlobalAgentQualityPage,
+	})),
+);
+const EvaluationExecutionLink = lazyWithReload(() =>
+	import("@/pages/agents/EvaluationExecutionLink").then((m) => ({
+		default: m.EvaluationExecutionLink,
+	})),
+);
+
+export function QualityRedirect({ defaultTab }: { defaultTab?: string }) {
+	const { id = "" } = useParams();
+	const location = useLocation();
+	const params = new URLSearchParams(location.search);
+	if (defaultTab) params.set("tab", defaultTab);
+	const search = params.toString();
+	return (
+		<Navigate
+			replace
+			to={`/agents/${id}/quality${search ? `?${search}` : ""}`}
+		/>
+	);
+}
 const AgentRunDetailPage = lazyWithReload(() =>
 	import("@/pages/agents/AgentRunDetailPage").then((m) => ({
 		default: m.AgentRunDetailPage,
@@ -304,7 +327,7 @@ export function AppFrame() {
 	);
 }
 
-const routeElements = (
+export const routeElements = (
 	<>
 		{/* Public routes - no auth required */}
 		<Route path="login" element={<Login />} />
@@ -593,6 +616,14 @@ const routeElements = (
 				}
 			/>
 			<Route
+				path="agents/quality"
+				element={
+					<ProtectedRoute>
+						<GlobalAgentQualityPage />
+					</ProtectedRoute>
+				}
+			/>
+			<Route
 				path="agents/:id"
 				loader={agentDetailLoader}
 				errorElement={<RouteLoadError />}
@@ -611,10 +642,18 @@ const routeElements = (
 				}
 			/>
 			<Route
+				path="agents/:id/quality"
+				element={
+					<ProtectedRoute>
+						<AgentQualityWorkbench />
+					</ProtectedRoute>
+				}
+			/>
+			<Route
 				path="agents/:id/tune"
 				element={
 					<ProtectedRoute>
-						<AgentTuneWorkbench />
+						<QualityRedirect />
 					</ProtectedRoute>
 				}
 			/>
@@ -626,9 +665,22 @@ const routeElements = (
 					</ProtectedRoute>
 				}
 			/>
-            <Route path="agents/:agentId/runs/:runId/debug" element={<ProtectedRoute><AgentDebuggerPage /></ProtectedRoute>} />
-            <Route path="agent-evaluations/executions/:executionId" element={<ProtectedRoute><EvaluationExecutionLink /></ProtectedRoute>} />
-            <Route path="agents/:id/studio" element={<ProtectedRoute><AgentEvaluationStudio /></ProtectedRoute>} />
+			<Route
+				path="agent-evaluations/executions/:executionId"
+				element={
+					<ProtectedRoute>
+						<EvaluationExecutionLink />
+					</ProtectedRoute>
+				}
+			/>
+			<Route
+				path="agents/:id/studio"
+				element={
+					<ProtectedRoute>
+						<QualityRedirect defaultTab="tests" />
+					</ProtectedRoute>
+				}
+			/>
 			{/* Knowledge - PlatformAdmin only */}
 			<Route
 				path="knowledge"

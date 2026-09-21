@@ -5,10 +5,12 @@ flagged ``AgentRun``: appends the user's turn, calls the configured tuning
 model with the run + history context, and persists the assistant reply.
 
 Also exposes the *consolidated tuning session* surface (Task 17): one LLM
-call across all currently-flagged runs for an agent, dry-run that proposal
-against each flagged run, and apply the proposal (updates
-``Agent.system_prompt``, writes ``AgentPromptHistory``, clears verdicts on
-the affected runs so they re-enter review under the new prompt).
+call across all currently-flagged runs for an agent, and dry-run of that
+proposal against each flagged run. Applying a proposal is intentionally
+not here: the legacy apply cleared flagged verdicts, so the replacement
+applies reviewed changes through the normal authorized
+``PUT /api/agents/{id}`` (which records ``AgentPromptHistory`` and never
+touches verdicts, findings, or evidence).
 
 This module exposes:
 
@@ -24,8 +26,6 @@ This module exposes:
   consolidated prompt proposal informed by all flagged runs.
 - :func:`dry_run_consolidated`: per-run dry-run of a consolidated
   proposal; capped at the first 10 flagged runs to bound cost.
-- :func:`apply_consolidated_tuning`: persist the new system prompt,
-  write history, and clear verdicts on affected flagged runs.
 """
 import json
 import logging
@@ -40,7 +40,6 @@ from src.core.log_safety import log_safe
 from src.core.principal import UserPrincipal
 from src.jobs.queue_names import TUNE_CHAT_QUEUE
 from src.jobs.rabbitmq import publish_message
-from src.models.orm.agent_prompt_history import AgentPromptHistory
 from src.models.orm.agent_run_flag_conversations import AgentRunFlagConversation
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.agents import Agent
@@ -203,15 +202,6 @@ class ConsolidatedProposal:
     affected_run_ids: list[UUID]
 
 
-@dataclass
-class AppliedTuning:
-    """In-memory result of :func:`apply_consolidated_tuning`."""
-
-    agent_id: UUID
-    history_id: UUID
-    affected_run_ids: list[UUID]
-
-
 async def _load_flagged_runs_with_conversations(
     agent_id: UUID,
     db: AsyncSession,
@@ -357,59 +347,3 @@ async def dry_run_consolidated(
             )
         )
     return results
-
-
-async def apply_consolidated_tuning(
-    agent_id: UUID,
-    new_prompt: str,
-    reason: str | None,
-    user_id: UUID | None,
-    db: AsyncSession,
-    user: UserPrincipal,
-) -> AppliedTuning:
-    """Apply a consolidated tuning proposal.
-
-    Updates ``agent.system_prompt``, inserts an ``AgentPromptHistory`` row,
-    and clears ``verdict``/``verdict_note`` on the flagged runs so they
-    re-enter the unreviewed queue under the new prompt. Caller commits.
-    """
-    agent = (
-        await db.execute(select(Agent).where(Agent.id == agent_id))
-    ).scalar_one_or_none()
-    if agent is None:
-        raise LookupError(f"Agent {agent_id} not found")
-
-    pairs = await _load_flagged_runs_with_conversations(agent_id, db, user)
-    affected_ids = [r.id for r, _ in pairs]
-
-    previous_prompt = agent.system_prompt
-    now = datetime.now(timezone.utc)
-
-    history = AgentPromptHistory(
-        id=uuid4(),
-        agent_id=agent.id,
-        previous_prompt=previous_prompt,
-        new_prompt=new_prompt,
-        changed_by=user_id,
-        changed_at=now,
-        reason=reason,
-    )
-    db.add(history)
-
-    agent.system_prompt = new_prompt
-    agent.updated_at = now
-
-    # Clear verdict on affected runs so they re-enter the review queue.
-    for run, _conv in pairs:
-        run.verdict = None
-        run.verdict_note = None
-        run.verdict_set_at = now
-        run.verdict_set_by = user_id
-
-    await db.flush()
-
-    return AppliedTuning(
-        agent_id=agent.id,
-        history_id=history.id,
-        affected_run_ids=affected_ids,
-    )

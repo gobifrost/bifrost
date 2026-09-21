@@ -5,7 +5,7 @@
  */
 
 import { $api } from "@/lib/api-client";
-import type { components } from "@/lib/v1";
+import type { components, operations } from "@/lib/v1";
 
 // Re-export types for convenience
 export type UsageReportResponse = components["schemas"]["UsageReportResponse"];
@@ -20,6 +20,8 @@ export type KnowledgeStorageTrend =
 	components["schemas"]["KnowledgeStorageTrend"];
 
 export type UsageSource = "executions" | "chat" | "agents" | "all";
+export type UsageBreakdownFilters =
+	operations["get_usage_breakdown_api_reports_usage_breakdown_get"]["parameters"]["query"];
 
 /**
  * Hook to fetch usage report for a date range.
@@ -44,13 +46,29 @@ export function useUsageReport(
 					start_date: startDate,
 					end_date: endDate,
 					source,
-					// Only pass org_id if it's a specific org (string), not undefined or null
+					// undefined means all orgs; null means global rows only.
 					...(typeof orgId === "string" ? { org_id: orgId } : {}),
+					...(orgId === null ? { global_only: true } : {}),
 				},
 			},
 		},
 		{
 			enabled: !!startDate && !!endDate,
+		},
+	);
+}
+
+export function useUsageBreakdown(filters: UsageBreakdownFilters) {
+	return $api.useQuery(
+		"get",
+		"/api/reports/usage/breakdown",
+		{
+			params: {
+				query: filters,
+			},
+		},
+		{
+			enabled: !!filters.start_date && !!filters.end_date,
 		},
 	);
 }

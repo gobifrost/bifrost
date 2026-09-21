@@ -113,6 +113,14 @@ class AgentUpdate(BaseModel):
     max_iterations: int | None = Field(default=None, ge=1, le=200, description="Max LLM iterations for autonomous runs")
     max_token_budget: int | None = Field(default=None, ge=1000, le=1000000, description="Max token budget for autonomous runs")
     max_run_timeout: int | None = Field(default=None, ge=0, le=86400, description="Max active seconds per autonomous run; 0 disables the timeout")
+    change_reason: str | None = Field(
+        default=None,
+        max_length=500,
+        description=(
+            "Reason recorded in prompt history when this update changes the "
+            "system prompt or tool configuration."
+        ),
+    )
 
 
 class AgentPromoteRequest(BaseModel):

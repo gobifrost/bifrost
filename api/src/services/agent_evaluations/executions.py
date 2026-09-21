@@ -9,6 +9,8 @@ without a database.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any
 from uuid import UUID
 
@@ -19,10 +21,90 @@ TERMINAL_RESULT_STATUSES = frozenset({"passed", "failed", "error"})
 
 
 def build_dedupe_key(
-    suite_id: UUID, suite_version: int, candidate_id: UUID | None
+    suite_id: UUID,
+    suite_version: int,
+    candidate_id: UUID | None,
+    profile_id: UUID | None = None,
+    repetitions_override: int | None = None,
+    subset_fingerprint: str | None = None,
 ) -> str:
     side = str(candidate_id) if candidate_id is not None else "baseline"
-    return f"suite:{suite_id}:v{suite_version}:candidate:{side}"
+    profile = str(profile_id) if profile_id is not None else "agent"
+    reps = str(repetitions_override) if repetitions_override is not None else "none"
+    key = f"suite:{suite_id}:v{suite_version}:candidate:{side}:profile:{profile}:reps:{reps}"
+    if subset_fingerprint is not None:
+        key += f":subset:{subset_fingerprint}"
+    return key
+
+
+def subset_fingerprint(selections: list[tuple[UUID, int]]) -> str:
+    """Canonical fingerprint for an explicit (case_id, version) selection."""
+    material = sorted(f"{case_id}:{version}" for case_id, version in selections)
+    return hashlib.sha256(
+        json.dumps(material, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def plan_matrix_cells(
+    candidate_ids: list[UUID],
+    profile_ids: list[UUID],
+) -> list[tuple[UUID | None, UUID]]:
+    """Enumerate matrix cells: baseline-per-profile plus candidate x profile.
+
+    Every candidate cell pairs with the baseline-only cell under the same
+    profile, so a prompt change is never confounded with a model change.
+    Raises ``QuotaExceeded`` when the fan-out exceeds ``MAX_MATRIX_CELLS``.
+    """
+    from src.services.agent_evaluations import quotas as eval_quotas
+
+    cells: list[tuple[UUID | None, UUID]] = [
+        (None, profile_id) for profile_id in profile_ids
+    ]
+    cells.extend(
+        (candidate_id, profile_id)
+        for candidate_id in candidate_ids
+        for profile_id in profile_ids
+    )
+    if len(cells) > eval_quotas.MAX_MATRIX_CELLS:
+        raise eval_quotas.QuotaExceeded(
+            f"Matrix fans out to {len(cells)} cells "
+            f"(limit {eval_quotas.MAX_MATRIX_CELLS}); select fewer "
+            "candidates or profiles.",
+            status_code=422,
+        )
+    return cells
+
+
+def apply_profile_override(
+    snapshot: dict[str, Any], profile_id: UUID, *, model_config
+) -> dict[str, Any]:
+    """Copy a frozen snapshot running both sides under one profile.
+
+    The input dict is never mutated: the caller persists the returned copy
+    on the execution row. The runtime executor pins provider, model,
+    endpoint, transport, caps, and tuning from the frozen snapshot and only
+    re-resolves *credentials* live from ``profile_id`` — so stamping the id
+    alone would run the selected profile's credentials against the
+    original model/endpoint. ``model_config`` (resolved via
+    ``get_llm_config`` at admission) freezes the full non-secret selected
+    configuration consistently. Secrets (``api_key``) and the connection
+    id are deliberately excluded: they stay server-side. The Agent-level
+    ``llm_max_tokens`` override is preserved, never replaced by the
+    profile default.
+    """
+    frozen = {**snapshot, "model": dict(snapshot.get("model") or {})}
+    model = frozen["model"]
+    model["profile_id"] = str(profile_id)
+    model["provider"] = model_config.provider
+    model["model"] = model_config.model
+    model["endpoint"] = model_config.endpoint
+    model["openai_transport"] = model_config.openai_transport
+    model["anthropic_prompt_cache_supported"] = (
+        model_config.anthropic_prompt_cache_supported
+    )
+    model["default_max_tokens"] = model_config.default_max_tokens
+    model["extra_params"] = dict(model_config.extra_params or {})
+    return frozen
 
 
 def plan_work_items(
@@ -273,44 +355,6 @@ def _score_result(result) -> None:
     result.simulator_state_hash = baseline_evidence.get("simulator_state_hash") or None
 
 
-async def resolve_semantic_assertions(session, result) -> None:
-    """Persist optional non-authoritative judge observations after scoring."""
-    from src.services.agent_evaluations.assertions import (
-        evaluate_assertions_async,
-        execute_semantic_judge,
-    )
-
-    comparison = dict(result.comparison or {})
-    pending = comparison.pop("_semantic_pending", None)
-    if not pending:
-        return
-    definitions = list(pending["definitions"])
-    sides = [("baseline", pending["baseline_evidence"])]
-    if pending.get("candidate_evidence") is not None:
-        sides.append(("candidate", pending["candidate_evidence"]))
-    resolved = {}
-    for side, evidence in sides:
-        outcomes = await evaluate_assertions_async(
-            definitions,
-            evidence,
-            judge_fn=lambda params, judge_evidence: execute_semantic_judge(
-                session, params, judge_evidence
-            ),
-        )
-        resolved[side] = outcomes
-    queues = {side: iter(outcomes) for side, outcomes in resolved.items()}
-    replaced = []
-    for outcome in result.assertion_results or []:
-        if outcome.get("type") == "llm_judge":
-            side = outcome.get("side", "baseline")
-            judged = next(queues[side])
-            replaced.append({**judged, "side": side, "label": outcome.get("label")})
-        else:
-            replaced.append(outcome)
-    result.assertion_results = replaced
-    result.comparison = comparison
-
-
 def _as_int(value: Any) -> int | None:
     try:
         return int(value) if value is not None else None
@@ -370,6 +414,9 @@ def create_execution_objects(
     baseline_snapshot: dict[str, Any] | None = None,
     candidate_snapshot: dict[str, Any] | None = None,
     execution_id: UUID | None = None,
+    matrix_id: UUID | None = None,
+    profile_id: UUID | None = None,
+    subset_fingerprint: str | None = None,
 ):
     """Build the execution + pending result rows (caller persists)."""
     from uuid import uuid4
@@ -380,7 +427,14 @@ def create_execution_objects(
     )
 
     resolved_id = execution_id or uuid4()
-    dedupe_key = build_dedupe_key(suite.id, suite.version, candidate_id)
+    dedupe_key = build_dedupe_key(
+        suite.id,
+        suite.version,
+        candidate_id,
+        profile_id,
+        repetitions_override,
+        subset_fingerprint,
+    )
     execution = AgentEvaluationExecution(
         id=resolved_id,
         suite_id=suite.id,
@@ -393,6 +447,8 @@ def create_execution_objects(
         baseline_snapshot=baseline_snapshot or {},
         candidate_snapshot=candidate_snapshot,
         case_definitions=[_case_definition(case) for case in cases],
+        matrix_id=matrix_id,
+        profile_id=profile_id,
     )
     planned = plan_work_items(
         [

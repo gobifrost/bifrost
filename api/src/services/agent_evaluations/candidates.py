@@ -125,6 +125,16 @@ def assert_production_snapshot(snapshot: dict[str, Any] | None) -> None:
             "Evaluation candidate snapshots cannot run in production; "
             "only the Evaluation service may create synthetic runs from one."
         )
+    if not snapshot:
+        return
+    from shared.proposed_tools import ProposedToolError, assert_no_unresolved_proposed_tools
+
+    try:
+        assert_no_unresolved_proposed_tools(
+            snapshot, context="Production snapshots"
+        )
+    except ProposedToolError as exc:
+        raise CandidateError(exc.detail) from exc
 
 
 def validate_overlay_tool_ids(

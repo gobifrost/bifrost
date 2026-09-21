@@ -11,13 +11,14 @@ Endpoint Structure:
 import logging
 from datetime import date
 from decimal import Decimal
-from typing import Literal
+from typing import Annotated, Literal
+from uuid import UUID
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import func, select
 
 from src.core.auth import Context, CurrentActiveUser, RequirePlatformAdmin
-from src.core.db_deps import DbSession
+from src.core.db_deps import DbSession, ReadSnapshotDbSession
 from src.models import (
     UsageReportResponse,
     UsageReportSummary,
@@ -38,6 +39,13 @@ from src.models.orm import (
 )
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.agents import Agent
+from shared.models import QualityUsageBreakdownResponse
+from shared.quality_usage_reporting import (
+    QualityUsageReportFilters,
+    UsageReportPagination,
+    summarize_quality_usage,
+    utc_inclusive_dates_to_half_open,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +69,9 @@ async def get_usage_report(
         default="all", description="Source filter: executions, chat, agents, or all"
     ),
     org_id: str | None = Query(default=None, description="Filter by organization ID"),
+    global_only: bool = Query(
+        default=False, description="Filter to platform-global rows with no organization"
+    ),
 ) -> UsageReportResponse:
     """
     Get usage report data similar to ROI reports.
@@ -79,9 +90,15 @@ async def get_usage_report(
     ]
 
     # Organization filter - from query param or context header
-    filter_org_id = org_id or (str(ctx.org_id) if ctx.org_id else None)
+    if org_id and global_only:
+        raise HTTPException(
+            status_code=422, detail="org_id and global_only cannot be used together"
+        )
+    filter_org_id = None if global_only else org_id or (str(ctx.org_id) if ctx.org_id else None)
     if filter_org_id:
         base_conditions.append(AIUsage.organization_id == filter_org_id)
+    elif global_only:
+        base_conditions.append(AIUsage.organization_id.is_(None))
 
     # Source filter
     if source == "executions":
@@ -113,6 +130,8 @@ async def get_usage_report(
         ]
         if filter_org_id:
             exec_conditions.append(Execution.organization_id == filter_org_id)
+        elif global_only:
+            exec_conditions.append(Execution.organization_id.is_(None))
 
         exec_metrics_query = select(
             func.coalesce(func.sum(Execution.cpu_total_seconds), 0.0).label("total_cpu"),
@@ -180,6 +199,8 @@ async def get_usage_report(
 
         if filter_org_id:
             workflow_query = workflow_query.where(AIUsage.organization_id == filter_org_id)
+        elif global_only:
+            workflow_query = workflow_query.where(AIUsage.organization_id.is_(None))
 
         workflow_query = workflow_query.group_by(Execution.workflow_name).order_by(
             func.sum(AIUsage.cost).desc()
@@ -221,6 +242,8 @@ async def get_usage_report(
 
         if filter_org_id:
             conv_query = conv_query.where(AIUsage.organization_id == filter_org_id)
+        elif global_only:
+            conv_query = conv_query.where(AIUsage.organization_id.is_(None))
 
         conv_query = conv_query.group_by(Conversation.id, Conversation.title).order_by(
             func.sum(AIUsage.cost).desc()
@@ -261,6 +284,8 @@ async def get_usage_report(
 
         if filter_org_id:
             agent_query = agent_query.where(AIUsage.organization_id == filter_org_id)
+        elif global_only:
+            agent_query = agent_query.where(AIUsage.organization_id.is_(None))
 
         agent_query = agent_query.group_by(Agent.name).order_by(
             func.sum(AIUsage.cost).desc()
@@ -279,53 +304,55 @@ async def get_usage_report(
         ]
 
     # 6. Get usage by organization
-    org_query = (
-        select(
-            Organization.id.label("org_id"),
-            Organization.name.label("org_name"),
-            func.count(
-                func.distinct(AIUsage.execution_id)
-            ).filter(AIUsage.execution_id.isnot(None)).label("execution_count"),
-            func.count(
-                func.distinct(AIUsage.conversation_id)
-            ).filter(AIUsage.conversation_id.isnot(None)).label("conversation_count"),
-            func.coalesce(func.sum(AIUsage.input_tokens), 0).label("input_tokens"),
-            func.coalesce(func.sum(AIUsage.output_tokens), 0).label("output_tokens"),
-            func.coalesce(func.sum(AIUsage.cost), Decimal("0")).label("ai_cost"),
+    by_organization: list[OrganizationUsage] = []
+    if not global_only:
+        org_query = (
+            select(
+                Organization.id.label("org_id"),
+                Organization.name.label("org_name"),
+                func.count(
+                    func.distinct(AIUsage.execution_id)
+                ).filter(AIUsage.execution_id.isnot(None)).label("execution_count"),
+                func.count(
+                    func.distinct(AIUsage.conversation_id)
+                ).filter(AIUsage.conversation_id.isnot(None)).label("conversation_count"),
+                func.coalesce(func.sum(AIUsage.input_tokens), 0).label("input_tokens"),
+                func.coalesce(func.sum(AIUsage.output_tokens), 0).label("output_tokens"),
+                func.coalesce(func.sum(AIUsage.cost), Decimal("0")).label("ai_cost"),
+            )
+            .join(Organization, AIUsage.organization_id == Organization.id)
+            .where(
+                AIUsage.organization_id.isnot(None),
+                func.date(AIUsage.timestamp) >= start_date,
+                func.date(AIUsage.timestamp) <= end_date,
+            )
         )
-        .join(Organization, AIUsage.organization_id == Organization.id)
-        .where(
-            AIUsage.organization_id.isnot(None),
-            func.date(AIUsage.timestamp) >= start_date,
-            func.date(AIUsage.timestamp) <= end_date,
-        )
-    )
 
-    # Apply source filter
-    if source == "executions":
-        org_query = org_query.where(AIUsage.execution_id.isnot(None))
-    elif source == "chat":
-        org_query = org_query.where(AIUsage.conversation_id.isnot(None))
-    elif source == "agents":
-        org_query = org_query.where(AIUsage.agent_run_id.isnot(None))
+        # Apply source filter
+        if source == "executions":
+            org_query = org_query.where(AIUsage.execution_id.isnot(None))
+        elif source == "chat":
+            org_query = org_query.where(AIUsage.conversation_id.isnot(None))
+        elif source == "agents":
+            org_query = org_query.where(AIUsage.agent_run_id.isnot(None))
 
-    org_query = org_query.group_by(Organization.id, Organization.name).order_by(
-        func.sum(AIUsage.cost).desc()
-    ).limit(50)
+        org_query = org_query.group_by(Organization.id, Organization.name).order_by(
+            func.sum(AIUsage.cost).desc()
+        ).limit(50)
 
-    org_result = await db.execute(org_query)
-    by_organization = [
-        OrganizationUsage(
-            organization_id=str(row.org_id),
-            organization_name=row.org_name or "Unknown",
-            execution_count=int(row.execution_count or 0),
-            conversation_count=int(row.conversation_count or 0),
-            input_tokens=int(row.input_tokens or 0),
-            output_tokens=int(row.output_tokens or 0),
-            ai_cost=Decimal(str(row.ai_cost or 0)),
-        )
-        for row in org_result.all()
-    ]
+        org_result = await db.execute(org_query)
+        by_organization = [
+            OrganizationUsage(
+                organization_id=str(row.org_id),
+                organization_name=row.org_name or "Unknown",
+                execution_count=int(row.execution_count or 0),
+                conversation_count=int(row.conversation_count or 0),
+                input_tokens=int(row.input_tokens or 0),
+                output_tokens=int(row.output_tokens or 0),
+                ai_cost=Decimal(str(row.ai_cost or 0)),
+            )
+            for row in org_result.all()
+        ]
 
     # 6. Get knowledge storage usage
     knowledge_storage: list[KnowledgeStorageUsage] = []
@@ -361,6 +388,10 @@ async def get_usage_report(
             storage_query = storage_query.where(
                 KnowledgeStorageDaily.organization_id == filter_org_id
             )
+        elif global_only:
+            storage_query = storage_query.where(
+                KnowledgeStorageDaily.organization_id.is_(None)
+            )
 
         storage_result = await db.execute(storage_query)
         knowledge_storage = [
@@ -392,6 +423,10 @@ async def get_usage_report(
             trends_storage_query = trends_storage_query.where(
                 KnowledgeStorageDaily.organization_id == filter_org_id
             )
+        elif global_only:
+            trends_storage_query = trends_storage_query.where(
+                KnowledgeStorageDaily.organization_id.is_(None)
+            )
 
         trends_storage_result = await db.execute(trends_storage_query)
         knowledge_storage_trends = [
@@ -415,3 +450,69 @@ async def get_usage_report(
         knowledge_storage_trends=knowledge_storage_trends,
         knowledge_storage_as_of=knowledge_storage_as_of,
     )
+
+
+@router.get(
+    "/usage/breakdown",
+    response_model=QualityUsageBreakdownResponse,
+    summary="Get quality usage breakdown",
+    description=(
+        "Get testing/review-aware AI usage breakdown for a date range. "
+        "Platform admin only."
+    ),
+    dependencies=[RequirePlatformAdmin],
+)
+async def get_usage_breakdown(
+    ctx: Context,
+    user: CurrentActiveUser,
+    db: ReadSnapshotDbSession,
+    start_date: date = Query(..., description="Start date in UTC (inclusive)"),
+    end_date: date = Query(..., description="End date in UTC (inclusive)"),
+    org_id: Annotated[
+        UUID | None, Query(description="Filter by organization UUID")
+    ] = None,
+    global_only: Annotated[
+        bool, Query(description="Filter to platform-global rows with no organization")
+    ] = False,
+    source: Annotated[
+        Literal["all", "executions", "chat", "agents"], Query()
+    ] = "all",
+    purpose: Annotated[str | None, Query()] = None,
+    provider: Annotated[str | None, Query()] = None,
+    model: Annotated[str | None, Query()] = None,
+    profile_id: Annotated[UUID | None, Query()] = None,
+    profile_fingerprint: Annotated[str | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> QualityUsageBreakdownResponse:
+    del user
+    try:
+        start_at, end_at = utc_inclusive_dates_to_half_open(start_date, end_date)
+        if org_id and global_only:
+            raise ValueError("org_id and global_only cannot be used together")
+        filter_org_id = None if global_only else org_id or ctx.org_id
+        report = await summarize_quality_usage(
+            db,
+            QualityUsageReportFilters(
+                scope=(
+                    "organization"
+                    if filter_org_id
+                    else "global_only"
+                    if global_only
+                    else "platform"
+                ),
+                organization_id=filter_org_id,
+                start_at=start_at,
+                end_at=end_at,
+                source=source,
+                purpose=purpose,
+                provider=provider,
+                model=model,
+                profile_id=profile_id,
+                profile_fingerprint=profile_fingerprint,
+                pagination=UsageReportPagination(limit=limit, offset=offset),
+            ),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return QualityUsageBreakdownResponse.model_validate(report)

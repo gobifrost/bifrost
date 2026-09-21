@@ -21,6 +21,7 @@ const mockUseFlagConversation = vi.fn();
 const mockSendFlagMessage = vi.fn();
 const mockSetVerdict = vi.fn();
 const mockClearVerdict = vi.fn();
+const mockRecordedEvaluation = vi.fn();
 
 vi.mock("@/services/agentRuns", () => ({
 	useInfiniteAgentRuns: (params: unknown) => mockUseInfiniteAgentRuns(params),
@@ -33,6 +34,13 @@ vi.mock("@/services/agentRuns", () => ({
 	}),
 	useSetVerdict: () => ({ mutate: mockSetVerdict, isPending: false }),
 	useClearVerdict: () => ({ mutate: mockClearVerdict, isPending: false }),
+}));
+
+vi.mock("@/services/agentPlatform", () => ({
+	agentPlatform: {
+		recordedEvaluation: (...args: unknown[]) =>
+			mockRecordedEvaluation(...args),
+	},
 }));
 
 // Stub the RunReviewSheet so we don't need a real Sheet portal in jsdom.
@@ -101,10 +109,14 @@ beforeEach(() => {
 	mockSendFlagMessage.mockReset();
 	mockSetVerdict.mockReset();
 	mockClearVerdict.mockReset();
+	mockRecordedEvaluation.mockReset();
+	mockRecordedEvaluation.mockResolvedValue({
+		evaluationId: "eval-1",
+		job_id: "job-1",
+	});
 });
 
 async function renderTab(agentId = "agent-1") {
-
 	return renderWithProviders(<AgentRunsTab agentId={agentId} />);
 }
 
@@ -240,8 +252,69 @@ describe("AgentRunsTab — verdict actions", () => {
 		);
 		await renderTab();
 		expect(
-			screen.getByText(/1 flagged run in tuning queue/i),
+			screen.getByText(/1 flagged run to review/i),
 		).toBeInTheDocument();
+	});
+});
+
+describe("AgentRunsTab — recorded evaluation", () => {
+	it("queues an exact recorded evaluation from a run card and links to the result", async () => {
+		const { user } = await renderTab();
+
+		await user.click(
+			screen.getByRole("button", { name: /evaluate recorded run/i }),
+		);
+
+		await waitFor(() => {
+			expect(mockRecordedEvaluation).toHaveBeenCalledWith({
+				agent_id: "agent-1",
+				run_ids: ["run-1"],
+				all_tests: true,
+				applicability: "unknown",
+				judge_mode: "exact",
+				applicability_overrides: [],
+			});
+		});
+		expect(
+			await screen.findByRole("link", {
+				name: /open recorded evaluation/i,
+			}),
+		).toHaveAttribute(
+			"href",
+			"/agents/agent-1/quality?collection=tests&recorded=eval-1",
+		);
+	});
+
+	it("keeps a failed recorded evaluation visible and retryable", async () => {
+		mockRecordedEvaluation
+			.mockRejectedValueOnce(new Error("Queue failed"))
+			.mockResolvedValueOnce({ evaluationId: "eval-2", job_id: "job-2" });
+		const { user } = await renderTab();
+
+		await user.click(
+			screen.getByRole("button", { name: /evaluate recorded run/i }),
+		);
+		expect(
+			await screen.findByText(/could not queue recorded evaluation/i),
+		).toBeVisible();
+
+		await user.click(
+			screen.getByRole("button", {
+				name: /retry recorded evaluation/i,
+			}),
+		);
+
+		await waitFor(() => {
+			expect(mockRecordedEvaluation).toHaveBeenCalledTimes(2);
+		});
+		expect(
+			await screen.findByRole("link", {
+				name: /open recorded evaluation/i,
+			}),
+		).toHaveAttribute(
+			"href",
+			"/agents/agent-1/quality?collection=tests&recorded=eval-2",
+		);
 	});
 });
 

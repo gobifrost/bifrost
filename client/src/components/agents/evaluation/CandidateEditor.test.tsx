@@ -11,6 +11,19 @@ vi.mock("@/components/ai/ModelProfileSelector", () => ({
 vi.mock("@/services/agentPlatform", () => ({
 	agentPlatform: { createCandidate: vi.fn() },
 }));
+vi.mock("@/hooks/useAgents", () => ({
+	useAgents: () => ({ data: [], isPending: false }),
+}));
+vi.mock("@/hooks/useTools", () => ({
+	useToolsGrouped: () => ({
+		data: { workflow: [], system: [] },
+		isPending: false,
+	}),
+	useSystemTools: () => ({ data: { tools: [] }, isPending: false }),
+}));
+vi.mock("@/services/aiModels", () => ({
+	listModelProfiles: vi.fn().mockResolvedValue([]),
+}));
 vi.mock("@/lib/api-client", () => ({
 	apiClient: { GET: vi.fn(), PUT: vi.fn() },
 }));
@@ -34,12 +47,14 @@ describe("candidate isolation", () => {
 			{ target: { value: "Proposed prompt" } },
 		);
 		fireEvent.click(
-			screen.getByRole("button", { name: "Create immutable candidate" }),
+			screen.getByRole("button", { name: "Save proposed changes" }),
 		);
 		await waitFor(() => expect(created).toHaveBeenCalled());
 		expect(agentPlatform.createCandidate).toHaveBeenCalledWith(
 			expect.objectContaining({
-				overlays: { system_prompt: "Proposed prompt" },
+				overlays: {
+					system_prompt: "Proposed prompt",
+				},
 			}),
 		);
 		expect(apiClient.PUT).not.toHaveBeenCalled();
@@ -64,17 +79,18 @@ describe("candidate isolation", () => {
 		);
 		expect(apiClient.PUT).not.toHaveBeenCalled();
 		fireEvent.click(
-			screen.getByRole("button", { name: "Review production diff" }),
+			screen.getByRole("button", { name: "Review and apply" }),
 		);
 		expect(
-			await screen.findByLabelText("Live system_prompt"),
-		).toHaveTextContent("Live prompt");
-		expect(
-			screen.getByLabelText("Candidate system_prompt"),
-		).toHaveTextContent("Proposed prompt");
+			await screen.findByText("Prompt"),
+		).toBeVisible();
+		const diff = screen.getByText("Prompt").closest("div")?.parentElement
+			?.textContent;
+		expect(diff).toMatch(/Live prompt/);
+		expect(diff).toMatch(/Proposed prompt/);
 		fireEvent.click(
 			screen.getByRole("button", {
-				name: "Apply these changes to live Agent",
+				name: "Apply these changes to live agent",
 			}),
 		);
 		await waitFor(() =>

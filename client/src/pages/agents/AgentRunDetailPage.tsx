@@ -65,6 +65,7 @@ import {
 	useSendFlagMessage,
 	useSetVerdict,
 } from "@/services/agentRuns";
+import { agentPlatform } from "@/services/agentPlatform";
 import type { components } from "@/lib/v1";
 
 import { FlagConversation } from "@/components/agents/FlagConversation";
@@ -86,9 +87,13 @@ export function AgentRunDetailPage() {
 	const location = useLocation();
 	const navigate = useNavigate();
 	const activeTab =
-		new URLSearchParams(location.search).get("tab") === "activity"
+		new URLSearchParams(location.search).get("tab") === "activity" ||
+		new URLSearchParams(location.search).get("sequence") != null
 			? "activity"
 			: "overview";
+	const evidenceSequence =
+		Number(new URLSearchParams(location.search).get("sequence")) ||
+		undefined;
 	const pendingActivity = useRef<string | null>(null);
 	const activityHeaderRef = useRef<HTMLDivElement>(null);
 	const activityFrameRef = useRef<HTMLDivElement>(null);
@@ -324,8 +329,12 @@ export function AgentRunDetailPage() {
 	useAgentRunUpdates({ agentId: owningAgentId });
 
 	const verdict = ((run?.verdict as Verdict | undefined) ?? null) as Verdict;
-	const [noteDrafts, setNoteDrafts] = useState<ReadonlyMap<string, string>>(() => new Map());
-	const note = runId ? (noteDrafts.get(runId) ?? run?.verdict_note ?? "") : "";
+	const [noteDrafts, setNoteDrafts] = useState<ReadonlyMap<string, string>>(
+		() => new Map(),
+	);
+	const note = runId
+		? (noteDrafts.get(runId) ?? run?.verdict_note ?? "")
+		: "";
 	const setNote = (value: string) => {
 		if (runId)
 			setNoteDrafts((previous) => new Map(previous).set(runId, value));
@@ -371,6 +380,13 @@ export function AgentRunDetailPage() {
 	const rerun = useRerunAgentRun();
 	const rerunBusy = useRef(false);
 	const [rerunFailure, setRerunFailure] = useState<string | null>(null);
+	const [recordedEvaluationPending, setRecordedEvaluationPending] =
+		useState(false);
+	const [recordedEvaluationFailure, setRecordedEvaluationFailure] =
+		useState(false);
+	const [recordedEvaluationHref, setRecordedEvaluationHref] = useState<
+		string | null
+	>(null);
 	const currentRunOrigin: AgentRunNavigationOrigin | null = run
 		? {
 				href: getLocationHref(location),
@@ -482,6 +498,30 @@ export function AgentRunDetailPage() {
 				},
 			},
 		);
+	}
+
+	async function handleRecordedEvaluation() {
+		if (!run?.id || !run.agent_id || recordedEvaluationPending) return;
+		setRecordedEvaluationPending(true);
+		setRecordedEvaluationFailure(false);
+		try {
+			const accepted = await agentPlatform.recordedEvaluation({
+				agent_id: run.agent_id,
+				run_ids: [run.id],
+				all_tests: true,
+				applicability: "unknown",
+				judge_mode: "exact",
+				applicability_overrides: [],
+			});
+			setRecordedEvaluationHref(
+				`/agents/${run.agent_id}/quality?collection=tests&recorded=${accepted.evaluationId}`,
+			);
+			toast.success("Recorded evaluation queued");
+		} catch {
+			setRecordedEvaluationFailure(true);
+		} finally {
+			setRecordedEvaluationPending(false);
+		}
 	}
 
 	function handleContextBackClick(event: ReactMouseEvent<HTMLAnchorElement>) {
@@ -709,7 +749,6 @@ export function AgentRunDetailPage() {
 					actionsLabel="Agent run actions"
 					actions={
 						<>
-							<Button asChild variant="outline"><Link to={`/agents/${agentId}/runs/${runId}/debug`}>Open debugger</Link></Button>
 							<Button
 								variant="ghost"
 								size="icon"
@@ -738,6 +777,22 @@ export function AgentRunDetailPage() {
 								)}
 								Rerun
 							</Button>
+							<Button
+								type="button"
+								variant="outline"
+								className="min-h-11 min-w-0"
+								disabled={
+									recordedEvaluationPending || !run.agent_id
+								}
+								onClick={() => void handleRecordedEvaluation()}
+							>
+								{recordedEvaluationPending ? (
+									<Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />
+								) : (
+									<Sparkles className="h-3.5 w-3.5" />
+								)}
+								Evaluate recorded run
+							</Button>
 						</>
 					}
 				/>
@@ -750,6 +805,23 @@ export function AgentRunDetailPage() {
 					pendingLabel="Queuing rerun…"
 					retryLabel="Retry rerun"
 				/>
+				<div className="flex flex-wrap items-center gap-2">
+					<RunActionFeedback
+						pending={recordedEvaluationPending}
+						failed={recordedEvaluationFailure}
+						onRetry={() => void handleRecordedEvaluation()}
+						message="Could not queue recorded evaluation. Try again when you are ready."
+						pendingLabel="Queuing recorded evaluation…"
+						retryLabel="Retry recorded evaluation"
+					/>
+					{recordedEvaluationHref ? (
+						<Button asChild variant="ghost" size="sm">
+							<Link to={recordedEvaluationHref}>
+								Open recorded evaluation
+							</Link>
+						</Button>
+					) : null}
+				</div>
 			</div>
 
 			<PageScrollArea
@@ -814,14 +886,14 @@ export function AgentRunDetailPage() {
 								<CardHeader className="pb-2">
 									<CardTitle className="flex items-center gap-2 text-sm">
 										<Sparkles className="h-4 w-4" />
-										Tuning conversation
+										Improvement conversation
 									</CardTitle>
 								</CardHeader>
 								<CardContent className="p-0">
 									{conversationError ? (
 										<div className="px-4 pb-3">
 											<FleetReadError
-												resource="tuning conversation"
+												resource="improvement conversation"
 												cached={!!conversation}
 												pending={conversationFetching}
 												onRetry={() =>
@@ -895,9 +967,11 @@ export function AgentRunDetailPage() {
 					>
 						<CardContent className="flex min-h-0 min-w-0 flex-1 flex-col p-0">
 							<AgentActivityWorkspace
+								key={`activity-${run.id}-seq-${evidenceSequence ?? "none"}`}
 								run={run}
 								focused={activeTab === "activity"}
 								expanded={activityInspecting}
+								evidenceSequence={evidenceSequence}
 								onFocusedChange={(focused) =>
 									changeTab(focused ? "activity" : "overview")
 								}

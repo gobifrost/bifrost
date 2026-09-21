@@ -758,16 +758,16 @@
 			]
 		},
 		{
-			"id": "AGENT-TUNING-APPLY-01",
+			"id": "AGENT-QUALITY-PROMOTION-01",
 			"area": "Agents",
 			"title": "applies an edited proposal through the real API and persists the live prompt",
 			"tests": [
 				{
-					"spec": "agents-tuning-apply.admin.spec.ts",
-					"title": "applies an edited proposal through the real API and persists the live prompt",
+					"spec": "agents-quality-promotion.admin.spec.ts",
+					"title": "promotion applies a reviewed candidate with reason and stale guard",
 					"project": "platform-admin",
 					"variant": "desktop",
-					"proof": "mixed-setup-real-mutation"
+					"proof": "real-platform"
 				}
 			]
 		},
