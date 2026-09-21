@@ -246,7 +246,11 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     #
     # PlatformJobPublic gained execution_backend (2026-09-17). ADDITIVE: old
     # clients ignore the placement detail and keep polling status as before.
-    "2c73f2dc8656f083d92b9bc25cceeb327f580428f1063b968ab077b92675660c"
+    #
+    # PlatformJobStatus gained requires_action (2026-09-21). BREAKING: older
+    # polling CLIs cannot parse the new PlatformJobPublic enum value, so
+    # MIN_CLI_VERSION was raised to 1.4.2. CONTRACT_VERSION remains frozen.
+    "127eb9802995bb48661182b4e8363dbcb819f7b146cb306c739c871a248520e9"
 )
 
 
