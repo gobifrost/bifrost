@@ -3795,6 +3795,83 @@ async def _serve(
         await runner.cleanup()
 
 
+def _workspace_import_decisions(
+    preview: dict[str, Any], *, keep_all: bool, replace_all: bool,
+    decisions_path: pathlib.Path | None, json_output: bool,
+) -> list[dict[str, str]]:
+    conflicts = [item for item in preview.get("items", []) if item.get("classification") == "conflict"]
+    if keep_all and replace_all:
+        raise click.UsageError("--keep-all and --replace-all cannot be combined")
+    if decisions_path is not None:
+        raw = json.loads(decisions_path.read_text())
+        values = raw.get("decisions", raw) if isinstance(raw, dict) else raw
+        if not isinstance(values, list):
+            raise click.ClickException("--decisions must contain a JSON list or {\"decisions\": [...]} object")
+        supplied = {item.get("item_id"): item for item in values if isinstance(item, dict)}
+        if set(supplied) != {item["id"] for item in conflicts}:
+            raise click.ClickException("--decisions must explicitly cover every conflict")
+        return values
+    if keep_all or replace_all:
+        action = "keep" if keep_all else "replace"
+        return [{"item_id": item["id"], "action": action} for item in conflicts]
+    if not conflicts:
+        return []
+    if json_output or not click.get_text_stream("stdin").isatty():
+        raise click.ClickException("Use --keep-all, --replace-all, or --decisions for noninteractive workspace imports.")
+    click.echo("Warning: workspace import creates uncommitted changes; review references and run compatibility checks before committing.")
+    decisions: list[dict[str, str]] = []
+    for item in conflicts:
+        choice = click.prompt(f"{item['kind']} {item['name']} [k]eep/[r]eplace", type=click.Choice(["k", "r"]))
+        decisions.append({"item_id": item["id"], "action": "keep" if choice == "k" else "replace"})
+    return decisions
+
+
+@solution_group.command("import-workspace", help="Import a Solution archive as unattached workspace content.")
+@click.argument("archive", type=click.Path(exists=True, dir_okay=False, path_type=pathlib.Path))
+@click.option("--keep-all", is_flag=True, help="Keep every conflicting destination item.")
+@click.option("--replace-all", is_flag=True, help="Replace every conflicting destination item.")
+@click.option("--decisions", type=click.Path(exists=True, dir_okay=False, path_type=pathlib.Path))
+@click.option("--json", "json_output", is_flag=True, help="Emit raw preview and terminal job JSON.")
+def import_workspace_cmd(
+    archive: pathlib.Path, keep_all: bool, replace_all: bool,
+    decisions: pathlib.Path | None, json_output: bool,
+) -> None:
+    """Preview, explicitly decide conflicts, and queue a workspace import."""
+    async def _run() -> dict[str, Any]:
+        client = BifrostClient.get_instance(require_auth=True)
+        response = await client.post(
+            "/api/solutions/import-workspace/preview",
+            files={"file": (archive.name, archive.read_bytes(), "application/zip")}, timeout=600,
+        )
+        if response.status_code != 200:
+            raise click.ClickException(f"Workspace preview failed: {response.status_code} {response.text}")
+        preview = response.json()
+        selected = _workspace_import_decisions(
+            preview, keep_all=keep_all, replace_all=replace_all,
+            decisions_path=decisions, json_output=json_output,
+        )
+        if not json_output:
+            click.echo("Warning: package cohesion may change in workspace scope; review references and run compatibility checks.")
+            for item in preview.get("items", []):
+                click.echo(f"{item['classification']:9} {item['kind']:12} {item['name']}")
+        queued = await client.post("/api/solutions/import-workspace", json={
+            "preview_token": preview["preview_token"], "decisions": selected,
+        })
+        if queued.status_code != 202:
+            raise click.ClickException(f"Workspace import enqueue failed: {queued.status_code} {queued.text}")
+        job = await poll_platform_job(
+            client, str(queued.json()["job_id"]), label="Workspace import",
+            timeout_operation="workspace import",
+        )
+        return {"preview": preview, "job": job}
+
+    result = asyncio.run(_run())
+    if json_output:
+        click.echo(json.dumps(result, default=str))
+    else:
+        click.echo("Workspace import completed with uncommitted workspace changes; review references and run compatibility checks before committing.")
+
+
 def handle_solution(args: list[str]) -> int:
     """Dispatch ``bifrost solution ...`` from :func:`bifrost.cli.main`."""
     try:

@@ -17,6 +17,7 @@ import os
 import re
 import tempfile
 import zipfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 from uuid import UUID, uuid4
@@ -77,6 +78,8 @@ from src.models.contracts.solutions import (
     SolutionsList,
     SolutionUpdate,
     SolutionUpgradeDiff,
+    WorkspaceBundleImportRequest,
+    WorkspaceBundlePreview,
 )
 from src.models.orm.agents import Agent, AgentRole
 from src.models.orm.app_roles import AppRole
@@ -103,6 +106,18 @@ from src.jobs.platform.solution_deploy import (
     SolutionDeployPayload,
 )
 from src.services.platform_jobs import enqueue_platform_job, publish_platform_job_update
+from src.services.platform_jobs import ensure_platform_job_notification
+from src.models.contracts.platform_jobs import PlatformJobAccepted, PlatformJobStatus
+from src.jobs.platform.workspace_bundle_import import (
+    WORKSPACE_BUNDLE_IMPORT_DEFINITION,
+    WorkspaceBundleImportPayload,
+)
+from src.jobs.platform.git_operation import WORKSPACE_MUTATION_RESOURCE_LOCK_KEY
+from src.services.solutions.workspace_bundle_plan import (
+    SolutionPackageWorkspaceProjection,
+    WorkspaceBundlePlanner,
+)
+from src.services.solutions.workspace_bundle_storage import WorkspaceBundleStorage
 from src.services.platform_jobs import ACTIVE_PLATFORM_JOB_STATUSES
 from src.services.application_sdk_status import (
     CurrentApplicationSdkMetadata,
@@ -146,6 +161,122 @@ def _safe_zip_filename(filename: str) -> str:
     stem = filename.removesuffix(".zip")
     safe_stem = _ZIP_FILENAME_SAFE_RE.sub("-", stem).strip(".-_")
     return f"{safe_stem or 'solution-export'}.zip"
+
+
+_WORKSPACE_PREVIEW_TTL = timedelta(minutes=30)
+
+
+async def _load_workspace_preview_metadata(
+    preview_token: str, *, requested_by: UUID
+) -> tuple[UUID, WorkspaceBundleStorage, dict]:
+    try:
+        preview_id = UUID(preview_token)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace import preview not found") from exc
+    storage = WorkspaceBundleStorage(preview_id)
+    try:
+        metadata = await storage.load_metadata()
+    except (FileNotFoundError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace import preview not found") from exc
+    if metadata.get("requested_by") != str(requested_by):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace import preview not found")
+    try:
+        expires_at = datetime.fromisoformat(metadata["expires_at"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Workspace import preview is invalid") from exc
+    if expires_at <= datetime.now(timezone.utc):
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail="Workspace import preview has expired")
+    return preview_id, storage, metadata
+
+
+@router.post(
+    "/import-workspace/preview", response_model=WorkspaceBundlePreview,
+    summary="Preview a Solution archive as global workspace content",
+)
+async def preview_workspace_import(
+    file: Annotated[UploadFile, File()], ctx: Context, user: CurrentSuperuser,
+) -> WorkspaceBundlePreview:
+    """Stage a requester-bound immutable archive and return its collision plan."""
+    path = await _spool_upload_to_temp(file, prefix="bifrost-workspace-preview-")
+    preview_id = uuid4()
+    storage = WorkspaceBundleStorage(preview_id)
+    try:
+        digest, _size = await storage.stage_package(path)
+        with tempfile.TemporaryDirectory(prefix="bifrost-workspace-preview-") as tmp:
+            from src.services.solutions.zip_install import _parse_workspace, _safe_extract_path
+
+            workspace = Path(tmp) / "workspace"
+            workspace.mkdir()
+            _safe_extract_path(path, str(workspace))
+            projection = SolutionPackageWorkspaceProjection.from_preview(
+                _parse_workspace(workspace), preview_id=preview_id, work_dir=workspace
+            )
+            planned = await WorkspaceBundlePlanner(ctx.db, preview_id=preview_id).plan(projection)
+            preview = planned.preview.model_copy(update={
+                "preview_token": str(preview_id), "package_sha256": digest,
+            })
+            await storage.stage_metadata({
+                "requested_by": str(user.user_id),
+                "expires_at": (datetime.now(timezone.utc) + _WORKSPACE_PREVIEW_TTL).isoformat(),
+                "package_sha256": digest,
+                "preview": preview.model_dump(mode="json"),
+                "manifest": planned.manifest.model_dump(mode="json"),
+                "id_map": {str(source): str(target) for source, target in planned.id_map.items()},
+                "file_hashes": planned.file_hashes,
+            })
+            return preview
+    except (ValueError, zipfile.BadZipFile) as exc:
+        await storage.delete()
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    finally:
+        _cleanup_file(path)
+
+
+@router.post(
+    "/import-workspace", response_model=PlatformJobAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Queue a reviewed workspace bundle import",
+)
+async def enqueue_workspace_import(
+    body: WorkspaceBundleImportRequest, response: Response, ctx: Context, user: CurrentSuperuser,
+) -> PlatformJobAccepted:
+    preview_id, _storage, metadata = await _load_workspace_preview_metadata(
+        body.preview_token, requested_by=user.user_id
+    )
+    preview = WorkspaceBundlePreview.model_validate(metadata["preview"])
+    conflicts = {item.id for item in preview.items if item.classification == "conflict"}
+    if {decision.item_id for decision in body.decisions} != conflicts:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="every workspace import conflict requires exactly one decision",
+        )
+    job, reused = await enqueue_platform_job(
+        ctx.db,
+        WORKSPACE_BUNDLE_IMPORT_DEFINITION,
+        WorkspaceBundleImportPayload(
+            preview_id=preview_id, package_sha256=preview.package_sha256, decisions=body.decisions,
+        ),
+        dedupe_key=str(preview_id),
+        resource_lock_key=WORKSPACE_MUTATION_RESOURCE_LOCK_KEY,
+        priority=500,
+        organization_id=None,
+        requested_by_user_id=user.user_id,
+        requested_by_email=user.email,
+        requested_by_name=user.name or user.email or "Unknown",
+        resource_type="workspace",
+        resource_id="bundle-import",
+        title=f"Import workspace bundle {preview.package_name}",
+        action_url="/solutions",
+    )
+    if job.notification_id is None:
+        await ensure_platform_job_notification(ctx.db, job)
+    await ctx.db.commit()
+    await publish_platform_job_update(job)
+    response.headers["Location"] = f"/api/platform-jobs/{job.id}"
+    return PlatformJobAccepted(
+        job_id=job.id, status=PlatformJobStatus(job.status), reused=reused,
+        notification_id=job.notification_id,
+    )
 
 
 async def _spool_upload_to_temp(file: UploadFile, *, prefix: str) -> Path:

@@ -63,3 +63,50 @@ async def test_importer_requires_one_decision_for_every_conflict(tmp_path) -> No
 
     with pytest.raises(WorkspaceBundleDecisionError, match="every conflict"):
         await WorkspaceBundleImporter(object()).apply(plan, [])
+
+
+@pytest.mark.asyncio
+async def test_promote_selected_files_writes_only_selected_content_with_file_index(tmp_path) -> None:
+    from bifrost.manifest import Manifest
+    from src.models.contracts.solutions import WorkspaceBundleItem, WorkspaceBundlePreview
+    from src.services.solutions.workspace_bundle_import import WorkspaceBundleImporter
+    from src.services.solutions.workspace_bundle_plan import PlannedWorkspaceBundle
+
+    source = tmp_path / "modules" / "customer.py"
+    source.parent.mkdir()
+    source.write_bytes(b"value = 1\n")
+    plan = PlannedWorkspaceBundle(
+        preview=WorkspaceBundlePreview(
+            preview_token="p", package_name="P", package_sha256="",
+            items=[WorkspaceBundleItem(id="file:modules/customer.py", kind="file", name="modules/customer.py", classification="create")],
+        ),
+        manifest=Manifest(), id_map={}, work_dir=tmp_path,
+        file_hashes={"modules/customer.py": "585c93666fcb046b7b264d3fa73202aa2a38254ae82a4b3ba19e873c2d5a9886"},
+    )
+
+    class FileIndex:
+        def __init__(self) -> None:
+            self.writes: list[tuple[str, bytes]] = []
+
+        async def write(self, path: str, content: bytes) -> str:
+            self.writes.append((path, content))
+            return "ignored"
+
+    index = FileIndex()
+    promoted = await WorkspaceBundleImporter(object()).promote_selected_files(
+        plan, {"file:modules/customer.py"}, file_index=index,
+    )
+
+    assert promoted == ["modules/customer.py"]
+    assert index.writes == [("modules/customer.py", b"value = 1\n")]
+
+
+def test_workspace_bundle_job_reuses_the_shared_workspace_lock() -> None:
+    from src.jobs.platform.git_operation import WORKSPACE_MUTATION_RESOURCE_LOCK_KEY
+    from src.jobs.platform.registry import get_platform_job_definition
+    from src.jobs.platform.workspace_bundle_import import WORKSPACE_BUNDLE_IMPORT_DEFINITION
+
+    assert WORKSPACE_BUNDLE_IMPORT_DEFINITION.job_type == "workspace.bundle_import"
+    assert WORKSPACE_BUNDLE_IMPORT_DEFINITION.policy.retry_on_runner_loss is True
+    assert get_platform_job_definition("workspace.bundle_import") is WORKSPACE_BUNDLE_IMPORT_DEFINITION
+    assert WORKSPACE_MUTATION_RESOURCE_LOCK_KEY == "workspace"

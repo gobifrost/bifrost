@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import AsyncIterator
 from pathlib import Path
 from uuid import UUID
@@ -30,6 +31,7 @@ class WorkspaceBundleStorage:
         self._storage = S3StorageClient(self._settings)
         self.root = f"{WORKSPACE_BUNDLE_IMPORTS_ROOT}/{self.preview_id}"
         self.package_key = f"{self.root}/package.zip"
+        self.metadata_key = f"{self.root}/preview.json"
 
     async def stage_package(self, source: Path) -> tuple[str, int]:
         async def chunks() -> AsyncIterator[bytes]:
@@ -55,3 +57,38 @@ class WorkspaceBundleStorage:
             destination.unlink(missing_ok=True)
             raise WorkspaceBundleIntegrityError("staged workspace bundle hash mismatch")
         return size
+
+    async def stage_metadata(self, metadata: dict) -> None:
+        """Store compact, requester-bound preview metadata beside the archive."""
+        data = json.dumps(metadata, separators=(",", ":"), sort_keys=True).encode("utf-8")
+
+        async def chunks() -> AsyncIterator[bytes]:
+            yield data
+
+        await self._storage.put_object_from_chunks(
+            self.metadata_key, chunks(), content_type="application/json"
+        )
+
+    async def load_metadata(self) -> dict:
+        data = await self._storage.read_uploaded_file(self.metadata_key)
+        return json.loads(data)
+
+    async def delete(self) -> None:
+        """Best-effort terminal cleanup of this preview's isolated staging prefix."""
+        try:
+            async with self._storage.get_client() as client:
+                response = await client.list_objects_v2(
+                    Bucket=self._settings.s3_bucket, Prefix=self.root + "/"
+                )
+                keys = [
+                    {"Key": key}
+                    for obj in response.get("Contents", [])
+                    if (key := obj.get("Key")) is not None
+                ]
+                if keys:
+                    await client.delete_objects(
+                        Bucket=self._settings.s3_bucket, Delete={"Objects": keys}
+                    )
+        except Exception:
+            # Retention cleanup can reap a failed best-effort deletion later.
+            return

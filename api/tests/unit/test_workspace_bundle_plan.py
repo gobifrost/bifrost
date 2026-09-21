@@ -85,6 +85,21 @@ def test_projection_omits_package_only_claims_and_role_bindings_with_warnings() 
     assert any("Role bindings" in warning for warning in projection.warnings)
 
 
+def test_projection_warns_when_package_explicitly_declares_empty_roles() -> None:
+    from src.services.solutions.workspace_bundle_plan import SolutionPackageWorkspaceProjection
+    from src.services.solutions.zip_install import PreviewResult
+
+    projection = SolutionPackageWorkspaceProjection.from_preview(
+        PreviewResult(workflows=[{
+            "id": "22222222-2222-2222-2222-222222222222", "name": "run",
+            "path": "workflows/run.py", "function_name": "run", "roles": [],
+        }]),
+        preview_id=UUID(int=7),
+    )
+
+    assert any("Role bindings" in warning for warning in projection.warnings)
+
+
 def test_planner_includes_hashed_source_files_and_detects_conflicts(tmp_path) -> None:
     from src.services.solutions.workspace_bundle_plan import (
         SolutionPackageWorkspaceProjection,
@@ -112,3 +127,21 @@ def test_planner_includes_hashed_source_files_and_detects_conflicts(tmp_path) ->
         projection, existing_file_hashes={"modules/customer.py": None},
     )
     assert next(item for item in unknown_destination.preview.items if item.kind == "file").classification == "conflict"
+
+
+def test_planner_excludes_secret_and_generated_source_files(tmp_path) -> None:
+    from src.services.solutions.workspace_bundle_plan import SolutionPackageWorkspaceProjection, WorkspaceBundlePlanner
+    from src.services.solutions.zip_install import PreviewResult
+
+    (tmp_path / ".env.production").write_text("TOKEN=secret")
+    (tmp_path / "node_modules").mkdir()
+    (tmp_path / "node_modules" / "lib.js").write_text("ignored")
+    (tmp_path / "modules").mkdir()
+    (tmp_path / "modules" / "kept.py").write_text("kept")
+    projection = SolutionPackageWorkspaceProjection.from_preview(
+        PreviewResult(name="P"), preview_id=UUID(int=7), work_dir=tmp_path,
+    )
+
+    planned = WorkspaceBundlePlanner(None, preview_id=UUID(int=7)).plan_sync(projection)
+
+    assert planned.file_hashes == {"modules/kept.py": hashlib.sha256(b"kept").hexdigest()}

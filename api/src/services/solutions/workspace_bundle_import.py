@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import Any
+import hashlib
+from typing import Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,9 +18,14 @@ class WorkspaceBundleDecisionError(ValueError):
     """The request no longer exactly represents the preview's conflicts."""
 
 
+class _FileIndexWriter(Protocol):
+    async def write(self, path: str, content: bytes) -> str: ...
+
+
 @dataclass(frozen=True)
 class WorkspaceBundleImportResult:
     imported_item_ids: frozenset[str]
+    selected_item_ids: frozenset[str]
     operations: tuple[SyncOp, ...]
 
 
@@ -49,11 +55,15 @@ class WorkspaceBundleImporter:
         if plan.work_dir is None:
             raise ValueError("workspace bundle import requires an extracted package directory")
 
+        selected_items = {
+            item.id
+            for item in plan.preview.items
+            if item.classification == "create" or by_id.get(item.id) == "replace"
+        }
         included = {
             item.source_id and str(item.source_id)
             for item in plan.preview.items
-            if item.source_id is not None
-            and (item.classification == "create" or by_id.get(item.id) == "replace")
+            if item.id in selected_items and item.source_id is not None
         }
         # Kept conflicts are absent from the write selection but their target IDs
         # remain in ``plan.id_map`` for selected forms/agents/events that refer to
@@ -67,5 +77,37 @@ class WorkspaceBundleImporter:
             progress_fn=self.progress_fn,
         )
         return WorkspaceBundleImportResult(
-            imported_item_ids=selection.included_source_ids, operations=tuple(ops)
+            imported_item_ids=selection.included_source_ids,
+            selected_item_ids=frozenset(selected_items),
+            operations=tuple(ops),
         )
+
+    async def promote_selected_files(
+        self,
+        plan: PlannedWorkspaceBundle,
+        selected_item_ids: set[str] | frozenset[str],
+        *,
+        file_index: _FileIndexWriter,
+    ) -> list[str]:
+        """Promote reviewed source files through the canonical S3/index writer.
+
+        Repeating this operation is safe after a runner loss: each write is
+        content-addressed by the preview hash and FileIndexService upserts its
+        row rather than creating another record.
+        """
+        if plan.work_dir is None:
+            raise ValueError("workspace bundle file promotion requires an extracted package directory")
+        promoted: list[str] = []
+        for item in plan.preview.items:
+            if item.kind != "file" or item.id not in selected_item_ids:
+                continue
+            expected = plan.file_hashes.get(item.name)
+            if expected is None:
+                raise WorkspaceBundleDecisionError(f"missing staged hash for {item.name}")
+            source = plan.work_dir / item.name
+            content = source.read_bytes()
+            if hashlib.sha256(content).hexdigest() != expected:
+                raise WorkspaceBundleDecisionError(f"staged source hash mismatch for {item.name}")
+            await file_index.write(item.name, content)
+            promoted.append(item.name)
+        return promoted

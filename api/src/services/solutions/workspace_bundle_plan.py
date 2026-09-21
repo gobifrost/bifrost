@@ -8,6 +8,7 @@ leaking into workspace reconciliation.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid5
@@ -26,6 +27,7 @@ from bifrost.manifest import (
     ManifestTable,
     ManifestWorkflow,
 )
+from bifrost.ignore_patterns import DEFAULT_IGNORE_PATTERNS
 from src.models.contracts.solutions import WorkspaceBundleItem, WorkspaceBundlePreview
 from src.services.git_repo_manager import hash_file, iter_repo_files
 from src.services.solutions.zip_install import PreviewResult
@@ -43,6 +45,18 @@ _CLAIMS_WARNING = (
 _ROLES_WARNING = (
     "Role bindings are environment-specific and were not imported; existing destination role assignments are preserved."
 )
+
+
+@lru_cache(maxsize=1)
+def _workspace_source_ignore_spec():
+    import pathspec
+
+    return pathspec.PathSpec.from_lines("gitwildmatch", DEFAULT_IGNORE_PATTERNS)
+
+
+def _is_importable_source_file(relative: str) -> bool:
+    """Apply the shared Solution/CLI secret and generated-content exclusions."""
+    return not _workspace_source_ignore_spec().match_file(relative)
 
 
 def _uuid(value: object, *, preview_id: UUID, stable_key: str) -> UUID:
@@ -136,7 +150,7 @@ class SolutionPackageWorkspaceProjection:
             )
         if package.claims:
             warnings.append(_CLAIMS_WARNING)
-        if any(row.get("roles") or row.get("role_names") for rows in (
+        if any("roles" in row or "role_names" in row for rows in (
             package.workflows, package.apps, package.tables, package.forms, package.agents,
         ) for row in rows):
             warnings.append(_ROLES_WARNING)
@@ -212,7 +226,7 @@ class WorkspaceBundlePlanner:
         if projection.work_dir is not None:
             for path in iter_repo_files(projection.work_dir):
                 relative = path.relative_to(projection.work_dir).as_posix()
-                if relative == "bifrost.solution.yaml" or relative.startswith(".bifrost/"):
+                if relative == "bifrost.solution.yaml" or not _is_importable_source_file(relative):
                     continue
                 _size, sha256 = hash_file(path)
                 file_hashes[relative] = sha256
@@ -255,7 +269,6 @@ class WorkspaceBundlePlanner:
         from src.models.orm.agents import Agent
         from src.models.orm.applications import Application
         from src.models.orm.config import Config
-        from src.models.orm.custom_claims import CustomClaim
         from src.models.orm.forms import Form
         from src.models.orm.tables import Table
         from src.models.orm.workflows import Workflow
@@ -265,14 +278,12 @@ class WorkspaceBundlePlanner:
             "app": lambda row: ManifestApp.from_row(row).model_dump(mode="json", exclude={"id"}),
             "table": lambda row: ManifestTable.from_row(row).model_dump(mode="json", exclude={"id"}),
             "config": lambda row: ManifestConfig.from_row(row).model_dump(mode="json", exclude={"id"}),
-            "claim": lambda row: ManifestCustomClaim.from_row(row).model_dump(mode="json", exclude={"id"}),
         }
         for kind, model, columns in (
             ("workflow", Workflow, (Workflow.path, Workflow.function_name)),
             ("app", Application, (Application.slug,)),
             ("table", Table, (Table.name,)),
             ("config", Config, (Config.key, Config.integration_id, Config.organization_id)),
-            ("claim", CustomClaim, (CustomClaim.name, CustomClaim.organization_id)),
         ):
             query = select(model).where(model.organization_id.is_(None))
             if "solution_id" in model.__table__.columns:
@@ -299,7 +310,9 @@ class WorkspaceBundlePlanner:
     async def _prefetch_existing_file_hashes(self) -> dict[str, str | None]:
         from src.services.repo_storage import RepoStorage
 
-        destination_paths = {path: None for path in await RepoStorage().list()}
+        destination_paths: dict[str, str | None] = {
+            path: None for path in await RepoStorage().list()
+        }
         if self.db is None:
             return destination_paths
         from src.models.orm.file_index import FileIndex
