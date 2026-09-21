@@ -371,15 +371,32 @@ function AgentQualityWorkbenchContent() {
 		},
 	});
 
+	function reopenInspector() {
+		setDismissedInspectorContext("");
+	}
+
 	function selectCollection(nextCollection: Collection) {
+		reopenInspector();
 		updateParams({ collection: nextCollection });
 		setSearch("");
 		setIsCreatingTest(false);
 	}
 
 	function selectListItem(kind: Collection, id: string) {
+		reopenInspector();
 		updateParams({ selected: `${kind}:${id}` });
 		setIsCreatingTest(false);
+	}
+
+	function openTestCreation() {
+		reopenInspector();
+		setIsCreatingTest(true);
+		updateParams({ selected: undefined });
+	}
+
+	function openTestCreationFromFinding(nextFindingId: string) {
+		reopenInspector();
+		updateParams({ collection: "tests", finding: nextFindingId });
 	}
 
 	function toggleTest(testId: string) {
@@ -514,10 +531,7 @@ function AgentQualityWorkbenchContent() {
 								<Button
 									type="button"
 									variant="outline"
-									onClick={() => {
-										setIsCreatingTest(true);
-										updateParams({ selected: undefined });
-									}}
+									onClick={openTestCreation}
 								>
 									Add Test
 								</Button>
@@ -584,9 +598,7 @@ function AgentQualityWorkbenchContent() {
 							item={selectedItem}
 							agentId={agentId}
 							latestByLogicalId={latestByLogicalId}
-							onCreateTestFromFinding={(findingId) =>
-								updateParams({ collection: "tests", finding: findingId })
-							}
+							onCreateTestFromFinding={openTestCreationFromFinding}
 							onBack={() => setDismissedInspectorContext(inspectorContext)}
 						/>
 					) : isTestCreationOpen ? (
@@ -694,6 +706,10 @@ function AgentQualityWorkbenchContent() {
 		);
 }
 
+function rovingTabIndex(index: number, isSelected: boolean, hasSelection: boolean) {
+	return isSelected || (!hasSelection && index === 0) ? 0 : -1;
+}
+
 function TestsCollection({
 	tests,
 	latestByLogicalId,
@@ -728,9 +744,12 @@ function TestsCollection({
 		);
 	if (tests.length === 0)
 		return <CollectionState>No saved tests yet.</CollectionState>;
+	const hasSelection = tests.some(
+		(test) => selectedKey === `tests:${test.logical_test_id}`,
+	);
 	return (
 		<div role="grid" aria-label="Tests collection">
-			{tests.map((test) => {
+			{tests.map((test, index) => {
 				const latest = latestByLogicalId.get(test.logical_test_id);
 				return (
 					<WorkbenchRow
@@ -749,6 +768,11 @@ function TestsCollection({
 							</>
 						}
 						selected={selectedKey === `tests:${test.logical_test_id}`}
+						tabIndex={rovingTabIndex(
+							index,
+							selectedKey === `tests:${test.logical_test_id}`,
+							hasSelection,
+						)}
 						onSelect={() => onSelect(test)}
 						selectionControl={
 							<Checkbox
@@ -794,9 +818,12 @@ function FindingsCollection({
 		);
 	if (findings.length === 0)
 		return <CollectionState>No findings yet.</CollectionState>;
+	const hasSelection = findings.some(
+		(finding) => selectedKey === `findings:${finding.id}`,
+	);
 	return (
 		<div role="grid" aria-label="Findings collection">
-			{findings.map((finding) => (
+			{findings.map((finding, index) => (
 				<WorkbenchRow
 					key={finding.id}
 					title={finding.description}
@@ -809,6 +836,11 @@ function FindingsCollection({
 						</>
 					}
 					selected={selectedKey === `findings:${finding.id}`}
+					tabIndex={rovingTabIndex(
+						index,
+						selectedKey === `findings:${finding.id}`,
+						hasSelection,
+					)}
 					onSelect={() => onSelect(finding)}
 				/>
 			))}
@@ -844,14 +876,22 @@ function ReviewsCollection({
 		);
 	if (reviews.length === 0)
 		return <CollectionState>No review runs yet.</CollectionState>;
+	const hasSelection = reviews.some(
+		(review) => selectedKey === `reviews:${review.id}`,
+	);
 	return (
 		<div role="grid" aria-label="Reviews collection">
-			{reviews.map((review) => (
+			{reviews.map((review, index) => (
 				<WorkbenchRow
 					key={review.id}
 					title={review.name}
 					meta={`Version ${review.latest_version} · ${review.status}`}
 					selected={selectedKey === `reviews:${review.id}`}
+					tabIndex={rovingTabIndex(
+						index,
+						selectedKey === `reviews:${review.id}`,
+						hasSelection,
+					)}
 					onSelect={() => onSelect(review)}
 				/>
 			))}
@@ -887,14 +927,22 @@ function RunsCollection({
 		);
 	if (runs.length === 0)
 		return <CollectionState>No run history yet.</CollectionState>;
+	const hasSelection = runs.some(
+		(run) => selectedKey === `runs:${run.id}`,
+	);
 	return (
 		<div role="grid" aria-label="Run History collection">
-			{runs.map((run) => (
+			{runs.map((run, index) => (
 				<WorkbenchRow
 					key={run.id}
 					title={run.asked ?? run.trigger_type}
 					meta={`${run.status} · ${run.created_at}`}
 					selected={selectedKey === `runs:${run.id}`}
+					tabIndex={rovingTabIndex(
+						index,
+						selectedKey === `runs:${run.id}`,
+						hasSelection,
+					)}
 					onSelect={() => onSelect(run)}
 				/>
 			))}
@@ -1512,7 +1560,7 @@ function FleetFindingsList({
 		return <FleetEmpty label="No findings match this filter." />;
 	return (
 		<div role="grid" aria-label="Findings collection" className="space-y-2">
-			{items.map((finding) => (
+			{items.map((finding, index) => (
 				<FleetRow
 					key={finding.id}
 					title={finding.description}
@@ -1524,6 +1572,7 @@ function FleetFindingsList({
 					})}
 					label={`Open Finding ${finding.description}`}
 					onNavigate={onNavigate}
+					tabIndex={rovingTabIndex(index, false, false)}
 				/>
 			))}
 		</div>
@@ -1548,7 +1597,7 @@ function FleetTestsList({
 	if (items.length === 0) return <FleetEmpty label="No tests for this agent." />;
 	return (
 		<div role="grid" aria-label="Tests collection" className="space-y-2">
-			{items.map((test) => (
+			{items.map((test, index) => (
 				<FleetRow
 					key={test.logical_test_id}
 					title={test.name}
@@ -1559,6 +1608,7 @@ function FleetTestsList({
 					})}
 					label={`Open Test ${test.name}`}
 					onNavigate={onNavigate}
+					tabIndex={rovingTabIndex(index, false, false)}
 				/>
 			))}
 		</div>
@@ -1583,7 +1633,7 @@ function FleetReviewsList({
 	if (items.length === 0) return <FleetEmpty label="No reviews for this agent." />;
 	return (
 		<div role="grid" aria-label="Reviews collection" className="space-y-2">
-			{items.map((review) => (
+			{items.map((review, index) => (
 				<FleetRow
 					key={review.id}
 					title={review.name}
@@ -1594,6 +1644,7 @@ function FleetReviewsList({
 					})}
 					label={`Open Review ${review.name}`}
 					onNavigate={onNavigate}
+					tabIndex={rovingTabIndex(index, false, false)}
 				/>
 			))}
 		</div>
@@ -1623,17 +1674,20 @@ function FleetRow({
 	to,
 	label,
 	onNavigate,
+	tabIndex,
 }: {
 	title: string;
 	meta: string;
 	to: string;
 	label: string;
 	onNavigate: (to: string) => void;
+	tabIndex: 0 | -1;
 }) {
 	return (
 		<WorkbenchRow
 			title={title}
 			meta={meta}
+			tabIndex={tabIndex}
 			onSelect={() => onNavigate(to)}
 			actions={
 				<Button asChild variant="ghost" size="sm">

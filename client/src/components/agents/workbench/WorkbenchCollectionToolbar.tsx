@@ -1,4 +1,4 @@
-import type { ComponentProps, ReactNode } from "react";
+import { useId, type ComponentProps, type ReactNode } from "react";
 import { Search } from "lucide-react";
 
 import { WorkspacePrimaryAction } from "@/components/layout/WorkspacePrimaryAction";
@@ -24,6 +24,8 @@ export function WorkbenchCollectionToolbar({
 	primaryAction,
 	children,
 }: WorkbenchCollectionToolbarProps) {
+	const searchInputId = useId();
+
 	return (
 		<div className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-muted/10 p-3">
 			<div className="relative min-w-[12rem] flex-1">
@@ -31,11 +33,11 @@ export function WorkbenchCollectionToolbar({
 					aria-hidden="true"
 					className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
 				/>
-				<label className="sr-only" htmlFor="workbench-collection-search">
+				<label className="sr-only" htmlFor={searchInputId}>
 					Search {collectionLabel}
 				</label>
 				<Input
-					id="workbench-collection-search"
+					id={searchInputId}
 					value={search}
 					onChange={(event) => onSearchChange(event.target.value)}
 					placeholder={`Search ${collectionLabel.toLowerCase()}`}

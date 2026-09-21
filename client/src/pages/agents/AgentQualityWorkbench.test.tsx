@@ -414,6 +414,18 @@ describe("AgentQualityWorkbench", () => {
 		).toBeVisible();
 	});
 
+	it("reopens test creation when Add Test is selected again after dismissal", async () => {
+		const { user } = renderPage();
+		await screen.findByText("Should ask before routing");
+
+		await user.click(screen.getByRole("button", { name: "Add Test" }));
+		await user.click(screen.getByRole("button", { name: "Close Inspector" }));
+		expect(screen.queryByRole("heading", { name: "Improve agent" })).not.toBeInTheDocument();
+
+		await user.click(screen.getByRole("button", { name: "Add Test" }));
+		expect(screen.getByRole("heading", { name: "Improve agent" })).toBeVisible();
+	});
+
 	it("keeps the collection and selected inspector in one contained Workbench", async () => {
 		const { user } = renderPage("/agents/agent-1/quality?collection=findings");
 
@@ -433,6 +445,20 @@ describe("AgentQualityWorkbench", () => {
 		expect(
 			screen.getByRole("row", { name: /routes without confirming/i }),
 		).toHaveAttribute("aria-selected", "true");
+	});
+
+	it("reopens the same selected row after inspector dismissal", async () => {
+		const { user } = renderPage("/agents/agent-1/quality?collection=findings");
+		const row = await screen.findByRole("row", {
+			name: /routes without confirming/i,
+		});
+
+		await user.click(row);
+		await user.click(screen.getByRole("button", { name: "Close Inspector" }));
+		expect(screen.queryByRole("heading", { name: "Finding details" })).not.toBeInTheDocument();
+
+		await user.click(row);
+		expect(screen.getByRole("heading", { name: "Finding details" })).toBeVisible();
 	});
 
 	it("creates a plain-language test from finding context and can clear it", async () => {

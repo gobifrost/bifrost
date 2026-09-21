@@ -33,4 +33,31 @@ describe("WorkbenchCollectionToolbar", () => {
 		).toBeVisible();
 		expect(screen.getByLabelText("Profile")).toBeVisible();
 	});
+
+	it("associates each mounted search control with a distinct label", () => {
+		renderWithProviders(
+			<>
+				<WorkbenchCollectionToolbar
+					collectionLabel="Tests"
+					search=""
+					onSearchChange={vi.fn()}
+				/>
+				<WorkbenchCollectionToolbar
+					collectionLabel="Tests"
+					search=""
+					onSearchChange={vi.fn()}
+				/>
+			</>,
+		);
+
+		const inputs = screen.getAllByRole("textbox", { name: "Search Tests" });
+		const labels = Array.from(document.querySelectorAll("label")).filter(
+			(label) => label.textContent === "Search Tests",
+		);
+
+		expect(inputs).toHaveLength(2);
+		expect(inputs[0]?.id).not.toBe(inputs[1]?.id);
+		expect(labels[0]).toHaveAttribute("for", inputs[0]?.id);
+		expect(labels[1]).toHaveAttribute("for", inputs[1]?.id);
+	});
 });
