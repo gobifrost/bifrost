@@ -99,9 +99,9 @@ async def run_workspace_bundle_import(
                     promoted = await importer.promote_selected_files(plan, result.selected_item_ids, file_index=FileIndexService(db))
                     await RepoSyncWriter(db).regenerate_manifest()
                     await db.commit()
+                    await mark_repo_dirty()
                 except Exception as exc:
                     raise PlatformJobFailure("workspace_bundle_finalize_failed", "Workspace import database changes were committed but file finalization failed; retrying the durable job.", retryable=True, result=journal) from exc
-    await mark_repo_dirty()
     await context.report("Workspace import complete", percent=100)
     result_body = {
         "imported_entity_ids": sorted(result.imported_item_ids),
@@ -127,5 +127,6 @@ WORKSPACE_BUNDLE_IMPORT_DEFINITION = PlatformJobDefinition(
         min_memory_headroom_mb=512,
         retry_on_runner_loss=True,
         retry_on_failure=True,
+        allow_running_cancellation=True,
     ),
 )

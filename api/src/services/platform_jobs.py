@@ -438,7 +438,12 @@ async def retry_platform_job_failure(
         )).scalar_one_or_none()
         if job is None:
             return False
-        if job.attempt >= job.max_attempts:
+        if job.status == "cancel_requested":
+            job.status = "cancelled"
+            job.phase = "Cancelled"
+            job.completed_at = _now()
+            job.error_retryable = False
+        elif job.attempt >= job.max_attempts:
             job.status = "failed"
             job.phase = "Failed"
             job.completed_at = _now()

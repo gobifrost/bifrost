@@ -114,6 +114,18 @@ async def cleanup_expired_workspace_bundle_previews(*, now: datetime | None = No
         preview = WorkspaceBundleStorage(preview_id, settings)
         try:
             metadata = await preview.load_metadata()
+            job_id = metadata.get("platform_job_id")
+            if job_id:
+                from uuid import UUID
+                from src.core.database import get_db_context
+                from src.models.orm.platform_jobs import PlatformJob
+
+                async with get_db_context() as db:
+                    job = await db.get(PlatformJob, UUID(job_id))
+                if job is not None and job.status in {
+                    "queued", "running", "waiting", "cancel_requested",
+                }:
+                    continue
             if datetime.fromisoformat(metadata["expires_at"]) <= now:
                 await preview.delete()
                 removed += 1

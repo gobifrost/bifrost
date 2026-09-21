@@ -241,7 +241,7 @@ async def preview_workspace_import(
 async def enqueue_workspace_import(
     body: WorkspaceBundleImportRequest, response: Response, ctx: Context, user: CurrentSuperuser,
 ) -> PlatformJobAccepted:
-    preview_id, _storage, metadata = await _load_workspace_preview_metadata(
+    preview_id, storage, metadata = await _load_workspace_preview_metadata(
         body.preview_token, requested_by=user.user_id
     )
     preview = WorkspaceBundlePreview.model_validate(metadata["preview"])
@@ -263,7 +263,9 @@ async def enqueue_workspace_import(
         WorkspaceBundleImportPayload(
             preview_id=preview_id, package_sha256=preview.package_sha256, decisions=body.decisions,
         ),
-        dedupe_key=f"{preview.package_sha256}:{decision_fingerprint}",
+        # A preview is requester-bound state, even when two archives have the
+        # same bytes. Never let a caller reuse another preview's active job.
+        dedupe_key=f"{user.user_id}:{preview_id}:{decision_fingerprint}",
         resource_lock_key=WORKSPACE_MUTATION_RESOURCE_LOCK_KEY,
         priority=500,
         organization_id=None,
@@ -277,6 +279,8 @@ async def enqueue_workspace_import(
     )
     if job.notification_id is None:
         await ensure_platform_job_notification(ctx.db, job)
+    metadata["platform_job_id"] = str(job.id)
+    await storage.stage_metadata(metadata)
     await ctx.db.commit()
     await publish_platform_job_update(job)
     response.headers["Location"] = f"/api/platform-jobs/{job.id}"
