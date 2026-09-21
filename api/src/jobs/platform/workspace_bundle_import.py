@@ -85,6 +85,7 @@ async def run_workspace_bundle_import(
                 else:
                     result = await importer.apply(plan, payload.decisions)
                 # Make entity upserts durable before the idempotent S3 phase.
+                await context.report("Committing workspace entity changes", percent=60)
                 await db.commit()
                 journal = {
                     "preview_id": str(payload.preview_id),

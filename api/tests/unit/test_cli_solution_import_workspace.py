@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import pytest
+from click.testing import CliRunner
+from unittest import mock
 
 
 def test_noninteractive_conflicts_require_explicit_decisions(monkeypatch) -> None:
@@ -32,3 +34,64 @@ def test_replace_all_covers_each_conflict() -> None:
         {"item_id": "file:a.py", "action": "replace"},
         {"item_id": "entity:workflow:w", "action": "replace"},
     ]
+
+
+def test_keep_all_covers_each_conflict() -> None:
+    from bifrost.commands.solution import _workspace_import_decisions
+
+    assert _workspace_import_decisions(
+        {"items": [{"id": "file:a.py", "classification": "conflict"}]},
+        keep_all=True, replace_all=False, decisions_path=None, json_output=True,
+    ) == [{"item_id": "file:a.py", "action": "keep"}]
+
+
+def test_command_streams_upload_and_prints_preview_json(tmp_path) -> None:
+    from bifrost.commands.solution import solution_group
+
+    archive = tmp_path / "bundle.zip"
+    archive.write_bytes(b"bundle")
+    preview = {"preview_token": "preview", "package_sha256": "a" * 64, "items": []}
+    calls: list[tuple[str, dict]] = []
+
+    def response(body):
+        result = mock.MagicMock(status_code=200, text=str(body))
+        result.json.return_value = body
+        return result
+
+    class Client:
+        async def post(self, path, **kwargs):
+            calls.append((path, kwargs))
+            return response(preview)
+
+    with mock.patch("bifrost.client.BifrostClient.get_instance", return_value=Client()):
+        result = CliRunner().invoke(
+            solution_group, ["import-workspace", str(archive), "--preview", "--json"],
+            catch_exceptions=False,
+        )
+
+    assert result.exit_code == 0, result.output
+    assert result.output.strip() == '{"preview": {"preview_token": "preview", "package_sha256": "' + "a" * 64 + '", "items": []}}'
+    path, kwargs = calls[0]
+    assert path.endswith("/preview")
+    assert kwargs["files"]["file"][1].closed is True
+
+
+def test_command_warns_before_interactive_conflict_prompt(monkeypatch) -> None:
+    from bifrost.commands.solution import _workspace_import_decisions
+
+    class Tty:
+        def isatty(self) -> bool:
+            return True
+
+    monkeypatch.setattr("click.get_text_stream", lambda _name: Tty())
+    transcript: list[str] = []
+    monkeypatch.setattr("click.echo", lambda message, **_kwargs: transcript.append(message))
+    monkeypatch.setattr("click.prompt", lambda *_args, **_kwargs: "k")
+
+    decisions = _workspace_import_decisions(
+        {"items": [{"id": "file:a.py", "kind": "file", "name": "a.py", "classification": "conflict"}]},
+        keep_all=False, replace_all=False, decisions_path=None, json_output=False,
+    )
+
+    assert decisions == [{"item_id": "file:a.py", "action": "keep"}]
+    assert transcript[0].startswith("Warning:")

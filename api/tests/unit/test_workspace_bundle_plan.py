@@ -145,3 +145,24 @@ def test_planner_excludes_secret_and_generated_source_files(tmp_path) -> None:
     planned = WorkspaceBundlePlanner(None, preview_id=UUID(int=7)).plan_sync(projection)
 
     assert planned.file_hashes == {"modules/kept.py": hashlib.sha256(b"kept").hexdigest()}
+
+
+def test_planner_passes_large_incoming_paths_to_lookup_lazily(tmp_path, monkeypatch) -> None:
+    """Previewing many paths must batch paths rather than retain a path list."""
+    from src.services.solutions.workspace_bundle_plan import (
+        SolutionPackageWorkspaceProjection,
+        WorkspaceBundlePlanner,
+    )
+    from src.services.solutions.zip_install import PreviewResult
+    import src.services.solutions.workspace_bundle_plan as plan_module
+
+    projection = SolutionPackageWorkspaceProjection.from_preview(
+        PreviewResult(name="P"), preview_id=UUID(int=7), work_dir=tmp_path,
+    )
+    paths = (tmp_path / "modules" / f"file-{index}.py" for index in range(10_000))
+    monkeypatch.setattr(plan_module, "iter_repo_files", lambda _root: paths)
+
+    incoming = WorkspaceBundlePlanner._incoming_file_paths(projection)
+
+    assert not isinstance(incoming, list)
+    assert next(incoming) == "modules/file-0.py"

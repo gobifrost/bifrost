@@ -7,6 +7,7 @@ leaking into workspace reconciliation.
 """
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -205,15 +206,17 @@ class WorkspaceBundlePlanner:
         )
 
     @staticmethod
-    def _incoming_file_paths(projection: SolutionPackageWorkspaceProjection) -> list[str]:
+    def _incoming_file_paths(projection: SolutionPackageWorkspaceProjection) -> Iterator[str]:
         if projection.work_dir is None:
-            return []
-        return [
-            path.relative_to(projection.work_dir).as_posix()
-            for path in iter_repo_files(projection.work_dir)
-            if path.relative_to(projection.work_dir).as_posix() != "bifrost.solution.yaml"
-            and _is_importable_source_file(path.relative_to(projection.work_dir).as_posix())
-        ]
+            return iter(())
+
+        def paths() -> Iterator[str]:
+            for path in iter_repo_files(projection.work_dir):
+                relative = path.relative_to(projection.work_dir).as_posix()
+                if relative != "bifrost.solution.yaml" and _is_importable_source_file(relative):
+                    yield relative
+
+        return paths()
 
     def _build_plan(
         self,
@@ -321,7 +324,7 @@ class WorkspaceBundlePlanner:
                 result[(kind, key)] = (row.id, {})
         return result
 
-    async def _prefetch_existing_file_hashes(self, incoming_paths: list[str]) -> dict[str, str | None]:
+    async def _prefetch_existing_file_hashes(self, incoming_paths: Iterator[str]) -> dict[str, str | None]:
         from src.services.repo_storage import RepoStorage
         from itertools import batched
 

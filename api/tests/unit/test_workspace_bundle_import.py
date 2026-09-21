@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from uuid import UUID
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -107,6 +108,58 @@ def test_workspace_bundle_job_reuses_the_shared_workspace_lock() -> None:
     from src.jobs.platform.workspace_bundle_import import WORKSPACE_BUNDLE_IMPORT_DEFINITION
 
     assert WORKSPACE_BUNDLE_IMPORT_DEFINITION.job_type == "workspace.bundle_import"
+    assert WORKSPACE_BUNDLE_IMPORT_DEFINITION.policy.max_concurrency == 1
     assert WORKSPACE_BUNDLE_IMPORT_DEFINITION.policy.retry_on_runner_loss is True
     assert get_platform_job_definition("workspace.bundle_import") is WORKSPACE_BUNDLE_IMPORT_DEFINITION
     assert WORKSPACE_MUTATION_RESOURCE_LOCK_KEY == "workspace"
+
+
+@pytest.mark.asyncio
+async def test_promoted_python_refreshes_module_cache_and_oversized_text_removes_stale_index(tmp_path, monkeypatch) -> None:
+    """The file phase must never leave search or module reads on old content."""
+    import src.services.file_index_service as index_module
+    from src.services.file_index_service import MAX_INDEXABLE_TEXT_BYTES, FileIndexService
+
+    class Storage:
+        async def put_object_from_chunks(self, _key, chunks):
+            import hashlib
+            digest = hashlib.sha256()
+            size = 0
+            async for chunk in chunks:
+                digest.update(chunk)
+                size += len(chunk)
+            return digest.hexdigest(), size
+
+    class Repo:
+        _settings = object()
+
+        def _repo_key(self, path):
+            return path
+
+        async def write(self, _path, content):
+            import hashlib
+            return hashlib.sha256(content).hexdigest()
+
+    cached = AsyncMock()
+    monkeypatch.setattr(index_module, "S3StorageClient", lambda _settings: Storage())
+    monkeypatch.setattr("src.core.module_cache.set_module", cached)
+    db = type("Db", (), {"execute": AsyncMock()})()
+    service = FileIndexService(db, Repo())
+    source = tmp_path / "module.py"
+    source.write_text("answer = 42\n")
+    import hashlib
+
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    await service.write_file("modules/module.py", source, expected_hash=digest)
+
+    cached.assert_awaited_once_with("modules/module.py", "answer = 42\n", digest)
+    oversized = tmp_path / "large.py"
+    with oversized.open("wb") as handle:
+        handle.truncate(MAX_INDEXABLE_TEXT_BYTES + 1)
+    with oversized.open("rb") as handle:
+        oversized_digest = hashlib.file_digest(handle, "sha256").hexdigest()
+    await service.write_file(
+        "modules/large.py", oversized,
+        expected_hash=oversized_digest,
+    )
+    assert db.execute.await_count == 2
