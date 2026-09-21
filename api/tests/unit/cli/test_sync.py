@@ -31,7 +31,7 @@ class TestFormatSyncResult:
         result = {"status": "completed", "pulled": 1, "pushed": 0, "commit_sha": None}
         lines = _format_sync_result(result)
         text = "\n".join(lines)
-        assert "Push complete" in text
+        assert "Sync complete" in text
 
     def test_conflicts_shown(self):
         """Should list each conflict with path and resolve command."""

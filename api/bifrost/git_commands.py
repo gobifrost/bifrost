@@ -5,10 +5,15 @@ Subcommands for `bifrost git` that mirror the UI's source control panel.
 Each command queues a job via the API and polls for results.
 """
 
+import asyncio
 import sys
 import time
+from typing import Any
+
+import click
 
 from .client import BifrostClient
+from .platform_jobs import poll_platform_job
 
 # Exit codes
 EXIT_CLEAN = 0      # Operation completed successfully
@@ -78,7 +83,6 @@ def _post_and_poll(client: BifrostClient, endpoint: str, label: str, json_body: 
     if response.status_code != 200:
         print(f"Error: {response.status_code} - {response.text}", file=sys.stderr)
         sys.exit(EXIT_ERROR)
-
     job_id = response.json()["job_id"]
 
     try:
@@ -86,6 +90,54 @@ def _post_and_poll(client: BifrostClient, endpoint: str, label: str, json_body: 
     except (TimeoutError, RuntimeError) as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(EXIT_ERROR)
+
+
+def _post_platform_job(
+    client: BifrostClient,
+    endpoint: str,
+    *,
+    label: str,
+    body: dict[str, Any],
+) -> dict[str, Any]:
+    """Queue a durable operation and poll its shared PlatformJob status."""
+
+    async def _run() -> dict[str, Any]:
+        response = await client.post(endpoint, json=body)
+        if response.status_code != 202:
+            raise RuntimeError(
+                f"{label} was not accepted ({response.status_code}): {response.text[:200]}"
+            )
+        accepted = response.json()
+        job_id = accepted.get("job_id")
+        if not isinstance(job_id, str) or not job_id:
+            raise RuntimeError(f"{label} response did not include a platform job id")
+        return await poll_platform_job(
+            client, job_id, label=label, allow_requires_action=True
+        )
+
+    return asyncio.run(_run())
+
+
+def _preview_connect(
+    client: BifrostClient, repository_url: str, branch: str
+) -> dict[str, Any]:
+    """Request a non-mutating first-connect reconciliation preview."""
+
+    async def _run() -> dict[str, Any]:
+        response = await client.post(
+            "/api/github/connect/preview",
+            json={"repository_url": repository_url, "branch": branch},
+        )
+        if response.status_code != 200:
+            raise RuntimeError(
+                f"Git connection preview failed ({response.status_code}): {response.text[:200]}"
+            )
+        preview = response.json()
+        if not isinstance(preview.get("token"), str):
+            raise RuntimeError("Git connection preview did not include a preview token")
+        return preview
+
+    return asyncio.run(_run())
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +172,7 @@ def _format_ahead_behind(data: dict) -> None:
 
 
 def _format_sync_result(result: dict) -> list[str]:
-    """Format sync/push result data into human-readable lines."""
+    """Format the structured workspace sync result for people."""
     lines: list[str] = []
     status = result.get("status", "unknown")
 
@@ -135,7 +187,7 @@ def _format_sync_result(result: dict) -> list[str]:
             parts.append(f"pushed {pushed} commit{'s' if pushed != 1 else ''}")
         summary = ", ".join(parts) if parts else "no changes"
         sha_info = f" (commit {commit_sha[:7]})" if commit_sha else ""
-        lines.append(f"Push complete: {summary}{sha_info}")
+        lines.append(f"Sync complete: {summary}{sha_info}")
 
         # Display entity-level changes
         entity_changes = (result.get("data") or {}).get("entity_changes") or result.get("entity_changes") or []
@@ -176,17 +228,30 @@ def _format_sync_result(result: dict) -> list[str]:
         lines.append("To resolve conflicts, run:")
         for conflict in conflicts:
             path = conflict.get("path", "unknown")
-            lines.append(f"  bifrost git resolve {path}=keep_remote")
-            lines.append(f"  bifrost git resolve {path}=keep_local")
+            ours = conflict.get("ours_available", True)
+            theirs = conflict.get("theirs_available", True)
+            if ours:
+                lines.append(f"  bifrost git resolve {path}=keep_local")
+            if theirs:
+                lines.append(f"  bifrost git resolve {path}=keep_remote")
         lines.append("")
-        lines.append(
-            "Or manage this in the Code Editor's Source Control at your Bifrost instance."
-        )
+        lines.append("To discard this merge and return to its pre-pull state, run:")
+        lines.append("  bifrost git abort-merge")
+        return lines
+
+    action = result.get("requires_action")
+    if action == "confirm_deletes":
+        pending = result.get("pending_deletes") or (result.get("data") or {}).get("pending_deletes") or []
+        lines.append("Sync requires confirmation before deleting:")
+        for item in pending:
+            path = item.get("path", item) if isinstance(item, dict) else item
+            lines.append(f"  - {path}")
+        lines.append("Review these paths, then rerun: bifrost git sync --confirm-deletes")
         return lines
 
     # Failed or unknown
     error = result.get("error") or result.get("message") or "Unknown error"
-    lines.append(f"Push failed: {error}")
+    lines.append(f"Sync failed: {error}")
     return lines
 
 
@@ -287,9 +352,30 @@ def run_git_commit(client: BifrostClient, message: str) -> int:
     return EXIT_CLEAN
 
 
-def run_git_push(client: BifrostClient) -> int:
-    """Pull + push + S3 sync + entity import."""
-    result = _post_and_poll(client, "/api/github/sync", label="Pushing")
+def _sync_result_from_platform_job(job: dict[str, Any]) -> dict[str, Any]:
+    """Unwrap a platform-job outcome without inventing a second result shape."""
+    result = job.get("result")
+    if isinstance(result, dict):
+        normalized = dict(result)
+        if "status" not in normalized and isinstance(normalized.get("success"), bool):
+            normalized["status"] = "success" if normalized["success"] else "failed"
+        return normalized
+    return job
+
+
+def run_git_sync(client: BifrostClient, *, confirm_deletes: bool = False) -> int:
+    """Fetch, reconcile, publish, and import workspace Git changes."""
+    try:
+        job = _post_platform_job(
+            client,
+            "/api/github/sync",
+            label="Syncing",
+            body={"confirm_deletes": confirm_deletes},
+        )
+    except (click.ClickException, RuntimeError, TimeoutError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+    result = _sync_result_from_platform_job(job)
 
     lines = _format_sync_result(result)
     for line in lines:
@@ -302,6 +388,118 @@ def run_git_push(client: BifrostClient) -> int:
         return EXIT_CONFLICTS
     else:
         return EXIT_ERROR
+
+
+def run_git_push(client: BifrostClient) -> int:
+    """Deprecated compatibility alias for :func:`run_git_sync`."""
+    print("Warning: `bifrost git push` is deprecated; use `bifrost git sync`.", file=sys.stderr)
+    return run_git_sync(client)
+
+
+def run_git_abort_merge(client: BifrostClient) -> int:
+    """Restore the workspace to its state before the current merge."""
+    try:
+        job = _post_platform_job(
+            client,
+            "/api/github/abort-merge",
+            label="Aborting merge",
+            body={},
+        )
+    except (click.ClickException, RuntimeError, TimeoutError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+    result = _sync_result_from_platform_job(job)
+    if result.get("status") in {"success", "completed", "succeeded"}:
+        print("Merge aborted; the workspace is restored to its pre-merge state.")
+        return EXIT_CLEAN
+    print(f"Error: {result.get('error') or result.get('message') or 'Unable to abort merge'}", file=sys.stderr)
+    return EXIT_ERROR
+
+
+def _format_connect_preview(preview: dict[str, Any]) -> None:
+    """Render classified content so a caller can make an informed choice."""
+    labels = {
+        "local_only": "Local only",
+        "remote_only": "Remote only",
+        "identical": "Identical",
+        "conflict": "Conflict",
+    }
+    for item in preview.get("items") or []:
+        classification = item.get("classification", "unknown")
+        print(f"{labels.get(classification, classification)}: {item.get('path', 'unknown')}")
+
+
+def run_git_connect(
+    client: BifrostClient,
+    repository_url: str,
+    *,
+    branch: str,
+    strategy: str | None,
+    decisions: dict[str, str],
+) -> int:
+    """Preview then apply a first Git connection without implicit reconciliation."""
+    try:
+        preview = _preview_connect(client, repository_url, branch)
+    except RuntimeError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+    _format_connect_preview(preview)
+
+    if strategy is None:
+        if not sys.stdin.isatty():
+            print(
+                "Error: connect needs --strategy in non-interactive mode "
+                "(publish-local, start-from-remote, or reconcile).",
+                file=sys.stderr,
+            )
+            return EXIT_ERROR
+        strategy = input("Strategy [publish-local/start-from-remote/reconcile]: ").strip()
+    strategy = strategy.replace("-", "_")
+    if strategy not in {"publish_local", "start_from_remote", "reconcile"}:
+        print("Error: invalid connection strategy", file=sys.stderr)
+        return EXIT_ERROR
+
+    conflicts = [
+        item.get("path") for item in preview.get("items") or []
+        if item.get("classification") == "conflict" and isinstance(item.get("path"), str)
+    ]
+    if strategy == "reconcile":
+        missing = [path for path in conflicts if path not in decisions]
+        if missing:
+            if not sys.stdin.isatty():
+                print(
+                    "Error: reconcile needs --decision PATH=local|remote for each conflict: "
+                    + ", ".join(missing),
+                    file=sys.stderr,
+                )
+                return EXIT_ERROR
+            for path in missing:
+                choice = input(f"Keep local or remote for {path} [local/remote]: ").strip()
+                if choice in {"local", "remote"}:
+                    decisions[path] = choice
+        invalid = [path for path in conflicts if decisions.get(path) not in {"local", "remote"}]
+        if invalid:
+            print("Error: invalid or missing reconciliation decisions", file=sys.stderr)
+            return EXIT_ERROR
+
+    try:
+        job = _post_platform_job(
+            client,
+            "/api/github/connect",
+            label="Connecting",
+            body={
+                "preview_token": preview["token"],
+                "strategy": strategy,
+                "decisions": decisions,
+            },
+        )
+    except (click.ClickException, RuntimeError, TimeoutError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+    result = _sync_result_from_platform_job(job)
+    for line in _format_sync_result(result):
+        print(line)
+    return EXIT_CLEAN if result.get("status") in {"success", "completed", "succeeded"} else EXIT_ERROR
 
 
 def run_git_resolve(client: BifrostClient, resolutions: dict[str, str]) -> int:

@@ -360,6 +360,150 @@ def update_cmd(
     asyncio.run(_run())
 
 
+async def _resolve_solution_git_ref(client: BifrostClient, solution_ref: str) -> dict[str, Any]:
+    """Resolve an install id or unambiguous slug for managed Git operations."""
+    response = await client.get("/api/solutions")
+    if response.status_code != 200:
+        raise click.ClickException(
+            f"Failed to list Solution installs ({response.status_code}): {response.text[:200]}"
+        )
+    installs = response.json().get("solutions", [])
+    matches = [install for install in installs if install.get("id") == solution_ref]
+    if not matches:
+        matches = [install for install in installs if install.get("slug") == solution_ref]
+    if not matches:
+        raise click.ClickException(f"No Solution install found for {solution_ref!r}.")
+    if len(matches) > 1:
+        ids = ", ".join(str(install.get("id")) for install in matches)
+        raise click.ClickException(
+            f"Solution slug {solution_ref!r} is ambiguous; use an install id: {ids}"
+        )
+    return matches[0]
+
+
+@solution_group.command(
+    name="install-repo",
+    help="Install a Solution from a repository and make Git its sole writer.",
+)
+@click.argument("repository_url")
+@click.option("--subpath", "repo_subpath", default=None, help="Solution workspace path inside the repository.")
+@click.option("--ref", "git_ref", default="main", show_default=True, help="Git ref to install.")
+def install_repo_cmd(repository_url: str, repo_subpath: str | None, git_ref: str) -> None:
+    """Install from Git; local ``solution deploy`` is refused afterwards."""
+
+    async def _run() -> int:
+        client = BifrostClient.get_instance(require_auth=True)
+        response = await client.post(
+            "/api/solutions/install/from-repo",
+            json={
+                "repo_url": repository_url,
+                "repo_subpath": repo_subpath,
+                "git_ref": git_ref,
+            },
+        )
+        if response.status_code != 202:
+            raise click.ClickException(
+                f"Repository install failed ({response.status_code}): {response.text[:200]}"
+            )
+        job_id = response.json().get("deploy_job_id")
+        if not isinstance(job_id, str):
+            raise click.ClickException("Repository install did not return a deploy job id.")
+        click.echo(f"Installing Git-connected Solution (job {job_id})...")
+        return await _poll_deploy_job(client, job_id, action="Install")
+
+    rc = asyncio.run(_run())
+    if rc:
+        raise SystemExit(rc)
+
+
+@solution_group.group(name="git", help="Connect or disconnect a managed Solution repository.")
+def solution_git_group() -> None:
+    pass
+
+
+@solution_git_group.command(name="connect")
+@click.argument("solution_ref")
+@click.argument("repository_url")
+@click.option("--subpath", "repo_subpath", default=None, help="Solution workspace path inside the repository.")
+@click.option("--ref", "git_ref", default="main", show_default=True, help="Git ref to update from.")
+def solution_git_connect_cmd(
+    solution_ref: str, repository_url: str, repo_subpath: str | None, git_ref: str
+) -> None:
+    """Connect an existing install; repository updates become its sole writer."""
+
+    async def _run() -> None:
+        client = BifrostClient.get_instance(require_auth=True)
+        solution = await _resolve_solution_git_ref(client, solution_ref)
+        response = await client.patch(
+            f"/api/solutions/{solution['id']}",
+            json={
+                "git_connected": True,
+                "git_repo_url": repository_url,
+                "repo_subpath": repo_subpath,
+                "git_ref": git_ref,
+            },
+        )
+        if response.status_code != 200:
+            raise click.ClickException(
+                f"Failed to connect Solution Git ({response.status_code}): {response.text[:200]}"
+            )
+        click.echo(
+            f"Connected Solution install {solution['id']} to Git. "
+            "Repository sync is now its only writer."
+        )
+
+    asyncio.run(_run())
+
+
+@solution_git_group.command(name="disconnect")
+@click.argument("solution_ref")
+def solution_git_disconnect_cmd(solution_ref: str) -> None:
+    """Disconnect Git so future updates are manual Solution deployments."""
+
+    async def _run() -> None:
+        client = BifrostClient.get_instance(require_auth=True)
+        solution = await _resolve_solution_git_ref(client, solution_ref)
+        response = await client.patch(
+            f"/api/solutions/{solution['id']}", json={"git_connected": False}
+        )
+        if response.status_code != 200:
+            raise click.ClickException(
+                f"Failed to disconnect Solution Git ({response.status_code}): {response.text[:200]}"
+            )
+        click.echo(
+            f"Disconnected Solution install {solution['id']}. "
+            "Future updates require an explicit deploy."
+        )
+
+    asyncio.run(_run())
+
+
+@solution_group.command(name="sync", help="Update a Git-connected Solution from its configured ref.")
+@click.argument("solution_ref")
+def solution_sync_cmd(solution_ref: str) -> None:
+    """Ask the server's sole Git writer to update the selected Solution."""
+
+    async def _run() -> None:
+        client = BifrostClient.get_instance(require_auth=True)
+        solution = await _resolve_solution_git_ref(client, solution_ref)
+        response = await client.post(f"/api/solutions/{solution['id']}/sync", json={})
+        if response.status_code not in {200, 202}:
+            raise click.ClickException(
+                f"Solution Git sync failed ({response.status_code}): {response.text[:200]}"
+            )
+        result = response.json()
+        job_id = result.get("job_id") or result.get("deploy_job_id")
+        if isinstance(job_id, str):
+            completed = await poll_platform_job(client, job_id, label="Syncing Solution")
+            output_result(completed)
+            return
+        # The current endpoint executes synchronously despite returning 202.
+        # Preserve its REST contract rather than inventing a second job system.
+        output_result(result)
+
+    asyncio.run(_run())
+
+
 def _workspace_from_path_arg(path: str) -> pathlib.Path:
     """Resolve a command's PATH argument to the solution root.
 
@@ -1920,7 +2064,7 @@ def _entities_in_manifest(workspace: pathlib.Path) -> list[dict[str, str]]:
 
 
 @solution_group.command(
-    name="pull",
+    name="pull-manifests",
     help="Pull captured entities into the local .bifrost/ manifest (does not touch source code).",
 )
 @click.argument("path", type=click.Path(exists=True, file_okay=False), default=".")
@@ -1937,6 +2081,12 @@ def pull_cmd(path: str, solution_id: str | None, org: str | None, is_global: boo
     entities it materialized so the matching ``pending_captures`` rows clear.
     Safe for an agent to run (it only rewrites the generated manifest).
     """
+    if click.get_current_context().info_name == "pull":
+        click.echo(
+            "Warning: `bifrost solution pull` is deprecated; use "
+            "`bifrost solution pull-manifests`.",
+            err=True,
+        )
     workspace = _workspace_from_path_arg(path)
     if not is_solution_workspace(workspace):
         raise click.ClickException(
@@ -2014,6 +2164,11 @@ def pull_cmd(path: str, solution_id: str | None, org: str | None, is_global: boo
     rc = asyncio.run(_run())
     if rc:
         raise SystemExit(rc)
+
+
+# Kept for released CLI scripts. Both spellings intentionally execute the same
+# command callback so the manifest-only behavior cannot drift.
+solution_group.add_command(pull_cmd, "pull")
 
 
 async def _poll_deploy_job(

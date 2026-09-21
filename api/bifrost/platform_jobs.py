@@ -21,6 +21,7 @@ async def poll_platform_job(
     interval: float = 2.0,
     timeout_seconds: float = DEFAULT_PLATFORM_JOB_TIMEOUT_SECONDS,
     timeout_operation: str | None = None,
+    allow_requires_action: bool = False,
 ) -> dict[str, Any]:
     """Poll ``/api/platform-jobs/{job_id}`` until the job reaches a terminal state.
 
@@ -56,6 +57,8 @@ async def poll_platform_job(
                 f"{error.get('message') or status_value}"
             )
         if status_value == "requires_action":
+            if allow_requires_action:
+                return body
             result = body.get("result")
             action = (
                 result.get("requires_action")
