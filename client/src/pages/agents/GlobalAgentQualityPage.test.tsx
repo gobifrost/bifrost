@@ -7,15 +7,18 @@ import { renderWithProviders, screen, waitFor } from "@/test-utils";
 import { GlobalAgentQualityPage } from "./GlobalAgentQualityPage";
 
 const mockSearchFindings = vi.fn();
+const mockFinding = vi.fn();
 const mockAgentTests = vi.fn();
 const mockLatestAgentTests = vi.fn();
 const mockReviews = vi.fn();
 const mockCreateAgentTest = vi.fn();
 const mockUseAgents = vi.fn();
+const mockUseInfiniteAgentRuns = vi.fn();
 
 vi.mock("@/services/agentPlatform", () => ({
 	agentPlatform: {
 		searchFindings: (...args: unknown[]) => mockSearchFindings(...args),
+		finding: (...args: unknown[]) => mockFinding(...args),
 		agentTests: (...args: unknown[]) => mockAgentTests(...args),
 		latestAgentTests: (...args: unknown[]) => mockLatestAgentTests(...args),
 		reviews: (...args: unknown[]) => mockReviews(...args),
@@ -35,12 +38,8 @@ vi.mock("@/hooks/useAgents", () => ({
 }));
 
 vi.mock("@/services/agentRuns", () => ({
-	useInfiniteAgentRuns: () => ({
-		data: undefined,
-		isLoading: false,
-		isError: false,
-		refetch: vi.fn(),
-	}),
+	useInfiniteAgentRuns: (...args: unknown[]) =>
+		mockUseInfiniteAgentRuns(...args),
 }));
 
 const agents = [
@@ -51,11 +50,27 @@ const agents = [
 beforeEach(() => {
 	mockUseAgents.mockReturnValue({ data: agents, isLoading: false });
 	mockSearchFindings.mockReset();
+	mockFinding.mockReset();
 	mockAgentTests.mockReset();
 	mockLatestAgentTests.mockReset();
 	mockReviews.mockReset();
 	mockCreateAgentTest.mockReset();
+	mockUseInfiniteAgentRuns.mockReset();
 	mockCreateAgentTest.mockResolvedValue({});
+	mockUseInfiniteAgentRuns.mockReturnValue({
+		data: undefined,
+		isLoading: false,
+		isError: false,
+		refetch: vi.fn(),
+	});
+	mockFinding.mockResolvedValue({
+		id: "finding-1",
+		agent_id: "agent-1",
+		description: "Missed escalation",
+		status: "open",
+		source_kind: "manual",
+		finding_kind: "problem",
+	});
 	mockSearchFindings.mockResolvedValue({
 		items: [
 			{
@@ -209,6 +224,42 @@ describe("GlobalAgentQualityPage", () => {
 			await screen.findByRole("list", { name: "Findings collection" }),
 		).toBeVisible();
 		expect(screen.getAllByRole("listitem")).toHaveLength(2);
+	});
+
+	it("rehydrates a fleet Finding-to-Test URL for the Finding owner", async () => {
+		const { user } = renderPage(
+			"/agents/quality?collection=tests&finding=finding-1",
+		);
+
+		expect(
+			await screen.findByRole("heading", { name: "Improve agent" }),
+		).toBeVisible();
+		expect(mockFinding).toHaveBeenCalledWith("finding-1");
+		expect(mockSearchFindings).not.toHaveBeenCalled();
+		await user.type(screen.getByLabelText("Situation"), "Urgent request");
+		await user.type(
+			screen.getByLabelText("Expected behavior"),
+			"Ask before escalating",
+		);
+		await user.click(screen.getByRole("button", { name: "Create test" }));
+
+		await waitFor(() => {
+			expect(mockCreateAgentTest).toHaveBeenCalledWith(
+				"agent-1",
+				expect.objectContaining({ finding_id: "finding-1" }),
+			);
+		});
+	});
+
+	it("disables fleet run queries because Run History is agent-only", async () => {
+		renderPage();
+
+		await screen.findByRole("list", { name: "Findings collection" });
+		expect(mockUseInfiniteAgentRuns).toHaveBeenCalledWith({
+			agentId: undefined,
+			pageSize: 50,
+			enabled: false,
+		});
 	});
 
 	it("creates a Test from an unfiltered fleet Finding without changing the filter", async () => {

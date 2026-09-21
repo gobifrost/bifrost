@@ -20,10 +20,6 @@ import { useAgentRunStepStore } from "@/stores/agentRunStepStore";
 // Re-export types for new wrappers (added with T8/T9/T15-T17)
 export type VerdictRequest = components["schemas"]["VerdictRequest"];
 export type VerdictResponse = components["schemas"]["VerdictResponse"];
-export type FlagConversation =
-	components["schemas"]["FlagConversationResponse"];
-export type SendFlagMessageRequest =
-	components["schemas"]["SendFlagMessageRequest"];
 export type DryRunRequest = components["schemas"]["DryRunRequest"];
 export type DryRunResponse = components["schemas"]["DryRunResponse"];
 
@@ -187,6 +183,7 @@ export function useInfiniteAgentRuns(params?: {
 	verdict?: string;
 	metadataFilter?: string;
 	pageSize?: number;
+	enabled?: boolean;
 }) {
 	const pageSize = params?.pageSize ?? 50;
 	return useInfiniteQuery({
@@ -218,6 +215,7 @@ export function useInfiniteAgentRuns(params?: {
 			const loaded = allPages.reduce((sum, p) => sum + p.items.length, 0);
 			return loaded < lastPage.total ? loaded : undefined;
 		},
+		enabled: params?.enabled ?? true,
 	});
 }
 
@@ -527,29 +525,6 @@ export function useClearVerdict() {
  */
 export function useRerunAgentRun() {
 	return $api.useMutation("post", "/api/agent-runs/{run_id}/rerun");
-}
-
-/**
- * Fetch the improvement conversation attached to a flagged run.
- *
- * Server creates an empty conversation row if none exists yet, so the UI
- * can stream messages into a stable `id`.
- */
-export function useFlagConversation(runId: string | undefined) {
-	return $api.useQuery(
-		"get",
-		"/api/agent-runs/{run_id}/flag-conversation",
-		{ params: { path: { run_id: runId ?? "" } } },
-		{ enabled: !!runId },
-	);
-}
-
-/** Append a user turn and synchronously get the improvement-model reply. */
-export function useSendFlagMessage() {
-	return $api.useMutation(
-		"post",
-		"/api/agent-runs/{run_id}/flag-conversation/message",
-	);
 }
 
 /** Reset summary state and re-enqueue a summarization job. Admin-only. */

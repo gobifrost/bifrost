@@ -293,6 +293,12 @@ function AgentQualityWorkbenchContent({
 		enabled: isFleet ? collection === "findings" : !!effectiveAgentId,
 		retry: false,
 	});
+	const referencedFindingQuery = useQuery({
+		queryKey: ["agent-platform", "finding", findingId],
+		queryFn: () => agentPlatform.finding(findingId!),
+		enabled: isFleet && collection === "tests" && !!findingId,
+		retry: false,
+	});
 	const reviewsQuery = useQuery({
 		queryKey: ["agent-platform", "reviews", effectiveAgentId, isFleet],
 		queryFn: () =>
@@ -308,6 +314,7 @@ function AgentQualityWorkbenchContent({
 	const runsQuery = useInfiniteAgentRuns({
 		agentId: isFleet ? undefined : effectiveAgentId,
 		pageSize: 50,
+		enabled: !isFleet,
 	});
 	const recordedResultsQuery = useQuery({
 		queryKey: ["agent-platform", "recorded-results", recordedId],
@@ -361,7 +368,9 @@ function AgentQualityWorkbenchContent({
 				QualityRun[] | undefined) ?? [],
 		[runsQuery.data?.pages],
 	);
-	const findingContext = findings.find((finding) => finding.id === findingId);
+	const findingContext =
+		findings.find((finding) => finding.id === findingId) ??
+		referencedFindingQuery.data;
 	const testCreationAgentId = findingContext?.agent_id ?? effectiveAgentId;
 	const selectedTestItems = tests.filter((test) =>
 		selectedTests.has(test.logical_test_id),
