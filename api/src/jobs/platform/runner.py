@@ -16,6 +16,7 @@ from src.jobs.platform.base import (
     PlatformJobContext,
     PlatformJobDeferred,
     PlatformJobFailure,
+    PlatformJobRequiresAction,
 )
 from src.jobs.platform.registry import get_platform_job_definition
 from src.models.orm.platform_jobs import PlatformJob
@@ -105,6 +106,14 @@ async def run_claimed_platform_job(job_id: UUID, lease_token: UUID) -> bool:
             error_code=exc.code,
             error_message=exc.message,
             error_retryable=exc.retryable,
+        )
+    except PlatformJobRequiresAction as exc:
+        return await finish_platform_job(
+            job_id,
+            lease_token,
+            status="requires_action",
+            phase=exc.phase,
+            result=exc.result,
         )
     except ValidationError as exc:
         return await finish_platform_job(

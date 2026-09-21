@@ -391,6 +391,32 @@ class EntityChange(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class WorkspaceFileChange(BaseModel):
+    """A file mutation included in a planned workspace synchronization."""
+
+    path: str = Field(..., description="Relative path from workspace root")
+    action: Literal["create", "update", "delete"] = Field(
+        ..., description="Workspace mutation to apply"
+    )
+    sha256: str | None = Field(
+        default=None, description="Content digest for created or updated files"
+    )
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class WorkspaceSyncPlan(BaseModel):
+    """A reviewed, deterministic workspace synchronization plan."""
+
+    base_sha: str | None = Field(default=None, description="Workspace base commit SHA")
+    merge_sha: str = Field(..., description="Commit SHA used to calculate the plan")
+    pending_deletes: list[EntityChange] = Field(default_factory=list)
+    entity_changes: list[EntityChange] = Field(default_factory=list)
+    file_changes: list[WorkspaceFileChange] = Field(default_factory=list)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class CommitResult(BaseModel):
     """Result of a git commit operation."""
     success: bool = Field(..., description="Whether commit succeeded")
@@ -437,7 +463,7 @@ class ResolveResult(BaseModel):
 
 class SyncResult(BaseModel):
     """Result of a combined sync (pull + push) operation."""
-    success: bool = Field(..., description="Whether sync succeeded")
+    success: bool = Field(default=False, description="Whether sync succeeded")
     pull_success: bool = Field(default=True, description="Whether pull phase succeeded")
     push_success: bool = Field(default=True, description="Whether push phase succeeded")
     pulled: int = Field(default=0, description="Number of entities imported")
@@ -449,6 +475,9 @@ class SyncResult(BaseModel):
     entity_changes: list[EntityChange] = Field(default_factory=list, description="Entity-level changes during sync")
     needs_delete_confirmation: bool = Field(default=False, description="Whether sync is blocked pending delete confirmation")
     pending_deletes: list[EntityChange] = Field(default_factory=list, description="Entities that will be deleted if confirmed")
+    requires_action: Literal["confirm_deletes"] | None = Field(
+        default=None, description="Required user action before sync can continue"
+    )
 
     model_config = ConfigDict(from_attributes=True)
 

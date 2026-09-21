@@ -36,6 +36,15 @@ class PlatformJobFailure(Exception):
         self.retryable = retryable
 
 
+class PlatformJobRequiresAction(Exception):
+    """Stop a job until a user completes an explicit follow-up action."""
+
+    def __init__(self, phase: str, result: dict[str, Any]) -> None:
+        super().__init__(phase)
+        self.phase = phase
+        self.result = result
+
+
 class PlatformJobCancelled(Exception):
     pass
 

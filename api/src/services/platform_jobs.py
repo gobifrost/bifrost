@@ -36,7 +36,7 @@ from src.services.notification_service import get_notification_service
 
 logger = logging.getLogger(__name__)
 ACTIVE_PLATFORM_JOB_STATUSES = ("queued", "running", "waiting", "cancel_requested")
-TERMINAL_PLATFORM_JOB_STATUSES = ("succeeded", "failed", "cancelled")
+TERMINAL_PLATFORM_JOB_STATUSES = ("succeeded", "failed", "cancelled", "requires_action")
 
 #: Job types eligible for Kubernetes placement when the build backend is
 #: enabled. Mirrors the config default so partial settings doubles in tests
@@ -128,6 +128,7 @@ def _notification_status(status: str) -> NotificationStatus:
         "succeeded": NotificationStatus.COMPLETED,
         "failed": NotificationStatus.FAILED,
         "cancelled": NotificationStatus.CANCELLED,
+        "requires_action": NotificationStatus.AWAITING_ACTION,
     }[status]
 
 
@@ -146,7 +147,7 @@ async def publish_platform_job_update(job: PlatformJob) -> None:
                     error=job.error_message[:1000] if job.error_message else None,
                     result=(
                         {"job_id": str(job.id), **(job.result or {})}
-                        if job.status == "succeeded"
+                        if job.status in ("succeeded", "requires_action")
                         else None
                     ),
                 ),
@@ -357,6 +358,7 @@ async def finish_platform_job(
     error_code: str | None = None,
     error_message: str | None = None,
     error_retryable: bool = False,
+    phase: str | None = None,
 ) -> bool:
     """Finalize only the currently leased attempt; stale runners are fenced out."""
     if status not in TERMINAL_PLATFORM_JOB_STATUSES:
@@ -376,10 +378,11 @@ async def finish_platform_job(
         if job is None:
             return False
         job.status = status
-        job.phase = {
+        job.phase = phase or {
             "succeeded": "Completed",
             "failed": "Failed",
             "cancelled": "Cancelled",
+            "requires_action": "Action required",
         }[status]
         if status == "succeeded":
             job.progress_percent = 100
@@ -459,6 +462,7 @@ async def finish_deferred_platform_job(
             "succeeded": "Completed",
             "failed": "Failed",
             "cancelled": "Cancelled",
+            "requires_action": "Action required",
         }[status]
         job.progress_percent = 100 if status == "succeeded" else job.progress_percent
         job.result = result
