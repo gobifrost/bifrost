@@ -49,7 +49,7 @@ async def run_solution_git_sync(
 
         await context.report("Pulling Solution repository", percent=15)
         try:
-            await sync(db, solution)
+            synced = await sync(db, solution)
         except NotASolutionWorkspace as exc:
             raise PlatformJobFailure("invalid_solution_workspace", str(exc)) from exc
         except SolutionFinalizeIncomplete as exc:
@@ -69,6 +69,13 @@ async def run_solution_git_sync(
                 "Solution update from Git failed; correct the repository and retry.",
                 retryable=True,
             ) from exc
+
+        if not synced:
+            raise PlatformJobFailure(
+                "solution_git_sync_deferred",
+                "Another Solution writer is active; retrying the Git update.",
+                retryable=True,
+            )
 
         if solution.update_available_version is not None:
             solution.update_available_version = None

@@ -199,12 +199,13 @@ async def deploy_from_workspace(
     return await deploy_zip_to_solution(db, solution, data, force=True)
 
 
-async def sync(db: AsyncSession, solution: Solution) -> None:
+async def sync(db: AsyncSession, solution: Solution) -> bool:
     """Clone the connected install's repo at its configured ref and deploy.
 
     Called by the auto-pull trigger (webhook/poll) on a new commit. The clone
     uses the install's ``git_ref`` when set, or the repo's default branch when
-    none is configured.
+    none is configured. Returns whether this call performed the requested
+    update; an existing writer leaves a pending-rerun marker and returns false.
 
     Serialized per-install with a Redis lock so overlapping triggers can't race —
     an older clone finishing last would otherwise full-replace the newer commit's
@@ -247,7 +248,7 @@ async def sync(db: AsyncSession, solution: Solution) -> None:
             logger.info(
                 "Sync already in progress for solution %s; queued a rerun", solution.id
             )
-            return
+            return False
 
         # Released the lock. If a trigger arrived while we held it, run again so
         # the newest commit lands (bounded: each pass clears the flag under lock,
@@ -255,7 +256,7 @@ async def sync(db: AsyncSession, solution: Solution) -> None:
         if await redis.delete(pending_key):
             logger.info("Rerunning sync for solution %s (newer commit queued)", solution.id)
             continue
-        return
+        return True
 
 
 async def clone_repo_to_dir(repo_url: str, dest: Path, ref: str | None = None) -> None:

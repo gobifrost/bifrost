@@ -68,6 +68,44 @@ async def test_solution_git_sync_runs_the_existing_single_writer_and_clears_upda
 
 
 @pytest.mark.asyncio
+async def test_solution_git_sync_retries_when_the_single_writer_only_queued_a_pending_rerun(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A lock-contended sync is not a completed Git update."""
+    solution = Solution(
+        id=uuid4(),
+        slug="managed-git",
+        name="Managed Git",
+        git_connected=True,
+        git_repo_url="https://example.test/managed-git.git",
+        update_available_version="2.0.0",
+    )
+    db = SimpleNamespace(get=AsyncMock(return_value=solution), commit=AsyncMock())
+
+    @asynccontextmanager
+    async def fake_db_context():
+        yield db
+
+    monkeypatch.setattr(
+        "src.jobs.platform.solution_git_sync.get_db_context", fake_db_context
+    )
+    monkeypatch.setattr(
+        "src.services.solutions.git_sync.sync", AsyncMock(return_value=False)
+    )
+
+    with pytest.raises(PlatformJobFailure) as error:
+        await run_solution_git_sync(
+            SimpleNamespace(report=AsyncMock(), log=AsyncMock()),
+            SolutionGitSyncPayload(solution_id=solution.id),
+        )
+
+    assert error.value.code == "solution_git_sync_deferred"
+    assert error.value.retryable is True
+    assert solution.update_available_version == "2.0.0"
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_solution_git_sync_reports_invalid_workspace_as_structured_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
