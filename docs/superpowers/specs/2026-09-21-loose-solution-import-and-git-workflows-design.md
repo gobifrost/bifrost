@@ -44,7 +44,8 @@ semantics are clear.
 
 ### Two destination modes
 
-The existing install entry point asks the user where the package should go:
+The install entry point asks the user where the package should go before it
+asks where the package comes from:
 
 - **Managed Solution** installs into an isolated install scope, creates or
   updates a Solution record, and retains Git/update/uninstall lifecycle.
@@ -70,12 +71,40 @@ and completes a first-connect reconciliation.
 
 ### Step 1: destination
 
-After selecting a package, the user chooses **Managed Solution** or **Workspace
-import**. The managed path retains its current organization/scope and setup
-fields. The workspace path explains that the result is unattached, editable,
-and appears as uncommitted workspace changes.
+The first screen contains exactly two equally weighted choices:
 
-### Step 2: review
+- **Import into workspace** applies ordinary, unattached workspace content and
+  produces uncommitted changes in the workspace repository.
+- **Import as a Solution** creates or updates an isolated, lifecycle-managed
+  Solution installation.
+
+This is the primary product distinction. Source choices do not appear beside
+the destination choices because that obscures the two lifecycle states.
+
+### Step 2: source
+
+After choosing either destination, the user chooses one of the same two source
+types:
+
+- **From a repository** accepts repository URL, ref, and optional package
+  subfolder.
+- **From a ZIP** accepts a local Solution archive.
+
+For a workspace destination, repository import is a one-time snapshot. It
+uses the same checkout, validation, preview, and staged-package boundary as a
+managed repository install, but the apply phase writes unattached workspace
+content. The imported files then appear as dirty changes in the workspace's
+existing Git repository. The package source does not remain connected, does
+not detect updates, and does not create another pull/update lifecycle.
+
+Remembered repository recipes and a prefilled **Re-import** action are a future
+enhancement. The v1 API keeps repository coordinates explicit so that feature
+can be added without changing snapshot-import semantics.
+
+Reactivate and other flows that already have a fixed destination may skip the
+destination screen, but they still use the applicable source screen.
+
+### Step 3: review
 
 The preview classifies every package item as:
 
@@ -104,7 +133,7 @@ uses a compact list plus one inspector; on narrow screens the inspector stacks
 below the list inside the same scroller. Rows remain content-sized rather than
 stretching to fill unused height.
 
-### Step 3: durable import
+### Step 4: durable import
 
 Starting the import enqueues a `workspace.bundle_import` PlatformJob. Progress
 and terminal status use the shared PlatformJob notification transport. The
@@ -149,6 +178,21 @@ runs manifest stale-entity cleanup and never deletes destination entities merely
 because they are absent from the package.
 
 ## Backend Architecture
+
+### Shared source acquisition
+
+ZIP upload and repository checkout converge before workspace planning. A
+source-acquisition adapter yields the same validated Solution package plus its
+content hash regardless of origin. Repository coordinates are bound into the
+preview token for audit and retry safety, but are not persisted as an ongoing
+connection. Both paths therefore use identical collision classification,
+decision validation, ID mapping, staging, memory limits, and PlatformJob apply
+behavior.
+
+Repository checkout is bounded and defensive: the requested ref and subfolder
+must resolve inside the checkout, ignored/generated/secret paths remain
+excluded, and failures return actionable source errors before a preview token
+is issued.
 
 ### Preview service
 
@@ -217,10 +261,13 @@ overhead rather than permitting growth proportional to payload size.
 
 ## CLI Contract
 
-The CLI supports the same two-phase protocol:
+The CLI supports the same destination-first, two-phase protocol:
 
-1. `bifrost solution import-workspace <zip> --preview` prints creates,
-   unchanged items, conflicts, match keys, and the compatibility warning.
+1. `bifrost solution import-workspace <zip> --preview` and
+   `bifrost solution import-workspace --repo <url> [--ref <ref>] [--path
+   <subfolder>] --preview` print creates, unchanged items, conflicts, match
+   keys, repository coordinates when applicable, and the compatibility
+   warning.
 2. Interactive terminals collect per-item Keep/Replace decisions and offer
    keep-all/replace-all.
 3. Automation supplies a decision file or an explicit `--keep-all` or
@@ -316,6 +363,43 @@ workspace Git after import.
 - Git tests cover preflight-before-push, deletion confirmation without dirty
   clearing, read-only status, abort, first-connect reconciliation, and CLI
   conflict messages.
+
+### Kitchen-sink review package
+
+The handoff fixture is a representative Solution repository and ZIP generated
+from the same source tree, not a single-workflow smoke package. It contains at
+least one of every definition the workspace projection claims to support:
+
+- workflows plus Python modules;
+- a source-backed app with multiple source files and dependencies;
+- a table definition;
+- an inline-content form;
+- an inline-content agent with workflow/tool bindings;
+- config declarations covering multiple scalar types;
+- scheduled/webhook event definitions and subscriptions;
+- file policies and ordinary managed source files;
+- README and portable metadata.
+
+It also contains package-only declarations—custom claims, connection schemas,
+file-location declarations, and role bindings—so acceptance proves they produce
+specific warnings rather than disappearing silently.
+
+Definitions intentionally reference one another where the manifest supports a
+typed relationship. The seeded destination produces a deliberate mixture of
+creates, unchanged items, entity conflicts, and file conflicts. Replacement
+assertions verify destination-ID preservation and reference rewriting; keep
+assertions verify that retained targets remain valid references. The fixture is
+exercised through all four combinations:
+
+1. workspace from ZIP;
+2. workspace from repository;
+3. managed Solution from ZIP;
+4. managed Solution from repository.
+
+The workspace cases must finish without a Solution record and leave reviewable
+workspace Git changes. The managed cases must retain the existing isolated
+Solution lifecycle. Acceptance fails if any advertised definition is omitted,
+silently downgraded, or only proven by archive parsing without a real apply.
 
 ## Delivery Sequence
 
