@@ -19,7 +19,7 @@ type Run = components["schemas"]["AgentRunDetailResponse"];
 type Finding = components["schemas"]["FindingPublic"];
 
 function makeRun(overrides: Partial<Run> = {}): Run {
-	return {
+	const run = {
 		id: "run-1",
 		agent_id: "agent-1",
 		agent_name: "Triage",
@@ -40,6 +40,10 @@ function makeRun(overrides: Partial<Run> = {}): Run {
 		ai_usage: [],
 		ai_totals: null,
 		...overrides,
+	};
+	return {
+		...run,
+		summary_status: run.summary_status ?? "completed",
 	};
 }
 
