@@ -5053,6 +5053,60 @@ class TestOrgScopedEntities:
 class TestDesktopSync:
     """Combined sync operation: pull + push in a single call."""
 
+    async def test_sync_returns_manifest_conflict_until_desktop_resolve(
+        self,
+        db_session: AsyncSession,
+        sync_service,
+        working_clone,
+    ):
+        """A manifest conflict stays unmerged until the user explicitly resolves it."""
+        workflow = Workflow(
+            id=uuid4(),
+            name="Manifest Conflict Test",
+            function_name="manifest_conflict_wf",
+            path="workflows/git_sync_test_manifest_conflict.py",
+            is_active=True,
+        )
+        db_session.add(workflow)
+        await db_session.commit()
+
+        workflow_path = "workflows/git_sync_test_manifest_conflict.py"
+        manifest_path = ".bifrost/workflows.yaml"
+        write_entity_to_repo(sync_service._persistent_dir, workflow_path, SAMPLE_WORKFLOW_PY)
+        await write_manifest_to_repo(db_session, sync_service._persistent_dir)
+        await sync_service.desktop_commit("initial manifest conflict state")
+        await sync_service.desktop_sync(confirm_deletes=True)
+
+        remote_manifest = Path(working_clone.working_dir) / manifest_path
+        working_clone.remotes.origin.pull()
+        remote_manifest.write_text(
+            remote_manifest.read_text().replace(
+                "Manifest Conflict Test", "Remote Manifest Conflict"
+            )
+        )
+        working_clone.index.add([manifest_path])
+        working_clone.index.commit("remote: change manifest")
+        working_clone.remotes.origin.push()
+
+        workflow.name = "Local Manifest Conflict"
+        await db_session.commit()
+        await write_manifest_to_repo(db_session, sync_service._persistent_dir)
+        await sync_service.desktop_commit("local: change manifest")
+
+        result = await sync_service.desktop_sync(confirm_deletes=True)
+
+        assert result.success is False
+        assert result.pull_success is False
+        assert [conflict.path for conflict in result.conflicts] == [manifest_path]
+        assert manifest_path in {
+            str(path) for path in Repo(sync_service._persistent_dir).index.unmerged_blobs()
+        }
+
+        resolve_result = await sync_service.desktop_resolve({manifest_path: "ours"})
+
+        assert resolve_result.success is True
+        assert not Repo(sync_service._persistent_dir).index.unmerged_blobs()
+
     async def test_sync_pull_and_push_combined(
         self,
         db_session: AsyncSession,

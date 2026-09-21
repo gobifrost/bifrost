@@ -69,6 +69,11 @@ class SyncError(Exception):
     pass
 
 
+class GitStatusError(SyncError):
+    """Git status could not be read or parsed safely."""
+    pass
+
+
 # =============================================================================
 # Helpers
 # =============================================================================
@@ -91,165 +96,6 @@ def _walk_tree(root: Path) -> dict[str, bytes]:
             continue
         files[rel] = p.read_bytes()
     return files
-
-
-def _three_way_merge_dicts(
-    base: dict, ours: dict, theirs: dict
-) -> dict:
-    """3-way merge two dicts against a common base.
-
-    - Keys deleted by either side (present in base but absent in ours/theirs)
-      stay deleted unless the other side modified the value.
-    - Keys added by either side are included.
-    - When both sides modify the same key, theirs wins.
-    """
-    merged = {}
-    # Preserve key ordering: ours first, then theirs additions, then base-only
-    seen: set = set()
-    ordered_keys: list = []
-    for key in ours:
-        if key not in seen:
-            ordered_keys.append(key)
-            seen.add(key)
-    for key in theirs:
-        if key not in seen:
-            ordered_keys.append(key)
-            seen.add(key)
-    for key in base:
-        if key not in seen:
-            ordered_keys.append(key)
-            seen.add(key)
-
-    for key in ordered_keys:
-        in_base = key in base
-        in_ours = key in ours
-        in_theirs = key in theirs
-
-        if in_ours and in_theirs:
-            # Both have it — if both are dicts, recurse; otherwise theirs wins
-            if isinstance(ours[key], dict) and isinstance(theirs[key], dict):
-                base_val = base.get(key, {}) if isinstance(base.get(key), dict) else {}
-                merged[key] = _three_way_merge_dicts(base_val, ours[key], theirs[key])
-            else:
-                merged[key] = theirs[key]
-        elif in_ours and not in_theirs:
-            if in_base:
-                # Theirs deleted it — honor the deletion unless ours modified it
-                if base.get(key) != ours[key]:
-                    merged[key] = ours[key]  # Ours modified, keep it
-                # else: theirs deleted, ours unchanged → delete
-            else:
-                merged[key] = ours[key]  # Added by ours
-        elif in_theirs and not in_ours:
-            if in_base:
-                # Ours deleted it — honor the deletion unless theirs modified it
-                if base.get(key) != theirs[key]:
-                    merged[key] = theirs[key]  # Theirs modified, keep it
-                # else: ours deleted, theirs unchanged → delete
-            else:
-                merged[key] = theirs[key]  # Added by theirs
-        # else: neither has it (shouldn't happen since key came from one of them)
-
-    return merged
-
-
-def _auto_resolve_manifest_conflicts(repo: GitRepo, work_dir: Path, unmerged: dict) -> set[str]:
-    """Auto-resolve .bifrost/*.yaml manifest conflicts via 3-way YAML merge.
-
-    For each conflicted manifest file:
-    1. Parse base (stage 1), ours (stage 2), and theirs (stage 3) YAML
-    2. 3-way merge respecting additions and deletions from both sides
-    3. Write merged YAML to working tree and git add
-    4. On failure, accept theirs entirely
-
-    Returns set of paths that were auto-resolved (removed from conflict list).
-    """
-    resolved_paths: set[str] = set()
-
-    for cpath in list(unmerged.keys()):
-        cpath_str = str(cpath)
-        if not (cpath_str.startswith(".bifrost/") and cpath_str.endswith(".yaml")):
-            continue
-
-        try:
-            # Parse all three sides (base, ours, theirs)
-            base_yaml: dict = {}
-            ours_yaml: dict = {}
-            theirs_yaml: dict = {}
-            try:
-                base_raw = repo.git.show(f":1:{cpath_str}")
-                base_yaml = yaml.safe_load(base_raw) or {}
-            except Exception:
-                base_yaml = {}
-            try:
-                ours_raw = repo.git.show(f":2:{cpath_str}")
-                ours_yaml = yaml.safe_load(ours_raw) or {}
-            except Exception:
-                ours_yaml = {}
-            try:
-                theirs_raw = repo.git.show(f":3:{cpath_str}")
-                theirs_yaml = yaml.safe_load(theirs_raw) or {}
-            except Exception:
-                theirs_yaml = {}
-
-            if not isinstance(ours_yaml, dict) or not isinstance(theirs_yaml, dict):
-                # Not a dict-shaped YAML — fall back to accepting theirs
-                raise ValueError("Non-dict YAML")
-            if not isinstance(base_yaml, dict):
-                base_yaml = {}
-
-            # 3-way merge respecting deletions
-            merged = _three_way_merge_dicts(base_yaml, ours_yaml, theirs_yaml)
-
-            # Write merged YAML
-            merged_yaml = yaml.dump(merged, default_flow_style=False, sort_keys=True, allow_unicode=True)
-            file_path = work_dir / cpath_str
-            file_path.parent.mkdir(parents=True, exist_ok=True)
-            file_path.write_text(merged_yaml)
-            repo.git.add(cpath_str)
-            resolved_paths.add(cpath_str)
-            logger.info(f"Auto-resolved manifest conflict: {cpath_str}")
-
-        except Exception as e:
-            # Fall back to accepting theirs entirely
-            logger.warning(f"Manifest auto-merge failed for {cpath_str}, accepting theirs: {e}")
-            try:
-                theirs_raw = repo.git.show(f":3:{cpath_str}")
-                file_path = work_dir / cpath_str
-                file_path.parent.mkdir(parents=True, exist_ok=True)
-                file_path.write_text(theirs_raw)
-                repo.git.add(cpath_str)
-                resolved_paths.add(cpath_str)
-            except Exception as fallback_err:
-                logger.error(f"Failed to accept theirs for {cpath_str}: {fallback_err}")
-
-    return resolved_paths
-
-
-def _classify_conflict_type(unmerged: dict, cpath: str) -> str:
-    """Classify conflict type from git unmerged blob stages.
-
-    Stage 1 = common ancestor, Stage 2 = ours, Stage 3 = theirs.
-    """
-    # unmerged keys may be PathLike — find matching entry by str comparison
-    entries = None
-    for key, val in unmerged.items():
-        if str(key) == cpath:
-            entries = val
-            break
-    if not entries:
-        return "both_modified"
-    stages = {stage for stage, _blob in entries}
-    if stages >= {1, 2, 3}:
-        return "both_modified"
-    elif stages == {2, 3}:
-        return "both_added"
-    elif stages == {1, 3}:
-        return "deleted_by_us"
-    elif stages == {1, 2}:
-        return "deleted_by_them"
-    else:
-        return "both_modified"
 
 
 # =============================================================================
@@ -342,97 +188,101 @@ class GitHubSyncService:
         """Core status logic. Returns changed files and conflicts."""
         from src.models.contracts.github import ChangedFile, MergeConflict, WorkingTreeStatus
 
-        # Read unresolved conflicts without changing the index.
-        conflict_list: list[MergeConflict] = []
+        def _read_stage(path: str, stage: int) -> str:
+            try:
+                return repo.git.show(f":{stage}:{path}")
+            except Exception as e:
+                raise GitStatusError(
+                    f"status failed reading conflict stage {stage} for {path}: {e}"
+                ) from e
+
         try:
-            unmerged = repo.index.unmerged_blobs()
-        except Exception:
-            unmerged = {}
-
-        if unmerged:
-            for cpath in sorted(str(k) for k in unmerged.keys()):
-                ours_content = None
-                theirs_content = None
-                try:
-                    ours_content = repo.git.show(f":2:{cpath}")
-                except Exception as e:
-                    # Stage 2 (ours) may not exist in some conflict types (e.g. delete/modify)
-                    logger.debug(f"could not read stage 2 for {cpath}: {e}")
-                try:
-                    theirs_content = repo.git.show(f":3:{cpath}")
-                except Exception as e:
-                    # Stage 3 (theirs) may not exist (e.g. modify/delete)
-                    logger.debug(f"could not read stage 3 for {cpath}: {e}")
-                metadata = extract_entity_metadata(cpath)
-                conflict_list.append(MergeConflict(
-                    path=cpath,
-                    ours_content=ours_content,
-                    theirs_content=theirs_content,
-                    display_name=metadata.display_name,
-                    entity_type=metadata.entity_type,
-                    conflict_type=_classify_conflict_type(unmerged, cpath),
-                ))
-
-        # Detect merge state and ahead/behind
-        merging = (work_dir / ".git" / "MERGE_HEAD").exists()
-        ahead = 0
-        behind = 0
-        if repo.head.is_valid():
-            try:
-                ahead = int(repo.git.rev_list("--count", f"origin/{self.branch}..HEAD"))
-            except Exception as e:
-                # No origin/<branch> ref locally (never fetched) — leave ahead=0
-                logger.debug(f"could not compute commits ahead of origin/{self.branch}: {e}")
-            try:
-                behind = int(repo.git.rev_list("--count", f"HEAD..origin/{self.branch}"))
-            except Exception as e:
-                # No origin/<branch> ref locally — leave behind=0
-                logger.debug(f"could not compute commits behind origin/{self.branch}: {e}")
-
-        if conflict_list:
-            return WorkingTreeStatus(
-                changed_files=[],
-                total_changes=0,
-                conflicts=conflict_list,
-                commits_ahead=ahead,
-                commits_behind=behind,
-                merging=merging,
+            # `git status` normally refreshes index stat information. Disable optional
+            # locks so inspection cannot rewrite the index while gathering status.
+            porcelain = repo.git.status(
+                "--porcelain=v2", "-z", env={"GIT_OPTIONAL_LOCKS": "0"}
             )
+        except Exception as e:
+            raise GitStatusError(f"status failed: {e}") from e
 
+        if porcelain and not porcelain.endswith("\0"):
+            raise GitStatusError("status failed: malformed porcelain-v2 output")
+
+        conflict_types = {
+            "UU": "both_modified",
+            "AA": "both_added",
+            "UD": "deleted_by_them",
+            "DU": "deleted_by_us",
+            "AU": "both_modified",
+            "UA": "both_modified",
+            "DD": "both_modified",
+        }
+        ours_stages = {"UU", "AA", "UD", "AU"}
+        theirs_stages = {"UU", "AA", "DU", "UA"}
         changed: list[ChangedFile] = []
-        # `git status` normally refreshes index stat information. Disable optional
-        # locks so inspection cannot rewrite the index while gathering status.
-        porcelain = repo.git.status(
-            "--porcelain=v2", "-z", env={"GIT_OPTIONAL_LOCKS": "0"}
-        )
+        conflicts: list[MergeConflict] = []
         records = porcelain.split("\0")
         record_index = 0
-        while record_index < len(records):
+        while record_index < len(records) - 1:
             record = records[record_index]
             record_index += 1
             if not record:
-                continue
+                raise GitStatusError("status failed: malformed empty porcelain-v2 record")
 
             status_code = ""
             path: str | None = None
             if record.startswith("1 "):
                 fields = record.split(" ", 8)
-                if len(fields) == 9:
-                    status_code = fields[1]
-                    path = fields[8]
+                if len(fields) != 9 or len(fields[1]) != 2 or not fields[8]:
+                    raise GitStatusError("status failed: malformed porcelain-v2 ordinary record")
+                status_code = fields[1]
+                path = fields[8]
             elif record.startswith("2 "):
                 fields = record.split(" ", 9)
-                if len(fields) == 10:
-                    status_code = fields[1]
-                    path = fields[9]
-                    # A rename/copy record is followed by its original path.
-                    record_index += 1
+                if (
+                    len(fields) != 10
+                    or len(fields[1]) != 2
+                    or not fields[9]
+                    or record_index >= len(records) - 1
+                    or not records[record_index]
+                ):
+                    raise GitStatusError("status failed: malformed porcelain-v2 rename record")
+                status_code = fields[1]
+                path = fields[9]
+                # A rename/copy record is followed by its original path.
+                record_index += 1
+            elif record.startswith("u "):
+                fields = record.split(" ", 10)
+                if len(fields) != 11 or fields[1] not in conflict_types or not fields[10]:
+                    raise GitStatusError("status failed: malformed porcelain-v2 conflict record")
+                status_code = fields[1]
+                path = fields[10]
+                metadata = extract_entity_metadata(path)
+                conflicts.append(MergeConflict(
+                    path=path,
+                    ours_content=_read_stage(path, 2) if status_code in ours_stages else None,
+                    theirs_content=_read_stage(path, 3) if status_code in theirs_stages else None,
+                    display_name=metadata.display_name,
+                    entity_type=metadata.entity_type,
+                    conflict_type=conflict_types[status_code],
+                ))
+                continue
             elif record.startswith("? "):
+                if not record[2:]:
+                    raise GitStatusError("status failed: malformed porcelain-v2 untracked record")
                 status_code = "?"
                 path = record[2:]
-
-            if path is None:
+            elif record.startswith("! "):
+                if not record[2:]:
+                    raise GitStatusError("status failed: malformed porcelain-v2 ignored record")
                 continue
+            else:
+                raise GitStatusError("status failed: unknown porcelain-v2 record")
+
+            if status_code != "?" and any(code not in ".MTADRCU" for code in status_code):
+                raise GitStatusError("status failed: invalid porcelain-v2 status code")
+            if path is None:
+                raise GitStatusError("status failed: missing porcelain-v2 path")
             if status_code == "?" or "A" in status_code:
                 change_type = "added"
             elif "D" in status_code:
@@ -450,9 +300,30 @@ class GitHubSyncService:
                 entity_type=metadata.entity_type,
             ))
 
+        try:
+            merging = (work_dir / ".git" / "MERGE_HEAD").exists()
+            ahead = 0
+            behind = 0
+            if repo.head.is_valid():
+                try:
+                    ahead = int(repo.git.rev_list("--count", f"origin/{self.branch}..HEAD"))
+                except Exception as e:
+                    # No origin/<branch> ref locally (never fetched) — leave ahead=0
+                    logger.debug(f"could not compute commits ahead of origin/{self.branch}: {e}")
+                try:
+                    behind = int(repo.git.rev_list("--count", f"HEAD..origin/{self.branch}"))
+                except Exception as e:
+                    # No origin/<branch> ref locally — leave behind=0
+                    logger.debug(f"could not compute commits behind origin/{self.branch}: {e}")
+        except GitStatusError:
+            raise
+        except Exception as e:
+            raise GitStatusError(f"status failed: {e}") from e
+
         return WorkingTreeStatus(
             changed_files=changed,
             total_changes=len(changed),
+            conflicts=conflicts,
             commits_ahead=ahead,
             commits_behind=behind,
             merging=merging,
@@ -494,7 +365,7 @@ class GitHubSyncService:
 
     async def _do_pull(self, work_dir: Path, repo: GitRepo, job_id: str | None = None) -> "PullResult":
         """Core pull logic. Fetches, merges, imports entities."""
-        from src.models.contracts.github import MergeConflict, PullResult
+        from src.models.contracts.github import PullResult
 
         async def _progress(phase: str, current: int = 0, total: int = 0) -> None:
             if job_id:
@@ -530,66 +401,13 @@ class GitHubSyncService:
             is_merge_conflict = (work_dir / ".git" / "MERGE_HEAD").exists()
 
             if is_merge_conflict:
-                conflicts: list[MergeConflict] = []
-                try:
-                    unmerged = repo.index.unmerged_blobs()
-                except Exception:
-                    unmerged = {}
-
-                if unmerged:
-                    try:
-                        _auto_resolve_manifest_conflicts(repo, work_dir, unmerged)
-                        unmerged = repo.index.unmerged_blobs()
-                    except Exception as e:
-                        logger.warning(f"Manifest auto-resolve in pull failed: {e}")
-
-                conflicted_files = sorted(str(k) for k in unmerged.keys())
-
-                if not conflicted_files:
-                    # All conflicts were auto-resolved, commit the merge
-                    logger.info("All merge conflicts auto-resolved, completing merge")
-                    repo.index.commit(
-                        "Merge remote-tracking branch (auto-resolved)",
-                        parent_commits=[
-                            repo.head.commit,
-                            repo.commit("MERGE_HEAD"),
-                        ],
-                    )
-                    # Remove MERGE_HEAD to complete merge state
-                    merge_head = work_dir / ".git" / "MERGE_HEAD"
-                    if merge_head.exists():
-                        merge_head.unlink()
-                else:
-                    for cpath in conflicted_files:
-                        ours_content = None
-                        theirs_content = None
-                        try:
-                            ours_content = repo.git.show(f":2:{cpath}")
-                        except Exception as e:
-                            # Stage 2 may not exist in some conflict types
-                            logger.debug(f"could not read stage 2 for {cpath}: {e}")
-                        try:
-                            theirs_content = repo.git.show(f":3:{cpath}")
-                        except Exception as e:
-                            # Stage 3 may not exist in some conflict types
-                            logger.debug(f"could not read stage 3 for {cpath}: {e}")
-
-                        metadata = extract_entity_metadata(cpath)
-                        conflicts.append(MergeConflict(
-                            path=cpath,
-                            ours_content=ours_content,
-                            theirs_content=theirs_content,
-                            display_name=metadata.display_name,
-                            entity_type=metadata.entity_type,
-                            conflict_type=_classify_conflict_type(unmerged, cpath),
-                        ))
-
-                    logger.info(f"Merge conflict: returning {len(conflicts)} conflicts to UI")
-                    return PullResult(
-                        success=False,
-                        conflicts=conflicts,
-                        error="Merge conflicts detected",
-                    )
+                status = self._do_status(work_dir, repo)
+                logger.info(f"Merge conflict: returning {len(status.conflicts)} conflicts to UI")
+                return PullResult(
+                    success=False,
+                    conflicts=status.conflicts,
+                    error="Merge conflicts detected",
+                )
             else:
                 raise
 
@@ -680,15 +498,17 @@ class GitHubSyncService:
         """Get working tree status. No lock, no S3. Returns empty if not initialized."""
         from src.models.contracts.github import WorkingTreeStatus
 
+        if not self.repo_manager.is_initialized:
+            return WorkingTreeStatus()
+
         try:
-            if not self.repo_manager.is_initialized:
-                return WorkingTreeStatus()
             async with self.repo_manager.lock() as work_dir:
-                repo = GitRepo(str(work_dir))
-                return self._do_status(work_dir, repo)
+                return self._do_status(work_dir, GitRepo(str(work_dir)))
+        except GitStatusError:
+            raise
         except Exception as e:
             logger.error(f"Status failed: {e}", exc_info=True)
-            return WorkingTreeStatus()
+            raise GitStatusError(f"status failed: {e}") from e
 
     @staticmethod
     async def _regenerate_manifest_to_dir(db, work_dir) -> None:
