@@ -30,9 +30,9 @@ vi.mock("@/hooks/useTools", () => ({
 }));
 
 vi.mock("@/services/aiModels", () => ({
-	listModelProfiles: vi.fn().mockResolvedValue([
-		{ id: "profile-1", name: "Careful reviewer" },
-	]),
+	listModelProfiles: vi
+		.fn()
+		.mockResolvedValue([{ id: "profile-1", name: "Careful reviewer" }]),
 }));
 
 vi.mock("@/services/agentRuns", () => ({
@@ -311,11 +311,41 @@ beforeEach(() => {
 			legacy_coverage_unknown: false,
 			legacy_call_count: 0,
 		},
-		by_purpose: { items: [], total_groups: 0, limit: 50, offset: 0, omitted_group_count: 0 },
-		by_provider_model: { items: [], total_groups: 0, limit: 50, offset: 0, omitted_group_count: 0 },
-		by_profile: { items: [], total_groups: 0, limit: 50, offset: 0, omitted_group_count: 0 },
-		by_organization: { items: [], total_groups: 0, limit: 50, offset: 0, omitted_group_count: 0 },
-		by_operation: { items: [], total_groups: 0, limit: 50, offset: 0, omitted_group_count: 0 },
+		by_purpose: {
+			items: [],
+			total_groups: 0,
+			limit: 50,
+			offset: 0,
+			omitted_group_count: 0,
+		},
+		by_provider_model: {
+			items: [],
+			total_groups: 0,
+			limit: 50,
+			offset: 0,
+			omitted_group_count: 0,
+		},
+		by_profile: {
+			items: [],
+			total_groups: 0,
+			limit: 50,
+			offset: 0,
+			omitted_group_count: 0,
+		},
+		by_organization: {
+			items: [],
+			total_groups: 0,
+			limit: 50,
+			offset: 0,
+			omitted_group_count: 0,
+		},
+		by_operation: {
+			items: [],
+			total_groups: 0,
+			limit: 50,
+			offset: 0,
+			omitted_group_count: 0,
+		},
 	});
 });
 
@@ -342,14 +372,16 @@ describe("AgentQualityWorkbench", () => {
 		expect(
 			await screen.findByRole("heading", { name: "Workbench" }),
 		).toBeVisible();
-		expect(screen.queryByText(/quality workbench/i)).not.toBeInTheDocument();
+		expect(
+			screen.queryByText(/quality workbench/i),
+		).not.toBeInTheDocument();
 		expect(document.querySelector("[data-agent-workbench]")).toBeVisible();
 		expect(
 			screen.getByText("Search, select, and inspect Workbench records."),
 		).toBeVisible();
 		expect(
-		screen.queryByText("Search, select, and inspect quality signals."),
-	).not.toBeInTheDocument();
+			screen.queryByText("Search, select, and inspect quality signals."),
+		).not.toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Tests" })).toHaveAttribute(
 			"aria-current",
 			"page",
@@ -390,10 +422,7 @@ describe("AgentQualityWorkbench", () => {
 		const { user } = renderPage();
 		await screen.findByText("Should ask before routing");
 
-		await user.type(
-			screen.getByLabelText("Search Tests"),
-			"routing",
-		);
+		await user.type(screen.getByLabelText("Search Tests"), "routing");
 		await user.click(
 			screen.getByRole("checkbox", { name: /select should ask/i }),
 		);
@@ -408,7 +437,9 @@ describe("AgentQualityWorkbench", () => {
 
 		await user.click(screen.getByRole("button", { name: "Add Test" }));
 
-		expect(screen.getByRole("heading", { name: "Improve agent" })).toBeVisible();
+		expect(
+			screen.getByRole("heading", { name: "Improve agent" }),
+		).toBeVisible();
 		expect(
 			screen.getByRole("button", { name: "Close Inspector" }),
 		).toBeVisible();
@@ -419,15 +450,23 @@ describe("AgentQualityWorkbench", () => {
 		await screen.findByText("Should ask before routing");
 
 		await user.click(screen.getByRole("button", { name: "Add Test" }));
-		await user.click(screen.getByRole("button", { name: "Close Inspector" }));
-		expect(screen.queryByRole("heading", { name: "Improve agent" })).not.toBeInTheDocument();
+		await user.click(
+			screen.getByRole("button", { name: "Close Inspector" }),
+		);
+		expect(
+			screen.queryByRole("heading", { name: "Improve agent" }),
+		).not.toBeInTheDocument();
 
 		await user.click(screen.getByRole("button", { name: "Add Test" }));
-		expect(screen.getByRole("heading", { name: "Improve agent" })).toBeVisible();
+		expect(
+			screen.getByRole("heading", { name: "Improve agent" }),
+		).toBeVisible();
 	});
 
 	it("keeps the collection and selected inspector in one contained Workbench", async () => {
-		const { user } = renderPage("/agents/agent-1/quality?collection=findings");
+		const { user } = renderPage(
+			"/agents/agent-1/quality?collection=findings",
+		);
 
 		await user.click(await screen.findByText("Routes without confirming."));
 
@@ -436,29 +475,41 @@ describe("AgentQualityWorkbench", () => {
 		expect(
 			screen.getByRole("button", { name: "Close Inspector" }),
 		).toBeVisible();
-		expect(screen.getByRole("list", { name: "Findings collection" })).toBeVisible();
+		expect(
+			screen.getByRole("list", { name: "Findings collection" }),
+		).toBeVisible();
 		expect(
 			screen.getByRole("button", { name: /routes without confirming/i }),
 		).toHaveAttribute("aria-current", "true");
 
-		await user.click(screen.getByRole("button", { name: "Close Inspector" }));
+		await user.click(
+			screen.getByRole("button", { name: "Close Inspector" }),
+		);
 		expect(
 			screen.getByRole("button", { name: /routes without confirming/i }),
 		).toHaveAttribute("aria-current", "true");
 	});
 
 	it("reopens the same selected row after inspector dismissal", async () => {
-		const { user } = renderPage("/agents/agent-1/quality?collection=findings");
+		const { user } = renderPage(
+			"/agents/agent-1/quality?collection=findings",
+		);
 		const row = await screen.findByRole("button", {
 			name: /routes without confirming/i,
 		});
 
 		await user.click(row);
-		await user.click(screen.getByRole("button", { name: "Close Inspector" }));
-		expect(screen.queryByRole("heading", { name: "Finding details" })).not.toBeInTheDocument();
+		await user.click(
+			screen.getByRole("button", { name: "Close Inspector" }),
+		);
+		expect(
+			screen.queryByRole("heading", { name: "Finding details" }),
+		).not.toBeInTheDocument();
 
 		await user.click(row);
-		expect(screen.getByRole("heading", { name: "Finding details" })).toBeVisible();
+		expect(
+			screen.getByRole("heading", { name: "Finding details" }),
+		).toBeVisible();
 	});
 
 	it("creates a plain-language test from finding context and can clear it", async () => {
@@ -511,8 +562,14 @@ describe("AgentQualityWorkbench", () => {
 		await screen.findByText("Should ask before routing");
 		await user.click(screen.getByRole("button", { name: "Add Test" }));
 
-		await user.type(screen.getByLabelText("Situation"), "When tools are risky");
-		await user.type(screen.getByLabelText("Expected behavior"), "Ask first");
+		await user.type(
+			screen.getByLabelText("Situation"),
+			"When tools are risky",
+		);
+		await user.type(
+			screen.getByLabelText("Expected behavior"),
+			"Ask first",
+		);
 		await user.click(screen.getByText("Advanced JSON/checks"));
 		await user.click(screen.getByLabelText("Advanced JSON"));
 		await user.paste(
@@ -522,7 +579,10 @@ describe("AgentQualityWorkbench", () => {
 				fixture: { priority: "high" },
 				simulator_policy: { persona: "impatient" },
 				assertions: [
-					{ type: "tool_not_called", params: { tool: "route_ticket" } },
+					{
+						type: "tool_not_called",
+						params: { tool: "route_ticket" },
+					},
 				],
 				output_schema: { type: "object" },
 				repetitions: 2,
@@ -564,7 +624,10 @@ describe("AgentQualityWorkbench", () => {
 		await user.click(screen.getByRole("button", { name: "Add Test" }));
 
 		await user.type(screen.getByLabelText("Situation"), "When JSON is bad");
-		await user.type(screen.getByLabelText("Expected behavior"), "Do not save");
+		await user.type(
+			screen.getByLabelText("Expected behavior"),
+			"Do not save",
+		);
 		await user.click(screen.getByText("Advanced JSON/checks"));
 		await user.click(screen.getByLabelText("Advanced JSON"));
 		await user.paste("[1]");
@@ -583,7 +646,9 @@ describe("AgentQualityWorkbench", () => {
 			screen.getByRole("checkbox", { name: /select should ask/i }),
 		);
 		await user.selectOptions(screen.getByLabelText("Profile"), "profile-1");
-		await user.click(screen.getByRole("button", { name: "Run Simulation" }));
+		await user.click(
+			screen.getByRole("button", { name: "Run Simulation" }),
+		);
 
 		await waitFor(() => {
 			expect(mockRunAgentTests).toHaveBeenCalledWith("agent-1", {
@@ -596,7 +661,9 @@ describe("AgentQualityWorkbench", () => {
 			screen.getByText(/Queued simulation execution-queued/i),
 		).toBeVisible();
 		expect(
-			await screen.findByText(/Changes suite suite-default execution execution-queued/i),
+			await screen.findByText(
+				/Changes suite suite-default execution execution-queued/i,
+			),
 		).toBeVisible();
 	});
 
@@ -627,7 +694,9 @@ describe("AgentQualityWorkbench", () => {
 				name: /select should summarize safely/i,
 			}),
 		);
-		await user.click(screen.getByRole("button", { name: "Run Simulation" }));
+		await user.click(
+			screen.getByRole("button", { name: "Run Simulation" }),
+		);
 
 		expect(
 			await screen.findByText(/Choose tests from one collection/i),
@@ -644,7 +713,9 @@ describe("AgentQualityWorkbench", () => {
 		expect(
 			screen.getByRole("heading", { name: "Finding details" }),
 		).toBeVisible();
-		expect(screen.getByRole("link", { name: /Run run-1/i })).toHaveAttribute(
+		expect(
+			screen.getByRole("link", { name: /Run run-1/i }),
+		).toHaveAttribute(
 			"href",
 			"/agents/agent-1/runs/run-1?tab=activity&sequence=7",
 		);
@@ -661,10 +732,9 @@ describe("AgentQualityWorkbench", () => {
 		await user.click(await screen.findByText("Routes without confirming."));
 		await user.click(screen.getByRole("button", { name: "Back to list" }));
 
-		expect(screen.getByRole("button", { name: "Findings" })).toHaveAttribute(
-			"aria-current",
-			"page",
-		);
+		expect(
+			screen.getByRole("button", { name: "Findings" }),
+		).toHaveAttribute("aria-current", "page");
 	});
 
 	it("loads recorded query results and usage in the inspector", async () => {
@@ -683,29 +753,54 @@ describe("AgentQualityWorkbench", () => {
 		});
 		expect(screen.getAllByText(/failed/i).length).toBeGreaterThan(0);
 		expect(screen.getByText(/incomplete/i)).toBeVisible();
-		expect(screen.getByText(/Run ended before final answer/i)).toBeVisible();
+		expect(
+			screen.getByText(/Run ended before final answer/i),
+		).toBeVisible();
 		expect(screen.getByText(/Unknown-cost calls: 1/i)).toBeVisible();
 	});
 
+	it("labels missing recorded usage cost as Unknown instead of zero", async () => {
+		mockRecordedEvaluationUsage.mockResolvedValueOnce({
+			overall: { known_cost: null },
+			coverage: { missing_cost_call_count: 1 },
+		});
+		renderPage("/agents/agent-1/quality?recorded=recorded-1");
+
+		expect(await screen.findByText("Cost: Unknown")).toBeVisible();
+		expect(screen.queryByText("$0.00")).not.toBeInTheDocument();
+	});
+
 	it("dismisses recorded results without losing the collection route", async () => {
-		const { user } = renderPage("/agents/agent-1/quality?recorded=recorded-1");
+		const { user } = renderPage(
+			"/agents/agent-1/quality?recorded=recorded-1",
+		);
 		await screen.findByRole("heading", { name: "Recorded results" });
 
-		await user.click(screen.getByRole("button", { name: "Close Inspector" }));
+		await user.click(
+			screen.getByRole("button", { name: "Close Inspector" }),
+		);
 
-		expect(screen.getByRole("region", { name: "Tests collection" })).toBeVisible();
+		expect(
+			screen.getByRole("region", { name: "Tests collection" }),
+		).toBeVisible();
 		expect(
 			screen.queryByRole("complementary", { name: "Test details" }),
 		).not.toBeInTheDocument();
 	});
 
 	it("dismisses changes context without losing the collection route", async () => {
-		const { user } = renderPage("/agents/agent-1/quality?execution=execution-1");
+		const { user } = renderPage(
+			"/agents/agent-1/quality?execution=execution-1",
+		);
 		await screen.findByText("Changes suite none execution execution-1");
 
-		await user.click(screen.getByRole("button", { name: "Close Inspector" }));
+		await user.click(
+			screen.getByRole("button", { name: "Close Inspector" }),
+		);
 
-		expect(screen.getByRole("region", { name: "Tests collection" })).toBeVisible();
+		expect(
+			screen.getByRole("region", { name: "Tests collection" }),
+		).toBeVisible();
 		expect(
 			screen.queryByRole("complementary", { name: "Test details" }),
 		).not.toBeInTheDocument();
@@ -715,7 +810,9 @@ describe("AgentQualityWorkbench", () => {
 		mockAgentTests.mockRejectedValueOnce(new Error("boom"));
 		const { user } = renderPage();
 
-		await user.click(await screen.findByRole("button", { name: "Retry tests" }));
+		await user.click(
+			await screen.findByRole("button", { name: "Retry tests" }),
+		);
 
 		await waitFor(() => {
 			expect(mockAgentTests).toHaveBeenCalledTimes(2);

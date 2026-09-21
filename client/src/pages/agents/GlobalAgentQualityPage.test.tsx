@@ -8,6 +8,7 @@ import { GlobalAgentQualityPage } from "./GlobalAgentQualityPage";
 
 const mockSearchFindings = vi.fn();
 const mockAgentTests = vi.fn();
+const mockLatestAgentTests = vi.fn();
 const mockReviews = vi.fn();
 const mockUseAgents = vi.fn();
 
@@ -15,6 +16,7 @@ vi.mock("@/services/agentPlatform", () => ({
 	agentPlatform: {
 		searchFindings: (...args: unknown[]) => mockSearchFindings(...args),
 		agentTests: (...args: unknown[]) => mockAgentTests(...args),
+		latestAgentTests: (...args: unknown[]) => mockLatestAgentTests(...args),
 		reviews: (...args: unknown[]) => mockReviews(...args),
 	},
 }));
@@ -32,6 +34,7 @@ beforeEach(() => {
 	mockUseAgents.mockReturnValue({ data: agents, isLoading: false });
 	mockSearchFindings.mockReset();
 	mockAgentTests.mockReset();
+	mockLatestAgentTests.mockReset();
 	mockReviews.mockReset();
 	mockSearchFindings.mockResolvedValue({
 		items: [
@@ -64,6 +67,25 @@ beforeEach(() => {
 		],
 		total: 1,
 	});
+	mockLatestAgentTests.mockResolvedValue({
+		items: [
+			{
+				logical_test_id: "test-1",
+				version: 1,
+				origin_suite_name: "Regression",
+				simulation: {
+					execution_id: "execution-1",
+					case_version: 1,
+					profile_id: null,
+					candidate_id: null,
+					status: "passed",
+					created_at: "2026-09-21T00:00:00Z",
+				},
+				recorded: null,
+			},
+		],
+		total: 1,
+	});
 	mockReviews.mockResolvedValue({
 		items: [
 			{
@@ -85,7 +107,10 @@ beforeEach(() => {
 function renderPage(entry = "/agents/quality") {
 	return renderWithProviders(
 		<Routes>
-			<Route path="/agents/quality" element={<GlobalAgentQualityPage />} />
+			<Route
+				path="/agents/quality"
+				element={<GlobalAgentQualityPage />}
+			/>
 			<Route path="/agents/:id/quality" element={<LocationProbe />} />
 			<Route path="/agents/:id" element={<div>agent detail</div>} />
 		</Routes>,
@@ -94,7 +119,7 @@ function renderPage(entry = "/agents/quality") {
 }
 
 describe("GlobalAgentQualityPage", () => {
-	it("searches findings globally and drills into the owning agent workbench", async () => {
+	it("keeps a selected fleet Finding in the attached inspector", async () => {
 		const { user } = renderPage(
 			"/agents/quality?collection=findings&search=missed&status=open&kind=problem",
 		);
@@ -119,35 +144,43 @@ describe("GlobalAgentQualityPage", () => {
 		).toHaveAttribute("href", "/agents");
 
 		await user.click(
-			screen.getByRole("link", { name: /open finding missed escalation/i }),
+			screen.getByRole("button", { name: /missed escalation/i }),
 		);
 
-		expect(await screen.findByTestId("location-probe")).toHaveTextContent(
-			"/agents/agent-1/quality?collection=findings&finding=finding-1&selected=findings%3Afinding-1",
-		);
+		expect(
+			await screen.findByRole("heading", { name: "Finding details" }),
+		).toBeVisible();
+		expect(
+			screen.getByRole("list", { name: "Findings collection" }),
+		).toBeVisible();
+		expect(screen.queryByTestId("location-probe")).not.toBeInTheDocument();
 	});
 
 	it("uses the shared fleet workbench and defaults to Findings", async () => {
 		renderPage();
 
 		expect(document.querySelector("[data-agent-workbench]")).toBeVisible();
-		expect(await screen.findByLabelText("Workbench collections")).toBeVisible();
+		expect(
+			await screen.findByLabelText("Workbench collections"),
+		).toBeVisible();
 		expect(document.querySelector("[data-workspace-header]")).toBeVisible();
-		expect(screen.getByRole("combobox", { name: "Workbench collection" })).toHaveTextContent(
-			"Findings",
-		);
+		expect(
+			screen.getByRole("combobox", { name: "Workbench collection" }),
+		).toHaveTextContent("Findings");
 		expect(
 			await screen.findByRole("list", { name: "Findings collection" }),
 		).toBeVisible();
 		expect(screen.getByRole("listitem")).toBeVisible();
 	});
 
-	it("requires an agent before loading tests and preserves the selected test in drill-in", async () => {
+	it("filters fleet Tests by one agent and inspects the selected test in place", async () => {
 		const { user } = renderPage("/agents/quality?collection=tests");
-		expect(await screen.findByText(/select an agent/i)).toBeVisible();
+		expect(await screen.findByText(/choose an agent/i)).toBeVisible();
 		expect(mockAgentTests).not.toHaveBeenCalled();
 
-		await user.click(screen.getByRole("combobox", { name: /agent filter/i }));
+		await user.click(
+			screen.getByRole("combobox", { name: /agent filter/i }),
+		);
 		await user.click(screen.getByRole("option", { name: "Triage" }));
 
 		await waitFor(() => {
@@ -155,20 +188,30 @@ describe("GlobalAgentQualityPage", () => {
 				offset: 0,
 				limit: 50,
 			});
+			expect(mockLatestAgentTests).toHaveBeenCalledWith("agent-1", {
+				offset: 0,
+				limit: 50,
+			});
 		});
 		await user.click(
-			await screen.findByRole("link", {
-				name: /open test escalates urgent requests/i,
+			await screen.findByRole("button", {
+				name: /escalates urgent requests/i,
 			}),
 		);
 
-		expect(await screen.findByTestId("location-probe")).toHaveTextContent(
-			"/agents/agent-1/quality?collection=tests&test=test-1",
-		);
+		expect(
+			await screen.findByRole("heading", {
+				name: "Escalates urgent requests",
+			}),
+		).toBeVisible();
+		expect(screen.getAllByText(/Simulation: passed/i)).toHaveLength(2);
+		expect(screen.queryByTestId("location-probe")).not.toBeInTheDocument();
 	});
 
-	it("loads reviews only after an agent is selected", async () => {
-		renderPage("/agents/quality?collection=reviews&agent=agent-1");
+	it("loads reviews for the selected agent without leaving the fleet workspace", async () => {
+		const { user } = renderPage(
+			"/agents/quality?collection=reviews&agent=agent-1",
+		);
 
 		expect(await screen.findByText("Weekly service quality")).toBeVisible();
 		expect(mockReviews).toHaveBeenCalledWith({
@@ -176,14 +219,12 @@ describe("GlobalAgentQualityPage", () => {
 			offset: 0,
 			limit: 50,
 		});
-		expect(
-			screen.getByRole("link", {
-				name: /open review weekly service quality/i,
-			}),
-		).toHaveAttribute(
-			"href",
-			"/agents/agent-1/quality?collection=reviews&review=review-1",
+		await user.click(
+			screen.getByRole("button", { name: /weekly service quality/i }),
 		);
+		expect(
+			await screen.findByRole("heading", { name: "Review details" }),
+		).toBeVisible();
 	});
 
 	it("keeps the canonical global route before the agent id route", () => {
