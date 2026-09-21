@@ -26307,6 +26307,11 @@ export interface components {
              * @default false
              */
             confirm_deletes: boolean;
+            /**
+             * Retry Job Id
+             * @description ID of this caller's failed workspace git job whose server-stored publication retry plan should be retried
+             */
+            retry_job_id?: string | null;
         };
         /** SystemDiagnosticLogPublic */
         SystemDiagnosticLogPublic: {

@@ -32,13 +32,20 @@ async def run_git_operation(
         "orgId": str(payload.organization_id) if payload.organization_id else "",
         **payload.options,
     }
-    if not await Scheduler()._handle_git_operation(data):
+    completed = await Scheduler()._handle_git_operation(data)
+    sync_result = data.get("_sync_result")
+    if not completed:
         raise PlatformJobFailure(
             "git_operation_failed",
             f"{payload.operation.replace('_', ' ').title()} failed.",
+            retryable=bool(sync_result and sync_result.get("retryable")),
+            result={"sync_result": sync_result} if sync_result else None,
         )
     await context.report("Git operation complete", percent=100)
-    return {"operation": payload.operation}
+    result = {"operation": payload.operation}
+    if sync_result is not None:
+        result["sync_result"] = sync_result
+    return result
 
 
 GIT_OPERATION_DEFINITION = PlatformJobDefinition(

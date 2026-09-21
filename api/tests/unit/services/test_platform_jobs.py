@@ -18,7 +18,12 @@ from src.jobs.platform.application_publish import (
     APPLICATION_PUBLISH_DEFINITION,
     ApplicationPublishPayload,
 )
-from src.jobs.platform.base import PlatformJobDefinition, PlatformJobPolicy, PlatformJobRequiresAction
+from src.jobs.platform.base import (
+    PlatformJobDefinition,
+    PlatformJobFailure,
+    PlatformJobPolicy,
+    PlatformJobRequiresAction,
+)
 from src.jobs.platform import runner
 from src.models.contracts.platform_jobs import PlatformJobStatus
 from src.models.orm.platform_jobs import PlatformJob
@@ -261,6 +266,47 @@ async def test_handler_requires_action_finishes_with_result_and_releases_lease(
     assert reused is False
     assert replacement.id != job.id
 
+
+@pytest.mark.asyncio
+async def test_handler_failure_persists_a_durable_result(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed git publication retains its server-owned retry-plan result."""
+    job = await _enqueue(db_session)
+    token = uuid4()
+    job.status = "running"
+    job.lease_token = token
+    job.lease_owner = "test-runner"
+    job.lease_expires_at = datetime.now(timezone.utc) + timedelta(minutes=1)
+    await db_session.commit()
+
+    async def publication_failed(*_args):
+        raise PlatformJobFailure(
+            "git_operation_failed",
+            "Push failed",
+            retryable=True,
+            result={"sync_result": {"retryable": True, "retry_plan": {"db_applied": True}}},
+        )
+
+    definition = PlatformJobDefinition(
+        job_type=job.job_type,
+        payload_version=job.payload_version,
+        payload_model=APPLICATION_PUBLISH_DEFINITION.payload_model,
+        handler=publication_failed,
+        policy=PlatformJobPolicy(timeout_seconds=30),
+    )
+    monkeypatch.setattr(runner, "get_platform_job_definition", lambda _: definition)
+    monkeypatch.setattr(service, "publish_platform_job_update", AsyncMock())
+
+    assert await runner.run_claimed_platform_job(job.id, token) is True
+
+    await db_session.refresh(job)
+    assert job.status == "failed"
+    assert job.error_retryable is True
+    assert job.result == {
+        "sync_result": {"retryable": True, "retry_plan": {"db_applied": True}}
+    }
 
 @pytest.mark.asyncio
 async def test_requires_action_phase_is_bounded_to_two_hundred_characters(

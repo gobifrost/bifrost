@@ -2960,6 +2960,90 @@ class TestCrossInstanceManifestReconciliation:
     """Test that manifest regeneration + commit + pull correctly reconciles
     cross-instance changes to .bifrost/*.yaml files."""
 
+    async def test_config_add_and_delete_requires_explicit_resolution(
+        self,
+        db_session: AsyncSession,
+        sync_service,
+        bare_repo,
+        working_clone,
+        tmp_path,
+    ):
+        """Concurrent config changes conflict until one reviewed side is selected."""
+        from src.models.orm.config import Config
+        from src.models.orm.integrations import Integration
+
+        integration_id = uuid4()
+        keep_id = uuid4()
+        delete_id = uuid4()
+        db_session.add(Integration(
+            id=integration_id,
+            name="Explicit config resolution",
+            is_deleted=False,
+        ))
+        await db_session.flush()
+        db_session.add_all([
+            Config(
+                id=keep_id,
+                key="keep_this",
+                value="yes",
+                integration_id=integration_id,
+                updated_by="git-sync",
+            ),
+            Config(
+                id=delete_id,
+                key="delete_this",
+                value="remove_me",
+                integration_id=integration_id,
+                updated_by="git-sync",
+            ),
+        ])
+        workflow = Workflow(
+            id=uuid4(),
+            name="Explicit config resolution workflow",
+            function_name="explicit_config_resolution_wf",
+            path="workflows/explicit_config_resolution.py",
+            is_active=True,
+        )
+        db_session.add(workflow)
+        await db_session.commit()
+
+        write_entity_to_repo(sync_service._persistent_dir, workflow.path, SAMPLE_WORKFLOW_PY)
+        await write_manifest_to_repo(db_session, sync_service._persistent_dir)
+        assert (await sync_service.desktop_commit("initial configs")).success
+        assert (await sync_service.desktop_sync(confirm_deletes=True)).success
+
+        working_clone.remotes.origin.pull("main")
+        configs_path = Path(working_clone.working_dir) / ".bifrost" / "configs.yaml"
+        configs = yaml.safe_load(configs_path.read_text())
+        configs["configs"]["new_from_remote"] = {
+            "id": str(uuid4()),
+            "key": "new_from_remote",
+            "value": "remote",
+            "integration_id": str(integration_id),
+        }
+        configs_path.write_text(yaml.dump(configs, default_flow_style=False, sort_keys=False))
+        working_clone.index.add([".bifrost/configs.yaml"])
+        working_clone.index.commit("remote config addition")
+        working_clone.remotes.origin.push("main")
+
+        await db_session.execute(delete(Config).where(Config.id == delete_id))
+        await db_session.commit()
+        assert (await sync_service.desktop_commit("local config deletion")).success
+
+        conflict = await sync_service.desktop_sync(confirm_deletes=True)
+
+        assert conflict.success is False
+        assert conflict.pull_success is False
+        assert [item.path for item in conflict.conflicts] == [".bifrost/configs.yaml"]
+
+        resolved = await sync_service.desktop_resolve({".bifrost/configs.yaml": "ours"})
+        assert resolved.success is True
+        assert (await sync_service.desktop_sync(confirm_deletes=True)).success
+
+        manifest = read_manifest_from_dir(sync_service._persistent_dir / ".bifrost")
+        keys = {config.key for config in manifest.configs.values()}
+        assert keys == {"keep_this"}
+
     async def test_empty_repo_pull_imports_remote_state(
         self,
         db_session: AsyncSession,

@@ -28,6 +28,9 @@ export type CommitInfo = components["schemas"]["CommitInfo"];
 export type ConflictInfo = components["schemas"]["ConflictInfo"];
 export type CommitHistoryResponse =
 	components["schemas"]["CommitHistoryResponse"];
+export type GitSyncOptions = Partial<
+	Omit<components["schemas"]["SyncRequest"], "job_id">
+>;
 
 // Preflight types - used by CommitResult
 export interface PreflightIssue {
@@ -413,8 +416,8 @@ export function useFileDiff() {
  */
 export function useSync() {
 	return {
-		mutateAsync: async (jobId?: string, opts?: { confirm_deletes?: boolean }): Promise<GitJobResponse> =>
-			gitPost("/api/github/sync", jobId ?? generateUUID(), opts ? { confirm_deletes: opts.confirm_deletes } : undefined, "Failed to queue sync"),
+		mutateAsync: async (jobId?: string, opts?: GitSyncOptions): Promise<GitJobResponse> =>
+			gitPost("/api/github/sync", jobId ?? generateUUID(), opts, "Failed to queue sync"),
 		isPending: false,
 	};
 }

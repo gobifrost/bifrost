@@ -32,11 +32,13 @@ from src.models import (
     GitJobResponse,
     GitOpRequest,
     SyncRequest,
+    SyncResult,
     GitRefreshStatusResponse,
     RepoStatusResponse,
     ResolveRequest,
     ValidateTokenRequest,
 )
+from src.models.orm.platform_jobs import PlatformJob
 from src.services.github_api import GitHubAPIClient, GitHubAPIError
 from src.services.github_config import (
     delete_github_config,
@@ -705,6 +707,35 @@ async def git_sync(
 
     job_id = (request.job_id if request and request.job_id else None) or str(uuid.uuid4())
     confirm_deletes = request.confirm_deletes if request else False
+    retry_plan = None
+    if request and request.retry_job_id:
+        previous_job = await db.get(PlatformJob, request.retry_job_id)
+        if (
+            previous_job is None
+            or previous_job.organization_id != ctx.org_id
+            or previous_job.requested_by_user_id != str(user.user_id)
+        ):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Retry plan not found")
+        if previous_job.job_type != "workspace.git" or previous_job.status != "failed":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Retry plan is not from a failed workspace sync",
+            )
+        try:
+            previous_result = SyncResult.model_validate(
+                (previous_job.result or {}).get("sync_result")
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Retry plan is unavailable",
+            ) from exc
+        if not previous_result.retryable or previous_result.retry_plan is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Workspace sync is not retryable",
+            )
+        retry_plan = previous_result.retry_plan.model_dump(mode="json")
     job_id = await publish_git_operation(
         job_id=job_id,
         org_id=str(ctx.org_id) if ctx.org_id else "",
@@ -712,6 +743,7 @@ async def git_sync(
         user_email=user.email,
         op_type="git_sync",
         confirm_deletes=confirm_deletes,
+        retry_plan=retry_plan,
     )
     return GitJobResponse(job_id=job_id)
 
@@ -857,5 +889,3 @@ async def git_discard(
         paths=request.paths,
     )
     return GitJobResponse(job_id=job_id)
-
-

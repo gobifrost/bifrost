@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 
 import yaml
 from git import Repo as GitRepo
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import Settings, get_settings
@@ -745,8 +745,6 @@ class GitHubSyncService:
             if progress_fn:
                 await progress_fn("Importing entities...")
             async with self.db.begin_nested():
-                if plan.pending_deletes:
-                    await self._lock_deletion_tables()
                 entities_imported, entity_changes = await self._import_all_entities(
                     work_dir, progress_fn=progress_fn,
                 )
@@ -843,51 +841,12 @@ class GitHubSyncService:
             entity_changes=all_entity_changes,
         )
 
-    async def _lock_deletion_tables(self) -> None:
-        """Block concurrent deletion-managed writes through the confirmation commit."""
-        from src.models.orm.agents import (
-            Agent,
-            AgentDelegation,
-            AgentRole,
-            AgentTool,
-            Conversation,
-            Message,
-            MessageAttachment,
-        )
-        from src.models.orm.applications import Application
-        from src.models.orm.config import Config
-        from src.models.orm.custom_claims import CustomClaim
-        from src.models.orm.events import EventSource, EventSubscription, ScheduleSource, WebhookSource
-        from src.models.orm.external_mcp import (
-            AgentMCPConnection,
-            MCPConnection,
-            MCPConnectionTool,
-            MCPServer,
-            UserMCPCredential,
-        )
-        from src.models.orm.forms import Form, FormField, FormRole
-        from src.models.orm.integrations import Integration, IntegrationConfigSchema, IntegrationMapping
-        from src.models.orm.organizations import Organization
-        from src.models.orm.policy_rule import PolicyRule
-        from src.models.orm.tables import Table
-        from src.models.orm.users import Role
-        from src.models.orm.workflows import Workflow
-        from src.services.manifest_import import _load_file_policy_model
-
-        models = (
-            Workflow, Integration, IntegrationConfigSchema, IntegrationMapping, Config,
-            Table, _load_file_policy_model(), CustomClaim, PolicyRule, EventSource,
-            EventSubscription, ScheduleSource, WebhookSource, Form, FormField, FormRole,
-            Agent, AgentTool, AgentDelegation, AgentRole, Conversation, Message,
-            MessageAttachment, Application, MCPServer, MCPConnection,
-            MCPConnectionTool, UserMCPCredential, AgentMCPConnection, Organization, Role,
-        )
-        table_names = ", ".join(model.__tablename__ for model in models)
-        await self.db.execute(text(
-            f"LOCK TABLE {table_names} IN SHARE ROW EXCLUSIVE MODE"
-        ))
-
-    async def desktop_sync(self, job_id: str | None = None, confirm_deletes: bool = False) -> "SyncResult":
+    async def desktop_sync(
+        self,
+        job_id: str | None = None,
+        confirm_deletes: bool = False,
+        retry_plan: "WorkspaceSyncPlan | None" = None,
+    ) -> "SyncResult":
         """Prepare, validate, then conditionally apply a workspace synchronization."""
         from src.models.contracts.github import SyncResult
 
@@ -899,7 +858,7 @@ class GitHubSyncService:
         try:
             async with self.repo_manager.lock() as work_dir:
                 repo = self._open_or_init(work_dir)
-                plan = await self.prepare_desktop_sync(
+                plan = retry_plan or await self.prepare_desktop_sync(
                     work_dir, repo, progress_fn=_progress,
                 )
                 return await self.apply_desktop_sync(

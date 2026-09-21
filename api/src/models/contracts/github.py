@@ -5,6 +5,7 @@ GitHub integration contract models for Bifrost.
 from datetime import datetime
 from enum import Enum
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -314,6 +315,13 @@ class GitOpRequest(BaseModel):
 class SyncRequest(GitOpRequest):
     """Request to sync (pull + push + entity import)."""
     confirm_deletes: bool = Field(default=False, description="Confirm pending entity deletions and proceed with sync")
+    retry_job_id: UUID | None = Field(
+        default=None,
+        description=(
+            "ID of this caller's failed workspace git job whose server-stored "
+            "publication retry plan should be retried"
+        ),
+    )
 
 
 class CommitRequest(GitOpRequest):

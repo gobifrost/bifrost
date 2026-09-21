@@ -103,6 +103,7 @@ async def run_claimed_platform_job(job_id: UUID, lease_token: UUID) -> bool:
             job_id,
             lease_token,
             status="failed",
+            result=exc.result,
             error_code=exc.code,
             error_message=exc.message,
             error_retryable=exc.retryable,

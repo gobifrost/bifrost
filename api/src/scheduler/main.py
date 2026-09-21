@@ -733,7 +733,18 @@ class Scheduler:
                 elif op_type == "git_sync":
                     # Combined pull + push + entity import
                     confirm_deletes = data.get("confirm_deletes", False)
-                    op_result = await sync_service.desktop_sync(job_id=job_id, confirm_deletes=confirm_deletes)
+                    retry_plan_payload = data.get("retry_plan")
+                    retry_plan = None
+                    if retry_plan_payload is not None:
+                        from src.models.contracts.github import WorkspaceSyncPlan
+
+                        retry_plan = WorkspaceSyncPlan.model_validate(retry_plan_payload)
+                    op_result = await sync_service.desktop_sync(
+                        job_id=job_id,
+                        confirm_deletes=confirm_deletes,
+                        retry_plan=retry_plan,
+                    )
+                    data["_sync_result"] = op_result.model_dump(mode="json")
                     if op_result.needs_delete_confirmation:
                         status_str = "needs_confirmation"
                     else:

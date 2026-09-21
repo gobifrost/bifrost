@@ -29,11 +29,13 @@ class PlatformJobFailure(Exception):
         message: str,
         *,
         retryable: bool = False,
+        result: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
         self.retryable = retryable
+        self.result = result
 
 
 class PlatformJobRequiresAction(Exception):
