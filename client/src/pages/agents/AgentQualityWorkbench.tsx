@@ -362,6 +362,7 @@ function AgentQualityWorkbenchContent({
 		[runsQuery.data?.pages],
 	);
 	const findingContext = findings.find((finding) => finding.id === findingId);
+	const testCreationAgentId = findingContext?.agent_id ?? effectiveAgentId;
 	const selectedTestItems = tests.filter((test) =>
 		selectedTests.has(test.logical_test_id),
 	);
@@ -398,14 +399,18 @@ function AgentQualityWorkbenchContent({
 
 	const createTest = useMutation({
 		mutationFn: (body: Schema["AgentTestCreate"]) =>
-			agentPlatform.createAgentTest(effectiveAgentId!, body),
+			agentPlatform.createAgentTest(testCreationAgentId!, body),
 		onSuccess: async () => {
 			setSituation("");
 			setExpectedBehavior("");
 			setAdvancedJson("");
 			setIsCreatingTest(false);
 			await queryClient.invalidateQueries({
-				queryKey: ["agent-platform", "agent-tests", effectiveAgentId],
+				queryKey: [
+					"agent-platform",
+					"agent-tests",
+					testCreationAgentId,
+				],
 			});
 		},
 	});
@@ -467,7 +472,7 @@ function AgentQualityWorkbenchContent({
 	}
 
 	function submitTest() {
-		if (!effectiveAgentId) return;
+		if (!testCreationAgentId) return;
 		const advanced = parseAdvancedJson(advancedJson);
 		if (advanced.error) {
 			setAdvancedJsonError(advanced.error);
@@ -738,7 +743,7 @@ function AgentQualityWorkbenchContent({
 							}
 							latestByLogicalId={latestByLogicalId}
 							onCreateTestFromFinding={
-								effectiveAgentId
+								collection === "findings"
 									? openTestCreationFromFinding
 									: undefined
 							}

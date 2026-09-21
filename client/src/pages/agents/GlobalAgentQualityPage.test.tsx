@@ -10,6 +10,7 @@ const mockSearchFindings = vi.fn();
 const mockAgentTests = vi.fn();
 const mockLatestAgentTests = vi.fn();
 const mockReviews = vi.fn();
+const mockCreateAgentTest = vi.fn();
 const mockUseAgents = vi.fn();
 
 vi.mock("@/services/agentPlatform", () => ({
@@ -18,6 +19,7 @@ vi.mock("@/services/agentPlatform", () => ({
 		agentTests: (...args: unknown[]) => mockAgentTests(...args),
 		latestAgentTests: (...args: unknown[]) => mockLatestAgentTests(...args),
 		reviews: (...args: unknown[]) => mockReviews(...args),
+		createAgentTest: (...args: unknown[]) => mockCreateAgentTest(...args),
 	},
 }));
 
@@ -52,6 +54,8 @@ beforeEach(() => {
 	mockAgentTests.mockReset();
 	mockLatestAgentTests.mockReset();
 	mockReviews.mockReset();
+	mockCreateAgentTest.mockReset();
+	mockCreateAgentTest.mockResolvedValue({});
 	mockSearchFindings.mockResolvedValue({
 		items: [
 			{
@@ -205,6 +209,37 @@ describe("GlobalAgentQualityPage", () => {
 			await screen.findByRole("list", { name: "Findings collection" }),
 		).toBeVisible();
 		expect(screen.getAllByRole("listitem")).toHaveLength(2);
+	});
+
+	it("creates a Test from an unfiltered fleet Finding without changing the filter", async () => {
+		const { user } = renderPage("/agents/quality?collection=findings");
+
+		await user.click(
+			await screen.findByRole("button", { name: /missed escalation/i }),
+		);
+		await user.click(
+			screen.getByRole("button", { name: "Create test from finding" }),
+		);
+
+		expect(
+			await screen.findByRole("heading", { name: "Improve agent" }),
+		).toBeVisible();
+		expect(screen.getByTestId("location-probe")).toHaveTextContent(
+			"/agents/quality?collection=tests&finding=finding-1",
+		);
+		await user.type(screen.getByLabelText("Situation"), "Urgent request");
+		await user.type(
+			screen.getByLabelText("Expected behavior"),
+			"Ask before escalating",
+		);
+		await user.click(screen.getByRole("button", { name: "Create test" }));
+
+		await waitFor(() => {
+			expect(mockCreateAgentTest).toHaveBeenCalledWith(
+				"agent-1",
+				expect.objectContaining({ finding_id: "finding-1" }),
+			);
+		});
 	});
 
 	it("filters fleet Tests by one agent and inspects the selected test in place", async () => {
