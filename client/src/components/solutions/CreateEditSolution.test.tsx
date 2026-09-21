@@ -46,6 +46,8 @@ vi.mock("@/services/solutions", () => ({
 	previewInstall: vi.fn(),
 	installSolutionFromRepo: vi.fn(),
 	previewSolutionFromRepo: vi.fn(),
+	previewWorkspaceBundle: vi.fn(),
+	importWorkspaceBundle: vi.fn(),
 	updateSolution: (...a: unknown[]) => mockUpdateSolution(...a),
 }));
 
@@ -595,7 +597,7 @@ describe("CreateEditSolution — source picker", () => {
 		return { ...utils, onSaved, onClose };
 	}
 
-	it("offers From-repository and From-zip when no source is chosen", async () => {
+	it("offers managed and workspace import destinations when no source is chosen", async () => {
 		renderCreate({ kind: "create" });
 
 		const picker = await screen.findByTestId("source-picker");
@@ -604,6 +606,9 @@ describe("CreateEditSolution — source picker", () => {
 		);
 		expect(within(picker).getByTestId("source-zip")).toHaveTextContent(
 			/from a zip/i,
+		);
+		expect(within(picker).getByTestId("source-workspace")).toHaveTextContent(
+			/import into workspace/i,
 		);
 		// No empty-shell create form — no name field, no install button yet.
 		expect(screen.queryByTestId("confirm-install")).toBeNull();
@@ -624,6 +629,17 @@ describe("CreateEditSolution — source picker", () => {
 		expect(await screen.findByTestId("repo-url")).toBeInTheDocument();
 		expect(screen.getByTestId("repo-subpath")).toBeInTheDocument();
 		expect(screen.getByTestId("repo-ref")).toBeInTheDocument();
+	});
+
+	it("picking Workspace import opens the wide reviewed import session", async () => {
+		const { user } = renderCreate({ kind: "create" });
+
+		await user.click(await screen.findByTestId("source-workspace"));
+
+		expect(await screen.findByText("Review workspace import")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: /choose solution .zip/i })).toBeInTheDocument();
+		expect(screen.getByTestId("workspace-import-footer")).toBeInTheDocument();
+		expect(screen.getByTestId("solution-dialog")).toHaveClass("sm:max-w-6xl");
 	});
 });
 

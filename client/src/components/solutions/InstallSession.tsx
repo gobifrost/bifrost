@@ -12,19 +12,23 @@ const InstallContext = createContext({
 	run: (action: () => void) => action(),
 	finish: () => {},
 	pending: false,
+	setWide: (_wide: boolean) => {},
 });
 export const useInstallSession = () => useContext(InstallContext);
 export function InstallSession({
 	open,
 	onClose,
 	children,
+	wide: initialWide = false,
 }: {
 	open: boolean;
 	onClose: () => void;
 	children: ReactNode;
+	wide?: boolean;
 }) {
 	const busy = useRef(false);
 	const [pending, setPending] = useState(false);
+	const [wide, setWide] = useState(initialWide);
 	const focus = useDialogReturnFocus();
 	const run = (action: () => void) => {
 		if (busy.current) return;
@@ -37,7 +41,7 @@ export function InstallSession({
 		setPending(false);
 	};
 	return (
-		<InstallContext.Provider value={{ run, finish, pending }}>
+		<InstallContext.Provider value={{ run, finish, pending, setWide }}>
 			<Dialog
 				open={open}
 				onOpenChange={(next) => {
@@ -47,12 +51,12 @@ export function InstallSession({
 				<DialogContent
 					{...focus}
 					showCloseButton={!pending}
-					className="max-h-[90dvh] overflow-y-auto sm:max-w-lg"
+					className={wide ? "flex max-h-[90dvh] flex-col overflow-hidden sm:max-w-6xl" : "max-h-[90dvh] overflow-y-auto sm:max-w-lg"}
 					data-testid="solution-dialog"
 				>
 					<fieldset
 						disabled={pending}
-						className="contents"
+						className={wide ? "flex min-h-0 flex-1 flex-col" : "contents"}
 						aria-busy={pending}
 					>
 						{children}

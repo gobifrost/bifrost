@@ -8456,6 +8456,43 @@ export interface paths {
         patch: operations["update_claim_api_claims__name__patch"];
         trace?: never;
     };
+    "/api/solutions/import-workspace/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview a Solution archive as global workspace content
+         * @description Stage a requester-bound immutable archive and return its collision plan.
+         */
+        post: operations["preview_workspace_import_api_solutions_import_workspace_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/solutions/import-workspace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Queue a reviewed workspace bundle import */
+        post: operations["enqueue_workspace_import_api_solutions_import_workspace_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/solutions": {
         parameters: {
             query?: never;
@@ -13207,6 +13244,11 @@ export interface components {
              */
             client_secret?: string | null;
         };
+        /** Body_preview_workspace_import_api_solutions_import_workspace_preview_post */
+        Body_preview_workspace_import_api_solutions_import_workspace_preview_post: {
+            /** File */
+            file: string;
+        };
         /** Body_sdk_store_artifact_api_sdk_artifacts_post */
         Body_sdk_store_artifact_api_sdk_artifacts_post: {
             /** File */
@@ -14403,7 +14445,7 @@ export interface components {
         CommitRequest: {
             /**
              * Job Id
-             * @description Client-generated job ID (avoids WebSocket race condition)
+             * @description Client-generated platform job ID
              */
             job_id?: string | null;
             /**
@@ -15394,7 +15436,7 @@ export interface components {
         DiffRequest: {
             /**
              * Job Id
-             * @description Client-generated job ID (avoids WebSocket race condition)
+             * @description Client-generated platform job ID
              */
             job_id?: string | null;
             /**
@@ -15410,7 +15452,7 @@ export interface components {
         DiscardRequest: {
             /**
              * Job Id
-             * @description Client-generated job ID (avoids WebSocket race condition)
+             * @description Client-generated platform job ID
              */
             job_id?: string | null;
             /**
@@ -18667,30 +18709,13 @@ export interface components {
             status: string;
         };
         /**
-         * GitJobResponse
-         * @description Response when a git operation is queued as a background job.
-         */
-        GitJobResponse: {
-            /**
-             * Job Id
-             * @description Job ID for tracking progress via WebSocket
-             */
-            job_id: string;
-            /**
-             * Status
-             * @description Job status
-             * @default queued
-             */
-            status: string;
-        };
-        /**
          * GitOpRequest
-         * @description Base request for git operations. Accepts optional client-generated job_id.
+         * @description Base request for Git operations with optional durable idempotency key.
          */
         GitOpRequest: {
             /**
              * Job Id
-             * @description Client-generated job ID (avoids WebSocket race condition)
+             * @description Client-generated platform job ID
              */
             job_id?: string | null;
         };
@@ -23778,7 +23803,7 @@ export interface components {
         ResolveRequest: {
             /**
              * Job Id
-             * @description Client-generated job ID (avoids WebSocket race condition)
+             * @description Client-generated platform job ID
              */
             job_id?: string | null;
             /**
@@ -26298,7 +26323,7 @@ export interface components {
         SyncRequest: {
             /**
              * Job Id
-             * @description Client-generated job ID (avoids WebSocket race condition)
+             * @description Client-generated platform job ID
              */
             job_id?: string | null;
             /**
@@ -28438,6 +28463,81 @@ export interface components {
             issues?: components["schemas"]["ValidationIssue"][];
             /** @description Workflow metadata if valid */
             metadata?: components["schemas"]["WorkflowMetadata"] | null;
+        };
+        /** WorkspaceBundleDecision */
+        WorkspaceBundleDecision: {
+            /** Item Id */
+            item_id: string;
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "keep" | "replace";
+        };
+        /**
+         * WorkspaceBundleDiffLine
+         * @description One portable field difference shown before importing a bundle.
+         */
+        WorkspaceBundleDiffLine: {
+            /** Field */
+            field: string;
+            /** Existing */
+            existing?: unknown | null;
+            /** Incoming */
+            incoming?: unknown | null;
+        };
+        /** WorkspaceBundleImportRequest */
+        WorkspaceBundleImportRequest: {
+            /** Preview Token */
+            preview_token: string;
+            /** Decisions */
+            decisions: components["schemas"]["WorkspaceBundleDecision"][];
+        };
+        /**
+         * WorkspaceBundleItem
+         * @description One entity or source file considered by a workspace-bundle preview.
+         */
+        WorkspaceBundleItem: {
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "workflow" | "integration" | "config" | "app" | "table" | "event" | "form" | "agent" | "claim" | "policy_rule" | "file_policy" | "file";
+            /** Name */
+            name: string;
+            /**
+             * Classification
+             * @enum {string}
+             */
+            classification: "create" | "unchanged" | "conflict";
+            /** Match Key */
+            match_key?: string | null;
+            /** Source Id */
+            source_id?: string | null;
+            /** Target Id */
+            target_id?: string | null;
+            /** Diff */
+            diff?: components["schemas"]["WorkspaceBundleDiffLine"][];
+        };
+        /**
+         * WorkspaceBundlePreview
+         * @description A deterministic, staged workspace-bundle import preview.
+         */
+        WorkspaceBundlePreview: {
+            /** Preview Token */
+            preview_token: string;
+            /** Package Name */
+            package_name: string;
+            /** Package Sha256 */
+            package_sha256: string;
+            /** Items */
+            items: components["schemas"]["WorkspaceBundleItem"][];
+            /** Warnings */
+            warnings?: string[];
+            /** Conflict Count */
+            readonly conflict_count: number;
         };
         /**
          * OAuthProviderInfo
@@ -34924,12 +35024,12 @@ export interface operations {
         };
         responses: {
             /** @description Successful Response */
-            200: {
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["GitJobResponse"];
+                    "application/json": components["schemas"]["PlatformJobAccepted"];
                 };
             };
             /** @description Validation Error */
@@ -34957,12 +35057,12 @@ export interface operations {
         };
         responses: {
             /** @description Successful Response */
-            200: {
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["GitJobResponse"];
+                    "application/json": components["schemas"]["PlatformJobAccepted"];
                 };
             };
             /** @description Validation Error */
@@ -34990,12 +35090,12 @@ export interface operations {
         };
         responses: {
             /** @description Successful Response */
-            200: {
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["GitJobResponse"];
+                    "application/json": components["schemas"]["PlatformJobAccepted"];
                 };
             };
             /** @description Validation Error */
@@ -35023,12 +35123,12 @@ export interface operations {
         };
         responses: {
             /** @description Successful Response */
-            200: {
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["GitJobResponse"];
+                    "application/json": components["schemas"]["PlatformJobAccepted"];
                 };
             };
             /** @description Validation Error */
@@ -35056,12 +35156,12 @@ export interface operations {
         };
         responses: {
             /** @description Successful Response */
-            200: {
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["GitJobResponse"];
+                    "application/json": components["schemas"]["PlatformJobAccepted"];
                 };
             };
             /** @description Validation Error */
@@ -35089,12 +35189,12 @@ export interface operations {
         };
         responses: {
             /** @description Successful Response */
-            200: {
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["GitJobResponse"];
+                    "application/json": components["schemas"]["PlatformJobAccepted"];
                 };
             };
             /** @description Validation Error */
@@ -35122,12 +35222,12 @@ export interface operations {
         };
         responses: {
             /** @description Successful Response */
-            200: {
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["GitJobResponse"];
+                    "application/json": components["schemas"]["PlatformJobAccepted"];
                 };
             };
             /** @description Validation Error */
@@ -35155,12 +35255,12 @@ export interface operations {
         };
         responses: {
             /** @description Successful Response */
-            200: {
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["GitJobResponse"];
+                    "application/json": components["schemas"]["PlatformJobAccepted"];
                 };
             };
             /** @description Validation Error */
@@ -43811,6 +43911,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CustomClaim"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preview_workspace_import_api_solutions_import_workspace_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_preview_workspace_import_api_solutions_import_workspace_preview_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceBundlePreview"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    enqueue_workspace_import_api_solutions_import_workspace_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceBundleImportRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformJobAccepted"];
                 };
             };
             /** @description Validation Error */

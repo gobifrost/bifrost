@@ -33,6 +33,8 @@ import {
 	listSolutions,
 	previewInstall,
 	previewSolutionFromRepo,
+	previewWorkspaceBundle,
+	importWorkspaceBundle,
 	putSolutionReadme,
 	syncSolution,
 	updateSelectedSolutionAppSdks,
@@ -50,6 +52,26 @@ beforeEach(() => {
 });
 
 describe("solutions service", () => {
+	it("previews a workspace bundle as multipart content", async () => {
+		mockAuthFetch.mockResolvedValue({ ok: true, json: async () => ({ items: [] }) });
+
+		await previewWorkspaceBundle(new File(["zip"], "bundle.zip"));
+
+		expect(mockAuthFetch).toHaveBeenCalledWith(
+			"/api/solutions/import-workspace/preview",
+			expect.objectContaining({ method: "POST" }),
+		);
+	});
+
+	it("enqueues reviewed workspace decisions", async () => {
+		mockPost.mockResolvedValue({ data: { job_id: "job-1", status: "queued", reused: false } });
+
+		await importWorkspaceBundle({ preview_token: "preview-1", decisions: [] });
+
+		expect(mockPost).toHaveBeenCalledWith("/api/solutions/import-workspace", {
+			body: { preview_token: "preview-1", decisions: [] },
+		});
+	});
 	it("lists solutions", async () => {
 		mockGet.mockResolvedValue({ data: { solutions: [] } });
 

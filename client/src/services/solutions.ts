@@ -49,6 +49,11 @@ export type SolutionSdkUpdateResponse =
 	components["schemas"]["SolutionSdkUpdateResponse"];
 export type SolutionSdkUpdateBatchResponse =
 	components["schemas"]["SolutionSdkUpdateBatchResponse"];
+export type WorkspaceBundlePreview =
+	components["schemas"]["WorkspaceBundlePreview"];
+export type WorkspaceBundleImportRequest =
+	components["schemas"]["WorkspaceBundleImportRequest"];
+export type PlatformJobAccepted = components["schemas"]["PlatformJobAccepted"];
 
 interface RequestOptions {
 	signal?: AbortSignal;
@@ -598,6 +603,35 @@ async function parseUploadError(
 		return body.detail;
 	}
 	return fallback;
+}
+
+/** Stage and classify a Solution archive for an explicit workspace import. */
+export async function previewWorkspaceBundle(
+	file: File,
+): Promise<WorkspaceBundlePreview> {
+	const body = new FormData();
+	body.append("file", file);
+	const response = await authFetch("/api/solutions/import-workspace/preview", {
+		method: "POST",
+		body,
+	});
+	if (!response.ok) {
+		throw new Error(
+			await parseUploadError(response, "Failed to preview workspace import"),
+		);
+	}
+	return response.json();
+}
+
+/** Queue a reviewed workspace import through the shared PlatformJob transport. */
+export async function importWorkspaceBundle(
+	request: WorkspaceBundleImportRequest,
+): Promise<PlatformJobAccepted> {
+	const { data, error } = await apiClient.POST("/api/solutions/import-workspace", {
+		body: request,
+	});
+	if (error) throw new Error(getErrorMessage(error, "Failed to start workspace import"));
+	return data;
 }
 
 /**

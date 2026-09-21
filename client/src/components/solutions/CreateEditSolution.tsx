@@ -40,6 +40,7 @@ import {
 	FileArchive,
 	FileCode,
 	GitBranch,
+	GitCompareArrows,
 	Loader2,
 	Plug,
 	Plus,
@@ -77,13 +78,18 @@ import {
 	installSolutionFromRepo,
 	previewInstall,
 	previewSolutionFromRepo,
+	previewWorkspaceBundle,
+	importWorkspaceBundle,
 	updateSolution,
 	type Solution,
 	type SolutionInstallPreview,
 	type SolutionRepoPreviewRequest,
 	type SolutionUpdate,
 	type SolutionUpgradeDiff,
+	type WorkspaceBundlePreview,
 } from "@/services/solutions";
+import { observePlatformJob } from "@/services/platformJobs";
+import { WorkspaceImportReview } from "./WorkspaceImportReview";
 import type { components } from "@/lib/v1";
 
 /** Pre-filled From-repository fields (e.g. from a `?repo=` deep link). */
@@ -642,11 +648,13 @@ function CreateDispatch({
 	onSaved: (solution: Solution) => void;
 }) {
 	const intent = mode.intent ?? "install";
-	const initialSource: "repo" | "zip" | null =
+	const session = useInstallSession();
+	const initialSource: "repo" | "zip" | "workspace" | null =
 		intent === "reactivate"
 			? "zip"
 			: (mode.source ?? (mode.repo ? "repo" : mode.file ? "zip" : null));
-	const [source, setSource] = useState<"repo" | "zip" | null>(initialSource);
+	const [source, setSource] = useState<"repo" | "zip" | "workspace" | null>(initialSource);
+	useEffect(() => session.setWide(source === "workspace"), [session, source]);
 
 	const orgId = mode.organizationId ?? null;
 	const lockOrganization = mode.organizationId !== undefined;
@@ -664,6 +672,9 @@ function CreateDispatch({
 			/>
 		);
 	}
+	if (source === "workspace") {
+		return <WorkspaceImportBody onClose={onClose} />;
+	}
 	return (
 		<CreateBody
 			initialFile={mode.file ?? null}
@@ -676,16 +687,63 @@ function CreateDispatch({
 	);
 }
 
+function WorkspaceImportBody({ onClose }: { onClose: () => void }) {
+	const session = useInstallSession();
+	const queryClient = useQueryClient();
+	const inputRef = useRef<HTMLInputElement>(null);
+	const [file, setFile] = useState<File | null>(null);
+	const [preview, setPreview] = useState<WorkspaceBundlePreview | null>(null);
+	const [decisions, setDecisions] = useState<Record<string, "keep" | "replace">>({});
+	const [error, setError] = useState<string | null>(null);
+	const [loading, setLoading] = useState(false);
+	const conflicts = preview?.items.filter((item) => item.classification === "conflict") ?? [];
+	const complete = conflicts.every((item) => decisions[item.id]);
+
+	const load = async (next: File) => {
+		setFile(next); setPreview(null); setDecisions({}); setError(null); setLoading(true);
+		try { setPreview(await previewWorkspaceBundle(next)); }
+		catch (cause) { setError(cause instanceof Error ? cause.message : "Failed to preview workspace import"); }
+		finally { setLoading(false); }
+	};
+	const start = async () => {
+		if (!preview || !complete) return;
+		try {
+			const accepted = await importWorkspaceBundle({
+				preview_token: preview.preview_token,
+				decisions: conflicts.map((item) => ({ item_id: item.id, action: decisions[item.id] })),
+			});
+			toast.success("Workspace import queued", { description: "Progress is available in Notifications." });
+			const observation = observePlatformJob(String(accepted.job_id), (job) => {
+				if (job.status === "succeeded") {
+					queryClient.invalidateQueries({ queryKey: ["github", "repo-status"] });
+					queryClient.invalidateQueries({ queryKey: ["solutions"] });
+				}
+			});
+			void observation.promise.catch(() => undefined);
+			onClose();
+		} catch (cause) { setError(cause instanceof Error ? cause.message : "Failed to start workspace import"); }
+		finally { session.finish(); }
+	};
+
+	return <>
+		<DialogHeader className="shrink-0 px-6 pt-6"><DialogTitle>Review workspace import</DialogTitle><DialogDescription>Choose which destination definitions to keep or replace. Creates and unchanged items need no decision.</DialogDescription></DialogHeader>
+		<input ref={inputRef} type="file" accept=".zip,application/zip" className="hidden" onChange={(event) => { const next = event.target.files?.[0]; if (next) void load(next); event.target.value = ""; }} />
+		{!file ? <div className="flex min-h-0 flex-1 items-center justify-center p-6"><Button type="button" variant="outline" className="min-h-24 w-full border-dashed" onClick={() => inputRef.current?.click()}><Upload className="mr-2 size-4" />Choose Solution .zip</Button></div> : loading ? <div className="flex min-h-0 flex-1 items-center justify-center gap-2"><Loader2 className="size-4 animate-spin" />Reading package…</div> : preview ? <WorkspaceImportReview preview={preview} decisions={decisions} onDecisionsChange={setDecisions} /> : <div className="flex-1 p-6"><InstallFailure message={error ?? "Could not preview this package."} /></div>}
+		{error && preview && <div className="px-6"><InstallFailure message={error} /></div>}
+		<DialogFooter data-testid="workspace-import-footer" className="shrink-0 border-t bg-muted/20 px-6 py-4 sm:justify-between"><p className="mr-auto text-xs text-muted-foreground">{preview ? `${conflicts.filter((item) => decisions[item.id]).length} of ${conflicts.length} conflicts resolved · import creates uncommitted Git changes` : ""}</p><div className="flex gap-2"><Button type="button" variant="outline" onClick={onClose}>Cancel</Button><Button type="button" disabled={!preview || !complete || session.pending} onClick={() => session.run(() => void start())}>Start import job</Button></div></DialogFooter>
+	</>;
+}
+
 /** The two install sources — a repository (marketplace) or a local zip. */
 function SourcePicker({
 	intent,
 	onPick,
 }: {
 	intent: CreateSolutionIntent;
-	onPick: (s: "repo" | "zip") => void;
+	onPick: (s: "repo" | "zip" | "workspace") => void;
 }) {
 	const options: {
-		source: "repo" | "zip";
+		source: "repo" | "zip" | "workspace";
 		icon: typeof GitBranch;
 		title: string;
 		description: string;
@@ -698,6 +756,13 @@ function SourcePicker({
 			description:
 				"Install from a GitHub repository — the marketplace path.",
 			testid: "source-repo",
+		},
+		{
+			source: "workspace",
+			icon: GitCompareArrows,
+			title: "Import into workspace",
+			description: "Bring definitions and source into the global workspace with reviewed collision decisions.",
+			testid: "source-workspace",
 		},
 		{
 			source: "zip",
