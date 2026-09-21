@@ -15,6 +15,11 @@ import type { components } from "@/lib/v1";
 // =============================================================================
 
 export type GitHubConnectRequest = components["schemas"]["GitHubConfigRequest"];
+export type GitConnectPreviewRequest =
+	components["schemas"]["GitConnectPreviewRequest"];
+export type GitConnectPreview = components["schemas"]["GitConnectPreview"];
+export type GitConnectRequest = components["schemas"]["GitConnectRequest"];
+export type PlatformJobAccepted = components["schemas"]["PlatformJobAccepted"];
 export type GitHubConfigResponse =
 	components["schemas"]["GitHubConfigResponse"];
 export type GitHubRepoInfo = components["schemas"]["GitHubRepoInfo"];
@@ -436,4 +441,33 @@ export async function listGitHubBranches(repoFullName: string) {
 
 	const data = response.data as { branches: GitHubBranchInfo[] };
 	return data.branches;
+}
+
+/** Compare a selected repository with the detached workspace before connecting it. */
+export async function previewGitHubConnect(
+	body: GitConnectPreviewRequest,
+): Promise<GitConnectPreview> {
+	const { data, error } = await apiClient.POST(
+		"/api/github/connect/preview",
+		{
+			body,
+		},
+	);
+	if (error || !data) {
+		throw new Error("Failed to preview the workspace connection");
+	}
+	return data;
+}
+
+/** Queue the reviewed first-connect plan through the shared PlatformJob transport. */
+export async function enqueueGitHubConnect(
+	body: GitConnectRequest,
+): Promise<PlatformJobAccepted> {
+	const { data, error } = await apiClient.POST("/api/github/connect", {
+		body,
+	});
+	if (error || !data) {
+		throw new Error("Failed to queue the workspace connection");
+	}
+	return data;
 }
