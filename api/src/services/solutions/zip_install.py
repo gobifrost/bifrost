@@ -160,6 +160,28 @@ class PreviewResult:
     requires_password: bool = False
 
 
+MAX_SOLUTION_ARCHIVE_BYTES = 512 * 1024 * 1024
+MAX_SOLUTION_ARCHIVE_ENTRIES = 10_000
+MAX_SOLUTION_ENTRY_BYTES = 128 * 1024 * 1024
+MAX_SOLUTION_UNCOMPRESSED_BYTES = 1024 * 1024 * 1024
+MAX_SOLUTION_COMPRESSION_RATIO = 100
+
+
+def _validate_zip_members(z: zipfile.ZipFile) -> None:
+    infos = z.infolist()
+    if len(infos) > MAX_SOLUTION_ARCHIVE_ENTRIES:
+        raise ValueError("Solution archive has too many entries")
+    total = 0
+    for info in infos:
+        if info.file_size > MAX_SOLUTION_ENTRY_BYTES:
+            raise ValueError(f"Solution archive entry is too large: {info.filename}")
+        if info.compress_size and info.file_size / info.compress_size > MAX_SOLUTION_COMPRESSION_RATIO:
+            raise ValueError(f"Solution archive compression ratio is unsafe: {info.filename}")
+        total += info.file_size
+        if total > MAX_SOLUTION_UNCOMPRESSED_BYTES:
+            raise ValueError("Solution archive expands beyond the allowed size")
+
+
 def _safe_extract(data: bytes, dest: str) -> None:
     """Extract ``data`` (zip bytes) into ``dest``, rejecting zip-slip members.
 
@@ -169,6 +191,7 @@ def _safe_extract(data: bytes, dest: str) -> None:
     """
     dest_real = os.path.realpath(dest)
     with zipfile.ZipFile(io.BytesIO(data)) as z:
+        _validate_zip_members(z)
         for member in z.namelist():
             target = os.path.realpath(os.path.join(dest, member))
             if not (target == dest_real or target.startswith(dest_real + os.sep)):
@@ -179,7 +202,10 @@ def _safe_extract(data: bytes, dest: str) -> None:
 def _safe_extract_path(zip_path: Path, dest: str) -> None:
     """Extract a zip file from disk, rejecting zip-slip members."""
     dest_real = os.path.realpath(dest)
+    if zip_path.stat().st_size > MAX_SOLUTION_ARCHIVE_BYTES:
+        raise ValueError("Solution archive exceeds the compressed upload limit")
     with zipfile.ZipFile(zip_path) as z:
+        _validate_zip_members(z)
         for member in z.namelist():
             target = os.path.realpath(os.path.join(dest, member))
             if not (target == dest_real or target.startswith(dest_real + os.sep)):

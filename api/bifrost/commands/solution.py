@@ -3831,10 +3831,11 @@ def _workspace_import_decisions(
 @click.option("--keep-all", is_flag=True, help="Keep every conflicting destination item.")
 @click.option("--replace-all", is_flag=True, help="Replace every conflicting destination item.")
 @click.option("--decisions", type=click.Path(exists=True, dir_okay=False, path_type=pathlib.Path))
+@click.option("--preview", "preview_only", is_flag=True, help="Print the staged collision preview without queuing an import.")
 @click.option("--json", "json_output", is_flag=True, help="Emit raw preview and terminal job JSON.")
 def import_workspace_cmd(
     archive: pathlib.Path, keep_all: bool, replace_all: bool,
-    decisions: pathlib.Path | None, json_output: bool,
+    decisions: pathlib.Path | None, preview_only: bool, json_output: bool,
 ) -> None:
     """Preview, explicitly decide conflicts, and queue a workspace import."""
     async def _run() -> dict[str, Any]:
@@ -3847,6 +3848,8 @@ def import_workspace_cmd(
         if response.status_code != 200:
             raise click.ClickException(f"Workspace preview failed: {response.status_code} {response.text}")
         preview = response.json()
+        if preview_only:
+            return {"preview": preview}
         if not json_output:
             click.echo("Warning: package cohesion may change in workspace scope; review references and run compatibility checks.")
         selected = _workspace_import_decisions(
@@ -3870,6 +3873,8 @@ def import_workspace_cmd(
     result = asyncio.run(_run())
     if json_output:
         click.echo(json.dumps(result, default=str))
+    elif preview_only:
+        click.echo("Workspace import preview complete; no changes were queued.")
     else:
         click.echo("Workspace import completed with uncommitted workspace changes; review references and run compatibility checks before committing.")
 
