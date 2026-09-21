@@ -45,6 +45,7 @@ _CLAIMS_WARNING = (
 _ROLES_WARNING = (
     "Role bindings are environment-specific and were not imported; existing destination role assignments are preserved."
 )
+_FILE_LOOKUP_BATCH_SIZE = 100
 
 
 @lru_cache(maxsize=1)
@@ -197,9 +198,22 @@ class WorkspaceBundlePlanner:
         return self._build_plan(projection, {}, existing_file_hashes or {})
 
     async def plan(self, projection: SolutionPackageWorkspaceProjection) -> PlannedWorkspaceBundle:
+        incoming_paths = self._incoming_file_paths(projection)
         return self._build_plan(
-            projection, await self._prefetch_existing(), await self._prefetch_existing_file_hashes()
+            projection, await self._prefetch_existing(),
+            await self._prefetch_existing_file_hashes(incoming_paths),
         )
+
+    @staticmethod
+    def _incoming_file_paths(projection: SolutionPackageWorkspaceProjection) -> list[str]:
+        if projection.work_dir is None:
+            return []
+        return [
+            path.relative_to(projection.work_dir).as_posix()
+            for path in iter_repo_files(projection.work_dir)
+            if path.relative_to(projection.work_dir).as_posix() != "bifrost.solution.yaml"
+            and _is_importable_source_file(path.relative_to(projection.work_dir).as_posix())
+        ]
 
     def _build_plan(
         self,
@@ -307,18 +321,27 @@ class WorkspaceBundlePlanner:
                 result[(kind, key)] = (row.id, {})
         return result
 
-    async def _prefetch_existing_file_hashes(self) -> dict[str, str | None]:
+    async def _prefetch_existing_file_hashes(self, incoming_paths: list[str]) -> dict[str, str | None]:
         from src.services.repo_storage import RepoStorage
+        from itertools import batched
 
-        destination_paths: dict[str, str | None] = {
-            path: None for path in await RepoStorage().list()
-        }
+        destination_paths: dict[str, str | None] = {}
+        repo = RepoStorage()
         if self.db is None:
+            for paths in batched(incoming_paths, _FILE_LOOKUP_BATCH_SIZE):
+                for path in paths:
+                    if await repo.exists(path):
+                        destination_paths[path] = None
             return destination_paths
         from src.models.orm.file_index import FileIndex
 
-        rows = await self.db.execute(select(FileIndex.path, FileIndex.content_hash))
-        destination_paths.update({
-            path: content_hash for path, content_hash in rows.all() if content_hash
-        })
+        for paths in batched(incoming_paths, _FILE_LOOKUP_BATCH_SIZE):
+            batch = list(paths)
+            rows = await self.db.execute(
+                select(FileIndex.path, FileIndex.content_hash).where(FileIndex.path.in_(batch))
+            )
+            destination_paths.update({path: content_hash for path, content_hash in rows.all()})
+            for path in batch:
+                if path not in destination_paths and await repo.exists(path):
+                    destination_paths[path] = None
         return destination_paths

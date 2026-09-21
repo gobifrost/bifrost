@@ -91,6 +91,17 @@ class RepoStorage:
             key = self._repo_key(path)
             await client.delete_object(Bucket=self._bucket, Key=key)
 
+    async def exists(self, path: str) -> bool:
+        """Return whether one _repo path exists without listing the workspace."""
+        async with self._get_client() as client:
+            try:
+                await client.head_object(Bucket=self._bucket, Key=self._repo_key(path))
+                return True
+            except client.exceptions.ClientError as exc:
+                if exc.response.get("Error", {}).get("Code") in {"404", "NoSuchKey", "NotFound"}:
+                    return False
+                raise
+
     async def list(self, prefix: str = "") -> list[str]:
         """List files in _repo/ with optional sub-prefix. Returns relative paths."""
         async with self._get_client() as client:

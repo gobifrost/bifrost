@@ -3820,9 +3820,19 @@ def _workspace_import_decisions(
         raise click.ClickException("Use --keep-all, --replace-all, or --decisions for noninteractive workspace imports.")
     click.echo("Warning: workspace import creates uncommitted changes; review references and run compatibility checks before committing.")
     decisions: list[dict[str, str]] = []
+    remaining_action: str | None = None
     for item in conflicts:
-        choice = click.prompt(f"{item['kind']} {item['name']} [k]eep/[r]eplace", type=click.Choice(["k", "r"]))
-        decisions.append({"item_id": item["id"], "action": "keep" if choice == "k" else "replace"})
+        choice = remaining_action or click.prompt(
+            f"{item['kind']} {item['name']} [k]eep/[r]eplace/[K]eep all/[R]eplace all",
+            type=click.Choice(["k", "r", "K", "R"]),
+        )
+        if choice == "K":
+            remaining_action = "keep"
+            choice = "keep"
+        elif choice == "R":
+            remaining_action = "replace"
+            choice = "replace"
+        decisions.append({"item_id": item["id"], "action": "keep" if choice in {"k", "keep"} else "replace"})
     return decisions
 
 
