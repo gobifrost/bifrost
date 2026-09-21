@@ -20,8 +20,10 @@ vi.mock("@/services/websocket", () => ({
 		}),
 	},
 }));
-vi.mock("@/services/platformJobs", () => ({
-	getPlatformJob: mocks.getPlatformJob,
+vi.mock("@/lib/api-client", () => ({
+	apiClient: {
+		GET: mocks.getPlatformJob,
+	},
 }));
 
 import { runGitOp } from "./runGitOperation";
@@ -54,7 +56,7 @@ function job(overrides: Partial<PlatformJobUpdate> = {}): PlatformJobUpdate {
 describe("runGitOp", () => {
 	it("subscribes before queueing and resolves a terminal platform-job update", async () => {
 		mocks.callbacks.clear();
-		mocks.getPlatformJob.mockResolvedValue(job());
+		mocks.getPlatformJob.mockResolvedValue({ data: job() });
 		const queue = vi.fn(async (jobId: string) => {
 			expect(mocks.callbacks.has(jobId)).toBe(true);
 			return { job_id: jobId, status: "queued" };
@@ -67,14 +69,30 @@ describe("runGitOp", () => {
 		);
 
 		await expect(resultPromise).resolves.toEqual({ success: true });
-		expect(mocks.getPlatformJob).toHaveBeenCalledWith("requested-job");
+		expect(mocks.getPlatformJob).toHaveBeenCalledWith(
+			"/api/platform-jobs/{job_id}",
+			{ params: { path: { job_id: "requested-job" } } },
+		);
 	});
 
 	it("uses the status snapshot when a fast job finishes before its update arrives", async () => {
 		mocks.callbacks.clear();
-		mocks.getPlatformJob.mockResolvedValue(
-			job({ status: "succeeded", result: { success: true } }),
-		);
+		mocks.getPlatformJob.mockResolvedValue({
+			data: job({ status: "succeeded", result: { success: true } }),
+		});
+
+		await expect(
+			runGitOp(async () => ({ job_id: "requested-job", status: "queued" }), "status"),
+		).resolves.toEqual({ success: true });
+	});
+
+	it("settles from a retried shared snapshot after a missed terminal update", async () => {
+		mocks.callbacks.clear();
+		mocks.getPlatformJob
+			.mockRejectedValueOnce(new Error("temporary status failure"))
+			.mockResolvedValueOnce({
+				data: job({ status: "succeeded", result: { success: true } }),
+			});
 
 		await expect(
 			runGitOp(async () => ({ job_id: "requested-job", status: "queued" }), "status"),

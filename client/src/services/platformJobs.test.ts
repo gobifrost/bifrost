@@ -10,7 +10,12 @@ vi.mock("@/lib/api-client", () => ({
 	},
 }));
 
-import { cancelPlatformJob, getPlatformJob, getPlatformJobs } from "./platformJobs";
+import {
+	cancelPlatformJob,
+	getPlatformJob,
+	getPlatformJobs,
+	observePlatformJob,
+} from "./platformJobs";
 
 describe("platform jobs service", () => {
 	beforeEach(() => {
@@ -83,5 +88,27 @@ describe("platform jobs service", () => {
 		await expect(getPlatformJob("job-1")).rejects.toThrow(
 			"Failed to load platform job",
 		);
+	});
+
+	it("retries a transient snapshot failure until a terminal shared job update", async () => {
+		vi.useFakeTimers();
+		mockGet
+			.mockResolvedValueOnce({ error: { detail: "temporarily unavailable" } })
+			.mockResolvedValueOnce({
+				data: { id: "job-1", status: "succeeded", result: { success: true } },
+			});
+
+		const observed: Array<{ status: string }> = [];
+		const observation = observePlatformJob("job-1", (job) => observed.push(job));
+		await vi.advanceTimersByTimeAsync(250);
+
+		await expect(observation.promise).resolves.toEqual({
+			id: "job-1",
+			status: "succeeded",
+			result: { success: true },
+		});
+		expect(observed).toEqual([{ id: "job-1", status: "succeeded", result: { success: true } }]);
+		observation.cancel();
+		vi.useRealTimers();
 	});
 });

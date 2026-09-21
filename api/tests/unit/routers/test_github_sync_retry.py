@@ -8,8 +8,30 @@ import pytest
 from fastapi import HTTPException
 
 from src.models.contracts.github import SyncRequest, SyncResult, WorkspaceSyncPlan
+from src.models.contracts.platform_jobs import PlatformJobAccepted
 from src.models.orm.platform_jobs import PlatformJob
 from src.routers import github
+
+
+def test_git_operation_routes_explicitly_return_accepted_platform_jobs() -> None:
+    """Every Git enqueue endpoint documents the shared async HTTP contract."""
+    operation_paths = {
+        "/api/github/fetch",
+        "/api/github/commit",
+        "/api/github/sync",
+        "/api/github/abort-merge",
+        "/api/github/changes",
+        "/api/github/resolve",
+        "/api/github/diff",
+        "/api/github/discard",
+    }
+    routes = {route.path: route for route in github.router.routes}
+
+    assert set(routes).issuperset(operation_paths)
+    for path in operation_paths:
+        route = routes[path]
+        assert route.status_code == 202
+        assert route.response_model is PlatformJobAccepted
 
 
 class _Db:

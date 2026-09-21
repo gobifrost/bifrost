@@ -106,21 +106,6 @@ export interface CommitResult {
 	entity_changes?: EntityChange[];
 }
 
-export interface PullResult {
-	success: boolean;
-	pulled: number;
-	commit_sha?: string | null;
-	conflicts: MergeConflict[];
-	error?: string | null;
-}
-
-export interface PushResult {
-	success: boolean;
-	commit_sha?: string | null;
-	pushed_commits: number;
-	error?: string | null;
-}
-
 export interface ResolveResult {
 	success: boolean;
 	pulled: number;
@@ -339,28 +324,6 @@ export function useCommit() {
 	return {
 		mutateAsync: async (message: string, jobId?: string): Promise<GitJobResponse> =>
 			gitPost("/api/github/commit", jobId ?? generateUUID(), { message }, "Failed to queue commit"),
-		isPending: false,
-	};
-}
-
-/**
- * Queue a git pull operation - returns job_id for WebSocket tracking
- */
-export function usePull() {
-	return {
-		mutateAsync: async (jobId?: string): Promise<GitJobResponse> =>
-			gitPost("/api/github/pull", jobId ?? generateUUID(), undefined, "Failed to queue pull"),
-		isPending: false,
-	};
-}
-
-/**
- * Queue a git push operation - returns job_id for WebSocket tracking
- */
-export function usePush() {
-	return {
-		mutateAsync: async (jobId?: string): Promise<GitJobResponse> =>
-			gitPost("/api/github/push", jobId ?? generateUUID(), undefined, "Failed to queue push"),
 		isPending: false,
 	};
 }

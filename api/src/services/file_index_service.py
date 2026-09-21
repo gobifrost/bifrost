@@ -26,6 +26,11 @@ TEXT_EXTENSIONS = frozenset({
     ".jsx", ".css", ".html", ".xml", ".sql", ".sh",
 })
 
+# Search is intentionally a bounded projection of workspace content, not an
+# alternate source of truth. Oversized text stays in repository storage but is
+# omitted from PostgreSQL search so sync/import cannot materialize it in a job.
+MAX_INDEXABLE_TEXT_BYTES = 8 * 1024 * 1024
+
 
 def _is_text_file(path: str) -> bool:
     """Check if a file should be indexed based on extension."""
@@ -53,6 +58,10 @@ class FileIndexService:
 
         # Only index text files
         if _is_text_file(path):
+            if len(content) > MAX_INDEXABLE_TEXT_BYTES:
+                logger.info("Skipping oversized text file in search index: %s", path)
+                await self.db.execute(delete(FileIndex).where(FileIndex.path == path))
+                return content_hash
             try:
                 content_str = content.decode("utf-8")
             except UnicodeDecodeError:
@@ -96,5 +105,4 @@ class FileIndexService:
             )
         )
         return [{"path": row.path, "content": row.content} for row in result.all()]
-
 

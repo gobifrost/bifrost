@@ -683,6 +683,7 @@ async def get_commits(
 @router.post(
     "/fetch",
     response_model=PlatformJobAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
     summary="Queue git fetch",
     description="Queue a git fetch operation. Results via WebSocket.",
 )
@@ -709,6 +710,7 @@ async def git_fetch(
 @router.post(
     "/commit",
     response_model=PlatformJobAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
     summary="Queue git commit",
     description="Queue a git commit operation (local only, no push).",
 )
@@ -736,6 +738,7 @@ async def git_commit(
 @router.post(
     "/sync",
     response_model=PlatformJobAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
     summary="Queue sync (pull + push)",
     description="Queue a combined sync: pull remote changes, push local commits, import entities. Results via WebSocket.",
 )
@@ -797,6 +800,7 @@ async def git_sync(
 @router.post(
     "/abort-merge",
     response_model=PlatformJobAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
     summary="Abort merge",
     description="Abort an in-progress merge, returning to pre-pull state.",
 )
@@ -823,6 +827,7 @@ async def git_abort_merge(
 @router.post(
     "/changes",
     response_model=PlatformJobAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
     summary="Queue working tree status",
     description="Queue a working tree status check.",
 )
@@ -849,6 +854,7 @@ async def git_changes(
 @router.post(
     "/resolve",
     response_model=PlatformJobAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
     summary="Queue conflict resolution",
     description="Queue conflict resolution after a failed pull.",
 )
@@ -876,6 +882,7 @@ async def git_resolve(
 @router.post(
     "/diff",
     response_model=PlatformJobAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
     summary="Queue file diff",
     description="Queue a file diff operation.",
 )
@@ -903,6 +910,7 @@ async def git_diff(
 @router.post(
     "/discard",
     response_model=PlatformJobAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
     summary="Discard working tree changes",
     description="Discard uncommitted changes for specific files (git checkout -- <path>).",
 )

@@ -1334,7 +1334,7 @@ class GitHubSyncService:
         from sqlalchemy.dialects.postgresql import insert
 
         from src.models.orm.file_index import FileIndex
-        from src.services.file_index_service import _is_text_file
+        from src.services.file_index_service import MAX_INDEXABLE_TEXT_BYTES, _is_text_file
 
         files = iter_tree_metadata(work_dir)
         repo_paths: set[str] = set()
@@ -1373,6 +1373,12 @@ class GitHubSyncService:
             rel_path = entry.path
             repo_paths.add(rel_path)
             if not _is_text_file(rel_path):
+                continue
+            if entry.size > MAX_INDEXABLE_TEXT_BYTES:
+                # Search indexing is a bounded projection. Delete a prior
+                # smaller-file entry so searches cannot return stale content,
+                # without loading the oversized repository file into memory.
+                await self.db.execute(delete(FileIndex).where(FileIndex.path == rel_path))
                 continue
             try:
                 content_str = (work_dir / rel_path).read_text(encoding="utf-8")

@@ -28,7 +28,7 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from src.config import get_settings
-from src.core.database import init_db, close_db, get_db_context
+from src.core.database import init_db, close_db
 from src.jobs.schedulers.cron_scheduler import process_schedule_sources
 from src.jobs.schedulers.execution_cleanup import cleanup_stuck_executions
 from src.jobs.schedulers.platform_jobs import platform_job_worker_loop

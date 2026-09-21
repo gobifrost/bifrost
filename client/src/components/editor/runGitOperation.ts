@@ -1,5 +1,5 @@
 import { generateUUID } from "@/lib/uuid";
-import { getPlatformJob } from "@/services/platformJobs";
+import { observePlatformJob, type PlatformJobObservation } from "@/services/platformJobs";
 import {
 	webSocketService,
 	type PlatformJobUpdate,
@@ -55,9 +55,11 @@ export async function runGitOp<T>(
 	return new Promise<T>((resolve, reject) => {
 		let settled = false;
 		const unsubscribers: Array<() => void> = [];
+		let observation: PlatformJobObservation | undefined;
 
 		const cleanup = () => {
 			for (const unsubscribe of unsubscribers) unsubscribe();
+			observation?.cancel();
 		};
 		const settle = (callback: () => void) => {
 			if (settled) return;
@@ -82,15 +84,13 @@ export async function runGitOp<T>(
 		// between enqueue and observation.
 		subscribe(requestedJobId);
 		void queueFn(requestedJobId)
-			.then(async (accepted) => {
+			.then((accepted) => {
 				onQueued?.(accepted.job_id);
 				if (accepted.job_id !== requestedJobId) subscribe(accepted.job_id);
-				try {
-					handleUpdate(await getPlatformJob(accepted.job_id));
-				} catch {
-					// The subscribed notification remains authoritative if the
-					// one-shot status snapshot is transiently unavailable.
-				}
+				observation = observePlatformJob(accepted.job_id, handleUpdate);
+				void observation.promise.catch((error: unknown) => {
+					settle(() => reject(error));
+				});
 			})
 			.catch((error: unknown) => {
 				settle(() => reject(error));

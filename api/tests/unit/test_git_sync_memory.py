@@ -87,3 +87,23 @@ def test_file_indexing_batches_large_changed_text_files(tmp_path: Path) -> None:
     # batch would retain all 128 MiB of changed text before writing it.
     assert execute_calls > 2
     assert peak_delta < 96 * MIB
+
+
+@pytest.mark.slow
+def test_file_index_skips_sparse_huge_text_file_without_reading_it(tmp_path: Path) -> None:
+    """An oversized text path is de-indexed without materializing its bytes."""
+    with (tmp_path / "huge.txt").open("wb") as huge_file:
+        huge_file.truncate(512 * MIB)
+
+    context = multiprocessing.get_context("spawn")
+    queue = context.Queue()
+    process = context.Process(target=_index_text_files_peak_rss, args=(str(tmp_path), queue))
+    process.start()
+    process.join(timeout=90)
+
+    assert process.exitcode == 0
+    execute_calls, peak_delta = queue.get(timeout=5)
+    # One prefetch and one de-index query; loading the sparse file would add
+    # hundreds of MiB to the child process RSS.
+    assert execute_calls == 2
+    assert peak_delta < 96 * MIB
