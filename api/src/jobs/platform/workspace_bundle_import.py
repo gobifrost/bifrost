@@ -19,7 +19,11 @@ from src.core.database import get_db_context
 from src.core.repo_dirty import mark_repo_dirty
 from src.services.file_index_service import FileIndexService
 from src.services.repo_sync_writer import RepoSyncWriter
-from src.services.solutions.workspace_bundle_import import WorkspaceBundleImportResult, WorkspaceBundleImporter
+from src.services.solutions.workspace_bundle_import import (
+    WorkspaceBundleDecisionError,
+    WorkspaceBundleImportResult,
+    WorkspaceBundleImporter,
+)
 from src.services.solutions.workspace_bundle_plan import (
     SolutionPackageWorkspaceProjection,
     WorkspaceBundlePlanner,
@@ -135,6 +139,7 @@ async def run_workspace_bundle_import(
             _safe_extract_path(archive, str(workspace))
             reviewed_preview = WorkspaceBundlePreview.model_validate(metadata["preview"])
             reviewed_file_hashes = metadata["file_hashes"]
+            expected_destination_hashes = metadata["destination_file_hashes"]
             async with get_db_context() as db:
                 importer = WorkspaceBundleImporter(
                     db,
@@ -194,10 +199,21 @@ async def run_workspace_bundle_import(
                 await context.save_checkpoint(journal, phase="Database import committed; finalizing files")
                 await context.report("Promoting selected workspace files", percent=70)
                 try:
-                    promoted = await importer.promote_selected_files(plan, result.selected_item_ids, file_index=FileIndexService(db))
+                    promoted = await importer.promote_selected_files(
+                        plan,
+                        result.selected_item_ids,
+                        file_index=FileIndexService(db),
+                        expected_destination_hashes=expected_destination_hashes,
+                    )
                     await RepoSyncWriter(db).regenerate_manifest()
                     await db.commit()
                     await mark_repo_dirty()
+                except WorkspaceBundleDecisionError as exc:
+                    raise PlatformJobFailure(
+                        "workspace_bundle_file_precondition_failed",
+                        "A workspace file changed after preview; create a new preview before importing.",
+                        result=journal,
+                    ) from exc
                 except Exception as exc:
                     raise PlatformJobFailure("workspace_bundle_finalize_failed", "Workspace import database changes were committed but file finalization failed; retrying the durable job.", retryable=True, result=journal) from exc
     await context.report("Workspace import complete", percent=100)

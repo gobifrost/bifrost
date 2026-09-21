@@ -228,6 +228,22 @@ class RepoStorage:
         except Exception:
             return False
 
+    async def content_hash(self, path: str) -> str | None:
+        """Return a bounded-memory SHA-256 fingerprint, or None when absent."""
+        async with self._get_client() as client:
+            try:
+                response = await client.get_object(
+                    Bucket=self._bucket, Key=self._repo_key(path)
+                )
+            except client.exceptions.NoSuchKey:
+                return None
+            digest = hashlib.sha256()
+            body = response["Body"]
+            async with body:
+                while chunk := await body.read(8 * 1024 * 1024):
+                    digest.update(chunk)
+            return digest.hexdigest()
+
     async def prefix_exists(self, prefix: str) -> bool:
         """Check if any object exists under a _repo/ prefix."""
         async with self._get_client() as client:

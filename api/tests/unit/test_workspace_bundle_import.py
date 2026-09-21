@@ -67,7 +67,9 @@ async def test_importer_requires_one_decision_for_every_conflict(tmp_path) -> No
 
 
 @pytest.mark.asyncio
-async def test_promote_selected_files_streams_source_through_file_index(tmp_path) -> None:
+async def test_promote_selected_files_streams_source_through_file_index(
+    tmp_path, monkeypatch
+) -> None:
     from bifrost.manifest import Manifest
     from src.models.contracts.solutions import WorkspaceBundleItem, WorkspaceBundlePreview
     from src.services.solutions.workspace_bundle_import import WorkspaceBundleImporter
@@ -94,12 +96,71 @@ async def test_promote_selected_files_streams_source_through_file_index(tmp_path
             return "ignored"
 
     index = FileIndex()
+    class Repo:
+        async def content_hash(self, _path):  # noqa: ANN001, ANN201
+            return None
+
+    monkeypatch.setattr(
+        "src.services.solutions.workspace_bundle_import.RepoStorage", Repo
+    )
     promoted = await WorkspaceBundleImporter(object()).promote_selected_files(
-        plan, {"file:modules/customer.py"}, file_index=index,
+        plan,
+        {"file:modules/customer.py"},
+        file_index=index,
+        expected_destination_hashes={},
     )
 
     assert promoted == ["modules/customer.py"]
     assert index.writes == [("modules/customer.py", "585c93666fcb046b7b264d3fa73202aa2a38254ae82a4b3ba19e873c2d5a9886")]
+
+
+@pytest.mark.asyncio
+async def test_promote_selected_files_rejects_a_destination_changed_after_preview(
+    tmp_path, monkeypatch
+) -> None:
+    """A selected replacement must not overwrite a newer workspace write."""
+    from bifrost.manifest import Manifest
+    from src.models.contracts.solutions import WorkspaceBundleItem, WorkspaceBundlePreview
+    from src.services.solutions.workspace_bundle_import import (
+        WorkspaceBundleDecisionError,
+        WorkspaceBundleImporter,
+    )
+    from src.services.solutions.workspace_bundle_plan import PlannedWorkspaceBundle
+
+    source = tmp_path / "modules" / "customer.py"
+    source.parent.mkdir()
+    source.write_bytes(b"value = 2\n")
+    plan = PlannedWorkspaceBundle(
+        preview=WorkspaceBundlePreview(
+            preview_token="p", package_name="P", package_sha256="",
+            items=[WorkspaceBundleItem(
+                id="file:modules/customer.py", kind="file", name="modules/customer.py",
+                classification="conflict",
+            )],
+        ),
+        manifest=Manifest(), id_map={}, work_dir=tmp_path,
+        file_hashes={"modules/customer.py": "a" * 64},
+    )
+
+    class Repo:
+        async def content_hash(self, _path):  # noqa: ANN001, ANN201
+            return "newer-destination-hash"
+
+    class FileIndex:
+        async def write_file(self, *_args, **_kwargs):  # noqa: ANN001, ANN003, ANN201
+            raise AssertionError("changed destination must not be overwritten")
+
+    monkeypatch.setattr(
+        "src.services.solutions.workspace_bundle_import.RepoStorage", Repo
+    )
+
+    with pytest.raises(WorkspaceBundleDecisionError, match="changed after preview"):
+        await WorkspaceBundleImporter(object()).promote_selected_files(
+            plan,
+            {"file:modules/customer.py"},
+            file_index=FileIndex(),
+            expected_destination_hashes={"modules/customer.py": "old-preview-hash"},
+        )
 
 
 def test_workspace_bundle_job_reuses_the_shared_workspace_lock() -> None:

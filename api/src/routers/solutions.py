@@ -228,6 +228,7 @@ async def preview_workspace_import(
                 "manifest": planned.manifest.model_dump(mode="json"),
                 "id_map": {str(source): str(target) for source, target in planned.id_map.items()},
                 "file_hashes": planned.file_hashes,
+                "destination_file_hashes": planned.destination_file_hashes,
             })
             return preview
     except (ValueError, zipfile.BadZipFile) as exc:

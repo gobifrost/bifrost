@@ -122,6 +122,7 @@ def test_planner_includes_hashed_source_files_and_detects_conflicts(tmp_path) ->
 
     assert item.classification == "conflict"
     assert planned.file_hashes == {"modules/customer.py": source_hash}
+    assert planned.destination_file_hashes == {"modules/customer.py": "different"}
 
     unknown_destination = WorkspaceBundlePlanner(None, preview_id=UUID(int=7)).plan_sync(
         projection, existing_file_hashes={"modules/customer.py": None},

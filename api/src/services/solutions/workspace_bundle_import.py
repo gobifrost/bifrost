@@ -8,6 +8,7 @@ from typing import Protocol
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.contracts.solutions import WorkspaceBundleDecision
+from src.services.repo_storage import RepoStorage
 from src.services.manifest_import import ManifestResolver, PartialImportSelection
 from src.services.solutions.workspace_bundle_plan import PlannedWorkspaceBundle
 from src.services.sync_ops import SyncOp
@@ -87,6 +88,7 @@ class WorkspaceBundleImporter:
         selected_item_ids: set[str] | frozenset[str],
         *,
         file_index: _FileIndexWriter,
+        expected_destination_hashes: dict[str, str],
     ) -> list[str]:
         """Promote reviewed source files through the canonical S3/index writer.
 
@@ -97,12 +99,19 @@ class WorkspaceBundleImporter:
         if plan.work_dir is None:
             raise ValueError("workspace bundle file promotion requires an extracted package directory")
         promoted: list[str] = []
+        destination = RepoStorage()
         for item in plan.preview.items:
             if item.kind != "file" or item.id not in selected_item_ids:
                 continue
             expected = plan.file_hashes.get(item.name)
             if expected is None:
                 raise WorkspaceBundleDecisionError(f"missing staged hash for {item.name}")
+            actual_destination_hash = await destination.content_hash(item.name)
+            expected_destination_hash = expected_destination_hashes.get(item.name)
+            if actual_destination_hash != expected_destination_hash:
+                raise WorkspaceBundleDecisionError(
+                    f"workspace file {item.name} changed after preview; create a new preview"
+                )
             source = plan.work_dir / item.name
             await file_index.write_file(item.name, source, expected_hash=expected)
             promoted.append(item.name)

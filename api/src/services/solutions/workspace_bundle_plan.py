@@ -173,6 +173,7 @@ class PlannedWorkspaceBundle:
     id_map: dict[UUID, UUID]
     work_dir: Path | None = None
     file_hashes: dict[str, str] | None = None
+    destination_file_hashes: dict[str, str] | None = None
 
 
 class WorkspaceBundlePlanner:
@@ -262,6 +263,11 @@ class WorkspaceBundlePlanner:
                                            package_sha256="", items=items, warnings=projection.warnings),
             manifest=projection.manifest, id_map=self.reference_map(items),
             work_dir=projection.work_dir, file_hashes=file_hashes,
+            destination_file_hashes={
+                path: fingerprint
+                for path, fingerprint in existing_file_hashes.items()
+                if fingerprint is not None
+            },
         )
 
     @staticmethod
@@ -330,21 +336,10 @@ class WorkspaceBundlePlanner:
 
         destination_paths: dict[str, str | None] = {}
         repo = RepoStorage()
-        if self.db is None:
-            for paths in batched(incoming_paths, _FILE_LOOKUP_BATCH_SIZE):
-                for path in paths:
-                    if await repo.exists(path):
-                        destination_paths[path] = None
-            return destination_paths
-        from src.models.orm.file_index import FileIndex
-
         for paths in batched(incoming_paths, _FILE_LOOKUP_BATCH_SIZE):
             batch = list(paths)
-            rows = await self.db.execute(
-                select(FileIndex.path, FileIndex.content_hash).where(FileIndex.path.in_(batch))
-            )
-            destination_paths.update({path: content_hash for path, content_hash in rows.all()})
             for path in batch:
-                if path not in destination_paths and await repo.exists(path):
-                    destination_paths[path] = None
+                fingerprint = await repo.content_hash(path)
+                if fingerprint is not None:
+                    destination_paths[path] = fingerprint
         return destination_paths

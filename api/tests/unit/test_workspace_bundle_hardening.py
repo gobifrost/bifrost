@@ -128,12 +128,13 @@ def _job_metadata(payload) -> dict:
             }],
         },
         "manifest": {}, "id_map": {}, "file_hashes": {},
+        "destination_file_hashes": {},
     }
 
 
 def _install_job_doubles(
     monkeypatch, payload, *, fail_finalize: bool, cancel_before_commit: bool = False,
-    lose_after_db_commit: bool = False,
+    lose_after_db_commit: bool = False, destination_changed: bool = False,
 ):
     """Replace only process/external boundaries; exercise the real job phases."""
     from src.jobs.platform.base import PlatformJobCancelled
@@ -179,6 +180,7 @@ def _install_job_doubles(
     class Importer:
         apply_calls = 0
         promote_calls = 0
+        promotion_preconditions: list[dict[str, str]] = []
 
         def __init__(self, _db, *, progress_fn=None):
             pass
@@ -190,8 +192,18 @@ def _install_job_doubles(
                 selected_item_ids=frozenset({"entity:workflow:one"}), operations=(),
             )
 
-        async def promote_selected_files(self, _plan, _selected, *, file_index):
+        async def promote_selected_files(
+            self, _plan, _selected, *, file_index, expected_destination_hashes
+        ):
+            from src.services.solutions.workspace_bundle_import import WorkspaceBundleDecisionError
+
+            assert expected_destination_hashes == {}
+            type(self).promotion_preconditions.append(expected_destination_hashes)
             type(self).promote_calls += 1
+            if destination_changed:
+                raise WorkspaceBundleDecisionError(
+                    "workspace file modules/one.py changed after preview; create a new preview"
+                )
             if fail_finalize and type(self).promote_calls == 1:
                 raise RuntimeError("object storage unavailable")
             return ["modules/one.py"]
@@ -284,9 +296,30 @@ async def test_finalize_failure_checkpoints_after_commit_and_retry_resumes_witho
 
     assert Importer.apply_calls == 1
     assert Importer.promote_calls == 2
+    assert Importer.promotion_preconditions == [{}, {}]
     assert Writer.regenerate_calls == 1
     assert result["promoted_files"] == ["modules/one.py"]
     assert dirty_calls == [True]
+
+
+@pytest.mark.asyncio
+async def test_destination_changed_after_preview_is_not_retried(monkeypatch) -> None:
+    from src.jobs.platform.base import PlatformJobFailure
+    from src.jobs.platform.workspace_bundle_import import WorkspaceBundleImportPayload, run_workspace_bundle_import
+
+    payload = WorkspaceBundleImportPayload(preview_id=uuid4(), package_sha256="a" * 64, decisions=[])
+    Context, used_dbs, Importer, _Writer, dirty_calls = _install_job_doubles(
+        monkeypatch, payload, fail_finalize=False, destination_changed=True,
+    )
+
+    with pytest.raises(PlatformJobFailure, match="changed after preview") as failure:
+        await run_workspace_bundle_import(Context(), payload)
+
+    assert failure.value.code == "workspace_bundle_file_precondition_failed"
+    assert failure.value.retryable is False
+    assert Importer.promote_calls == 1
+    assert used_dbs[0].commits == 1
+    assert dirty_calls == []
 
 
 @pytest.mark.asyncio
