@@ -8,7 +8,6 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from bifrost.manifest import Manifest
 from src.jobs.platform.base import (
     PlatformJobContext,
     PlatformJobDefinition,
@@ -21,7 +20,10 @@ from src.core.repo_dirty import mark_repo_dirty
 from src.services.file_index_service import FileIndexService
 from src.services.repo_sync_writer import RepoSyncWriter
 from src.services.solutions.workspace_bundle_import import WorkspaceBundleImportResult, WorkspaceBundleImporter
-from src.services.solutions.workspace_bundle_plan import PlannedWorkspaceBundle
+from src.services.solutions.workspace_bundle_plan import (
+    SolutionPackageWorkspaceProjection,
+    WorkspaceBundlePlanner,
+)
 from src.services.solutions.workspace_bundle_storage import WorkspaceBundleStorage
 
 
@@ -41,6 +43,28 @@ def _require_requester(metadata: dict, context: PlatformJobContext, payload: Wor
         raise PlatformJobFailure("preview_expired", "Workspace import preview has expired.")
 
 
+def _require_preview_is_current(
+    reviewed: WorkspaceBundlePreview,
+    reviewed_file_hashes: dict[str, str],
+    current: WorkspaceBundlePreview,
+    current_file_hashes: dict[str, str],
+) -> None:
+    def items(preview: WorkspaceBundlePreview) -> dict[str, tuple[object, ...]]:
+        return {
+            item.id: (
+                item.kind, item.classification, item.match_key,
+                str(item.source_id), str(item.target_id),
+            )
+            for item in preview.items
+        }
+
+    if items(reviewed) != items(current) or reviewed_file_hashes != current_file_hashes:
+        raise PlatformJobFailure(
+            "preview_stale",
+            "The workspace changed since preview; create a new preview before importing.",
+        )
+
+
 async def run_workspace_bundle_import(
     context: PlatformJobContext, payload: WorkspaceBundleImportPayload
 ) -> dict:
@@ -51,18 +75,13 @@ async def run_workspace_bundle_import(
     with tempfile.TemporaryDirectory(prefix="bifrost-workspace-bundle-") as tmp:
             archive = Path(tmp) / "package.zip"
             await storage.copy_package_to(archive, expected_sha256=payload.package_sha256)
-            from src.services.solutions.zip_install import _safe_extract_path
+            from src.services.solutions.zip_install import _parse_workspace, _safe_extract_path
 
             workspace = Path(tmp) / "workspace"
             workspace.mkdir()
             _safe_extract_path(archive, str(workspace))
-            plan = PlannedWorkspaceBundle(
-                preview=WorkspaceBundlePreview.model_validate(metadata["preview"]),
-                manifest=Manifest.model_validate(metadata["manifest"]),
-                id_map={UUID(source): UUID(target) for source, target in metadata["id_map"].items()},
-                work_dir=workspace,
-                file_hashes=metadata["file_hashes"],
-            )
+            reviewed_preview = WorkspaceBundlePreview.model_validate(metadata["preview"])
+            reviewed_file_hashes = metadata["file_hashes"]
             async with get_db_context() as db:
                 importer = WorkspaceBundleImporter(
                     db,
@@ -71,18 +90,26 @@ async def run_workspace_bundle_import(
                     ),
                 )
                 journal = context.checkpoint
-                if (
+                resuming = (
                     journal is not None
                     and journal.get("db_applied") is True
                     and journal.get("preview_id") == str(payload.preview_id)
                     and journal.get("package_sha256") == payload.package_sha256
-                ):
+                )
+                projection = SolutionPackageWorkspaceProjection.from_preview(
+                    _parse_workspace(workspace), preview_id=payload.preview_id, work_dir=workspace,
+                )
+                plan = await WorkspaceBundlePlanner(db, preview_id=payload.preview_id).plan(projection)
+                if resuming:
                     result = WorkspaceBundleImportResult(
                         imported_item_ids=frozenset(journal["imported_entity_ids"]),
                         selected_item_ids=frozenset(journal["selected_item_ids"]),
                         operations=(),
                     )
                 else:
+                    _require_preview_is_current(
+                        reviewed_preview, reviewed_file_hashes, plan.preview, plan.file_hashes or {},
+                    )
                     result = await importer.apply(plan, payload.decisions)
                 # Make entity upserts durable before the idempotent S3 phase.
                 await context.report("Committing workspace entity changes", percent=60)

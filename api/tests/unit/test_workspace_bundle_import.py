@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from uuid import UUID
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, call
 
 import pytest
 
@@ -141,8 +141,10 @@ async def test_promoted_python_refreshes_module_cache_and_oversized_text_removes
             return hashlib.sha256(content).hexdigest()
 
     cached = AsyncMock()
+    invalidated = AsyncMock()
     monkeypatch.setattr(index_module, "S3StorageClient", lambda _settings: Storage())
     monkeypatch.setattr("src.core.module_cache.set_module", cached)
+    monkeypatch.setattr("src.core.module_cache.invalidate_module", invalidated)
     db = type("Db", (), {"execute": AsyncMock()})()
     service = FileIndexService(db, Repo())
     source = tmp_path / "module.py"
@@ -162,4 +164,13 @@ async def test_promoted_python_refreshes_module_cache_and_oversized_text_removes
         "modules/large.py", oversized,
         expected_hash=oversized_digest,
     )
-    assert db.execute.await_count == 2
+    invalid = tmp_path / "invalid.py"
+    invalid.write_bytes(b"\xff")
+    invalid_digest = hashlib.sha256(invalid.read_bytes()).hexdigest()
+    await service.write_file("modules/invalid.py", invalid, expected_hash=invalid_digest)
+
+    assert db.execute.await_count == 3
+    invalidated.assert_has_awaits([
+        call("modules/large.py"),
+        call("modules/invalid.py"),
+    ])

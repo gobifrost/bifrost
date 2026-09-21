@@ -45,6 +45,13 @@ def _is_text_file(path: str) -> bool:
     return False
 
 
+async def _invalidate_python_module_cache(path: str) -> None:
+    if path.endswith(".py"):
+        from src.core.module_cache import invalidate_module
+
+        await invalidate_module(path)
+
+
 class FileIndexService:
     """Dual-write facade for _repo/ files."""
 
@@ -66,12 +73,14 @@ class FileIndexService:
             if len(content) > MAX_INDEXABLE_TEXT_BYTES:
                 logger.info("Skipping oversized text file in search index: %s", path)
                 await self.db.execute(delete(FileIndex).where(FileIndex.path == path))
+                await _invalidate_python_module_cache(path)
                 return content_hash
             try:
                 content_str = content.decode("utf-8")
             except UnicodeDecodeError:
                 logger.warning(f"Could not decode {path} as UTF-8, skipping index")
                 await self.db.execute(delete(FileIndex).where(FileIndex.path == path))
+                await _invalidate_python_module_cache(path)
                 return content_hash
 
             stmt = insert(FileIndex).values(
@@ -114,13 +123,18 @@ class FileIndexService:
             raise ValueError(f"promoted source hash mismatch for {path}")
         if not _is_text_file(path) or size > MAX_INDEXABLE_TEXT_BYTES:
             await self.db.execute(delete(FileIndex).where(FileIndex.path == path))
+            await _invalidate_python_module_cache(path)
             return content_hash
         content = source.read_bytes()
         content_hash = await self.write(path, content)
         if path.endswith(".py"):
             from src.core.module_cache import set_module
 
-            await set_module(path, content.decode("utf-8"), content_hash)
+            try:
+                module_content = content.decode("utf-8")
+            except UnicodeDecodeError:
+                return content_hash
+            await set_module(path, module_content, content_hash)
         return content_hash
 
     async def delete(self, path: str) -> None:

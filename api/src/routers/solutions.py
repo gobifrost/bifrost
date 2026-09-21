@@ -11,7 +11,6 @@ what end users see (the Solution is invisible to them — criterion 16).
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import logging
 import os
@@ -123,6 +122,7 @@ from src.services.solutions.workspace_bundle_plan import (
     WorkspaceBundlePlanner,
 )
 from src.services.solutions.workspace_bundle_storage import WorkspaceBundleStorage
+from src.services.solutions.zip_install import MAX_SOLUTION_ARCHIVE_BYTES
 from src.services.platform_jobs import ACTIVE_PLATFORM_JOB_STATUSES
 from src.services.application_sdk_status import (
     CurrentApplicationSdkMetadata,
@@ -255,21 +255,16 @@ async def enqueue_workspace_import(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="every workspace import conflict requires exactly one decision",
         )
-    decision_fingerprint = hashlib.sha256(
-        json.dumps(
-            sorted((decision.item_id, decision.action) for decision in body.decisions),
-            separators=(",", ":"),
-        ).encode("utf-8")
-    ).hexdigest()
+    payload = WorkspaceBundleImportPayload(
+        preview_id=preview_id, package_sha256=preview.package_sha256, decisions=body.decisions,
+    )
     job, reused = await enqueue_platform_job(
         ctx.db,
         WORKSPACE_BUNDLE_IMPORT_DEFINITION,
-        WorkspaceBundleImportPayload(
-            preview_id=preview_id, package_sha256=preview.package_sha256, decisions=body.decisions,
-        ),
+        payload,
         # A preview is requester-bound state, even when two archives have the
         # same bytes. Never let a caller reuse another preview's active job.
-        dedupe_key=f"{user.user_id}:{preview_id}:{decision_fingerprint}",
+        dedupe_key=f"{user.user_id}:{preview_id}",
         resource_lock_key=WORKSPACE_MUTATION_RESOURCE_LOCK_KEY,
         priority=500,
         organization_id=None,
@@ -281,10 +276,16 @@ async def enqueue_workspace_import(
         title=f"Import workspace bundle {preview.package_name}",
         action_url="/solutions",
     )
+    if reused and not _same_workspace_bundle_decisions(job, payload):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A workspace import with different decisions is already active for this preview.",
+        )
     if job.notification_id is None:
         await ensure_platform_job_notification(ctx.db, job)
-    metadata["platform_job_id"] = str(job.id)
-    await storage.stage_metadata(metadata)
+    if not reused:
+        metadata["platform_job_id"] = str(job.id)
+        await storage.stage_metadata(metadata)
     await ctx.db.commit()
     await publish_platform_job_update(job)
     response.headers["Location"] = f"/api/platform-jobs/{job.id}"
@@ -294,12 +295,35 @@ async def enqueue_workspace_import(
     )
 
 
+def _same_workspace_bundle_decisions(
+    job: PlatformJob, requested: WorkspaceBundleImportPayload,
+) -> bool:
+    if job.encrypted_payload is None:
+        return False
+    from src.core.security import decrypt_secret
+
+    active = WorkspaceBundleImportPayload.model_validate_json(decrypt_secret(job.encrypted_payload))
+    return (
+        active.preview_id == requested.preview_id
+        and active.package_sha256 == requested.package_sha256
+        and sorted((decision.item_id, decision.action) for decision in active.decisions)
+        == sorted((decision.item_id, decision.action) for decision in requested.decisions)
+    )
+
+
 async def _spool_upload_to_temp(file: UploadFile, *, prefix: str) -> Path:
     tmp = tempfile.NamedTemporaryFile(prefix=prefix, suffix=".zip", delete=False)
     path = Path(tmp.name)
     try:
         with tmp:
+            compressed_size = 0
             while chunk := await file.read(UPLOAD_CHUNK_SIZE):
+                compressed_size += len(chunk)
+                if compressed_size > MAX_SOLUTION_ARCHIVE_BYTES:
+                    raise HTTPException(
+                        status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                        detail="Solution archive exceeds the compressed upload limit.",
+                    )
                 tmp.write(chunk)
     except Exception:
         _cleanup_file(path)

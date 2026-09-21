@@ -13,6 +13,8 @@ import {
 	installSolutionFromRepo,
 	previewInstall,
 	previewSolutionFromRepo,
+	previewWorkspaceBundle,
+	importWorkspaceBundle,
 	type Solution,
 	type SolutionInstallPreview,
 } from "@/services/solutions";
@@ -49,6 +51,11 @@ vi.mock("@/services/solutions", () => ({
 	previewWorkspaceBundle: vi.fn(),
 	importWorkspaceBundle: vi.fn(),
 	updateSolution: (...a: unknown[]) => mockUpdateSolution(...a),
+}));
+
+const mockRunGitOp = vi.fn();
+vi.mock("@/components/editor/runGitOperation", () => ({
+	runGitOp: (...args: unknown[]) => mockRunGitOp(...args),
 }));
 
 function makeSolution(overrides: Partial<Solution> = {}): Solution {
@@ -640,6 +647,43 @@ describe("CreateEditSolution — source picker", () => {
 		expect(screen.getByRole("button", { name: /choose solution .zip/i })).toBeInTheDocument();
 		expect(screen.getByTestId("workspace-import-footer")).toBeInTheDocument();
 		expect(screen.getByTestId("solution-dialog")).toHaveClass("sm:max-w-6xl");
+	});
+
+	it("queues a reviewed workspace import through the shared platform-job observer", async () => {
+		vi.mocked(previewWorkspaceBundle).mockResolvedValue({
+			preview_token: "workspace-preview",
+			package_name: "Workspace",
+			package_sha256: "a".repeat(64),
+			items: [],
+			warnings: [],
+		});
+		vi.mocked(importWorkspaceBundle).mockResolvedValue({
+			job_id: "workspace-job",
+			status: "queued",
+			reused: false,
+		});
+		mockRunGitOp.mockImplementation(async (queue, _title, onQueued, onUpdate) => {
+			const accepted = await queue("requested-job");
+			onQueued?.(accepted.job_id);
+			onUpdate?.({ status: "succeeded", result: {} });
+			return {};
+		});
+		const onClose = vi.fn();
+		const { user } = renderWithProviders(
+			<CreateEditSolution mode={{ kind: "create", source: "workspace" }} open onClose={onClose} onSaved={vi.fn()} />,
+		);
+
+		const fileInput = document.querySelector<HTMLInputElement>('input[type="file"]');
+		expect(fileInput).not.toBeNull();
+		await user.upload(fileInput!, new File(["zip"], "workspace.zip", { type: "application/zip" }));
+		await user.click(await screen.findByRole("button", { name: /start import job/i }));
+
+		await waitFor(() => expect(importWorkspaceBundle).toHaveBeenCalledWith({
+			preview_token: "workspace-preview",
+			decisions: [],
+		}));
+		expect(mockRunGitOp).toHaveBeenCalledTimes(1);
+		expect(onClose).toHaveBeenCalledTimes(1);
 	});
 });
 

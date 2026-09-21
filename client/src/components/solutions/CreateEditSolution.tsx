@@ -88,7 +88,7 @@ import {
 	type SolutionUpgradeDiff,
 	type WorkspaceBundlePreview,
 } from "@/services/solutions";
-import { observePlatformJob } from "@/services/platformJobs";
+import { runGitOp } from "@/components/editor/runGitOperation";
 import { WorkspaceImportReview } from "./WorkspaceImportReview";
 import type { components } from "@/lib/v1";
 
@@ -708,19 +708,26 @@ function WorkspaceImportBody({ onClose }: { onClose: () => void }) {
 	const start = async () => {
 		if (!preview || !complete) return;
 		try {
-			const accepted = await importWorkspaceBundle({
-				preview_token: preview.preview_token,
-				decisions: conflicts.map((item) => ({ item_id: item.id, action: decisions[item.id] })),
-			});
-			toast.success("Workspace import queued", { description: "Progress is available in Notifications." });
-			const observation = observePlatformJob(String(accepted.job_id), (job) => {
+			await runGitOp(
+				async () => {
+					const accepted = await importWorkspaceBundle({
+						preview_token: preview.preview_token,
+						decisions: conflicts.map((item) => ({ item_id: item.id, action: decisions[item.id] })),
+					});
+					return { job_id: String(accepted.job_id), status: accepted.status };
+				},
+				"Workspace import",
+				() => {
+					toast.success("Workspace import queued", { description: "Progress is available in Notifications." });
+					onClose();
+				},
+				(job) => {
 				if (job.status === "succeeded") {
 					queryClient.invalidateQueries({ queryKey: ["github", "repo-status"] });
 					queryClient.invalidateQueries({ queryKey: ["solutions"] });
 				}
-			});
-			void observation.promise.catch(() => undefined);
-			onClose();
+				},
+			);
 		} catch (cause) { setError(cause instanceof Error ? cause.message : "Failed to start workspace import"); }
 		finally { session.finish(); }
 	};
@@ -730,7 +737,7 @@ function WorkspaceImportBody({ onClose }: { onClose: () => void }) {
 		<input ref={inputRef} type="file" accept=".zip,application/zip" className="hidden" onChange={(event) => { const next = event.target.files?.[0]; if (next) void load(next); event.target.value = ""; }} />
 		{!file ? <div className="flex min-h-0 flex-1 items-center justify-center p-6"><Button type="button" variant="outline" className="min-h-24 w-full border-dashed" onClick={() => inputRef.current?.click()}><Upload className="mr-2 size-4" />Choose Solution .zip</Button></div> : loading ? <div className="flex min-h-0 flex-1 items-center justify-center gap-2"><Loader2 className="size-4 animate-spin" />Reading package…</div> : preview ? <WorkspaceImportReview preview={preview} decisions={decisions} onDecisionsChange={setDecisions} /> : <div className="flex-1 p-6"><InstallFailure message={error ?? "Could not preview this package."} /></div>}
 		{error && preview && <div className="px-6"><InstallFailure message={error} /></div>}
-		<DialogFooter data-testid="workspace-import-footer" className="shrink-0 border-t bg-muted/20 px-6 py-4 sm:justify-between"><p className="mr-auto text-xs text-muted-foreground">{preview ? `${conflicts.filter((item) => decisions[item.id]).length} of ${conflicts.length} conflicts resolved · import creates uncommitted Git changes` : ""}</p><div className="flex gap-2"><Button type="button" variant="outline" onClick={onClose}>Cancel</Button><Button type="button" disabled={!preview || !complete || session.pending} onClick={() => session.run(() => void start())}>Start import job</Button></div></DialogFooter>
+		<DialogFooter data-testid="workspace-import-footer" className="shrink-0 border-t bg-muted/20 px-6 py-4 sm:justify-between"><p className="mr-auto text-xs text-muted-foreground">{preview ? `${conflicts.filter((item) => decisions[item.id]).length} of ${conflicts.length} conflicts resolved · import creates uncommitted Git changes` : ""}</p><div className="flex gap-2"><Button type="button" variant="outline" onClick={onClose}>Cancel</Button><Button type="button" disabled={!preview || !complete || session.pending} onClick={() => session.run(start)}>Start import job</Button></div></DialogFooter>
 	</>;
 }
 

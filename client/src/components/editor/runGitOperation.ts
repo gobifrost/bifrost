@@ -88,9 +88,9 @@ export async function runGitOp<T>(
 				onQueued?.(accepted.job_id);
 				if (accepted.job_id !== requestedJobId) subscribe(accepted.job_id);
 				observation = observePlatformJob(accepted.job_id, handleUpdate);
-				void observation.promise.catch((error: unknown) => {
-					settle(() => reject(error));
-				});
+				// Notification delivery remains authoritative. A failed best-effort
+				// snapshot must not discard the already-subscribed shared observer.
+				void observation.promise.catch(() => undefined);
 			})
 			.catch((error: unknown) => {
 				settle(() => reject(error));

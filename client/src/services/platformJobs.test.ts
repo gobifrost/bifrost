@@ -90,24 +90,16 @@ describe("platform jobs service", () => {
 		);
 	});
 
-	it("retries a transient snapshot failure until a terminal shared job update", async () => {
+	it("uses one snapshot fallback instead of polling after a failed read", async () => {
 		vi.useFakeTimers();
-		mockGet
-			.mockResolvedValueOnce({ error: { detail: "temporarily unavailable" } })
-			.mockResolvedValueOnce({
-				data: { id: "job-1", status: "succeeded", result: { success: true } },
-			});
+		mockGet.mockResolvedValue({ error: { detail: "temporarily unavailable" } });
 
-		const observed: Array<{ status: string }> = [];
-		const observation = observePlatformJob("job-1", (job) => observed.push(job));
+		const observation = observePlatformJob("job-1", vi.fn());
+		const completion = expect(observation.promise).rejects.toThrow("Failed to load platform job");
 		await vi.advanceTimersByTimeAsync(250);
 
-		await expect(observation.promise).resolves.toEqual({
-			id: "job-1",
-			status: "succeeded",
-			result: { success: true },
-		});
-		expect(observed).toEqual([{ id: "job-1", status: "succeeded", result: { success: true } }]);
+		await completion;
+		expect(mockGet).toHaveBeenCalledTimes(1);
 		observation.cancel();
 		vi.useRealTimers();
 	});

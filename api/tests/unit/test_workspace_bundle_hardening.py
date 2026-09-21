@@ -52,6 +52,28 @@ def test_workspace_bundle_preview_guard_rejects_expired_preview() -> None:
         )
 
 
+def test_workspace_bundle_revalidation_rejects_changed_natural_key_or_file_fingerprint() -> None:
+    from src.jobs.platform.base import PlatformJobFailure
+    from src.jobs.platform.workspace_bundle_import import _require_preview_is_current
+    from src.models.contracts.solutions import WorkspaceBundleItem, WorkspaceBundlePreview
+
+    reviewed = WorkspaceBundlePreview(
+        preview_token="preview", package_name="P", package_sha256="a" * 64,
+        items=[WorkspaceBundleItem(
+            id="entity:workflow:one", kind="workflow", name="one", classification="create",
+            match_key="('workflows/one.py', 'one')", source_id=uuid4(), target_id=uuid4(),
+        )],
+    )
+    current = reviewed.model_copy(update={
+        "items": [reviewed.items[0].model_copy(update={"classification": "conflict"})],
+    })
+
+    with pytest.raises(PlatformJobFailure, match="changed since preview") as error:
+        _require_preview_is_current(reviewed, {"workflows/one.py": "old"}, current, {"workflows/one.py": "new"})
+
+    assert error.value.code == "preview_stale"
+
+
 def _job_metadata(payload) -> dict:
     return {
         "requested_by": "owner",
@@ -135,6 +157,21 @@ def _install_job_doubles(monkeypatch, payload, *, fail_finalize: bool, cancel_be
     async def mark_dirty():
         dirty_calls.append(True)
 
+    class Projection:
+        @staticmethod
+        def from_preview(*_args, **_kwargs):
+            return object()
+
+    class Planner:
+        def __init__(self, _db, *, preview_id):
+            self.preview_id = preview_id
+
+        async def plan(self, _projection):
+            return SimpleNamespace(
+                preview=job_module.WorkspaceBundlePreview.model_validate(Storage.metadata["preview"]),
+                file_hashes=Storage.metadata["file_hashes"],
+            )
+
     class Context:
         def __init__(self, checkpoint=None):
             self.requested_by_user_id = "owner"
@@ -155,6 +192,8 @@ def _install_job_doubles(monkeypatch, payload, *, fail_finalize: bool, cancel_be
     monkeypatch.setattr(job_module, "WorkspaceBundleImporter", Importer)
     monkeypatch.setattr(job_module, "RepoSyncWriter", Writer)
     monkeypatch.setattr(job_module, "mark_repo_dirty", mark_dirty)
+    monkeypatch.setattr(job_module, "SolutionPackageWorkspaceProjection", Projection)
+    monkeypatch.setattr(job_module, "WorkspaceBundlePlanner", Planner)
     monkeypatch.setattr(zip_install, "_safe_extract_path", lambda *_args: None)
     return Context, used_dbs, Importer, Writer, dirty_calls
 

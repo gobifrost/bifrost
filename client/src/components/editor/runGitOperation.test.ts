@@ -56,6 +56,7 @@ function job(overrides: Partial<PlatformJobUpdate> = {}): PlatformJobUpdate {
 describe("runGitOp", () => {
 	it("subscribes before queueing and resolves a terminal platform-job update", async () => {
 		mocks.callbacks.clear();
+		mocks.getPlatformJob.mockReset();
 		mocks.getPlatformJob.mockResolvedValue({ data: job() });
 		const queue = vi.fn(async (jobId: string) => {
 			expect(mocks.callbacks.has(jobId)).toBe(true);
@@ -77,6 +78,7 @@ describe("runGitOp", () => {
 
 	it("uses the status snapshot when a fast job finishes before its update arrives", async () => {
 		mocks.callbacks.clear();
+		mocks.getPlatformJob.mockReset();
 		mocks.getPlatformJob.mockResolvedValue({
 			data: job({ status: "succeeded", result: { success: true } }),
 		});
@@ -86,16 +88,20 @@ describe("runGitOp", () => {
 		).resolves.toEqual({ success: true });
 	});
 
-	it("settles from a retried shared snapshot after a missed terminal update", async () => {
+	it("continues listening for a shared update when the one snapshot fallback fails", async () => {
 		mocks.callbacks.clear();
-		mocks.getPlatformJob
-			.mockRejectedValueOnce(new Error("temporary status failure"))
-			.mockResolvedValueOnce({
-				data: job({ status: "succeeded", result: { success: true } }),
-			});
+		mocks.getPlatformJob.mockReset();
+		mocks.getPlatformJob.mockRejectedValueOnce(new Error("temporary status failure"));
 
-		await expect(
-			runGitOp(async () => ({ job_id: "requested-job", status: "queued" }), "status"),
-		).resolves.toEqual({ success: true });
+		const resultPromise = runGitOp<{ success: boolean }>(
+			async () => ({ job_id: "requested-job", status: "queued" }),
+			"status",
+		);
+		await vi.waitFor(() => expect(mocks.getPlatformJob).toHaveBeenCalledTimes(1));
+		mocks.callbacks.get("requested-job")?.(
+			job({ status: "succeeded", result: { success: true } }),
+		);
+
+		await expect(resultPromise).resolves.toEqual({ success: true });
 	});
 });
