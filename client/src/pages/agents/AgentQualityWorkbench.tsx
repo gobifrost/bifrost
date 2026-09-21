@@ -457,6 +457,7 @@ function AgentQualityWorkbenchContent() {
 	return (
 		<PageWorkspace
 			className="mx-auto flex min-w-0 w-full max-w-[1400px] flex-col gap-5"
+			data-agent-workbench=""
 			data-testid="agent-workbench"
 		>
 			<div className="space-y-5" data-testid="quality-sticky-header">
@@ -502,7 +503,7 @@ function AgentQualityWorkbenchContent() {
 									<p className="text-sm text-muted-foreground">
 										{selectedTests.size
 											? `${selectedTests.size} selected`
-											: "Search, select, and inspect quality signals."}
+											: "Search, select, and inspect Workbench records."}
 									</p>
 								</div>
 								{collection === "tests" && (
@@ -1418,6 +1419,7 @@ function FleetAgentWorkbench() {
 	return (
 		<PageWorkspace
 			className="mx-auto flex min-w-0 w-full max-w-[1200px] flex-col gap-5"
+			data-agent-workbench=""
 			data-testid="agent-workbench"
 		>
 			<div className="shrink-0 space-y-5">

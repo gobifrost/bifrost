@@ -102,7 +102,7 @@ describe("GlobalAgentQualityPage", () => {
 		expect(
 			await screen.findByRole("heading", { name: "Agent Workbench" }),
 		).toBeVisible();
-		expect(screen.getByTestId("agent-workbench")).toBeVisible();
+		expect(document.querySelector("[data-agent-workbench]")).toBeVisible();
 		await waitFor(() => {
 			expect(mockSearchFindings).toHaveBeenCalledWith(
 				expect.objectContaining({
@@ -130,7 +130,7 @@ describe("GlobalAgentQualityPage", () => {
 	it("uses the shared fleet workbench and defaults to Findings", async () => {
 		renderPage();
 
-		expect(await screen.findByTestId("agent-workbench")).toBeVisible();
+		expect(document.querySelector("[data-agent-workbench]")).toBeVisible();
 		expect(screen.getByRole("combobox", { name: "Workbench collection" })).toHaveTextContent(
 			"Findings",
 		);

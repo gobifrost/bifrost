@@ -343,7 +343,13 @@ describe("AgentQualityWorkbench", () => {
 			await screen.findByRole("heading", { name: "Workbench" }),
 		).toBeVisible();
 		expect(screen.queryByText(/quality workbench/i)).not.toBeInTheDocument();
-		expect(screen.getByTestId("agent-workbench")).toBeVisible();
+		expect(document.querySelector("[data-agent-workbench]")).toBeVisible();
+		expect(
+			screen.getByText("Search, select, and inspect Workbench records."),
+		).toBeVisible();
+		expect(
+		screen.queryByText("Search, select, and inspect quality signals."),
+	).not.toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Tests" })).toHaveAttribute(
 			"aria-pressed",
 			"true",
