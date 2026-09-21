@@ -448,6 +448,17 @@ async def get_app_publish_status(
     description = f"Application publish {status_value}"
     if phase:
         description += f": {phase}"
+    if status_value == "requires_action":
+        result = body.get("result")
+        action = result.get("requires_action") if isinstance(result, dict) else None
+        safe_result = {"requires_action": action} if isinstance(action, str) else {}
+        return error_result(
+            description,
+            {
+                "status": status_value,
+                "result": safe_result,
+            },
+        )
     if status_value in ("failed", "cancelled"):
         error = body.get("error") or {}
         return error_result(

@@ -256,6 +256,31 @@ def _call_rest_capturing_params() -> tuple[AsyncMock, list[dict]]:
 
 
 @pytest.mark.asyncio
+async def test_get_app_publish_status_requires_action_is_an_error() -> None:
+    """An action-required publish must not be presented as a completed success."""
+    ctx = _make_mcp_context()
+    response = {
+        "status": "requires_action",
+        "progress": {"phase": "Confirm deletes"},
+        "result": {
+            "requires_action": "confirm_deletes",
+            "unsafe_detail": "must not reach MCP consumers",
+        },
+    }
+
+    with patch.object(apps_mod, "call_rest", AsyncMock(return_value=(200, response))):
+        result = await apps_mod.get_app_publish_status(ctx, "publish-job-id")
+
+    assert result.structured_content is not None
+    assert result.structured_content["error"] == (
+        "Application publish requires_action: Confirm deletes"
+    )
+    assert result.structured_content["status"] == "requires_action"
+    assert result.structured_content["result"] == {"requires_action": "confirm_deletes"}
+    assert "unsafe_detail" not in result.structured_content
+
+
+@pytest.mark.asyncio
 async def test_create_integration_forwards_description() -> None:
     """create_integration includes description in DTO assembly and REST payload."""
     from src.services.mcp_server.tools.integrations import create_integration
