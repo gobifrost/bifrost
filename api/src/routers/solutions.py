@@ -11,6 +11,7 @@ what end users see (the Solution is invisible to them — criterion 16).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -250,13 +251,19 @@ async def enqueue_workspace_import(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="every workspace import conflict requires exactly one decision",
         )
+    decision_fingerprint = hashlib.sha256(
+        json.dumps(
+            sorted((decision.item_id, decision.action) for decision in body.decisions),
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
     job, reused = await enqueue_platform_job(
         ctx.db,
         WORKSPACE_BUNDLE_IMPORT_DEFINITION,
         WorkspaceBundleImportPayload(
             preview_id=preview_id, package_sha256=preview.package_sha256, decisions=body.decisions,
         ),
-        dedupe_key=str(preview_id),
+        dedupe_key=f"{preview.package_sha256}:{decision_fingerprint}",
         resource_lock_key=WORKSPACE_MUTATION_RESOURCE_LOCK_KEY,
         priority=500,
         organization_id=None,

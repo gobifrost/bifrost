@@ -3839,19 +3839,21 @@ def import_workspace_cmd(
     """Preview, explicitly decide conflicts, and queue a workspace import."""
     async def _run() -> dict[str, Any]:
         client = BifrostClient.get_instance(require_auth=True)
-        response = await client.post(
-            "/api/solutions/import-workspace/preview",
-            files={"file": (archive.name, archive.read_bytes(), "application/zip")}, timeout=600,
-        )
+        with archive.open("rb") as stream:
+            response = await client.post(
+                "/api/solutions/import-workspace/preview",
+                files={"file": (archive.name, stream, "application/zip")}, timeout=600,
+            )
         if response.status_code != 200:
             raise click.ClickException(f"Workspace preview failed: {response.status_code} {response.text}")
         preview = response.json()
+        if not json_output:
+            click.echo("Warning: package cohesion may change in workspace scope; review references and run compatibility checks.")
         selected = _workspace_import_decisions(
             preview, keep_all=keep_all, replace_all=replace_all,
             decisions_path=decisions, json_output=json_output,
         )
         if not json_output:
-            click.echo("Warning: package cohesion may change in workspace scope; review references and run compatibility checks.")
             for item in preview.get("items", []):
                 click.echo(f"{item['classification']:9} {item['kind']:12} {item['name']}")
         queued = await client.post("/api/solutions/import-workspace", json={
