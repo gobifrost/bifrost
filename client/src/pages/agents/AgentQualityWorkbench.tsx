@@ -717,7 +717,7 @@ function AgentQualityWorkbenchContent({
 							<FleetAgentFilter
 								agents={agents}
 								collection={collection}
-								value={effectiveAgentId}
+								value={effectiveAgentId ?? "all"}
 								onValueChange={(value) =>
 									updateParams({
 										agent:
