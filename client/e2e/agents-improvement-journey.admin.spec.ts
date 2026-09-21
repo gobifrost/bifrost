@@ -90,7 +90,7 @@ test("reviewed finding becomes a durable test without losing source evidence", a
 			path: testInfo.outputPath("finding-inspector-desktop.png"),
 			fullPage: true,
 		});
-		await page.getByRole("button", { name: "Create test from finding" }).click();
+		await page.getByRole("button", { name: "Create Test" }).click();
 		await expect(page).toHaveURL(/collection=tests/);
 		await expect(page.getByText("Drafting from finding")).toBeVisible();
 		await page.getByLabel("Situation").fill("When a response is ambiguous");
@@ -101,7 +101,7 @@ test("reviewed finding becomes a durable test without losing source evidence", a
 		await page
 			.getByLabel("Advanced JSON")
 			.fill('{"forbidden_tools":["delete_record"],"tags":["reviewed"]}');
-		await page.getByRole("button", { name: "Create test" }).click();
+		await page.getByRole("button", { name: "Create Test", exact: true }).click();
 		await expect(
 			page.getByText("Should ask one clarifying question", { exact: true }),
 		).toBeVisible({ timeout: 10000 });

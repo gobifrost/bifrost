@@ -565,7 +565,7 @@ describe("AgentQualityWorkbench", () => {
 		).toBeVisible();
 	});
 
-	it("creates a plain-language test from finding context and can clear it", async () => {
+	it("returns to Tests after creating a plain-language test from finding context", async () => {
 		const { user } = renderPage(
 			"/agents/agent-1/quality?collection=tests&finding=finding-1",
 		);
@@ -580,7 +580,7 @@ describe("AgentQualityWorkbench", () => {
 			screen.getByLabelText("Expected behavior"),
 			"Ask before routing",
 		);
-		await user.click(screen.getByRole("button", { name: "Create test" }));
+		await user.click(screen.getByRole("button", { name: "Create Test" }));
 
 		await waitFor(() => {
 			expect(mockCreateAgentTest).toHaveBeenCalledWith(
@@ -604,10 +604,11 @@ describe("AgentQualityWorkbench", () => {
 			);
 		});
 
-		await user.click(screen.getByRole("button", { name: "Clear finding" }));
-		expect(
-			screen.queryByText(/Drafting from finding/i),
-		).not.toBeInTheDocument();
+		await waitFor(() => {
+			expect(
+				screen.queryByText(/Drafting from finding/i),
+			).not.toBeInTheDocument();
+		});
 	});
 
 	it("applies supported Advanced JSON fields instead of burying text in assertions", async () => {
@@ -643,7 +644,7 @@ describe("AgentQualityWorkbench", () => {
 				tags: ["safety"],
 			}),
 		);
-		await user.click(screen.getByRole("button", { name: "Create test" }));
+		await user.click(screen.getByRole("button", { name: "Create Test" }));
 
 		await waitFor(() => {
 			expect(mockCreateAgentTest).toHaveBeenCalledWith(
@@ -684,7 +685,7 @@ describe("AgentQualityWorkbench", () => {
 		await user.click(screen.getByText("Advanced JSON/checks"));
 		await user.click(screen.getByLabelText("Advanced JSON"));
 		await user.paste("[1]");
-		await user.click(screen.getByRole("button", { name: "Create test" }));
+		await user.click(screen.getByRole("button", { name: "Create Test" }));
 
 		expect(await screen.findByText(/must be a JSON object/i)).toBeVisible();
 		expect(mockCreateAgentTest).not.toHaveBeenCalled();
@@ -773,17 +774,25 @@ describe("AgentQualityWorkbench", () => {
 			"/agents/agent-1/runs/run-1?tab=activity&sequence=7",
 		);
 		await user.click(
-			screen.getByRole("button", { name: "Create test from finding" }),
+			screen.getByRole("button", { name: "Create Test" }),
 		);
 		expect(screen.getByRole("button", { name: "Tests" })).toHaveAttribute(
 			"aria-current",
 			"page",
 		);
 		expect(screen.getByText(/Drafting from finding/i)).toBeVisible();
+		expect(screen.getByLabelText("Situation")).toHaveValue(
+			"Routes without confirming.",
+		);
+		expect(screen.getByLabelText("Expected behavior")).toHaveValue(
+			"Ask first.",
+		);
 
 		await user.click(screen.getByRole("button", { name: "Findings" }));
 		await user.click(await screen.findByText("Routes without confirming."));
-		await user.click(screen.getByRole("button", { name: "Back to list" }));
+		await user.click(
+			screen.getByRole("button", { name: "Close Inspector" }),
+		);
 
 		expect(
 			screen.getByRole("button", { name: "Findings" }),

@@ -241,7 +241,7 @@ describe("GlobalAgentQualityPage", () => {
 			screen.getByLabelText("Expected behavior"),
 			"Ask before escalating",
 		);
-		await user.click(screen.getByRole("button", { name: "Create test" }));
+		await user.click(screen.getByRole("button", { name: "Create Test" }));
 
 		await waitFor(() => {
 			expect(mockCreateAgentTest).toHaveBeenCalledWith(
@@ -295,21 +295,21 @@ describe("GlobalAgentQualityPage", () => {
 			await screen.findByRole("button", { name: /missed escalation/i }),
 		);
 		await user.click(
-			screen.getByRole("button", { name: "Create test from finding" }),
+			screen.getByRole("button", { name: "Create Test" }),
 		);
 
 		expect(
 			await screen.findByRole("heading", { name: "Improve agent" }),
 		).toBeVisible();
 		expect(screen.getByTestId("location-probe")).toHaveTextContent(
-			"/agents/quality?collection=tests&finding=finding-1",
+			"/agents/quality?collection=tests&finding=finding-1&agent=agent-1",
 		);
 		await user.type(screen.getByLabelText("Situation"), "Urgent request");
 		await user.type(
 			screen.getByLabelText("Expected behavior"),
 			"Ask before escalating",
 		);
-		await user.click(screen.getByRole("button", { name: "Create test" }));
+		await user.click(screen.getByRole("button", { name: "Create Test" }));
 
 		await waitFor(() => {
 			expect(mockCreateAgentTest).toHaveBeenCalledWith(

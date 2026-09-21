@@ -420,6 +420,7 @@ function AgentQualityWorkbenchContent({
 			setExpectedBehavior("");
 			setAdvancedJson("");
 			setIsCreatingTest(false);
+			updateParams({ finding: undefined, selected: undefined });
 			await queryClient.invalidateQueries({
 				queryKey: [
 					"agent-platform",
@@ -471,9 +472,15 @@ function AgentQualityWorkbenchContent({
 		updateParams({ selected: undefined });
 	}
 
-	function openTestCreationFromFinding(nextFindingId: string) {
+	function openTestCreationFromFinding(finding: Finding) {
 		reopenInspector();
-		updateParams({ collection: "tests", finding: nextFindingId });
+		setSituation(finding.description);
+		setExpectedBehavior(finding.expected_behavior ?? "");
+		updateParams({
+			collection: "tests",
+			finding: finding.id,
+			...(isFleet ? { agent: finding.agent_id } : {}),
+		});
 	}
 
 	function toggleTest(testId: string) {
@@ -761,9 +768,6 @@ function AgentQualityWorkbenchContent({
 								collection === "findings"
 									? openTestCreationFromFinding
 									: undefined
-							}
-							onBack={() =>
-								setDismissedInspectorContext(inspectorContext)
 							}
 						/>
 					) : isTestCreationOpen ? (
@@ -1271,7 +1275,7 @@ function TestCreationPanel({
 					onClick={onCreate}
 					disabled={!canCreate || isPending}
 				>
-					Create test
+					Create Test
 				</Button>
 			</div>
 		</div>
@@ -1284,18 +1288,16 @@ function Inspector({
 	agentId,
 	latestByLogicalId,
 	onCreateTestFromFinding,
-	onBack,
 }: {
 	collection: Collection;
 	item: AgentTest | Finding | Review | QualityRun | null;
 	agentId?: string;
 	latestByLogicalId: Map<string, AgentTestLatest>;
-	onCreateTestFromFinding?: (findingId: string) => void;
-	onBack: () => void;
+	onCreateTestFromFinding?: (finding: Finding) => void;
 }) {
 	if (!item) {
 		return (
-			<div className="rounded-xl border bg-card p-4 shadow-sm">
+			<div className="space-y-2">
 				<h2 className="font-display text-lg font-semibold">
 					Inspector
 				</h2>
@@ -1306,12 +1308,8 @@ function Inspector({
 		);
 	}
 	return (
-		<div className="rounded-xl border bg-card p-4 shadow-sm">
-			<Button type="button" variant="ghost" size="sm" onClick={onBack}>
-				Back to list
-			</Button>
-			<div className="mt-4">
-				{collection === "tests" && (
+		<div className="space-y-4">
+			{collection === "tests" && (
 					<TestInspector
 						test={item as AgentTest}
 						agentId={agentId}
@@ -1319,28 +1317,24 @@ function Inspector({
 							(item as AgentTest).logical_test_id,
 						)}
 					/>
-				)}
-				{collection === "findings" && (
+			)}
+			{collection === "findings" && (
 					<FindingInspector
 						finding={item as Finding}
 						agentId={agentId}
 						onCreateTest={
 							onCreateTestFromFinding
-								? () =>
-										onCreateTestFromFinding(
-											(item as Finding).id,
-										)
+								? () => onCreateTestFromFinding(item as Finding)
 								: undefined
 						}
 					/>
-				)}
-				{collection === "reviews" && (
+			)}
+			{collection === "reviews" && (
 					<ReviewInspector review={item as Review} />
-				)}
-				{collection === "runs" && (
+			)}
+			{collection === "runs" && (
 					<RunInspector run={item as QualityRun} agentId={agentId} />
-				)}
-			</div>
+			)}
 		</div>
 	);
 }
@@ -1426,7 +1420,7 @@ function FindingInspector({
 			) : null}
 			{onCreateTest ? (
 				<Button type="button" onClick={onCreateTest}>
-					Create test from finding
+					Create Test
 				</Button>
 			) : (
 				<p className="text-sm text-muted-foreground">
