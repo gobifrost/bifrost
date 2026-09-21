@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from unittest import mock
 
+import pytest
+
 from bifrost import cli
 
 
@@ -64,6 +66,101 @@ def test_git_abort_merge_enqueues_platform_job(monkeypatch) -> None:
     }
 
 
+@pytest.mark.parametrize(
+    ("args", "endpoint", "label", "body", "result", "expected_output"),
+    [
+        (
+            ["fetch"],
+            "/api/github/fetch",
+            "Fetching",
+            {},
+            {
+                "success": True,
+                "commits_ahead": 1,
+                "changed_files": [{"path": "README.md", "change_type": "added"}],
+            },
+            "README.md",
+        ),
+        (
+            ["status"],
+            "/api/github/changes",
+            "Checking status",
+            {},
+            {
+                "success": True,
+                "commits_behind": 1,
+                "changed_files": [{"path": "workflows/run.py", "change_type": "modified"}],
+                "conflicts": [{"path": "workflows/run.py"}],
+            },
+            "merge conflict",
+        ),
+        (
+            ["commit", "-m", "save workspace"],
+            "/api/github/commit",
+            "Committing",
+            {"message": "save workspace"},
+            {"success": True, "commit_sha": "abcdef012345", "files_committed": 1},
+            "Committed abcdef0",
+        ),
+        (
+            ["resolve", "workflows/run.py=keep_local"],
+            "/api/github/resolve",
+            "Resolving",
+            {"resolutions": {"workflows/run.py": "ours"}},
+            {"success": True, "pulled": 1},
+            "Sync complete: pulled 1 change",
+        ),
+        (
+            ["diff", "workflows/run.py"],
+            "/api/github/diff",
+            "Diffing",
+            {"path": "workflows/run.py"},
+            {"success": True, "path": "workflows/run.py", "head_content": "old", "working_content": "new"},
+            "+ new",
+        ),
+        (
+            ["discard", "workflows/run.py"],
+            "/api/github/discard",
+            "Discarding",
+            {"paths": ["workflows/run.py"]},
+            {"success": True, "discarded": ["workflows/run.py"]},
+            "Discarded changes to 1 file",
+        ),
+    ],
+)
+def test_git_operations_enqueue_platform_jobs_and_use_terminal_results(
+    monkeypatch,
+    capsys,
+    args: list[str],
+    endpoint: str,
+    label: str,
+    body: dict[str, object],
+    result: dict[str, object],
+    expected_output: str,
+) -> None:
+    """Every workspace Git operation uses the shared PlatformJob transport."""
+    client = mock.MagicMock()
+    monkeypatch.setattr(
+        "bifrost.client.BifrostClient.get_instance", lambda **_: client
+    )
+    called: dict[str, object] = {}
+
+    def run(client_arg, operation_endpoint, *, label: str, body: dict[str, object]):  # type: ignore[no-untyped-def]
+        called.update(client=client_arg, endpoint=operation_endpoint, label=label, body=body)
+        return {"status": "succeeded", "result": result}
+
+    monkeypatch.setattr("bifrost.git_commands._post_platform_job", run)
+
+    assert cli.handle_git(args) == 0
+    assert called == {
+        "client": client,
+        "endpoint": endpoint,
+        "label": label,
+        "body": body,
+    }
+    assert expected_output in capsys.readouterr().out
+
+
 def test_git_sync_prints_pending_deletions_from_action_result(monkeypatch, capsys) -> None:
     """A delete-confirmation action remains structured after job polling."""
     client = mock.MagicMock()
@@ -75,6 +172,7 @@ def test_git_sync_prints_pending_deletions_from_action_result(monkeypatch, capsy
         lambda *_args, **_kwargs: {
             "status": "requires_action",
             "result": {
+                "success": False,
                 "requires_action": "confirm_deletes",
                 "pending_deletes": [{"path": ".bifrost/agents.yaml"}],
             },
