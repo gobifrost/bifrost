@@ -25,7 +25,7 @@ export function QualityHeader({ agentId, agentName }: QualityHeaderProps) {
 				</span>
 			</Link>
 			<ListPageHeader
-				title="Quality workbench"
+				title="Workbench"
 				description="Review runs, turn findings into tests, compare changes, and inspect results."
 			/>
 		</div>

@@ -25,8 +25,9 @@ describe("QualityHeader", () => {
 			screen.getByRole("link", { name: /test parent agent/i }),
 		).toHaveAttribute("href", "/agents/agent-1");
 		expect(
-			screen.getByRole("heading", { name: /quality workbench/i }),
+			screen.getByRole("heading", { name: "Workbench" }),
 		).toBeInTheDocument();
+		expect(screen.queryByText(/quality workbench/i)).not.toBeInTheDocument();
 		expect(
 			screen.getByText(
 				/Review runs, turn findings into tests, compare changes, and inspect results\./,

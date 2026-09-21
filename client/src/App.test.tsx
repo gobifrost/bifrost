@@ -1,4 +1,6 @@
 import { useEffect } from "react";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
 	Link,
 	Outlet,
@@ -163,6 +165,17 @@ describe("QualityRedirect", () => {
 
 		expect(await screen.findByTestId("location-probe")).toHaveTextContent(
 			"/agents/agent-1/quality?tab=tests&suite=suite-1",
+		);
+	});
+});
+
+describe("Agent Workbench routes", () => {
+	it("keeps the literal fleet compatibility route before the agent route", () => {
+		const appSource = readFileSync(join(process.cwd(), "src/App.tsx"), "utf8");
+
+		expect(appSource.indexOf('path="agents/quality"')).toBeGreaterThan(-1);
+		expect(appSource.indexOf('path="agents/quality"')).toBeLessThan(
+			appSource.indexOf('path="agents/:id"'),
 		);
 	});
 });

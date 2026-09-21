@@ -34,7 +34,7 @@ export function FleetHeader({
 				>
 					<Link to="/agents/quality">
 						<Sparkles aria-hidden="true" className="size-4" />
-						Quality
+						Agent Workbench
 					</Link>
 				</Button>
 				<Button

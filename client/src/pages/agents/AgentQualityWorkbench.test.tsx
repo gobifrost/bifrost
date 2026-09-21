@@ -340,8 +340,10 @@ describe("AgentQualityWorkbench", () => {
 		renderPage();
 
 		expect(
-			await screen.findByRole("heading", { name: "Quality workbench" }),
+			await screen.findByRole("heading", { name: "Workbench" }),
 		).toBeVisible();
+		expect(screen.queryByText(/quality workbench/i)).not.toBeInTheDocument();
+		expect(screen.getByTestId("agent-workbench")).toBeVisible();
 		expect(screen.getByRole("button", { name: "Tests" })).toHaveAttribute(
 			"aria-pressed",
 			"true",
@@ -383,7 +385,7 @@ describe("AgentQualityWorkbench", () => {
 		await screen.findByText("Should ask before routing");
 
 		await user.type(
-			screen.getByLabelText("Search quality collection"),
+			screen.getByLabelText("Search Workbench collection"),
 			"routing",
 		);
 		await user.click(

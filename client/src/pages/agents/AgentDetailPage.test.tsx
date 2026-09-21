@@ -136,6 +136,14 @@ describe("AgentDetailPage — edit mode", () => {
 		).toBeInTheDocument();
 	});
 
+	it("offers the agent Workbench action", async () => {
+		await renderAtRoute("/agents/agent-1");
+
+		expect(
+			screen.getByRole("link", { name: "Open Workbench" }),
+		).toHaveAttribute("href", "/agents/agent-1/quality?tab=tests");
+	});
+
 	it("renders the Overview tab by default", async () => {
 		await renderAtRoute("/agents/agent-1");
 		expect(screen.getByTestId("overview-tab")).toHaveTextContent(

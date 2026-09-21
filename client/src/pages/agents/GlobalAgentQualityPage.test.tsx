@@ -100,8 +100,9 @@ describe("GlobalAgentQualityPage", () => {
 		);
 
 		expect(
-			await screen.findByRole("heading", { name: "Agent quality" }),
+			await screen.findByRole("heading", { name: "Agent Workbench" }),
 		).toBeVisible();
+		expect(screen.getByTestId("agent-workbench")).toBeVisible();
 		await waitFor(() => {
 			expect(mockSearchFindings).toHaveBeenCalledWith(
 				expect.objectContaining({
@@ -114,7 +115,7 @@ describe("GlobalAgentQualityPage", () => {
 		expect(await screen.findByText(/Triage/)).toBeVisible();
 		expect(screen.getByText(/manual source/i)).toBeVisible();
 		expect(
-			screen.getByRole("link", { name: "Back to agents" }),
+			screen.getByRole("link", { name: "Back to Agents" }),
 		).toHaveAttribute("href", "/agents");
 
 		await user.click(
@@ -123,6 +124,15 @@ describe("GlobalAgentQualityPage", () => {
 
 		expect(await screen.findByTestId("location-probe")).toHaveTextContent(
 			"/agents/agent-1/quality?collection=findings&finding=finding-1&selected=findings%3Afinding-1",
+		);
+	});
+
+	it("uses the shared fleet workbench and defaults to Findings", async () => {
+		renderPage();
+
+		expect(await screen.findByTestId("agent-workbench")).toBeVisible();
+		expect(screen.getByRole("combobox", { name: "Workbench collection" })).toHaveTextContent(
+			"Findings",
 		);
 	});
 

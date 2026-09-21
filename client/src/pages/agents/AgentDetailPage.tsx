@@ -318,7 +318,7 @@ export function AgentDetailPage() {
 					</div>
 					{!isCreate && agent ? (
 						<div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
-								<Button asChild variant="outline" size="sm"><Link to={`/agents/${agent.id}/quality?tab=tests`}>Quality workbench</Link></Button>
+								<Button asChild variant="outline" size="sm"><Link to={`/agents/${agent.id}/quality?tab=tests`}>Open Workbench</Link></Button>
 							{hasChat ? (
 								<TooltipProvider>
 									<Tooltip>
