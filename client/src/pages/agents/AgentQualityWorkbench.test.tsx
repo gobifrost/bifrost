@@ -436,20 +436,20 @@ describe("AgentQualityWorkbench", () => {
 		expect(
 			screen.getByRole("button", { name: "Close Inspector" }),
 		).toBeVisible();
-		expect(screen.getByRole("grid", { name: "Findings collection" })).toBeVisible();
+		expect(screen.getByRole("list", { name: "Findings collection" })).toBeVisible();
 		expect(
-			screen.getByRole("row", { name: /routes without confirming/i }),
-		).toHaveAttribute("aria-selected", "true");
+			screen.getByRole("button", { name: /routes without confirming/i }),
+		).toHaveAttribute("aria-current", "true");
 
 		await user.click(screen.getByRole("button", { name: "Close Inspector" }));
 		expect(
-			screen.getByRole("row", { name: /routes without confirming/i }),
-		).toHaveAttribute("aria-selected", "true");
+			screen.getByRole("button", { name: /routes without confirming/i }),
+		).toHaveAttribute("aria-current", "true");
 	});
 
 	it("reopens the same selected row after inspector dismissal", async () => {
 		const { user } = renderPage("/agents/agent-1/quality?collection=findings");
-		const row = await screen.findByRole("row", {
+		const row = await screen.findByRole("button", {
 			name: /routes without confirming/i,
 		});
 
