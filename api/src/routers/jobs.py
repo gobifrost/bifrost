@@ -75,10 +75,12 @@ async def get_job_status(
             status_map = {
                 "queued": "pending",
                 "running": "running",
+                "waiting": "running",
                 "cancel_requested": "running",
                 "succeeded": "success",
                 "failed": "failed",
                 "cancelled": "cancelled",
+                "requires_action": "failed",
             }
             result = platform_job.result or {}
             return JobStatusResponse(
@@ -87,7 +89,12 @@ async def get_job_status(
                 pulled=result.get("pulled", 0),
                 pushed=result.get("pushed", 0),
                 commit_sha=result.get("commit_sha"),
-                error=platform_job.error_message,
+                error=platform_job.error_message or (
+                    f"Action required: {result['requires_action']}"
+                    if platform_job.status == "requires_action"
+                    and isinstance(result.get("requires_action"), str)
+                    else None
+                ),
                 data=result,
                 preview=result.get("preview"),
                 conflicts=result.get("conflicts"),

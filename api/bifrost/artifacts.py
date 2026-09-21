@@ -153,9 +153,22 @@ class artifacts:
                 if not isinstance(artifact, dict):
                     raise RuntimeError("Video generation completed without an artifact.")
                 return ArtifactRef.model_validate(artifact)
-            if status in {"failed", "cancelled"}:
+            if status in {"failed", "cancelled", "requires_action"}:
                 error = job.get("error")
                 message = error.get("message") if isinstance(error, dict) else None
+                result = job.get("result")
+                action = (
+                    result.get("requires_action")
+                    if isinstance(result, dict)
+                    else None
+                )
+                if status == "requires_action":
+                    follow_up = (
+                        f" Required action: {action}."
+                        if isinstance(action, str)
+                        else " User action is required."
+                    )
+                    raise RuntimeError(f"Video generation requires action.{follow_up}")
                 raise RuntimeError(message or f"Video generation {status}.")
             await asyncio.sleep(poll_interval_seconds)
         raise TimeoutError(

@@ -263,6 +263,36 @@ async def test_handler_requires_action_finishes_with_result_and_releases_lease(
 
 
 @pytest.mark.asyncio
+async def test_requires_action_phase_is_bounded_to_two_hundred_characters(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = await _enqueue(db_session)
+    token = uuid4()
+    job.status = "running"
+    job.lease_token = token
+    await db_session.commit()
+
+    @asynccontextmanager
+    async def test_context() -> AsyncGenerator[AsyncSession, None]:
+        yield db_session
+
+    monkeypatch.setattr(service, "get_db_context", test_context)
+    monkeypatch.setattr(service, "publish_platform_job_update", AsyncMock())
+
+    assert await service.finish_platform_job(
+        job.id,
+        token,
+        status="requires_action",
+        phase="x" * 201,
+        result={"requires_action": "confirm_deletes"},
+    )
+
+    await db_session.refresh(job)
+    assert job.phase == "x" * 200
+
+
+@pytest.mark.asyncio
 async def test_requires_action_projects_result_to_public_job_and_notification(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,

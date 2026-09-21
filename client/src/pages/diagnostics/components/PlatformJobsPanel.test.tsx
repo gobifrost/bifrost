@@ -285,4 +285,31 @@ describe("PlatformJobsPanel", () => {
 		).toBeInTheDocument();
 		expect(screen.getAllByText("Kubernetes").length).toBeGreaterThan(0);
 	});
+
+	it("filters and presents jobs requiring action", async () => {
+		const user = userEvent.setup();
+		mocks.getPlatformJobs.mockResolvedValue({
+			jobs: [{ ...queuedJob, status: "requires_action", title: "Confirm sync" }],
+			total: 1,
+			limit: 25,
+			offset: 0,
+		});
+		renderPanel();
+
+		await user.click(
+			await screen.findByRole("combobox", {
+				name: "Filter Platform Jobs by state",
+			}),
+		);
+		await user.click(
+			await screen.findByRole("option", { name: "Requires Action" }),
+		);
+
+		await waitFor(() =>
+			expect(mocks.getPlatformJobs).toHaveBeenCalledWith(
+				expect.objectContaining({ status: "requires_action" }),
+			),
+		);
+		expect(screen.getAllByText("Requires Action").length).toBeGreaterThan(0);
+	});
 });

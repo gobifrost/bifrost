@@ -144,6 +144,31 @@ async def test_create_video_waits_for_durable_artifact_result(monkeypatch) -> No
 
 
 @pytest.mark.asyncio
+async def test_create_video_stops_when_its_job_requires_action(monkeypatch) -> None:
+    module = importlib.import_module("bifrost.artifacts")
+    accepted = MagicMock()
+    accepted.json.return_value = {"job_id": "job-1", "status": "queued"}
+    requires_action = MagicMock()
+    requires_action.json.return_value = {
+        "id": "job-1",
+        "status": "requires_action",
+        "result": {"requires_action": "confirm_deletes"},
+    }
+    client = MagicMock()
+    client.post = AsyncMock(return_value=accepted)
+    client.get = AsyncMock(return_value=requires_action)
+    monkeypatch.setattr(module, "get_client", lambda: client)
+    monkeypatch.setattr(module, "raise_for_status_with_detail", MagicMock())
+
+    with pytest.raises(RuntimeError, match="requires action") as exc_info:
+        await module.artifacts.create_video(
+            "launch-loop", prompt="A launch loop", poll_interval_seconds=0.001
+        )
+
+    assert "confirm_deletes" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
 async def test_read_resolves_opaque_artifact_id(monkeypatch) -> None:
     module = importlib.import_module("bifrost.artifacts")
     response = MagicMock(content=b"workbook")

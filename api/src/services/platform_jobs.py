@@ -378,12 +378,12 @@ async def finish_platform_job(
         if job is None:
             return False
         job.status = status
-        job.phase = phase or {
+        job.phase = (phase or {
             "succeeded": "Completed",
             "failed": "Failed",
             "cancelled": "Cancelled",
             "requires_action": "Action required",
-        }[status]
+        }[status])[:200]
         if status == "succeeded":
             job.progress_percent = 100
         job.result = result
