@@ -4,7 +4,7 @@ import {
 } from "@/components/layout/PageWorkspace";
 import { Link, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Search, Sparkles } from "lucide-react";
+import { ArrowLeft, Search } from "lucide-react";
 
 import { FleetReadError } from "./FleetReadError";
 import { Button } from "@/components/ui/button";
@@ -108,8 +108,8 @@ export function GlobalAgentQualityPage() {
 					</div>
 					<Button asChild variant="outline">
 						<Link to="/agents">
-							<Sparkles aria-hidden="true" className="size-4" />
-							Fleet
+							<ArrowLeft aria-hidden="true" className="size-4" />
+							Back to agents
 						</Link>
 					</Button>
 				</div>

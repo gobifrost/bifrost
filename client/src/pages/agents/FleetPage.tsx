@@ -2,7 +2,6 @@ import {
 	PageWorkspace,
 	PageScrollArea,
 } from "@/components/layout/PageWorkspace";
-import { FleetReviewDialog } from "./FleetReviewDialog";
 import { FleetHeader } from "./FleetHeader";
 import { FleetToolbar } from "./FleetToolbar";
 import { FleetReadError } from "./FleetReadError";
@@ -84,7 +83,6 @@ type ViewMode = "grid" | "table";
 type Organization = components["schemas"]["OrganizationPublic"];
 
 export function FleetPage() {
-	const [reviewOpen, setReviewOpen] = useState(false);
 	const [view, setView] = useState<ViewMode>("grid");
 	const tableAvailable = useMediaQuery("(min-width: 1024px)");
 	const [query, setQuery] = useState("");
@@ -150,15 +148,12 @@ export function FleetPage() {
 					actions={isPlatformAdmin ? <SummaryBackfillButton /> : null}
 				/>
 
-				{reviewOpen && (
-					<FleetReviewDialog onClose={() => setReviewOpen(false)} />
-				)}
 				{/* Flagged-run review banner */}
 				{fleetStats && fleetStats.needs_review > 0 ? (
 					<QueueBanner
 						count={fleetStats.needs_review}
 						actionLabel="Review now"
-						onAction={() => setReviewOpen(true)}
+						actionHref="/history?type=agents&verdict=down"
 					/>
 				) : null}
 

@@ -179,6 +179,27 @@ describe("AgentRunsPanel", () => {
 		});
 	});
 
+	it("opens the fleet review queue from the verdict query filter", async () => {
+		renderWithProviders(
+			<Routes>
+				<Route path="/history" element={<AgentRunsPanel />} />
+			</Routes>,
+			{
+				initialEntries: ["/history?type=agents&verdict=down"],
+			},
+		);
+
+		expect(mockUseInfiniteAgentRuns).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				pageSize: 25,
+				verdict: "down",
+			}),
+		);
+		expect(
+			screen.getByRole("combobox", { name: "Review status" }),
+		).toHaveTextContent("Flagged");
+	});
+
 	it("constrains the table and progressively collapses secondary columns", () => {
 		renderWithProviders(
 			<Routes>

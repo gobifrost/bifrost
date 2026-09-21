@@ -113,6 +113,9 @@ describe("GlobalAgentQualityPage", () => {
 		});
 		expect(await screen.findByText(/Triage/)).toBeVisible();
 		expect(screen.getByText(/manual source/i)).toBeVisible();
+		expect(
+			screen.getByRole("link", { name: "Back to agents" }),
+		).toHaveAttribute("href", "/agents");
 
 		await user.click(
 			screen.getByRole("link", { name: /open finding missed escalation/i }),

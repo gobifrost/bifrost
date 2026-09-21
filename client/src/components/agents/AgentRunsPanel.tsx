@@ -69,6 +69,11 @@ const AGENT_RUN_STATUSES = [
 	{ value: "cancelled", label: "Cancelled" },
 	{ value: "budget_exceeded", label: "Budget exceeded" },
 ] as const;
+const AGENT_RUN_VERDICTS = [
+	{ value: "down", label: "Flagged" },
+	{ value: "up", label: "Approved" },
+	{ value: "unreviewed", label: "Unreviewed" },
+] as const;
 
 export function AgentRunsPanel() {
 	const isDesktop = useIsDesktop();
@@ -78,6 +83,7 @@ export function AgentRunsPanel() {
 	const { isPlatformAdmin } = useAuth();
 	const agentIdFilter = searchParams.get("agent") || "";
 	const statusFilter = searchParams.get("status") || "";
+	const verdictFilter = searchParams.get("verdict") || "";
 	const [searchTerm, setSearchTerm] = useState(searchParams.get("q") || "");
 	const [filterOrgId, setFilterOrgId] = useState<string | null | undefined>(
 		undefined,
@@ -99,6 +105,7 @@ export function AgentRunsPanel() {
 		};
 		if (agentIdFilter) params.agentId = agentIdFilter;
 		if (statusFilter) params.status = statusFilter;
+		if (verdictFilter) params.verdict = verdictFilter;
 		if (isPlatformAdmin && filterOrgId) params.orgId = filterOrgId;
 		if (searchTerm) params.q = searchTerm;
 		if (dateRange?.from) {
@@ -117,6 +124,7 @@ export function AgentRunsPanel() {
 		isPlatformAdmin,
 		searchTerm,
 		statusFilter,
+		verdictFilter,
 	]);
 	const {
 		data,
@@ -152,6 +160,7 @@ export function AgentRunsPanel() {
 	const hasActiveFilters =
 		agentIdFilter !== "" ||
 		statusFilter !== "" ||
+		verdictFilter !== "" ||
 		searchTerm !== "" ||
 		dateRange !== undefined ||
 		(isPlatformAdmin && filterOrgId !== undefined);
@@ -170,7 +179,7 @@ export function AgentRunsPanel() {
 		/>
 	);
 
-	const filtersKey = `${agentIdFilter}|${statusFilter}|${searchTerm}|${dateRange?.from?.toISOString() ?? ""}|${dateRange?.to?.toISOString() ?? ""}|${filterOrgId ?? ""}`;
+	const filtersKey = `${agentIdFilter}|${statusFilter}|${verdictFilter}|${searchTerm}|${dateRange?.from?.toISOString() ?? ""}|${dateRange?.to?.toISOString() ?? ""}|${filterOrgId ?? ""}`;
 	const [prevFiltersKey, setPrevFiltersKey] = useState(filtersKey);
 	if (prevFiltersKey !== filtersKey) {
 		setPrevFiltersKey(filtersKey);
@@ -203,6 +212,7 @@ export function AgentRunsPanel() {
 				const next = new URLSearchParams(prev);
 				next.delete("agent");
 				next.delete("status");
+				next.delete("verdict");
 				next.delete("q");
 				return next;
 			},
@@ -382,6 +392,39 @@ export function AgentRunsPanel() {
 									className="min-h-11"
 								>
 									{status.label}
+								</SelectItem>
+							))}
+						</SelectContent>
+					</Select>
+					<Select
+						value={verdictFilter || ALL_FILTER_VALUE}
+						onValueChange={(value) =>
+							setQueryParam(
+								"verdict",
+								value === ALL_FILTER_VALUE ? "" : value,
+							)
+						}
+					>
+						<SelectTrigger
+							aria-label="Review status"
+							className="min-h-11 w-full min-w-0 lg:w-44"
+						>
+							<SelectValue />
+						</SelectTrigger>
+						<SelectContent position="popper">
+							<SelectItem
+								value={ALL_FILTER_VALUE}
+								className="min-h-11"
+							>
+								All review statuses
+							</SelectItem>
+							{AGENT_RUN_VERDICTS.map((verdict) => (
+								<SelectItem
+									key={verdict.value}
+									value={verdict.value}
+									className="min-h-11"
+								>
+									{verdict.label}
 								</SelectItem>
 							))}
 						</SelectContent>

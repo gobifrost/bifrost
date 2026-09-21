@@ -198,6 +198,10 @@ describe("FleetPage — header + fleet stats", () => {
 		expect(
 			screen.getByText(/4 flagged runs to review/i),
 		).toBeInTheDocument();
+		expect(
+			screen.getByRole("link", { name: /review now/i }),
+		).toHaveAttribute("href", "/history?type=agents&verdict=down");
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 	});
 });
 
