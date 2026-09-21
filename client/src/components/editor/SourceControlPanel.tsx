@@ -39,6 +39,7 @@ import { useEditorStore, type DiffPreviewState } from "@/stores/editorStore";
 import {
 	GitOpError,
 	runGitOp as runPlatformGitOp,
+	type GitOperationAccepted,
 } from "./runGitOperation";
 
 /** Log preflight validation issues to the editor terminal */
@@ -194,7 +195,7 @@ function logEntityChangesToTerminal(
 
 /** Queue Git work through the shared durable PlatformJob transport. */
 async function runGitOp<T>(
-	queueFn: (jobId: string) => Promise<{ job_id: string }>,
+	queueFn: (jobId: string) => Promise<GitOperationAccepted>,
 	resultType: string,
 	onQueued?: (jobId: string) => void,
 ): Promise<T> {

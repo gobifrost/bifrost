@@ -71,6 +71,7 @@ class FileIndexService:
                 content_str = content.decode("utf-8")
             except UnicodeDecodeError:
                 logger.warning(f"Could not decode {path} as UTF-8, skipping index")
+                await self.db.execute(delete(FileIndex).where(FileIndex.path == path))
                 return content_hash
 
             stmt = insert(FileIndex).values(
@@ -115,7 +116,12 @@ class FileIndexService:
             await self.db.execute(delete(FileIndex).where(FileIndex.path == path))
             return content_hash
         content = source.read_bytes()
-        return await self.write(path, content)
+        content_hash = await self.write(path, content)
+        if path.endswith(".py"):
+            from src.core.module_cache import set_module
+
+            await set_module(path, content.decode("utf-8"), content_hash)
+        return content_hash
 
     async def delete(self, path: str) -> None:
         """Delete a file from S3 and the DB index."""
