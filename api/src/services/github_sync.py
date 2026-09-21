@@ -730,38 +730,6 @@ class GitHubSyncService:
             logger.error(f"Abort merge failed: {e}", exc_info=True)
             return AbortMergeResult(success=False, error=str(e))
 
-    def _do_resolve(self, work_dir: Path, repo: GitRepo, resolutions: dict[str, str]) -> "ResolveResult":
-        """Core resolve logic for inline conflict resolution during sync_execute."""
-        from src.models.contracts.github import ResolveResult
-
-        merge_head = work_dir / ".git" / "MERGE_HEAD"
-        is_merge = merge_head.exists()
-        has_unmerged = bool(repo.index.unmerged_blobs())
-
-        if not is_merge and not has_unmerged:
-            return ResolveResult(success=False, error="No conflicts to resolve")
-
-        for cpath, resolution in resolutions.items():
-            try:
-                if resolution == "ours":
-                    repo.git.checkout("--ours", cpath)
-                elif resolution == "theirs":
-                    repo.git.checkout("--theirs", cpath)
-                repo.git.add(cpath)
-            except Exception:
-                # DU/UD conflict — one side deleted, checkout fails
-                try:
-                    repo.git.rm(cpath)
-                except Exception:
-                    repo.git.add(cpath)
-
-        if is_merge:
-            repo.index.commit("Merge with conflict resolution")
-        else:
-            repo.index.commit("Apply stashed changes with conflict resolution")
-
-        return ResolveResult(success=True)
-
     async def desktop_resolve(self, resolutions: dict[str, str]) -> "ResolveResult":
         """
         Resolve merge conflicts after a failed pull.
