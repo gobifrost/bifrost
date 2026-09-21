@@ -13,7 +13,6 @@ from fastapi import APIRouter, HTTPException, Query, Response, status
 
 from src.core.auth import Context, CurrentSuperuser
 from src.core.db_deps import DbSession
-from src.core.log_safety import log_safe
 from src.models import (
     CommitHistoryResponse,
     CommitInfo,
@@ -24,11 +23,9 @@ from src.models import (
     DiscardRequest,
     GitHubBranchesResponse,
     GitHubBranchInfo,
-    GitHubConfigRequest,
     GitHubConfigResponse,
     GitHubRepoInfo,
     GitHubReposResponse,
-    GitHubSetupResponse,
     GitOpRequest,
     SyncRequest,
     SyncResult,
@@ -377,69 +374,6 @@ async def validate_github_token(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to validate GitHub token: {str(e)}",
-        )
-
-
-@router.post(
-    "/configure",
-    response_model=GitHubSetupResponse,
-    summary="Configure GitHub integration",
-    description="Save GitHub repository configuration. Syncing happens via /sync endpoints.",
-)
-async def configure_github(
-    request: GitHubConfigRequest,
-    ctx: Context,
-    user: CurrentSuperuser,
-    db: DbSession,
-) -> GitHubSetupResponse:
-    """
-    Configure GitHub integration.
-
-    Saves the GitHub repository configuration (repo URL, branch) to the database.
-    Use the /sync endpoints to pull/push changes.
-    """
-    try:
-        # Normalize repo_url - accept both full URL and owner/repo format
-        repo_url = request.repo_url.strip()
-        if not repo_url.startswith("http"):
-            repo_url = f"https://github.com/{repo_url}"
-
-        logger.info(f"Configuring GitHub for repo: {log_safe(repo_url)}")
-
-        # Get existing config to retrieve token
-        existing_config = await get_github_config(db, ctx.org_id)
-
-        if not existing_config or not existing_config.token:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="GitHub token not found. Please validate your token first.",
-            )
-
-        # Save the updated configuration
-        await save_github_config(
-            db=db,
-            org_id=ctx.org_id,
-            token=existing_config.token,
-            repo_url=repo_url,
-            branch=request.branch or "main",
-            updated_by=user.email,
-        )
-
-        logger.info(f"GitHub configuration saved for repo: {log_safe(repo_url)}")
-
-        return GitHubSetupResponse(
-            job_id=None,
-            notification_id=None,
-            status="configured",
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to configure GitHub: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to configure GitHub: {str(e)}",
         )
 
 

@@ -54,6 +54,17 @@ def test_reconcile_requires_exactly_one_local_or_remote_choice_per_conflict() ->
     ) == {"modules/shared.py": "local"}
 
 
+def test_connect_preview_rejects_file_directory_shape_collisions() -> None:
+    """A file cannot be reconciled with a directory rooted at the same path."""
+    from src.services.github_sync import GitConnectPreviewError, classify_connect_trees
+
+    with pytest.raises(GitConnectPreviewError, match="file/directory shape conflict.*modules/shared"):
+        classify_connect_trees(
+            {"modules/shared": "local-file"},
+            {"modules/shared/task.py": "remote-file"},
+        )
+
+
 def test_start_from_remote_requires_explicit_confirmation_when_local_content_would_be_discarded() -> None:
     request = GitConnectRequest(
         preview_token="preview",

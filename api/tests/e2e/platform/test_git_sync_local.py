@@ -515,6 +515,29 @@ class TestFirstGitConnection:
                 organization_id=None,
             )
 
+    async def test_connect_preview_refuses_file_directory_shape_conflicts(
+        self, sync_service, bare_repo, working_clone,
+    ) -> None:
+        """A review cannot offer a reconciliation that cannot be materialized."""
+        write_entity_to_repo(sync_service._persistent_dir, "modules/shared", "local")
+        write_entity_to_repo(
+            Path(working_clone.working_tree_dir), "modules/shared/task.py", "remote"
+        )
+        repo = working_clone
+        repo.git.add(A=True)
+        repo.index.commit("remote directory conflicts with local file")
+        repo.remotes.origin.push(refspec="main:main")
+
+        from src.services.github_sync import GitConnectPreviewError
+
+        with pytest.raises(GitConnectPreviewError, match="file/directory shape conflict.*modules/shared"):
+            await sync_service.preview_connect(
+                str(bare_repo),
+                "main",
+                requested_by_user_id="connect-shape-user",
+                organization_id=None,
+            )
+
 
 # =============================================================================
 # Platform → Empty Repo (Initial Export)

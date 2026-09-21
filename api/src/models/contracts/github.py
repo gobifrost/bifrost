@@ -49,14 +49,6 @@ class ValidateTokenRequest(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class GitHubConfigRequest(BaseModel):
-    """Request to configure GitHub integration - token must already be saved via /validate"""
-    repo_url: str = Field(..., min_length=1, description="GitHub repository URL (e.g., https://github.com/user/repo)")
-    branch: str = Field(default="main", description="Branch to sync with")
-
-    model_config = ConfigDict(from_attributes=True)
-
-
 class GitConnectItem(BaseModel):
     """One path compared during a first workspace Git connection preview."""
 
@@ -225,17 +217,6 @@ class CommitAndPushResponse(BaseModel):
     error: str | None = Field(default=None, description="Error message if operation failed")
 
     model_config = ConfigDict(from_attributes=True)
-
-
-class GitHubSetupResponse(BaseModel):
-    """Response after configuring GitHub integration"""
-    job_id: str | None = Field(default=None, description="Job ID for tracking the setup operation (deprecated)")
-    notification_id: str | None = Field(default=None, description="Notification ID for watching progress via WebSocket (deprecated)")
-    status: str = Field(default="configured", description="Configuration status")
-
-    model_config = ConfigDict(from_attributes=True)
-
-
 
 
 class CommitInfo(BaseModel):

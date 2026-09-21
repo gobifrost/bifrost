@@ -393,6 +393,7 @@ def run_git_connect(
     branch: str,
     strategy: str | None,
     decisions: dict[str, str],
+    confirm_destructive: bool,
 ) -> int:
     """Preview then apply a first Git connection without implicit reconciliation."""
     try:
@@ -415,6 +416,27 @@ def run_git_connect(
     if strategy not in {"publish_local", "start_from_remote", "reconcile"}:
         print("Error: invalid connection strategy", file=sys.stderr)
         return EXIT_ERROR
+
+    discards_local = any(
+        item.get("classification") in {"local_only", "conflict"}
+        for item in preview.get("items") or []
+    )
+    if strategy == "start_from_remote" and discards_local and not confirm_destructive:
+        if not sys.stdin.isatty():
+            print(
+                "Error: start-from-remote would discard local content; "
+                "pass --confirm-destructive to continue.",
+                file=sys.stderr,
+            )
+            return EXIT_ERROR
+        confirmation = input(
+            "Starting from remote will discard reviewed local content. "
+            "Type 'yes' to continue: "
+        ).strip().lower()
+        if confirmation != "yes":
+            print("Connection cancelled; local content was not discarded.", file=sys.stderr)
+            return EXIT_ERROR
+        confirm_destructive = True
 
     conflicts = [
         item.get("path") for item in preview.get("items") or []
@@ -439,15 +461,19 @@ def run_git_connect(
             print("Error: invalid or missing reconciliation decisions", file=sys.stderr)
             return EXIT_ERROR
 
+    body: dict[str, Any] = {
+        "preview_token": preview["token"],
+        "strategy": strategy,
+        "decisions": decisions,
+    }
+    if strategy == "start_from_remote":
+        body["confirm_destructive"] = confirm_destructive
+
     result = _run_platform_git_operation(
         client,
         "/api/github/connect",
         label="Connecting",
-        body={
-            "preview_token": preview["token"],
-            "strategy": strategy,
-            "decisions": decisions,
-        },
+        body=body,
     )
     if result is None:
         return EXIT_ERROR

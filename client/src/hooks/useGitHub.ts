@@ -14,7 +14,6 @@ import type { components } from "@/lib/v1";
 // Types - Auto-generated from OpenAPI spec
 // =============================================================================
 
-export type GitHubConnectRequest = components["schemas"]["GitHubConfigRequest"];
 export type GitConnectPreviewRequest =
 	components["schemas"]["GitConnectPreviewRequest"];
 export type GitConnectPreview = components["schemas"]["GitConnectPreview"];
@@ -228,24 +227,6 @@ export function useValidateGitHubToken() {
 			// Invalidate repositories cache after validation
 			queryClient.invalidateQueries({
 				queryKey: ["get", "/api/github/repositories"],
-			});
-		},
-	});
-}
-
-/**
- * Configure GitHub integration
- */
-export function useConfigureGitHub() {
-	const queryClient = useQueryClient();
-	return $api.useMutation("post", "/api/github/configure", {
-		onSuccess: () => {
-			// Invalidate related queries after configuration
-			queryClient.invalidateQueries({
-				queryKey: ["get", "/api/github/config"],
-			});
-			queryClient.invalidateQueries({
-				queryKey: ["get", "/api/github/status"],
 			});
 		},
 	});

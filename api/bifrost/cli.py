@@ -1867,9 +1867,14 @@ def handle_git(args: list[str]) -> int:
         branch = "main"
         strategy = None
         decisions: dict[str, str] = {}
+        confirm_destructive = False
         index = 1
         while index < len(sub_args):
             option = sub_args[index]
+            if option == "--confirm-destructive":
+                confirm_destructive = True
+                index += 1
+                continue
             if option in {"--branch", "--strategy", "--decision"}:
                 if index + 1 >= len(sub_args):
                     print(f"Error: {option} requires a value", file=sys.stderr)
@@ -1893,7 +1898,12 @@ def handle_git(args: list[str]) -> int:
                 print(f"Unknown option: {option}", file=sys.stderr)
                 return EXIT_ERROR
         return run_git_connect(
-            client, repository_url, branch=branch, strategy=strategy, decisions=decisions
+            client,
+            repository_url,
+            branch=branch,
+            strategy=strategy,
+            decisions=decisions,
+            confirm_destructive=confirm_destructive,
         )
 
     if subcmd == "resolve":
@@ -1961,6 +1971,7 @@ Examples:
   bifrost git commit -m "add onboarding workflow"
   bifrost git sync
   bifrost git connect https://github.com/example/workspace.git --strategy publish-local
+  bifrost git connect https://github.com/example/workspace.git --strategy start-from-remote --confirm-destructive
   bifrost git connect https://github.com/example/workspace.git --strategy reconcile --decision workflows/billing.py=local
   bifrost git abort-merge
   bifrost git resolve workflows/billing.py=keep_remote

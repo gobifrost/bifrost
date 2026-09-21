@@ -246,3 +246,70 @@ def test_git_connect_posts_preview_token_and_reconcile_decision(monkeypatch) -> 
             "decisions": {"workflows/shared.py": "local"},
         },
     }
+
+
+def test_git_connect_start_from_remote_requires_explicit_destructive_confirmation(
+    monkeypatch, capsys
+) -> None:
+    """The CLI must fail closed instead of silently discarding reviewed local content."""
+    client = mock.MagicMock()
+    monkeypatch.setattr(
+        "bifrost.client.BifrostClient.get_instance", lambda **_: client
+    )
+    monkeypatch.setattr(
+        "bifrost.git_commands._preview_connect",
+        lambda *_: {
+            "token": "preview-token",
+            "repository_url": "https://example.test/repo.git",
+            "branch": "main",
+            "state": "requires_reconciliation",
+            "items": [{"path": "workflows/local.py", "classification": "local_only"}],
+        },
+    )
+    enqueue = mock.MagicMock()
+    monkeypatch.setattr("bifrost.git_commands._post_platform_job", enqueue)
+
+    assert cli.handle_git([
+        "connect", "https://example.test/repo.git", "--strategy", "start-from-remote",
+    ]) == 2
+
+    assert "--confirm-destructive" in capsys.readouterr().err
+    enqueue.assert_not_called()
+
+
+def test_git_connect_start_from_remote_sends_explicit_destructive_confirmation(
+    monkeypatch
+) -> None:
+    """An explicitly approved remote start reaches the server with its confirmation."""
+    client = mock.MagicMock()
+    monkeypatch.setattr(
+        "bifrost.client.BifrostClient.get_instance", lambda **_: client
+    )
+    monkeypatch.setattr(
+        "bifrost.git_commands._preview_connect",
+        lambda *_: {
+            "token": "preview-token",
+            "repository_url": "https://example.test/repo.git",
+            "branch": "main",
+            "state": "requires_reconciliation",
+            "items": [{"path": "workflows/local.py", "classification": "local_only"}],
+        },
+    )
+    called: dict[str, object] = {}
+
+    def run(_client, endpoint, *, label, body):  # type: ignore[no-untyped-def]
+        called.update(endpoint=endpoint, label=label, body=body)
+        return {"status": "succeeded", "result": {"status": "success"}}
+
+    monkeypatch.setattr("bifrost.git_commands._post_platform_job", run)
+
+    assert cli.handle_git([
+        "connect", "https://example.test/repo.git", "--strategy", "start-from-remote",
+        "--confirm-destructive",
+    ]) == 0
+    assert called["body"] == {
+        "preview_token": "preview-token",
+        "strategy": "start_from_remote",
+        "decisions": {},
+        "confirm_destructive": True,
+    }

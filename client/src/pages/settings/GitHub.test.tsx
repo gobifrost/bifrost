@@ -7,7 +7,6 @@ import { GitHub } from "./GitHub";
 const {
 	mockUseGitHubConfig,
 	mockUseGitHubRepositories,
-	mockConfigureMutateAsync,
 	mockPreviewConnect,
 	mockEnqueueConnect,
 	mockCreateRepoMutateAsync,
@@ -17,7 +16,6 @@ const {
 } = vi.hoisted(() => ({
 	mockUseGitHubConfig: vi.fn(),
 	mockUseGitHubRepositories: vi.fn(),
-	mockConfigureMutateAsync: vi.fn(),
 	mockPreviewConnect: vi.fn(),
 	mockEnqueueConnect: vi.fn(),
 	mockCreateRepoMutateAsync: vi.fn(),
@@ -30,11 +28,6 @@ vi.mock("@/hooks/useGitHub", () => ({
 	useGitHubConfig: () => mockUseGitHubConfig(),
 	useGitHubRepositories: (enabled?: boolean) =>
 		mockUseGitHubRepositories(enabled),
-	useConfigureGitHub: () => ({
-		mutateAsync: mockConfigureMutateAsync,
-		isError: false,
-		isSuccess: false,
-	}),
 	previewGitHubConnect: (...args: unknown[]) => mockPreviewConnect(...args),
 	enqueueGitHubConnect: (...args: unknown[]) => mockEnqueueConnect(...args),
 	useCreateGitHubRepository: () => ({
@@ -76,10 +69,6 @@ beforeEach(() => {
 		isError: false,
 		isFetching: false,
 		refetch: vi.fn(),
-	});
-	mockConfigureMutateAsync.mockResolvedValue({
-		job_id: "job-1",
-		status: "queued",
 	});
 	mockPreviewConnect.mockResolvedValue({
 		token: "review-token",

@@ -191,10 +191,31 @@ def _connect_tree_fingerprint(tree: Mapping[str, str]) -> str:
     return digest.hexdigest()
 
 
+def _connect_shape_conflicts(
+    local: Mapping[str, str], remote: Mapping[str, str],
+) -> list[str]:
+    """Return paths that are a file on one side and a directory on the other."""
+    conflicts: set[str] = set()
+    for files, other_files in ((local, remote), (remote, local)):
+        for path in other_files:
+            components = path.split("/")
+            for index in range(1, len(components)):
+                ancestor = "/".join(components[:index])
+                if ancestor in files:
+                    conflicts.add(ancestor)
+    return sorted(conflicts)
+
+
 def classify_connect_trees(
     local: Mapping[str, str], remote: Mapping[str, str],
 ) -> list[GitConnectItem]:
     """Classify the union of detached local and reviewed remote tree hashes."""
+    shape_conflicts = _connect_shape_conflicts(local, remote)
+    if shape_conflicts:
+        raise GitConnectPreviewError(
+            "first Git connection cannot reconcile file/directory shape conflict(s): "
+            + ", ".join(shape_conflicts)
+        )
     items: list[GitConnectItem] = []
     for path in sorted(set(local) | set(remote)):
         local_hash = local.get(path)
@@ -437,8 +458,6 @@ class GitHubSyncService:
         progress_fn=None,
     ) -> "SyncResult":
         """Materialize a reviewed first connection, then use the normal sync apply path."""
-        from src.models.contracts.github import SyncResult
-
         record = await self.load_connect_preview(
             request.preview_token,
             requested_by_user_id=requested_by_user_id,

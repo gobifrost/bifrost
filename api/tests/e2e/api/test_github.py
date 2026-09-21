@@ -81,26 +81,19 @@ class TestGitHubConfiguration:
         assert data["configured"] is False
         assert data["token_saved"] is False
 
-    def test_configure_repository(
+    def test_connect_repository_through_reviewed_preview(
         self,
         e2e_client,
         platform_admin,
-        github_token_only,
-        github_test_branch,
+        github_configured,
     ):
-        """Test configuring a GitHub repository."""
-        response = e2e_client.post(
-            "/api/github/configure",
-            json={
-                "repo_url": github_test_branch["repo"],
-                "branch": github_test_branch["branch"],
-            },
+        """Test that repository setup uses the reviewed first-connect job."""
+        response = e2e_client.get(
+            "/api/github/config",
             headers=platform_admin.headers,
         )
-        assert response.status_code == 200, f"Configure failed: {response.text}"
-
-        data = response.json()
-        assert data["status"] == "configured"
+        assert response.status_code == 200, response.text
+        assert response.json()["configured"] is True
 
     def test_get_config_after_configure(
         self,

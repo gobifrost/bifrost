@@ -43,6 +43,13 @@ def test_git_operation_routes_explicitly_return_accepted_platform_jobs() -> None
     assert routes["/api/github/connect"].response_model is PlatformJobAccepted
 
 
+def test_legacy_configure_route_cannot_bypass_reviewed_first_connection() -> None:
+    """A repository can only become configured through preview + workspace.git."""
+    routes = {route.path for route in github.router.routes}
+
+    assert "/api/github/configure" not in routes
+
+
 @pytest.mark.asyncio
 async def test_connect_refuses_unconfirmed_destructive_remote_start(
     monkeypatch: pytest.MonkeyPatch,
