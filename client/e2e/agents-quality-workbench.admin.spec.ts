@@ -1,16 +1,16 @@
 /**
  * Agent improvement workbench (Admin)
  *
- * Seeds an agent and navigates to its quality page. Asserts
- * the workbench structure: the "Quality workbench" heading, the four quality
+ * Seeds an agent and navigates to its Workbench page. Asserts
+ * the workbench structure: the "Workbench" heading, the four Workbench
  * collections with Tests selected by default, and the shared test inspector.
  */
 
 import { test, expect } from "@playwright/test";
 import { seedAgentViaPage } from "./setup/seed-agent";
 
-test.describe("Agent Quality Workbench (admin)", () => {
-	test("quality workbench renders collections with tests first", async ({
+test.describe("Agent Workbench (admin)", () => {
+	test("Workbench renders collections with tests first", async ({
 		page,
 	}, testInfo) => {
 		const agent = await seedAgentViaPage(page, {
@@ -21,11 +21,11 @@ test.describe("Agent Quality Workbench (admin)", () => {
 
 		// 1. Heading is always present regardless of flagged-run count.
 		await expect(
-			page.getByRole("heading", { name: /quality workbench/i }),
+			page.getByRole("heading", { name: "Workbench", exact: true }),
 		).toBeVisible({ timeout: 10000 });
 
 		// 2. The four collections share one workbench; Tests is the default.
-		for (const collection of ["Tests", "Findings", "Reviews", "Run history"]) {
+		for (const collection of ["Tests", "Findings", "Reviews", "Run History"]) {
 			await expect(
 				page.getByRole("button", { name: collection, exact: true }),
 			).toBeVisible();
@@ -40,7 +40,7 @@ test.describe("Agent Quality Workbench (admin)", () => {
 		).toHaveCount(0);
 
 		// 4. Screenshots for visual reference, desktop and mobile,
-		// captured from the top of the quality landing.
+		// captured from the top of the Workbench landing.
 		await page.screenshot({
 			path: testInfo.outputPath("workbench-evidence-desktop.png"),
 			fullPage: true,
@@ -69,7 +69,9 @@ test.describe("Agent Quality Workbench (admin)", () => {
 		expect(headerBox!.y + headerBox!.height).toBeLessThanOrEqual(
 			viewport!.height,
 		);
-		await expect(page.getByRole("heading", { name: /quality workbench/i })).toBeInViewport();
+		await expect(
+			page.getByRole("heading", { name: "Workbench", exact: true }),
+		).toBeInViewport();
 	});
 
 	test("collection selection survives in the URL", async ({ page }) => {
