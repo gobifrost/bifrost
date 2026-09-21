@@ -63,6 +63,18 @@ export function RunFindingAction({
 		);
 
 	if (!agentId) return null;
+	if (findings.isError) {
+		return (
+			<RunActionFeedback
+				pending={findings.isFetching}
+				failed={!findings.isFetching}
+				onRetry={() => void findings.refetch()}
+				message="Could not check existing Findings. Retry before creating one from this run."
+				pendingLabel="Checking existing Findings…"
+				retryLabel="Retry Finding lookup"
+			/>
+		);
+	}
 	if (existing) {
 		return (
 			<Button asChild variant="outline" className="min-h-11">

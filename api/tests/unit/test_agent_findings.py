@@ -13,6 +13,7 @@ from src.models.contracts.agent_findings import (
     FindingUpdate,
 )
 from src.models.orm.agent_findings import AgentFinding
+from src.routers.agent_findings import _lock_run_source_finding
 
 
 def _finding(**overrides):
@@ -95,3 +96,24 @@ def test_finding_public_carries_empty_link_list_by_default():
     )
     assert public.status == "open"
     assert public.linked_case_ids == []
+
+
+@pytest.mark.asyncio
+async def test_run_sourced_create_uses_transaction_advisory_lock():
+    class FakeSession:
+        def __init__(self):
+            self.calls = []
+
+        async def execute(self, statement, params=None):
+            self.calls.append((str(statement), params))
+
+    run_id = uuid4()
+    session = FakeSession()
+    await _lock_run_source_finding(session, run_id)  # type: ignore[arg-type]
+
+    assert session.calls == [
+        (
+            "SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))",
+            {"key": str(run_id)},
+        )
+    ]

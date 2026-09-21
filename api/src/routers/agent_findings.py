@@ -27,8 +27,8 @@ from datetime import datetime, timezone
 from typing import Annotated
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import select
+from fastapi import APIRouter, HTTPException, Query, Response, status
+from sqlalchemy import select, text
 
 from shared.agent_finding_queries import search_findings, serialize_finding
 from shared.models import FindingCreate, FindingPublic, FindingSearchPage, FindingUpdate
@@ -120,9 +120,39 @@ async def _resolve_source_run(
         )
 
 
+async def _existing_run_source_finding(
+    db: DbSession, user: CurrentActiveUser, source_run_id: UUID | None
+) -> AgentFinding | None:
+    if source_run_id is None:
+        return None
+    return (
+        await db.execute(
+            select(AgentFinding).where(
+                AgentFinding.source_kind == "run",
+                AgentFinding.source_run_id == source_run_id,
+                visible_agent_finding_condition(user),
+            )
+            .order_by(AgentFinding.created_at.asc(), AgentFinding.id.asc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+
+async def _lock_run_source_finding(db: DbSession, source_run_id: UUID | None) -> None:
+    if source_run_id is None:
+        return
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+        {"key": str(source_run_id)},
+    )
+
+
 @router.post("", response_model=FindingPublic, status_code=status.HTTP_201_CREATED)
 async def create_finding(
-    body: FindingCreate, db: DbSession, user: CurrentActiveUser
+    body: FindingCreate,
+    db: DbSession,
+    user: CurrentActiveUser,
+    response: Response,
 ) -> FindingPublic:
     """Record a reviewed finding against a visible agent."""
     agent = await _require_agent(db, user, body.agent_id)
@@ -139,6 +169,12 @@ async def create_finding(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="source_sequence requires a run source.",
         )
+    if body.source_kind == "run":
+        await _lock_run_source_finding(db, body.source_run_id)
+        existing = await _existing_run_source_finding(db, user, body.source_run_id)
+        if existing is not None:
+            response.status_code = status.HTTP_200_OK
+            return await _to_public(db, existing, user)
 
     now = datetime.now(timezone.utc)
     finding = AgentFinding(

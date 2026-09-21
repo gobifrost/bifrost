@@ -155,4 +155,27 @@ describe("RunFindingAction", () => {
 			"/agents/agent-1/quality?collection=findings&selected=findings:finding-2",
 		);
 	});
+
+	it("blocks creation and retries when existing Finding lookup fails", async () => {
+		mockFindings
+			.mockRejectedValueOnce(new Error("lookup failed"))
+			.mockResolvedValueOnce([]);
+		const { user } = renderAction();
+
+		expect(
+			await screen.findByText(/could not check existing findings/i),
+		).toBeVisible();
+		expect(
+			screen.queryByRole("button", { name: "Create Finding" }),
+		).not.toBeInTheDocument();
+
+		await user.click(
+			screen.getByRole("button", { name: "Retry Finding lookup" }),
+		);
+
+		expect(
+			await screen.findByRole("button", { name: "Create Finding" }),
+		).toBeEnabled();
+		expect(mockCreateFinding).not.toHaveBeenCalled();
+	});
 });

@@ -278,6 +278,26 @@ describe("AgentReviewPage — verdict actions", () => {
 		).not.toBeInTheDocument();
 	});
 
+	it("does not show the Finding action for good runs", async () => {
+		mockUseAgentRun.mockImplementation((runId: string | undefined) =>
+			runId ? { data: makeRun(runId, { verdict: "up" }) } : {},
+		);
+		await renderPage();
+		expect(
+			screen.queryByRole("button", { name: "Create Finding" }),
+		).not.toBeInTheDocument();
+	});
+
+	it("does not show the Finding action for unreviewed runs", async () => {
+		mockUseAgentRun.mockImplementation((runId: string | undefined) =>
+			runId ? { data: makeRun(runId, { verdict: null }) } : {},
+		);
+		await renderPage();
+		expect(
+			screen.queryByRole("button", { name: "Create Finding" }),
+		).not.toBeInTheDocument();
+	});
+
 	it("calls useSetVerdict and auto-advances on success", async () => {
 		const { user } = await renderPage();
 		await user.click(screen.getByTestId("panel-up"));

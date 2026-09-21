@@ -10,7 +10,7 @@ import {
  *
  * Layout:
  *   - Header: agent name, "Review N of total" counter, dot pagination,
- *     keyboard shortcut hints, link to the Workbench page when there is
+ *     keyboard shortcut hints, link to the Agent Workbench page when there is
  *     anything still flagged.
  *   - Main: a Card with the run summary header + <RunReviewPanel
  *     variant="flipbook"> with verdict actions.
@@ -452,9 +452,11 @@ export function AgentReviewPage() {
 								Save note and continue
 							</Button>
 						) : null}
-						<div className="mt-3">
-							<RunFindingAction run={detail} note={note} />
-						</div>
+						{detail.verdict === "down" ? (
+							<div className="mt-3">
+								<RunFindingAction run={detail} note={note} />
+							</div>
+						) : null}
 					</fieldset>
 				) : !detailError ? (
 					<Skeleton className="h-96 w-full" />

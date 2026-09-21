@@ -12,7 +12,7 @@ from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import delete
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.orm.agent_evaluations import (
@@ -327,6 +327,42 @@ async def test_run_sourced_finding_links_same_agent_run(
     finding = created.json()
     assert finding["source_run_id"] == str(org_run.id)
     assert finding["source_sequence"] == 3
+
+
+async def test_run_sourced_finding_create_returns_existing_for_same_run(
+    e2e_client, platform_admin, org_agent, org_run, db_session: AsyncSession
+):
+    body = {
+        "agent_id": org_agent["id"],
+        "description": "Wrong tool call.",
+        "expected_behavior": "Call lookup before answering.",
+        "source_kind": "run",
+        "source_run_id": str(org_run.id),
+    }
+    first = e2e_client.post(
+        "/api/agent-findings",
+        json=body,
+        headers=platform_admin.headers,
+    )
+    assert first.status_code == 201, first.text
+
+    second = e2e_client.post(
+        "/api/agent-findings",
+        json={**body, "description": "Second tab duplicate."},
+        headers=platform_admin.headers,
+    )
+    assert second.status_code == 200, second.text
+    assert second.json()["id"] == first.json()["id"]
+    assert second.json()["description"] == "Wrong tool call."
+
+    count = (
+        await db_session.execute(
+            select(func.count())
+            .select_from(AgentFinding)
+            .where(AgentFinding.source_run_id == org_run.id)
+        )
+    ).scalar_one()
+    assert count == 1
 
 
 async def test_run_source_must_belong_to_agent(
