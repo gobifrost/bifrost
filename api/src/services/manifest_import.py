@@ -1344,7 +1344,15 @@ class ManifestResolver:
                     resolved_list.append(item)
             data[field_name] = resolved_list
 
-    async def _resolve_deletions(self, work_dir: Path | None = None, manifest: "Manifest | None" = None, repo: "RepoStorage | None" = None, dry_run: bool = False) -> list:
+    async def _resolve_deletions(
+        self,
+        work_dir: Path | None = None,
+        manifest: "Manifest | None" = None,
+        repo: "RepoStorage | None" = None,
+        dry_run: bool = False,
+        approved_deletes: set[tuple[str, str]] | None = None,
+        lock_rows: bool = False,
+    ) -> list:
         """Compute delete/deactivate ops for entities removed from the manifest.
 
         Optimized: pushes filtering to SQL with NOT IN clauses, returning only
@@ -1485,8 +1493,12 @@ class ManifestResolver:
             q = _spare_solution_managed(model, q)
             if present:
                 q = q.where(model.id.notin_(present))  # type: ignore[attr-defined]
+            if lock_rows:
+                q = q.with_for_update()
             result = await self.db.execute(q)
             rows = result.all()
+            if approved_deletes is not None:
+                rows = [row for row in rows if (entity_type, str(row[0])) in approved_deletes]
             if not rows:
                 return 0
             stale_ids = []
@@ -1499,6 +1511,7 @@ class ManifestResolver:
                     action="removed",
                     entity_type=entity_type,
                     name=name,
+                    entity_id=str(sid),
                 ))
             if not dry_run:
                 await self.db.execute(
@@ -1516,8 +1529,12 @@ class ManifestResolver:
             q = _spare_solution_managed(model, q)
             if present:
                 q = q.where(model.id.notin_(present))  # type: ignore[attr-defined]
+            if lock_rows:
+                q = q.with_for_update()
             result = await self.db.execute(q)
             rows = result.all()
+            if approved_deletes is not None:
+                rows = [row for row in rows if (entity_type, str(row[0])) in approved_deletes]
             if not rows:
                 return 0
             stale_ids = []
@@ -1530,6 +1547,7 @@ class ManifestResolver:
                     action="removed",
                     entity_type=entity_type,
                     name=name,
+                    entity_id=str(sid),
                 ))
             if not dry_run:
                 await self.db.execute(
@@ -1562,8 +1580,15 @@ class ManifestResolver:
         ).where(Config.config_schema_id.is_(None))
         if present_config_uuids:
             cfg_q = cfg_q.where(Config.id.notin_(present_config_uuids))
+        if lock_rows:
+            cfg_q = cfg_q.with_for_update()
         cfg_result = await self.db.execute(cfg_q)
         stale_cfg_rows = cfg_result.all()
+        if approved_deletes is not None:
+            stale_cfg_rows = [
+                row for row in stale_cfg_rows
+                if ("configs", str(row[0])) in approved_deletes
+            ]
         stale_cfg_ids = [row[0] for row in stale_cfg_rows]
         if stale_cfg_ids:
             for sid, s_org_id, s_key in stale_cfg_rows:
@@ -1572,6 +1597,7 @@ class ManifestResolver:
                     action="removed",
                     entity_type="configs",
                     name=str(sid),
+                    entity_id=str(sid),
                 ))
                 # Record for post-commit cache invalidation (the deleted row
                 # would otherwise keep serving from the read-through cache).
@@ -1594,6 +1620,7 @@ class ManifestResolver:
                 action="keep",
                 entity_type="tables",
                 name=row[1] or str(row[0]),
+                entity_id=str(row[0]),
             ))
 
         # Delete file policies not in manifest.
@@ -1659,10 +1686,16 @@ class ManifestResolver:
             tool_q = select(MCPConnectionTool.id, MCPConnectionTool.tool_name, MCPConnectionTool.connection_id).where(
                 MCPConnectionTool.connection_id.in_(present_mcp_connection_uuids)
             )
+            if lock_rows:
+                tool_q = tool_q.with_for_update()
             tool_rows = (await self.db.execute(tool_q)).all()
             stale_tool_ids: list[UUID] = []
             for row in tool_rows:
                 if (row[2], row[1]) not in present_tool_keys:
+                    if approved_deletes is not None and (
+                        "mcp_connection_tools", str(row[0])
+                    ) not in approved_deletes:
+                        continue
                     stale_tool_ids.append(row[0])
                     logger.info(
                         f"Deleting mcp_connection_tools {row[0]} ({row[1]}) — removed from manifest"
@@ -1671,6 +1704,7 @@ class ManifestResolver:
                         action="removed",
                         entity_type="mcp_connection_tools",
                         name=row[1] or str(row[0]),
+                        entity_id=str(row[0]),
                     ))
             if stale_tool_ids and not dry_run:
                 await self.db.execute(

@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 
 import yaml
 from git import Repo as GitRepo
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import Settings, get_settings
@@ -89,6 +89,18 @@ class WorkspacePlanStale(SyncError):
     pass
 
 
+def _delete_keys(changes: list) -> set[tuple[str, str]]:
+    """Return the stable identities that a deletion confirmation authorizes."""
+    keys = {
+        (change.entity_type, change.entity_id)
+        for change in changes
+        if change.action == "removed" and change.entity_id is not None
+    }
+    if len(keys) != len(changes):
+        raise WorkspacePlanStale("pending entity deletions lack stable identities")
+    return keys
+
+
 # =============================================================================
 # Helpers
 # =============================================================================
@@ -111,6 +123,24 @@ def _walk_tree(root: Path) -> dict[str, bytes]:
             continue
         files[rel] = p.read_bytes()
     return files
+
+
+def _workspace_fingerprint(root: Path) -> str:
+    """Hash every workspace path and byte sequence, excluding Git internals."""
+    digest = hashlib.sha256()
+    paths = sorted(
+        path for path in root.rglob("*")
+        if path.is_file() and ".git" not in path.relative_to(root).parts
+    )
+    for source in paths:
+        path = source.relative_to(root).as_posix()
+        digest.update(path.encode("utf-8"))
+        digest.update(b"\0")
+        with source.open("rb") as file:
+            while chunk := file.read(8 * 1024 * 1024):
+                digest.update(chunk)
+        digest.update(b"\0")
+    return digest.hexdigest()
 
 
 # =============================================================================
@@ -672,6 +702,7 @@ class GitHubSyncService:
         return WorkspaceSyncPlan(
             base_sha=base_sha,
             merge_sha=merge_sha,
+            workspace_fingerprint=_workspace_fingerprint(work_dir),
             pending_deletes=pending_removals,
             entity_changes=entity_changes,
             file_changes=self._plan_file_changes(work_dir, repo, base_sha, merge_sha),
@@ -690,9 +721,12 @@ class GitHubSyncService:
         from src.models.contracts.github import SyncResult
 
         current_sha = repo.head.commit.hexsha if repo.head.is_valid() else ""
-        if current_sha != plan.merge_sha:
+        if (
+            current_sha != plan.merge_sha
+            or _workspace_fingerprint(work_dir) != plan.workspace_fingerprint
+        ):
             raise WorkspacePlanStale("working tree changed after validation")
-        if plan.pending_deletes and not confirm_deletes:
+        if plan.pending_deletes and not plan.db_applied and not confirm_deletes:
             logger.info(
                 "Sync blocked: %d entity deletion(s) require confirmation",
                 len(plan.pending_deletes),
@@ -704,23 +738,51 @@ class GitHubSyncService:
                 entity_changes=plan.entity_changes,
             )
 
-        if progress_fn:
-            await progress_fn("Importing entities...")
-        async with self.db.begin_nested():
-            entities_imported, entity_changes = await self._import_all_entities(
-                work_dir, progress_fn=progress_fn,
-            )
-            all_entity_changes = list(entity_changes)
-            if plan.pending_deletes:
-                if progress_fn:
-                    await progress_fn("Deleting removed entities...")
-                all_entity_changes.extend(
-                    await self._resolver._resolve_deletions(work_dir=work_dir)
-                )
+        if plan.db_applied:
+            entities_imported = 0
+            all_entity_changes = list(plan.entity_changes)
+        else:
             if progress_fn:
-                await progress_fn("Updating file index...")
-            await self._update_file_index(work_dir)
-        await self.db.commit()
+                await progress_fn("Importing entities...")
+            async with self.db.begin_nested():
+                if plan.pending_deletes:
+                    await self._lock_deletion_tables()
+                entities_imported, entity_changes = await self._import_all_entities(
+                    work_dir, progress_fn=progress_fn,
+                )
+                all_entity_changes = list(entity_changes)
+                if plan.pending_deletes:
+                    if progress_fn:
+                        await progress_fn("Deleting removed entities...")
+                    approved_deletes = _delete_keys(plan.pending_deletes)
+                    current_deletes = await self._resolver._resolve_deletions(
+                        work_dir=work_dir,
+                        dry_run=True,
+                        lock_rows=True,
+                    )
+                    current_keys = _delete_keys(
+                        [change for change in current_deletes if change.action != "keep"]
+                    )
+                    if current_keys != approved_deletes:
+                        raise WorkspacePlanStale(
+                            "pending entity deletions changed after confirmation"
+                        )
+                    all_entity_changes.extend(
+                        await self._resolver._resolve_deletions(
+                            work_dir=work_dir,
+                            approved_deletes=approved_deletes,
+                            lock_rows=True,
+                        )
+                    )
+                if progress_fn:
+                    await progress_fn("Updating file index...")
+                await self._update_file_index(work_dir)
+            await self.db.commit()
+
+        publication_plan = plan.model_copy(update={
+            "db_applied": True,
+            "entity_changes": all_entity_changes,
+        })
 
         if progress_fn:
             await progress_fn("Pushing to remote...")
@@ -736,18 +798,36 @@ class GitHubSyncService:
                 entities_imported=entities_imported,
                 entity_changes=all_entity_changes,
                 error=push_result.error,
+                retryable=True,
+                retry_plan=publication_plan,
             )
 
-        if progress_fn:
-            await progress_fn("Syncing to storage...")
-        await self.repo_manager.sync_up(work_dir)
+        try:
+            if progress_fn:
+                await progress_fn("Syncing to storage...")
+            await self.repo_manager.sync_up(work_dir)
 
-        from src.core.module_cache import refresh_modules_from_directory
-        await refresh_modules_from_directory(work_dir)
+            from src.core.module_cache import refresh_modules_from_directory
+            await refresh_modules_from_directory(work_dir)
 
-        if progress_fn:
-            await progress_fn("Syncing app previews...")
-        await self._sync_app_previews(work_dir)
+            if progress_fn:
+                await progress_fn("Syncing app previews...")
+            await self._sync_app_previews(work_dir)
+        except Exception as error:
+            logger.warning(
+                "Workspace publication failed after import; retaining local dirty state for retry: %s",
+                error,
+            )
+            return SyncResult(
+                pull_success=True,
+                pushed_commits=push_result.pushed_commits,
+                commit_sha=push_result.commit_sha,
+                entities_imported=entities_imported,
+                entity_changes=all_entity_changes,
+                error=str(error),
+                retryable=True,
+                retry_plan=publication_plan,
+            )
 
         logger.info(
             "Sync complete: pushed=%d, imported=%d, sha=%s",
@@ -762,6 +842,50 @@ class GitHubSyncService:
             entities_imported=entities_imported,
             entity_changes=all_entity_changes,
         )
+
+    async def _lock_deletion_tables(self) -> None:
+        """Block concurrent deletion-managed writes through the confirmation commit."""
+        from src.models.orm.agents import (
+            Agent,
+            AgentDelegation,
+            AgentRole,
+            AgentTool,
+            Conversation,
+            Message,
+            MessageAttachment,
+        )
+        from src.models.orm.applications import Application
+        from src.models.orm.config import Config
+        from src.models.orm.custom_claims import CustomClaim
+        from src.models.orm.events import EventSource, EventSubscription, ScheduleSource, WebhookSource
+        from src.models.orm.external_mcp import (
+            AgentMCPConnection,
+            MCPConnection,
+            MCPConnectionTool,
+            MCPServer,
+            UserMCPCredential,
+        )
+        from src.models.orm.forms import Form, FormField, FormRole
+        from src.models.orm.integrations import Integration, IntegrationConfigSchema, IntegrationMapping
+        from src.models.orm.organizations import Organization
+        from src.models.orm.policy_rule import PolicyRule
+        from src.models.orm.tables import Table
+        from src.models.orm.users import Role
+        from src.models.orm.workflows import Workflow
+        from src.services.manifest_import import _load_file_policy_model
+
+        models = (
+            Workflow, Integration, IntegrationConfigSchema, IntegrationMapping, Config,
+            Table, _load_file_policy_model(), CustomClaim, PolicyRule, EventSource,
+            EventSubscription, ScheduleSource, WebhookSource, Form, FormField, FormRole,
+            Agent, AgentTool, AgentDelegation, AgentRole, Conversation, Message,
+            MessageAttachment, Application, MCPServer, MCPConnection,
+            MCPConnectionTool, UserMCPCredential, AgentMCPConnection, Organization, Role,
+        )
+        table_names = ", ".join(model.__tablename__ for model in models)
+        await self.db.execute(text(
+            f"LOCK TABLE {table_names} IN SHARE ROW EXCLUSIVE MODE"
+        ))
 
     async def desktop_sync(self, job_id: str | None = None, confirm_deletes: bool = False) -> "SyncResult":
         """Prepare, validate, then conditionally apply a workspace synchronization."""

@@ -385,6 +385,10 @@ class EntityChange(BaseModel):
     action: Literal["added", "updated", "removed", "keep"] = Field(..., description="Type of change")
     entity_type: str = Field(..., description="Entity type: workflow, form, agent, app, integration, config, table, event, organization, role")
     name: str = Field(..., description="Entity display name")
+    entity_id: str | None = Field(
+        default=None,
+        description="Stable entity UUID for actions that must be confirmed exactly",
+    )
     path: str | None = Field(default=None, description="File path (for file-backed entities)")
     reason: str | None = Field(default=None, description="Reason for removal, e.g. 'file not found: workflows/contacts.py'")
 
@@ -410,6 +414,14 @@ class WorkspaceSyncPlan(BaseModel):
 
     base_sha: str | None = Field(default=None, description="Workspace base commit SHA")
     merge_sha: str = Field(..., description="Commit SHA used to calculate the plan")
+    workspace_fingerprint: str = Field(
+        default="",
+        description="Content fingerprint of the workspace used to calculate the plan",
+    )
+    db_applied: bool = Field(
+        default=False,
+        description="Whether this plan's import and approved deletions are already committed",
+    )
     pending_deletes: list[EntityChange] = Field(default_factory=list)
     entity_changes: list[EntityChange] = Field(default_factory=list)
     file_changes: list[WorkspaceFileChange] = Field(default_factory=list)
@@ -477,6 +489,14 @@ class SyncResult(BaseModel):
     pending_deletes: list[EntityChange] = Field(default_factory=list, description="Entities that will be deleted if confirmed")
     requires_action: Literal["confirm_deletes"] | None = Field(
         default=None, description="Required user action before sync can continue"
+    )
+    retryable: bool = Field(
+        default=False,
+        description="Whether a post-import publication failure can be retried using retry_plan",
+    )
+    retry_plan: WorkspaceSyncPlan | None = Field(
+        default=None,
+        description="Exact validated plan to retry after a publication failure",
     )
 
     model_config = ConfigDict(from_attributes=True)
