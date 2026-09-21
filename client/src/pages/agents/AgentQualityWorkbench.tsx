@@ -729,7 +729,7 @@ function TestsCollection({
 	if (tests.length === 0)
 		return <CollectionState>No saved tests yet.</CollectionState>;
 	return (
-		<div role="listbox" aria-label="Tests collection">
+		<div role="grid" aria-label="Tests collection">
 			{tests.map((test) => {
 				const latest = latestByLogicalId.get(test.logical_test_id);
 				return (
@@ -795,7 +795,7 @@ function FindingsCollection({
 	if (findings.length === 0)
 		return <CollectionState>No findings yet.</CollectionState>;
 	return (
-		<div role="listbox" aria-label="Findings collection">
+		<div role="grid" aria-label="Findings collection">
 			{findings.map((finding) => (
 				<WorkbenchRow
 					key={finding.id}
@@ -845,7 +845,7 @@ function ReviewsCollection({
 	if (reviews.length === 0)
 		return <CollectionState>No review runs yet.</CollectionState>;
 	return (
-		<div role="listbox" aria-label="Reviews collection">
+		<div role="grid" aria-label="Reviews collection">
 			{reviews.map((review) => (
 				<WorkbenchRow
 					key={review.id}
@@ -888,7 +888,7 @@ function RunsCollection({
 	if (runs.length === 0)
 		return <CollectionState>No run history yet.</CollectionState>;
 	return (
-		<div role="listbox" aria-label="Run History collection">
+		<div role="grid" aria-label="Run History collection">
 			{runs.map((run) => (
 				<WorkbenchRow
 					key={run.id}
@@ -1511,7 +1511,7 @@ function FleetFindingsList({
 	if (items.length === 0)
 		return <FleetEmpty label="No findings match this filter." />;
 	return (
-		<div className="space-y-2">
+		<div role="grid" aria-label="Findings collection" className="space-y-2">
 			{items.map((finding) => (
 				<FleetRow
 					key={finding.id}
@@ -1547,7 +1547,7 @@ function FleetTestsList({
 		((query.data as { items?: AgentTest[] } | undefined)?.items ?? []) as AgentTest[];
 	if (items.length === 0) return <FleetEmpty label="No tests for this agent." />;
 	return (
-		<div className="space-y-2">
+		<div role="grid" aria-label="Tests collection" className="space-y-2">
 			{items.map((test) => (
 				<FleetRow
 					key={test.logical_test_id}
@@ -1582,7 +1582,7 @@ function FleetReviewsList({
 		((query.data as { items?: Review[] } | undefined)?.items ?? []) as Review[];
 	if (items.length === 0) return <FleetEmpty label="No reviews for this agent." />;
 	return (
-		<div className="space-y-2">
+		<div role="grid" aria-label="Reviews collection" className="space-y-2">
 			{items.map((review) => (
 				<FleetRow
 					key={review.id}

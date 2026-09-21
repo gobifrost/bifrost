@@ -32,7 +32,7 @@ export function WorkbenchRow({
 
 	return (
 		<div
-			role="option"
+			role="row"
 			tabIndex={0}
 			aria-selected={selected}
 			onClick={onSelect}
@@ -45,6 +45,7 @@ export function WorkbenchRow({
 		>
 			{selectionControl ? (
 				<div
+					role="gridcell"
 					className="shrink-0 pt-0.5"
 					onClick={(event) => event.stopPropagation()}
 					onKeyDown={(event) => event.stopPropagation()}
@@ -52,7 +53,7 @@ export function WorkbenchRow({
 					{selectionControl}
 				</div>
 			) : null}
-			<div className="min-w-0 flex-1">
+			<div role="gridcell" className="min-w-0 flex-1">
 				<div className="font-medium [overflow-wrap:anywhere]">{title}</div>
 				{meta ? (
 					<div className="mt-1 text-sm text-muted-foreground [overflow-wrap:anywhere]">
@@ -63,6 +64,7 @@ export function WorkbenchRow({
 			</div>
 			{actions ? (
 				<div
+					role="gridcell"
 					className="shrink-0"
 					onClick={(event) => event.stopPropagation()}
 					onKeyDown={(event) => event.stopPropagation()}

@@ -424,13 +424,14 @@ describe("AgentQualityWorkbench", () => {
 		expect(
 			screen.getByRole("button", { name: "Close Inspector" }),
 		).toBeVisible();
+		expect(screen.getByRole("grid", { name: "Findings collection" })).toBeVisible();
 		expect(
-			screen.getByRole("option", { name: /routes without confirming/i }),
+			screen.getByRole("row", { name: /routes without confirming/i }),
 		).toHaveAttribute("aria-selected", "true");
 
 		await user.click(screen.getByRole("button", { name: "Close Inspector" }));
 		expect(
-			screen.getByRole("option", { name: /routes without confirming/i }),
+			screen.getByRole("row", { name: /routes without confirming/i }),
 		).toHaveAttribute("aria-selected", "true");
 	});
 

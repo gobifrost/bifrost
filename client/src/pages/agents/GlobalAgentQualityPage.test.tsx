@@ -136,6 +136,10 @@ describe("GlobalAgentQualityPage", () => {
 		expect(screen.getByRole("combobox", { name: "Workbench collection" })).toHaveTextContent(
 			"Findings",
 		);
+		expect(
+			await screen.findByRole("grid", { name: "Findings collection" }),
+		).toBeVisible();
+		expect(screen.getByRole("row", { name: /missed escalation/i })).toBeVisible();
 	});
 
 	it("requires an agent before loading tests and preserves the selected test in drill-in", async () => {

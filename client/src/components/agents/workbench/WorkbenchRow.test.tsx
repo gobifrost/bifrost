@@ -1,15 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { renderWithProviders, screen } from "@/test-utils";
+import { renderWithProviders, screen, within } from "@/test-utils";
 
 import { WorkbenchRow } from "./WorkbenchRow";
 
 describe("WorkbenchRow", () => {
-	it("selects with click, Enter, and Space without treating the row as a button", async () => {
+	it("uses grid row semantics while preserving nested control isolation", async () => {
 		const onSelect = vi.fn();
 		const onNestedAction = vi.fn();
 		const { user } = renderWithProviders(
-			<div role="listbox" aria-label="Tests collection">
+			<div role="grid" aria-label="Tests collection">
 				<WorkbenchRow
 					title="Should confirm routing"
 					meta="Failed simulation · 2 minutes ago"
@@ -25,9 +25,12 @@ describe("WorkbenchRow", () => {
 			</div>,
 		);
 
-		const row = screen.getByRole("option", {
+		const grid = screen.getByRole("grid", { name: "Tests collection" });
+		const row = screen.getByRole("row", {
 			name: /should confirm routing/i,
 		});
+		expect(row.parentElement).toBe(grid);
+		expect(within(row).getAllByRole("gridcell")).toHaveLength(3);
 		expect(row).toHaveAttribute("aria-selected", "true");
 		expect(row).toHaveClass("tree-row-selected");
 
