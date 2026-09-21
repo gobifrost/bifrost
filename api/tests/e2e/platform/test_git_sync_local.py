@@ -223,6 +223,18 @@ async def sync_service(db_session: AsyncSession, bare_repo, tmp_path):
             shutil.rmtree(work_dir, ignore_errors=True)
 
     @asynccontextmanager
+    async def local_checkout_readonly():
+        """Simulates sync down without publishing preview reads back to storage."""
+        import tempfile
+        work_dir = Path(tempfile.mkdtemp(prefix="bifrost-test-repo-readonly-"))
+        try:
+            if any(persistent_dir.iterdir()):
+                shutil.copytree(persistent_dir, work_dir, dirs_exist_ok=True)
+            yield work_dir
+        finally:
+            shutil.rmtree(work_dir, ignore_errors=True)
+
+    @asynccontextmanager
     async def local_lock():
         """Simulates Redis lock -- just yields the persistent dir directly."""
         yield persistent_dir
@@ -250,6 +262,7 @@ async def sync_service(db_session: AsyncSession, bare_repo, tmp_path):
         shutil.rmtree(checkpoints_dir / checkpoint_id)
 
     service.repo_manager.checkout = local_checkout  # type: ignore[assignment]
+    service.repo_manager.checkout_readonly = local_checkout_readonly  # type: ignore[assignment]
     service.repo_manager.lock = local_lock  # type: ignore[assignment]
     service.repo_manager.sync_up = noop_sync_up  # type: ignore[assignment]
     service.repo_manager.checkpoint_workspace = checkpoint_workspace  # type: ignore[assignment]
@@ -434,6 +447,73 @@ async def cleanup_test_data(db_session: AsyncSession):
     await db_session.execute(delete(Organization).where(Organization.created_by.in_(["git-sync", "test"])))
     await db_session.execute(delete(Role).where(Role.created_by == "git-sync"))
     await db_session.commit()
+
+
+# =============================================================================
+# First connection reconciliation
+# =============================================================================
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+class TestFirstGitConnection:
+    async def test_connect_preview_classifies_detached_local_and_remote_files(
+        self, sync_service, bare_repo, working_clone,
+    ) -> None:
+        """A detached workspace compares local-only, remote-only, same, and conflict paths."""
+        write_entity_to_repo(sync_service._persistent_dir, "modules/local.py", "local")
+        write_entity_to_repo(sync_service._persistent_dir, "modules/same.py", "same")
+        write_entity_to_repo(sync_service._persistent_dir, "modules/shared.py", "ours")
+        write_entity_to_repo(working_clone, "modules/remote.py", "remote")
+        write_entity_to_repo(working_clone, "modules/same.py", "same")
+        write_entity_to_repo(working_clone, "modules/shared.py", "theirs")
+        repo = Repo(str(working_clone))
+        repo.git.add(A=True)
+        repo.index.commit("remote workspace")
+        repo.remotes.origin.push(refspec="main:main")
+
+        preview = await sync_service.preview_connect(
+            str(bare_repo),
+            "main",
+            requested_by_user_id="connect-preview-user",
+            organization_id=None,
+        )
+
+        classifications = {item.path: item.classification for item in preview.items}
+        assert preview.state == "requires_reconciliation"
+        assert classifications["modules/local.py"] == "local_only"
+        assert classifications["modules/remote.py"] == "remote_only"
+        assert classifications["modules/same.py"] == "identical"
+        assert classifications["modules/shared.py"] == "conflict"
+
+    async def test_connect_reconcile_refuses_workspace_changed_after_preview(
+        self, sync_service, bare_repo, working_clone,
+    ) -> None:
+        """The preview hash prevents a reviewed decision from applying to changed local bytes."""
+        write_entity_to_repo(sync_service._persistent_dir, "modules/shared.py", "ours")
+        write_entity_to_repo(working_clone, "modules/shared.py", "theirs")
+        repo = Repo(str(working_clone))
+        repo.git.add(A=True)
+        repo.index.commit("remote conflict")
+        repo.remotes.origin.push(refspec="main:main")
+        preview = await sync_service.preview_connect(
+            str(bare_repo), "main", requested_by_user_id="connect-stale-user", organization_id=None,
+        )
+        write_entity_to_repo(sync_service._persistent_dir, "modules/after-preview.py", "changed")
+
+        from src.models.contracts.github import GitConnectRequest
+        from src.services.github_sync import GitConnectPreviewStale
+
+        with pytest.raises(GitConnectPreviewStale, match="workspace changed"):
+            await sync_service.desktop_connect(
+                GitConnectRequest(
+                    preview_token=preview.token,
+                    strategy="reconcile",
+                    decisions={"modules/shared.py": "local"},
+                ),
+                requested_by_user_id="connect-stale-user",
+                organization_id=None,
+            )
 
 
 # =============================================================================

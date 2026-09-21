@@ -7,7 +7,7 @@ from enum import Enum
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 # ==================== GIT & GITHUB MODELS ====================
@@ -55,6 +55,47 @@ class GitHubConfigRequest(BaseModel):
     branch: str = Field(default="main", description="Branch to sync with")
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class GitConnectItem(BaseModel):
+    """One path compared during a first workspace Git connection preview."""
+
+    path: str
+    classification: Literal["local_only", "remote_only", "identical", "conflict"]
+    local_sha256: str | None = None
+    remote_sha256: str | None = None
+
+
+class GitConnectPreviewRequest(BaseModel):
+    """Repository and branch to compare against the detached workspace."""
+
+    repository_url: str = Field(..., min_length=1)
+    branch: str = Field(default="main", min_length=1)
+
+
+class GitConnectPreview(BaseModel):
+    """Requester-bound, short-lived first-connect reconciliation preview."""
+
+    token: str
+    repository_url: str
+    branch: str
+    state: Literal["ready", "requires_reconciliation"]
+    items: list[GitConnectItem] = Field(default_factory=list)
+
+
+class GitConnectRequest(BaseModel):
+    """Approved strategy and path decisions for a reviewed connect preview."""
+
+    preview_token: str = Field(..., min_length=1)
+    strategy: Literal["publish_local", "start_from_remote", "reconcile"]
+    decisions: dict[str, Literal["local", "remote"]] = Field(default_factory=dict)
+    confirm_destructive: bool = False
+
+    @model_validator(mode="after")
+    def _destructive_confirmation_is_strategy_scoped(self) -> "GitConnectRequest":
+        if self.strategy != "start_from_remote" and self.confirm_destructive:
+            raise ValueError("confirm_destructive is only valid for start_from_remote")
+        return self
 
 
 class GitHubConfigResponse(BaseModel):

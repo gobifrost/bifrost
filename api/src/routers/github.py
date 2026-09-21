@@ -9,7 +9,7 @@ import logging
 import uuid
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Response, status
 
 from src.core.auth import Context, CurrentSuperuser
 from src.core.db_deps import DbSession
@@ -41,6 +41,12 @@ from src.jobs.platform.git_operation import (
     GIT_OPERATION_DEFINITION,
     GitOperationPayload,
     WORKSPACE_MUTATION_RESOURCE_LOCK_KEY,
+    _authenticated_clone_url,
+)
+from src.models.contracts.github import (
+    GitConnectPreview,
+    GitConnectPreviewRequest,
+    GitConnectRequest,
 )
 from src.models.contracts.platform_jobs import PlatformJobAccepted, PlatformJobStatus
 from src.models.orm.platform_jobs import PlatformJob
@@ -50,7 +56,17 @@ from src.services.github_config import (
     get_github_config,
     save_github_config,
 )
-from src.services.platform_jobs import enqueue_platform_job, publish_platform_job_update
+from src.services.github_sync import (
+    GitConnectDecisionError,
+    GitConnectPreviewError,
+    GitHubSyncService,
+    resolve_connect_items,
+)
+from src.services.platform_jobs import (
+    enqueue_platform_job,
+    ensure_platform_job_notification,
+    publish_platform_job_update,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -69,16 +85,37 @@ def _extract_repo_from_url(repo_url: str) -> str:
     return repo_url
 
 
+def _normalize_connect_repository_url(repository_url: str) -> str:
+    """Accept GitHub owner/repo shorthand without permitting arbitrary remotes."""
+    candidate = repository_url.strip().removesuffix(".git")
+    if not candidate.startswith("http"):
+        candidate = f"https://github.com/{candidate}"
+    prefix = "https://github.com/"
+    repository = candidate.removeprefix(prefix).strip("/")
+    if (
+        not candidate.startswith(prefix)
+        or len(repository.split("/")) != 2
+        or not all(repository.split("/"))
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="repository_url must be a GitHub HTTPS repository URL",
+        )
+    return f"{prefix}{repository}"
+
+
 async def _enqueue_git_operation(
     db: DbSession,
     *,
     operation: Literal[
-        "fetch", "status", "commit", "sync", "resolve", "discard", "abort_merge", "diff"
+        "fetch", "status", "commit", "sync", "resolve", "discard", "abort_merge", "diff", "connect"
     ],
     organization_id,
     user: CurrentSuperuser,
     job_id: uuid.UUID | None,
     options: dict | None = None,
+    response: Response | None = None,
+    ensure_notification: bool = False,
 ) -> PlatformJobAccepted:
     """Enqueue one Git operation through the shared durable job transport."""
     job, reused = await enqueue_platform_job(
@@ -102,8 +139,12 @@ async def _enqueue_git_operation(
         action_url="/git",
         job_id=job_id,
     )
+    if ensure_notification and job.notification_id is None:
+        await ensure_platform_job_notification(db, job)
     await db.commit()
     await publish_platform_job_update(job)
+    if response is not None:
+        response.headers["Location"] = f"/api/platform-jobs/{job.id}"
     return PlatformJobAccepted(
         job_id=job.id,
         status=PlatformJobStatus(job.status),
@@ -678,6 +719,102 @@ async def get_commits(
 # =============================================================================
 # Desktop-Style Git Operations
 # =============================================================================
+
+
+@router.post(
+    "/connect/preview",
+    response_model=GitConnectPreview,
+    summary="Preview first workspace Git connection",
+)
+async def preview_git_connect(
+    body: GitConnectPreviewRequest,
+    ctx: Context,
+    user: CurrentSuperuser,
+    db: DbSession,
+) -> GitConnectPreview:
+    """Compare the detached workspace with a remote branch without changing either."""
+    config = await get_github_config(db, ctx.org_id)
+    if config is None or not config.token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="GitHub token not found. Please validate your token first.",
+        )
+    if config.repo_url:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="GitHub is already connected; disconnect it before connecting another repository.",
+        )
+    repository_url = _normalize_connect_repository_url(body.repository_url)
+    service = GitHubSyncService(
+        db,
+        repo_url=_authenticated_clone_url(config, repository_url),
+        branch=body.branch,
+    )
+    try:
+        return await service.preview_connect(
+            repository_url,
+            body.branch,
+            requested_by_user_id=str(user.user_id),
+            organization_id=str(ctx.org_id) if ctx.org_id else None,
+        )
+    except GitConnectPreviewError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+
+
+@router.post(
+    "/connect",
+    response_model=PlatformJobAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Queue reviewed first workspace Git connection",
+)
+async def enqueue_git_connect(
+    body: GitConnectRequest,
+    response: Response,
+    ctx: Context,
+    user: CurrentSuperuser,
+    db: DbSession,
+) -> PlatformJobAccepted:
+    """Validate a requester-bound preview, then run it through ``workspace.git``."""
+    config = await get_github_config(db, ctx.org_id)
+    if config is None or not config.token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="GitHub token not found. Please validate your token first.",
+        )
+    if config.repo_url:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="GitHub is already connected; disconnect it before connecting another repository.",
+        )
+    try:
+        preview = await GitHubSyncService.load_connect_preview(
+            body.preview_token,
+            requested_by_user_id=str(user.user_id),
+            organization_id=str(ctx.org_id) if ctx.org_id else None,
+        )
+        resolve_connect_items(
+            preview.items, strategy=body.strategy, decisions=body.decisions
+        )
+        if body.strategy == "start_from_remote" and any(
+            item.classification in {"local_only", "conflict"} for item in preview.items
+        ) and not body.confirm_destructive:
+            raise GitConnectDecisionError(
+                "start_from_remote would discard local content; set confirm_destructive"
+            )
+    except GitConnectPreviewError as exc:
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail=str(exc)) from exc
+    except GitConnectDecisionError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+    return await _enqueue_git_operation(
+        db,
+        operation="connect",
+        organization_id=ctx.org_id,
+        user=user,
+        job_id=uuid.uuid4(),
+        options={"request": body.model_dump(mode="json")},
+        response=response,
+        ensure_notification=True,
+    )
 
 
 @router.post(

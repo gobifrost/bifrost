@@ -17,8 +17,13 @@ from src.jobs.platform.base import (
     PlatformJobRequiresAction,
 )
 from src.models.contracts.github import WorkspaceSyncPlan
-from src.services.github_config import get_github_config
-from src.services.github_sync import GitHubSyncService
+from src.services.github_config import get_github_config, save_github_config
+from src.services.github_sync import (
+    GitConnectDecisionError,
+    GitConnectPreviewError,
+    GitConnectPreviewStale,
+    GitHubSyncService,
+)
 
 
 WORKSPACE_MUTATION_RESOURCE_LOCK_KEY = "workspace"
@@ -26,15 +31,17 @@ WORKSPACE_MUTATION_RESOURCE_LOCK_KEY = "workspace"
 
 class GitOperationPayload(BaseModel):
     operation: Literal[
-        "fetch", "status", "commit", "sync", "resolve", "discard", "abort_merge", "diff"
+        "fetch", "status", "commit", "sync", "resolve", "discard", "abort_merge", "diff", "connect"
     ]
     organization_id: UUID | None = None
     options: dict[str, Any] = Field(default_factory=dict)
 
 
-def _authenticated_clone_url(config: Any) -> str:
+def _authenticated_clone_url(config: Any, repository_url: str | None = None) -> str:
     """Build the authenticated GitHub remote without exposing it to callers."""
-    repo = config.repo_url
+    repo = repository_url or config.repo_url
+    if not repo:
+        raise ValueError("repository URL is required")
     if repo.startswith("https://github.com/"):
         repo = repo.removeprefix("https://github.com/").removesuffix(".git")
     return f"https://x-access-token:{config.token}@github.com/{repo}.git"
@@ -100,6 +107,20 @@ async def dispatch_git_operation(
         return {"success": True, **(await service.desktop_diff(options["path"])).model_dump(mode="json")}
     if payload.operation == "discard":
         return (await service.desktop_discard(options.get("paths", []))).model_dump(mode="json")
+    if payload.operation == "connect":
+        from src.models.contracts.github import GitConnectRequest
+
+        request = GitConnectRequest.model_validate(options.get("request"))
+        return (
+            await service.desktop_connect(
+                request,
+                requested_by_user_id=context.requested_by_user_id,
+                organization_id=str(context.organization_id) if context.organization_id else None,
+                progress_fn=lambda phase, current=0, total=0: _report(
+                    context, phase, current, total
+                ),
+            )
+        ).model_dump(mode="json")
     raise PlatformJobFailure("invalid_git_operation", "Unknown Git operation.")
 
 
@@ -108,17 +129,61 @@ async def run_git_operation(
     payload: GitOperationPayload,
 ) -> dict:
     await _report(context, f"Running {payload.operation.replace('_', ' ')}", total=100)
+    if payload.organization_id not in (None, context.organization_id):
+        raise PlatformJobFailure(
+            "invalid_git_operation",
+            "Git operation organization does not match its platform job.",
+        )
+    organization_id = context.organization_id
     async with get_db_context() as db:
-        config = await get_github_config(db, payload.organization_id)
-        if config is None or not config.token or not config.repo_url:
+        config = await get_github_config(db, organization_id)
+        if config is None or not config.token:
             raise PlatformJobFailure("github_not_configured", "GitHub is not configured.")
+        if payload.operation == "connect":
+            try:
+                request_data = payload.options["request"]
+                preview = await GitHubSyncService.load_connect_preview(
+                    request_data["preview_token"],
+                    requested_by_user_id=context.requested_by_user_id,
+                    organization_id=str(context.organization_id) if context.organization_id else None,
+                )
+            except (KeyError, TypeError, GitConnectPreviewError) as exc:
+                raise PlatformJobFailure("git_connect_preview_invalid", str(exc)) from exc
+            if config.repo_url:
+                raise PlatformJobFailure(
+                    "github_already_configured",
+                    "GitHub is already connected; disconnect it before first-connect reconciliation.",
+                )
+            service_url = _authenticated_clone_url(config, preview.repository_url)
+            service_branch = preview.branch
+        else:
+            if not config.repo_url:
+                raise PlatformJobFailure("github_not_configured", "GitHub is not configured.")
+            service_url = _authenticated_clone_url(config)
+            service_branch = config.branch
         service = GitHubSyncService(
             db=db,
-            repo_url=_authenticated_clone_url(config),
-            branch=config.branch,
+            repo_url=service_url,
+            branch=service_branch,
             settings=get_settings(),
         )
-        result = await dispatch_git_operation(service, payload, context)
+        try:
+            result = await dispatch_git_operation(service, payload, context)
+        except GitConnectPreviewStale as exc:
+            raise PlatformJobFailure("git_connect_plan_stale", str(exc)) from exc
+        except GitConnectDecisionError as exc:
+            raise PlatformJobFailure("git_connect_decision_invalid", str(exc)) from exc
+        if payload.operation == "connect" and (
+            result.get("success") or result.get("requires_action")
+        ):
+            await save_github_config(
+                db=db,
+                org_id=organization_id,
+                token=config.token,
+                repo_url=preview.repository_url,
+                branch=preview.branch,
+                updated_by=context.requested_by_email,
+            )
 
     if result.get("requires_action"):
         raise PlatformJobRequiresAction("Delete confirmation required", result)

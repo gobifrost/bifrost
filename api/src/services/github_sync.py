@@ -13,17 +13,25 @@ Key principles:
 
 import hashlib
 import logging
+import shutil
 import subprocess
+import tempfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, Mapping
+from uuid import uuid4
 
 import yaml
 from git import Repo as GitRepo
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import Settings, get_settings
 from src.models.contracts.github import (
+    GitConnectItem,
+    GitConnectPreview,
+    GitConnectRequest,
     PreflightIssue,
     PreflightResult,
     WorkspaceFileChange,
@@ -33,7 +41,6 @@ from src.services.git_repo_manager import GitRepoManager, hash_file, iter_tree_m
 from src.services.github_sync_entity_metadata import extract_entity_metadata
 
 if TYPE_CHECKING:
-    from typing import Literal  # used only in string annotations below
     from src.models.contracts.github import (
         AbortMergeResult,
         CommitResult,
@@ -66,6 +73,8 @@ logger = logging.getLogger(__name__)
 # database write, but unrelated files must never accumulate behind it.
 FILE_INDEX_UPSERT_MAX_ROWS = 100
 FILE_INDEX_UPSERT_MAX_BYTES = 8 * 1024 * 1024
+GIT_CONNECT_PREVIEW_TTL = timedelta(minutes=30)
+_GIT_CONNECT_PREVIEW_KEY_PREFIX = "bifrost:git-connect-preview:"
 
 
 # =============================================================================
@@ -94,6 +103,31 @@ class WorkspaceMergeConflict(SyncError):
 class WorkspacePlanStale(SyncError):
     """A reviewed sync plan no longer matches the checked-out workspace."""
     pass
+
+
+class GitConnectPreviewError(SyncError):
+    """A first-connect preview is unavailable, expired, or not owned by this caller."""
+
+
+class GitConnectPreviewStale(SyncError):
+    """The workspace or remote changed after the user reviewed the preview."""
+
+
+class GitConnectDecisionError(SyncError):
+    """A chosen connect strategy is unsafe or lacks required decisions."""
+
+
+class _GitConnectPreviewRecord(BaseModel):
+    token: str
+    repository_url: str
+    branch: str
+    requested_by_user_id: str
+    organization_id: str | None
+    expires_at: datetime
+    local_fingerprint: str
+    remote_fingerprint: str
+    remote_head_sha: str | None
+    items: list[GitConnectItem]
 
 
 def _delete_keys(changes: list) -> set[tuple[str, str]]:
@@ -131,6 +165,81 @@ def _workspace_fingerprint(root: Path) -> str:
     return digest.hexdigest()
 
 
+def _connect_tree_hashes(root: Path) -> dict[str, str]:
+    """Hash one workspace tree while refusing symlinked first-connect input."""
+    files: dict[str, str] = {}
+    for path in root.rglob("*"):
+        relative = path.relative_to(root)
+        if ".git" in relative.parts:
+            continue
+        if path.is_symlink():
+            raise GitConnectPreviewError(
+                f"first Git connection does not support symlinks ({relative.as_posix()})"
+            )
+        if path.is_file():
+            files[relative.as_posix()] = hash_file(path)[1]
+    return files
+
+
+def _connect_tree_fingerprint(tree: Mapping[str, str]) -> str:
+    digest = hashlib.sha256()
+    for path, sha256 in sorted(tree.items()):
+        digest.update(path.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(sha256.encode("ascii"))
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def classify_connect_trees(
+    local: Mapping[str, str], remote: Mapping[str, str],
+) -> list[GitConnectItem]:
+    """Classify the union of detached local and reviewed remote tree hashes."""
+    items: list[GitConnectItem] = []
+    for path in sorted(set(local) | set(remote)):
+        local_hash = local.get(path)
+        remote_hash = remote.get(path)
+        if local_hash is None:
+            classification: Literal["local_only", "remote_only", "identical", "conflict"] = "remote_only"
+        elif remote_hash is None:
+            classification = "local_only"
+        elif local_hash == remote_hash:
+            classification = "identical"
+        else:
+            classification = "conflict"
+        items.append(GitConnectItem(
+            path=path,
+            classification=classification,
+            local_sha256=local_hash,
+            remote_sha256=remote_hash,
+        ))
+    return items
+
+
+def resolve_connect_items(
+    items: list[GitConnectItem],
+    *,
+    strategy: Literal["publish_local", "start_from_remote", "reconcile"],
+    decisions: Mapping[str, Literal["local", "remote"]],
+) -> dict[str, Literal["local", "remote"]]:
+    """Validate decisions and return the source selected for each conflicting path."""
+    conflicts = {item.path for item in items if item.classification == "conflict"}
+    if strategy != "reconcile":
+        if decisions:
+            raise GitConnectDecisionError("path decisions are only valid for reconcile")
+        return {}
+    if set(decisions) != conflicts:
+        missing = sorted(conflicts - set(decisions))
+        extra = sorted(set(decisions) - conflicts)
+        detail = []
+        if missing:
+            detail.append("missing conflict decisions: " + ", ".join(missing))
+        if extra:
+            detail.append("unknown conflict decisions: " + ", ".join(extra))
+        raise GitConnectDecisionError("; ".join(detail))
+    return dict(decisions)
+
+
 # =============================================================================
 # Git Sync Service
 # =============================================================================
@@ -156,6 +265,268 @@ class GitHubSyncService:
         self.branch = branch
         self.repo_manager = GitRepoManager(settings or get_settings())
         self._resolver = ManifestResolver(db)
+
+    @staticmethod
+    def _connect_preview_key(token: str) -> str:
+        return f"{_GIT_CONNECT_PREVIEW_KEY_PREFIX}{token}"
+
+    @staticmethod
+    def _clone_connect_remote(destination: Path, repository_url: str, branch: str) -> GitRepo | None:
+        """Clone the reviewed remote branch, treating an empty remote as an empty tree."""
+        try:
+            repo = GitRepo.clone_from(repository_url, str(destination), branch=branch)
+        except Exception as exc:
+            message = str(exc).lower()
+            if "empty repository" in message:
+                return None
+            # Git reports both an empty repository and a missing branch as
+            # "remote branch ... not found" when a branch is requested.  A
+            # branchless clone distinguishes those cases without trusting the
+            # error text as the decision.
+            if "remote branch" in message:
+                if destination.exists():
+                    shutil.rmtree(destination)
+                try:
+                    fallback = GitRepo.clone_from(repository_url, str(destination))
+                except Exception as fallback_exc:
+                    if "empty repository" in str(fallback_exc).lower():
+                        return None
+                    raise GitConnectPreviewError(
+                        f"could not read remote branch {branch}: {fallback_exc}"
+                    ) from fallback_exc
+                if not fallback.head.is_valid():
+                    return None
+            raise GitConnectPreviewError(f"could not read remote branch {branch}: {exc}") from exc
+        return repo
+
+    @classmethod
+    async def load_connect_preview(
+        cls,
+        token: str,
+        *,
+        requested_by_user_id: str,
+        organization_id: str | None,
+    ) -> _GitConnectPreviewRecord:
+        """Load an opaque preview only for its requester and original organization."""
+        from src.core.cache.redis_client import get_shared_redis
+
+        redis = await get_shared_redis()
+        raw = await redis.get(cls._connect_preview_key(token))
+        if raw is None:
+            raise GitConnectPreviewError("Git connection preview was not found or has expired")
+        try:
+            record = _GitConnectPreviewRecord.model_validate_json(raw)
+        except Exception as exc:
+            raise GitConnectPreviewError("Git connection preview is invalid") from exc
+        if record.expires_at <= datetime.now(timezone.utc):
+            await redis.delete(cls._connect_preview_key(token))
+            raise GitConnectPreviewError("Git connection preview has expired")
+        if (
+            record.requested_by_user_id != requested_by_user_id
+            or record.organization_id != organization_id
+        ):
+            raise GitConnectPreviewError("Git connection preview was not found")
+        return record
+
+    async def preview_connect(
+        self,
+        repository_url: str,
+        branch: str,
+        *,
+        requested_by_user_id: str,
+        organization_id: str | None,
+    ) -> GitConnectPreview:
+        """Compare a detached workspace and remote branch without changing either."""
+        async with self.repo_manager.checkout_readonly() as work_dir:
+            local = _connect_tree_hashes(work_dir)
+            with tempfile.TemporaryDirectory(prefix="bifrost-connect-preview-") as raw_remote:
+                remote_root = Path(raw_remote) / "remote"
+                remote_repo = self._clone_connect_remote(remote_root, self.repo_url, branch)
+                remote = {} if remote_repo is None else _connect_tree_hashes(remote_root)
+                remote_head_sha = (
+                    remote_repo.head.commit.hexsha
+                    if remote_repo is not None and remote_repo.head.is_valid()
+                    else None
+                )
+
+        items = classify_connect_trees(local, remote)
+        token = str(uuid4())
+        record = _GitConnectPreviewRecord(
+            token=token,
+            repository_url=repository_url,
+            branch=branch,
+            requested_by_user_id=requested_by_user_id,
+            organization_id=organization_id,
+            expires_at=datetime.now(timezone.utc) + GIT_CONNECT_PREVIEW_TTL,
+            local_fingerprint=_connect_tree_fingerprint(local),
+            remote_fingerprint=_connect_tree_fingerprint(remote),
+            remote_head_sha=remote_head_sha,
+            items=items,
+        )
+        from src.core.cache.redis_client import get_shared_redis
+
+        redis = await get_shared_redis()
+        await redis.setex(
+            self._connect_preview_key(token),
+            int(GIT_CONNECT_PREVIEW_TTL.total_seconds()),
+            record.model_dump_json(),
+        )
+        return GitConnectPreview(
+            token=token,
+            repository_url=repository_url,
+            branch=branch,
+            state=(
+                "ready"
+                if all(item.classification == "identical" for item in items)
+                else "requires_reconciliation"
+            ),
+            items=items,
+        )
+
+    @staticmethod
+    def _replace_connect_workspace(destination: Path, source: Path) -> None:
+        """Replace the checked-out workspace from a reviewed, symlink-free tree."""
+        for child in destination.iterdir():
+            if child.is_dir():
+                shutil.rmtree(child)
+            else:
+                child.unlink()
+        for child in source.iterdir():
+            target = destination / child.name
+            if child.is_dir():
+                shutil.copytree(child, target)
+            else:
+                shutil.copy2(child, target)
+
+    @staticmethod
+    def _copy_connect_file(source_root: Path, destination_root: Path, path: str) -> None:
+        source = source_root / path
+        if not source.is_file():
+            raise GitConnectPreviewStale(f"reviewed source file disappeared: {path}")
+        destination = destination_root / path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if destination.exists():
+            destination.unlink()
+        shutil.copy2(source, destination)
+
+    def _configure_connect_repo(self, repo: GitRepo) -> None:
+        if "origin" in [remote.name for remote in repo.remotes]:
+            repo.remotes.origin.set_url(self.repo_url)
+        else:
+            repo.create_remote("origin", self.repo_url)
+        with repo.config_writer() as writer:
+            writer.set_value("user", "name", "Bifrost")
+            writer.set_value("user", "email", "bifrost@localhost")
+
+    async def _commit_connect_tree(self, work_dir: Path, repo: GitRepo) -> None:
+        """Commit reviewed files without regenerating a manifest from old DB state."""
+        repo.git.add(A=True)
+        if repo.head.is_valid() and not repo.index.diff("HEAD") and not repo.untracked_files:
+            return
+        preflight = await self._run_preflight(work_dir)
+        if not preflight.valid:
+            raise GitConnectDecisionError("reviewed workspace failed preflight validation")
+        repo.index.commit("Connect Bifrost workspace")
+
+    async def desktop_connect(
+        self,
+        request: GitConnectRequest,
+        *,
+        requested_by_user_id: str,
+        organization_id: str | None,
+        progress_fn=None,
+    ) -> "SyncResult":
+        """Materialize a reviewed first connection, then use the normal sync apply path."""
+        from src.models.contracts.github import SyncResult
+
+        record = await self.load_connect_preview(
+            request.preview_token,
+            requested_by_user_id=requested_by_user_id,
+            organization_id=organization_id,
+        )
+        decisions = resolve_connect_items(
+            record.items, strategy=request.strategy, decisions=request.decisions
+        )
+        async with self.repo_manager.checkout() as work_dir:
+            local = _connect_tree_hashes(work_dir)
+            if _connect_tree_fingerprint(local) != record.local_fingerprint:
+                raise GitConnectPreviewStale("workspace changed after the connection preview")
+            with tempfile.TemporaryDirectory(prefix="bifrost-connect-apply-") as raw_remote:
+                remote_root = Path(raw_remote) / "remote"
+                remote_repo = self._clone_connect_remote(remote_root, self.repo_url, record.branch)
+                remote = {} if remote_repo is None else _connect_tree_hashes(remote_root)
+                remote_head_sha = (
+                    remote_repo.head.commit.hexsha
+                    if remote_repo is not None and remote_repo.head.is_valid()
+                    else None
+                )
+                if (
+                    _connect_tree_fingerprint(remote) != record.remote_fingerprint
+                    or remote_head_sha != record.remote_head_sha
+                ):
+                    raise GitConnectPreviewStale("remote branch changed after the connection preview")
+
+                if request.strategy == "publish_local":
+                    if remote_head_sha is not None or remote:
+                        raise GitConnectDecisionError(
+                            "publish_local refuses a nonempty remote branch; choose reconcile instead"
+                        )
+                    git_dir = work_dir / ".git"
+                    if git_dir.exists():
+                        shutil.rmtree(git_dir)
+                    repo = GitRepo.init(str(work_dir))
+                    self._configure_connect_repo(repo)
+                    await self._commit_connect_tree(work_dir, repo)
+                elif request.strategy == "start_from_remote":
+                    discards_local = any(
+                        item.classification in {"local_only", "conflict"}
+                        for item in record.items
+                    )
+                    if discards_local and not request.confirm_destructive:
+                        raise GitConnectDecisionError(
+                            "start_from_remote would discard local content; set confirm_destructive"
+                        )
+                    if remote_repo is None:
+                        raise GitConnectDecisionError(
+                            "start_from_remote requires a nonempty remote branch"
+                        )
+                    self._replace_connect_workspace(work_dir, remote_root)
+                    repo = GitRepo(str(work_dir))
+                    self._configure_connect_repo(repo)
+                else:
+                    if remote_repo is None:
+                        git_dir = work_dir / ".git"
+                        if git_dir.exists():
+                            shutil.rmtree(git_dir)
+                        repo = GitRepo.init(str(work_dir))
+                        self._configure_connect_repo(repo)
+                        await self._commit_connect_tree(work_dir, repo)
+                    else:
+                        local_root = Path(raw_remote) / "local"
+                        local_root.mkdir()
+                        for item in record.items:
+                            if item.local_sha256 is not None:
+                                self._copy_connect_file(work_dir, local_root, item.path)
+                        self._replace_connect_workspace(work_dir, remote_root)
+                        for item in record.items:
+                            if item.classification == "local_only" or (
+                                item.classification == "conflict" and decisions[item.path] == "local"
+                            ):
+                                self._copy_connect_file(local_root, work_dir, item.path)
+                        repo = GitRepo(str(work_dir))
+                        self._configure_connect_repo(repo)
+                        await self._commit_connect_tree(work_dir, repo)
+
+                if progress_fn:
+                    await progress_fn("Validating reconciled workspace")
+                plan = await self.prepare_desktop_sync(work_dir, repo, progress_fn=progress_fn)
+                return await self.apply_desktop_sync(
+                    work_dir,
+                    repo,
+                    plan,
+                    confirm_deletes=False,
+                    progress_fn=progress_fn,
+                )
 
     # -----------------------------------------------------------------
     # Preflight: validate repo health
