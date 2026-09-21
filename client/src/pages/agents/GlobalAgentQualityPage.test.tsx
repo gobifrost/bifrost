@@ -251,6 +251,32 @@ describe("GlobalAgentQualityPage", () => {
 		});
 	});
 
+	it("shows linked Finding loading instead of an agent prompt", async () => {
+		mockFinding.mockImplementation(() => new Promise(() => {}));
+		renderPage("/agents/quality?collection=tests&finding=finding-1");
+
+		expect(
+			await screen.findByText("Loading linked Finding…"),
+		).toBeVisible();
+		expect(screen.queryByText(/Choose an agent/i)).not.toBeInTheDocument();
+	});
+
+	it("retries an unavailable linked Finding instead of an agent prompt", async () => {
+		mockFinding.mockRejectedValue(new Error("Missing Finding"));
+		const { user } = renderPage(
+			"/agents/quality?collection=tests&finding=finding-1",
+		);
+
+		expect(
+			await screen.findByText(
+				"This linked Finding is unavailable. Retry to continue creating its test.",
+			),
+		).toBeVisible();
+		expect(screen.queryByText(/Choose an agent/i)).not.toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Retry Finding" }));
+		await waitFor(() => expect(mockFinding).toHaveBeenCalledTimes(2));
+	});
+
 	it("disables fleet run queries because Run History is agent-only", async () => {
 		renderPage();
 

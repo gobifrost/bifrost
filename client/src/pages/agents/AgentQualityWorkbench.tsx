@@ -371,6 +371,12 @@ function AgentQualityWorkbenchContent({
 	const findingContext =
 		findings.find((finding) => finding.id === findingId) ??
 		referencedFindingQuery.data;
+	const isLinkedFleetFindingUnavailable =
+		isFleet &&
+		collection === "tests" &&
+		!!findingId &&
+		!findingContext &&
+		!referencedFindingQuery.isLoading;
 	const testCreationAgentId = findingContext?.agent_id ?? effectiveAgentId;
 	const selectedTestItems = tests.filter((test) =>
 		selectedTests.has(test.logical_test_id),
@@ -797,7 +803,24 @@ function AgentQualityWorkbenchContent({
 					</p>
 				) : null}
 				{collection === "tests" &&
-					(effectiveAgentId ? (
+					(isLinkedFleetFindingUnavailable ? (
+						<CollectionState
+							tone="error"
+							actionLabel="Retry Finding"
+							onAction={() => {
+								void referencedFindingQuery.refetch();
+							}}
+						>
+							This linked Finding is unavailable. Retry to
+							continue creating its test.
+						</CollectionState>
+					) : isFleet &&
+					  findingId &&
+					  referencedFindingQuery.isLoading ? (
+						<CollectionState>
+							Loading linked Finding…
+						</CollectionState>
+					) : effectiveAgentId ? (
 						<TestsCollection
 							tests={filteredTests}
 							latestByLogicalId={latestByLogicalId}
