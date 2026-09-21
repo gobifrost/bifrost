@@ -43613,6 +43613,15 @@ export interface operations {
             };
         };
         responses: {
+            /** @description Existing run-sourced finding */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FindingPublic"];
+                };
+            };
             /** @description Successful Response */
             201: {
                 headers: {

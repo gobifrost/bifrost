@@ -147,7 +147,17 @@ async def _lock_run_source_finding(db: DbSession, source_run_id: UUID | None) ->
     )
 
 
-@router.post("", response_model=FindingPublic, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=FindingPublic,
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        status.HTTP_200_OK: {
+            "model": FindingPublic,
+            "description": "Existing run-sourced finding",
+        }
+    },
+)
 async def create_finding(
     body: FindingCreate,
     db: DbSession,

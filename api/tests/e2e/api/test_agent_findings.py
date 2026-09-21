@@ -365,6 +365,22 @@ async def test_run_sourced_finding_create_returns_existing_for_same_run(
     assert count == 1
 
 
+async def test_create_finding_openapi_documents_existing_200_response(e2e_client):
+    spec = e2e_client.get("/openapi.json")
+    assert spec.status_code == 200, spec.text
+
+    responses = spec.json()["paths"]["/api/agent-findings"]["post"]["responses"]
+    assert responses["200"]["description"] == "Existing run-sourced finding"
+    assert (
+        responses["200"]["content"]["application/json"]["schema"]["$ref"]
+        == "#/components/schemas/FindingPublic"
+    )
+    assert (
+        responses["201"]["content"]["application/json"]["schema"]["$ref"]
+        == "#/components/schemas/FindingPublic"
+    )
+
+
 async def test_run_source_must_belong_to_agent(
     e2e_client, platform_admin, org_agent, org_run, db_session: AsyncSession
 ):

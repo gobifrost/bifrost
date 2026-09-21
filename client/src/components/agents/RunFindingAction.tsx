@@ -7,7 +7,6 @@ import { agentPlatform } from "@/services/agentPlatform";
 import type { components } from "@/lib/v1";
 
 type AgentRunDetail = components["schemas"]["AgentRunDetailResponse"];
-type Finding = components["schemas"]["FindingPublic"];
 
 export function RunFindingAction({
 	run,
@@ -36,21 +35,9 @@ export function RunFindingAction({
 				source_sequence: null,
 				external_ref: null,
 			}),
-		onSuccess: (finding) => {
-			queryClient.setQueryData<Finding[]>(
-				["agent-platform", "findings", agentId],
-				(previous) => {
-					if (!previous) return [finding];
-					if (previous.some((item) => item.id === finding.id))
-						return previous;
-					return [finding, ...previous];
-				},
-			);
+		onSuccess: () => {
 			void queryClient.invalidateQueries({
 				queryKey: ["agent-platform", "findings"],
-			});
-			void queryClient.invalidateQueries({
-				queryKey: ["agent-quality", "findings"],
 			});
 		},
 	});

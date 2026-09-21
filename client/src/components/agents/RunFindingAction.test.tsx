@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderWithProviders, screen, waitFor } from "@/test-utils";
+import { QueryClient } from "@tanstack/react-query";
 
 import { RunFindingAction } from "./RunFindingAction";
 import type { components } from "@/lib/v1";
@@ -72,6 +73,8 @@ function renderAction(run = makeRun()) {
 
 describe("RunFindingAction", () => {
 	it("creates a prefilled Finding for a negatively reviewed run", async () => {
+		const invalidateSpy = vi.spyOn(QueryClient.prototype, "invalidateQueries");
+		const setQueryDataSpy = vi.spyOn(QueryClient.prototype, "setQueryData");
 		const { user } = renderAction();
 
 		await user.click(
@@ -94,6 +97,13 @@ describe("RunFindingAction", () => {
 			"href",
 			"/agents/agent-1/quality?collection=findings&selected=findings:finding-1",
 		);
+		expect(setQueryDataSpy).not.toHaveBeenCalled();
+		expect(invalidateSpy).toHaveBeenCalledWith({
+			queryKey: ["agent-platform", "findings"],
+		});
+		expect(invalidateSpy).not.toHaveBeenCalledWith({
+			queryKey: ["agent-quality", "findings"],
+		});
 	});
 
 	it("links to an existing run-sourced Finding", async () => {
