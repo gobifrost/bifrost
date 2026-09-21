@@ -267,6 +267,7 @@ Summarizer-generated `AIUsage` rows roll up into `AgentStats.total_cost_7d` (the
 
 ### Frontend (TypeScript/React)
 
+-   **Product UI casing**: Use Title Case for navigation destinations, page/workspace names, tabs, and action labels (for example, `Open Workbench`, `Run Simulation`, and `Create Finding`). Use sentence case for prose, descriptions, helper text, and labels that read as sentences.
 -   **Type Generation**: Run `npm run generate:types` in `client/` after API changes
     -   Must run while API is running
     -   Types are auto-generated from OpenAPI spec based on `models.py`
