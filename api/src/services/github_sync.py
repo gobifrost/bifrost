@@ -495,7 +495,7 @@ class GitHubSyncService:
             return FetchResult(success=False, error=str(e))
 
     async def desktop_status(self) -> "WorkingTreeStatus":
-        """Get working tree status. No lock, no S3. Returns empty if not initialized."""
+        """Get working tree status under the repo lock, without S3 sync."""
         from src.models.contracts.github import WorkingTreeStatus
 
         if not self.repo_manager.is_initialized:
