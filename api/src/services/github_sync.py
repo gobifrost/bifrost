@@ -61,6 +61,13 @@ from src.services.manifest_import import (
 logger = logging.getLogger(__name__)
 
 
+# Keep changed text content bounded while building PostgreSQL upsert statements.
+# The content of one large searchable file necessarily lives in memory for its
+# database write, but unrelated files must never accumulate behind it.
+FILE_INDEX_UPSERT_MAX_ROWS = 100
+FILE_INDEX_UPSERT_MAX_BYTES = 8 * 1024 * 1024
+
+
 # =============================================================================
 # Errors
 # =============================================================================
@@ -1338,8 +1345,30 @@ class GitHubSyncService:
         )
         existing_hashes = {row[0]: row[1] for row in existing_result.all()}
 
-        # Build list of rows that need upserting (changed or new)
+        # Flush changed text rows as they are discovered.  A row's content must
+        # be materialized for the database write, but retaining every changed
+        # text file until traversal completes can otherwise exhaust a worker.
         pending_upserts: list[dict] = []
+        pending_bytes = 0
+        upserted_count = 0
+
+        async def flush_pending_upserts() -> None:
+            nonlocal pending_bytes, upserted_count
+            if not pending_upserts:
+                return
+            stmt = insert(FileIndex).values(pending_upserts).on_conflict_do_update(
+                index_elements=[FileIndex.path],
+                set_={
+                    "content": insert(FileIndex).excluded.content,
+                    "content_hash": insert(FileIndex).excluded.content_hash,
+                    "updated_at": text("NOW()"),
+                },
+            )
+            await self.db.execute(stmt)
+            upserted_count += len(pending_upserts)
+            pending_upserts.clear()
+            pending_bytes = 0
+
         for entry in files:
             rel_path = entry.path
             repo_paths.add(rel_path)
@@ -1355,28 +1384,27 @@ class GitHubSyncService:
             if existing_hashes.get(rel_path) == content_hash:
                 continue
 
+            if pending_upserts and (
+                len(pending_upserts) >= FILE_INDEX_UPSERT_MAX_ROWS
+                or pending_bytes + entry.size > FILE_INDEX_UPSERT_MAX_BYTES
+            ):
+                await flush_pending_upserts()
             pending_upserts.append({
                 "path": rel_path,
                 "content": content_str,
                 "content_hash": content_hash,
             })
+            pending_bytes += entry.size
+            if (
+                len(pending_upserts) >= FILE_INDEX_UPSERT_MAX_ROWS
+                or pending_bytes >= FILE_INDEX_UPSERT_MAX_BYTES
+            ):
+                await flush_pending_upserts()
 
-        # Batch upsert in chunks of 100
-        CHUNK_SIZE = 100
-        for i in range(0, len(pending_upserts), CHUNK_SIZE):
-            chunk = pending_upserts[i : i + CHUNK_SIZE]
-            stmt = insert(FileIndex).values(chunk).on_conflict_do_update(
-                index_elements=[FileIndex.path],
-                set_={
-                    "content": insert(FileIndex).excluded.content,
-                    "content_hash": insert(FileIndex).excluded.content_hash,
-                    "updated_at": text("NOW()"),
-                },
-            )
-            await self.db.execute(stmt)
+        await flush_pending_upserts()
 
-        if pending_upserts:
-            logger.info("File index: upserted %d changed files", len(pending_upserts))
+        if upserted_count:
+            logger.info("File index: upserted %d changed files", upserted_count)
 
         # Remove file_index entries that no longer exist in the repo
         stale_paths = set(existing_hashes.keys()) - repo_paths
