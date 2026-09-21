@@ -73,7 +73,8 @@ const ASSIGNMENTS: {
 	{
 		key: "testing",
 		label: "Testing",
-		description: "Used by the quality workbench’s Test Designer to propose reviewable cases. Evaluated agents keep their own model profiles.",
+		description:
+			"Used by the Quality page’s Test Designer to propose reviewable cases. Evaluated agents keep their own model profiles.",
 		icon: ShieldCheck,
 	},
 	{

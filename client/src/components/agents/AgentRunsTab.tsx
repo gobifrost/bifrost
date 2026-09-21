@@ -3,12 +3,9 @@ import { useMediaQuery } from "@/hooks/useMediaQuery";
  * Runs tab for an agent's detail page.
  *
  * Lists this agent's runs with a search bar + verdict filter. Clicking a
- * RunCard opens the RunReviewSheet slide-over (for verdict + review chat).
+ * RunCard opens the RunReviewSheet slide-over for verdict and Finding actions.
  * Inline verdict toggles call `useSetVerdict` / `useClearVerdict` and
  * invalidate the run-list cache so subsequent fetches reflect the change.
- *
- * Composer state for the FlagConversation lives here; the parent page
- * is purely a router for tabs.
  */
 
 import { useMemo, useRef, useState } from "react";

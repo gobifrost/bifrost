@@ -20,8 +20,6 @@ vi.mock("@/services/agentRuns", () => ({
 import { RunReviewSheet } from "./RunReviewSheet";
 
 type AgentRunDetail = components["schemas"]["AgentRunDetailResponse"];
-type FlagConversationResponse =
-	components["schemas"]["FlagConversationResponse"];
 
 function NavigationStateProbe() {
 	const location = useLocation();
@@ -50,14 +48,6 @@ const baseRun: AgentRunDetail = {
 	created_at: "2026-04-21T10:00:00Z",
 	metadata: {},
 	steps: [],
-};
-
-const baseConversation: FlagConversationResponse = {
-	id: "00000000-0000-0000-0000-0000000000c1",
-	run_id: baseRun.id,
-	messages: [],
-	created_at: baseRun.created_at,
-	last_updated_at: baseRun.created_at,
 };
 
 const activityRun: AgentRunDetail = {
@@ -101,8 +91,6 @@ describe("RunReviewSheet", () => {
 				note=""
 				onVerdict={() => {}}
 				onNote={() => {}}
-				conversation={null}
-				onSendChat={() => {}}
 			/>,
 		);
 		expect(
@@ -123,25 +111,22 @@ describe("RunReviewSheet", () => {
 				note=""
 				onVerdict={() => {}}
 				onNote={() => {}}
-				conversation={baseConversation}
-				onSendChat={() => {}}
 			/>,
 		);
 		const titles = screen.getAllByText(/routed to support/i);
 		expect(titles.length).toBeGreaterThan(0);
 		expect(
-			screen.getByRole("tab", { name: /^review$/i }),
-		).toBeInTheDocument();
-		expect(screen.getByRole("tab", { name: /discussion/i })).toBeInTheDocument();
+			screen.queryByRole("tab", { name: /discussion/i }),
+		).not.toBeInTheDocument();
+		expect(
+			screen.queryByText(/improvement conversation/i),
+		).not.toBeInTheDocument();
 		expect(
 			screen.getByRole("button", { name: /close run review/i }),
 		).toBeInTheDocument();
 		expect(
 			screen.getByRole("link", { name: /open full run/i }),
 		).toHaveClass("h-11");
-		expect(screen.getByRole("tab", { name: /^review$/i })).toHaveClass(
-			"min-h-11",
-		);
 	});
 
 	it("renders markdown in the sheet title without showing markers", () => {
@@ -154,8 +139,6 @@ describe("RunReviewSheet", () => {
 				note=""
 				onVerdict={() => {}}
 				onNote={() => {}}
-				conversation={baseConversation}
-				onSendChat={() => {}}
 			/>,
 		);
 
@@ -178,8 +161,6 @@ describe("RunReviewSheet", () => {
 				note=""
 				onVerdict={() => {}}
 				onNote={() => {}}
-				conversation={baseConversation}
-				onSendChat={() => {}}
 			/>,
 		);
 		// Review tab body shows the asked text. Title also renders `asked`
@@ -199,8 +180,6 @@ describe("RunReviewSheet", () => {
 				note=""
 				onVerdict={() => {}}
 				onNote={() => {}}
-				conversation={baseConversation}
-				onSendChat={() => {}}
 			/>,
 		);
 
@@ -228,28 +207,26 @@ describe("RunReviewSheet", () => {
 		expect(activity).toHaveAttribute("data-highlighted", "true");
 	});
 
-	it("switches to Discussion tab on click", async () => {
-		const { user } = renderWithProviders(
+	it("shows a Finding action for a negatively reviewed run", () => {
+		renderWithProviders(
 			<RunReviewSheet
 				open={true}
 				onOpenChange={() => {}}
 				run={baseRun}
-				verdict={null}
-				note=""
+				verdict="down"
+				note="Skipped approval"
 				onVerdict={() => {}}
 				onNote={() => {}}
-				conversation={baseConversation}
-				onSendChat={() => {}}
+				reviewActions={<button type="button">Create Finding</button>}
 			/>,
 		);
-		await user.click(screen.getByRole("tab", { name: /discussion/i }));
-		// FlagConversation empty state is visible after switching
 		expect(
-			screen.getByText(/flag this run and tell me what went wrong/i),
+			screen.getByRole("button", { name: "Create Finding" }),
 		).toBeInTheDocument();
+		expect(screen.queryByText(/discussion/i)).not.toBeInTheDocument();
 	});
 
-	it("starts on the tune tab when defaultTab='tune'", () => {
+	it("keeps negative reviews on the review surface", () => {
 		renderWithProviders(
 			<RunReviewSheet
 				open={true}
@@ -259,14 +236,17 @@ describe("RunReviewSheet", () => {
 				note=""
 				onVerdict={() => {}}
 				onNote={() => {}}
-				conversation={baseConversation}
-				onSendChat={() => {}}
-				defaultTab="tune"
 			/>,
 		);
 		expect(
-			screen.getByText(/flag this run and tell me what went wrong/i),
-		).toBeInTheDocument();
+			screen.getAllByText(/how do i reset my password/i).length,
+		).toBeGreaterThan(0);
+		expect(
+			screen.queryByText(/flag this run and tell me what went wrong/i),
+		).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole("tab", { name: /discussion/i }),
+		).not.toBeInTheDocument();
 	});
 
 	it("calls onOpenChange(false) when the close button is clicked", async () => {
@@ -280,8 +260,6 @@ describe("RunReviewSheet", () => {
 				note=""
 				onVerdict={() => {}}
 				onNote={() => {}}
-				conversation={baseConversation}
-				onSendChat={() => {}}
 			/>,
 		);
 		await user.click(
@@ -300,8 +278,6 @@ describe("RunReviewSheet", () => {
 				note=""
 				onVerdict={() => {}}
 				onNote={() => {}}
-				conversation={baseConversation}
-				onSendChat={() => {}}
 			/>,
 		);
 		const link = screen.getByRole("link", { name: /open full run/i });
@@ -322,8 +298,6 @@ describe("RunReviewSheet", () => {
 				note=""
 				onVerdict={() => {}}
 				onNote={() => {}}
-				conversation={baseConversation}
-				onSendChat={() => {}}
 			/>,
 		);
 		const sheetContent = document.querySelector(
@@ -347,8 +321,6 @@ describe("RunReviewSheet", () => {
 							note=""
 							onVerdict={() => {}}
 							onNote={() => {}}
-							conversation={baseConversation}
-							onSendChat={() => {}}
 						/>
 					}
 				/>

@@ -1,23 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderWithProviders, screen } from "@/test-utils";
+import type { ReactNode } from "react";
 
 import { AgentRunSheet } from "./AgentRunSheet";
 import type { Verdict } from "./RunReviewPanel";
 
 const mockUseAgentRun = vi.fn();
-const mockUseFlagConversation = vi.fn();
-const mockSendFlagMessage = vi.fn();
 const mockSetVerdict = vi.fn();
 const mockClearVerdict = vi.fn();
 
 vi.mock("@/services/agentRuns", () => ({
 	useAgentRun: (id: string | undefined) => mockUseAgentRun(id),
-	useFlagConversation: (id: string | undefined) =>
-		mockUseFlagConversation(id),
-	useSendFlagMessage: () => ({
-		mutate: mockSendFlagMessage,
-		isPending: false,
-	}),
 	useSetVerdict: () => ({
 		mutate: mockSetVerdict,
 	}),
@@ -26,29 +19,29 @@ vi.mock("@/services/agentRuns", () => ({
 	}),
 }));
 
+vi.mock("./RunFindingAction", () => ({
+	RunFindingAction: () => <button type="button">Create Finding</button>,
+}));
+
 vi.mock("./RunReviewSheet", () => ({
 	RunReviewSheet: ({
 		open,
 		run,
 		verdict,
 		onVerdict,
-		chatDisabled,
-		defaultTab,
+		reviewActions,
 	}: {
 		open: boolean;
 		run: { id: string } | null;
 		verdict: Verdict;
 		onVerdict: (verdict: Verdict) => void;
-		chatDisabled?: boolean;
-		defaultTab?: string;
+		reviewActions?: ReactNode;
 	}) =>
 		open ? (
 			<div
 				data-testid="run-review-sheet"
 				data-run-id={run?.id ?? ""}
 				data-verdict={verdict ?? "none"}
-				data-chat-disabled={String(chatDisabled)}
-				data-default-tab={defaultTab ?? ""}
 			>
 				<button type="button" onClick={() => onVerdict("down")}>
 					Mark wrong
@@ -56,6 +49,7 @@ vi.mock("./RunReviewSheet", () => ({
 				<button type="button" onClick={() => onVerdict("up")}>
 					Mark good
 				</button>
+				{reviewActions}
 			</div>
 		) : null,
 }));
@@ -90,14 +84,6 @@ beforeEach(() => {
 		isFetching: false,
 		refetch: vi.fn(),
 	});
-	mockUseFlagConversation.mockReturnValue({
-		data: undefined,
-		isLoading: false,
-		isError: false,
-		isFetching: false,
-		refetch: vi.fn(),
-	});
-	mockSendFlagMessage.mockReset();
 	mockSetVerdict.mockReset();
 	mockClearVerdict.mockReset();
 });
@@ -112,15 +98,13 @@ describe("AgentRunSheet", () => {
 	it("does not load an improvement conversation for an unreviewed run", () => {
 		renderSheet();
 
-		expect(mockUseFlagConversation).toHaveBeenCalledWith(undefined);
 		expect(screen.getByTestId("run-review-sheet")).toHaveAttribute(
-			"data-default-tab",
-			"review",
+			"data-verdict",
+			"none",
 		);
-		expect(screen.getByTestId("run-review-sheet")).toHaveAttribute(
-			"data-chat-disabled",
-			"true",
-		);
+		expect(
+			screen.queryByRole("button", { name: "Create Finding" }),
+		).not.toBeInTheDocument();
 	});
 
 	it("does not load an improvement conversation while run details are loading", () => {
@@ -133,12 +117,15 @@ describe("AgentRunSheet", () => {
 
 		renderSheet();
 
-		expect(mockUseFlagConversation).toHaveBeenCalledWith(undefined);
+		expect(screen.getByTestId("run-review-sheet")).toHaveAttribute(
+			"data-run-id",
+			"",
+		);
 	});
 
-	it("loads the improvement conversation for a flagged run", () => {
+	it("shows a Finding action instead of loading a conversation for a flagged run", () => {
 		mockUseAgentRun.mockReturnValue({
-			data: makeRun("down"),
+			data: { ...makeRun("down"), verdict_note: "Skipped approval" },
 			isError: false,
 			isFetching: false,
 			refetch: vi.fn(),
@@ -146,11 +133,13 @@ describe("AgentRunSheet", () => {
 
 		renderSheet();
 
-		expect(mockUseFlagConversation).toHaveBeenCalledWith("run-1");
 		expect(screen.getByTestId("run-review-sheet")).toHaveAttribute(
-			"data-default-tab",
-			"tune",
+			"data-verdict",
+			"down",
 		);
+		expect(
+			screen.getByRole("button", { name: "Create Finding" }),
+		).toBeInTheDocument();
 	});
 
 	it("preserves verdict changes while conversation loading is gated", async () => {

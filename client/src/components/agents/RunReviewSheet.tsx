@@ -1,15 +1,14 @@
 /**
- * Slide-over sheet that wraps a run's review and improvement discussion.
+ * Slide-over sheet that wraps a run's review and activity.
  *
- * Mounts the shared RunReviewPanel under the Review tab and the
- * FlagConversation under the Discussion tab. The parent controls open state,
- * the run, and all state for verdict / note / conversation — this
- * component is purely presentational.
+ * Mounts the shared RunReviewPanel with the run activity below it. The parent
+ * controls open state, the run, and all state for verdict / note; this
+ * component remains purely presentational.
  */
 
 import { useDialogReturnFocus } from "@/hooks/useDialogReturnFocus";
 import { useState, type ReactNode } from "react";
-import { ExternalLink, ListTree, Sparkles, X } from "lucide-react";
+import { ExternalLink, ListTree, X } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
@@ -21,7 +20,6 @@ import {
 	SheetTitle,
 	SheetDescription,
 } from "@/components/ui/sheet";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
 	createAgentRunNavigationState,
 	getLocationHref,
@@ -29,14 +27,11 @@ import {
 import { cn } from "@/lib/utils";
 import type { components } from "@/lib/v1";
 
-import { FlagConversation } from "./FlagConversation";
 import { RunReviewPanel, type Verdict } from "./RunReviewPanel";
 import { Timeline } from "./Timeline";
 import { activityDomId } from "./run-activity";
 
 type AgentRunDetail = components["schemas"]["AgentRunDetailResponse"];
-type FlagConversationResponse =
-	components["schemas"]["FlagConversationResponse"];
 
 export interface RunReviewSheetProps {
 	open: boolean;
@@ -46,17 +41,10 @@ export interface RunReviewSheetProps {
 	note: string;
 	onVerdict: (v: Verdict) => void;
 	onNote: (n: string) => void;
-	conversation: FlagConversationResponse | null;
-	onSendChat: (text: string) => void | Promise<void>;
-	chatPending?: boolean;
-	chatDisabled?: boolean;
-	onTestAgainstRun?: () => void;
-	defaultTab?: "review" | "tune";
 	reviewPending?: boolean;
 	reviewFeedback?: ReactNode;
 	reviewActions?: ReactNode;
 	readFeedback?: ReactNode;
-	conversationFeedback?: ReactNode;
 }
 
 export function RunReviewSheet({
@@ -67,17 +55,10 @@ export function RunReviewSheet({
 	note,
 	onVerdict,
 	onNote,
-	conversation,
-	onSendChat,
-	chatPending,
-	chatDisabled,
-	onTestAgainstRun,
-	defaultTab = "review",
 	reviewPending,
 	reviewFeedback,
 	reviewActions,
 	readFeedback,
-	conversationFeedback,
 }: RunReviewSheetProps) {
 	const location = useLocation();
 	const dialogFocus = useDialogReturnFocus();
@@ -169,85 +150,43 @@ export function RunReviewSheet({
 						{readFeedback}
 					</div>
 				) : null}
-				<Tabs
-					defaultValue={defaultTab}
-					className="agent-run-review-tabs flex min-h-0 flex-1 flex-col gap-0 overflow-hidden"
-				>
-					<TabsList className="mx-4 mt-4 flex min-h-14 shrink-0 w-[calc(100%-2rem)] sm:mx-6 sm:w-fit">
-						<RunReviewSheetTabTrigger
-							value="review"
-							icon={ListTree}
-						>
-							Review
-						</RunReviewSheetTabTrigger>
-						<RunReviewSheetTabTrigger value="tune" icon={Sparkles}>
-							Discussion
-						</RunReviewSheetTabTrigger>
-					</TabsList>
-					<TabsContent
-						value="review"
-						className="agent-run-review-tab flex min-h-0 flex-1 flex-col overflow-hidden"
-					>
-						<RunReviewSheetScrollRegion>
-							{reviewFeedback ? (
-								<div className="px-4 pt-4 sm:px-6">
-									{reviewFeedback}
-								</div>
-							) : null}
-							<fieldset
-								disabled={reviewPending}
-								className="min-w-0 space-y-3"
-							>
-								<RunReviewPanel
-									run={run}
-									verdict={verdict}
-									note={note}
-									onVerdict={onVerdict}
-									onNote={onNote}
-									variant="drawer"
-									runNavigationOrigin={runNavigationOrigin}
-									onActivityReferencePreview={
-										handleActivityReferencePreview
-									}
-									onActivityReferenceActivate={
-										handleActivityReferenceActivate
-									}
-								/>
-								{reviewActions ? (
-									<div className="px-4 pb-4 sm:px-6">
-										{reviewActions}
-									</div>
-								) : null}
-							</fieldset>
-							<RunReviewSheetActivitySection
-								highlightedActivityId={highlightedActivityId}
-								run={run}
-								runNavigationOrigin={runNavigationOrigin}
-							/>
-						</RunReviewSheetScrollRegion>
-					</TabsContent>
-					<TabsContent
-						value="tune"
-						className="agent-run-review-tab flex min-h-0 flex-1 flex-col overflow-hidden"
-					>
-						<div className="agent-run-review-tuning flex min-h-0 flex-1 flex-col overflow-hidden">
-							{conversationFeedback ? (
-								<div className="shrink-0 px-4 pt-4 sm:px-6">
-									{conversationFeedback}
-								</div>
-							) : null}
-							{(!conversationFeedback || conversation) && (
-								<FlagConversation
-									conversation={conversation}
-									onSend={onSendChat}
-									pending={chatPending}
-									disabled={chatDisabled}
-									onTestAgainstRun={onTestAgainstRun}
-								/>
-							)}
+				<RunReviewSheetScrollRegion>
+					{reviewFeedback ? (
+						<div className="px-4 pt-4 sm:px-6">
+							{reviewFeedback}
 						</div>
-					</TabsContent>
-				</Tabs>
+					) : null}
+					<fieldset
+						disabled={reviewPending}
+						className="min-w-0 space-y-3"
+					>
+						<RunReviewPanel
+							run={run}
+							verdict={verdict}
+							note={note}
+							onVerdict={onVerdict}
+							onNote={onNote}
+							variant="drawer"
+							runNavigationOrigin={runNavigationOrigin}
+							onActivityReferencePreview={
+								handleActivityReferencePreview
+							}
+							onActivityReferenceActivate={
+								handleActivityReferenceActivate
+							}
+						/>
+						{reviewActions ? (
+							<div className="px-4 pb-4 sm:px-6">
+								{reviewActions}
+							</div>
+						) : null}
+					</fieldset>
+					<RunReviewSheetActivitySection
+						highlightedActivityId={highlightedActivityId}
+						run={run}
+						runNavigationOrigin={runNavigationOrigin}
+					/>
+				</RunReviewSheetScrollRegion>
 			</SheetContent>
 		</Sheet>
 	);
@@ -301,8 +240,7 @@ function RunReviewSheetHeader({
 				</div>
 				<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
 					<p className="max-w-2xl text-sm leading-5 text-muted-foreground">
-						Review verdicts, notes, and improvement chat for this
-						run.
+						Review verdicts, notes, and activity for this run.
 					</p>
 					<Button
 						asChild
@@ -323,26 +261,6 @@ function RunReviewSheetHeader({
 				</div>
 			</div>
 		</SheetHeader>
-	);
-}
-
-function RunReviewSheetTabTrigger({
-	value,
-	icon: Icon,
-	children,
-}: {
-	value: "review" | "tune";
-	icon: typeof ListTree;
-	children: string;
-}) {
-	return (
-		<TabsTrigger
-			value={value}
-			className="min-h-11 flex-1 gap-2 px-3 text-sm font-medium motion-reduce:transition-none sm:flex-none"
-		>
-			<Icon className="h-4 w-4" />
-			{children}
-		</TabsTrigger>
 	);
 }
 

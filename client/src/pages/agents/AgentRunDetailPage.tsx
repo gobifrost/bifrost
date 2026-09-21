@@ -43,7 +43,7 @@ import { toast } from "sonner";
 import { RunDetailHeading } from "@/components/execution/RunDetailHeading";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAgent } from "@/hooks/useAgents";
@@ -60,15 +60,13 @@ import {
 	useAgentRun,
 	useAgentRunStream,
 	useClearVerdict,
-	useFlagConversation,
 	useRerunAgentRun,
-	useSendFlagMessage,
 	useSetVerdict,
 } from "@/services/agentRuns";
 import { agentPlatform } from "@/services/agentPlatform";
 import type { components } from "@/lib/v1";
 
-import { FlagConversation } from "@/components/agents/FlagConversation";
+import { RunFindingAction } from "@/components/agents/RunFindingAction";
 import {
 	RunReviewPanel,
 	type Verdict,
@@ -395,14 +393,6 @@ export function AgentRunDetailPage() {
 		: null;
 
 	const isFlagged = verdict === "down";
-	const {
-		data: conversation,
-		isLoading: conversationLoading,
-		isError: conversationError,
-		isFetching: conversationFetching,
-		refetch: refetchConversation,
-	} = useFlagConversation(isFlagged ? runId : undefined);
-	const sendMessage = useSendFlagMessage();
 
 	function invalidateRun() {
 		queryClient.invalidateQueries({ queryKey: ["agent-runs"] });
@@ -441,35 +431,6 @@ export function AgentRunDetailPage() {
 				},
 				{ onSuccess, onError, onSettled },
 			);
-	}
-
-	function handleSendChat(text: string): Promise<void> {
-		return new Promise((resolve, reject) => {
-			if (!runId) {
-				reject(new Error("Run unavailable"));
-				return;
-			}
-			sendMessage.mutate(
-				{
-					params: { path: { run_id: runId } },
-					body: { content: text },
-				},
-				{
-					onSuccess: (data) => {
-						queryClient.setQueryData(
-							[
-								"get",
-								"/api/agent-runs/{run_id}/flag-conversation",
-								{ params: { path: { run_id: runId } } },
-							],
-							data,
-						);
-						resolve();
-					},
-					onError: reject,
-				},
-			);
-		});
 	}
 
 	function handleRerun() {
@@ -879,48 +840,12 @@ export function AgentRunDetailPage() {
 									Save review note
 								</Button>
 							) : null}
+							{isFlagged ? (
+								<div className="mt-3">
+									<RunFindingAction run={run} note={note} />
+								</div>
+							) : null}
 						</fieldset>
-
-						{isFlagged ? (
-							<Card data-testid="flag-conversation-card">
-								<CardHeader className="pb-2">
-									<CardTitle className="flex items-center gap-2 text-sm">
-										<Sparkles className="h-4 w-4" />
-										Improvement conversation
-									</CardTitle>
-								</CardHeader>
-								<CardContent className="p-0">
-									{conversationError ? (
-										<div className="px-4 pb-3">
-											<FleetReadError
-												resource="improvement conversation"
-												cached={!!conversation}
-												pending={conversationFetching}
-												onRetry={() =>
-													void refetchConversation()
-												}
-											/>
-										</div>
-									) : null}
-									{conversationLoading ? (
-										<div className="p-4">
-											<Skeleton className="h-40 w-full" />
-										</div>
-									) : conversationError &&
-									  !conversation ? null : (
-										<div className="flex h-[420px] flex-col">
-											<FlagConversation
-												conversation={
-													conversation ?? null
-												}
-												onSend={handleSendChat}
-												pending={sendMessage.isPending}
-											/>
-										</div>
-									)}
-								</CardContent>
-							</Card>
-						) : null}
 					</div>
 				) : null}
 

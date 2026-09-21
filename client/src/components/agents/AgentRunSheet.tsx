@@ -7,11 +7,10 @@ import {
 	useAgentRun,
 	useSetVerdict,
 	useClearVerdict,
-	useFlagConversation,
-	useSendFlagMessage,
 } from "@/services/agentRuns";
 import { RunReviewSheet } from "./RunReviewSheet";
 import type { Verdict } from "./RunReviewPanel";
+import { RunFindingAction } from "./RunFindingAction";
 
 function ReadNotice({
 	resource,
@@ -54,13 +53,6 @@ export function AgentRunSheet({ openRunId, onClose }: AgentRunSheetProps) {
 		runDetail?.verdict === "up" || runDetail?.verdict === "down"
 			? runDetail.verdict
 			: null;
-	const isFlagged = verdict === "down";
-	const conversationQuery = useFlagConversation(
-		isFlagged ? (openRunId ?? undefined) : undefined,
-	);
-	const conversation = conversationQuery.data;
-	const sendMessage = useSendFlagMessage();
-
 	const queryClient = useQueryClient();
 	const setVerdict = useSetVerdict();
 	const clearVerdict = useClearVerdict();
@@ -131,34 +123,12 @@ export function AgentRunSheet({ openRunId, onClose }: AgentRunSheetProps) {
 				callbacks,
 			);
 	}
-	function onSendChat(text: string): Promise<void> {
-		return new Promise((resolve, reject) => {
-			if (
-				!openRunId ||
-				!isFlagged ||
-				conversationQuery.isLoading ||
-				conversationQuery.isError
-			) {
-				reject(new Error("Conversation unavailable"));
-				return;
-			}
-			sendMessage.mutate(
-				{
-					params: { path: { run_id: openRunId } },
-					body: { content: text },
-				},
-				{
-					onSuccess: () => {
-						void conversationQuery.refetch();
-						resolve();
-					},
-					onError: reject,
-				},
-			);
-		});
-	}
-
 	const open = !!openRunId;
+	const noteChanged = note !== (runDetail?.verdict_note ?? "");
+	const findingAction =
+		runDetail && verdict === "down" ? (
+			<RunFindingAction run={runDetail} note={note} />
+		) : null;
 
 	return (
 		<RunReviewSheet
@@ -186,31 +156,28 @@ export function AgentRunSheet({ openRunId, onClose }: AgentRunSheetProps) {
 				) : null
 			}
 			reviewActions={
-				note !== (runDetail?.verdict_note ?? "") ? (
-					verdict ? (
-						<Button
-							type="button"
-							className="min-h-11"
-							onClick={() => saveReview(verdict)}
-						>
-							Save review note
-						</Button>
-					) : (
-						<p className="text-sm text-muted-foreground">
-							Choose Good or Wrong to save this note.
-						</p>
-					)
+				noteChanged || findingAction ? (
+					<div className="space-y-3">
+						{noteChanged ? (
+							verdict ? (
+								<Button
+									type="button"
+									className="min-h-11"
+									onClick={() => saveReview(verdict)}
+								>
+									Save review note
+								</Button>
+							) : (
+								<p className="text-sm text-muted-foreground">
+									Choose Good or Wrong to save this note.
+								</p>
+							)
+						) : null}
+						{findingAction}
+					</div>
 				) : null
 			}
 			onNote={setNote}
-			conversation={conversation ?? null}
-			onSendChat={onSendChat}
-			chatPending={sendMessage.isPending}
-			chatDisabled={
-				!isFlagged ||
-				conversationQuery.isLoading ||
-				conversationQuery.isError
-			}
 			readFeedback={
 				detailQuery.isError ? (
 					<ReadNotice
@@ -220,23 +187,6 @@ export function AgentRunSheet({ openRunId, onClose }: AgentRunSheetProps) {
 					/>
 				) : null
 			}
-			conversationFeedback={
-				conversationQuery.isLoading ? (
-					<p
-						role="status"
-						className="p-4 text-sm text-muted-foreground"
-					>
-						Loading improvement conversation…
-					</p>
-				) : conversationQuery.isError ? (
-					<ReadNotice
-						resource="improvement conversation"
-						pending={conversationQuery.isFetching}
-						onRetry={() => void conversationQuery.refetch()}
-					/>
-				) : null
-			}
-			defaultTab={verdict === "down" ? "tune" : "review"}
 		/>
 	);
 }

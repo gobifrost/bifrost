@@ -10,7 +10,7 @@ import {
  *
  * Layout:
  *   - Header: agent name, "Review N of total" counter, dot pagination,
- *     keyboard shortcut hints, link to the quality workbench when there is
+ *     keyboard shortcut hints, link to the quality page when there is
  *     anything still flagged.
  *   - Main: a Card with the run summary header + <RunReviewPanel
  *     variant="flipbook"> with verdict actions.
@@ -162,14 +162,13 @@ export function AgentReviewPage() {
 		},
 		onSuccess: () => {
 			toast.success("Finding recorded", {
-				description:
-					"Review it in the quality workbench under Evidence.",
+				description: "Review it on the Quality page under Findings.",
 				action: agentId
 					? {
-							label: "Open Evidence",
+							label: "Open Findings",
 							onClick: () =>
 								navigate(
-									`/agents/${agentId}/quality?tab=evidence`,
+									`/agents/${agentId}/quality?collection=findings`,
 								),
 						}
 					: undefined,
@@ -402,9 +401,11 @@ export function AgentReviewPage() {
 						</span>
 						{flaggedRemaining > 0 ? (
 							<Button asChild>
-								<Link to={`/agents/${agentId}/quality`}>
+								<Link
+									to={`/agents/${agentId}/quality?collection=findings`}
+								>
 									<Sparkles className="h-4 w-4" />
-									Open quality workbench
+									Open Quality
 								</Link>
 							</Button>
 						) : null}
@@ -498,7 +499,7 @@ export function AgentReviewPage() {
 						>
 							{recordFinding.isPending
 								? "Recording…"
-								: "Record finding from this run"}
+								: "Record Finding from This Run"}
 						</Button>
 					</fieldset>
 				) : !detailError ? (

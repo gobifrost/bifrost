@@ -2,8 +2,8 @@ import { AgentRunDetailPage } from "./AgentRunDetailPage";
 /**
  * Tests for AgentRunDetailPage.
  *
- * Mocks the run + agent + review hooks at module scope. RunReviewPanel and
- * FlagConversation are stubbed to thin probes — they have their own tests.
+ * Mocks the run + agent + review hooks at module scope. RunReviewPanel is
+ * stubbed to a thin probe — it has its own tests.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -16,8 +16,6 @@ import { createAgentRunNavigationState } from "@/lib/agent-run-navigation";
 // -----------------------------------------------------------------------------
 
 const mockUseAgentRun = vi.fn();
-const mockUseFlagConversation = vi.fn();
-const mockSendFlagMessage = vi.fn();
 const mockSetVerdict = vi.fn();
 const mockClearVerdict = vi.fn();
 const mockRegenSummary = vi.fn();
@@ -28,12 +26,6 @@ let rerunPending = false;
 vi.mock("@/services/agentRuns", () => ({
 	useAgentRun: (id: string | undefined) => mockUseAgentRun(id),
 	useAgentRunStream: () => {},
-	useFlagConversation: (id: string | undefined) =>
-		mockUseFlagConversation(id),
-	useSendFlagMessage: () => ({
-		mutate: mockSendFlagMessage,
-		isPending: false,
-	}),
 	useSetVerdict: () => ({ mutate: mockSetVerdict, isPending: false }),
 	useClearVerdict: () => ({ mutate: mockClearVerdict, isPending: false }),
 	useRegenerateSummary: () => ({
@@ -141,16 +133,8 @@ vi.mock("@/components/agents/RunReviewPanel", () => ({
 	),
 }));
 
-vi.mock("@/components/agents/FlagConversation", () => ({
-	FlagConversation: ({
-		conversation,
-	}: {
-		conversation: { id: string } | null;
-	}) => (
-		<div data-testid="flag-conversation">
-			conv-{conversation?.id ?? "none"}
-		</div>
-	),
+vi.mock("@/components/agents/RunFindingAction", () => ({
+	RunFindingAction: () => <button type="button">Create Finding</button>,
 }));
 
 // -----------------------------------------------------------------------------
@@ -199,8 +183,6 @@ beforeEach(() => {
 	mockUseAgentRun.mockReturnValue({ data: makeRun(), isLoading: false });
 	mockUseAgent.mockReturnValue({ data: baseAgent, isLoading: false });
 	mockUseExecution.mockReturnValue({ data: undefined });
-	mockUseFlagConversation.mockReturnValue({ data: undefined });
-	mockSendFlagMessage.mockReset();
 	mockSetVerdict.mockReset();
 	mockClearVerdict.mockReset();
 	mockRegenSummary.mockReset();
@@ -715,29 +697,35 @@ describe("AgentRunDetailPage — recorded evaluation", () => {
 	});
 });
 
-describe("AgentRunDetailPage — flag conversation", () => {
-	it("does not render the flag conversation when verdict is not down", async () => {
+describe("AgentRunDetailPage — findings", () => {
+	it("does not render the Finding action when verdict is not down", async () => {
 		await renderPage();
 		expect(
 			screen.queryByTestId("flag-conversation-card"),
 		).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", { name: "Create Finding" }),
+		).not.toBeInTheDocument();
+		expect(
+			screen.queryByText(/improvement conversation/i),
+		).not.toBeInTheDocument();
 	});
 
-	it("renders the flag conversation when verdict is down", async () => {
+	it("renders the Finding action when verdict is down", async () => {
 		mockUseAgentRun.mockReturnValue({
 			data: makeRun({ verdict: "down" }),
 			isLoading: false,
 		});
-		mockUseFlagConversation.mockReturnValue({
-			data: { id: "conv-1", run_id: "run-1", messages: [] },
-		});
 		await renderPage();
 		expect(
-			screen.getByTestId("flag-conversation-card"),
+			screen.queryByTestId("flag-conversation-card"),
+		).not.toBeInTheDocument();
+		expect(
+			screen.queryByText(/improvement conversation/i),
+		).not.toBeInTheDocument();
+		expect(
+			screen.getByRole("button", { name: "Create Finding" }),
 		).toBeInTheDocument();
-		expect(screen.getByTestId("flag-conversation")).toHaveTextContent(
-			"conv-conv-1",
-		);
 	});
 });
 

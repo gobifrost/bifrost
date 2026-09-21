@@ -17,8 +17,6 @@ import { renderWithProviders, screen, waitFor } from "@/test-utils";
 
 const mockUseInfiniteAgentRuns = vi.fn();
 const mockUseAgentRun = vi.fn();
-const mockUseFlagConversation = vi.fn();
-const mockSendFlagMessage = vi.fn();
 const mockSetVerdict = vi.fn();
 const mockClearVerdict = vi.fn();
 const mockRecordedEvaluation = vi.fn();
@@ -26,12 +24,6 @@ const mockRecordedEvaluation = vi.fn();
 vi.mock("@/services/agentRuns", () => ({
 	useInfiniteAgentRuns: (params: unknown) => mockUseInfiniteAgentRuns(params),
 	useAgentRun: (id: string | undefined) => mockUseAgentRun(id),
-	useFlagConversation: (id: string | undefined) =>
-		mockUseFlagConversation(id),
-	useSendFlagMessage: () => ({
-		mutate: mockSendFlagMessage,
-		isPending: false,
-	}),
 	useSetVerdict: () => ({ mutate: mockSetVerdict, isPending: false }),
 	useClearVerdict: () => ({ mutate: mockClearVerdict, isPending: false }),
 }));
@@ -105,8 +97,6 @@ function makeInfinitePages(
 beforeEach(() => {
 	mockUseInfiniteAgentRuns.mockReturnValue(makeInfinitePages([makeRun()]));
 	mockUseAgentRun.mockReturnValue({ data: undefined });
-	mockUseFlagConversation.mockReturnValue({ data: undefined });
-	mockSendFlagMessage.mockReset();
 	mockSetVerdict.mockReset();
 	mockClearVerdict.mockReset();
 	mockRecordedEvaluation.mockReset();
