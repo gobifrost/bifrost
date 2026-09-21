@@ -14,6 +14,7 @@ from src.jobs.platform.solution_git_sync import (
     run_solution_git_sync,
 )
 from src.models.orm.solutions import Solution
+from src.services.solutions.deploy import SolutionFinalizeIncomplete
 from src.services.solutions.git_sync import NotASolutionWorkspace
 
 
@@ -99,3 +100,44 @@ async def test_solution_git_sync_reports_invalid_workspace_as_structured_failure
 
     assert error.value.code == "invalid_solution_workspace"
     assert error.value.message == "descriptor missing"
+
+
+@pytest.mark.asyncio
+async def test_solution_git_sync_keeps_update_badge_when_storage_finalization_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    solution = Solution(
+        id=uuid4(),
+        slug="managed-git",
+        name="Managed Git",
+        git_connected=True,
+        git_repo_url="https://example.test/managed-git.git",
+        update_available_version="2.0.0",
+    )
+    db = SimpleNamespace(get=AsyncMock(return_value=solution), commit=AsyncMock())
+    context = SimpleNamespace(report=AsyncMock(), log=AsyncMock())
+
+    @asynccontextmanager
+    async def fake_db_context():
+        yield db
+
+    monkeypatch.setattr(
+        "src.jobs.platform.solution_git_sync.get_db_context", fake_db_context
+    )
+    monkeypatch.setattr(
+        "src.services.solutions.git_sync.sync",
+        AsyncMock(side_effect=SolutionFinalizeIncomplete(str(solution.id))),
+    )
+
+    with pytest.raises(PlatformJobFailure) as error:
+        await run_solution_git_sync(
+            context, SolutionGitSyncPayload(solution_id=solution.id)
+        )
+
+    assert error.value.code == "solution_git_finalize_incomplete"
+    assert solution.update_available_version == "2.0.0"
+    db.commit.assert_not_awaited()
+    assert all(
+        report.kwargs.get("percent") != 100
+        for report in context.report.await_args_list
+    )

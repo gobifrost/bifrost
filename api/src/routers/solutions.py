@@ -331,6 +331,44 @@ async def _spool_upload_to_temp(file: UploadFile, *, prefix: str) -> Path:
     return path
 
 
+async def _lock_solution_operation(db: AsyncSession, solution_id: UUID) -> None:
+    """Serialize Solution mutations with SDK-update enqueue decisions."""
+    await db.execute(
+        text(
+            "SELECT pg_advisory_xact_lock("
+            "hashtext('bifrost:solution-operation:' || :solution_id))"
+        ),
+        {"solution_id": str(solution_id)},
+    )
+
+
+async def _active_solution_sdk_update_exists(
+    db: AsyncSession, solution_id: UUID
+) -> bool:
+    """Return whether an owned App has a queued or running SDK rebuild."""
+    app_ids = [
+        str(app_id)
+        for app_id in (
+            await db.execute(
+                select(Application.id).where(Application.solution_id == solution_id)
+            )
+        ).scalars().all()
+    ]
+    if not app_ids:
+        return False
+    return (
+        await db.execute(
+            select(PlatformJob.id)
+            .where(
+                PlatformJob.job_type == "application.sdk_update",
+                PlatformJob.resource_id.in_(app_ids),
+                PlatformJob.status.in_(ACTIVE_PLATFORM_JOB_STATUSES),
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none() is not None
+
+
 async def _enqueue_solution_deploy_job(
     db: AsyncSession,
     *,
@@ -349,38 +387,12 @@ async def _enqueue_solution_deploy_job(
     if (input_path is None) == (input_bytes is None):
         raise ValueError("exactly one staged input is required")
     if install_id is not None:
-        await db.execute(
-            text(
-                "SELECT pg_advisory_xact_lock("
-                "hashtext('bifrost:solution-operation:' || :solution_id))"
-            ),
-            {"solution_id": str(install_id)},
-        )
-        app_ids = [
-            str(app_id)
-            for app_id in (
-                await db.execute(
-                    select(Application.id).where(Application.solution_id == install_id)
-                )
-            ).scalars().all()
-        ]
-        if app_ids:
-            active_app_update = (
-                await db.execute(
-                    select(PlatformJob.id)
-                    .where(
-                        PlatformJob.job_type == "application.sdk_update",
-                        PlatformJob.resource_id.in_(app_ids),
-                        PlatformJob.status.in_(ACTIVE_PLATFORM_JOB_STATUSES),
-                    )
-                    .limit(1)
-                )
-            ).scalar_one_or_none()
-            if active_app_update is not None:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="An App SDK update is already in progress for this Solution.",
-                )
+        await _lock_solution_operation(db, install_id)
+        if await _active_solution_sdk_update_exists(db, install_id):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="An App SDK update is already in progress for this Solution.",
+            )
     job_id = uuid4()
     storage = SolutionDeployJobStorage(job_id)
     if input_path is not None:
@@ -1724,6 +1736,7 @@ async def update_solution(
     try:
         async with solution_write_lock(solution_id):
             if enabling_git_connection:
+                await _lock_solution_operation(ctx.db, solution_id)
                 active_deploy = (
                     await ctx.db.execute(
                         select(PlatformJob.id)
@@ -1741,6 +1754,14 @@ async def update_solution(
                         detail=(
                             "A Solution deployment is already queued or running; "
                             "wait for it to finish before connecting Git."
+                        ),
+                    )
+                if await _active_solution_sdk_update_exists(ctx.db, solution_id):
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail=(
+                            "An App SDK update is already queued or running for this "
+                            "Solution; wait for it to finish before connecting Git."
                         ),
                     )
                 await _validate_solution_git_connection_source(
@@ -2540,6 +2561,13 @@ async def sync_solution(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="This git-connected install has no git_repo_url to pull from.",
+        )
+
+    await _lock_solution_operation(ctx.db, solution_id)
+    if await _active_solution_sdk_update_exists(ctx.db, solution_id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An App SDK update is already in progress for this Solution.",
         )
 
     job, reused = await enqueue_platform_job(

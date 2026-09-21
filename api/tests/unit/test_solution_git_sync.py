@@ -9,6 +9,8 @@ A git-connected install has exactly one writer: auto-pull from its repo.
 from __future__ import annotations
 
 import uuid
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -96,6 +98,43 @@ class TestDeployFromWorkspace:
             await db.execute(select(Workflow.name).where(Workflow.solution_id == sol.id))
         ).scalars().all()
         assert survivors == ["keepme"]
+
+
+@pytest.mark.asyncio
+async def test_git_sync_propagates_incomplete_storage_finalization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Git sync must remain failed until its committed bundle reaches storage."""
+    from src.services.solutions import git_sync
+    from src.services.solutions.deploy import SolutionFinalizeIncomplete
+
+    solution = Solution(
+        id=uuid.uuid4(),
+        slug="storage-finalize",
+        name="Storage Finalize",
+        git_connected=True,
+        git_repo_url="https://example.test/storage-finalize.git",
+    )
+    result = SimpleNamespace(
+        finalize_s3=AsyncMock(side_effect=SolutionFinalizeIncomplete(str(solution.id)))
+    )
+    db = SimpleNamespace(commit=AsyncMock())
+
+    async def fake_clone(_repo_url, destination, *, ref=None):  # noqa: ANN001
+        (destination / "bifrost.solution.yaml").write_text(
+            "slug: storage-finalize\nname: Storage Finalize\nscope: global\n"
+        )
+
+    monkeypatch.setattr(git_sync, "clone_repo_to_dir", fake_clone)
+    monkeypatch.setattr(
+        git_sync, "deploy_from_workspace", AsyncMock(return_value=result)
+    )
+
+    with pytest.raises(SolutionFinalizeIncomplete):
+        await git_sync._run_sync_once(db, solution)
+
+    db.commit.assert_awaited_once()
+    result.finalize_s3.assert_awaited_once()
 
 
 @pytest.mark.e2e

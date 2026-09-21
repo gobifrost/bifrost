@@ -28,6 +28,7 @@ async def run_solution_git_sync(
     payload: SolutionGitSyncPayload,
 ) -> dict:
     """Pull one connected Solution through its existing single-writer sync."""
+    from src.services.solutions.deploy import SolutionFinalizeIncomplete
     from src.services.solutions.git_sync import NotASolutionWorkspace, sync
 
     await context.report("Loading connected Solution", percent=5)
@@ -51,6 +52,13 @@ async def run_solution_git_sync(
             await sync(db, solution)
         except NotASolutionWorkspace as exc:
             raise PlatformJobFailure("invalid_solution_workspace", str(exc)) from exc
+        except SolutionFinalizeIncomplete as exc:
+            raise PlatformJobFailure(
+                "solution_git_finalize_incomplete",
+                "Solution update committed but source storage was unavailable after "
+                "retries. Retry the Git update to complete it.",
+                retryable=True,
+            ) from exc
         except Exception as exc:  # noqa: BLE001 - job records the safe failure
             logger.exception(
                 "Managed Solution Git sync failed",

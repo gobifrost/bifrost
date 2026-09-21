@@ -31,7 +31,6 @@ from src.models.orm.solutions import Solution
 from src.services.solutions.deploy import (
     DeployResult,
     SolutionBundle,
-    SolutionFinalizeIncomplete,
 )
 
 logger = logging.getLogger(__name__)
@@ -297,14 +296,4 @@ async def _run_sync_once(db: AsyncSession, solution: Solution) -> None:
     # can't interleave. The bundle is in-memory, so finalizing after the checkout
     # temp dir is gone is fine.
     await db.commit()
-    try:
-        await result.finalize_s3()
-    except SolutionFinalizeIncomplete:
-        # finalize_s3 already retried; storage is down. Auto-pull runs in a
-        # background job with no caller to surface a 502 to, and the deploy is
-        # full-replace + idempotent — the next sync trigger re-runs and heals it.
-        logger.error(
-            "Solution %s synced (DB committed) but storage finalize failed "
-            "after retries; the next sync will re-run and heal it.",
-            solution.id,
-        )
+    await result.finalize_s3()
