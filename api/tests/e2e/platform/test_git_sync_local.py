@@ -16,6 +16,7 @@ Fixtures:
 """
 
 from pathlib import Path
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -226,13 +227,16 @@ async def sync_service(db_session: AsyncSession, bare_repo, tmp_path):
         """Simulates Redis lock -- just yields the persistent dir directly."""
         yield persistent_dir
 
+    sync_up_calls: list[Path] = []
+
     # Also make sync_up a no-op for lock()-based operations that call sync_up explicitly
     async def noop_sync_up(source):
-        pass
+        sync_up_calls.append(source)
 
     service.repo_manager.checkout = local_checkout  # type: ignore[assignment]
     service.repo_manager.lock = local_lock  # type: ignore[assignment]
     service.repo_manager.sync_up = noop_sync_up  # type: ignore[assignment]
+    service._sync_up_calls = sync_up_calls  # type: ignore[attr-defined]
     # Patch the module-level PERSISTENT_WORK_DIR so is_initialized checks the test dir
     import src.services.git_repo_manager as grm_mod
     grm_mod.PERSISTENT_WORK_DIR = persistent_dir
@@ -5394,6 +5398,154 @@ class TestAbortMerge:
 
 @pytest.mark.e2e
 @pytest.mark.asyncio
+class TestSyncPublicationOrdering:
+    """Validation and confirmation must precede all workspace publication."""
+
+    async def test_import_failure_does_not_push_or_sync_storage(
+        self,
+        sync_service,
+        bare_repo,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """A failed import leaves the remote and RepoStorage publication untouched."""
+        await sync_service.desktop_commit("initial commit")
+        initial = await sync_service.desktop_sync(confirm_deletes=True)
+        assert initial.success is True
+
+        write_entity_to_repo(sync_service._persistent_dir, "README.md", "not published yet\n")
+        committed = await sync_service.desktop_commit("publish only after import")
+        assert committed.success is True
+
+        before_remote = Repo(str(bare_repo)).commit("main").hexsha
+        sync_service._sync_up_calls.clear()
+        monkeypatch.setattr(
+            sync_service,
+            "_import_all_entities",
+            AsyncMock(side_effect=ValueError("bad manifest")),
+        )
+
+        result = await sync_service.desktop_sync(confirm_deletes=True)
+
+        assert result.success is False
+        assert Repo(str(bare_repo)).commit("main").hexsha == before_remote
+        assert sync_service._sync_up_calls == []
+
+    async def test_delete_confirmation_occurs_before_publish(
+        self,
+        db_session: AsyncSession,
+        sync_service,
+        bare_repo,
+    ):
+        """A deletion preview requires action without publishing its commit."""
+        wf = Workflow(
+            id=uuid4(),
+            name="Confirmation Ordering",
+            function_name="confirmation_ordering",
+            path="workflows/confirmation_ordering.py",
+            is_active=True,
+        )
+        db_session.add(wf)
+        await db_session.commit()
+
+        write_entity_to_repo(
+            sync_service._persistent_dir,
+            "workflows/confirmation_ordering.py",
+            SAMPLE_WORKFLOW_PY,
+        )
+        await write_manifest_to_repo(db_session, sync_service._persistent_dir)
+        assert (await sync_service.desktop_commit("add confirmation workflow")).success
+        assert (await sync_service.desktop_sync(confirm_deletes=True)).success
+
+        remove_entity_from_repo(sync_service._persistent_dir, "workflows/confirmation_ordering.py")
+        await write_manifest_to_repo(db_session, sync_service._persistent_dir)
+        assert (await sync_service.desktop_commit("remove confirmation workflow")).success
+
+        before_remote = Repo(str(bare_repo)).commit("main").hexsha
+        sync_service._sync_up_calls.clear()
+
+        result = await sync_service.desktop_sync(confirm_deletes=False)
+
+        assert result.success is False
+        assert result.requires_action == "confirm_deletes"
+        assert result.pending_deletes
+        assert Repo(str(bare_repo)).commit("main").hexsha == before_remote
+        assert sync_service._sync_up_calls == []
+
+    async def test_apply_rejects_a_stale_plan_before_publish(
+        self,
+        sync_service,
+    ):
+        """A commit after validation invalidates the plan instead of publishing it."""
+        from src.services.github_sync import WorkspacePlanStale
+
+        await sync_service.desktop_commit("initial commit")
+        assert (await sync_service.desktop_sync(confirm_deletes=True)).success
+
+        async with sync_service.repo_manager.lock() as work_dir:
+            repo = sync_service._open_or_init(work_dir)
+            plan = await sync_service.prepare_desktop_sync(work_dir, repo)
+            write_entity_to_repo(work_dir, "README.md", "stale plan\n")
+            repo.index.add(["README.md"])
+            repo.index.commit("make plan stale")
+            sync_service._sync_up_calls.clear()
+
+            with pytest.raises(WorkspacePlanStale, match="changed after validation"):
+                await sync_service.apply_desktop_sync(
+                    work_dir,
+                    repo,
+                    plan,
+                    confirm_deletes=True,
+                )
+
+        assert sync_service._sync_up_calls == []
+
+    async def test_prepare_validation_rolls_back_database_mutations(
+        self,
+        db_session: AsyncSession,
+        sync_service,
+        working_clone,
+    ):
+        """Prepare validates dependent manifest rows without retaining their inserts."""
+        from uuid import UUID as UUIDType
+
+        from src.models.orm.custom_claims import CustomClaim
+        from src.models.orm.organizations import Organization
+
+        work_dir = Path(working_clone.working_dir)
+        org_id = str(uuid4())
+        claim_id = str(uuid4())
+        bifrost_dir = work_dir / ".bifrost"
+        bifrost_dir.mkdir(exist_ok=True)
+        (bifrost_dir / "organizations.yaml").write_text(yaml.dump({
+            "organizations": [{"id": org_id, "name": "Validation Org"}],
+        }, default_flow_style=False))
+        (bifrost_dir / "claims.yaml").write_text(yaml.dump({
+            "claims": {
+                claim_id: {
+                    "id": claim_id,
+                    "name": "validation_claim",
+                    "organization_id": org_id,
+                    "type": "list",
+                    "query": {"table": "users", "select": "id"},
+                },
+            },
+        }, default_flow_style=False))
+        working_clone.index.add([".bifrost/organizations.yaml", ".bifrost/claims.yaml"])
+        working_clone.index.commit("manifest validated without applying")
+        working_clone.remotes.origin.push()
+
+        async with sync_service.repo_manager.lock() as persistent_dir:
+            repo = sync_service._open_or_init(persistent_dir)
+            plan = await sync_service.prepare_desktop_sync(persistent_dir, repo)
+
+        assert any(change.entity_type == "claims" for change in plan.entity_changes)
+        assert await db_session.get(Organization, UUIDType(org_id)) is None
+        assert await db_session.get(CustomClaim, UUIDType(claim_id)) is None
+        assert sync_service._sync_up_calls == []
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
 class TestDeleteConfirmation:
     """Verify confirm_deletes gate blocks or allows entity deletion."""
 
@@ -5405,7 +5557,7 @@ class TestDeleteConfirmation:
     ):
         """
         When DB has entities not in the manifest and confirm_deletes is False,
-        sync returns success=True with needs_delete_confirmation=True.
+        sync returns an explicit confirmation requirement.
         """
         # Create a workflow in DB
         wf_id = uuid4()
@@ -5436,8 +5588,9 @@ class TestDeleteConfirmation:
 
         # Sync WITHOUT confirm_deletes → should be blocked
         result = await sync_service.desktop_sync()
-        assert result.success is True
+        assert result.success is False
         assert result.needs_delete_confirmation is True
+        assert result.requires_action == "confirm_deletes"
         assert len(result.pending_deletes) > 0
 
         # The workflow should still exist in DB (not deleted)

@@ -592,6 +592,7 @@ class ManifestResolver:
         changed_ids: set[str] | None = None,
         sidecar_content: Any = None,
         install_id: "UUID | None" = None,
+        sync_app_previews: bool = True,
     ) -> "list[SyncOp]":
         """Build and execute SyncOps for importing a manifest (entities only).
 
@@ -752,8 +753,10 @@ class ManifestResolver:
             app_ops = self._resolve_app(mapp, cache)
             await self._apply_ops(app_ops, all_ops, dry_run=dry_run, existing_ids=_app_id_set)
 
-            # Compile source files from _repo/ into _apps/{id}/preview/
-            if not dry_run:
+            # Compile source files from _repo/ into _apps/{id}/preview/.
+            # Workspace Git sync defers this until its Git and _repo
+            # publication has succeeded.
+            if not dry_run and sync_app_previews:
                 try:
                     from src.services.app_storage import AppStorageService
 

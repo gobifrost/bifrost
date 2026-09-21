@@ -26,6 +26,8 @@ from src.config import Settings, get_settings
 from src.models.contracts.github import (
     PreflightIssue,
     PreflightResult,
+    WorkspaceFileChange,
+    WorkspaceSyncPlan,
 )
 from src.services.git_repo_manager import GitRepoManager
 from src.services.github_sync_entity_metadata import extract_entity_metadata
@@ -71,6 +73,19 @@ class SyncError(Exception):
 
 class GitStatusError(SyncError):
     """Git status could not be read or parsed safely."""
+    pass
+
+
+class WorkspaceMergeConflict(SyncError):
+    """The remote merge must be resolved before a workspace sync can continue."""
+
+    def __init__(self, conflicts: list) -> None:
+        super().__init__("Merge conflicts detected")
+        self.conflicts = conflicts
+
+
+class WorkspacePlanStale(SyncError):
+    """A reviewed sync plan no longer matches the checked-out workspace."""
     pass
 
 
@@ -363,14 +378,13 @@ class GitHubSyncService:
             preflight=pf,
         )
 
-    async def _do_pull(self, work_dir: Path, repo: GitRepo, job_id: str | None = None) -> "PullResult":
+    async def _do_pull(self, work_dir: Path, repo: GitRepo, progress_fn=None) -> "PullResult":
         """Core pull logic. Fetches, merges, imports entities."""
         from src.models.contracts.github import PullResult
 
         async def _progress(phase: str, current: int = 0, total: int = 0) -> None:
-            if job_id:
-                from src.core.pubsub import publish_git_progress
-                await publish_git_progress(job_id, phase, current, total)
+            if progress_fn:
+                await progress_fn(phase, current, total)
 
         # NOTE: We intentionally do NOT regenerate the manifest here.
         # The sync_execute flow commits first (which regenerates the manifest),
@@ -413,9 +427,6 @@ class GitHubSyncService:
 
         # Entity import is handled by desktop_sync() after push succeeds.
         pulled = 0  # Will be counted during entity import in desktop_sync
-
-        # Sync app preview files from repo to _apps/{id}/preview/
-        await self._sync_app_previews(work_dir)
 
         commit_sha = repo.head.commit.hexsha if repo.head.is_valid() else None
         logger.info(f"Pull complete: {pulled} entities, commit={commit_sha[:8] if commit_sha else 'none'}")
@@ -468,6 +479,43 @@ class GitHubSyncService:
             commit_sha=commit_sha,
             pushed_commits=ahead,
         )
+
+    @staticmethod
+    def _plan_file_changes(
+        work_dir: Path,
+        repo: GitRepo,
+        base_sha: str | None,
+        merge_sha: str,
+    ) -> list[WorkspaceFileChange]:
+        """Describe committed file changes between the pre-pull and merged heads."""
+        if not merge_sha or base_sha == merge_sha:
+            return []
+
+        if base_sha:
+            output = repo.git.diff("--name-status", f"{base_sha}..{merge_sha}")
+        else:
+            output = repo.git.diff_tree("--no-commit-id", "--name-status", "-r", merge_sha)
+
+        changes: list[WorkspaceFileChange] = []
+        for line in output.splitlines():
+            parts = line.split("\t")
+            if len(parts) < 2:
+                continue
+            status, *paths = parts
+            path = paths[-1]
+            action = {
+                "A": "create",
+                "D": "delete",
+            }.get(status[0], "update")
+            source = work_dir / path
+            changes.append(
+                WorkspaceFileChange(
+                    path=path,
+                    action=action,
+                    sha256=None if action == "delete" or not source.is_file() else _content_hash(source.read_bytes()),
+                )
+            )
+        return changes
 
     # -----------------------------------------------------------------
     # Desktop-style operations: fetch, status, commit, sync, resolve, diff
@@ -593,15 +641,130 @@ class GitHubSyncService:
             logger.error(f"Commit failed: {e}", exc_info=True)
             return CommitResult(success=False, error=str(e))
 
-    async def desktop_sync(self, job_id: str | None = None, confirm_deletes: bool = False) -> "SyncResult":
-        """Combined pull + push. The ONLY place entity import + S3 sync-up happen.
+    async def prepare_desktop_sync(self, work_dir: Path, repo: GitRepo, *, progress_fn=None) -> WorkspaceSyncPlan:
+        """Merge and validate a workspace sync without publishing it anywhere."""
+        base_sha = repo.head.commit.hexsha if repo.head.is_valid() else None
+        pull_result = await self._do_pull(work_dir, repo, progress_fn=progress_fn)
+        if not pull_result.success:
+            if pull_result.conflicts:
+                raise WorkspaceMergeConflict(pull_result.conflicts)
+            raise SyncError(pull_result.error or "Unable to merge remote changes")
 
-        Lock → git pull (stash, merge, pop) → if conflicts: return early.
-        If clean: git push → S3 sync up → entity import.
-        If stale entities detected and confirm_deletes=False, returns early
-        with needs_delete_confirmation=True and the list of pending deletes.
-        Returns SyncResult.
-        """
+        merge_sha = repo.head.commit.hexsha if repo.head.is_valid() else ""
+        if progress_fn:
+            await progress_fn("Validating entity import...")
+        configs_touched_before = self._resolver.configs_touched.copy()
+        try:
+            async with self.db.begin_nested() as validation:
+                _imported, entity_changes = await self._import_all_entities(
+                    work_dir,
+                    progress_fn=progress_fn,
+                    validate_only=True,
+                )
+                if progress_fn:
+                    await progress_fn("Checking for removed entities...")
+                pending_deletes = await self._resolver._resolve_deletions(work_dir=work_dir)
+                await validation.rollback()
+        finally:
+            self._resolver.configs_touched = configs_touched_before
+            self.db.expire_all()
+        pending_removals = [change for change in pending_deletes if change.action != "keep"]
+        return WorkspaceSyncPlan(
+            base_sha=base_sha,
+            merge_sha=merge_sha,
+            pending_deletes=pending_removals,
+            entity_changes=entity_changes,
+            file_changes=self._plan_file_changes(work_dir, repo, base_sha, merge_sha),
+        )
+
+    async def apply_desktop_sync(
+        self,
+        work_dir: Path,
+        repo: GitRepo,
+        plan: WorkspaceSyncPlan,
+        *,
+        confirm_deletes: bool,
+        progress_fn=None,
+    ) -> "SyncResult":
+        """Apply a validated plan, publishing only after its DB import succeeds."""
+        from src.models.contracts.github import SyncResult
+
+        current_sha = repo.head.commit.hexsha if repo.head.is_valid() else ""
+        if current_sha != plan.merge_sha:
+            raise WorkspacePlanStale("working tree changed after validation")
+        if plan.pending_deletes and not confirm_deletes:
+            logger.info(
+                "Sync blocked: %d entity deletion(s) require confirmation",
+                len(plan.pending_deletes),
+            )
+            return SyncResult(
+                needs_delete_confirmation=True,
+                requires_action="confirm_deletes",
+                pending_deletes=plan.pending_deletes,
+                entity_changes=plan.entity_changes,
+            )
+
+        if progress_fn:
+            await progress_fn("Importing entities...")
+        async with self.db.begin_nested():
+            entities_imported, entity_changes = await self._import_all_entities(
+                work_dir, progress_fn=progress_fn,
+            )
+            all_entity_changes = list(entity_changes)
+            if plan.pending_deletes:
+                if progress_fn:
+                    await progress_fn("Deleting removed entities...")
+                all_entity_changes.extend(
+                    await self._resolver._resolve_deletions(work_dir=work_dir)
+                )
+            if progress_fn:
+                await progress_fn("Updating file index...")
+            await self._update_file_index(work_dir)
+        await self.db.commit()
+
+        if progress_fn:
+            await progress_fn("Pushing to remote...")
+        push_result = self._do_push(work_dir, repo)
+        if not push_result.success:
+            logger.warning(
+                "Workspace publication failed after import; retaining local dirty state for retry: %s",
+                push_result.error,
+            )
+            return SyncResult(
+                pull_success=True,
+                push_success=False,
+                entities_imported=entities_imported,
+                entity_changes=all_entity_changes,
+                error=push_result.error,
+            )
+
+        if progress_fn:
+            await progress_fn("Syncing to storage...")
+        await self.repo_manager.sync_up(work_dir)
+
+        from src.core.module_cache import refresh_modules_from_directory
+        await refresh_modules_from_directory(work_dir)
+
+        if progress_fn:
+            await progress_fn("Syncing app previews...")
+        await self._sync_app_previews(work_dir)
+
+        logger.info(
+            "Sync complete: pushed=%d, imported=%d, sha=%s",
+            push_result.pushed_commits,
+            entities_imported,
+            push_result.commit_sha,
+        )
+        return SyncResult(
+            success=True,
+            pushed_commits=push_result.pushed_commits,
+            commit_sha=push_result.commit_sha,
+            entities_imported=entities_imported,
+            entity_changes=all_entity_changes,
+        )
+
+    async def desktop_sync(self, job_id: str | None = None, confirm_deletes: bool = False) -> "SyncResult":
+        """Prepare, validate, then conditionally apply a workspace synchronization."""
         from src.models.contracts.github import SyncResult
 
         async def _progress(phase: str, current: int = 0, total: int = 0) -> None:
@@ -612,104 +775,25 @@ class GitHubSyncService:
         try:
             async with self.repo_manager.lock() as work_dir:
                 repo = self._open_or_init(work_dir)
-
-                # Step 1: Pull (fetch + merge, stash local changes)
-                pull_result = await self._do_pull(work_dir, repo, job_id)
-
-                if not pull_result.success:
-                    if pull_result.conflicts:
-                        # Return conflicts to UI — user resolves via desktop_resolve
-                        return SyncResult(
-                            success=False,
-                            pull_success=False,
-                            conflicts=pull_result.conflicts,
-                            error="Merge conflicts detected",
-                        )
-                    return SyncResult(
-                        success=False,
-                        pull_success=False,
-                        error=pull_result.error,
-                    )
-
-                # Step 2: Push
-                await _progress("Pushing to remote...")
-                push_result = self._do_push(work_dir, repo)
-
-                if not push_result.success:
-                    return SyncResult(
-                        success=False,
-                        pull_success=True,
-                        push_success=False,
-                        error=push_result.error,
-                    )
-
-                # Step 3: S3 sync up (so other containers see the changes)
-                await _progress("Syncing to storage...")
-                await self.repo_manager.sync_up(work_dir)
-
-                # Refresh Redis module cache so editor + workers see new .py content
-                from src.core.module_cache import refresh_modules_from_directory
-                await refresh_modules_from_directory(work_dir)
-
-                # Step 4: Entity import — always full import (safe, idempotent upserts)
-                await _progress("Importing entities...")
-                all_entity_changes: list = []
-                async with self.db.begin_nested():
-                    entities_imported, entity_changes = await self._import_all_entities(
-                        work_dir, progress_fn=_progress,
-                    )
-                    all_entity_changes.extend(entity_changes)
-                    await _progress("Updating file index...")
-                    await self._update_file_index(work_dir)
-                await self.db.commit()
-
-                # Step 5: Clean up removed entities (gated on confirmation)
-                await _progress("Checking for removed entities...")
-                pending_deletes = await self._resolver._resolve_deletions(work_dir=work_dir, dry_run=True)
-                # Filter out "keep" entries (e.g. tables) — only actual removals need confirmation
-                pending_removals = [e for e in pending_deletes if e.action != "keep"]
-                if pending_removals and not confirm_deletes:
-                    # Block sync — user must confirm deletions first
-                    logger.info(
-                        f"Sync blocked: {len(pending_removals)} entity deletion(s) require confirmation"
-                    )
-                    return SyncResult(
-                        success=True,
-                        needs_delete_confirmation=True,
-                        pending_deletes=pending_removals,
-                        pulled=pull_result.pulled,
-                        pushed_commits=push_result.pushed_commits,
-                        commit_sha=push_result.commit_sha,
-                        entities_imported=entities_imported,
-                        entity_changes=all_entity_changes,
-                    )
-
-                if pending_removals:
-                    await _progress("Deleting removed entities...")
-                    async with self.db.begin_nested():
-                        deletion_changes = await self._resolver._resolve_deletions(work_dir=work_dir)
-                        all_entity_changes.extend(deletion_changes)
-                    await self.db.commit()
-
-                # Step 6: Sync app previews
-                await _progress("Syncing app previews...")
-                await self._sync_app_previews(work_dir)
-
-                logger.info(
-                    f"Sync complete: pushed={push_result.pushed_commits}, "
-                    f"imported={entities_imported}, sha={push_result.commit_sha}"
+                plan = await self.prepare_desktop_sync(
+                    work_dir, repo, progress_fn=_progress,
                 )
-                return SyncResult(
-                    success=True,
-                    pulled=pull_result.pulled,
-                    pushed_commits=push_result.pushed_commits,
-                    commit_sha=push_result.commit_sha,
-                    entities_imported=entities_imported,
-                    entity_changes=all_entity_changes,
+                return await self.apply_desktop_sync(
+                    work_dir,
+                    repo,
+                    plan,
+                    confirm_deletes=confirm_deletes,
+                    progress_fn=_progress,
                 )
-        except Exception as e:
-            logger.error(f"Sync failed: {e}", exc_info=True)
-            return SyncResult(success=False, error=str(e))
+        except WorkspaceMergeConflict as error:
+            return SyncResult(
+                pull_success=False,
+                conflicts=error.conflicts,
+                error=str(error),
+            )
+        except Exception as error:
+            logger.error("Sync failed: %s", error, exc_info=True)
+            return SyncResult(success=False, error=str(error))
 
     async def desktop_abort_merge(self) -> "AbortMergeResult":
         """Abort an in-progress merge. Returns to pre-pull state."""
@@ -918,6 +1002,7 @@ class GitHubSyncService:
         self,
         work_dir: Path,
         progress_fn=None,
+        validate_only: bool = False,
     ) -> "tuple[int, list]":
         """Import entities from the working tree into the DB (incremental).
 
@@ -952,7 +1037,12 @@ class GitHubSyncService:
 
         # Resolve only changed entities
         await self._resolver.plan_import(
-            manifest, work_dir, progress_fn=progress_fn, changed_ids=changed_ids,
+            manifest,
+            work_dir,
+            progress_fn=progress_fn,
+            dry_run=False,
+            changed_ids=changed_ids,
+            sync_app_previews=False,
         )
 
         # Build entity change list from the diff
@@ -971,6 +1061,9 @@ class GitHubSyncService:
                 ))
 
         count = len(changed_ids)
+
+        if validate_only:
+            return count, entity_changes
 
         # Indexer side-effects: WorkflowIndexer for changed workflows
         from src.models.orm.workflows import Workflow as WfORM
