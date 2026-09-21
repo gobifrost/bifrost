@@ -20,7 +20,7 @@ from src.core.database import get_db_context
 from src.core.repo_dirty import mark_repo_dirty
 from src.services.file_index_service import FileIndexService
 from src.services.repo_sync_writer import RepoSyncWriter
-from src.services.solutions.workspace_bundle_import import WorkspaceBundleImporter
+from src.services.solutions.workspace_bundle_import import WorkspaceBundleImportResult, WorkspaceBundleImporter
 from src.services.solutions.workspace_bundle_plan import PlannedWorkspaceBundle
 from src.services.solutions.workspace_bundle_storage import WorkspaceBundleStorage
 
@@ -70,15 +70,37 @@ async def run_workspace_bundle_import(
                         phase, current=current, total=total
                     ),
                 )
-                result = await importer.apply(plan, payload.decisions)
+                journal = context.checkpoint
+                if (
+                    journal is not None
+                    and journal.get("db_applied") is True
+                    and journal.get("preview_id") == str(payload.preview_id)
+                    and journal.get("package_sha256") == payload.package_sha256
+                ):
+                    result = WorkspaceBundleImportResult(
+                        imported_item_ids=frozenset(journal["imported_entity_ids"]),
+                        selected_item_ids=frozenset(journal["selected_item_ids"]),
+                        operations=(),
+                    )
+                else:
+                    result = await importer.apply(plan, payload.decisions)
                 # Make entity upserts durable before the idempotent S3 phase.
                 await db.commit()
+                journal = {
+                    "preview_id": str(payload.preview_id),
+                    "package_sha256": payload.package_sha256,
+                    "selected_item_ids": sorted(result.selected_item_ids),
+                    "imported_entity_ids": sorted(result.imported_item_ids),
+                    "db_applied": True,
+                }
+                await context.save_checkpoint(journal, phase="Database import committed; finalizing files")
                 await context.report("Promoting selected workspace files", percent=70)
-                promoted = await importer.promote_selected_files(
-                    plan, result.selected_item_ids, file_index=FileIndexService(db)
-                )
-                await RepoSyncWriter(db).regenerate_manifest()
-                await db.commit()
+                try:
+                    promoted = await importer.promote_selected_files(plan, result.selected_item_ids, file_index=FileIndexService(db))
+                    await RepoSyncWriter(db).regenerate_manifest()
+                    await db.commit()
+                except Exception as exc:
+                    raise PlatformJobFailure("workspace_bundle_finalize_failed", "Workspace import database changes were committed but file finalization failed; retrying the durable job.", retryable=True, result=journal) from exc
     await mark_repo_dirty()
     await context.report("Workspace import complete", percent=100)
     result_body = {
@@ -104,5 +126,6 @@ WORKSPACE_BUNDLE_IMPORT_DEFINITION = PlatformJobDefinition(
         max_concurrency=1,
         min_memory_headroom_mb=512,
         retry_on_runner_loss=True,
+        retry_on_failure=True,
     ),
 )

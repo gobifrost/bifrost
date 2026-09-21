@@ -66,7 +66,7 @@ async def test_importer_requires_one_decision_for_every_conflict(tmp_path) -> No
 
 
 @pytest.mark.asyncio
-async def test_promote_selected_files_writes_only_selected_content_with_file_index(tmp_path) -> None:
+async def test_promote_selected_files_streams_source_through_file_index(tmp_path) -> None:
     from bifrost.manifest import Manifest
     from src.models.contracts.solutions import WorkspaceBundleItem, WorkspaceBundlePreview
     from src.services.solutions.workspace_bundle_import import WorkspaceBundleImporter
@@ -86,10 +86,10 @@ async def test_promote_selected_files_writes_only_selected_content_with_file_ind
 
     class FileIndex:
         def __init__(self) -> None:
-            self.writes: list[tuple[str, bytes]] = []
+            self.writes: list[tuple[str, str]] = []
 
-        async def write(self, path: str, content: bytes) -> str:
-            self.writes.append((path, content))
+        async def write_file(self, path: str, source, *, expected_hash: str) -> str:
+            self.writes.append((path, expected_hash))
             return "ignored"
 
     index = FileIndex()
@@ -98,7 +98,7 @@ async def test_promote_selected_files_writes_only_selected_content_with_file_ind
     )
 
     assert promoted == ["modules/customer.py"]
-    assert index.writes == [("modules/customer.py", b"value = 1\n")]
+    assert index.writes == [("modules/customer.py", "585c93666fcb046b7b264d3fa73202aa2a38254ae82a4b3ba19e873c2d5a9886")]
 
 
 def test_workspace_bundle_job_reuses_the_shared_workspace_lock() -> None:

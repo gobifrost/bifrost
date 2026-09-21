@@ -15,6 +15,7 @@ class PlatformJobPolicy:
     max_attempts: int = 2
     max_concurrency: int | None = None
     retry_on_runner_loss: bool = True
+    retry_on_failure: bool = False
     min_memory_headroom_mb: int = 256
     admission_memory_ratio: float = 0.85
     hard_memory_ratio: float = 0.95
@@ -68,6 +69,7 @@ class PlatformJobContext:
     requested_by_user_id: str
     requested_by_email: str
     requested_by_name: str
+    checkpoint: dict[str, Any] | None = None
 
     async def report(
         self,
@@ -100,6 +102,12 @@ class PlatformJobContext:
             message=message,
             platform_job_id=self.job_id,
         )
+
+    async def save_checkpoint(self, result: dict[str, Any], *, phase: str) -> None:
+        from src.services.platform_jobs import checkpoint_platform_job
+
+        if not await checkpoint_platform_job(self.job_id, self.lease_token, result=result, phase=phase):
+            raise PlatformJobCancelled
 
 
 PlatformJobHandler = Callable[

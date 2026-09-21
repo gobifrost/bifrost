@@ -274,6 +274,18 @@ class Scheduler:
         )
         logger.info("Deferred execution promoter scheduled (every 60s)")
 
+        from src.jobs.schedulers.workspace_bundle_cleanup import cleanup_workspace_bundle_previews
+        scheduler.add_job(
+            self._run_scheduled_task,
+            IntervalTrigger(hours=1),
+            id="workspace_bundle_preview_cleanup",
+            name="Clean up expired workspace bundle previews",
+            replace_existing=True,
+            next_run_time=datetime.now(timezone.utc),
+            args=["workspace_bundle_preview_cleanup", cleanup_workspace_bundle_previews],
+            **misfire_options,
+        )
+
         # Legacy entity-logo normalization — bounded batches, immediate at startup.
         from src.jobs.schedulers.logo_thumbnail_backfill import (
             backfill_logo_thumbnails,

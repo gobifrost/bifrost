@@ -9,6 +9,9 @@ Binary files are written to S3 only (not indexed).
 from __future__ import annotations
 
 import logging
+import hashlib
+from collections.abc import AsyncIterator
+from pathlib import Path
 
 from sqlalchemy import delete, select, text
 from sqlalchemy.dialects.postgresql import insert
@@ -16,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.orm.file_index import FileIndex
 from src.services.repo_storage import RepoStorage
+from src.services.file_storage.s3_client import S3StorageClient
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +34,7 @@ TEXT_EXTENSIONS = frozenset({
 # alternate source of truth. Oversized text stays in repository storage but is
 # omitted from PostgreSQL search so sync/import cannot materialize it in a job.
 MAX_INDEXABLE_TEXT_BYTES = 8 * 1024 * 1024
+FILE_COPY_CHUNK_SIZE = 8 * 1024 * 1024
 
 
 def _is_text_file(path: str) -> bool:
@@ -86,6 +91,32 @@ class FileIndexService:
 
         return content_hash
 
+    async def write_file(self, path: str, source: Path, *, expected_hash: str) -> str:
+        """Stream a staged file into _repo/ and index only bounded text."""
+        digest = hashlib.sha256()
+        with source.open("rb") as handle:
+            while chunk := handle.read(FILE_COPY_CHUNK_SIZE):
+                digest.update(chunk)
+        if digest.hexdigest() != expected_hash:
+            raise ValueError(f"staged source hash mismatch for {path}")
+
+        async def chunks() -> AsyncIterator[bytes]:
+            with source.open("rb") as handle:
+                while chunk := handle.read(FILE_COPY_CHUNK_SIZE):
+                    yield chunk
+
+        storage = S3StorageClient(self.repo_storage._settings)
+        content_hash, size = await storage.put_object_from_chunks(
+            self.repo_storage._repo_key(path), chunks()
+        )
+        if content_hash != expected_hash:
+            raise ValueError(f"promoted source hash mismatch for {path}")
+        if not _is_text_file(path) or size > MAX_INDEXABLE_TEXT_BYTES:
+            await self.db.execute(delete(FileIndex).where(FileIndex.path == path))
+            return content_hash
+        content = source.read_bytes()
+        return await self.write(path, content)
+
     async def delete(self, path: str) -> None:
         """Delete a file from S3 and the DB index."""
         await self.repo_storage.delete(path)
@@ -105,4 +136,3 @@ class FileIndexService:
             )
         )
         return [{"path": row.path, "content": row.content} for row in result.all()]
-

@@ -402,6 +402,65 @@ async def finish_platform_job(
     return True
 
 
+async def checkpoint_platform_job(
+    job_id: UUID, lease_token: UUID, *, result: dict[str, Any], phase: str
+) -> bool:
+    """Durably save resumable handler state on the fenced shared job row."""
+    async with get_db_context() as db:
+        job = (await db.execute(
+            select(PlatformJob).where(
+                PlatformJob.id == job_id, PlatformJob.lease_token == lease_token,
+                PlatformJob.status == "running",
+            ).with_for_update()
+        )).scalar_one_or_none()
+        if job is None:
+            return False
+        job.result = result
+        job.phase = phase[:200]
+        job.revision += 1
+        await db.commit()
+    await publish_platform_job_update(job)
+    return True
+
+
+async def retry_platform_job_failure(
+    job_id: UUID, lease_token: UUID, failure: Any, *, enabled: bool
+) -> bool:
+    """Requeue a retryable failure while retaining its handler checkpoint."""
+    if not enabled or not failure.retryable:
+        return await finish_platform_job(job_id, lease_token, status="failed", result=failure.result, error_code=failure.code, error_message=failure.message, error_retryable=failure.retryable)
+    async with get_db_context() as db:
+        job = (await db.execute(
+            select(PlatformJob).where(
+                PlatformJob.id == job_id, PlatformJob.lease_token == lease_token,
+                PlatformJob.status.in_(("running", "cancel_requested")),
+            ).with_for_update()
+        )).scalar_one_or_none()
+        if job is None:
+            return False
+        if job.attempt >= job.max_attempts:
+            job.status = "failed"
+            job.phase = "Failed"
+            job.completed_at = _now()
+            job.error_retryable = False
+        else:
+            job.status = "queued"
+            job.phase = "Retrying after recoverable failure"
+            job.available_at = _now()
+            job.error_retryable = True
+        job.result = failure.result
+        job.error_code = failure.code
+        job.error_message = failure.message[:4000]
+        job.lease_owner = None
+        job.lease_token = None
+        job.heartbeat_at = None
+        job.lease_expires_at = None
+        job.revision += 1
+        await db.commit()
+    await publish_platform_job_update(job)
+    return job.status == "queued"
+
+
 async def defer_platform_job(
     job_id: UUID,
     lease_token: UUID,

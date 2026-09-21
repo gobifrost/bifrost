@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-import hashlib
 from typing import Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,7 +18,7 @@ class WorkspaceBundleDecisionError(ValueError):
 
 
 class _FileIndexWriter(Protocol):
-    async def write(self, path: str, content: bytes) -> str: ...
+    async def write_file(self, path: str, source, *, expected_hash: str) -> str: ...
 
 
 @dataclass(frozen=True)
@@ -105,9 +104,6 @@ class WorkspaceBundleImporter:
             if expected is None:
                 raise WorkspaceBundleDecisionError(f"missing staged hash for {item.name}")
             source = plan.work_dir / item.name
-            content = source.read_bytes()
-            if hashlib.sha256(content).hexdigest() != expected:
-                raise WorkspaceBundleDecisionError(f"staged source hash mismatch for {item.name}")
-            await file_index.write(item.name, content)
+            await file_index.write_file(item.name, source, expected_hash=expected)
             promoted.append(item.name)
         return promoted

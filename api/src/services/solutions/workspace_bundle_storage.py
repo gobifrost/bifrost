@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import AsyncIterator
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
 
@@ -77,18 +78,46 @@ class WorkspaceBundleStorage:
         """Best-effort terminal cleanup of this preview's isolated staging prefix."""
         try:
             async with self._storage.get_client() as client:
-                response = await client.list_objects_v2(
-                    Bucket=self._settings.s3_bucket, Prefix=self.root + "/"
-                )
-                keys = [
-                    {"Key": key}
-                    for obj in response.get("Contents", [])
-                    if (key := obj.get("Key")) is not None
-                ]
-                if keys:
-                    await client.delete_objects(
-                        Bucket=self._settings.s3_bucket, Delete={"Objects": keys}
-                    )
+                token = None
+                while True:
+                    response = await client.list_objects_v2(Bucket=self._settings.s3_bucket, Prefix=self.root + "/", **({"ContinuationToken": token} if token else {}))
+                    keys = [{"Key": key} for obj in response.get("Contents", []) if (key := obj.get("Key")) is not None]
+                    if keys:
+                        await client.delete_objects(Bucket=self._settings.s3_bucket, Delete={"Objects": keys})
+                    if not response.get("IsTruncated"):
+                        break
+                    token = response.get("NextContinuationToken")
         except Exception:
             # Retention cleanup can reap a failed best-effort deletion later.
             return
+
+
+async def cleanup_expired_workspace_bundle_previews(*, now: datetime | None = None) -> int:
+    """Reap expired staged previews, including never-enqueued and failed jobs."""
+    settings = get_settings()
+    storage = S3StorageClient(settings)
+    now = now or datetime.now(timezone.utc)
+    preview_ids: set[str] = set()
+    async with storage.get_client() as client:
+        token = None
+        while True:
+            response = await client.list_objects_v2(Bucket=settings.s3_bucket, Prefix=WORKSPACE_BUNDLE_IMPORTS_ROOT + "/", **({"ContinuationToken": token} if token else {}))
+            for obj in response.get("Contents", []):
+                key = obj.get("Key", "")
+                if key.endswith("/preview.json"):
+                    preview_ids.add(key.split("/")[1])
+            if not response.get("IsTruncated"):
+                break
+            token = response.get("NextContinuationToken")
+    removed = 0
+    for preview_id in preview_ids:
+        preview = WorkspaceBundleStorage(preview_id, settings)
+        try:
+            metadata = await preview.load_metadata()
+            if datetime.fromisoformat(metadata["expires_at"]) <= now:
+                await preview.delete()
+                removed += 1
+        except (FileNotFoundError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+            await preview.delete()
+            removed += 1
+    return removed
