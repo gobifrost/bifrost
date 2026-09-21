@@ -3836,6 +3836,37 @@ def _workspace_import_decisions(
     return decisions
 
 
+def _print_workspace_import_preview(preview: dict[str, Any]) -> None:
+    """Render the staged workspace changes before any decisions are applied."""
+    items = preview.get("items", [])
+    conflicts = sum(item.get("classification") == "conflict" for item in items)
+    creates = sum(item.get("classification") == "create" for item in items)
+    unchanged = sum(item.get("classification") == "unchanged" for item in items)
+    click.echo(
+        "Review compatibility: package definitions were designed together; "
+        "mixed keep/replace choices can change references."
+    )
+    click.echo(
+        "Workspace import preview: "
+        f"{conflicts} conflict{'s' if conflicts != 1 else ''}, "
+        f"{creates} create{'s' if creates != 1 else ''}, "
+        f"{unchanged} unchanged."
+    )
+    for warning in preview.get("warnings", []):
+        click.echo(f"Warning: {warning}")
+    for item in items:
+        click.echo(
+            f"{item['classification']:<9} {item['kind']:<12} {item['name']}"
+        )
+        details = []
+        if item.get("match_key"):
+            details.append(f"matched by {item['match_key']}")
+        if item.get("target_id"):
+            details.append(f"replace preserves destination ID {item['target_id']}")
+        if details:
+            click.echo(f"  {'; '.join(details)}")
+
+
 @solution_group.command("import-workspace", help="Import a Solution archive as unattached workspace content.")
 @click.argument("archive", type=click.Path(exists=True, dir_okay=False, path_type=pathlib.Path))
 @click.option("--keep-all", is_flag=True, help="Keep every conflicting destination item.")
@@ -3859,6 +3890,8 @@ def import_workspace_cmd(
             raise click.ClickException(f"Workspace preview failed: {response.status_code} {response.text}")
         preview = response.json()
         if preview_only:
+            if not json_output:
+                _print_workspace_import_preview(preview)
             return {"preview": preview}
         if not json_output:
             click.echo("Warning: package cohesion may change in workspace scope; review references and run compatibility checks.")

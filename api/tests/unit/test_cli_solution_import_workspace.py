@@ -76,6 +76,56 @@ def test_command_streams_upload_and_prints_preview_json(tmp_path) -> None:
     assert kwargs["files"]["file"][1].closed is True
 
 
+def test_human_preview_prints_compatibility_warning_and_conflicts(tmp_path) -> None:
+    from bifrost.commands.solution import solution_group
+
+    archive = tmp_path / "bundle.zip"
+    archive.write_bytes(b"bundle")
+    preview = {
+        "preview_token": "preview",
+        "package_sha256": "a" * 64,
+        "items": [
+            {
+                "id": "entity:workflow:w",
+                "classification": "conflict",
+                "kind": "workflow",
+                "name": "daily_sync",
+                "match_key": "workflows/daily_sync.py::daily_sync",
+                "target_id": "destination-workflow-id",
+            },
+            {
+                "id": "file:workflows/new.py",
+                "classification": "create",
+                "kind": "file",
+                "name": "workflows/new.py",
+            },
+        ],
+        "warnings": ["Imported entities are unattached global workspace content."],
+    }
+
+    class Client:
+        async def post(self, _path, **_kwargs):
+            result = mock.MagicMock(status_code=200, text=str(preview))
+            result.json.return_value = preview
+            return result
+
+    with mock.patch("bifrost.client.BifrostClient.get_instance", return_value=Client()):
+        result = CliRunner().invoke(
+            solution_group,
+            ["import-workspace", str(archive), "--preview"],
+            catch_exceptions=False,
+        )
+
+    assert result.exit_code == 0, result.output
+    assert "Review compatibility" in result.output
+    assert "1 conflict" in result.output
+    assert "conflict  workflow" in result.output
+    assert "daily_sync" in result.output
+    assert "destination-workflow-id" in result.output
+    assert "create    file" in result.output
+    assert "Imported entities are unattached global workspace content." in result.output
+
+
 def test_command_warns_before_interactive_conflict_prompt(monkeypatch) -> None:
     from bifrost.commands.solution import _workspace_import_decisions
 
