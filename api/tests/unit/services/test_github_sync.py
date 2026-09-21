@@ -4,7 +4,11 @@ Unit tests for GitHub Sync Service.
 Tests the GitHubSyncService data models and exceptions.
 """
 
+from contextlib import asynccontextmanager
+from pathlib import Path
+
 import pytest
+from git import Repo
 
 from src.models.contracts.github import (
     OrphanInfo,
@@ -13,6 +17,109 @@ from src.models.contracts.github import (
     WorkflowReference,
 )
 from src.services.github_sync import SyncError
+
+
+class _StatusRepoManager:
+    """Minimal read-only repo manager for exercising desktop_status()."""
+
+    def __init__(self, work_dir: Path) -> None:
+        self.work_dir = work_dir
+        self.is_initialized = True
+
+    @asynccontextmanager
+    async def lock(self):
+        yield self.work_dir
+
+
+def _status_service(work_dir: Path):
+    from src.services.github_sync import GitHubSyncService
+
+    service = GitHubSyncService.__new__(GitHubSyncService)
+    service.branch = "main"
+    service.repo_url = "https://example.invalid/workspace.git"
+    service.repo_manager = _StatusRepoManager(work_dir)
+    return service
+
+
+def _git_state(repo: Repo) -> tuple[bytes, bytes, bytes, tuple[tuple[str, bytes], ...]]:
+    """Capture the index plus merge state that status must not alter."""
+    work_dir = Path(repo.working_tree_dir)
+    merge_files = ("MERGE_HEAD", "MERGE_MODE", "MERGE_MSG")
+    return (
+        (work_dir / ".git" / "index").read_bytes(),
+        repo.git.diff("--cached", "--binary", as_process=False).encode(),
+        repo.git.ls_files("-u", "-z", as_process=False).encode(),
+        tuple(
+            (name, (work_dir / ".git" / name).read_bytes())
+            for name in merge_files
+            if (work_dir / ".git" / name).exists()
+        ),
+    )
+
+
+def _commit(repo: Repo, path: str, content: str, message: str) -> None:
+    target = Path(repo.working_tree_dir) / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content)
+    repo.index.add([path])
+    repo.index.commit(message)
+
+
+def _configure_user(repo: Repo) -> None:
+    with repo.config_writer() as config:
+        config.set_value("user", "name", "Test User")
+        config.set_value("user", "email", "test@example.com")
+
+
+@pytest.mark.asyncio
+async def test_desktop_status_does_not_change_dirty_index(tmp_path: Path) -> None:
+    repo = Repo.init(tmp_path)
+    _configure_user(repo)
+    repo.git.branch("-M", "main")
+    _commit(repo, "tracked.txt", "base\n", "initial")
+    _commit(repo, "rename source.txt", "rename me\n", "add rename source")
+
+    (tmp_path / "staged.txt").write_text("staged\n")
+    repo.index.add(["staged.txt"])
+    repo.git.mv("rename source.txt", "renamed file.txt")
+    (tmp_path / "tracked.txt").write_text("working tree change\n")
+    (tmp_path / "file with spaces.txt").write_text("untracked\n")
+
+    before = _git_state(repo)
+    status = await _status_service(tmp_path).desktop_status()
+
+    assert _git_state(repo) == before
+    assert {change.path for change in status.changed_files} == {
+        "staged.txt",
+        "tracked.txt",
+        "file with spaces.txt",
+        "renamed file.txt",
+    }
+
+
+@pytest.mark.asyncio
+async def test_desktop_status_does_not_change_in_progress_merge(tmp_path: Path, caplog) -> None:
+    repo = Repo.init(tmp_path)
+    _configure_user(repo)
+    repo.git.branch("-M", "main")
+    _commit(repo, "conflict.txt", "base\n", "initial")
+
+    other = repo.create_head("other")
+    other.checkout()
+    _commit(repo, "conflict.txt", "theirs\n", "theirs")
+    repo.heads.main.checkout()
+    _commit(repo, "conflict.txt", "ours\n", "ours")
+    with pytest.raises(Exception):
+        repo.git.merge("other")
+    assert (tmp_path / ".git" / "MERGE_HEAD").exists()
+
+    before = _git_state(repo)
+    status = await _status_service(tmp_path).desktop_status()
+
+    assert _git_state(repo) == before
+    assert "Status failed" not in caplog.text
+    assert status.merging is True
+    assert [conflict.path for conflict in status.conflicts] == ["conflict.txt"]
 
 
 class TestWorkflowReference:

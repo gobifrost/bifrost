@@ -342,7 +342,7 @@ class GitHubSyncService:
         """Core status logic. Returns changed files and conflicts."""
         from src.models.contracts.github import ChangedFile, MergeConflict, WorkingTreeStatus
 
-        # Check for unresolved conflicts BEFORE git add (which would resolve them)
+        # Read unresolved conflicts without changing the index.
         conflict_list: list[MergeConflict] = []
         try:
             unmerged = repo.index.unmerged_blobs()
@@ -350,13 +350,6 @@ class GitHubSyncService:
             unmerged = {}
 
         if unmerged:
-            # Auto-resolve .bifrost/*.yaml manifest conflicts
-            try:
-                _auto_resolve_manifest_conflicts(repo, work_dir, unmerged)
-                unmerged = repo.index.unmerged_blobs()
-            except Exception as e:
-                logger.warning(f"Manifest auto-resolve in status failed: {e}")
-
             for cpath in sorted(str(k) for k in unmerged.keys()):
                 ours_content = None
                 theirs_content = None
@@ -406,52 +399,56 @@ class GitHubSyncService:
                 merging=merging,
             )
 
-        # Stage everything to get accurate diff
-        repo.git.add(A=True)
-
         changed: list[ChangedFile] = []
+        # `git status` normally refreshes index stat information. Disable optional
+        # locks so inspection cannot rewrite the index while gathering status.
+        porcelain = repo.git.status(
+            "--porcelain=v2", "-z", env={"GIT_OPTIONAL_LOCKS": "0"}
+        )
+        records = porcelain.split("\0")
+        record_index = 0
+        while record_index < len(records):
+            record = records[record_index]
+            record_index += 1
+            if not record:
+                continue
 
-        if repo.head.is_valid():
-            porcelain = repo.git.status("--porcelain")
-            for line in porcelain.strip().split("\n"):
-                if not line.strip():
-                    continue
-                status_code = line[:2].strip()
-                path = line[3:].strip()
-                if path.startswith('"') and path.endswith('"'):
-                    path = path[1:-1]
+            status_code = ""
+            path: str | None = None
+            if record.startswith("1 "):
+                fields = record.split(" ", 8)
+                if len(fields) == 9:
+                    status_code = fields[1]
+                    path = fields[8]
+            elif record.startswith("2 "):
+                fields = record.split(" ", 9)
+                if len(fields) == 10:
+                    status_code = fields[1]
+                    path = fields[9]
+                    # A rename/copy record is followed by its original path.
+                    record_index += 1
+            elif record.startswith("? "):
+                status_code = "?"
+                path = record[2:]
 
-                if status_code in ("A", "??"):
-                    change_type = "added"
-                elif status_code == "D":
-                    change_type = "deleted"
-                elif status_code == "R":
-                    change_type = "renamed"
-                    if " -> " in path:
-                        path = path.split(" -> ", 1)[1]
-                else:
-                    change_type = "modified"
+            if path is None:
+                continue
+            if status_code == "?" or "A" in status_code:
+                change_type = "added"
+            elif "D" in status_code:
+                change_type = "deleted"
+            elif "R" in status_code:
+                change_type = "renamed"
+            else:
+                change_type = "modified"
 
-                metadata = extract_entity_metadata(path)
-                changed.append(ChangedFile(
-                    path=path,
-                    change_type=change_type,
-                    display_name=metadata.display_name,
-                    entity_type=metadata.entity_type,
-                ))
-        else:
-            for path in repo.untracked_files:
-                metadata = extract_entity_metadata(path)
-                changed.append(ChangedFile(
-                    path=path,
-                    change_type="added",
-                    display_name=metadata.display_name,
-                    entity_type=metadata.entity_type,
-                ))
-
-        # Unstage (reset) so we don't pollute the working tree
-        if repo.head.is_valid():
-            repo.git.reset("HEAD")
+            metadata = extract_entity_metadata(path)
+            changed.append(ChangedFile(
+                path=path,
+                change_type=change_type,
+                display_name=metadata.display_name,
+                entity_type=metadata.entity_type,
+            ))
 
         return WorkingTreeStatus(
             changed_files=changed,
@@ -687,7 +684,7 @@ class GitHubSyncService:
             if not self.repo_manager.is_initialized:
                 return WorkingTreeStatus()
             async with self.repo_manager.lock() as work_dir:
-                repo = self._open_or_init(work_dir)
+                repo = GitRepo(str(work_dir))
                 return self._do_status(work_dir, repo)
         except Exception as e:
             logger.error(f"Status failed: {e}", exc_info=True)
