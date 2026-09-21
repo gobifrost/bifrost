@@ -29,7 +29,7 @@ import {
  */
 
 import { useEffect, useId, useRef, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import {
@@ -602,6 +602,117 @@ function GitRepoSection({
 				)}
 			</div>
 		</div>
+	);
+}
+
+/**
+ * A manual install becomes Git-managed only after its proposed source has been
+ * read and shown to the operator. The server validates the same source again
+ * while saving, so this is a review step rather than a trust boundary.
+ */
+function GitConnectionConfirmDialog({
+	open,
+	solutionSlug,
+	preview,
+	loading,
+	retrying,
+	previewError,
+	onRetryPreview,
+	onClose,
+	onConfirm,
+	pending,
+}: {
+	open: boolean;
+	solutionSlug: string;
+	preview: SolutionInstallPreview | undefined;
+	loading: boolean;
+	retrying: boolean;
+	previewError: boolean;
+	onRetryPreview: () => void;
+	onClose: () => void;
+	onConfirm: () => void;
+	pending: boolean;
+}) {
+	const sourceMatchesInstall = preview?.slug === solutionSlug;
+	return (
+		<AlertDialog open={open} onOpenChange={(next) => !next && onClose()}>
+			<AlertDialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-xl">
+				<AlertDialogHeader>
+					<AlertDialogTitle>Connect Git?</AlertDialogTitle>
+					<AlertDialogDescription>
+						Git becomes this Solution&apos;s only writer. Future updates pull
+						and replace its installed content from this repository.
+					</AlertDialogDescription>
+				</AlertDialogHeader>
+				<div
+					className="max-h-[40dvh] overflow-y-auto"
+					data-testid="git-connect-preview"
+				>
+					{loading ? (
+						<p
+							role="status"
+							className="flex items-center gap-2 text-sm text-muted-foreground"
+						>
+							<Loader2
+								aria-hidden="true"
+								className="size-4 animate-spin motion-reduce:animate-none"
+							/>
+							Reviewing repository contents…
+						</p>
+					) : previewError ? (
+						<div className="space-y-3">
+							<p role="alert" className="text-sm text-destructive">
+								Couldn&apos;t preview this repository. Review it before
+								connecting Git.
+							</p>
+							<Button
+								type="button"
+								variant="outline"
+								disabled={retrying || pending}
+								onClick={onRetryPreview}
+							>
+								Retry preview
+							</Button>
+						</div>
+					) : !sourceMatchesInstall ? (
+						<p role="alert" className="text-sm text-destructive">
+							This repository declares{" "}
+							{preview?.slug
+								? `“${preview.slug}”`
+								: "no Solution slug"}
+							, not “{solutionSlug}”. It can&apos;t manage this install.
+						</p>
+					) : (
+						<div className="space-y-3">
+							<p className="text-sm">
+								Repository declares{" "}
+								<span className="font-semibold">
+									{preview.name ?? solutionSlug}
+								</span>
+								{preview.version ? ` · v${preview.version}` : ""}.
+							</p>
+							<UpgradeDiffView diff={preview.diff ?? {}} />
+						</div>
+					)}
+				</div>
+				<AlertDialogFooter>
+					<AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
+					<Button
+						type="button"
+						disabled={
+							pending ||
+							loading ||
+							retrying ||
+							previewError ||
+							!sourceMatchesInstall
+						}
+						onClick={onConfirm}
+					>
+						{pending ? "Connecting…" : "Connect Git"}
+					</Button>
+				</AlertDialogFooter>
+			</AlertDialogContent>
+		</AlertDialog>
 	);
 }
 
@@ -1727,10 +1838,30 @@ function EditBody({
 	// typing a URL back in flips it on. A connected install with an edited URL
 	// is a "reconnect" — the same save, no separate control.
 	const [connected, setConnected] = useState(solution.git_connected);
+	const [gitConnectConfirmOpen, setGitConnectConfirmOpen] = useState(false);
 
 	const outboundInitial =
 		solution.allow_outbound_access ?? solution.global_repo_access;
 	const inboundInitial = solution.allow_inbound_access ?? true;
+
+	function gitConnectionDraft() {
+		const trimmedUrl = gitRepoUrl.trim();
+		const nextConnected = connected && trimmedUrl !== "";
+		return {
+			nextConnected,
+			nextUrl: nextConnected ? trimmedUrl : null,
+			nextSubpath: nextConnected
+				? gitSubpath.trim() === ""
+					? null
+					: gitSubpath.trim()
+				: null,
+			nextRef: nextConnected
+				? gitRef.trim() === ""
+					? null
+					: gitRef.trim()
+				: null,
+		};
+	}
 
 	const saveMut = useMutation({
 		mutationFn: () => {
@@ -1743,34 +1874,28 @@ function EditBody({
 			if (allowInboundAccess !== inboundInitial)
 				update.allow_inbound_access = allowInboundAccess;
 
-			const trimmedUrl = gitRepoUrl.trim();
 			// Connect when there's a URL and the user hasn't disconnected;
 			// disconnect otherwise. A disconnected install clears its repo coords.
-			const nextConnected = connected && trimmedUrl !== "";
-			const nextUrl = nextConnected ? trimmedUrl : null;
-			const nextSubpath = nextConnected
-				? gitSubpath.trim() === ""
-					? null
-					: gitSubpath.trim()
-				: null;
-			const nextRef = nextConnected
-				? gitRef.trim() === ""
-					? null
-					: gitRef.trim()
-				: null;
+			const { nextConnected, nextUrl, nextSubpath, nextRef } =
+				gitConnectionDraft();
+			const enablingGitConnection = nextConnected && !solution.git_connected;
 
 			if (nextConnected !== solution.git_connected)
 				update.git_connected = nextConnected;
 			if (nextUrl !== (solution.git_repo_url ?? null))
 				update.git_repo_url = nextUrl;
-			if (nextSubpath !== (solution.repo_subpath ?? null))
+			if (
+				enablingGitConnection ||
+				nextSubpath !== (solution.repo_subpath ?? null)
+			)
 				update.repo_subpath = nextSubpath;
-			if (nextRef !== (solution.git_ref ?? null))
+			if (enablingGitConnection || nextRef !== (solution.git_ref ?? null))
 				update.git_ref = nextRef;
 
 			return updateSolution(solution.id, update);
 		},
 		onSuccess: (updated) => {
+			setGitConnectConfirmOpen(false);
 			toast.success("Solution updated");
 			onSaved(updated);
 		},
@@ -1778,6 +1903,37 @@ function EditBody({
 			savingRef.current = false;
 		},
 	});
+
+	const gitConnectionPreview = useQuery({
+		queryKey: [
+			"solution-git-connect-preview",
+			solution.id,
+			gitRepoUrl,
+			gitSubpath,
+			gitRef,
+		],
+		enabled: gitConnectConfirmOpen,
+		queryFn: () => {
+			const { nextUrl, nextSubpath, nextRef } = gitConnectionDraft();
+			return previewSolutionFromRepo({
+				repo_url: nextUrl ?? "",
+				repo_subpath: nextSubpath,
+				git_ref: nextRef,
+				organization_id: solution.organization_id ?? null,
+			});
+		},
+	});
+
+	function submitEdit() {
+		if (savingRef.current) return;
+		const { nextConnected } = gitConnectionDraft();
+		if (nextConnected && !solution.git_connected) {
+			setGitConnectConfirmOpen(true);
+			return;
+		}
+		savingRef.current = true;
+		saveMut.mutate();
+	}
 
 	return (
 		<Dialog
@@ -1794,9 +1950,7 @@ function EditBody({
 					className="flex max-h-[90dvh] min-h-0 flex-1 flex-col overflow-hidden"
 					onSubmit={(event) => {
 						event.preventDefault();
-						if (savingRef.current) return;
-						savingRef.current = true;
-						saveMut.mutate();
+						submitEdit();
 					}}
 				>
 					<DialogHeader className="shrink-0 border-b p-5 pr-16! text-left">
@@ -1945,6 +2099,22 @@ function EditBody({
 						</Button>
 					</DialogFooter>
 				</form>
+				<GitConnectionConfirmDialog
+					open={gitConnectConfirmOpen}
+					solutionSlug={solution.slug ?? solution.name}
+					preview={gitConnectionPreview.data}
+					loading={gitConnectionPreview.isLoading}
+					retrying={gitConnectionPreview.isFetching}
+					previewError={gitConnectionPreview.isError}
+					onRetryPreview={() => void gitConnectionPreview.refetch()}
+					onClose={() => setGitConnectConfirmOpen(false)}
+					onConfirm={() => {
+						if (savingRef.current) return;
+						savingRef.current = true;
+						saveMut.mutate();
+					}}
+					pending={saveMut.isPending}
+				/>
 			</DialogContent>
 		</Dialog>
 	);

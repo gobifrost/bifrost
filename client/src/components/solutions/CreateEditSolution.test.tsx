@@ -53,6 +53,8 @@ vi.mock("@/services/solutions", () => ({
 	updateSolution: (...a: unknown[]) => mockUpdateSolution(...a),
 }));
 
+const mockPreviewSolutionFromRepo = vi.mocked(previewSolutionFromRepo);
+
 const mockRunGitOp = vi.fn();
 vi.mock("@/components/editor/runGitOperation", () => ({
 	runGitOp: (...args: unknown[]) => mockRunGitOp(...args),
@@ -76,6 +78,7 @@ function makeSolution(overrides: Partial<Solution> = {}): Solution {
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	mockPreviewSolutionFromRepo.mockResolvedValue(makePreview({ diff: {} }));
 });
 
 function renderEdit(solution: Solution) {
@@ -122,7 +125,6 @@ describe("CreateEditSolution — edit mode", () => {
 		await user.click(
 			within(dialog).getByRole("button", { name: /save changes/i }),
 		);
-
 		await waitFor(() =>
 			expect(mockUpdateSolution).toHaveBeenCalledWith("sol-1", {
 				allow_outbound_access: true,
@@ -143,14 +145,94 @@ describe("CreateEditSolution — edit mode", () => {
 		await user.click(
 			within(dialog).getByRole("button", { name: /save changes/i }),
 		);
+		await screen.findByRole("heading", { name: "Connect Git?" });
+		await user.click(screen.getByRole("button", { name: "Connect Git" }));
 
 		await waitFor(() =>
 			expect(mockUpdateSolution).toHaveBeenCalledWith("sol-1", {
 				git_repo_url: "https://github.com/acme/solution-my-solution-x1",
 				git_connected: true,
+				repo_subpath: null,
+				git_ref: null,
 			}),
 		);
 		expect(onSaved).toHaveBeenCalled();
+	});
+
+	it("previews and confirms a manual Solution before Git becomes its only writer", async () => {
+		mockUpdateSolution.mockResolvedValue(makeSolution());
+		mockPreviewSolutionFromRepo.mockResolvedValue(
+			makePreview({
+				slug: "my-solution",
+				diff: { workflows: { added: ["remote_sync"], removed: [] } },
+			}),
+		);
+		const { user } = renderEdit(makeSolution());
+
+		const dialog = await screen.findByTestId("solution-dialog");
+		await user.type(
+			within(dialog).getByTestId("git-repo-url"),
+			"https://github.com/acme/solution-my-solution",
+		);
+		await user.type(
+			within(dialog).getByTestId("git-repo-subpath"),
+			"solutions/my-solution",
+		);
+		await user.type(within(dialog).getByTestId("git-repo-ref"), "main");
+		await user.click(
+			within(dialog).getByRole("button", { name: /save changes/i }),
+		);
+
+		expect(mockUpdateSolution).not.toHaveBeenCalled();
+		expect(
+			await screen.findByRole("heading", { name: "Connect Git?" }),
+		).toBeInTheDocument();
+		await waitFor(() =>
+			expect(mockPreviewSolutionFromRepo).toHaveBeenCalledWith({
+				repo_url: "https://github.com/acme/solution-my-solution",
+				repo_subpath: "solutions/my-solution",
+				git_ref: "main",
+				organization_id: null,
+			}),
+		);
+		expect(
+			screen.getByText(/Git becomes this Solution's only writer/i),
+		).toBeInTheDocument();
+		expect(screen.getByTestId("upgrade-diff")).toHaveTextContent(
+			"remote_sync",
+		);
+
+		await user.click(screen.getByRole("button", { name: "Connect Git" }));
+		await waitFor(() =>
+			expect(mockUpdateSolution).toHaveBeenCalledWith("sol-1", {
+				git_connected: true,
+				git_repo_url: "https://github.com/acme/solution-my-solution",
+				repo_subpath: "solutions/my-solution",
+				git_ref: "main",
+			}),
+		);
+	});
+
+	it("does not connect when the reviewed repository declares another Solution", async () => {
+		mockPreviewSolutionFromRepo.mockResolvedValue(
+			makePreview({ slug: "other-solution" }),
+		);
+		const { user } = renderEdit(makeSolution());
+
+		const dialog = await screen.findByTestId("solution-dialog");
+		await user.type(
+			within(dialog).getByTestId("git-repo-url"),
+			"https://github.com/acme/other-solution",
+		);
+		await user.click(
+			within(dialog).getByRole("button", { name: /save changes/i }),
+		);
+
+		expect(
+			await screen.findByText(/declares “other-solution”/i),
+		).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Connect Git" })).toBeDisabled();
+		expect(mockUpdateSolution).not.toHaveBeenCalled();
 	});
 
 	it("clearing the repo URL disconnects git on save", async () => {
@@ -194,6 +276,8 @@ describe("CreateEditSolution — edit mode", () => {
 		await user.click(
 			within(dialog).getByRole("button", { name: /save changes/i }),
 		);
+		await screen.findByRole("heading", { name: "Connect Git?" });
+		await user.click(screen.getByRole("button", { name: "Connect Git" }));
 
 		await waitFor(() =>
 			expect(mockUpdateSolution).toHaveBeenCalledWith("sol-1", {
