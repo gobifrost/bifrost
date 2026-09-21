@@ -1,6 +1,6 @@
 # Agent Workbench Production Design
 
-**Status:** Approved direction; written implementation specification pending user review.
+**Status:** Approved for implementation on 2026-09-21.
 
 **Visual authority:** The accepted interactive prototype in
 `client/public/mockups/agent-test-explorer/`, especially its contained
