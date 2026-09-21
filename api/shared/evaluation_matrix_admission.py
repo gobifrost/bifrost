@@ -318,9 +318,11 @@ async def admit_execution_cell(
         title=f"Evaluating suite {suite.name}",
         action_url=f"/agent-evaluations/executions/{execution.id}",
     )
-    if reused and job.requested_by_user_id != str(user.user_id):
+    if reused:
         _domain_error(
-            "job_conflict", "A suite execution is already in progress.", 409
+            "job_conflict",
+            "A platform job for this suite cell is still active.",
+            409,
         )
     execution.platform_job_id = job.id
     execution.status = "queued"

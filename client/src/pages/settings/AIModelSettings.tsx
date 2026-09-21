@@ -15,7 +15,6 @@ import {
 	KeyRound,
 	MessageSquareText,
 	Plus,
-	Settings2,
 	ShieldCheck,
 	Sparkles,
 	Star,
@@ -74,14 +73,8 @@ const ASSIGNMENTS: {
 	{
 		key: "testing",
 		label: "Testing",
-		description: "Used by Evaluation Studio’s Test Designer to propose reviewable cases. Evaluated Agents keep their own model profiles.",
+		description: "Used by the quality workbench’s Test Designer to propose reviewable cases. Evaluated agents keep their own model profiles.",
 		icon: ShieldCheck,
-	},
-	{
-		key: "tuning",
-		label: "Agent Tuning",
-		description: "Used by tuning and improvement workflows.",
-		icon: Settings2,
 	},
 	{
 		key: "image_generation",

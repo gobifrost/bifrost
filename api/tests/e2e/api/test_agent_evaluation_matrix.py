@@ -19,6 +19,7 @@ from src.models.orm.agent_evaluations import (
     AgentEvaluationExecution,
     AgentEvaluationMatrix,
 )
+from src.models.orm.platform_jobs import PlatformJob
 
 logger = logging.getLogger(__name__)
 
@@ -204,7 +205,7 @@ async def published_suite(
 
 
 async def _cleanup_matrix(db_session: AsyncSession, matrix_id: UUID) -> None:
-    """Delete a matrix and exactly its member executions (shared or owned)."""
+    """Delete a matrix, its member executions, and their owned jobs."""
     matrix = await db_session.get(AgentEvaluationMatrix, matrix_id)
     member_ids = (
         [UUID(value) for value in (matrix.cell_execution_ids or [])]
@@ -212,11 +213,37 @@ async def _cleanup_matrix(db_session: AsyncSession, matrix_id: UUID) -> None:
         else []
     )
     if member_ids:
+        executions = (
+            (
+                await db_session.execute(
+                    select(AgentEvaluationExecution).where(
+                        AgentEvaluationExecution.id.in_(member_ids)
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        job_ids = [row.platform_job_id for row in executions if row.platform_job_id]
+        for job_id in job_ids:
+            job = await db_session.get(PlatformJob, job_id)
+            if job is not None and job.status in (
+                "queued",
+                "running",
+                "waiting",
+                "cancel_requested",
+            ):
+                job.status = "cancelled"
+        await db_session.flush()
         await db_session.execute(
             delete(AgentEvaluationExecution).where(
                 AgentEvaluationExecution.id.in_(member_ids)
             )
         )
+        if job_ids:
+            await db_session.execute(
+                delete(PlatformJob).where(PlatformJob.id.in_(job_ids))
+            )
     await db_session.execute(
         delete(AgentEvaluationMatrix).where(AgentEvaluationMatrix.id == matrix_id)
     )

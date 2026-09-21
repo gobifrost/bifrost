@@ -125,14 +125,14 @@ async def _run_with_model(agent, script, output_schema, **overrides):
     executor = AutonomousAgentExecutor(_mock_session_factory())
     with (
         patch(
-            "src.services.execution.autonomous_agent_executor.get_llm_config",
+            "src.services.execution.autonomous_agent_executor.get_llm_configs",
             new_callable=AsyncMock,
-            return_value=LLMConfig(
+            return_value=[LLMConfig(
                 provider="openai", model="test-model", api_key="k"
-            ),
+            )],
         ),
         patch(
-            "src.services.execution.autonomous_agent_executor.create_agent_model",
+            "src.services.agent_runtime.model_factory.create_agent_model",
             return_value=model,
         ),
         patch(
@@ -237,14 +237,14 @@ class TestDelegatedContract:
         executor = AutonomousAgentExecutor(factory)
         with (
             patch(
-                "src.services.execution.autonomous_agent_executor.get_llm_config",
+                "src.services.execution.autonomous_agent_executor.get_llm_configs",
                 new_callable=AsyncMock,
-                return_value=LLMConfig(
+                return_value=[LLMConfig(
                     provider="openai", model="test-model", api_key="k"
-                ),
+                )],
             ),
             patch(
-                "src.services.execution.autonomous_agent_executor.create_agent_model",
+                "src.services.agent_runtime.model_factory.create_agent_model",
                 return_value=model,
             ),
             patch(

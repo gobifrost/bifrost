@@ -6233,7 +6233,12 @@ export interface paths {
         put?: never;
         /**
          * Apply Tuning Session
-         * @description Apply a consolidated tuning proposal: update prompt, write history, clear verdicts.
+         * @description Gone: apply reviewed changes via ``PUT /api/agents/{id}``.
+         *
+         *     The legacy apply cleared flagged verdicts; the replacement preserves
+         *     verdicts, findings, and evidence, records ``AgentPromptHistory``
+         *     through the normal authorized update, and guards stale diffs with
+         *     ``If-Unmodified-Since``.
          */
         post: operations["apply_tuning_session_api_agents__agent_id__tuning_session_apply_post"];
         delete?: never;
@@ -6455,6 +6460,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/agent-evaluations/executions/{execution_id}/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Execution Usage */
+        get: operations["get_execution_usage_api_agent_evaluations_executions__execution_id__usage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-evaluations/designer-runs/{run_id}/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Designer Run Usage */
+        get: operations["get_designer_run_usage_api_agent_evaluations_designer_runs__run_id__usage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/agent-evaluations/executions/{execution_id}/cancel": {
         parameters: {
             query?: never;
@@ -6466,6 +6505,465 @@ export interface paths {
         put?: never;
         /** Cancel Execution */
         post: operations["cancel_execution_api_agent_evaluations_executions__execution_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-evaluations/executions/batch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Execution Batch
+         * @description Admit a saved multi-profile matrix: one atomic execution per cell.
+         *
+         *     Cells whose inputs are already running are explicitly reused (no
+         *     reparenting: the older execution keeps its own matrix) and recorded
+         *     in this matrix's durable membership, so reads and cancellation see
+         *     every reported cell. Quota counts only newly admitted work.
+         */
+        post: operations["create_execution_batch_api_agent_evaluations_executions_batch_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-evaluations/executions/batch/{matrix_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Execution Batch
+         * @description Read the live matrix aggregate: per-cell status, never stored.
+         */
+        get: operations["get_execution_batch_api_agent_evaluations_executions_batch__matrix_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-evaluations/executions/batch/{matrix_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel Execution Batch
+         * @description Cancel every active cell through the shared execution/job path.
+         */
+        post: operations["cancel_execution_batch_api_agent_evaluations_executions_batch__matrix_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-evaluations/agents/{agent_id}/tests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Agent Tests Route */
+        get: operations["list_agent_tests_route_api_agent_evaluations_agents__agent_id__tests_get"];
+        put?: never;
+        /** Create Agent Test Route */
+        post: operations["create_agent_test_route_api_agent_evaluations_agents__agent_id__tests_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-evaluations/agents/{agent_id}/tests/latest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Agent Tests Latest Route */
+        get: operations["list_agent_tests_latest_route_api_agent_evaluations_agents__agent_id__tests_latest_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-evaluations/agents/{agent_id}/tests/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run Agent Tests Subset
+         * @description Run explicitly selected accepted test versions (single suite).
+         *
+         *     Selections carry exact versions so reruns cannot silently pick a newer
+         *     edited version. Cross-suite selections partition across calls.
+         */
+        post: operations["run_agent_tests_subset_api_agent_evaluations_agents__agent_id__tests_run_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-evaluations/agents/{agent_id}/tests/generate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Generate Agent Tests From Findings
+         * @description Generate tests from explicitly selected findings (selection is approval).
+         *
+         *     Dismissed findings stay selectable. Every finding and source run is
+         *     reauthorized; revoked sources fail closed. Drafts materialize disabled
+         *     into the default collection for explicit acceptance.
+         */
+        post: operations["generate_agent_tests_from_findings_api_agent_evaluations_agents__agent_id__tests_generate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-evaluations/agents/{agent_id}/tests/{logical_test_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Agent Test Route */
+        get: operations["get_agent_test_route_api_agent_evaluations_agents__agent_id__tests__logical_test_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Edit Agent Test Route */
+        patch: operations["edit_agent_test_route_api_agent_evaluations_agents__agent_id__tests__logical_test_id__patch"];
+        trace?: never;
+    };
+    "/api/agent-evaluations/recorded-evaluations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Recorded Evaluation */
+        post: operations["create_recorded_evaluation_api_agent_evaluations_recorded_evaluations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-evaluations/recorded-evaluations/{evaluation_id}/results": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Recorded Evaluation Results */
+        get: operations["get_recorded_evaluation_results_api_agent_evaluations_recorded_evaluations__evaluation_id__results_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-evaluations/recorded-evaluations/{evaluation_id}/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Recorded Evaluation Usage */
+        get: operations["get_recorded_evaluation_usage_api_agent_evaluations_recorded_evaluations__evaluation_id__usage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-reviews": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Reviews */
+        get: operations["list_reviews_api_agent_reviews_get"];
+        put?: never;
+        /** Create Review */
+        post: operations["create_review_api_agent_reviews_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-reviews/runs/{review_run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Run */
+        get: operations["get_run_api_agent_reviews_runs__review_run_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-reviews/runs/{review_run_id}/results": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Results */
+        get: operations["get_results_api_agent_reviews_runs__review_run_id__results_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-reviews/runs/{review_run_id}/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Usage */
+        get: operations["get_usage_api_agent_reviews_runs__review_run_id__usage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-reviews/{review_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Review */
+        get: operations["get_review_api_agent_reviews__review_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update Review */
+        patch: operations["update_review_api_agent_reviews__review_id__patch"];
+        trace?: never;
+    };
+    "/api/agent-reviews/{review_id}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Versions */
+        get: operations["list_versions_api_agent_reviews__review_id__versions_get"];
+        put?: never;
+        /** Create Version */
+        post: operations["create_version_api_agent_reviews__review_id__versions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-reviews/{review_id}/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Run */
+        post: operations["create_run_api_agent_reviews__review_id__runs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-findings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Findings
+         * @description List the caller's tenant findings for one visible agent, oldest first.
+         */
+        get: operations["list_findings_api_agent_findings_get"];
+        put?: never;
+        /**
+         * Create Finding
+         * @description Record a reviewed finding against a visible agent.
+         */
+        post: operations["create_finding_api_agent_findings_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-findings/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Search Finding Page
+         * @description Search visible findings across authorized agents with paging.
+         */
+        get: operations["search_finding_page_api_agent_findings_search_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-findings/{finding_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Finding
+         * @description Read one finding; cross-tenant ids read as not found.
+         */
+        get: operations["get_finding_api_agent_findings__finding_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update Finding
+         * @description Edit text or dismiss a finding. Dismissal needs no test.
+         */
+        patch: operations["update_finding_api_agent_findings__finding_id__patch"];
+        trace?: never;
+    };
+    "/api/recurring-triggers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Schedules */
+        get: operations["list_schedules_api_recurring_triggers_get"];
+        put?: never;
+        /** Create Schedule */
+        post: operations["create_schedule_api_recurring_triggers_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/recurring-triggers/{trigger_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Schedule */
+        get: operations["get_schedule_api_recurring_triggers__trigger_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update Schedule */
+        patch: operations["update_schedule_api_recurring_triggers__trigger_id__patch"];
+        trace?: never;
+    };
+    "/api/recurring-triggers/{trigger_id}/fires": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Schedule Fires */
+        get: operations["list_schedule_fires_api_recurring_triggers__trigger_id__fires_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -7743,6 +8241,26 @@ export interface paths {
          * @description Get AI usage report for a date range. Platform admin only.
          */
         get: operations["get_usage_report_api_reports_usage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/reports/usage/breakdown": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get quality usage breakdown
+         * @description Get testing/review-aware AI usage breakdown for a date range. Platform admin only.
+         */
+        get: operations["get_usage_breakdown_api_reports_usage_breakdown_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -11844,6 +12362,11 @@ export interface components {
              * @description Max token budget for autonomous runs
              */
             max_token_budget?: number | null;
+            /**
+             * Max Run Timeout
+             * @description Max active seconds per autonomous run; 0 disables the timeout
+             */
+            max_run_timeout?: number | null;
         };
         /**
          * AgentDebuggerLinks
@@ -11939,6 +12462,8 @@ export interface components {
             max_iterations?: number | null;
             /** Max Token Budget */
             max_token_budget?: number | null;
+            /** Max Run Timeout */
+            max_run_timeout?: number | null;
             /**
              * Logo
              * @description Inline presentation logo as a data URL on single-agent responses.
@@ -11954,6 +12479,233 @@ export interface components {
              * @description Presentation-logo content hash.
              */
             logo_version?: string | null;
+        };
+        /** AgentReviewDefinitionCreate */
+        AgentReviewDefinitionCreate: {
+            /**
+             * Agent Id
+             * Format: uuid
+             */
+            agent_id: string;
+            /** Organization Id */
+            organization_id?: string | null;
+            /** Name */
+            name: string;
+            /** Review Statement */
+            review_statement: string;
+            /** Evidence Format Instructions */
+            evidence_format_instructions?: string | null;
+            /** Model Profile Id */
+            model_profile_id?: string | null;
+        };
+        /** AgentReviewDefinitionPublic */
+        AgentReviewDefinitionPublic: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Agent Id
+             * Format: uuid
+             */
+            agent_id: string;
+            /** Org Id */
+            org_id?: string | null;
+            /** Name */
+            name: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "active" | "disabled";
+            /** Latest Version */
+            latest_version: number;
+            /**
+             * Latest Version Id
+             * Format: uuid
+             */
+            latest_version_id: string;
+            /**
+             * Latest Version Created At
+             * Format: date-time
+             */
+            latest_version_created_at: string;
+            /** Created By */
+            created_by?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** AgentReviewDefinitionUpdate */
+        AgentReviewDefinitionUpdate: {
+            /** Name */
+            name?: string | null;
+            /** Status */
+            status?: ("active" | "disabled") | null;
+        };
+        /** AgentReviewDefinitionsPage */
+        AgentReviewDefinitionsPage: {
+            /** Items */
+            items: components["schemas"]["AgentReviewDefinitionPublic"][];
+            /** Total */
+            total: number;
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+        };
+        /** AgentReviewRunAccepted */
+        AgentReviewRunAccepted: {
+            /**
+             * Review Run Id
+             * Format: uuid
+             */
+            review_run_id: string;
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            /** Reused */
+            reused: boolean;
+            /** Notification Id */
+            notification_id?: string | null;
+        };
+        /** AgentReviewRunCreate */
+        AgentReviewRunCreate: {
+            /** Run Ids */
+            run_ids: string[];
+        };
+        /** AgentReviewRunPublic */
+        AgentReviewRunPublic: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Review Id
+             * Format: uuid
+             */
+            review_id: string;
+            /**
+             * Review Version Id
+             * Format: uuid
+             */
+            review_version_id: string;
+            /** Review Version */
+            review_version: number;
+            /**
+             * Agent Id
+             * Format: uuid
+             */
+            agent_id: string;
+            /** Org Id */
+            org_id?: string | null;
+            /** Platform Job Id */
+            platform_job_id?: string | null;
+            /** Selected Run Ids */
+            selected_run_ids: string[];
+            /** Source Refs */
+            source_refs: components["schemas"]["AgentReviewSourceRef"][];
+            /** Result Summary */
+            result_summary?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /** AgentReviewRunResults */
+        AgentReviewRunResults: {
+            review_run: components["schemas"]["AgentReviewRunPublic"];
+            /** Findings */
+            findings: components["schemas"]["FindingPublic"][];
+            /**
+             * Usage Operation Type
+             * @default agent_review
+             * @constant
+             */
+            usage_operation_type: "agent_review";
+            /**
+             * Usage Operation Id
+             * Format: uuid
+             */
+            usage_operation_id: string;
+        };
+        /** AgentReviewSourceRef */
+        AgentReviewSourceRef: {
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            /** Agent Id */
+            agent_id: string | null;
+            /** Org Id */
+            org_id?: string | null;
+            /** Root Run Id */
+            root_run_id?: string | null;
+            /** Parent Run Id */
+            parent_run_id?: string | null;
+            /** Trigger Type */
+            trigger_type?: string | null;
+        };
+        /** AgentReviewVersionCreate */
+        AgentReviewVersionCreate: {
+            /** Review Statement */
+            review_statement: string;
+            /** Evidence Format Instructions */
+            evidence_format_instructions?: string | null;
+            /** Model Profile Id */
+            model_profile_id?: string | null;
+        };
+        /** AgentReviewVersionPublic */
+        AgentReviewVersionPublic: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Review Id
+             * Format: uuid
+             */
+            review_id: string;
+            /** Version */
+            version: number;
+            /** Review Statement */
+            review_statement: string;
+            /** Evidence Format Instructions */
+            evidence_format_instructions?: string | null;
+            /** Model Profile Id */
+            model_profile_id?: string | null;
+            /** Created By */
+            created_by?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /** AgentReviewVersionsPage */
+        AgentReviewVersionsPage: {
+            /** Items */
+            items: components["schemas"]["AgentReviewVersionPublic"][];
+            /** Total */
+            total: number;
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
         };
         /**
          * AgentRunChildResponse
@@ -12099,6 +12851,14 @@ export interface components {
             completed_at?: string | null;
             /** Parent Run Id */
             parent_run_id?: string | null;
+            /** Output Schema */
+            output_schema?: {
+                [key: string]: unknown;
+            } | null;
+            /** Contract Valid */
+            contract_valid?: boolean | null;
+            /** Contract Errors */
+            contract_errors?: string[] | null;
             /** Steps */
             steps?: components["schemas"]["AgentRunStepResponse"][];
             /** Child Run Ids */
@@ -12247,6 +13007,14 @@ export interface components {
             completed_at?: string | null;
             /** Parent Run Id */
             parent_run_id?: string | null;
+            /** Output Schema */
+            output_schema?: {
+                [key: string]: unknown;
+            } | null;
+            /** Contract Valid */
+            contract_valid?: boolean | null;
+            /** Contract Errors */
+            contract_errors?: string[] | null;
         };
         /**
          * AgentRunSnapshotView
@@ -12572,6 +13340,260 @@ export interface components {
             reason: string;
         };
         /**
+         * AgentTestCreate
+         * @description Body for agent-wide test creation (lands in the default collection).
+         */
+        AgentTestCreate: {
+            /** Name */
+            name: string;
+            /**
+             * Position
+             * @default 0
+             */
+            position: number;
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+            /** Input */
+            input?: {
+                [key: string]: unknown;
+            } | null;
+            /** Fixture */
+            fixture?: {
+                [key: string]: unknown;
+            };
+            /** Simulator Policy */
+            simulator_policy?: {
+                [key: string]: unknown;
+            };
+            /** Assertions */
+            assertions?: {
+                [key: string]: unknown;
+            }[];
+            /** Expected Tools */
+            expected_tools?: string[];
+            /** Forbidden Tools */
+            forbidden_tools?: string[];
+            /** Output Schema */
+            output_schema?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Repetitions
+             * @default 1
+             */
+            repetitions: number;
+            /** Scoring Policy */
+            scoring_policy?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Provenance
+             * @default manual
+             */
+            provenance: string;
+            /** Provenance Run Ids */
+            provenance_run_ids?: string[];
+            /** Finding Id */
+            finding_id?: string | null;
+            /** Tags */
+            tags?: string[];
+        };
+        /** AgentTestLatestPage */
+        AgentTestLatestPage: {
+            /** Items */
+            items: components["schemas"]["AgentTestLatestPublic"][];
+            /** Total */
+            total: number;
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+        };
+        /** AgentTestLatestPublic */
+        AgentTestLatestPublic: {
+            /**
+             * Logical Test Id
+             * Format: uuid
+             */
+            logical_test_id: string;
+            /** Version */
+            version: number;
+            /** Origin Suite Name */
+            origin_suite_name: string;
+            simulation?: components["schemas"]["SimulationLatestPublic"] | null;
+            recorded?: components["schemas"]["RecordedLatestPublic"] | null;
+        };
+        /** AgentTestPage */
+        AgentTestPage: {
+            /** Items */
+            items: components["schemas"]["AgentTestPublic"][];
+            /** Total */
+            total: number;
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+        };
+        /**
+         * AgentTestPublic
+         * @description Current accepted version of one logical agent-wide test.
+         */
+        AgentTestPublic: {
+            /**
+             * Logical Test Id
+             * Format: uuid
+             */
+            logical_test_id: string;
+            /** Version */
+            version: number;
+            /**
+             * Origin Suite Id
+             * Format: uuid
+             */
+            origin_suite_id: string;
+            /** Origin Suite Name */
+            origin_suite_name: string;
+            /** Origin Is Default */
+            origin_is_default: boolean;
+            /**
+             * Case Id
+             * Format: uuid
+             */
+            case_id: string;
+            /** Name */
+            name: string;
+            /** Position */
+            position: number;
+            /** Enabled */
+            enabled: boolean;
+            /** Input */
+            input?: {
+                [key: string]: unknown;
+            } | null;
+            /** Fixture */
+            fixture?: {
+                [key: string]: unknown;
+            };
+            /** Simulator Policy */
+            simulator_policy?: {
+                [key: string]: unknown;
+            };
+            /** Assertions */
+            assertions?: {
+                [key: string]: unknown;
+            }[];
+            /** Expected Tools */
+            expected_tools?: string[];
+            /** Forbidden Tools */
+            forbidden_tools?: string[];
+            /** Output Schema */
+            output_schema?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Repetitions
+             * @default 1
+             */
+            repetitions: number;
+            /** Scoring Policy */
+            scoring_policy?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Provenance
+             * @default manual
+             */
+            provenance: string;
+            /** Provenance Run Ids */
+            provenance_run_ids?: string[];
+            /** Finding Id */
+            finding_id?: string | null;
+            /** Tags */
+            tags?: string[];
+            /** Created At */
+            created_at?: string | null;
+            /** Updated At */
+            updated_at?: string | null;
+        };
+        /**
+         * AgentTestUpdate
+         * @description Body for agent-wide test edits (inserts the next accepted version).
+         */
+        AgentTestUpdate: {
+            /** Name */
+            name?: string | null;
+            /** Position */
+            position?: number | null;
+            /** Enabled */
+            enabled?: boolean | null;
+            /** Input */
+            input?: {
+                [key: string]: unknown;
+            } | null;
+            /** Fixture */
+            fixture?: {
+                [key: string]: unknown;
+            } | null;
+            /** Simulator Policy */
+            simulator_policy?: {
+                [key: string]: unknown;
+            } | null;
+            /** Assertions */
+            assertions?: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Expected Tools */
+            expected_tools?: string[] | null;
+            /** Forbidden Tools */
+            forbidden_tools?: string[] | null;
+            /** Output Schema */
+            output_schema?: {
+                [key: string]: unknown;
+            } | null;
+            /** Repetitions */
+            repetitions?: number | null;
+            /** Scoring Policy */
+            scoring_policy?: {
+                [key: string]: unknown;
+            } | null;
+            /** Tags */
+            tags?: string[] | null;
+            /** Expected Version */
+            expected_version?: number | null;
+        };
+        /**
+         * AgentTestsGenerateCreate
+         * @description Body for generating tests from explicitly selected findings.
+         */
+        AgentTestsGenerateCreate: {
+            /** Finding Ids */
+            finding_ids: string[];
+            /**
+             * Requested Count
+             * @default 3
+             */
+            requested_count: number;
+            /** Suite Goal */
+            suite_goal?: string | null;
+        };
+        /**
+         * AgentTestsRunCreate
+         * @description Body for running explicitly selected test versions (one suite).
+         */
+        AgentTestsRunCreate: {
+            /** Selections */
+            selections: components["schemas"]["TestRunSelection"][];
+            /** Candidate Id */
+            candidate_id?: string | null;
+            /** Profile Id */
+            profile_id?: string | null;
+            /** Repetitions Override */
+            repetitions_override?: number | null;
+        };
+        /**
          * AgentTimelineEntry
          * @description One ordered journal event projected for debugging.
          */
@@ -12712,6 +13734,16 @@ export interface components {
              * @description Max token budget for autonomous runs
              */
             max_token_budget?: number | null;
+            /**
+             * Max Run Timeout
+             * @description Max active seconds per autonomous run; 0 disables the timeout
+             */
+            max_run_timeout?: number | null;
+            /**
+             * Change Reason
+             * @description Reason recorded in prompt history when this update changes the system prompt or tool configuration.
+             */
+            change_reason?: string | null;
         };
         /**
          * AgentUsage
@@ -13216,34 +14248,6 @@ export interface components {
              * @description Role IDs for role_based access (replaces existing roles)
              */
             role_ids?: string[] | null;
-        };
-        /**
-         * ApplyTuningRequest
-         * @description Body for ``POST /api/agents/{id}/tuning-session/apply``.
-         */
-        ApplyTuningRequest: {
-            /** New Prompt */
-            new_prompt: string;
-            /** Reason */
-            reason?: string | null;
-        };
-        /**
-         * ApplyTuningResponse
-         * @description Result of applying a consolidated tuning proposal.
-         */
-        ApplyTuningResponse: {
-            /**
-             * Agent Id
-             * Format: uuid
-             */
-            agent_id: string;
-            /**
-             * History Id
-             * Format: uuid
-             */
-            history_id: string;
-            /** Affected Run Ids */
-            affected_run_ids: string[];
         };
         /**
          * ArtifactDownloadResponse
@@ -17032,6 +18036,23 @@ export interface components {
             /** Label */
             label?: string | null;
         };
+        /**
+         * EvaluationBatchResult
+         * @description Matrix admission aggregate. Status is computed from live cells.
+         */
+        EvaluationBatchResult: {
+            matrix: components["schemas"]["EvaluationMatrixPublic"];
+            /** Cells */
+            cells: components["schemas"]["MatrixCellPublic"][];
+            /** Planned Cells */
+            planned_cells: number;
+            /** Planned Runs */
+            planned_runs: number;
+            /** Cost Estimate Usd */
+            cost_estimate_usd?: number | null;
+            /** Cost Note */
+            cost_note: string;
+        };
         /** EvaluationCaseCreate */
         EvaluationCaseCreate: {
             /** Name */
@@ -17082,9 +18103,14 @@ export interface components {
              * @default manual
              * @enum {string}
              */
-            provenance: "manual" | "generated" | "historical_inspiration";
+            provenance: "manual" | "generated" | "historical_inspiration" | "finding";
             /** Provenance Run Ids */
             provenance_run_ids?: string[];
+            /**
+             * Finding Id
+             * @description Reviewed finding this case reproduces. Forces provenance to finding.
+             */
+            finding_id?: string | null;
             /** Tags */
             tags?: string[];
         };
@@ -17148,6 +18174,8 @@ export interface components {
             provenance: string;
             /** Provenance Run Ids */
             provenance_run_ids?: string[];
+            /** Finding Id */
+            finding_id?: string | null;
             /** Tags */
             tags?: string[];
             /**
@@ -17201,6 +18229,28 @@ export interface components {
             /** Expected Version */
             expected_version?: number | null;
         };
+        /**
+         * EvaluationExecutionBatchCreate
+         * @description Saved multi-profile matrix admission.
+         *
+         *     Fans out to one atomic execution per (candidate-or-baseline, profile)
+         *     cell. Every candidate cell pairs with the baseline-only cell under the
+         *     same profile; the selected profile is frozen into both snapshots at
+         *     admission and never falls back to another profile.
+         */
+        EvaluationExecutionBatchCreate: {
+            /**
+             * Suite Id
+             * Format: uuid
+             */
+            suite_id: string;
+            /** Candidate Ids */
+            candidate_ids?: string[];
+            /** Profile Ids */
+            profile_ids: string[];
+            /** Repetitions Override */
+            repetitions_override?: number | null;
+        };
         /** EvaluationExecutionCreate */
         EvaluationExecutionCreate: {
             /**
@@ -17234,6 +18284,10 @@ export interface components {
             candidate_id?: string | null;
             /** Baseline Agent Id */
             baseline_agent_id?: string | null;
+            /** Matrix Id */
+            matrix_id?: string | null;
+            /** Profile Id */
+            profile_id?: string | null;
             /** Status */
             status: string;
             /**
@@ -17266,6 +18320,35 @@ export interface components {
             created_at?: string | null;
             /** Completed At */
             completed_at?: string | null;
+        };
+        /** EvaluationMatrixPublic */
+        EvaluationMatrixPublic: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Suite Id
+             * Format: uuid
+             */
+            suite_id: string;
+            /** Suite Version */
+            suite_version: number;
+            /** Candidate Ids */
+            candidate_ids?: string[];
+            /** Profile Ids */
+            profile_ids?: string[];
+            /** Repetitions Override */
+            repetitions_override?: number | null;
+            /** Cell Execution Ids */
+            cell_execution_ids?: string[];
+            /** Org Id */
+            org_id?: string | null;
+            /** Created By */
+            created_by?: string | null;
+            /** Created At */
+            created_at?: string | null;
         };
         /** EvaluationResultPublic */
         EvaluationResultPublic: {
@@ -18880,6 +19963,135 @@ export interface components {
              * @default false
              */
             create_only: boolean;
+        };
+        /**
+         * FindingCreate
+         * @description Body for ``POST /api/agent-findings``.
+         */
+        FindingCreate: {
+            /**
+             * Agent Id
+             * Format: uuid
+             */
+            agent_id: string;
+            /** Description */
+            description: string;
+            /** Expected Behavior */
+            expected_behavior?: string | null;
+            /**
+             * Source Kind
+             * @default manual
+             * @enum {string}
+             */
+            source_kind: "run" | "manual" | "external";
+            /** Source Run Id */
+            source_run_id?: string | null;
+            /** Source Sequence */
+            source_sequence?: number | null;
+            /** External Ref */
+            external_ref?: string | null;
+            /**
+             * Finding Kind
+             * @default problem
+             * @enum {string}
+             */
+            finding_kind: "problem" | "opportunity";
+            /** Evidence Markdown */
+            evidence_markdown?: string | null;
+        };
+        /**
+         * FindingPublic
+         * @description A finding with its linked regression case ids (computed, not stored).
+         */
+        FindingPublic: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Agent Id
+             * Format: uuid
+             */
+            agent_id: string;
+            /** Org Id */
+            org_id?: string | null;
+            /**
+             * Status
+             * @default open
+             */
+            status: string;
+            /** Description */
+            description: string;
+            /** Expected Behavior */
+            expected_behavior?: string | null;
+            /**
+             * Source Kind
+             * @default manual
+             */
+            source_kind: string;
+            /** Source Run Id */
+            source_run_id?: string | null;
+            /** Source Sequence */
+            source_sequence?: number | null;
+            /** External Ref */
+            external_ref?: string | null;
+            /**
+             * Finding Kind
+             * @default problem
+             */
+            finding_kind: string;
+            /** Evidence Markdown */
+            evidence_markdown?: string | null;
+            /** Source Review Id */
+            source_review_id?: string | null;
+            /** Source Review Version Id */
+            source_review_version_id?: string | null;
+            /** Source Review Run Id */
+            source_review_run_id?: string | null;
+            /** Source Review Version */
+            source_review_version?: number | null;
+            /** Source Run Refs */
+            source_run_refs?: {
+                [key: string]: unknown;
+            }[];
+            /** Source Ordinal */
+            source_ordinal?: number | null;
+            /** Linked Case Ids */
+            linked_case_ids?: string[];
+            /** Created By */
+            created_by?: string | null;
+            /** Created At */
+            created_at?: string | null;
+            /** Updated At */
+            updated_at?: string | null;
+        };
+        /** FindingSearchPage */
+        FindingSearchPage: {
+            /** Items */
+            items: components["schemas"]["FindingPublic"][];
+            /** Total */
+            total: number;
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+        };
+        /**
+         * FindingUpdate
+         * @description Body for ``PATCH /api/agent-findings/{id}``.
+         */
+        FindingUpdate: {
+            /** Description */
+            description?: string | null;
+            /** Expected Behavior */
+            expected_behavior?: string | null;
+            /** Status */
+            status?: ("open" | "dismissed") | null;
+            /** Finding Kind */
+            finding_kind?: ("problem" | "opportunity") | null;
+            /** Evidence Markdown */
+            evidence_markdown?: string | null;
         };
         /** FlagConversationResponse */
         FlagConversationResponse: {
@@ -22125,6 +23337,47 @@ export interface components {
              */
             authorization_url: string;
         };
+        /** MatrixCellPublic */
+        MatrixCellPublic: {
+            /**
+             * Execution Id
+             * Format: uuid
+             */
+            execution_id: string;
+            /** Candidate Id */
+            candidate_id?: string | null;
+            /** Profile Id */
+            profile_id?: string | null;
+            /** Status */
+            status: string;
+            /**
+             * Total Cases
+             * @default 0
+             */
+            total_cases: number;
+            /**
+             * Completed Cases
+             * @default 0
+             */
+            completed_cases: number;
+            /**
+             * Passed Cases
+             * @default 0
+             */
+            passed_cases: number;
+            /**
+             * Failed Cases
+             * @default 0
+             */
+            failed_cases: number;
+            /** Platform Job Id */
+            platform_job_id?: string | null;
+            /**
+             * Reused
+             * @default false
+             */
+            reused: boolean;
+        };
         /** MemoryDeleteResponse */
         MemoryDeleteResponse: {
             /**
@@ -24276,6 +25529,178 @@ export interface components {
              */
             cleared: number;
         };
+        /** QualityUsageBreakdownResponse */
+        QualityUsageBreakdownResponse: {
+            overall: components["schemas"]["QualityUsageTotals"];
+            coverage: components["schemas"]["QualityUsageCoverage"];
+            by_purpose: components["schemas"]["QualityUsagePage_QualityUsagePurposeRow_"];
+            by_provider_model: components["schemas"]["QualityUsagePage_QualityUsageProviderModelRow_"];
+            by_profile: components["schemas"]["QualityUsagePage_QualityUsageProfileRow_"];
+            by_organization: components["schemas"]["QualityUsagePage_QualityUsageOrganizationRow_"];
+            by_operation: components["schemas"]["QualityUsagePage_QualityUsageOperationRow_"];
+        };
+        /** QualityUsageCoverage */
+        QualityUsageCoverage: {
+            /** Started Attempt Count */
+            started_attempt_count: number;
+            /** Unobserved Attempt Count */
+            unobserved_attempt_count: number;
+            /** Missing Cost Call Count */
+            missing_cost_call_count: number;
+            /** Unassigned Operation Call Count */
+            unassigned_operation_call_count: number;
+            /** Legacy Coverage Unknown */
+            legacy_coverage_unknown?: boolean | null;
+            /** Legacy Call Count */
+            legacy_call_count?: number | null;
+        };
+        /** QualityUsageOperationRow */
+        QualityUsageOperationRow: {
+            /** Operation Type */
+            operation_type: string | null;
+            /** Operation Id */
+            operation_id: string | null;
+            /** Purpose */
+            purpose: string | null;
+            totals: components["schemas"]["QualityUsageTotals"];
+            coverage: components["schemas"]["QualityUsageCoverage"];
+        };
+        /** QualityUsageOrganizationRow */
+        QualityUsageOrganizationRow: {
+            /** Organization Id */
+            organization_id: string | null;
+            /** Organization Name */
+            organization_name: string | null;
+            totals: components["schemas"]["QualityUsageTotals"];
+            coverage: components["schemas"]["QualityUsageCoverage"];
+        };
+        /** QualityUsagePage[QualityUsageOperationRow] */
+        QualityUsagePage_QualityUsageOperationRow_: {
+            /** Items */
+            items: components["schemas"]["QualityUsageOperationRow"][];
+            /** Total Groups */
+            total_groups: number;
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Omitted Group Count */
+            omitted_group_count: number;
+        };
+        /** QualityUsagePage[QualityUsageOrganizationRow] */
+        QualityUsagePage_QualityUsageOrganizationRow_: {
+            /** Items */
+            items: components["schemas"]["QualityUsageOrganizationRow"][];
+            /** Total Groups */
+            total_groups: number;
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Omitted Group Count */
+            omitted_group_count: number;
+        };
+        /** QualityUsagePage[QualityUsageProfileRow] */
+        QualityUsagePage_QualityUsageProfileRow_: {
+            /** Items */
+            items: components["schemas"]["QualityUsageProfileRow"][];
+            /** Total Groups */
+            total_groups: number;
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Omitted Group Count */
+            omitted_group_count: number;
+        };
+        /** QualityUsagePage[QualityUsageProviderModelRow] */
+        QualityUsagePage_QualityUsageProviderModelRow_: {
+            /** Items */
+            items: components["schemas"]["QualityUsageProviderModelRow"][];
+            /** Total Groups */
+            total_groups: number;
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Omitted Group Count */
+            omitted_group_count: number;
+        };
+        /** QualityUsagePage[QualityUsagePurposeRow] */
+        QualityUsagePage_QualityUsagePurposeRow_: {
+            /** Items */
+            items: components["schemas"]["QualityUsagePurposeRow"][];
+            /** Total Groups */
+            total_groups: number;
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Omitted Group Count */
+            omitted_group_count: number;
+        };
+        /** QualityUsageProfileRow */
+        QualityUsageProfileRow: {
+            /** Purpose */
+            purpose: string | null;
+            /** Profile Id */
+            profile_id: string | null;
+            /** Profile Name */
+            profile_name: string | null;
+            /** Profile Fingerprint */
+            profile_fingerprint: string | null;
+            /** Provider */
+            provider: string | null;
+            /** Model */
+            model: string | null;
+            totals: components["schemas"]["QualityUsageTotals"];
+            coverage: components["schemas"]["QualityUsageCoverage"];
+        };
+        /** QualityUsageProviderModelRow */
+        QualityUsageProviderModelRow: {
+            /** Purpose */
+            purpose: string | null;
+            /** Provider */
+            provider: string | null;
+            /** Model */
+            model: string | null;
+            totals: components["schemas"]["QualityUsageTotals"];
+            coverage: components["schemas"]["QualityUsageCoverage"];
+        };
+        /** QualityUsagePurposeRow */
+        QualityUsagePurposeRow: {
+            /** Purpose */
+            purpose: string | null;
+            totals: components["schemas"]["QualityUsageTotals"];
+            coverage: components["schemas"]["QualityUsageCoverage"];
+        };
+        /** QualityUsageTotals */
+        QualityUsageTotals: {
+            /** Input Tokens */
+            input_tokens: number;
+            /** Output Tokens */
+            output_tokens: number;
+            /** Cache Read Tokens */
+            cache_read_tokens: number;
+            /** Cache Write Tokens */
+            cache_write_tokens: number;
+            /** Call Count */
+            call_count: number;
+            /** Duration Ms */
+            duration_ms: number;
+            /** Duration Missing Count */
+            duration_missing_count: number;
+            /** Observed Provider Cost */
+            observed_provider_cost: string;
+            /** Estimated Cost */
+            estimated_cost: string;
+            /** Known Cost */
+            known_cost: string;
+            /** Missing Cost Call Count */
+            missing_cost_call_count: number;
+            /** Legacy Call Count */
+            legacy_call_count: number;
+        };
         /**
          * QueueItem
          * @description An item in the execution queue.
@@ -24450,6 +25875,160 @@ export interface components {
             /** Started At */
             started_at: string | null;
         };
+        /** RecordedApplicabilityOverride */
+        RecordedApplicabilityOverride: {
+            /**
+             * Case Id
+             * Format: uuid
+             */
+            case_id: string;
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            /**
+             * Applicability
+             * @enum {string}
+             */
+            applicability: "applicable" | "not_applicable" | "unknown";
+        };
+        /** RecordedEvaluationCreate */
+        RecordedEvaluationCreate: {
+            /**
+             * Agent Id
+             * Format: uuid
+             */
+            agent_id: string;
+            /** Run Ids */
+            run_ids: string[];
+            /** Case Ids */
+            case_ids?: string[] | null;
+            /**
+             * All Tests
+             * @default false
+             */
+            all_tests: boolean;
+            /**
+             * Applicability
+             * @default unknown
+             * @enum {string}
+             */
+            applicability: "applicable" | "not_applicable" | "unknown";
+            /**
+             * Judge Mode
+             * @default exact
+             * @enum {string}
+             */
+            judge_mode: "exact" | "semantic";
+            /** Applicability Overrides */
+            applicability_overrides?: components["schemas"]["RecordedApplicabilityOverride"][];
+        };
+        /** RecordedEvaluationResultPublic */
+        RecordedEvaluationResultPublic: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Evaluation Id
+             * Format: uuid
+             */
+            evaluation_id: string;
+            /**
+             * Case Id
+             * Format: uuid
+             */
+            case_id: string;
+            /** Case Version */
+            case_version: number;
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            /**
+             * Applicability
+             * @enum {string}
+             */
+            applicability: "applicable" | "not_applicable" | "unknown";
+            /** Applicability Source */
+            applicability_source: string;
+            /** Outcome */
+            outcome: string;
+            /** Complete */
+            complete: boolean;
+            /** Assertion Outcomes */
+            assertion_outcomes: {
+                [key: string]: unknown;
+            }[];
+            /** Counts */
+            counts: {
+                [key: string]: unknown;
+            };
+            /** Evidence Refs */
+            evidence_refs: {
+                [key: string]: unknown;
+            }[];
+            /** Limitations */
+            limitations: string[];
+            /** Error */
+            error?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /** RecordedEvaluationResultsPage */
+        RecordedEvaluationResultsPage: {
+            /**
+             * Evaluation Id
+             * Format: uuid
+             */
+            evaluation_id: string;
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            /** Aggregate */
+            aggregate?: {
+                [key: string]: unknown;
+            } | null;
+            /** Results */
+            results: components["schemas"]["RecordedEvaluationResultPublic"][];
+            /** Total */
+            total: number;
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+        };
+        /** RecordedLatestPublic */
+        RecordedLatestPublic: {
+            /**
+             * Evaluation Id
+             * Format: uuid
+             */
+            evaluation_id: string;
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            /** Case Version */
+            case_version: number;
+            /** Outcome */
+            outcome: string;
+            /** Applicability */
+            applicability: string;
+            /** Judge Mode */
+            judge_mode?: string | null;
+            /** Created At */
+            created_at?: string | null;
+        };
         /**
          * RecoveryCodesCountResponse
          * @description Recovery codes count response.
@@ -24490,6 +26069,111 @@ export interface components {
              * @description Path where file was recreated
              */
             path: string;
+        };
+        /**
+         * RecurringTriggerCreate
+         * @description Body for POST /api/recurring-triggers. Requester is always the caller.
+         *
+         *     Organization is derived from the operation target and immutable after
+         *     creation; there is no caller-supplied org scope.
+         */
+        RecurringTriggerCreate: {
+            /**
+             * Operation Type
+             * @enum {string}
+             */
+            operation_type: "agent_review" | "agent_evaluation_suite";
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /** Operation Params */
+            operation_params?: {
+                [key: string]: unknown;
+            };
+            /** Cron Expression */
+            cron_expression: string;
+            /**
+             * Timezone
+             * @default UTC
+             */
+            timezone: string;
+            /**
+             * Overlap Policy
+             * @default skip
+             * @enum {string}
+             */
+            overlap_policy: "skip" | "queue" | "replace";
+        };
+        /** RecurringTriggerPage */
+        RecurringTriggerPage: {
+            /** Items */
+            items: components["schemas"]["RecurringTriggerPublic"][];
+            /** Total */
+            total: number;
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+        };
+        /** RecurringTriggerPublic */
+        RecurringTriggerPublic: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Org Id */
+            org_id?: string | null;
+            /** Operation Type */
+            operation_type: string;
+            /**
+             * Operation Id
+             * Format: uuid
+             */
+            operation_id: string;
+            /** Operation Params */
+            operation_params?: {
+                [key: string]: unknown;
+            };
+            /** Cron Expression */
+            cron_expression: string;
+            /** Timezone */
+            timezone: string;
+            /** Enabled */
+            enabled: boolean;
+            /** Overlap Policy */
+            overlap_policy: string;
+            /**
+             * Requested By User Id
+             * Format: uuid
+             */
+            requested_by_user_id: string;
+            /** Requested By Email */
+            requested_by_email: string;
+            /** Requested By Name */
+            requested_by_name: string;
+            /** Created At */
+            created_at?: string | null;
+            /** Updated At */
+            updated_at?: string | null;
+        };
+        /**
+         * RecurringTriggerUpdate
+         * @description Body for PATCH /api/recurring-triggers/{id}. Identity is immutable.
+         */
+        RecurringTriggerUpdate: {
+            /** Cron Expression */
+            cron_expression?: string | null;
+            /** Timezone */
+            timezone?: string | null;
+            /** Enabled */
+            enabled?: boolean | null;
+            /** Operation Params */
+            operation_params?: {
+                [key: string]: unknown;
+            } | null;
         };
         /**
          * RecycleAllRequest
@@ -26200,6 +27884,24 @@ export interface components {
              */
             compiled?: string | null;
         };
+        /** SimulationLatestPublic */
+        SimulationLatestPublic: {
+            /**
+             * Execution Id
+             * Format: uuid
+             */
+            execution_id: string;
+            /** Case Version */
+            case_version: number;
+            /** Profile Id */
+            profile_id?: string | null;
+            /** Candidate Id */
+            candidate_id?: string | null;
+            /** Status */
+            status: string;
+            /** Created At */
+            created_at?: string | null;
+        };
         /**
          * Solution
          * @description Read-shape returned by REST.
@@ -27527,6 +29229,19 @@ export interface components {
             policies?: components["schemas"]["TablePolicies"] | null;
         };
         /**
+         * TestRunSelection
+         * @description One explicitly selected accepted test version.
+         */
+        TestRunSelection: {
+            /**
+             * Case Id
+             * Format: uuid
+             */
+            case_id: string;
+            /** Case Version */
+            case_version: number;
+        };
+        /**
          * TextArtifactSpec
          * @description Schema-first payload for a text, HTML, CSV, Markdown, or JSON file.
          */
@@ -27777,6 +29492,52 @@ export interface components {
              * @description Distinct topic strings currently in use as EventSources.
              */
             in_use: string[];
+        };
+        /** TriggerFirePage */
+        TriggerFirePage: {
+            /** Items */
+            items: components["schemas"]["TriggerFirePublic"][];
+            /** Total */
+            total: number;
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+        };
+        /** TriggerFirePublic */
+        TriggerFirePublic: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Trigger Id
+             * Format: uuid
+             */
+            trigger_id: string;
+            /**
+             * Scheduled For
+             * Format: date-time
+             */
+            scheduled_for: string;
+            /** Status */
+            status: string;
+            /** Reason */
+            reason?: string | null;
+            /** Platform Job Id */
+            platform_job_id?: string | null;
+            /** Domain Run Id */
+            domain_run_id?: string | null;
+            /**
+             * Attempt Count
+             * @default 1
+             */
+            attempt_count: number;
+            /** Created At */
+            created_at?: string | null;
+            /** Updated At */
+            updated_at?: string | null;
         };
         /**
          * TrustedDeviceResponse
@@ -39262,7 +41023,9 @@ export interface operations {
     update_agent_api_agents__agent_id__put: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "if-unmodified-since"?: string | null;
+            };
             path: {
                 agent_id: string;
             };
@@ -40411,19 +42174,15 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ApplyTuningRequest"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
-            200: {
+            410: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApplyTuningResponse"];
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
@@ -40939,6 +42698,74 @@ export interface operations {
             };
         };
     };
+    get_execution_usage_api_agent_evaluations_executions__execution_id__usage_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                execution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QualityUsageBreakdownResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_designer_run_usage_api_agent_evaluations_designer_runs__run_id__usage_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QualityUsageBreakdownResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     cancel_execution_api_agent_evaluations_executions__execution_id__cancel_post: {
         parameters: {
             query?: never;
@@ -40957,6 +42784,1116 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EvaluationExecutionPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_execution_batch_api_agent_evaluations_executions_batch_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EvaluationExecutionBatchCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvaluationBatchResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_execution_batch_api_agent_evaluations_executions_batch__matrix_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                matrix_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvaluationBatchResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_execution_batch_api_agent_evaluations_executions_batch__matrix_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                matrix_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvaluationBatchResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_agent_tests_route_api_agent_evaluations_agents__agent_id__tests_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentTestPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_agent_test_route_api_agent_evaluations_agents__agent_id__tests_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentTestCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentTestPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_agent_tests_latest_route_api_agent_evaluations_agents__agent_id__tests_latest_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentTestLatestPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_agent_tests_subset_api_agent_evaluations_agents__agent_id__tests_run_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentTestsRunCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformJobAccepted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    generate_agent_tests_from_findings_api_agent_evaluations_agents__agent_id__tests_generate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentTestsGenerateCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DesignerDraftAccepted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_agent_test_route_api_agent_evaluations_agents__agent_id__tests__logical_test_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+                logical_test_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentTestPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    edit_agent_test_route_api_agent_evaluations_agents__agent_id__tests__logical_test_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+                logical_test_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentTestUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentTestPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_recorded_evaluation_api_agent_evaluations_recorded_evaluations_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecordedEvaluationCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformJobAccepted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_recorded_evaluation_results_api_agent_evaluations_recorded_evaluations__evaluation_id__results_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                evaluation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordedEvaluationResultsPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_recorded_evaluation_usage_api_agent_evaluations_recorded_evaluations__evaluation_id__usage_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                evaluation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QualityUsageBreakdownResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_reviews_api_agent_reviews_get: {
+        parameters: {
+            query: {
+                agent_id: string;
+                status?: string;
+                organization_id?: string | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentReviewDefinitionsPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_review_api_agent_reviews_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentReviewDefinitionCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentReviewDefinitionPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_run_api_agent_reviews_runs__review_run_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                review_run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentReviewRunPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_results_api_agent_reviews_runs__review_run_id__results_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                review_run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentReviewRunResults"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_usage_api_agent_reviews_runs__review_run_id__usage_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                review_run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QualityUsageBreakdownResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_review_api_agent_reviews__review_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                review_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentReviewDefinitionPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_review_api_agent_reviews__review_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                review_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentReviewDefinitionUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentReviewDefinitionPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_versions_api_agent_reviews__review_id__versions_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                review_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentReviewVersionsPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_version_api_agent_reviews__review_id__versions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                review_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentReviewVersionCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentReviewVersionPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_run_api_agent_reviews__review_id__runs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                review_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentReviewRunCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentReviewRunAccepted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_findings_api_agent_findings_get: {
+        parameters: {
+            query: {
+                agent_id: string;
+                status?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FindingPublic"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_finding_api_agent_findings_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FindingCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FindingPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    search_finding_page_api_agent_findings_search_get: {
+        parameters: {
+            query?: {
+                agent_id?: string | null;
+                status?: string | null;
+                finding_kind?: string | null;
+                source_kind?: string | null;
+                review_id?: string | null;
+                review_run_id?: string | null;
+                q?: string | null;
+                organization_id?: string | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FindingSearchPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_finding_api_agent_findings__finding_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                finding_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FindingPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_finding_api_agent_findings__finding_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                finding_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FindingUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FindingPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_schedules_api_recurring_triggers_get: {
+        parameters: {
+            query?: {
+                operation_type?: string | null;
+                organization_id?: string | null;
+                enabled?: boolean | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecurringTriggerPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_schedule_api_recurring_triggers_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecurringTriggerCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecurringTriggerPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_schedule_api_recurring_triggers__trigger_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                trigger_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecurringTriggerPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_schedule_api_recurring_triggers__trigger_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                trigger_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecurringTriggerUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecurringTriggerPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_schedule_fires_api_recurring_triggers__trigger_id__fires_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                trigger_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TriggerFirePage"];
                 };
             };
             /** @description Validation Error */
@@ -43525,6 +46462,8 @@ export interface operations {
                 source?: "executions" | "chat" | "agents" | "all";
                 /** @description Filter by organization ID */
                 org_id?: string | null;
+                /** @description Filter to platform-global rows with no organization */
+                global_only?: boolean;
             };
             header?: never;
             path?: never;
@@ -43539,6 +46478,52 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UsageReportResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_usage_breakdown_api_reports_usage_breakdown_get: {
+        parameters: {
+            query: {
+                /** @description Start date in UTC (inclusive) */
+                start_date: string;
+                /** @description End date in UTC (inclusive) */
+                end_date: string;
+                /** @description Filter by organization UUID */
+                org_id?: string | null;
+                /** @description Filter to platform-global rows with no organization */
+                global_only?: boolean;
+                source?: "all" | "executions" | "chat" | "agents";
+                purpose?: string | null;
+                provider?: string | null;
+                model?: string | null;
+                profile_id?: string | null;
+                profile_fingerprint?: string | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QualityUsageBreakdownResponse"];
                 };
             };
             /** @description Validation Error */

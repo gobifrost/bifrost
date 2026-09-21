@@ -851,12 +851,12 @@ class AgentRunConsumer(BaseConsumer):
             consumer_applied_result = False
             raw_status = run_result.get("status", "completed")
             terminal_status = _TERMINAL_STATUS_MAP.get(raw_status)
-			# A suspended parent parked itself in waiting_child and released
+            # A suspended parent parked itself in waiting_child and released
             # the worker: the sync waiter keeps waiting for the final
             # terminal result, and event delivery completes with it.
-			suspended = raw_status == "suspended"
-			async with self._session_factory() as db:
-				# Flush metering and steps even when another worker won the
+            suspended = raw_status == "suspended"
+            async with self._session_factory() as db:
+                # Flush metering and steps even when another worker won the
                 # terminal-state race; completed provider work still incurred
                 # cost and remains useful diagnostic evidence.
                 if executor:

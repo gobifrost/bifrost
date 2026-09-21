@@ -312,8 +312,9 @@ class AutonomousAgentExecutor:
             snapshot_limits = {}
             profile_id = agent.llm_profile_id
 
-		async with self._session_factory() as db:
-			llm_config = await get_llm_config(db, profile_id=profile_id)
+        async with self._session_factory() as db:
+            llm_configs = await get_llm_configs(db, profile_id=profile_id)
+        llm_config = llm_configs[0]
         if snapshot_model is not None:
             # Re-resolve only credentials from the live profile.  Endpoint,
             # transport, caps, and provider tuning stay pinned at enqueue.
@@ -329,9 +330,10 @@ class AutonomousAgentExecutor:
                 default_max_tokens=snapshot_model.get("default_max_tokens"),
                 extra_params=dict(snapshot_model.get("extra_params") or {}),
             )
-		model_name = (
-			snapshot_model["model"] if snapshot_model else llm_config.model
-		)
+            llm_configs[0] = llm_config
+        model_name = (
+            snapshot_model["model"] if snapshot_model else llm_config.model
+        )
 
         # Short-circuit if agent is paused. Runs already past this point continue
         # normally — this check only gates new runs at entry. Snapshot-backed
@@ -695,7 +697,11 @@ class AutonomousAgentExecutor:
             record_model_event,
             retry_surface="autonomous_agent",
             model_override=model_name,
-            max_tokens=agent.llm_max_tokens,
+            max_tokens=(
+                snapshot_model["llm_max_tokens"]
+                if snapshot_model
+                else agent.llm_max_tokens
+            ),
             session_id=run_id,
         )
         # llm_config already carries the resolved profile's
@@ -716,37 +722,25 @@ class AutonomousAgentExecutor:
         # Usage for every attempt — including rejected ones — is already
         # charged to the shared UsageLimits ledger by ObservedModel.
         empty_output_guard = EmptyOutputCircuitBreaker()
-		runtime = PydanticAgent(
-			observed_model,
+        runtime = PydanticAgent(
+            chain.model,
             # DeferredToolRequests stays a legal output so system tools can
             # suspend (delegation, fan-out, timers) instead of erroring.
-			output_type=[DeferredToolRequests, str],
-			system_prompt=(
-				execution_snapshot["system_prompt"]
+            output_type=[DeferredToolRequests, str],
+            system_prompt=(
+                execution_snapshot["system_prompt"]
                 if execution_snapshot is not None
                 else build_agent_system_prompt(
-					agent,
-					execution_context={"mode": "autonomous"},
-				)
-			),
+                    agent,
+                    execution_context={"mode": "autonomous"},
+                )
+            ),
             toolsets=[toolset] if tool_definitions else [],
             capabilities=[
                 *build_runtime_capabilities(budget),
                 empty_output_guard,
             ],
-			model_settings=agent_model_settings(
-                llm_config,
-                max_tokens=(
-                    snapshot_model["llm_max_tokens"]
-                    if snapshot_model
-                    else agent.llm_max_tokens
-                ),
-                session_id=run_id,
-                # llm_config already carries the resolved profile's
-                # default_max_tokens; agent.llm_max_tokens wins when set,
-                # otherwise the profile default (or provider default) applies.
-				agent_kind="worker",
-			),
+            model_settings=chain.primary_settings,
             # One bounded correction for malformed tool names/arguments. The
             # shared UsageLimits ledger charges the retry to the parent run.
             retries=1,
@@ -936,13 +930,13 @@ class AutonomousAgentExecutor:
         }
         if error and status == "failed":
             response["error"] = error
-		if chain.failover is not None and (path := chain.failover.fallback_path()):
-			response["failover_path"] = path
-		if status == "contract_failed":
-			response["error"] = (
-				"Output did not satisfy the caller's output contract: "
-				+ "; ".join(contract_errors[:5])
-			)
+        if chain.failover is not None and (path := chain.failover.fallback_path()):
+            response["failover_path"] = path
+        if status == "contract_failed":
+            response["error"] = (
+                "Output did not satisfy the caller's output contract: "
+                + "; ".join(contract_errors[:5])
+            )
         return response
 
     async def _enforce_output_contract(
@@ -2350,14 +2344,14 @@ class AutonomousAgentExecutor:
             sub_run_obj.duration_ms = duration_ms
             sub_run_obj.completed_at = datetime.now(timezone.utc)
             sub_run_obj.error = error
-			if sub_result.get("failover_path"):
-				sub_run_obj.run_metadata = {
+            if sub_result.get("failover_path"):
+                sub_run_obj.run_metadata = {
                     **(sub_run_obj.run_metadata or {}),
                     # String-valued map on the wire; encode the path.
-					"failover_path": json.dumps(sub_result["failover_path"]),
-				}
-			sub_run_obj.contract_valid = sub_result.get("contract_valid")
-			sub_run_obj.contract_errors = sub_result.get("contract_errors")
+                    "failover_path": json.dumps(sub_result["failover_path"]),
+                }
+            sub_run_obj.contract_valid = sub_result.get("contract_valid")
+            sub_run_obj.contract_errors = sub_result.get("contract_errors")
 
             await sub_executor.flush_to_db(db)
             await db.commit()

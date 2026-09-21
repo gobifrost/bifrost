@@ -1411,8 +1411,8 @@ class TestAutonomousAgentExecutor:
     @pytest.mark.asyncio
     @patch("src.services.agent_runtime.model_factory.create_agent_model")
     @patch("src.services.execution.autonomous_agent_executor.resolve_agent_tools")
-	async def test_delegation_cancellation_marks_child_cancelled(
-		self, mock_resolve_tools, mock_create_model, mock_session, mock_agent
+    async def test_delegation_cancellation_marks_child_cancelled(
+        self, mock_resolve_tools, mock_create_model, mock_session, mock_agent
     ):
         """Parent cancellation marks the inline child cancelled, never timed out."""
         from src.models.orm.agent_runs import AgentRun
@@ -1456,8 +1456,8 @@ class TestAutonomousAgentExecutor:
 
         mock_session._mock_session.get = AsyncMock(side_effect=_get_row)
 
-		mock_llm = AsyncMock()
-		mock_llm.complete = AsyncMock(
+        mock_llm = AsyncMock()
+        mock_llm.complete = AsyncMock(
             side_effect=[
                 LLMResponse(
                     content=None,
@@ -1473,9 +1473,9 @@ class TestAutonomousAgentExecutor:
                     output_tokens=50,
                 ),
                 asyncio.CancelledError("parent gone"),
-			]
-		)
-		mock_create_model.return_value = LegacyMockModel(mock_llm)
+            ]
+        )
+        mock_create_model.return_value = LegacyMockModel(mock_llm)
 
         executor = AutonomousAgentExecutor(mock_session)
         with pytest.raises(asyncio.CancelledError):
@@ -1764,7 +1764,7 @@ class TestAutonomousAgentExecutor:
         executor = AutonomousAgentExecutor(mock_session)
         with (
             patch(
-                "src.services.execution.autonomous_agent_executor.create_agent_model",
+                "src.services.agent_runtime.model_factory.create_agent_model",
                 side_effect=_fake_create_model,
             ),
             patch(
@@ -1828,7 +1828,7 @@ class TestAutonomousAgentExecutor:
         )
         with (
             patch(
-                "src.services.execution.autonomous_agent_executor.create_agent_model",
+                "src.services.agent_runtime.model_factory.create_agent_model",
                 return_value=FunctionModel(lambda messages, info: "unused"),
             ),
             patch(

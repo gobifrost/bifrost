@@ -414,14 +414,14 @@ class TestDurableExecutorBoundaries:
             recorded_usage: list = []
             with (
                 patch(
-                    "src.services.execution.autonomous_agent_executor.get_llm_config",
+                    "src.services.execution.autonomous_agent_executor.get_llm_configs",
                     new_callable=AsyncMock,
-                    return_value=LLMConfig(
+                    return_value=[LLMConfig(
                         provider="openai", model="test-model", api_key="k"
-                    ),
+                    )],
                 ),
                 patch(
-                    "src.services.execution.autonomous_agent_executor.create_agent_model",
+                    "src.services.agent_runtime.model_factory.create_agent_model",
                     return_value=_function_model(),
                 ),
                 patch(

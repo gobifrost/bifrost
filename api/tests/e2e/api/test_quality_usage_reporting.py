@@ -47,6 +47,8 @@ async def _seed_quality_ledger(db_session, *, org_id: UUID) -> tuple[UUID, UUID]
         request_fingerprint="included-fingerprint",
         organization_id=org_id,
     )
+    included_attempt.attempt.started_at = datetime(2026, 9, 20, 12, 0, tzinfo=timezone.utc)
+    await db_session.flush()
     await record_quality_usage_observation(
         db_session,
         idempotency_key=included_attempt.attempt.idempotency_key,
@@ -63,7 +65,7 @@ async def _seed_quality_ledger(db_session, *, org_id: UUID) -> tuple[UUID, UUID]
         cache_write_tokens=1,
         provider_cost=Decimal("0.00030000"),
     )
-    await begin_quality_usage_attempt(
+    gap_attempt = await begin_quality_usage_attempt(
         db_session,
         idempotency_key=f"e2e-public-gap-{uuid4()}",
         quality_operation_type="recorded_evaluation",
@@ -75,6 +77,8 @@ async def _seed_quality_ledger(db_session, *, org_id: UUID) -> tuple[UUID, UUID]
         request_fingerprint="gap-fingerprint",
         organization_id=org_id,
     )
+    gap_attempt.attempt.started_at = datetime(2026, 9, 20, 13, 0, tzinfo=timezone.utc)
+    await db_session.flush()
     midnight_attempt = await begin_quality_usage_attempt(
         db_session,
         idempotency_key=f"e2e-public-midnight-{uuid4()}",

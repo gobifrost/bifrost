@@ -428,8 +428,9 @@ async def test_scheduled_suite_duplicate_and_overlap(
 
         with patch(PATH_DB_CTX, return_value=_DbCtx(db_session)):
             results = await process_recurring_platform_job_triggers()
-        # Cancelled cells do not overlap-block: the due occurrence admits.
-        # The old occurrence itself is fenced exactly once either way.
+        # The old occurrence itself is fenced exactly once. If its job was
+        # already claimed before cancellation, the due occurrence is safely
+        # skipped until that one-to-one job leaves cancel_requested.
         old_fires = (
             (
                 await db_session.execute(
@@ -443,7 +444,8 @@ async def test_scheduled_suite_duplicate_and_overlap(
             .all()
         )
         assert len(old_fires) == 1
-        assert results["admitted"] >= 1
+        assert results["errors"] == []
+        assert results["admitted"] + results["skipped"] >= 1
         new_fire = (
             await db_session.execute(
                 select(RecurringTriggerFire).where(
@@ -489,6 +491,79 @@ async def test_scheduled_suite_duplicate_and_overlap(
             )
         )
         await db_session.commit()
+
+
+async def test_scheduled_suite_skips_job_still_cancelling_without_rebinding(
+    e2e_client,
+    platform_admin,
+    org1_user,
+    sched_published_suite,
+    sched_matrix_profile,
+    db_session: AsyncSession,
+):
+    """A cancelled cell's still-active one-to-one job cannot bind a new cell."""
+    suite = sched_published_suite["suite"]
+    trigger = _make_suite_trigger(
+        org_id=org1_user.organization_id,
+        suite_id=UUID(suite["id"]),
+        user=org1_user,
+        profile_id=sched_matrix_profile,
+    )
+    db_session.add(trigger)
+    await db_session.commit()
+    tid = trigger.id
+    old_for = datetime.now(timezone.utc).replace(second=0, microsecond=0) - timedelta(days=1)
+    new_for = old_for + timedelta(minutes=1)
+    matrix_id: UUID | None = None
+    try:
+        old = await claim_fire(db_session, trigger_id=tid, scheduled_for=old_for)
+        old = await admit_scheduled_suite(
+            db_session, trigger=trigger, fire=old, scheduled_for=old_for
+        )
+        await db_session.commit()
+        assert old.domain_run_id is not None
+        matrix_id = old.domain_run_id
+
+        matrix = await db_session.get(AgentEvaluationMatrix, matrix_id)
+        assert matrix is not None
+        execution = await db_session.get(
+            AgentEvaluationExecution, UUID(matrix.cell_execution_ids[0])
+        )
+        assert execution is not None and execution.platform_job_id is not None
+        job = await db_session.get(PlatformJob, execution.platform_job_id)
+        assert job is not None
+        execution.status = "cancelled"
+        execution.completed_at = datetime.now(timezone.utc)
+        job.status = "cancel_requested"
+        job.phase = "Cancellation requested"
+        job.cancel_requested_at = datetime.now(timezone.utc)
+        await db_session.flush()
+
+        new_fire = await claim_fire(db_session, trigger_id=tid, scheduled_for=new_for)
+        new_fire = await admit_scheduled_suite(
+            db_session, trigger=trigger, fire=new_fire, scheduled_for=new_for
+        )
+        await db_session.commit()
+
+        assert new_fire.status == "skipped"
+        assert new_fire.reason == "job_conflict"
+        matrices = (
+            (
+                await db_session.execute(
+                    select(AgentEvaluationMatrix).where(
+                        AgentEvaluationMatrix.suite_id == UUID(suite["id"])
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert [row.id for row in matrices] == [matrix_id]
+    finally:
+        if matrix_id is not None:
+            await _cancel_and_cleanup_matrix(
+                e2e_client, platform_admin, db_session, matrix_id, [tid]
+            )
 
 
 async def test_scheduled_suite_fail_closed(

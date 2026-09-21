@@ -114,14 +114,14 @@ def _executor_patches(dispatch):
     tool_id = uuid4()
     return (
         patch(
-            "src.services.execution.autonomous_agent_executor.get_llm_config",
+            "src.services.execution.autonomous_agent_executor.get_llm_configs",
             new_callable=AsyncMock,
-            return_value=LLMConfig(
+            return_value=[LLMConfig(
                 provider="openai", model="test-model", api_key="k"
-            ),
+            )],
         ),
         patch(
-            "src.services.execution.autonomous_agent_executor.create_agent_model",
+            "src.services.agent_runtime.model_factory.create_agent_model",
             return_value=_history_aware_model(),
         ),
         patch(
@@ -236,7 +236,7 @@ class TestRestartRecovery:
                 with (
                     get_llm,
                     patch(
-                        "src.services.execution.autonomous_agent_executor.create_agent_model",
+                        "src.services.agent_runtime.model_factory.create_agent_model",
                         return_value=FunctionModel(_die_immediately),
                     ),
                     resolve_tools,

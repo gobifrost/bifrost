@@ -34,9 +34,6 @@ from src.services.agent_runtime.resume import prepare_resume
 from src.services.execution.autonomous_agent_executor import AutonomousAgentExecutor
 from src.services.llm.base import LLMConfig
 
-pytestmark = pytest.mark.asyncio
-
-
 @pytest.fixture(autouse=True)
 def _mock_rabbitmq_publish():
     """Keep durable queue nudges in-process.
@@ -102,15 +99,15 @@ def _create_agent(e2e_client, platform_admin, name: str) -> dict:
 def _llm_patches(model):
     return (
         patch(
-            "src.services.execution.autonomous_agent_executor.create_agent_model",
+            "src.services.agent_runtime.model_factory.create_agent_model",
             return_value=model,
         ),
         patch(
-            "src.services.execution.autonomous_agent_executor.get_llm_config",
+            "src.services.execution.autonomous_agent_executor.get_llm_configs",
             new_callable=AsyncMock,
-            return_value=LLMConfig(
+            return_value=[LLMConfig(
                 provider="openai", model="test-parent", api_key="test-key"
-            ),
+            )],
         ),
         patch(
             "src.services.agent_runtime.execution_snapshot.get_llm_config",

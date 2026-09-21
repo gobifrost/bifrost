@@ -695,15 +695,15 @@ async def test_durable_delegation_suspends_wakes_and_resumes_same_parent(
         executor = AutonomousAgentExecutor(async_session_factory)
         with (
             patch(
-                "src.services.execution.autonomous_agent_executor.create_agent_model",
+                "src.services.agent_runtime.model_factory.create_agent_model",
                 return_value=DelegatingTestModel(slug),
             ),
             patch(
-                "src.services.execution.autonomous_agent_executor.get_llm_config",
+                "src.services.execution.autonomous_agent_executor.get_llm_configs",
                 new_callable=AsyncMock,
-                return_value=LLMConfig(
+                return_value=[LLMConfig(
                     provider="openai", model="test-parent", api_key="test-key"
-                ),
+                )],
             ),
             patch(
                 "src.services.agent_runtime.execution_snapshot.get_llm_config",
@@ -801,15 +801,15 @@ async def test_durable_delegation_suspends_wakes_and_resumes_same_parent(
         resumed_executor = AutonomousAgentExecutor(async_session_factory)
         with (
             patch(
-                "src.services.execution.autonomous_agent_executor.create_agent_model",
+                "src.services.agent_runtime.model_factory.create_agent_model",
                 return_value=DelegatingTestModel(slug),
             ),
             patch(
-                "src.services.execution.autonomous_agent_executor.get_llm_config",
+                "src.services.execution.autonomous_agent_executor.get_llm_configs",
                 new_callable=AsyncMock,
-                return_value=LLMConfig(
+                return_value=[LLMConfig(
                     provider="openai", model="test-parent", api_key="test-key"
-                ),
+                )],
             ),
             patch(
                 "src.services.execution.run_summarizer.enqueue_summarize",
