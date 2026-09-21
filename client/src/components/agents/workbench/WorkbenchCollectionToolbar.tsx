@@ -1,6 +1,7 @@
-import type { ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { Search } from "lucide-react";
 
+import { WorkspacePrimaryAction } from "@/components/layout/WorkspacePrimaryAction";
 import { Input } from "@/components/ui/input";
 
 type WorkbenchCollectionToolbarProps = {
@@ -9,7 +10,7 @@ type WorkbenchCollectionToolbarProps = {
 	onSearchChange: (search: string) => void;
 	selectionCount?: number;
 	secondaryAction?: ReactNode;
-	primaryAction?: ReactNode;
+	primaryAction?: ComponentProps<typeof WorkspacePrimaryAction>;
 	children?: ReactNode;
 };
 
@@ -48,7 +49,7 @@ export function WorkbenchCollectionToolbar({
 			) : null}
 			{children}
 			{secondaryAction}
-			{primaryAction}
+			{primaryAction ? <WorkspacePrimaryAction {...primaryAction} /> : null}
 		</div>
 	);
 }

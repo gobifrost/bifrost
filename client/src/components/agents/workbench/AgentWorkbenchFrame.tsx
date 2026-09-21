@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 
 import { WorkspaceHeader } from "@/components/layout/WorkspaceHeader";
 import { Button } from "@/components/ui/button";
+import { navigationSelectionClasses } from "@/components/layout/navigationStyles";
 import {
 	Select,
 	SelectContent,
@@ -15,6 +16,15 @@ export type WorkbenchCollection = {
 	value: string;
 	label: string;
 };
+
+function detailLabel(collectionLabel: string) {
+	if (collectionLabel === "Run History") return "Run details";
+	if (collectionLabel.endsWith("ies"))
+		return `${collectionLabel.slice(0, -3)}y details`;
+	if (collectionLabel.endsWith("s"))
+		return `${collectionLabel.slice(0, -1)} details`;
+	return `${collectionLabel} details`;
+}
 
 type AgentWorkbenchFrameProps = {
 	title: string;
@@ -91,24 +101,24 @@ export function AgentWorkbenchFrame({
 					className="hidden w-44 shrink-0 flex-col gap-1 border-r bg-muted/20 p-2 md:flex"
 				>
 					{collections.map((item) => (
-						<Button
+						<button
 							key={item.value}
 							type="button"
-							variant="ghost"
 							className={cn(
-								"justify-start",
-								item.value === collection &&
-									"bg-muted font-medium text-foreground",
+								"flex min-h-10 items-center px-3 py-2 text-left text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2",
+								navigationSelectionClasses(item.value === collection),
 							)}
 							aria-current={item.value === collection ? "page" : undefined}
 							onClick={() => onCollectionChange(item.value)}
 						>
 							{item.label}
-						</Button>
+						</button>
 					))}
 				</nav>
 
 				<section
+					role="region"
+					aria-label={`${selectedCollection?.label ?? title} collection`}
 					className={cn(
 						"flex min-h-0 min-w-0 flex-1 flex-col",
 						inspector && "max-md:hidden",
@@ -119,7 +129,10 @@ export function AgentWorkbenchFrame({
 				</section>
 
 				{inspector ? (
-					<aside className="flex min-h-0 w-[min(28rem,42%)] shrink-0 flex-col border-l bg-card max-md:w-full max-md:border-l-0">
+					<aside
+						aria-label={detailLabel(selectedCollection?.label ?? title)}
+						className="flex min-h-0 w-[min(28rem,42%)] shrink-0 flex-col border-l bg-card max-md:w-full max-md:border-l-0"
+					>
 						<div className="flex min-h-12 shrink-0 items-center border-b px-3">
 							{onCloseInspector ? (
 								<Button
@@ -128,7 +141,7 @@ export function AgentWorkbenchFrame({
 									size="sm"
 									onClick={onCloseInspector}
 								>
-									Close inspector
+									Close Inspector
 								</Button>
 							) : null}
 						</div>

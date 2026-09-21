@@ -14,7 +14,7 @@ describe("WorkbenchCollectionToolbar", () => {
 				onSearchChange={onSearchChange}
 				selectionCount={2}
 				secondaryAction={<button type="button">Add Test</button>}
-				primaryAction={<button type="button">Run Simulation</button>}
+				primaryAction={{ type: "button", children: "Run Simulation" }}
 			>
 				<label>
 					Profile

@@ -26,6 +26,8 @@ describe("AgentWorkbenchFrame", () => {
 		);
 
 		expect(screen.getByLabelText("Workbench collections")).toBeVisible();
+		expect(screen.getByRole("region", { name: "Tests collection" })).toBeVisible();
+		expect(screen.getByRole("complementary", { name: "Test details" })).toBeVisible();
 		expect(screen.getByRole("button", { name: "Tests" })).toHaveAttribute(
 			"aria-current",
 			"page",
@@ -33,7 +35,7 @@ describe("AgentWorkbenchFrame", () => {
 		expect(screen.getByText("Collection toolbar")).toBeVisible();
 		expect(screen.getByText("Test rows")).toBeVisible();
 		expect(screen.getByText("Test inspector")).toBeVisible();
-		expect(screen.getByRole("button", { name: "Close inspector" })).toBeVisible();
+		expect(screen.getByRole("button", { name: "Close Inspector" })).toBeVisible();
 	});
 
 	it("uses a collection selector on narrow screens", () => {

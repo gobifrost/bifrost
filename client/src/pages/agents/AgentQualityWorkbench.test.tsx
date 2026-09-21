@@ -410,7 +410,7 @@ describe("AgentQualityWorkbench", () => {
 
 		expect(screen.getByRole("heading", { name: "Improve agent" })).toBeVisible();
 		expect(
-			screen.getByRole("button", { name: "Close inspector" }),
+			screen.getByRole("button", { name: "Close Inspector" }),
 		).toBeVisible();
 	});
 
@@ -422,15 +422,15 @@ describe("AgentQualityWorkbench", () => {
 		expect(screen.getByLabelText("Workbench collections")).toBeVisible();
 		expect(document.querySelector("[data-workspace-header]")).toBeVisible();
 		expect(
-			screen.getByRole("button", { name: "Close inspector" }),
+			screen.getByRole("button", { name: "Close Inspector" }),
 		).toBeVisible();
 		expect(
-			screen.getByRole("button", { name: /routes without confirming/i }),
+			screen.getByRole("option", { name: /routes without confirming/i }),
 		).toHaveAttribute("aria-selected", "true");
 
-		await user.click(screen.getByRole("button", { name: "Close inspector" }));
+		await user.click(screen.getByRole("button", { name: "Close Inspector" }));
 		expect(
-			screen.getByRole("button", { name: /routes without confirming/i }),
+			screen.getByRole("option", { name: /routes without confirming/i }),
 		).toHaveAttribute("aria-selected", "true");
 	});
 
@@ -658,6 +658,30 @@ describe("AgentQualityWorkbench", () => {
 		expect(screen.getByText(/incomplete/i)).toBeVisible();
 		expect(screen.getByText(/Run ended before final answer/i)).toBeVisible();
 		expect(screen.getByText(/Unknown-cost calls: 1/i)).toBeVisible();
+	});
+
+	it("dismisses recorded results without losing the collection route", async () => {
+		const { user } = renderPage("/agents/agent-1/quality?recorded=recorded-1");
+		await screen.findByRole("heading", { name: "Recorded results" });
+
+		await user.click(screen.getByRole("button", { name: "Close Inspector" }));
+
+		expect(screen.getByRole("region", { name: "Tests collection" })).toBeVisible();
+		expect(
+			screen.queryByRole("complementary", { name: "Test details" }),
+		).not.toBeInTheDocument();
+	});
+
+	it("dismisses changes context without losing the collection route", async () => {
+		const { user } = renderPage("/agents/agent-1/quality?execution=execution-1");
+		await screen.findByText("Changes suite none execution execution-1");
+
+		await user.click(screen.getByRole("button", { name: "Close Inspector" }));
+
+		expect(screen.getByRole("region", { name: "Tests collection" })).toBeVisible();
+		expect(
+			screen.queryByRole("complementary", { name: "Test details" }),
+		).not.toBeInTheDocument();
 	});
 
 	it("offers retry actions for collection read errors", async () => {

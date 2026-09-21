@@ -32,7 +32,7 @@ export function WorkbenchRow({
 
 	return (
 		<div
-			role="button"
+			role="option"
 			tabIndex={0}
 			aria-selected={selected}
 			onClick={onSelect}

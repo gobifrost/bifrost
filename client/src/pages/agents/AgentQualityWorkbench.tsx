@@ -176,7 +176,8 @@ function AgentQualityWorkbenchContent() {
 
 	const [search, setSearch] = useState("");
 	const [isCreatingTest, setIsCreatingTest] = useState(false);
-	const [isInspectorDismissed, setIsInspectorDismissed] = useState(false);
+	const [dismissedInspectorContext, setDismissedInspectorContext] =
+		useState("");
 	const [selectedTests, setSelectedTests] = useState<Set<string>>(
 		() => new Set(),
 	);
@@ -188,6 +189,17 @@ function AgentQualityWorkbenchContent() {
 	const [advancedJson, setAdvancedJson] = useState("");
 	const [advancedJsonError, setAdvancedJsonError] = useState("");
 	const queuedSuiteIdRef = useRef("");
+	const inspectorContext = [
+		selectedKey,
+		findingId,
+		recordedId,
+		suiteId,
+		candidateId,
+		matrixId,
+		executionId,
+		isCreatingTest,
+	].join(":");
+	const isInspectorDismissed = dismissedInspectorContext === inspectorContext;
 
 	function updateParams(values: Record<string, string | undefined>) {
 		const next = new URLSearchParams(params);
@@ -363,13 +375,11 @@ function AgentQualityWorkbenchContent() {
 		updateParams({ collection: nextCollection });
 		setSearch("");
 		setIsCreatingTest(false);
-		setIsInspectorDismissed(false);
 	}
 
 	function selectListItem(kind: Collection, id: string) {
 		updateParams({ selected: `${kind}:${id}` });
 		setIsCreatingTest(false);
-		setIsInspectorDismissed(false);
 	}
 
 	function toggleTest(testId: string) {
@@ -506,7 +516,6 @@ function AgentQualityWorkbenchContent() {
 									variant="outline"
 									onClick={() => {
 										setIsCreatingTest(true);
-										setIsInspectorDismissed(false);
 										updateParams({ selected: undefined });
 									}}
 								>
@@ -516,15 +525,13 @@ function AgentQualityWorkbenchContent() {
 						}
 						primaryAction={
 							collection === "tests" ? (
-								<Button
-									type="button"
-									onClick={submitSimulation}
-									disabled={
-										selectedTestItems.length === 0 || runTests.isPending
-									}
-								>
-									Run Simulation
-								</Button>
+								{
+									type: "button",
+									onClick: submitSimulation,
+									disabled:
+										selectedTestItems.length === 0 || runTests.isPending,
+									children: "Run Simulation",
+								}
 							) : undefined
 						}
 					>
@@ -546,7 +553,7 @@ function AgentQualityWorkbenchContent() {
 					</WorkbenchCollectionToolbar>
 				}
 				inspector={
-					recordedId ? (
+					isInspectorDismissed ? undefined : recordedId ? (
 						<RecordedResultsPanel
 							results={recordedResultsQuery.data}
 							usage={recordedUsageQuery.data}
@@ -571,7 +578,7 @@ function AgentQualityWorkbenchContent() {
 							executionId={executionId}
 							onNavigate={updateParams}
 						/>
-					) : selectedItem && !isInspectorDismissed ? (
+					) : selectedItem ? (
 						<Inspector
 							collection={collection}
 							item={selectedItem}
@@ -580,7 +587,7 @@ function AgentQualityWorkbenchContent() {
 							onCreateTestFromFinding={(findingId) =>
 								updateParams({ collection: "tests", finding: findingId })
 							}
-							onBack={() => setIsInspectorDismissed(true)}
+							onBack={() => setDismissedInspectorContext(inspectorContext)}
 						/>
 					) : isTestCreationOpen ? (
 						<TestCreationPanel
@@ -602,7 +609,6 @@ function AgentQualityWorkbenchContent() {
 							onAdvancedJsonChange={setAdvancedJson}
 							onClearFinding={() => {
 								setIsCreatingTest(false);
-								setIsInspectorDismissed(false);
 								updateParams({ finding: undefined });
 							}}
 							onCreate={submitTest}
@@ -611,7 +617,7 @@ function AgentQualityWorkbenchContent() {
 				}
 				onCloseInspector={() => {
 					setIsCreatingTest(false);
-					setIsInspectorDismissed(true);
+					setDismissedInspectorContext(inspectorContext);
 				}}
 			>
 				{selectionError ? (
@@ -723,7 +729,7 @@ function TestsCollection({
 	if (tests.length === 0)
 		return <CollectionState>No saved tests yet.</CollectionState>;
 	return (
-		<div>
+		<div role="listbox" aria-label="Tests collection">
 			{tests.map((test) => {
 				const latest = latestByLogicalId.get(test.logical_test_id);
 				return (
@@ -789,7 +795,7 @@ function FindingsCollection({
 	if (findings.length === 0)
 		return <CollectionState>No findings yet.</CollectionState>;
 	return (
-		<div>
+		<div role="listbox" aria-label="Findings collection">
 			{findings.map((finding) => (
 				<WorkbenchRow
 					key={finding.id}
@@ -839,7 +845,7 @@ function ReviewsCollection({
 	if (reviews.length === 0)
 		return <CollectionState>No review runs yet.</CollectionState>;
 	return (
-		<div>
+		<div role="listbox" aria-label="Reviews collection">
 			{reviews.map((review) => (
 				<WorkbenchRow
 					key={review.id}
@@ -882,7 +888,7 @@ function RunsCollection({
 	if (runs.length === 0)
 		return <CollectionState>No run history yet.</CollectionState>;
 	return (
-		<div>
+		<div role="listbox" aria-label="Run History collection">
 			{runs.map((run) => (
 				<WorkbenchRow
 					key={run.id}
