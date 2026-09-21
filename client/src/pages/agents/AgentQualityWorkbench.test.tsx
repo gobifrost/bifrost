@@ -773,9 +773,7 @@ describe("AgentQualityWorkbench", () => {
 			"href",
 			"/agents/agent-1/runs/run-1?tab=activity&sequence=7",
 		);
-		await user.click(
-			screen.getByRole("button", { name: "Create Test" }),
-		);
+		await user.click(screen.getByRole("button", { name: "Create Test" }));
 		expect(screen.getByRole("button", { name: "Tests" })).toHaveAttribute(
 			"aria-current",
 			"page",
@@ -873,7 +871,7 @@ describe("AgentQualityWorkbench", () => {
 		const { user } = renderPage();
 
 		await user.click(
-			await screen.findByRole("button", { name: "Retry tests" }),
+			await screen.findByRole("button", { name: "Retry Tests" }),
 		);
 
 		await waitFor(() => {

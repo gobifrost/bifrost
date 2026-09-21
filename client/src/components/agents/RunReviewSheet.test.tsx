@@ -94,7 +94,7 @@ describe("RunReviewSheet", () => {
 			/>,
 		);
 		expect(
-			screen.getByRole("dialog", { name: "Run review" }),
+			screen.getByRole("dialog", { name: "Run Review" }),
 		).toBeVisible();
 		expect(screen.getByRole("status")).toHaveTextContent(
 			"Loading run details",

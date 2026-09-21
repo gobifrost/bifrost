@@ -426,7 +426,7 @@ export function AgentReviewPage() {
 					<fieldset
 						disabled={saving}
 						className="min-w-0"
-						aria-label="Run review"
+						aria-label="Run Review"
 					>
 						<FlipbookCard
 							key={detail.id}

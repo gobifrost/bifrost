@@ -73,11 +73,11 @@ export function RunReviewSheet({
 				<SheetContent
 					{...dialogFocus}
 					side="right"
-					aria-label="Run review"
+					aria-label="Run Review"
 					className="w-full bg-background sm:max-w-2xl"
 				>
 					<SheetHeader>
-						<SheetTitle>Run review</SheetTitle>
+						<SheetTitle>Run Review</SheetTitle>
 						<SheetDescription>
 							Review this run’s activity and outcome.
 						</SheetDescription>
@@ -131,14 +131,14 @@ export function RunReviewSheet({
 			<SheetContent
 				{...dialogFocus}
 				side="right"
-				aria-label="Run review"
+				aria-label="Run Review"
 				showCloseButton={false}
 				className={cn(
 					"agent-run-review-sheet flex h-full w-full max-w-none flex-col gap-0 overflow-hidden border-border/70 bg-background p-0 text-foreground shadow-xl motion-reduce:transition-none motion-reduce:animate-none sm:max-w-2xl",
 				)}
 			>
 				<RunReviewSheetHeader
-					title={run.asked || run.did || "Run review"}
+					title={run.asked || run.did || "Run Review"}
 					runId={run.id}
 					agentId={run.agent_id}
 					runNavigationOrigin={runNavigationOrigin}
@@ -217,7 +217,7 @@ function RunReviewSheetHeader({
 					<div className="min-w-0 flex-1">
 						<div className="mb-1 inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-primary">
 							<span className="h-2 w-2 rounded-full bg-primary" />
-							Run review
+							Run Review
 						</div>
 						<SheetTitle className="text-pretty break-words text-lg leading-6 sm:text-xl">
 							<MarkdownContent

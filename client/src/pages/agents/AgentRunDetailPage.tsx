@@ -806,7 +806,7 @@ export function AgentRunDetailPage() {
 						<fieldset
 							disabled={savingVerdict}
 							className="min-w-0"
-							aria-label="Run review"
+							aria-label="Run Review"
 						>
 							<Card className="min-w-0 gap-0 overflow-hidden py-0">
 								<RunReviewPanel

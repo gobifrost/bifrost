@@ -944,7 +944,7 @@ function TestsCollection({
 		return (
 			<CollectionState
 				tone="error"
-				actionLabel="Retry tests"
+				actionLabel="Retry Tests"
 				onAction={onRetry}
 			>
 				Could not load tests.
@@ -1031,7 +1031,7 @@ function FindingsCollection({
 		return (
 			<CollectionState
 				tone="error"
-				actionLabel="Retry findings"
+				actionLabel="Retry Findings"
 				onAction={onRetry}
 			>
 				Could not load findings.
@@ -1091,7 +1091,7 @@ function ReviewsCollection({
 		return (
 			<CollectionState
 				tone="error"
-				actionLabel="Retry reviews"
+				actionLabel="Retry Reviews"
 				onAction={onRetry}
 			>
 				Could not load reviews.
@@ -1140,7 +1140,7 @@ function RunsCollection({
 		return (
 			<CollectionState
 				tone="error"
-				actionLabel="Retry run history"
+				actionLabel="Retry Run History"
 				onAction={onRetry}
 			>
 				Could not load run history.
@@ -1213,7 +1213,7 @@ function TestCreationPanel({
 							size="sm"
 							onClick={onClearFinding}
 						>
-							Clear finding
+							Clear Finding
 						</Button>
 					</div>
 					<p className="mt-2 text-sm text-muted-foreground">
@@ -1460,7 +1460,7 @@ function RunInspector({ run, agentId }: { run: QualityRun; agentId?: string }) {
 					className="text-sm underline"
 					to={`/agents/${agentId}/runs/${run.id}`}
 				>
-					Open run
+					Open Run
 				</Link>
 			)}
 		</div>
