@@ -3600,26 +3600,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/github/configure": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Configure GitHub integration
-         * @description Save GitHub repository configuration. Syncing happens via /sync endpoints.
-         */
-        post: operations["configure_github_api_github_configure_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/github/repositories": {
         parameters: {
             query?: never;
@@ -9028,12 +9008,12 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Auto-pull a git-connected install from its repo (admin only)
-         * @description Pull the connected install's repo ``main`` and deploy it (criterion 13).
+         * Queue a git-connected install update from its repo (admin only)
+         * @description Queue a pull of the connected install's configured Git ref (criterion 13).
          *
-         *     This is the auto-pull entry point (webhook/poll/manual). It is the ONLY
-         *     writer for a connected install — the deploy endpoint is refused for it. For a
-         *     disconnected install there is nothing to pull, so this is refused in turn.
+         *     The shared per-Solution resource lock serializes this durable mutation with
+         *     deploys and SDK updates. The git-sync handler retains the service-level
+         *     write lock, which also protects non-platform writers.
          */
         post: operations["sync_solution_api_solutions__solution_id__sync_post"];
         delete?: never;
@@ -18705,23 +18685,6 @@ export interface components {
             branches: components["schemas"]["GitHubBranchInfo"][];
         };
         /**
-         * GitHubConfigRequest
-         * @description Request to configure GitHub integration - token must already be saved via /validate
-         */
-        GitHubConfigRequest: {
-            /**
-             * Repo Url
-             * @description GitHub repository URL (e.g., https://github.com/user/repo)
-             */
-            repo_url: string;
-            /**
-             * Branch
-             * @description Branch to sync with
-             * @default main
-             */
-            branch: string;
-        };
-        /**
          * GitHubConfigResponse
          * @description Response after configuring GitHub
          */
@@ -18796,28 +18759,6 @@ export interface components {
             repositories: components["schemas"]["GitHubRepoInfo"][];
             /** @description Auto-detected existing repository */
             detected_repo?: components["schemas"]["DetectedRepoInfo"] | null;
-        };
-        /**
-         * GitHubSetupResponse
-         * @description Response after configuring GitHub integration
-         */
-        GitHubSetupResponse: {
-            /**
-             * Job Id
-             * @description Job ID for tracking the setup operation (deprecated)
-             */
-            job_id?: string | null;
-            /**
-             * Notification Id
-             * @description Notification ID for watching progress via WebSocket (deprecated)
-             */
-            notification_id?: string | null;
-            /**
-             * Status
-             * @description Configuration status
-             * @default configured
-             */
-            status: string;
         };
         /**
          * GitOpRequest
@@ -34947,39 +34888,6 @@ export interface operations {
             };
         };
     };
-    configure_github_api_github_configure_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["GitHubConfigRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["GitHubSetupResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     list_github_repos_api_github_repositories_get: {
         parameters: {
             query?: never;
@@ -45058,9 +44966,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["PlatformJobAccepted"];
                 };
             };
             /** @description Validation Error */

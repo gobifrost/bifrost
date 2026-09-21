@@ -108,7 +108,7 @@ export type CreateEditSolutionMode =
 			 * Which install source to show. When omitted (and no `file`/`repo`
 			 * prefill is present), the source picker is shown first.
 			 */
-			source?: "repo" | "zip";
+			source?: "repo" | "zip" | "workspace";
 			/** Prefilled zip (a page drop) — implies the zip source. */
 			file?: File;
 			/** Prefilled repo fields (a deep link) — implies the repo source. */

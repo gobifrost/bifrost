@@ -1,0 +1,5 @@
+slug: workspace-import-demo
+name: Workspace Import Demo
+version: 1.0.0
+allow_outbound_access: false
+allow_inbound_access: false

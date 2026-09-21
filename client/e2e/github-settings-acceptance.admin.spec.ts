@@ -26,7 +26,7 @@ test.describe("GitHub settings acceptance (admin)", () => {
 	test("reviews a selected repository and queues an explicit reconciliation", async ({
 		page,
 	}) => {
-		let config = unconfiguredConfig();
+		const config = unconfiguredConfig();
 		let validateCalls = 0;
 		let previewPayload: unknown;
 		let connectPayload: unknown;

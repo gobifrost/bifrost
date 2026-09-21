@@ -738,6 +738,7 @@ describe("CreateEditSolution — source picker", () => {
 			preview_token: "workspace-preview",
 			package_name: "Workspace",
 			package_sha256: "a".repeat(64),
+			conflict_count: 0,
 			items: [],
 			warnings: [],
 		});

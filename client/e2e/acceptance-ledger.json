@@ -511,11 +511,11 @@
 		{
 			"id": "GITHUB-UI-01",
 			"area": "Platform settings",
-			"title": "validates, selects, saves, reloads, creates a repo, and disconnects through the UI",
+			"title": "reviews a selected repository and queues an explicit reconciliation",
 			"tests": [
 				{
 					"spec": "github-settings-acceptance.admin.spec.ts",
-					"title": "validates, selects, saves, reloads, creates a repo, and disconnects through the UI",
+					"title": "reviews a selected repository and queues an explicit reconciliation",
 					"project": "platform-admin",
 					"variant": "desktop",
 					"proof": "intercepted-external"

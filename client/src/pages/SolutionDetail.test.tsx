@@ -21,6 +21,8 @@ const APP_LOGO_DATA_URL =
 const wsMocks = vi.hoisted(() => ({
 	platformJobCallback: undefined as
 		((job: Record<string, unknown>) => void) | undefined,
+	jobSpecificCallback: undefined as
+		((job: Record<string, unknown>) => void) | undefined,
 }));
 
 vi.mock("@/services/websocket", () => ({
@@ -28,6 +30,15 @@ vi.mock("@/services/websocket", () => ({
 		onAnyPlatformJobUpdate: vi.fn(
 			(callback: (job: Record<string, unknown>) => void) => {
 				wsMocks.platformJobCallback = callback;
+				return vi.fn();
+			},
+		),
+		onPlatformJobUpdate: vi.fn(
+			(
+				_jobId: string,
+				callback: (job: Record<string, unknown>) => void,
+			) => {
+				wsMocks.jobSpecificCallback = callback;
 				return vi.fn();
 			},
 		),
@@ -833,13 +844,17 @@ describe("SolutionDetail", () => {
 
 		const { user } = await renderPage();
 		await screen.findByTestId("solution-detail");
-		await user.click(screen.getByRole("button", { name: "Disconnect Git" }));
+		await user.click(
+			screen.getByRole("button", { name: "Disconnect Git" }),
+		);
 
 		expect(
 			await screen.findByRole("heading", { name: "Disconnect Git?" }),
 		).toBeInTheDocument();
 		expect(mockDisconnectSolutionGit).not.toHaveBeenCalled();
-		await user.click(screen.getByRole("button", { name: "Disconnect Git" }));
+		await user.click(
+			screen.getByRole("button", { name: "Disconnect Git" }),
+		);
 		await waitFor(() =>
 			expect(mockDisconnectSolutionGit).toHaveBeenCalledWith("sol-1"),
 		);
@@ -910,14 +925,6 @@ describe("SolutionDetail", () => {
 		} as unknown as typeof entities.solution;
 		mockGetSolutionEntities.mockResolvedValue(entities);
 
-		let onUpdate: ((job: { status: string }) => void) | undefined;
-		mockObservePlatformJob.mockImplementation(
-			(_jobId: string, callback: (job: { status: string }) => void) => {
-				onUpdate = callback;
-				return { promise: Promise.resolve(undefined), cancel: vi.fn() };
-			},
-		);
-
 		const { user } = await renderPage();
 		await screen.findByTestId("solution-detail");
 		await user.click(screen.getByTestId("update-now"));
@@ -929,14 +936,41 @@ describe("SolutionDetail", () => {
 				expect.any(Function),
 			),
 		);
-		const entityReadsBeforeTerminal = mockGetSolutionEntities.mock.calls.length;
+		const entityReadsBeforeTerminal =
+			mockGetSolutionEntities.mock.calls.length;
 
-		act(() => onUpdate?.({ status: "running" }));
+		act(() => wsMocks.jobSpecificCallback?.({ status: "running" }));
 		expect(mockGetSolutionEntities).toHaveBeenCalledTimes(
 			entityReadsBeforeTerminal,
 		);
 
-		act(() => onUpdate?.({ status: "succeeded" }));
+		act(() => wsMocks.jobSpecificCallback?.({ status: "succeeded" }));
+		await waitFor(() =>
+			expect(mockGetSolutionEntities.mock.calls.length).toBeGreaterThan(
+				entityReadsBeforeTerminal,
+			),
+		);
+	});
+
+	it("refreshes the Solution after a queued Git sync fails terminally", async () => {
+		mockSyncSolution.mockResolvedValue({ job_id: "failed-sync-job" });
+		const entities = makeEntities();
+		entities.solution = {
+			...entities.solution,
+			git_connected: true,
+			git_repo_url: "https://github.com/acme/sol",
+			git_ref: "main",
+		} as unknown as typeof entities.solution;
+		mockGetSolutionEntities.mockResolvedValue(entities);
+
+		const { user } = await renderPage();
+		await screen.findByTestId("solution-detail");
+		await user.click(screen.getByTestId("update-now"));
+		await user.click(screen.getByTestId("confirm-update-now"));
+		const entityReadsBeforeTerminal =
+			mockGetSolutionEntities.mock.calls.length;
+
+		act(() => wsMocks.jobSpecificCallback?.({ status: "failed" }));
 		await waitFor(() =>
 			expect(mockGetSolutionEntities.mock.calls.length).toBeGreaterThan(
 				entityReadsBeforeTerminal,

@@ -139,6 +139,7 @@ import {
 	disconnectSolutionGit,
 } from "@/services/solutions";
 import { observePlatformJob } from "@/services/platformJobs";
+import { webSocketService } from "@/services/websocket";
 import { SolutionUpdateDialog } from "@/components/solutions/SolutionUpdateDialog";
 import { SolutionSetupWizard } from "@/components/solutions/SolutionSetupWizard";
 import { SolutionReadmeTab } from "@/components/solutions/SolutionReadmeTab";
@@ -2524,17 +2525,30 @@ export function SolutionDetail() {
 				toast.success("Solution update queued", {
 					description: "Progress is available in Notifications.",
 				});
-				const observation = observePlatformJob(
-					String(accepted.job_id),
-					(job) => {
-						if (job.status === "succeeded") {
-							void queryClient.invalidateQueries({
-								queryKey: ["solutions"],
-							});
-							invalidate();
-						}
-					},
+				const jobId = String(accepted.job_id);
+				let unsubscribe: () => void = () => undefined;
+				const handleUpdate = (job: { status: string }) => {
+					const terminal = [
+						"succeeded",
+						"failed",
+						"cancelled",
+						"requires_action",
+					].includes(job.status);
+					if (terminal) {
+						void queryClient.invalidateQueries({
+							queryKey: ["solutions"],
+						});
+						invalidate();
+						unsubscribe();
+					}
+				};
+				// Subscribe first, then take a durable snapshot. The pair closes both
+				// sides of the accepted-response-to-notification race without polling.
+				unsubscribe = webSocketService.onPlatformJobUpdate(
+					jobId,
+					handleUpdate,
 				);
+				const observation = observePlatformJob(jobId, handleUpdate);
 				void observation.promise.catch(() => undefined);
 				return;
 			}
@@ -2549,7 +2563,8 @@ export function SolutionDetail() {
 		onSuccess: () => {
 			setDisconnectGitOpen(false);
 			toast.success("Git disconnected", {
-				description: "Installed entities are unchanged and can be updated manually.",
+				description:
+					"Installed entities are unchanged and can be updated manually.",
 			});
 			void queryClient.invalidateQueries({ queryKey: ["solutions"] });
 			invalidate();
@@ -3292,22 +3307,30 @@ export function SolutionDetail() {
 					>
 						<AlertDialogContent>
 							<AlertDialogHeader>
-								<AlertDialogTitle>Disconnect Git?</AlertDialogTitle>
+								<AlertDialogTitle>
+									Disconnect Git?
+								</AlertDialogTitle>
 								<AlertDialogDescription>
-									This does not change installed entities. Future updates become
-									manual, and Git will no longer be the only writer for this
+									This does not change installed entities.
+									Future updates become manual, and Git will
+									no longer be the only writer for this
 									Solution.
 								</AlertDialogDescription>
 							</AlertDialogHeader>
 							{disconnectGitMut.isError && (
-								<p role="alert" className="text-sm text-destructive">
+								<p
+									role="alert"
+									className="text-sm text-destructive"
+								>
 									{disconnectGitMut.error instanceof Error
 										? disconnectGitMut.error.message
 										: "Could not disconnect Git. Try again."}
 								</p>
 							)}
 							<AlertDialogFooter>
-								<AlertDialogCancel disabled={disconnectGitMut.isPending}>
+								<AlertDialogCancel
+									disabled={disconnectGitMut.isPending}
+								>
 									Cancel
 								</AlertDialogCancel>
 								<AlertDialogAction
