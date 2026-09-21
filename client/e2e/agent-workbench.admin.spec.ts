@@ -40,6 +40,16 @@ test("turns a fleet Finding into a durable Test without leaving the Workbench", 
 		});
 		expect(createdFinding.ok()).toBe(true);
 
+		const createdReview = await api.post("/api/agent-reviews", {
+			data: {
+				agent_id: agentId,
+				name: `Find routing improvement opportunities ${suffix}`,
+				review_statement:
+					"Find recurring routing problems and opportunities in completed runs.",
+			},
+		});
+		expect(createdReview.ok()).toBe(true);
+
 		await page.goto("/agents");
 		await page.getByRole("link", { name: "Agent Workbench" }).click();
 		await expect(page).toHaveURL(/\/agents\/quality/);
@@ -47,9 +57,11 @@ test("turns a fleet Finding into a durable Test without leaving the Workbench", 
 		await expect(
 			page.getByRole("button", { name: "Findings", exact: true }),
 		).toHaveAttribute("aria-current", "page");
-		await page
-			.getByRole("button", { name: findingDescription })
-			.click();
+		await page.screenshot({
+			path: testInfo.outputPath("agent-workbench-findings-wide.png"),
+			fullPage: true,
+		});
+		await page.getByRole("button", { name: findingDescription }).click();
 		await expect(
 			page.getByRole("heading", { name: "Finding details" }),
 		).toBeVisible();
@@ -68,7 +80,9 @@ test("turns a fleet Finding into a durable Test without leaving the Workbench", 
 			expectedBehavior,
 		);
 
-		await page.getByRole("button", { name: "Create Test", exact: true }).click();
+		await page
+			.getByRole("button", { name: "Create Test", exact: true })
+			.click();
 		await expect(
 			page.getByRole("button", {
 				name: "Should ask one clarifying question before routing.",
@@ -76,6 +90,23 @@ test("turns a fleet Finding into a durable Test without leaving the Workbench", 
 		).toBeVisible();
 		await expect(page.getByText("Drafting from finding")).toHaveCount(0);
 		await expect(page).toHaveURL(/collection=tests/);
+		await page.screenshot({
+			path: testInfo.outputPath("agent-workbench-tests-wide.png"),
+			fullPage: true,
+		});
+
+		await page
+			.getByRole("button", { name: "Reviews", exact: true })
+			.click();
+		await expect(
+			page.getByText(`Find routing improvement opportunities ${suffix}`),
+		).toBeVisible();
+		await page.screenshot({
+			path: testInfo.outputPath("agent-workbench-reviews-wide.png"),
+			fullPage: true,
+		});
+
+		await page.getByRole("button", { name: "Tests", exact: true }).click();
 
 		await page.setViewportSize({ width: 390, height: 844 });
 		await page.screenshot({

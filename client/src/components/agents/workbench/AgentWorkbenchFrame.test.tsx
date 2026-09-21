@@ -6,8 +6,10 @@ import { AgentWorkbenchFrame } from "./AgentWorkbenchFrame";
 
 describe("AgentWorkbenchFrame", () => {
 	const collections = [
-		{ value: "tests", label: "Tests" },
-		{ value: "findings", label: "Findings" },
+		{ value: "findings", label: "Findings", group: "Act", count: 4 },
+		{ value: "tests", label: "Tests", group: "Validate", count: 18 },
+		{ value: "reviews", label: "Reviews", group: "Automate", count: 1 },
+		{ value: "runs", label: "Run History", group: "Evidence", count: 52 },
 	];
 
 	it("keeps collection navigation and the selected inspector in one workspace", () => {
@@ -26,16 +28,31 @@ describe("AgentWorkbenchFrame", () => {
 		);
 
 		expect(screen.getByLabelText("Workbench collections")).toBeVisible();
-		expect(screen.getByRole("region", { name: "Tests collection" })).toBeVisible();
-		expect(screen.getByRole("complementary", { name: "Test details" })).toBeVisible();
+		for (const group of ["Act", "Validate", "Automate", "Evidence"]) {
+			expect(screen.getByText(group)).toBeVisible();
+		}
+		expect(
+			screen.getByRole("button", { name: "Findings" }),
+		).toHaveAccessibleDescription("4 items");
 		expect(screen.getByRole("button", { name: "Tests" })).toHaveAttribute(
 			"aria-current",
 			"page",
 		);
+		expect(
+			screen.getByRole("button", { name: "Tests" }),
+		).toHaveAccessibleDescription("18 items");
+		expect(
+			screen.getByRole("region", { name: "Tests collection" }),
+		).toBeVisible();
+		expect(
+			screen.getByRole("complementary", { name: "Test details" }),
+		).toBeVisible();
 		expect(screen.getByText("Collection toolbar")).toBeVisible();
 		expect(screen.getByText("Test rows")).toBeVisible();
 		expect(screen.getByText("Test inspector")).toBeVisible();
-		expect(screen.getByRole("button", { name: "Close Inspector" })).toBeVisible();
+		expect(
+			screen.getByRole("button", { name: "Close Inspector" }),
+		).toBeVisible();
 	});
 
 	it("uses a collection selector on narrow screens", () => {

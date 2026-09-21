@@ -13,9 +13,13 @@ describe("WorkbenchRow", () => {
 				<WorkbenchRow
 					title="Should confirm routing"
 					meta="Failed simulation · 2 minutes ago"
+					leading={<span>!</span>}
+					leadingLabel="Failed Test"
 					selected
 					onSelect={onSelect}
-					selectionControl={<input aria-label="Select test" type="checkbox" />}
+					selectionControl={
+						<input aria-label="Select test" type="checkbox" />
+					}
 					actions={
 						<button type="button" onClick={onNestedAction}>
 							Open actions
@@ -27,6 +31,7 @@ describe("WorkbenchRow", () => {
 
 		const list = screen.getByRole("list", { name: "Tests collection" });
 		const item = screen.getByRole("listitem");
+		expect(screen.getByRole("img", { name: "Failed Test" })).toBeVisible();
 		const primaryButton = screen.getByRole("button", {
 			name: /should confirm routing/i,
 		});
@@ -36,14 +41,18 @@ describe("WorkbenchRow", () => {
 		expect(primaryButton.querySelectorAll("div")).toHaveLength(0);
 
 		await user.tab();
-		expect(screen.getByRole("checkbox", { name: "Select test" })).toHaveFocus();
+		expect(
+			screen.getByRole("checkbox", { name: "Select test" }),
+		).toHaveFocus();
 		await user.tab();
 		expect(primaryButton).toHaveFocus();
 		await user.keyboard("{Enter}");
 		await user.keyboard(" ");
 		expect(onSelect).toHaveBeenCalledTimes(2);
 		await user.tab();
-		expect(screen.getByRole("button", { name: "Open actions" })).toHaveFocus();
+		expect(
+			screen.getByRole("button", { name: "Open actions" }),
+		).toHaveFocus();
 
 		await user.click(screen.getByRole("checkbox", { name: "Select test" }));
 		await user.click(screen.getByRole("button", { name: "Open actions" }));

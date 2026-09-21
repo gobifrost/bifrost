@@ -294,9 +294,7 @@ describe("GlobalAgentQualityPage", () => {
 		await user.click(
 			await screen.findByRole("button", { name: /missed escalation/i }),
 		);
-		await user.click(
-			screen.getByRole("button", { name: "Create Test" }),
-		);
+		await user.click(screen.getByRole("button", { name: "Create Test" }));
 
 		expect(
 			await screen.findByRole("heading", { name: "Improve agent" }),
@@ -371,7 +369,9 @@ describe("GlobalAgentQualityPage", () => {
 		expect(
 			await screen.findByRole("heading", { name: "Review details" }),
 		).toBeVisible();
-		expect(screen.getByText(/Triage · Version 1 · active/i)).toBeVisible();
+		expect(screen.getByRole("listitem")).toHaveTextContent(
+			/Surfaces Findings.*Triage.*Version 1.*active/i,
+		);
 	});
 
 	it("keeps the canonical global route before the agent id route", () => {

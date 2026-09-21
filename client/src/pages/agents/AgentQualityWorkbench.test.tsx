@@ -377,7 +377,9 @@ describe("AgentQualityWorkbench", () => {
 		).not.toBeInTheDocument();
 		expect(document.querySelector("[data-agent-workbench]")).toBeVisible();
 		expect(
-			screen.getByText("Search, select, and inspect Workbench records."),
+			screen.getByText(
+				"Validate expected agent behavior with repeatable tests.",
+			),
 		).toBeVisible();
 		expect(
 			screen.queryByText("Search, select, and inspect quality signals."),
@@ -392,6 +394,7 @@ describe("AgentQualityWorkbench", () => {
 		expect(
 			await screen.findByText("Should ask before routing"),
 		).toBeVisible();
+		expect(screen.getByRole("img", { name: "Failed Test" })).toBeVisible();
 		expect(screen.getByText(/Simulation: failed/i)).toBeVisible();
 		expect(screen.getByText(/Recorded: failed/i)).toBeVisible();
 		expect(mockAgentTests).toHaveBeenCalledWith("agent-1", {
@@ -402,6 +405,34 @@ describe("AgentQualityWorkbench", () => {
 			limit: 50,
 			offset: 0,
 		});
+	});
+
+	it("distinguishes the Finding inbox from Review automation", async () => {
+		const { user } = renderPage(
+			"/agents/agent-1/quality?collection=findings",
+		);
+
+		expect(
+			await screen.findByText(
+				"Investigate problems and opportunities surfaced by runs and Reviews.",
+			),
+		).toBeVisible();
+		expect(
+			await screen.findByRole("img", { name: "Open Finding" }),
+		).toBeVisible();
+		expect(await screen.findByText("Run source")).toBeVisible();
+
+		await user.click(screen.getByRole("button", { name: "Reviews" }));
+
+		expect(
+			await screen.findByText(
+				"Automate plain-English checks over completed runs to surface Findings.",
+			),
+		).toBeVisible();
+		expect(
+			screen.getByRole("img", { name: "Active Review" }),
+		).toBeVisible();
+		expect(screen.getByText("Surfaces Findings")).toBeVisible();
 	});
 
 	it("maps old tab links to collection state without rendering wizard tabs", async () => {

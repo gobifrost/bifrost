@@ -1,7 +1,17 @@
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft } from "lucide-react";
+import {
+	ArrowLeft,
+	CircleCheck,
+	CircleX,
+	Clock3,
+	FlaskConical,
+	History,
+	ScanSearch,
+	TriangleAlert,
+	type LucideIcon,
+} from "lucide-react";
 
 import { PageWorkspace } from "@/components/layout/PageWorkspace";
 import { PageLoader } from "@/components/PageLoader";
@@ -26,7 +36,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useAgent, useAgents } from "@/hooks/useAgents";
 import { useInfiniteAgentRuns, type AgentRun } from "@/services/agentRuns";
 import { agentPlatform } from "@/services/agentPlatform";
-import { formatCost } from "@/lib/utils";
+import { cn, formatCost } from "@/lib/utils";
 import type { components } from "@/lib/v1";
 
 import { FleetReadError } from "./FleetReadError";
@@ -45,12 +55,45 @@ type QualityRun = AgentRun & {
 
 type Collection = "tests" | "findings" | "reviews" | "runs";
 
-const COLLECTIONS: { value: Collection; label: string }[] = [
-	{ value: "tests", label: "Tests" },
-	{ value: "findings", label: "Findings" },
-	{ value: "reviews", label: "Reviews" },
-	{ value: "runs", label: "Run History" },
-];
+const COLLECTION_META: Record<
+	Collection,
+	{
+		label: string;
+		group: string;
+		description: string;
+		icon: LucideIcon;
+	}
+> = {
+	findings: {
+		label: "Findings",
+		group: "Act",
+		description:
+			"Investigate problems and opportunities surfaced by runs and Reviews.",
+		icon: TriangleAlert,
+	},
+	tests: {
+		label: "Tests",
+		group: "Validate",
+		description: "Validate expected agent behavior with repeatable tests.",
+		icon: FlaskConical,
+	},
+	reviews: {
+		label: "Reviews",
+		group: "Automate",
+		description:
+			"Automate plain-English checks over completed runs to surface Findings.",
+		icon: ScanSearch,
+	},
+	runs: {
+		label: "Run History",
+		group: "Evidence",
+		description:
+			"Inspect the lifecycle and evidence from Workbench operations.",
+		icon: History,
+	},
+};
+
+const COLLECTIONS: Collection[] = ["findings", "tests", "reviews", "runs"];
 
 function collectionFromParams(params: URLSearchParams): Collection {
 	const collection = params.get("collection");
@@ -365,6 +408,26 @@ function AgentQualityWorkbenchContent({
 				QualityRun[] | undefined) ?? [],
 		[runsQuery.data?.pages],
 	);
+	const collectionCounts: Record<Collection, number> = {
+		findings: findings.length,
+		tests: tests.length,
+		reviews: reviews.length,
+		runs: runs.length,
+	};
+	const collectionItems = (isFleet ? FLEET_COLLECTIONS : COLLECTIONS).map(
+		(value) => {
+			const meta = COLLECTION_META[value];
+			const Icon = meta.icon;
+			return {
+				value,
+				label: meta.label,
+				group: meta.group,
+				count: collectionCounts[value],
+				icon: <Icon className="size-4" />,
+			};
+		},
+	);
+	const selectedCollection = COLLECTION_META[collection];
 	const findingContext =
 		findings.find((finding) => finding.id === findingId) ??
 		referencedFindingQuery.data;
@@ -592,7 +655,14 @@ function AgentQualityWorkbenchContent({
 		>
 			<div className="space-y-5" data-testid="quality-sticky-header">
 				{isFleet ? (
-					<div className="flex flex-wrap items-start justify-between gap-3">
+					<div className="space-y-3">
+						<Link
+							to="/agents"
+							className="inline-flex min-h-11 w-fit items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
+						>
+							<ArrowLeft aria-hidden="true" className="size-4" />
+							Back to Agents
+						</Link>
 						<div>
 							<h1 className="font-display text-2xl font-semibold tracking-tight">
 								Agent Workbench
@@ -602,15 +672,6 @@ function AgentQualityWorkbenchContent({
 								fleet.
 							</p>
 						</div>
-						<Button asChild variant="outline">
-							<Link to="/agents">
-								<ArrowLeft
-									aria-hidden="true"
-									className="size-4"
-								/>
-								Back to Agents
-							</Link>
-						</Button>
 					</div>
 				) : (
 					<QualityHeader
@@ -631,43 +692,16 @@ function AgentQualityWorkbenchContent({
 			</div>
 
 			<AgentWorkbenchFrame
-				title={
-					(isFleet
-						? FLEET_COLLECTIONS.map((value) => ({
-								value,
-								label: value[0].toUpperCase() + value.slice(1),
-							}))
-						: COLLECTIONS
-					).find((item) => item.value === collection)?.label ??
-					"Tests"
-				}
-				description="Search, select, and inspect Workbench records."
-				collections={
-					isFleet
-						? FLEET_COLLECTIONS.map((value) => ({
-								value,
-								label: value[0].toUpperCase() + value.slice(1),
-							}))
-						: COLLECTIONS
-				}
+				title={selectedCollection.label}
+				description={selectedCollection.description}
+				collections={collectionItems}
 				collection={collection}
 				onCollectionChange={(next) =>
 					selectCollection(next as Collection)
 				}
 				toolbar={
 					<WorkbenchCollectionToolbar
-						collectionLabel={
-							(isFleet
-								? FLEET_COLLECTIONS.map((value) => ({
-										value,
-										label:
-											value[0].toUpperCase() +
-											value.slice(1),
-									}))
-								: COLLECTIONS
-							).find((item) => item.value === collection)
-								?.label ?? "Tests"
-						}
+						collectionLabel={selectedCollection.label}
 						search={search}
 						onSearchChange={(value) =>
 							isFleet
@@ -963,13 +997,41 @@ function TestsCollection({
 		<div role="list" aria-label="Tests collection">
 			{tests.map((test) => {
 				const latest = latestByLogicalId.get(test.logical_test_id);
+				const latestOutcome =
+					latest?.recorded?.outcome ??
+					latest?.simulation?.status ??
+					"none";
+				const testFailed = latestOutcome === "failed";
+				const testPassed =
+					latestOutcome === "passed" || latestOutcome === "completed";
+				const StatusIcon = testFailed
+					? CircleX
+					: testPassed
+						? CircleCheck
+						: Clock3;
+				const statusLabel = testFailed
+					? "Failed Test"
+					: testPassed
+						? "Passed Test"
+						: "Not Run Test";
 				return (
 					<WorkbenchRow
 						key={test.logical_test_id}
 						title={test.name}
+						leading={
+							<StatusIcon
+								className={cn(
+									"size-4",
+									testFailed && "text-destructive",
+									testPassed &&
+										"text-emerald-600 dark:text-emerald-400",
+								)}
+							/>
+						}
+						leadingLabel={statusLabel}
 						meta={
 							<>
-								{resultLabel(latest)}
+								<span>{resultLabel(latest)}</span>
 								{agentName ? (
 									<>
 										<span className="mx-1">·</span>
@@ -1046,25 +1108,39 @@ function FindingsCollection({
 		);
 	return (
 		<div role="list" aria-label="Findings collection">
-			{findings.map((finding) => (
-				<WorkbenchRow
-					key={finding.id}
-					title={finding.description}
-					meta={
-						<>
-							{agentName
-								? `${agentName(finding.agent_id)} · `
-								: ""}
-							{finding.expected_behavior
-								? `Expected: ${finding.expected_behavior} · `
-								: ""}
-							{finding.source_kind} source · {finding.status}
-						</>
-					}
-					selected={selectedKey === `findings:${finding.id}`}
-					onSelect={() => onSelect(finding)}
-				/>
-			))}
+			{findings.map((finding) => {
+				const sourceLabel = `${finding.source_kind.charAt(0).toUpperCase()}${finding.source_kind.slice(1).replaceAll("_", " ")} source`;
+				const statusLabel = `${finding.status.charAt(0).toUpperCase()}${finding.status.slice(1)} Finding`;
+				return (
+					<WorkbenchRow
+						key={finding.id}
+						title={finding.description}
+						leading={
+							<TriangleAlert className="size-4 text-amber-600 dark:text-amber-400" />
+						}
+						leadingLabel={statusLabel}
+						meta={
+							<>
+								<Badge variant="warning">{sourceLabel}</Badge>
+								{agentName ? (
+									<>
+										<span className="mx-1">·</span>
+										{agentName(finding.agent_id)}
+									</>
+								) : null}
+								{finding.expected_behavior ? (
+									<>
+										<span className="mx-1">·</span>
+										Expected: {finding.expected_behavior}
+									</>
+								) : null}
+							</>
+						}
+						selected={selectedKey === `findings:${finding.id}`}
+						onSelect={() => onSelect(finding)}
+					/>
+				);
+			})}
 		</div>
 	);
 }
@@ -1110,7 +1186,23 @@ function ReviewsCollection({
 				<WorkbenchRow
 					key={review.id}
 					title={review.name}
-					meta={`${agentName ? `${agentName} · ` : ""}Version ${review.latest_version} · ${review.status}`}
+					leading={<ScanSearch className="size-4 text-primary" />}
+					leadingLabel={`${review.status.charAt(0).toUpperCase()}${review.status.slice(1)} Review`}
+					meta={
+						<>
+							<Badge variant="outline">Surfaces Findings</Badge>
+							{agentName ? (
+								<>
+									<span className="mx-1">·</span>
+									{agentName}
+								</>
+							) : null}
+							<span className="mx-1">·</span>Version{" "}
+							{review.latest_version}
+							<span className="mx-1">·</span>
+							{review.status}
+						</>
+					}
 					selected={selectedKey === `reviews:${review.id}`}
 					onSelect={() => onSelect(review)}
 				/>
@@ -1159,6 +1251,8 @@ function RunsCollection({
 				<WorkbenchRow
 					key={run.id}
 					title={run.asked ?? run.trigger_type}
+					leading={<History className="size-4 text-primary" />}
+					leadingLabel={`${run.status} Workbench Run`}
 					meta={`${run.status} · ${run.created_at}`}
 					selected={selectedKey === `runs:${run.id}`}
 					onSelect={() => onSelect(run)}
