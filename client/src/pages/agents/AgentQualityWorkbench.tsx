@@ -279,17 +279,18 @@ function AgentQualityWorkbenchContent({
 			params.get("status"),
 			params.get("kind"),
 		],
-		queryFn: () =>
-			isFleet
-				? agentPlatform.searchFindings({
-						offset: 0,
-						limit: 50,
-						q: search || undefined,
-						status: params.get("status") || undefined,
-						finding_kind: params.get("kind") || undefined,
-						agent_id: effectiveAgentId || undefined,
-					})
-				: agentPlatform.findings(effectiveAgentId!),
+		queryFn: async (): Promise<Finding[]> => {
+			if (!isFleet) return agentPlatform.findings(effectiveAgentId!);
+			const page = await agentPlatform.searchFindings({
+				offset: 0,
+				limit: 50,
+				q: search || undefined,
+				status: params.get("status") || undefined,
+				finding_kind: params.get("kind") || undefined,
+				agent_id: effectiveAgentId || undefined,
+			});
+			return page.items;
+		},
 		enabled: isFleet ? collection === "findings" : !!effectiveAgentId,
 		retry: false,
 	});
@@ -351,12 +352,8 @@ function AgentQualityWorkbenchContent({
 		[testsQuery.data?.items],
 	);
 	const findings = useMemo(
-		() =>
-			isFleet
-				? ((findingsQuery.data as { items?: Finding[] } | undefined)
-						?.items ?? [])
-				: (findingsQuery.data ?? []),
-		[findingsQuery.data, isFleet],
+		() => findingsQuery.data ?? [],
+		[findingsQuery.data],
 	);
 	const reviews = useMemo(
 		() => reviewsQuery.data?.items ?? [],
@@ -381,6 +378,18 @@ function AgentQualityWorkbenchContent({
 	const selectedTestItems = tests.filter((test) =>
 		selectedTests.has(test.logical_test_id),
 	);
+	const changesWorkspace =
+		!isFleet && hasChangesContext && effectiveAgentId ? (
+			<ChangesWorkspace
+				agentId={effectiveAgentId}
+				suiteId={suiteId}
+				candidateId={candidateId}
+				profileIds={profileIds}
+				matrixId={matrixId}
+				executionId={executionId}
+				onNavigate={updateParams}
+			/>
+		) : undefined;
 
 	const selectedItem = useMemo(() => {
 		const [, selectedId] = selectedKey.split(":", 2);
@@ -744,16 +753,8 @@ function AgentQualityWorkbenchContent({
 								void recordedUsageQuery.refetch();
 							}}
 						/>
-					) : !isFleet && hasChangesContext ? (
-						<ChangesWorkspace
-							agentId={effectiveAgentId!}
-							suiteId={suiteId}
-							candidateId={candidateId}
-							profileIds={profileIds}
-							matrixId={matrixId}
-							executionId={executionId}
-							onNavigate={updateParams}
-						/>
+					) : changesWorkspace ? (
+						changesWorkspace
 					) : selectedItem ? (
 						<Inspector
 							collection={collection}
@@ -1310,30 +1311,30 @@ function Inspector({
 	return (
 		<div className="space-y-4">
 			{collection === "tests" && (
-					<TestInspector
-						test={item as AgentTest}
-						agentId={agentId}
-						latest={latestByLogicalId.get(
-							(item as AgentTest).logical_test_id,
-						)}
-					/>
+				<TestInspector
+					test={item as AgentTest}
+					agentId={agentId}
+					latest={latestByLogicalId.get(
+						(item as AgentTest).logical_test_id,
+					)}
+				/>
 			)}
 			{collection === "findings" && (
-					<FindingInspector
-						finding={item as Finding}
-						agentId={agentId}
-						onCreateTest={
-							onCreateTestFromFinding
-								? () => onCreateTestFromFinding(item as Finding)
-								: undefined
-						}
-					/>
+				<FindingInspector
+					finding={item as Finding}
+					agentId={agentId}
+					onCreateTest={
+						onCreateTestFromFinding
+							? () => onCreateTestFromFinding(item as Finding)
+							: undefined
+					}
+				/>
 			)}
 			{collection === "reviews" && (
-					<ReviewInspector review={item as Review} />
+				<ReviewInspector review={item as Review} />
 			)}
 			{collection === "runs" && (
-					<RunInspector run={item as QualityRun} agentId={agentId} />
+				<RunInspector run={item as QualityRun} agentId={agentId} />
 			)}
 		</div>
 	);
