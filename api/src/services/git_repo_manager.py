@@ -17,10 +17,12 @@ only used for bulk sync operations (git clone/fetch/merge/push).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from uuid import UUID, uuid4
 from contextlib import asynccontextmanager
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
+from dataclasses import dataclass
 from pathlib import Path
 
 import redis.asyncio as redis
@@ -35,6 +37,42 @@ GIT_LOCK_TIMEOUT = 300  # 5 minutes
 WORKSPACE_CHECKPOINT_PREFIX = "_workspace_sync_checkpoints"
 
 PERSISTENT_WORK_DIR = Path("/tmp/git")
+TREE_HASH_CHUNK_SIZE = 8 * 1024 * 1024
+
+
+@dataclass(frozen=True)
+class TreeEntryMetadata:
+    """Content-independent metadata for a workspace file."""
+
+    path: str
+    size: int
+    sha256: str
+
+
+def iter_repo_files(root: Path) -> Iterator[Path]:
+    """Yield workspace files without descending into Git internals."""
+    for path in root.rglob("*"):
+        if not path.is_file() or ".git" in path.relative_to(root).parts:
+            continue
+        yield path
+
+
+def hash_file(path: Path) -> tuple[int, str]:
+    """Stream one file's hash without retaining its content."""
+    digest = hashlib.sha256()
+    size = 0
+    with path.open("rb") as source:
+        while chunk := source.read(TREE_HASH_CHUNK_SIZE):
+            digest.update(chunk)
+            size += len(chunk)
+    return size, digest.hexdigest()
+
+
+def iter_tree_metadata(root: Path) -> Iterator[TreeEntryMetadata]:
+    """Yield metadata for each workspace file while retaining bounded memory."""
+    for path in iter_repo_files(root):
+        size, sha256 = hash_file(path)
+        yield TreeEntryMetadata(path.relative_to(root).as_posix(), size, sha256)
 
 
 class GitRepoManager:

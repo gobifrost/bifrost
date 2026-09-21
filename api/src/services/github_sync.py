@@ -29,7 +29,7 @@ from src.models.contracts.github import (
     WorkspaceFileChange,
     WorkspaceSyncPlan,
 )
-from src.services.git_repo_manager import GitRepoManager
+from src.services.git_repo_manager import GitRepoManager, hash_file, iter_tree_metadata
 from src.services.github_sync_entity_metadata import extract_entity_metadata
 
 if TYPE_CHECKING:
@@ -104,25 +104,6 @@ def _delete_keys(changes: list) -> set[tuple[str, str]]:
 # =============================================================================
 # Helpers
 # =============================================================================
-
-
-def _content_hash(content: bytes) -> str:
-    """SHA-256 of bytes."""
-    return hashlib.sha256(content).hexdigest()
-
-
-def _walk_tree(root: Path) -> dict[str, bytes]:
-    """Walk a directory tree and return {relative_path: content} for all files."""
-    files: dict[str, bytes] = {}
-    for p in root.rglob("*"):
-        if p.is_dir():
-            continue
-        rel = str(p.relative_to(root))
-        # Skip .git internals
-        if rel.startswith(".git/") or rel == ".git":
-            continue
-        files[rel] = p.read_bytes()
-    return files
 
 
 def _workspace_fingerprint(root: Path) -> str:
@@ -542,7 +523,7 @@ class GitHubSyncService:
                 WorkspaceFileChange(
                     path=path,
                     action=action,
-                    sha256=None if action == "delete" or not source.is_file() else _content_hash(source.read_bytes()),
+                    sha256=None if action == "delete" or not source.is_file() else hash_file(source)[1],
                 )
             )
         return changes
@@ -551,14 +532,13 @@ class GitHubSyncService:
     # Desktop-style operations: fetch, status, commit, sync, resolve, diff
     # -----------------------------------------------------------------
 
-    async def desktop_fetch(self, job_id: str | None = None) -> "FetchResult":
+    async def desktop_fetch(self, *, progress_fn=None) -> "FetchResult":
         """Git fetch origin. S3 sync down → regenerate manifest → git fetch → ahead/behind."""
         from src.models.contracts.github import FetchResult
 
         async def _progress(phase: str, current: int = 0, total: int = 0) -> None:
-            if job_id:
-                from src.core.pubsub import publish_git_progress
-                await publish_git_progress(job_id, phase, current, total)
+            if progress_fn:
+                await progress_fn(phase, current, total)
 
         try:
             await _progress("Syncing from storage...")
@@ -855,17 +835,17 @@ class GitHubSyncService:
 
     async def desktop_sync(
         self,
-        job_id: str | None = None,
         confirm_deletes: bool = False,
         retry_plan: "WorkspaceSyncPlan | None" = None,
+        *,
+        progress_fn=None,
     ) -> "SyncResult":
         """Prepare, validate, then conditionally apply a workspace synchronization."""
         from src.models.contracts.github import SyncResult
 
         async def _progress(phase: str, current: int = 0, total: int = 0) -> None:
-            if job_id:
-                from src.core.pubsub import publish_git_progress
-                await publish_git_progress(job_id, phase, current, total)
+            if progress_fn:
+                await progress_fn(phase, current, total)
 
         try:
             async with self.repo_manager.lock() as work_dir:
@@ -1349,8 +1329,8 @@ class GitHubSyncService:
         from src.models.orm.file_index import FileIndex
         from src.services.file_index_service import _is_text_file
 
-        files = _walk_tree(work_dir)
-        repo_paths = set(files.keys())
+        files = iter_tree_metadata(work_dir)
+        repo_paths: set[str] = set()
 
         # Prefetch all existing (path, content_hash) in one query
         existing_result = await self.db.execute(
@@ -1360,14 +1340,16 @@ class GitHubSyncService:
 
         # Build list of rows that need upserting (changed or new)
         pending_upserts: list[dict] = []
-        for rel_path, content in files.items():
+        for entry in files:
+            rel_path = entry.path
+            repo_paths.add(rel_path)
             if not _is_text_file(rel_path):
                 continue
             try:
-                content_str = content.decode("utf-8")
+                content_str = (work_dir / rel_path).read_text(encoding="utf-8")
             except UnicodeDecodeError:
                 continue
-            content_hash = _content_hash(content)
+            content_hash = entry.sha256
 
             # Skip if hash hasn't changed
             if existing_hashes.get(rel_path) == content_hash:
@@ -1394,7 +1376,7 @@ class GitHubSyncService:
             await self.db.execute(stmt)
 
         if pending_upserts:
-            logger.info(f"File index: upserted {len(pending_upserts)} changed files, skipped {len(files) - len(pending_upserts)} unchanged")
+            logger.info("File index: upserted %d changed files", len(pending_upserts))
 
         # Remove file_index entries that no longer exist in the repo
         stale_paths = set(existing_hashes.keys()) - repo_paths

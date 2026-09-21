@@ -21,6 +21,9 @@ class _Db:
         assert job_id == self.job.id
         return self.job
 
+    async def commit(self) -> None:
+        pass
+
 
 @pytest.mark.asyncio
 async def test_sync_retry_loads_the_callers_durable_publication_plan(
@@ -40,20 +43,17 @@ async def test_sync_retry_loads_the_callers_durable_publication_plan(
         requested_by_user_id=str(user_id),
         job_type="workspace.git",
         status="failed",
-        result={
-            "sync_result": SyncResult(
-                retryable=True,
-                retry_plan=plan,
-            ).model_dump(mode="json")
-        },
+        result=SyncResult(retryable=True, retry_plan=plan).model_dump(mode="json"),
     )
-    publish = AsyncMock(return_value=str(uuid4()))
+    job = SimpleNamespace(id=uuid4(), status="queued", notification_id=None)
+    enqueue = AsyncMock(return_value=(job, False))
     monkeypatch.setattr(
         github,
         "get_github_config",
         AsyncMock(return_value=SimpleNamespace(token="token", repo_url="owner/repo")),
     )
-    monkeypatch.setattr(github, "publish_git_operation", publish)
+    monkeypatch.setattr(github, "enqueue_platform_job", enqueue)
+    monkeypatch.setattr(github, "publish_platform_job_update", AsyncMock())
 
     response = await github.git_sync(
         ctx=SimpleNamespace(org_id=org_id),
@@ -62,8 +62,8 @@ async def test_sync_retry_loads_the_callers_durable_publication_plan(
         request=SyncRequest(retry_job_id=previous_job.id),
     )
 
-    assert response.job_id == publish.return_value
-    assert publish.await_args.kwargs["retry_plan"] == plan.model_dump(mode="json")
+    assert response.job_id == job.id
+    assert enqueue.await_args.args[2].options["retry_plan"] == plan.model_dump(mode="json")
 
 
 @pytest.mark.asyncio
@@ -80,13 +80,13 @@ async def test_sync_retry_rejects_another_callers_job(
         status="failed",
         result={},
     )
-    publish = AsyncMock()
+    enqueue = AsyncMock()
     monkeypatch.setattr(
         github,
         "get_github_config",
         AsyncMock(return_value=SimpleNamespace(token="token", repo_url="owner/repo")),
     )
-    monkeypatch.setattr(github, "publish_git_operation", publish)
+    monkeypatch.setattr(github, "enqueue_platform_job", enqueue)
 
     with pytest.raises(HTTPException) as error:
         await github.git_sync(
@@ -97,4 +97,4 @@ async def test_sync_retry_rejects_another_callers_job(
         )
 
     assert error.value.status_code == 404
-    publish.assert_not_awaited()
+    enqueue.assert_not_awaited()

@@ -306,8 +306,8 @@ class GitJobResponse(BaseModel):
 
 
 class GitOpRequest(BaseModel):
-    """Base request for git operations. Accepts optional client-generated job_id."""
-    job_id: str | None = Field(default=None, description="Client-generated job ID (avoids WebSocket race condition)")
+    """Base request for Git operations with optional durable idempotency key."""
+    job_id: UUID | None = Field(default=None, description="Client-generated platform job ID")
 
     model_config = ConfigDict(from_attributes=True)
 
