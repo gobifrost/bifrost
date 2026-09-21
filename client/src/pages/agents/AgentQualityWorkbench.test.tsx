@@ -445,6 +445,59 @@ describe("AgentQualityWorkbench", () => {
 		).toBeVisible();
 	});
 
+	it("explains the next action when the agent has no saved tests", async () => {
+		mockAgentTests.mockResolvedValueOnce({
+			items: [],
+			total: 0,
+			limit: 50,
+			offset: 0,
+		});
+		const { user } = renderPage();
+
+		expect(
+			await screen.findByText(
+				/No tests yet\. Add a test to capture behavior/i,
+			),
+		).toBeVisible();
+		const addTestButtons = screen.getAllByRole("button", {
+			name: "Add Test",
+		});
+		expect(addTestButtons).toHaveLength(2);
+		await user.click(addTestButtons[1]!);
+		expect(
+			screen.getByRole("heading", { name: "Improve agent" }),
+		).toBeVisible();
+	});
+
+	it("explains how empty collections gain evidence", async () => {
+		mockFindings.mockResolvedValueOnce([]);
+		mockReviews.mockResolvedValueOnce({
+			items: [],
+			total: 0,
+			limit: 50,
+			offset: 0,
+		});
+		mockUseAgentRuns.mockReturnValue({
+			data: { items: [], total: 0, next_cursor: null },
+			isLoading: false,
+		});
+		const { user } = renderPage(
+			"/agents/agent-1/quality?collection=findings",
+		);
+
+		expect(
+			await screen.findByText(/Findings come from runs and Reviews/i),
+		).toBeVisible();
+		await user.click(screen.getByRole("button", { name: "Reviews" }));
+		expect(
+			await screen.findByText(/Create a Review from completed runs/i),
+		).toBeVisible();
+		await user.click(screen.getByRole("button", { name: "Run History" }));
+		expect(
+			await screen.findByText(/Run a Test or Review to create evidence/i),
+		).toBeVisible();
+	});
+
 	it("reopens test creation when Add Test is selected again after dismissal", async () => {
 		const { user } = renderPage();
 		await screen.findByText("Should ask before routing");

@@ -23,6 +23,22 @@ vi.mock("@/services/agentPlatform", () => ({
 
 vi.mock("@/hooks/useAgents", () => ({
 	useAgents: (...args: unknown[]) => mockUseAgents(...args),
+	useAgent: () => ({
+		data: null,
+		isLoading: false,
+		isError: false,
+		isFetching: false,
+		refetch: vi.fn(),
+	}),
+}));
+
+vi.mock("@/services/agentRuns", () => ({
+	useInfiniteAgentRuns: () => ({
+		data: undefined,
+		isLoading: false,
+		isError: false,
+		refetch: vi.fn(),
+	}),
 }));
 
 const agents = [
@@ -44,6 +60,14 @@ beforeEach(() => {
 				description: "Missed escalation",
 				status: "open",
 				source_kind: "manual",
+				finding_kind: "problem",
+			},
+			{
+				id: "finding-2",
+				agent_id: "agent-2",
+				description: "Billing missed detail is incomplete",
+				status: "open",
+				source_kind: "review",
 				finding_kind: "problem",
 			},
 		],
@@ -109,7 +133,12 @@ function renderPage(entry = "/agents/quality") {
 		<Routes>
 			<Route
 				path="/agents/quality"
-				element={<GlobalAgentQualityPage />}
+				element={
+					<>
+						<GlobalAgentQualityPage />
+						<LocationProbe />
+					</>
+				}
 			/>
 			<Route path="/agents/:id/quality" element={<LocationProbe />} />
 			<Route path="/agents/:id" element={<div>agent detail</div>} />
@@ -153,7 +182,12 @@ describe("GlobalAgentQualityPage", () => {
 		expect(
 			screen.getByRole("list", { name: "Findings collection" }),
 		).toBeVisible();
-		expect(screen.queryByTestId("location-probe")).not.toBeInTheDocument();
+		expect(screen.getByTestId("location-probe")).toHaveTextContent(
+			"/agents/quality?collection=findings&search=missed&status=open&kind=problem&selected=findings%3Afinding-1&finding=finding-1",
+		);
+		expect(
+			screen.getByText("Billing missed detail is incomplete"),
+		).toBeVisible();
 	});
 
 	it("uses the shared fleet workbench and defaults to Findings", async () => {
@@ -170,7 +204,7 @@ describe("GlobalAgentQualityPage", () => {
 		expect(
 			await screen.findByRole("list", { name: "Findings collection" }),
 		).toBeVisible();
-		expect(screen.getByRole("listitem")).toBeVisible();
+		expect(screen.getAllByRole("listitem")).toHaveLength(2);
 	});
 
 	it("filters fleet Tests by one agent and inspects the selected test in place", async () => {
@@ -205,7 +239,7 @@ describe("GlobalAgentQualityPage", () => {
 			}),
 		).toBeVisible();
 		expect(screen.getAllByText(/Simulation: passed/i)).toHaveLength(2);
-		expect(screen.queryByTestId("location-probe")).not.toBeInTheDocument();
+		expect(screen.getByRole("listitem")).toHaveTextContent("Triage");
 	});
 
 	it("loads reviews for the selected agent without leaving the fleet workspace", async () => {
@@ -225,6 +259,7 @@ describe("GlobalAgentQualityPage", () => {
 		expect(
 			await screen.findByRole("heading", { name: "Review details" }),
 		).toBeVisible();
+		expect(screen.getByText(/Triage · Version 1 · active/i)).toBeVisible();
 	});
 
 	it("keeps the canonical global route before the agent id route", () => {

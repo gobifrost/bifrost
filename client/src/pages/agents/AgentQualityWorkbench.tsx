@@ -22,7 +22,6 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { useAgent, useAgents } from "@/hooks/useAgents";
 import { useInfiniteAgentRuns, type AgentRun } from "@/services/agentRuns";
@@ -155,15 +154,24 @@ export function AgentQualityWorkbench({
 }: {
 	scope?: AgentWorkbenchScope;
 }) {
-	if (scope === "fleet") return <FleetAgentWorkbench />;
-	return <AgentQualityWorkbenchContent />;
+	return <AgentQualityWorkbenchContent scope={scope} />;
 }
 
-function AgentQualityWorkbenchContent() {
-	const { id: agentId } = useParams<{ id: string }>();
+function AgentQualityWorkbenchContent({
+	scope,
+}: {
+	scope: AgentWorkbenchScope;
+}) {
+	const { id: routeAgentId } = useParams<{ id: string }>();
 	const [params, setParams] = useSearchParams();
 	const queryClient = useQueryClient();
-	const collection = collectionFromParams(params);
+	const isFleet = scope === "fleet";
+	const effectiveAgentId = isFleet
+		? (params.get("agent") ?? "")
+		: routeAgentId;
+	const collection = isFleet
+		? fleetCollectionFromParams(params.get("collection"))
+		: collectionFromParams(params);
 	const selectedKey = params.get("selected") ?? "";
 	const findingId = params.get("finding");
 	const suiteId = params.get("suite") ?? "";
@@ -176,7 +184,8 @@ function AgentQualityWorkbenchContent() {
 		.filter(Boolean);
 	const hasChangesContext = Boolean(candidateId || matrixId || executionId);
 
-	const [search, setSearch] = useState("");
+	const [agentSearch, setAgentSearch] = useState("");
+	const search = isFleet ? (params.get("search") ?? "") : agentSearch;
 	const [isCreatingTest, setIsCreatingTest] = useState(false);
 	const [dismissedInspectorContext, setDismissedInspectorContext] =
 		useState("");
@@ -231,41 +240,75 @@ function AgentQualityWorkbenchContent() {
 		isError: agentError,
 		isFetching: agentFetching,
 		refetch: refetchAgent,
-	} = useAgent(agentId);
+	} = useAgent(isFleet ? undefined : effectiveAgentId);
+	const { data: agentList } = useAgents(undefined, {
+		includeInactive: true,
+		includeStats: false,
+	});
+	const agents = (agentList ?? []) as FleetAgentSummary[];
+	const agentName = (id: string) =>
+		agents.find((agent) => agent.id === id)?.name ?? id;
 
 	const testsQuery = useQuery({
-		queryKey: ["agent-platform", "agent-tests", agentId],
+		queryKey: ["agent-platform", "agent-tests", effectiveAgentId],
 		queryFn: () =>
-			agentPlatform.agentTests(agentId!, { limit: 50, offset: 0 }),
-		enabled: !!agentId,
-		retry: false,
-	});
-	const latestQuery = useQuery({
-		queryKey: ["agent-platform", "agent-tests-latest", agentId],
-		queryFn: () =>
-			agentPlatform.latestAgentTests(agentId!, { limit: 50, offset: 0 }),
-		enabled: !!agentId,
-		retry: false,
-	});
-	const findingsQuery = useQuery({
-		queryKey: ["agent-platform", "findings", agentId],
-		queryFn: () => agentPlatform.findings(agentId!),
-		enabled: !!agentId,
-		retry: false,
-	});
-	const reviewsQuery = useQuery({
-		queryKey: ["agent-platform", "reviews", agentId],
-		queryFn: () =>
-			agentPlatform.reviews({
-				agent_id: agentId!,
-				status: "active",
+			agentPlatform.agentTests(effectiveAgentId!, {
 				limit: 50,
 				offset: 0,
 			}),
-		enabled: !!agentId,
+		enabled: !!effectiveAgentId && (!isFleet || collection === "tests"),
 		retry: false,
 	});
-	const runsQuery = useInfiniteAgentRuns({ agentId, pageSize: 50 });
+	const latestQuery = useQuery({
+		queryKey: ["agent-platform", "agent-tests-latest", effectiveAgentId],
+		queryFn: () =>
+			agentPlatform.latestAgentTests(effectiveAgentId!, {
+				limit: 50,
+				offset: 0,
+			}),
+		enabled: !!effectiveAgentId && (!isFleet || collection === "tests"),
+		retry: false,
+	});
+	const findingsQuery = useQuery({
+		queryKey: [
+			"agent-platform",
+			"findings",
+			isFleet ? "fleet" : "agent",
+			effectiveAgentId,
+			search,
+			params.get("status"),
+			params.get("kind"),
+		],
+		queryFn: () =>
+			isFleet
+				? agentPlatform.searchFindings({
+						offset: 0,
+						limit: 50,
+						q: search || undefined,
+						status: params.get("status") || undefined,
+						finding_kind: params.get("kind") || undefined,
+						agent_id: effectiveAgentId || undefined,
+					})
+				: agentPlatform.findings(effectiveAgentId!),
+		enabled: isFleet ? collection === "findings" : !!effectiveAgentId,
+		retry: false,
+	});
+	const reviewsQuery = useQuery({
+		queryKey: ["agent-platform", "reviews", effectiveAgentId, isFleet],
+		queryFn: () =>
+			agentPlatform.reviews({
+				agent_id: effectiveAgentId!,
+				status: isFleet ? undefined : "active",
+				limit: 50,
+				offset: 0,
+			}),
+		enabled: !!effectiveAgentId && (!isFleet || collection === "reviews"),
+		retry: false,
+	});
+	const runsQuery = useInfiniteAgentRuns({
+		agentId: isFleet ? undefined : effectiveAgentId,
+		pageSize: 50,
+	});
 	const recordedResultsQuery = useQuery({
 		queryKey: ["agent-platform", "recorded-results", recordedId],
 		queryFn: () =>
@@ -301,8 +344,12 @@ function AgentQualityWorkbenchContent() {
 		[testsQuery.data?.items],
 	);
 	const findings = useMemo(
-		() => findingsQuery.data ?? [],
-		[findingsQuery.data],
+		() =>
+			isFleet
+				? ((findingsQuery.data as { items?: Finding[] } | undefined)
+						?.items ?? [])
+				: (findingsQuery.data ?? []),
+		[findingsQuery.data, isFleet],
 	);
 	const reviews = useMemo(
 		() => reviewsQuery.data?.items ?? [],
@@ -351,21 +398,21 @@ function AgentQualityWorkbenchContent() {
 
 	const createTest = useMutation({
 		mutationFn: (body: Schema["AgentTestCreate"]) =>
-			agentPlatform.createAgentTest(agentId!, body),
+			agentPlatform.createAgentTest(effectiveAgentId!, body),
 		onSuccess: async () => {
 			setSituation("");
 			setExpectedBehavior("");
 			setAdvancedJson("");
 			setIsCreatingTest(false);
 			await queryClient.invalidateQueries({
-				queryKey: ["agent-platform", "agent-tests", agentId],
+				queryKey: ["agent-platform", "agent-tests", effectiveAgentId],
 			});
 		},
 	});
 
 	const runTests = useMutation({
 		mutationFn: (body: Schema["AgentTestsRunCreate"]) =>
-			agentPlatform.runAgentTests(agentId!, body),
+			agentPlatform.runAgentTests(effectiveAgentId!, body),
 		onSuccess: (result) => {
 			setQueuedExecution(result.executionId);
 			updateParams({
@@ -381,14 +428,20 @@ function AgentQualityWorkbenchContent() {
 
 	function selectCollection(nextCollection: Collection) {
 		reopenInspector();
-		updateParams({ collection: nextCollection });
-		setSearch("");
+		updateParams({
+			collection: nextCollection,
+			...(isFleet ? { selected: undefined, finding: undefined } : {}),
+		});
+		if (!isFleet) setAgentSearch("");
 		setIsCreatingTest(false);
 	}
 
 	function selectListItem(kind: Collection, id: string) {
 		reopenInspector();
-		updateParams({ selected: `${kind}:${id}` });
+		updateParams({
+			selected: `${kind}:${id}`,
+			finding: kind === "findings" ? id : undefined,
+		});
 		setIsCreatingTest(false);
 	}
 
@@ -414,7 +467,7 @@ function AgentQualityWorkbenchContent() {
 	}
 
 	function submitTest() {
-		if (!agentId) return;
+		if (!effectiveAgentId) return;
 		const advanced = parseAdvancedJson(advancedJson);
 		if (advanced.error) {
 			setAdvancedJsonError(advanced.error);
@@ -454,7 +507,7 @@ function AgentQualityWorkbenchContent() {
 	}
 
 	function submitSimulation() {
-		if (!agentId || selectedTestItems.length === 0) return;
+		if (!effectiveAgentId || selectedTestItems.length === 0) return;
 		const suiteIds = new Set(
 			selectedTestItems.map((test) => test.origin_suite_id),
 		);
@@ -476,8 +529,8 @@ function AgentQualityWorkbenchContent() {
 		});
 	}
 
-	if (!agent && agentLoading) return <PageLoader />;
-	if (!agent && agentError) {
+	if (!isFleet && !agent && agentLoading) return <PageLoader />;
+	if (!isFleet && !agent && agentError) {
 		return (
 			<div className="space-y-4">
 				<h1 className="font-display text-2xl font-semibold">
@@ -502,8 +555,34 @@ function AgentQualityWorkbenchContent() {
 			data-testid="agent-workbench"
 		>
 			<div className="space-y-5" data-testid="quality-sticky-header">
-				<QualityHeader agentId={agentId} agentName={agent?.name} />
-				{agentError && (
+				{isFleet ? (
+					<div className="flex flex-wrap items-start justify-between gap-3">
+						<div>
+							<h1 className="font-display text-2xl font-semibold tracking-tight">
+								Agent Workbench
+							</h1>
+							<p className="mt-1 text-sm text-muted-foreground">
+								Findings, tests, and reviews across the agent
+								fleet.
+							</p>
+						</div>
+						<Button asChild variant="outline">
+							<Link to="/agents">
+								<ArrowLeft
+									aria-hidden="true"
+									className="size-4"
+								/>
+								Back to Agents
+							</Link>
+						</Button>
+					</div>
+				) : (
+					<QualityHeader
+						agentId={effectiveAgentId}
+						agentName={agent?.name}
+					/>
+				)}
+				{!isFleet && agentError && (
 					<FleetReadError
 						resource="agent"
 						cached={!!agent}
@@ -517,11 +596,24 @@ function AgentQualityWorkbenchContent() {
 
 			<AgentWorkbenchFrame
 				title={
-					COLLECTIONS.find((item) => item.value === collection)
-						?.label ?? "Tests"
+					(isFleet
+						? FLEET_COLLECTIONS.map((value) => ({
+								value,
+								label: value[0].toUpperCase() + value.slice(1),
+							}))
+						: COLLECTIONS
+					).find((item) => item.value === collection)?.label ??
+					"Tests"
 				}
 				description="Search, select, and inspect Workbench records."
-				collections={COLLECTIONS}
+				collections={
+					isFleet
+						? FLEET_COLLECTIONS.map((value) => ({
+								value,
+								label: value[0].toUpperCase() + value.slice(1),
+							}))
+						: COLLECTIONS
+				}
 				collection={collection}
 				onCollectionChange={(next) =>
 					selectCollection(next as Collection)
@@ -529,17 +621,30 @@ function AgentQualityWorkbenchContent() {
 				toolbar={
 					<WorkbenchCollectionToolbar
 						collectionLabel={
-							COLLECTIONS.find(
-								(item) => item.value === collection,
-							)?.label ?? "Tests"
+							(isFleet
+								? FLEET_COLLECTIONS.map((value) => ({
+										value,
+										label:
+											value[0].toUpperCase() +
+											value.slice(1),
+									}))
+								: COLLECTIONS
+							).find((item) => item.value === collection)
+								?.label ?? "Tests"
 						}
 						search={search}
-						onSearchChange={setSearch}
+						onSearchChange={(value) =>
+							isFleet
+								? updateParams({ search: value || undefined })
+								: setAgentSearch(value)
+						}
 						selectionCount={
-							collection === "tests" ? selectedTests.size : 0
+							!isFleet && collection === "tests"
+								? selectedTests.size
+								: 0
 						}
 						secondaryAction={
-							collection === "tests" ? (
+							collection === "tests" && !!effectiveAgentId ? (
 								<Button
 									type="button"
 									variant="outline"
@@ -550,7 +655,7 @@ function AgentQualityWorkbenchContent() {
 							) : undefined
 						}
 						primaryAction={
-							collection === "tests"
+							!isFleet && collection === "tests"
 								? {
 										type: "button",
 										onClick: submitSimulation,
@@ -562,7 +667,7 @@ function AgentQualityWorkbenchContent() {
 								: undefined
 						}
 					>
-						{collection === "tests" ? (
+						{!isFleet && collection === "tests" ? (
 							<div className="min-w-[12rem]">
 								<ModelProfileSelector
 									label="Profile"
@@ -571,6 +676,21 @@ function AgentQualityWorkbenchContent() {
 									placeholder="Default assignment"
 								/>
 							</div>
+						) : null}
+						{isFleet ? (
+							<FleetAgentFilter
+								agents={agents}
+								collection={collection}
+								value={effectiveAgentId}
+								onValueChange={(value) =>
+									updateParams({
+										agent:
+											value === "all" ? undefined : value,
+										selected: undefined,
+										finding: undefined,
+									})
+								}
+							/>
 						) : null}
 						{queuedExecution ? (
 							<span className="text-sm font-medium text-foreground">
@@ -597,9 +717,9 @@ function AgentQualityWorkbenchContent() {
 								void recordedUsageQuery.refetch();
 							}}
 						/>
-					) : hasChangesContext ? (
+					) : !isFleet && hasChangesContext ? (
 						<ChangesWorkspace
-							agentId={agentId!}
+							agentId={effectiveAgentId!}
 							suiteId={suiteId}
 							candidateId={candidateId}
 							profileIds={profileIds}
@@ -611,10 +731,16 @@ function AgentQualityWorkbenchContent() {
 						<Inspector
 							collection={collection}
 							item={selectedItem}
-							agentId={agentId}
+							agentId={
+								isFleet && collection === "findings"
+									? (selectedItem as Finding).agent_id
+									: effectiveAgentId
+							}
 							latestByLogicalId={latestByLogicalId}
 							onCreateTestFromFinding={
-								openTestCreationFromFinding
+								effectiveAgentId
+									? openTestCreationFromFinding
+									: undefined
 							}
 							onBack={() =>
 								setDismissedInspectorContext(inspectorContext)
@@ -656,27 +782,41 @@ function AgentQualityWorkbenchContent() {
 						{selectionError}
 					</p>
 				) : null}
-				{collection === "tests" && (
-					<TestsCollection
-						tests={filteredTests}
-						latestByLogicalId={latestByLogicalId}
-						selectedTests={selectedTests}
-						selectedKey={selectedKey}
-						isLoading={testsQuery.isLoading}
-						isError={testsQuery.isError || latestQuery.isError}
-						onRetry={() => {
-							void testsQuery.refetch();
-							void latestQuery.refetch();
-						}}
-						onToggle={toggleTest}
-						onSelect={(test) =>
-							selectListItem("tests", test.logical_test_id)
-						}
-					/>
-				)}
+				{collection === "tests" &&
+					(effectiveAgentId ? (
+						<TestsCollection
+							tests={filteredTests}
+							latestByLogicalId={latestByLogicalId}
+							selectedTests={selectedTests}
+							selectedKey={selectedKey}
+							isLoading={testsQuery.isLoading}
+							isError={testsQuery.isError || latestQuery.isError}
+							onRetry={() => {
+								void testsQuery.refetch();
+								void latestQuery.refetch();
+							}}
+							onToggle={isFleet ? () => {} : toggleTest}
+							agentName={
+								isFleet
+									? agentName(effectiveAgentId)
+									: undefined
+							}
+							onAddTest={openTestCreation}
+							showSelectionControl={!isFleet}
+							onSelect={(test) =>
+								selectListItem("tests", test.logical_test_id)
+							}
+						/>
+					) : (
+						<CollectionState>
+							Choose an agent to view tests and add the first
+							test.
+						</CollectionState>
+					))}
 				{collection === "findings" && (
 					<FindingsCollection
 						findings={filteredFindings}
+						agentName={isFleet ? agentName : undefined}
 						selectedKey={selectedKey}
 						isLoading={findingsQuery.isLoading}
 						isError={findingsQuery.isError}
@@ -688,21 +828,32 @@ function AgentQualityWorkbenchContent() {
 						}
 					/>
 				)}
-				{collection === "reviews" && (
-					<ReviewsCollection
-						reviews={filteredReviews}
-						selectedKey={selectedKey}
-						isLoading={reviewsQuery.isLoading}
-						isError={reviewsQuery.isError}
-						onRetry={() => {
-							void reviewsQuery.refetch();
-						}}
-						onSelect={(review) =>
-							selectListItem("reviews", review.id)
-						}
-					/>
-				)}
-				{collection === "runs" && (
+				{collection === "reviews" &&
+					(effectiveAgentId ? (
+						<ReviewsCollection
+							reviews={filteredReviews}
+							selectedKey={selectedKey}
+							isLoading={reviewsQuery.isLoading}
+							isError={reviewsQuery.isError}
+							onRetry={() => {
+								void reviewsQuery.refetch();
+							}}
+							onSelect={(review) =>
+								selectListItem("reviews", review.id)
+							}
+							agentName={
+								isFleet
+									? agentName(effectiveAgentId)
+									: undefined
+							}
+						/>
+					) : (
+						<CollectionState>
+							Choose an agent to view its Reviews and the findings
+							they create.
+						</CollectionState>
+					))}
+				{!isFleet && collection === "runs" && (
 					<RunsCollection
 						runs={filteredRuns}
 						selectedKey={selectedKey}
@@ -729,6 +880,9 @@ function TestsCollection({
 	onToggle,
 	onSelect,
 	onRetry,
+	agentName,
+	onAddTest,
+	showSelectionControl = true,
 }: {
 	tests: AgentTest[];
 	latestByLogicalId: Map<string, AgentTestLatest>;
@@ -739,6 +893,9 @@ function TestsCollection({
 	onToggle: (id: string) => void;
 	onSelect: (test: AgentTest) => void;
 	onRetry: () => void;
+	agentName?: string;
+	onAddTest?: () => void;
+	showSelectionControl?: boolean;
 }) {
 	if (isLoading) return <CollectionState>Loading tests…</CollectionState>;
 	if (isError)
@@ -752,7 +909,14 @@ function TestsCollection({
 			</CollectionState>
 		);
 	if (tests.length === 0)
-		return <CollectionState>No saved tests yet.</CollectionState>;
+		return (
+			<CollectionState
+				actionLabel={onAddTest ? "Add Test" : undefined}
+				onAction={onAddTest}
+			>
+				No tests yet. Add a test to capture behavior you want to verify.
+			</CollectionState>
+		);
 	return (
 		<div role="list" aria-label="Tests collection">
 			{tests.map((test) => {
@@ -764,6 +928,12 @@ function TestsCollection({
 						meta={
 							<>
 								{resultLabel(latest)}
+								{agentName ? (
+									<>
+										<span className="mx-1">·</span>
+										{agentName}
+									</>
+								) : null}
 								<span className="mx-1">·</span>v{test.version}
 								{test.origin_suite_name ? (
 									<>
@@ -778,15 +948,17 @@ function TestsCollection({
 						}
 						onSelect={() => onSelect(test)}
 						selectionControl={
-							<Checkbox
-								checked={selectedTests.has(
-									test.logical_test_id,
-								)}
-								onCheckedChange={() =>
-									onToggle(test.logical_test_id)
-								}
-								aria-label={`Select ${test.name}`}
-							/>
+							showSelectionControl ? (
+								<Checkbox
+									checked={selectedTests.has(
+										test.logical_test_id,
+									)}
+									onCheckedChange={() =>
+										onToggle(test.logical_test_id)
+									}
+									aria-label={`Select ${test.name}`}
+								/>
+							) : undefined
 						}
 					/>
 				);
@@ -802,6 +974,7 @@ function FindingsCollection({
 	isError,
 	onSelect,
 	onRetry,
+	agentName,
 }: {
 	findings: Finding[];
 	selectedKey: string;
@@ -809,6 +982,7 @@ function FindingsCollection({
 	isError: boolean;
 	onSelect: (finding: Finding) => void;
 	onRetry: () => void;
+	agentName?: (agentId: string) => string;
 }) {
 	if (isLoading) return <CollectionState>Loading findings…</CollectionState>;
 	if (isError)
@@ -822,7 +996,12 @@ function FindingsCollection({
 			</CollectionState>
 		);
 	if (findings.length === 0)
-		return <CollectionState>No findings yet.</CollectionState>;
+		return (
+			<CollectionState>
+				No findings yet. Findings come from runs and Reviews that need
+				follow-up.
+			</CollectionState>
+		);
 	return (
 		<div role="list" aria-label="Findings collection">
 			{findings.map((finding) => (
@@ -831,10 +1010,13 @@ function FindingsCollection({
 					title={finding.description}
 					meta={
 						<>
+							{agentName
+								? `${agentName(finding.agent_id)} · `
+								: ""}
 							{finding.expected_behavior
 								? `Expected: ${finding.expected_behavior} · `
 								: ""}
-							{finding.status}
+							{finding.source_kind} source · {finding.status}
 						</>
 					}
 					selected={selectedKey === `findings:${finding.id}`}
@@ -852,6 +1034,7 @@ function ReviewsCollection({
 	isError,
 	onSelect,
 	onRetry,
+	agentName,
 }: {
 	reviews: Review[];
 	selectedKey: string;
@@ -859,6 +1042,7 @@ function ReviewsCollection({
 	isError: boolean;
 	onSelect: (review: Review) => void;
 	onRetry: () => void;
+	agentName?: string;
 }) {
 	if (isLoading) return <CollectionState>Loading reviews…</CollectionState>;
 	if (isError)
@@ -872,14 +1056,19 @@ function ReviewsCollection({
 			</CollectionState>
 		);
 	if (reviews.length === 0)
-		return <CollectionState>No review runs yet.</CollectionState>;
+		return (
+			<CollectionState>
+				No Reviews yet. Create a Review from completed runs to surface
+				durable findings.
+			</CollectionState>
+		);
 	return (
 		<div role="list" aria-label="Reviews collection">
 			{reviews.map((review) => (
 				<WorkbenchRow
 					key={review.id}
 					title={review.name}
-					meta={`Version ${review.latest_version} · ${review.status}`}
+					meta={`${agentName ? `${agentName} · ` : ""}Version ${review.latest_version} · ${review.status}`}
 					selected={selectedKey === `reviews:${review.id}`}
 					onSelect={() => onSelect(review)}
 				/>
@@ -916,7 +1105,12 @@ function RunsCollection({
 			</CollectionState>
 		);
 	if (runs.length === 0)
-		return <CollectionState>No run history yet.</CollectionState>;
+		return (
+			<CollectionState>
+				No run history yet. Run a Test or Review to create evidence
+				here.
+			</CollectionState>
+		);
 	return (
 		<div role="list" aria-label="Run History collection">
 			{runs.map((run) => (
@@ -1059,7 +1253,7 @@ function Inspector({
 	item: AgentTest | Finding | Review | QualityRun | null;
 	agentId?: string;
 	latestByLogicalId: Map<string, AgentTestLatest>;
-	onCreateTestFromFinding: (findingId: string) => void;
+	onCreateTestFromFinding?: (findingId: string) => void;
 	onBack: () => void;
 }) {
 	if (!item) {
@@ -1093,8 +1287,13 @@ function Inspector({
 					<FindingInspector
 						finding={item as Finding}
 						agentId={agentId}
-						onCreateTest={() =>
-							onCreateTestFromFinding((item as Finding).id)
+						onCreateTest={
+							onCreateTestFromFinding
+								? () =>
+										onCreateTestFromFinding(
+											(item as Finding).id,
+										)
+								: undefined
 						}
 					/>
 				)}
@@ -1157,7 +1356,7 @@ function FindingInspector({
 }: {
 	finding: Finding;
 	agentId?: string;
-	onCreateTest: () => void;
+	onCreateTest?: () => void;
 }) {
 	const runHref =
 		agentId && finding.source_run_id
@@ -1188,9 +1387,16 @@ function FindingInspector({
 					Linked tests: {finding.linked_case_ids.join(", ")}
 				</p>
 			) : null}
-			<Button type="button" onClick={onCreateTest}>
-				Create test from finding
-			</Button>
+			{onCreateTest ? (
+				<Button type="button" onClick={onCreateTest}>
+					Create test from finding
+				</Button>
+			) : (
+				<p className="text-sm text-muted-foreground">
+					Choose this agent in the filter to create a test from this
+					finding.
+				</p>
+			)}
 		</div>
 	);
 }
@@ -1362,529 +1568,43 @@ function CollectionState({
 	);
 }
 
+function FleetAgentFilter({
+	agents,
+	collection,
+	value,
+	onValueChange,
+}: {
+	agents: FleetAgentSummary[];
+	collection: Collection;
+	value: string;
+	onValueChange: (value: string) => void;
+}) {
+	return (
+		<Select value={value || "all"} onValueChange={onValueChange}>
+			<SelectTrigger
+				aria-label="Agent filter"
+				className="min-h-11 w-full sm:w-[220px]"
+			>
+				<SelectValue placeholder="All agents" />
+			</SelectTrigger>
+			<SelectContent>
+				{collection === "findings" ? (
+					<SelectItem value="all">All agents</SelectItem>
+				) : null}
+				{agents.map((agent) => (
+					<SelectItem key={agent.id} value={agent.id}>
+						{agent.name ?? agent.id}
+					</SelectItem>
+				))}
+			</SelectContent>
+		</Select>
+	);
+}
+
 type FleetCollection = "findings" | "tests" | "reviews";
 type FleetAgentSummary = { id: string; name?: string | null };
 
 const FLEET_COLLECTIONS: FleetCollection[] = ["findings", "tests", "reviews"];
-
-function FleetAgentWorkbench() {
-	const [params, setParams] = useSearchParams();
-	const queryClient = useQueryClient();
-	const collection = fleetCollectionFromParams(params.get("collection"));
-	const selectedAgentId = params.get("agent") ?? "";
-	const selectedKey = params.get("selected") ?? "";
-	const findingId = params.get("finding") ?? "";
-	const search = params.get("search") ?? "";
-	const status = params.get("status") ?? "";
-	const kind = params.get("kind") ?? "";
-	const [isCreatingTest, setIsCreatingTest] = useState(false);
-	const [situation, setSituation] = useState("");
-	const [expectedBehavior, setExpectedBehavior] = useState("");
-	const [advancedJson, setAdvancedJson] = useState("");
-	const [advancedJsonError, setAdvancedJsonError] = useState("");
-	const [dismissedInspectorContext, setDismissedInspectorContext] =
-		useState("");
-	const inspectorContext = `${collection}:${selectedKey}:${findingId}:${isCreatingTest}`;
-	const isInspectorDismissed = dismissedInspectorContext === inspectorContext;
-	const { data: agentList } = useAgents(undefined, {
-		includeInactive: true,
-		includeStats: false,
-	});
-	const agents = (agentList ?? []) as FleetAgentSummary[];
-	const agentName = (agentId: string) =>
-		agents.find((agent) => agent.id === agentId)?.name ?? agentId;
-
-	function update(values: Record<string, string | undefined>) {
-		const next = new URLSearchParams(params);
-		Object.entries(values).forEach(([key, value]) => {
-			if (value) next.set(key, value);
-			else next.delete(key);
-		});
-		setParams(next, { replace: true });
-	}
-
-	function selectCollection(nextCollection: FleetCollection) {
-		setDismissedInspectorContext("");
-		setIsCreatingTest(false);
-		update({
-			collection: nextCollection,
-			selected: undefined,
-			finding: undefined,
-		});
-	}
-
-	const findings = useQuery({
-		queryKey: [
-			"agent-quality",
-			"findings",
-			search,
-			status,
-			kind,
-			selectedAgentId,
-		],
-		queryFn: () =>
-			agentPlatform.searchFindings({
-				offset: 0,
-				limit: 50,
-				q: search || undefined,
-				status: status || undefined,
-				finding_kind: kind || undefined,
-				agent_id: selectedAgentId || undefined,
-			}),
-		enabled: collection === "findings" || Boolean(findingId),
-	});
-	const tests = useQuery({
-		queryKey: ["agent-quality", "tests", selectedAgentId],
-		queryFn: () =>
-			agentPlatform.agentTests(selectedAgentId, {
-				offset: 0,
-				limit: 50,
-			}),
-		enabled: collection === "tests" && !!selectedAgentId,
-	});
-	const latestTests = useQuery({
-		queryKey: ["agent-quality", "tests-latest", selectedAgentId],
-		queryFn: () =>
-			agentPlatform.latestAgentTests(selectedAgentId, {
-				offset: 0,
-				limit: 50,
-			}),
-		enabled: collection === "tests" && !!selectedAgentId,
-	});
-	const reviews = useQuery({
-		queryKey: ["agent-quality", "reviews", selectedAgentId],
-		queryFn: () =>
-			agentPlatform.reviews({
-				agent_id: selectedAgentId,
-				offset: 0,
-				limit: 50,
-			}),
-		enabled: collection === "reviews" && !!selectedAgentId,
-	});
-	const findingItems = ((findings.data as { items?: Finding[] } | undefined)
-		?.items ?? []) as Finding[];
-	const testItems = ((tests.data as { items?: AgentTest[] } | undefined)
-		?.items ?? []) as AgentTest[];
-	const reviewItems = ((reviews.data as { items?: Review[] } | undefined)
-		?.items ?? []) as Review[];
-	const latestByLogicalId = useMemo(
-		() =>
-			new Map(
-				(
-					((
-						latestTests.data as
-							{ items?: AgentTestLatest[] } | undefined
-					)?.items ?? []) as AgentTestLatest[]
-				).map((latest) => [latest.logical_test_id, latest]),
-			),
-		[latestTests.data],
-	);
-	const selectedItem = (() => {
-		const [, selectedId] = selectedKey.split(":", 2);
-		if (!selectedId) return null;
-		if (collection === "findings")
-			return (
-				findingItems.find((finding) => finding.id === selectedId) ??
-				null
-			);
-		if (collection === "tests")
-			return (
-				testItems.find((test) => test.logical_test_id === selectedId) ??
-				null
-			);
-		return reviewItems.find((review) => review.id === selectedId) ?? null;
-	})();
-	const findingContext = findingItems.find(
-		(finding) => finding.id === findingId,
-	);
-	const isTestCreationOpen =
-		collection === "tests" &&
-		!selectedItem &&
-		(isCreatingTest || Boolean(findingContext));
-	const createTest = useMutation({
-		mutationFn: (body: Schema["AgentTestCreate"]) =>
-			agentPlatform.createAgentTest(selectedAgentId, body),
-		onSuccess: async () => {
-			setSituation("");
-			setExpectedBehavior("");
-			setAdvancedJson("");
-			setIsCreatingTest(false);
-			update({ finding: undefined });
-			await queryClient.invalidateQueries({
-				queryKey: ["agent-quality", "tests", selectedAgentId],
-			});
-		},
-	});
-
-	function selectFinding(finding: Finding) {
-		setDismissedInspectorContext("");
-		update({
-			agent: finding.agent_id,
-			finding: finding.id,
-			selected: `findings:${finding.id}`,
-		});
-	}
-
-	function selectItem(kind: "tests" | "reviews", id: string) {
-		setDismissedInspectorContext("");
-		update({ selected: `${kind}:${id}`, finding: undefined });
-	}
-
-	function createTestFromFinding(finding: Finding) {
-		setDismissedInspectorContext("");
-		update({
-			agent: finding.agent_id,
-			collection: "tests",
-			finding: finding.id,
-			selected: undefined,
-		});
-	}
-
-	function openTestCreation() {
-		setDismissedInspectorContext("");
-		setIsCreatingTest(true);
-		update({ selected: undefined, finding: undefined });
-	}
-
-	function submitTest() {
-		if (!selectedAgentId) return;
-		const advanced = parseAdvancedJson(advancedJson);
-		if (advanced.error) {
-			setAdvancedJsonError(advanced.error);
-			return;
-		}
-		setAdvancedJsonError("");
-		createTest.mutate({
-			name: testNameFromExpected(expectedBehavior, situation),
-			position: testItems.length,
-			enabled: true,
-			input: {
-				situation: situation.trim(),
-				expected_behavior: expectedBehavior.trim(),
-			},
-			fixture: {},
-			simulator_policy: {},
-			assertions: [
-				{
-					type: "terminal_status",
-					label: "Completes successfully",
-					params: { status: "completed" },
-				},
-			],
-			expected_tools: [],
-			forbidden_tools: [],
-			output_schema: null,
-			repetitions: 1,
-			scoring_policy: {},
-			provenance: findingContext ? "finding" : "manual",
-			provenance_run_ids: findingContext?.source_run_id
-				? [findingContext.source_run_id]
-				: [],
-			finding_id: findingContext?.id ?? null,
-			tags: [],
-			...advanced.fields,
-		});
-	}
-
-	return (
-		<PageWorkspace
-			className="mx-auto flex min-w-0 w-full max-w-[1200px] flex-col gap-5"
-			data-agent-workbench=""
-			data-testid="agent-workbench"
-		>
-			<div className="shrink-0 space-y-5">
-				<div className="flex flex-wrap items-start justify-between gap-3">
-					<div className="min-w-0">
-						<h1 className="font-display text-2xl font-semibold tracking-tight">
-							Agent Workbench
-						</h1>
-						<p className="mt-1 text-sm text-muted-foreground">
-							Findings, tests, and reviews across the agent fleet.
-						</p>
-					</div>
-					<Button asChild variant="outline">
-						<Link to="/agents">
-							<ArrowLeft aria-hidden="true" className="size-4" />
-							Back to Agents
-						</Link>
-					</Button>
-				</div>
-			</div>
-
-			<AgentWorkbenchFrame
-				title={collection[0].toUpperCase() + collection.slice(1)}
-				description="Search and inspect records across the agent fleet."
-				collections={FLEET_COLLECTIONS.map((value) => ({
-					value,
-					label: value[0].toUpperCase() + value.slice(1),
-				}))}
-				collection={collection}
-				onCollectionChange={(value) =>
-					selectCollection(value as FleetCollection)
-				}
-				toolbar={
-					<WorkbenchCollectionToolbar
-						collectionLabel={
-							collection[0].toUpperCase() + collection.slice(1)
-						}
-						search={search}
-						onSearchChange={(value) =>
-							update({ search: value || undefined })
-						}
-						secondaryAction={
-							collection === "tests" && selectedAgentId ? (
-								<Button
-									type="button"
-									variant="outline"
-									onClick={openTestCreation}
-								>
-									Add Test
-								</Button>
-							) : undefined
-						}
-					>
-						<Select
-							value={selectedAgentId || "all"}
-							onValueChange={(value) =>
-								update({
-									agent: value === "all" ? undefined : value,
-									selected: undefined,
-									finding: undefined,
-								})
-							}
-						>
-							<SelectTrigger
-								aria-label="Agent filter"
-								className="min-h-11 w-full sm:w-[220px]"
-							>
-								<SelectValue placeholder="All agents" />
-							</SelectTrigger>
-							<SelectContent>
-								{collection === "findings" ? (
-									<SelectItem value="all">
-										All agents
-									</SelectItem>
-								) : null}
-								{agents.map((agent) => (
-									<SelectItem key={agent.id} value={agent.id}>
-										{agent.name ?? agent.id}
-									</SelectItem>
-								))}
-							</SelectContent>
-						</Select>
-					</WorkbenchCollectionToolbar>
-				}
-				inspector={
-					isInspectorDismissed ? undefined : isTestCreationOpen ? (
-						<TestCreationPanel
-							finding={findingContext}
-							situation={situation}
-							expectedBehavior={expectedBehavior}
-							advancedJson={advancedJson}
-							advancedJsonError={advancedJsonError}
-							createError={
-								createTest.error instanceof Error
-									? createTest.error.message
-									: createTest.isError
-										? "Could not create test."
-										: ""
-							}
-							isPending={createTest.isPending}
-							onSituationChange={setSituation}
-							onExpectedBehaviorChange={setExpectedBehavior}
-							onAdvancedJsonChange={setAdvancedJson}
-							onClearFinding={() => {
-								setIsCreatingTest(false);
-								update({ finding: undefined });
-							}}
-							onCreate={submitTest}
-						/>
-					) : !selectedItem ? undefined : (
-						<Inspector
-							collection={collection}
-							item={selectedItem}
-							agentId={selectedAgentId}
-							latestByLogicalId={latestByLogicalId}
-							onCreateTestFromFinding={() =>
-								createTestFromFinding(selectedItem as Finding)
-							}
-							onBack={() =>
-								setDismissedInspectorContext(inspectorContext)
-							}
-						/>
-					)
-				}
-				onCloseInspector={() => {
-					setIsCreatingTest(false);
-					setDismissedInspectorContext(inspectorContext);
-				}}
-			>
-				{collection === "findings" ? (
-					<FleetFindingsList
-						query={findings}
-						agentName={agentName}
-						selectedKey={selectedKey}
-						onSelect={selectFinding}
-					/>
-				) : selectedAgentId ? (
-					collection === "tests" ? (
-						<FleetTestsList
-							query={tests}
-							latestByLogicalId={latestByLogicalId}
-							selectedKey={selectedKey}
-							onSelect={(test) =>
-								selectItem("tests", test.logical_test_id)
-							}
-						/>
-					) : (
-						<FleetReviewsList
-							query={reviews}
-							selectedKey={selectedKey}
-							onSelect={(review) =>
-								selectItem("reviews", review.id)
-							}
-						/>
-					)
-				) : (
-					<FleetEmpty
-						label={`Choose an agent to view and inspect ${collection}.`}
-					/>
-				)}
-			</AgentWorkbenchFrame>
-		</PageWorkspace>
-	);
-}
-
-function FleetFindingsList({
-	query,
-	agentName,
-	selectedKey,
-	onSelect,
-}: {
-	query: ReturnType<typeof useQuery>;
-	agentName: (agentId: string) => string;
-	selectedKey: string;
-	onSelect: (finding: Finding) => void;
-}) {
-	if (query.isLoading) return <FleetLoadingRows />;
-	if (query.isError)
-		return <FleetQueryError query={query} resource="findings" />;
-	const items = ((query.data as { items?: Finding[] } | undefined)?.items ??
-		[]) as Finding[];
-	if (items.length === 0)
-		return <FleetEmpty label="No findings match this filter." />;
-	return (
-		<div role="list" aria-label="Findings collection" className="space-y-2">
-			{items.map((finding) => (
-				<WorkbenchRow
-					key={finding.id}
-					title={finding.description}
-					meta={`${agentName(finding.agent_id)} · ${finding.source_kind} source · ${finding.status}`}
-					selected={selectedKey === `findings:${finding.id}`}
-					onSelect={() => onSelect(finding)}
-				/>
-			))}
-		</div>
-	);
-}
-
-function FleetTestsList({
-	query,
-	latestByLogicalId,
-	selectedKey,
-	onSelect,
-}: {
-	query: ReturnType<typeof useQuery>;
-	latestByLogicalId: Map<string, AgentTestLatest>;
-	selectedKey: string;
-	onSelect: (test: AgentTest) => void;
-}) {
-	if (query.isLoading) return <FleetLoadingRows />;
-	if (query.isError)
-		return <FleetQueryError query={query} resource="agent tests" />;
-	const items = ((query.data as { items?: AgentTest[] } | undefined)?.items ??
-		[]) as AgentTest[];
-	if (items.length === 0)
-		return <FleetEmpty label="No tests for this agent." />;
-	return (
-		<div role="list" aria-label="Tests collection" className="space-y-2">
-			{items.map((test) => (
-				<WorkbenchRow
-					key={test.logical_test_id}
-					title={test.name}
-					meta={`${resultLabel(latestByLogicalId.get(test.logical_test_id))} · v${test.version} · ${test.enabled ? "enabled" : "disabled"}`}
-					selected={selectedKey === `tests:${test.logical_test_id}`}
-					onSelect={() => onSelect(test)}
-				/>
-			))}
-		</div>
-	);
-}
-
-function FleetReviewsList({
-	query,
-	selectedKey,
-	onSelect,
-}: {
-	query: ReturnType<typeof useQuery>;
-	selectedKey: string;
-	onSelect: (review: Review) => void;
-}) {
-	if (query.isLoading) return <FleetLoadingRows />;
-	if (query.isError)
-		return <FleetQueryError query={query} resource="agent reviews" />;
-	const items = ((query.data as { items?: Review[] } | undefined)?.items ??
-		[]) as Review[];
-	if (items.length === 0)
-		return <FleetEmpty label="No reviews for this agent." />;
-	return (
-		<div role="list" aria-label="Reviews collection" className="space-y-2">
-			{items.map((review) => (
-				<WorkbenchRow
-					key={review.id}
-					title={review.name}
-					meta={`${review.status} · v${review.latest_version}`}
-					selected={selectedKey === `reviews:${review.id}`}
-					onSelect={() => onSelect(review)}
-				/>
-			))}
-		</div>
-	);
-}
-
-function FleetQueryError({
-	query,
-	resource,
-}: {
-	query: ReturnType<typeof useQuery>;
-	resource: string;
-}) {
-	return (
-		<FleetReadError
-			resource={resource}
-			cached={false}
-			pending={query.isFetching}
-			onRetry={() => void query.refetch()}
-		/>
-	);
-}
-
-function FleetLoadingRows() {
-	return (
-		<div className="space-y-2">
-			<Skeleton className="h-20 w-full" />
-			<Skeleton className="h-20 w-full" />
-		</div>
-	);
-}
-
-function FleetEmpty({ label }: { label: string }) {
-	return (
-		<p className="rounded-[var(--bf-radius-surface)] border bg-card px-4 py-8 text-center text-sm text-muted-foreground">
-			{label}
-		</p>
-	);
-}
 
 function fleetCollectionFromParams(value: string | null): FleetCollection {
 	return FLEET_COLLECTIONS.includes(value as FleetCollection)
