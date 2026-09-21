@@ -19,6 +19,7 @@ from src.config import get_settings
 from src.models.contracts.common import ErrorResponse
 from src.core.csrf import CSRFMiddleware
 from src.core.embed_middleware import EmbedScopeMiddleware
+from src.core.request_body_limit import RouteBodyLimitMiddleware
 from src.core.database import close_db, get_session_factory, init_db
 from src.core.pubsub import manager as pubsub_manager
 from src.routers.health import close_health_check_clients
@@ -481,6 +482,16 @@ def create_app() -> FastAPI:
         allow_methods=["GET", "POST", "OPTIONS"],
         allow_headers=["*"],
         expose_headers=["Mcp-Session-Id"],
+    )
+
+    # This route accepts multipart uploads.  The cap must run before
+    # Starlette constructs UploadFile and spills a body to disk.
+    from src.services.solutions.zip_install import MAX_SOLUTION_ARCHIVE_BYTES
+    app.add_middleware(
+        RouteBodyLimitMiddleware,
+        limits={
+            ("POST", "/api/solutions/import-workspace/preview"): MAX_SOLUTION_ARCHIVE_BYTES,
+        },
     )
 
     # Add CSRF protection middleware

@@ -39,7 +39,13 @@ def _require_requester(metadata: dict, context: PlatformJobContext, payload: Wor
     if metadata.get("package_sha256") != payload.package_sha256:
         raise PlatformJobFailure("preview_archive_changed", "The staged workspace archive no longer matches the reviewed preview.")
     expires_at = datetime.fromisoformat(metadata["expires_at"])
-    if expires_at <= datetime.now(timezone.utc):
+    # Expiry controls accepting a new import request.  Once the queueing
+    # request has bound this immutable preview to this particular durable job,
+    # retries must still be able to finish it after the preview TTL elapses.
+    if (
+        metadata.get("platform_job_id") != str(context.job_id)
+        and expires_at <= datetime.now(timezone.utc)
+    ):
         raise PlatformJobFailure("preview_expired", "Workspace import preview has expired.")
 
 
@@ -63,6 +69,53 @@ def _require_preview_is_current(
             "preview_stale",
             "The workspace changed since preview; create a new preview before importing.",
         )
+
+
+def _checkpoint_matches_replanned_bundle(
+    reviewed: WorkspaceBundlePreview,
+    current: WorkspaceBundlePreview,
+    selected_item_ids: set[str],
+) -> bool:
+    """Recognize the only state transition made before the durable checkpoint.
+
+    Entity create/replace actions become ``unchanged`` after their database
+    transaction commits.  File actions are promoted later, so their preview
+    state must not move.  This lets a runner-loss retry resume finalization
+    without accepting any unrelated workspace change.
+    """
+    reviewed_items = {item.id: item for item in reviewed.items}
+    current_items = {item.id: item for item in current.items}
+    if reviewed_items.keys() != current_items.keys():
+        return False
+
+    for item_id, reviewed_item in reviewed_items.items():
+        current_item = current_items[item_id]
+        if (
+            reviewed_item.kind != current_item.kind
+            or reviewed_item.match_key != current_item.match_key
+            or reviewed_item.source_id != current_item.source_id
+            or reviewed_item.target_id != current_item.target_id
+        ):
+            return False
+        expected_classification = reviewed_item.classification
+        if item_id in selected_item_ids and reviewed_item.kind != "file":
+            expected_classification = "unchanged"
+        if current_item.classification != expected_classification:
+            return False
+    return True
+
+
+def _journal_for_db_apply(
+    payload: WorkspaceBundleImportPayload,
+    result: WorkspaceBundleImportResult,
+) -> dict:
+    return {
+        "preview_id": str(payload.preview_id),
+        "package_sha256": payload.package_sha256,
+        "selected_item_ids": sorted(result.selected_item_ids),
+        "imported_entity_ids": sorted(result.imported_item_ids),
+        "db_apply_started": True,
+    }
 
 
 async def run_workspace_bundle_import(
@@ -106,21 +159,38 @@ async def run_workspace_bundle_import(
                         selected_item_ids=frozenset(journal["selected_item_ids"]),
                         operations=(),
                     )
+                elif (
+                    journal is not None
+                    and journal.get("db_apply_started") is True
+                    and journal.get("preview_id") == str(payload.preview_id)
+                    and journal.get("package_sha256") == payload.package_sha256
+                    and _checkpoint_matches_replanned_bundle(
+                        reviewed_preview, plan.preview, set(journal["selected_item_ids"]),
+                    )
+                    and reviewed_file_hashes == (plan.file_hashes or {})
+                ):
+                    # A runner may have been lost between db.commit() and the
+                    # following checkpoint.  The pre-apply checkpoint plus the
+                    # exact expected plan transition proves the entity changes
+                    # committed, so resume only the idempotent file phase.
+                    result = WorkspaceBundleImportResult(
+                        imported_item_ids=frozenset(journal["imported_entity_ids"]),
+                        selected_item_ids=frozenset(journal["selected_item_ids"]),
+                        operations=(),
+                    )
                 else:
                     _require_preview_is_current(
                         reviewed_preview, reviewed_file_hashes, plan.preview, plan.file_hashes or {},
                     )
                     result = await importer.apply(plan, payload.decisions)
+                    await context.save_checkpoint(
+                        _journal_for_db_apply(payload, result),
+                        phase="Applying workspace entity changes",
+                    )
                 # Make entity upserts durable before the idempotent S3 phase.
                 await context.report("Committing workspace entity changes", percent=60)
                 await db.commit()
-                journal = {
-                    "preview_id": str(payload.preview_id),
-                    "package_sha256": payload.package_sha256,
-                    "selected_item_ids": sorted(result.selected_item_ids),
-                    "imported_entity_ids": sorted(result.imported_item_ids),
-                    "db_applied": True,
-                }
+                journal = _journal_for_db_apply(payload, result) | {"db_applied": True}
                 await context.save_checkpoint(journal, phase="Database import committed; finalizing files")
                 await context.report("Promoting selected workspace files", percent=70)
                 try:
