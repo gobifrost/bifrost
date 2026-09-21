@@ -76,6 +76,10 @@ vi.mock("@/components/agents/RunReviewPanel", () => ({
 	),
 }));
 
+vi.mock("@/components/agents/RunFindingAction", () => ({
+	RunFindingAction: () => <button type="button">Create Finding</button>,
+}));
+
 // -----------------------------------------------------------------------------
 // Fixtures
 // -----------------------------------------------------------------------------
@@ -261,6 +265,19 @@ describe("AgentReviewPage — navigation", () => {
 });
 
 describe("AgentReviewPage — verdict actions", () => {
+	it("uses the shared Finding action for negative runs", async () => {
+		await renderPage();
+
+		expect(
+			screen.getByRole("button", { name: "Create Finding" }),
+		).toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", {
+				name: ["Record Finding", "from This Run"].join(" "),
+			}),
+		).not.toBeInTheDocument();
+	});
+
 	it("calls useSetVerdict and auto-advances on success", async () => {
 		const { user } = await renderPage();
 		await user.click(screen.getByTestId("panel-up"));

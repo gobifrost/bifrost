@@ -10,7 +10,7 @@ import {
  *
  * Layout:
  *   - Header: agent name, "Review N of total" counter, dot pagination,
- *     keyboard shortcut hints, link to the quality page when there is
+ *     keyboard shortcut hints, link to the Workbench page when there is
  *     anything still flagged.
  *   - Main: a Card with the run summary header + <RunReviewPanel
  *     variant="flipbook"> with verdict actions.
@@ -32,8 +32,7 @@ import {
 	Keyboard,
 	Sparkles,
 } from "lucide-react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
+import { useQueryClient } from "@tanstack/react-query";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -44,6 +43,7 @@ import {
 	RunReviewPanel,
 	type Verdict,
 } from "@/components/agents/RunReviewPanel";
+import { RunFindingAction } from "@/components/agents/RunFindingAction";
 import { FleetReadError } from "./FleetReadError";
 import { useAgent } from "@/hooks/useAgents";
 import {
@@ -52,7 +52,6 @@ import {
 	useClearVerdict,
 	useSetVerdict,
 } from "@/services/agentRuns";
-import { agentPlatform } from "@/services/agentPlatform";
 import {
 	cn,
 	formatCost,
@@ -144,38 +143,6 @@ export function AgentReviewPage() {
 
 	const setVerdict = useSetVerdict();
 	const clearVerdict = useClearVerdict();
-	const recordFinding = useMutation({
-		mutationFn: (input: { runId: string; note: string }) => {
-			if (!agentId) throw new Error("Run unavailable");
-			return agentPlatform.createFinding({
-				agent_id: agentId,
-				description:
-					input.note.trim() ||
-					`Observed problem in run ${input.runId.slice(0, 8)}.`,
-				expected_behavior: null,
-				source_kind: "run",
-				finding_kind: "problem",
-				source_run_id: input.runId,
-				source_sequence: null,
-				external_ref: null,
-			});
-		},
-		onSuccess: () => {
-			toast.success("Finding recorded", {
-				description: "Review it on the Quality page under Findings.",
-				action: agentId
-					? {
-							label: "Open Findings",
-							onClick: () =>
-								navigate(
-									`/agents/${agentId}/quality?collection=findings`,
-								),
-						}
-					: undefined,
-			});
-		},
-		onError: () => toast.error("Could not record the finding."),
-	});
 	const [drafts, setDrafts] = useState<Record<string, string>>({});
 	const note = current
 		? (drafts[current.id] ?? detail?.verdict_note ?? "")
@@ -405,7 +372,7 @@ export function AgentReviewPage() {
 									to={`/agents/${agentId}/quality?collection=findings`}
 								>
 									<Sparkles className="h-4 w-4" />
-									Open Quality
+									Open Workbench
 								</Link>
 							</Button>
 						) : null}
@@ -485,22 +452,9 @@ export function AgentReviewPage() {
 								Save note and continue
 							</Button>
 						) : null}
-						<Button
-							variant="outline"
-							className="mt-3 ml-2"
-							disabled={recordFinding.isPending || !current}
-							onClick={() =>
-								current &&
-								recordFinding.mutate({
-									runId: current.id,
-									note,
-								})
-							}
-						>
-							{recordFinding.isPending
-								? "Recording…"
-								: "Record Finding from This Run"}
-						</Button>
+						<div className="mt-3">
+							<RunFindingAction run={detail} note={note} />
+						</div>
 					</fieldset>
 				) : !detailError ? (
 					<Skeleton className="h-96 w-full" />
