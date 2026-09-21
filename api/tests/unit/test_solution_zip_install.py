@@ -19,6 +19,17 @@ from src.services.solutions.zip_install import (
 )
 
 
+def test_safe_extract_rejects_compression_bomb(tmp_path: Path) -> None:
+    from src.services.solutions.zip_install import _safe_extract
+
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        z.writestr("compressed.txt", b"0" * (2 * 1024 * 1024))
+
+    with pytest.raises(ValueError, match="compression ratio"):
+        _safe_extract(archive.getvalue(), str(tmp_path))
+
+
 def _make_workspace_zip(extra: dict[str, str] | None = None) -> bytes:
     """Build an in-memory Solution workspace zip with a descriptor, a workflow
     manifest + source, and a required-secret config declaration."""
