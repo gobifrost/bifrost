@@ -78,10 +78,15 @@ async def test_desktop_status_does_not_change_dirty_index(tmp_path: Path) -> Non
     repo.git.branch("-M", "main")
     _commit(repo, "tracked.txt", "base\n", "initial")
     _commit(repo, "rename source.txt", "rename me\n", "add rename source")
+    _commit(repo, "staged modified.txt", "before\n", "add staged modification")
+    _commit(repo, "deleted.txt", "delete me\n", "add deleted file")
 
     (tmp_path / "staged.txt").write_text("staged\n")
     repo.index.add(["staged.txt"])
+    (tmp_path / "staged modified.txt").write_text("after\n")
+    repo.index.add(["staged modified.txt"])
     repo.git.mv("rename source.txt", "renamed file.txt")
+    repo.git.rm("deleted.txt")
     (tmp_path / "tracked.txt").write_text("working tree change\n")
     (tmp_path / "file with spaces.txt").write_text("untracked\n")
 
@@ -89,11 +94,13 @@ async def test_desktop_status_does_not_change_dirty_index(tmp_path: Path) -> Non
     status = await _status_service(tmp_path).desktop_status()
 
     assert _git_state(repo) == before
-    assert {change.path for change in status.changed_files} == {
-        "staged.txt",
-        "tracked.txt",
-        "file with spaces.txt",
-        "renamed file.txt",
+    assert {(change.path, change.change_type) for change in status.changed_files} == {
+        ("staged.txt", "added"),
+        ("staged modified.txt", "modified"),
+        ("tracked.txt", "modified"),
+        ("file with spaces.txt", "added"),
+        ("renamed file.txt", "renamed"),
+        ("deleted.txt", "deleted"),
     }
 
 
@@ -120,6 +127,42 @@ async def test_desktop_status_does_not_change_in_progress_merge(tmp_path: Path, 
     assert "Status failed" not in caplog.text
     assert status.merging is True
     assert [conflict.path for conflict in status.conflicts] == ["conflict.txt"]
+
+
+def test_status_parser_consumes_copy_source_record(tmp_path: Path) -> None:
+    """A porcelain-v2 copy record reports only its destination to the API."""
+    from src.services.github_sync import GitHubSyncService
+
+    class FakeGit:
+        def status(self, *args, **kwargs):
+            assert args == ("--porcelain=v2", "-z")
+            assert kwargs == {"env": {"GIT_OPTIONAL_LOCKS": "0"}}
+            return (
+                "2 C. N... 100644 100644 100644 abcdef0 abcdef0 C100 "
+                "copied file.txt\0source file.txt\0"
+            )
+
+    class FakeRepo:
+        git = FakeGit()
+
+        class index:
+            @staticmethod
+            def unmerged_blobs():
+                return {}
+
+        class head:
+            @staticmethod
+            def is_valid():
+                return False
+
+    (tmp_path / ".git").mkdir()
+    service = GitHubSyncService.__new__(GitHubSyncService)
+
+    status = service._do_status(tmp_path, FakeRepo())
+
+    assert [(change.path, change.change_type) for change in status.changed_files] == [
+        ("copied file.txt", "modified")
+    ]
 
 
 class TestWorkflowReference:
