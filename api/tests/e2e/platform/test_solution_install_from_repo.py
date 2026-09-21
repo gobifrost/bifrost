@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import time
 import uuid
 from pathlib import Path
 
@@ -259,9 +260,24 @@ async def test_sync_clears_update_available_version(e2e_client, platform_admin, 
     assert before.status_code == 200, before.text
     assert before.json()["update_available_version"] == "1.1.0"
 
-    # Pull the connected repo — a successful sync clears the signal.
+    # Pull the connected repo through the shared durable job — a successful
+    # sync clears the signal after the worker completes, not in the POST.
     synced = e2e_client.post(f"/api/solutions/{sid}/sync", headers=platform_admin.headers)
     assert synced.status_code == 202, synced.text
+    job_id = synced.json()["job_id"]
+    assert synced.headers["Location"] == f"/api/platform-jobs/{job_id}"
+
+    job = {}
+    for _ in range(240):
+        status_response = e2e_client.get(
+            f"/api/platform-jobs/{job_id}", headers=platform_admin.headers
+        )
+        assert status_response.status_code == 200, status_response.text
+        job = status_response.json()
+        if job["status"] in {"succeeded", "failed", "cancelled"}:
+            break
+        time.sleep(0.25)
+    assert job["status"] == "succeeded", job
 
     after = e2e_client.get(f"/api/solutions/{sid}", headers=platform_admin.headers)
     assert after.status_code == 200, after.text

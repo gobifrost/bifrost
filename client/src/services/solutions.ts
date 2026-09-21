@@ -219,7 +219,7 @@ export async function disconnectSolutionGit(
 export async function syncSolution(
 	solutionId: string,
 	options: RequestOptions = {},
-): Promise<PlatformJobAccepted | undefined> {
+): Promise<PlatformJobAccepted> {
 	const { signal } = options;
 	const { data, error } = await apiClient.POST(
 		"/api/solutions/{solution_id}/sync",
@@ -230,9 +230,7 @@ export async function syncSolution(
 	);
 	if (error)
 		throw new Error(getErrorMessage(error, "Failed to sync solution"));
-	// The current endpoint completes synchronously. Keep the client ready for
-	// its PlatformJob response without making callers branch on a parallel API.
-	return data as unknown as PlatformJobAccepted | undefined;
+	return data as unknown as PlatformJobAccepted;
 }
 
 export async function getSolutionSdkStatus(

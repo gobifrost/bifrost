@@ -2514,9 +2514,8 @@ export function SolutionDetail() {
 		setHardDeleteOpen(true);
 	}
 
-	// Pull the configured ref and full-replace a git-connected install. The
-	// endpoint is synchronous today and may return PlatformJobAccepted after its
-	// backend conversion; both paths invalidate the same managed Solution state.
+	// Pull the configured ref and full-replace a git-connected install through a
+	// shared PlatformJob. The notification transport owns durable progress.
 	const syncMut = useMutation({
 		mutationFn: () => syncSolution(solutionId!),
 		onSuccess: (accepted) => {

@@ -195,19 +195,6 @@ describe("solutions service", () => {
 	});
 
 	it("syncs a solution by id", async () => {
-		mockPost.mockResolvedValue({ data: undefined });
-
-		await expect(syncSolution("sol-1")).resolves.toBeUndefined();
-
-		expect(mockPost).toHaveBeenCalledWith(
-			"/api/solutions/{solution_id}/sync",
-			{
-				params: { path: { solution_id: "sol-1" } },
-			},
-		);
-	});
-
-	it("returns a shared PlatformJob acceptance when sync becomes durable", async () => {
 		mockPost.mockResolvedValue({
 			data: { job_id: "job-1", status: "queued", reused: false },
 		});
@@ -217,6 +204,13 @@ describe("solutions service", () => {
 			status: "queued",
 			reused: false,
 		});
+
+		expect(mockPost).toHaveBeenCalledWith(
+			"/api/solutions/{solution_id}/sync",
+			{
+				params: { path: { solution_id: "sol-1" } },
+			},
+		);
 	});
 
 	it("throws when sync fails", async () => {

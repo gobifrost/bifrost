@@ -106,6 +106,10 @@ from src.jobs.platform.solution_deploy import (
     SOLUTION_DEPLOY_DEFINITION,
     SolutionDeployPayload,
 )
+from src.jobs.platform.solution_git_sync import (
+    SOLUTION_GIT_SYNC_DEFINITION,
+    SolutionGitSyncPayload,
+)
 from src.services.platform_jobs import enqueue_platform_job, publish_platform_job_update
 from src.services.platform_jobs import ensure_platform_job_notification
 from src.models.contracts.platform_jobs import PlatformJobAccepted, PlatformJobStatus
@@ -1667,8 +1671,60 @@ async def update_solution(
         solution_write_lock,
     )
 
+    enabling_git_connection = (
+        fields.get("git_connected") is True and not sol.git_connected
+    )
+    if enabling_git_connection:
+        required_coordinates = {"git_repo_url", "repo_subpath", "git_ref"}
+        if not required_coordinates.issubset(fields):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    "Connecting Git requires git_repo_url, repo_subpath, and "
+                    "git_ref coordinates in the same request."
+                ),
+            )
+        repo_url = fields["git_repo_url"]
+        if not isinstance(repo_url, str) or not repo_url.strip():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Connecting Git requires a git_repo_url.",
+            )
+        git_ref = fields["git_ref"]
+        if isinstance(git_ref, str) and not git_ref.strip():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="git_ref must be a branch or tag when provided.",
+            )
+
     try:
         async with solution_write_lock(solution_id):
+            if enabling_git_connection:
+                active_deploy = (
+                    await ctx.db.execute(
+                        select(PlatformJob.id)
+                        .where(
+                            PlatformJob.job_type == "solution.deploy",
+                            PlatformJob.resource_lock_key == f"solution:{solution_id}",
+                            PlatformJob.status.in_(ACTIVE_PLATFORM_JOB_STATUSES),
+                        )
+                        .limit(1)
+                    )
+                ).scalar_one_or_none()
+                if active_deploy is not None:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail=(
+                            "A Solution deployment is already queued or running; "
+                            "wait for it to finish before connecting Git."
+                        ),
+                    )
+                await _validate_solution_git_connection_source(
+                    sol,
+                    repo_url=repo_url.strip(),
+                    repo_subpath=fields["repo_subpath"],
+                    git_ref=git_ref,
+                )
             scope_changing = (
                 "organization_id" in fields
                 and fields["organization_id"] != sol.organization_id
@@ -1692,6 +1748,62 @@ async def update_solution(
         ) from exc
     await ctx.db.refresh(sol)
     return SolutionDTO.model_validate(sol)
+
+
+async def _validate_solution_git_connection_source(
+    solution: SolutionORM,
+    *,
+    repo_url: str,
+    repo_subpath: str | None,
+    git_ref: str | None,
+) -> None:
+    """Clone and verify the Git source before making an install managed by it."""
+    from src.services.solutions.git_sync import (
+        NotASolutionWorkspace,
+        clone_repo_to_dir,
+        resolve_repo_subpath,
+    )
+    from src.services.solutions.zip_install import _parse_workspace
+
+    with tempfile.TemporaryDirectory(prefix="bifrost-solution-git-connect-") as tmp:
+        checkout = Path(tmp)
+        try:
+            await clone_repo_to_dir(repo_url, checkout, ref=git_ref)
+        except Exception as exc:  # noqa: BLE001 - GitPython has varied errors
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Could not clone the configured Solution Git source.",
+            ) from exc
+        try:
+            root = resolve_repo_subpath(checkout, repo_subpath)
+        except NotASolutionWorkspace as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
+            ) from exc
+        descriptor = root / "bifrost.solution.yaml"
+        if not descriptor.is_file():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    "The configured Git source has no bifrost.solution.yaml at "
+                    f"{repo_subpath or '<repo root>'}."
+                ),
+            )
+        try:
+            preview = _parse_workspace(root)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="The configured Git source is not a valid Solution workspace.",
+            ) from exc
+        if preview.slug != solution.slug:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    f"The configured Git source declares solution '{preview.slug}', "
+                    f"not this install's '{solution.slug}'."
+                ),
+            )
 
 
 @router.post(
@@ -1964,6 +2076,11 @@ async def _run_deploy_job(
                 solution = await db.get(SolutionORM, solution_id)
                 if solution is None:
                     raise SolutionDeployConflict("Solution not found")
+                if solution.git_connected:
+                    raise SolutionDeployConflict(
+                        "This install became git-connected before deploy started; "
+                        "deploy is disabled (auto-pull is the only writer)."
+                    )
                 await _set_phase("validating bundle and applying resources")
                 result = await deploy_zip_to_solution_path(
                     db, solution, zip_path, force=force
@@ -2374,15 +2491,18 @@ async def ack_pulled_captures(
 
 @router.post(
     "/{solution_id}/sync",
+    response_model=PlatformJobAccepted,
     status_code=status.HTTP_202_ACCEPTED,
-    summary="Auto-pull a git-connected install from its repo (admin only)",
+    summary="Queue a git-connected install update from its repo (admin only)",
 )
-async def sync_solution(solution_id: UUID, ctx: Context, user: CurrentSuperuser) -> dict:
-    """Pull the connected install's repo ``main`` and deploy it (criterion 13).
+async def sync_solution(
+    solution_id: UUID, response: Response, ctx: Context, user: CurrentSuperuser
+) -> PlatformJobAccepted:
+    """Queue a pull of the connected install's configured Git ref (criterion 13).
 
-    This is the auto-pull entry point (webhook/poll/manual). It is the ONLY
-    writer for a connected install — the deploy endpoint is refused for it. For a
-    disconnected install there is nothing to pull, so this is refused in turn.
+    The shared per-Solution resource lock serializes this durable mutation with
+    deploys and SDK updates. The git-sync handler retains the service-level
+    write lock, which also protects non-platform writers.
     """
     solution = await ctx.db.get(SolutionORM, solution_id)
     if solution is None:
@@ -2398,23 +2518,33 @@ async def sync_solution(solution_id: UUID, ctx: Context, user: CurrentSuperuser)
             detail="This git-connected install has no git_repo_url to pull from.",
         )
 
-    from src.services.solutions.git_sync import NotASolutionWorkspace
-    from src.services.solutions.git_sync import sync as git_sync
-
-    try:
-        # git_sync commits + runs the S3 phase itself (inside its per-install
-        # lock, DB-commit-before-S3 per P1-c), so the router does not commit here.
-        await git_sync(ctx.db, solution)
-        # A successful pull means the install is now at the repo HEAD — clear any
-        # pending "update available" signal so the badge disappears.
-        if solution.update_available_version is not None:
-            solution.update_available_version = None
-            await ctx.db.commit()
-    except NotASolutionWorkspace as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
-        ) from exc
-    return {"solution_id": str(solution_id), "status": "synced"}
+    job, reused = await enqueue_platform_job(
+        ctx.db,
+        SOLUTION_GIT_SYNC_DEFINITION,
+        SolutionGitSyncPayload(solution_id=solution_id),
+        dedupe_key=str(solution_id),
+        resource_lock_key=f"solution:{solution_id}",
+        priority=500,
+        organization_id=solution.organization_id,
+        requested_by_user_id=user.user_id,
+        requested_by_email=user.email,
+        requested_by_name=user.name or user.email or "Unknown",
+        resource_type="solution",
+        resource_id=str(solution_id),
+        title=f"Update {solution.name} from Git",
+        action_url=f"/solutions/{solution_id}",
+    )
+    if job.notification_id is None:
+        await ensure_platform_job_notification(ctx.db, job)
+    await ctx.db.commit()
+    await publish_platform_job_update(job)
+    response.headers["Location"] = f"/api/platform-jobs/{job.id}"
+    return PlatformJobAccepted(
+        job_id=job.id,
+        status=PlatformJobStatus(job.status),
+        reused=reused,
+        notification_id=job.notification_id,
+    )
 
 
 async def _preview_to_dto(

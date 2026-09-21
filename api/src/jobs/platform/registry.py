@@ -17,6 +17,7 @@ from src.jobs.platform.system_maintenance import (
 )
 from src.jobs.platform.solution_export import SOLUTION_EXPORT_DEFINITION
 from src.jobs.platform.solution_deploy import SOLUTION_DEPLOY_DEFINITION
+from src.jobs.platform.solution_git_sync import SOLUTION_GIT_SYNC_DEFINITION
 from src.jobs.platform.embedding_reindex import EMBEDDING_REINDEX_DEFINITION
 from src.jobs.platform.reimport import WORKSPACE_REIMPORT_DEFINITION
 from src.jobs.platform.git_operation import GIT_OPERATION_DEFINITION
@@ -38,6 +39,7 @@ _DEFINITIONS = {
     ARTIFACT_RETENTION_CLEANUP_DEFINITION.job_type: ARTIFACT_RETENTION_CLEANUP_DEFINITION,
     SOLUTION_EXPORT_DEFINITION.job_type: SOLUTION_EXPORT_DEFINITION,
     SOLUTION_DEPLOY_DEFINITION.job_type: SOLUTION_DEPLOY_DEFINITION,
+    SOLUTION_GIT_SYNC_DEFINITION.job_type: SOLUTION_GIT_SYNC_DEFINITION,
     EMBEDDING_REINDEX_DEFINITION.job_type: EMBEDDING_REINDEX_DEFINITION,
     WORKSPACE_REIMPORT_DEFINITION.job_type: WORKSPACE_REIMPORT_DEFINITION,
     GIT_OPERATION_DEFINITION.job_type: GIT_OPERATION_DEFINITION,
