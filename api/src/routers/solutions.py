@@ -80,6 +80,7 @@ from src.models.contracts.solutions import (
     SolutionUpgradeDiff,
     WorkspaceBundleImportRequest,
     WorkspaceBundlePreview,
+    WorkspaceBundleRepoPreviewRequest,
 )
 from src.models.orm.agents import Agent, AgentRole
 from src.models.orm.app_roles import AppRole
@@ -294,6 +295,141 @@ async def enqueue_workspace_import(
         job_id=job.id, status=PlatformJobStatus(job.status), reused=reused,
         notification_id=job.notification_id,
     )
+
+
+async def _stage_workspace_preview(
+    ctx: Context,
+    user: CurrentSuperuser,
+    *,
+    work_dir: Path,
+    staging_zip: Path,
+    source_kind: str,
+    repo_url: str | None = None,
+    git_ref: str | None = None,
+    repo_subpath: str | None = None,
+    resolved_commit: str | None = None,
+) -> WorkspaceBundlePreview:
+    """Plan a workspace bundle from an already-validated tree and stage it.
+
+    ZIP and repository inputs converge here: both supply a validated Solution
+    package directory plus the exact bytes the durable job will re-parse.
+    """
+    from src.services.solutions.zip_install import _parse_workspace
+
+    preview_id = uuid4()
+    storage = WorkspaceBundleStorage(preview_id)
+    try:
+        digest, _size = await storage.stage_package(staging_zip)
+        projection = SolutionPackageWorkspaceProjection.from_preview(
+            _parse_workspace(work_dir), preview_id=preview_id, work_dir=work_dir
+        )
+        planned = await WorkspaceBundlePlanner(ctx.db, preview_id=preview_id).plan(projection)
+        preview = planned.preview.model_copy(update={
+            "preview_token": str(preview_id),
+            "package_sha256": digest,
+            "source_kind": source_kind,
+            "repo_url": repo_url,
+            "git_ref": git_ref,
+            "repo_subpath": repo_subpath,
+            "resolved_commit": resolved_commit,
+        })
+        await storage.stage_metadata({
+            "requested_by": str(user.user_id),
+            "expires_at": (datetime.now(timezone.utc) + _WORKSPACE_PREVIEW_TTL).isoformat(),
+            "package_sha256": digest,
+            "preview": preview.model_dump(mode="json"),
+            "manifest": planned.manifest.model_dump(mode="json"),
+            "id_map": {str(source): str(target) for source, target in planned.id_map.items()},
+            "file_hashes": planned.file_hashes,
+            "destination_file_hashes": planned.destination_file_hashes,
+            "source_kind": source_kind,
+            "repo_url": repo_url,
+            "git_ref": git_ref,
+            "repo_subpath": repo_subpath,
+            "resolved_commit": resolved_commit,
+        })
+        return preview
+    except (ValueError, zipfile.BadZipFile) as exc:
+        await storage.delete()
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+
+@router.post(
+    "/import-workspace/preview-repo", response_model=WorkspaceBundlePreview,
+    summary="Preview a Solution repository snapshot as global workspace content",
+)
+async def preview_workspace_import_repo(
+    body: WorkspaceBundleRepoPreviewRequest, ctx: Context, user: CurrentSuperuser,
+) -> WorkspaceBundlePreview:
+    """Clone, validate, and plan a one-time repository snapshot.
+
+    Snapshot semantics: coordinates and the resolved commit are bound into the
+    staged preview for audit/retry, but no Solution record, install ID, or
+    ongoing package-repository connection is created. Checkout, ref, subfolder,
+    or descriptor failures return 422 before any preview token is issued.
+    """
+    import shutil
+
+    from src.services.solutions.git_sync import (
+        NotASolutionWorkspace,
+        clone_repo_to_dir,
+        resolve_repo_subpath,
+    )
+
+    tmp = Path(tempfile.mkdtemp(prefix="bifrost-workspace-repo-preview-"))
+    try:
+        checkout = tmp / "checkout"
+        try:
+            await clone_repo_to_dir(body.repo_url, checkout, ref=body.git_ref)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Could not clone {body.repo_url}: {exc}",
+            ) from exc
+        try:
+            root = resolve_repo_subpath(checkout, body.repo_subpath)
+        except NotASolutionWorkspace as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            ) from exc
+        marker = Path(os.path.realpath(os.path.join(os.path.realpath(root), "bifrost.solution.yaml")))
+        if not marker.is_file() or not str(marker).startswith(os.path.realpath(root) + os.sep):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"No bifrost.solution.yaml at {body.repo_subpath or '<repo root>'} in {body.repo_url}",
+            )
+        symlink = next((path for path in root.rglob("*") if path.is_symlink()), None)
+        if symlink is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Solution repo workspaces may not contain symlinks (found {symlink.relative_to(root).as_posix()}).",
+            )
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "git", "rev-parse", "HEAD", cwd=str(checkout),
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _stderr = await proc.communicate()
+            resolved_commit = stdout.decode().strip() if proc.returncode == 0 else None
+        except Exception:
+            resolved_commit = None
+        if not resolved_commit:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Could not resolve commit for {body.repo_url} at ref {body.git_ref or 'default'}.",
+            )
+        from bifrost.commands.solution import _build_deploy_zip
+
+        staging_zip = tmp / "package.zip"
+        staging_zip.write_bytes(_build_deploy_zip(root, extra_text_files={}))
+        return await _stage_workspace_preview(
+            ctx, user,
+            work_dir=root, staging_zip=staging_zip, source_kind="repo",
+            repo_url=body.repo_url, git_ref=body.git_ref,
+            repo_subpath=body.repo_subpath, resolved_commit=resolved_commit,
+        )
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def _same_workspace_bundle_decisions(
@@ -2071,6 +2207,7 @@ async def _run_deploy_job(
     zip_path: Path,
     *,
     force: bool,
+    allow_connected_install: bool = False,
 ) -> None:
     """Execute the deploy under a fresh session (background task).
 
@@ -2080,6 +2217,11 @@ async def _run_deploy_job(
     before this ran). The whole deploy — including the per-install write lock,
     the DB commit, and the post-commit S3 finalize — happens here so the (often
     >100s) work no longer blocks the request and times out the CLI (Task 7).
+
+    ``allow_connected_install`` is only for a from-repo install's first deploy:
+    the install row is created git-connected by the same request that enqueues
+    this job, so the one-writer refusal below would deadlock creation. Manual
+    deploys to connected installs stay refused (auto-pull is their only writer).
     """
     from src.core.database import get_db_context
     from src.services.solutions.zip_install import (
@@ -2122,7 +2264,7 @@ async def _run_deploy_job(
                 solution = await db.get(SolutionORM, solution_id)
                 if solution is None:
                     raise SolutionDeployConflict("Solution not found")
-                if solution.git_connected:
+                if solution.git_connected and not allow_connected_install:
                     raise SolutionDeployConflict(
                         "This install became git-connected before deploy started; "
                         "deploy is disabled (auto-pull is the only writer)."

@@ -124,6 +124,90 @@ def test_human_preview_prints_compatibility_warning_and_conflicts(tmp_path) -> N
     assert "destination-workflow-id" in result.output
     assert "create    file" in result.output
     assert "Imported entities are unattached global workspace content." in result.output
+    assert "unattached workspace content and creates uncommitted workspace Git changes" in result.output
+
+
+def test_archive_and_repo_are_mutually_exclusive(tmp_path) -> None:
+    from bifrost.commands.solution import solution_group
+
+    archive = tmp_path / "bundle.zip"
+    archive.write_bytes(b"bundle")
+    result = CliRunner().invoke(
+        solution_group,
+        ["import-workspace", str(archive), "--repo", "https://example.com/repo.git", "--preview"],
+        catch_exceptions=False,
+    )
+    assert result.exit_code != 0
+    assert "mutually exclusive" in result.output
+
+
+def test_repo_and_archive_both_missing_fails(tmp_path) -> None:
+    from bifrost.commands.solution import solution_group
+
+    result = CliRunner().invoke(
+        solution_group, ["import-workspace", "--preview"], catch_exceptions=False,
+    )
+    assert result.exit_code != 0
+    assert "ARCHIVE or --repo" in result.output
+
+
+def test_ref_without_repo_fails(tmp_path) -> None:
+    from bifrost.commands.solution import solution_group
+
+    archive = tmp_path / "bundle.zip"
+    archive.write_bytes(b"bundle")
+    result = CliRunner().invoke(
+        solution_group,
+        ["import-workspace", str(archive), "--ref", "main", "--preview"],
+        catch_exceptions=False,
+    )
+    assert result.exit_code != 0
+    assert "--ref and --path require --repo" in result.output
+
+
+def test_repo_preview_posts_coordinates_and_prints_source() -> None:
+    from bifrost.commands.solution import solution_group
+
+    preview = {
+        "preview_token": "preview",
+        "package_sha256": "a" * 64,
+        "source_kind": "repo",
+        "repo_url": "https://example.com/repo.git",
+        "git_ref": "main",
+        "repo_subpath": "packages/demo",
+        "resolved_commit": "abc123",
+        "items": [],
+        "warnings": [],
+    }
+    calls: list[tuple[str, dict]] = []
+
+    def response(body):
+        result = mock.MagicMock(status_code=200, text=str(body))
+        result.json.return_value = body
+        return result
+
+    class Client:
+        async def post(self, path, **kwargs):
+            calls.append((path, kwargs))
+            return response(preview)
+
+    with mock.patch("bifrost.client.BifrostClient.get_instance", return_value=Client()):
+        result = CliRunner().invoke(
+            solution_group,
+            ["import-workspace", "--repo", "https://example.com/repo.git",
+             "--ref", "main", "--path", "packages/demo", "--preview"],
+            catch_exceptions=False,
+        )
+
+    assert result.exit_code == 0, result.output
+    assert calls[0][0].endswith("/preview-repo")
+    assert calls[0][1]["json"]["repo_url"] == "https://example.com/repo.git"
+    assert calls[0][1]["json"]["git_ref"] == "main"
+    assert calls[0][1]["json"]["repo_subpath"] == "packages/demo"
+    assert "https://example.com/repo.git" in result.output
+    assert "abc123" in result.output
+    assert "one-time snapshot" in result.output
+    assert "unattached workspace content and creates uncommitted workspace Git changes" in result.output
 
 
 def test_command_warns_before_interactive_conflict_prompt(monkeypatch) -> None:

@@ -181,6 +181,11 @@ class WorkspaceBundlePreview(BaseModel):
     package_sha256: str
     items: list[WorkspaceBundleItem]
     warnings: list[str] = Field(default_factory=list)
+    source_kind: Literal["zip", "repo"] = "zip"
+    repo_url: str | None = None
+    git_ref: str | None = None
+    repo_subpath: str | None = None
+    resolved_commit: str | None = None
 
     @computed_field
     @property
@@ -191,6 +196,19 @@ class WorkspaceBundlePreview(BaseModel):
 class WorkspaceBundleDecision(BaseModel):
     item_id: str
     action: Literal["keep", "replace"]
+
+
+class WorkspaceBundleRepoPreviewRequest(BaseModel):
+    """One-time repository snapshot coordinates for a workspace import.
+
+    Snapshot semantics only: the coordinates are bound into the preview for
+    audit/retry, but no ongoing package-repository connection is persisted.
+    A future saved re-import recipe may prefill these same fields.
+    """
+
+    repo_url: str = Field(min_length=1, max_length=2048)
+    git_ref: str | None = Field(default=None, max_length=256)
+    repo_subpath: str | None = Field(default=None, max_length=1024)
 
 
 class WorkspaceBundleImportRequest(BaseModel):

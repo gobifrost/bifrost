@@ -1583,6 +1583,10 @@ def _collect_apps(workspace: pathlib.Path) -> list[dict]:
             "id": body.get("id", key),
             "slug": body.get("slug") or key,
             "name": body.get("name") or key,
+            # The manifest-relative source dir. The workspace projection needs
+            # it (ManifestApp.path is required); the deployer keeps its
+            # apps/{slug} fallback for entries that predate it.
+            "path": body.get("path"),
             # description is deploy-owned: _upsert_apps full-replaces it, so
             # dropping it here would CLEAR the deployed app's description on every
             # deploy (non-round-tripping — Codex #16).
@@ -3842,6 +3846,17 @@ def _print_workspace_import_preview(preview: dict[str, Any]) -> None:
     conflicts = sum(item.get("classification") == "conflict" for item in items)
     creates = sum(item.get("classification") == "create" for item in items)
     unchanged = sum(item.get("classification") == "unchanged" for item in items)
+    if preview.get("source_kind") == "repo" or preview.get("repo_url"):
+        coords = " ".join(
+            part for part in (
+                f"repo {preview.get('repo_url')}" if preview.get("repo_url") else None,
+                f"ref {preview.get('git_ref')}" if preview.get("git_ref") else None,
+                f"path {preview.get('repo_subpath')}" if preview.get("repo_subpath") else None,
+                f"commit {preview.get('resolved_commit')}" if preview.get("resolved_commit") else None,
+            ) if part
+        )
+        if coords:
+            click.echo(f"Source: {coords} (one-time snapshot; no ongoing connection).")
     click.echo(
         "Review compatibility: package definitions were designed together; "
         "mixed keep/replace choices can change references."
@@ -3854,6 +3869,7 @@ def _print_workspace_import_preview(preview: dict[str, Any]) -> None:
     )
     for warning in preview.get("warnings", []):
         click.echo(f"Warning: {warning}")
+    click.echo("Warning: the result is unattached workspace content and creates uncommitted workspace Git changes.")
     for item in items:
         click.echo(
             f"{item['classification']:<9} {item['kind']:<12} {item['name']}"
@@ -3867,25 +3883,46 @@ def _print_workspace_import_preview(preview: dict[str, Any]) -> None:
             click.echo(f"  {'; '.join(details)}")
 
 
-@solution_group.command("import-workspace", help="Import a Solution archive as unattached workspace content.")
-@click.argument("archive", type=click.Path(exists=True, dir_okay=False, path_type=pathlib.Path))
+@solution_group.command("import-workspace", help="Import a Solution package as unattached workspace content (one-time snapshot).")
+@click.argument("archive", type=click.Path(exists=True, dir_okay=False, path_type=pathlib.Path), required=False)
+@click.option("--repo", "repo_url", default=None, help="Solution git repository URL (snapshot import; mutually exclusive with ARCHIVE).")
+@click.option("--ref", "git_ref", default=None, help="Git ref to import (default branch when omitted).")
+@click.option("--path", "repo_subpath", default=None, help="Package subfolder within the repository.")
 @click.option("--keep-all", is_flag=True, help="Keep every conflicting destination item.")
 @click.option("--replace-all", is_flag=True, help="Replace every conflicting destination item.")
 @click.option("--decisions", type=click.Path(exists=True, dir_okay=False, path_type=pathlib.Path))
 @click.option("--preview", "preview_only", is_flag=True, help="Print the staged collision preview without queuing an import.")
 @click.option("--json", "json_output", is_flag=True, help="Emit raw preview and terminal job JSON.")
 def import_workspace_cmd(
-    archive: pathlib.Path, keep_all: bool, replace_all: bool,
+    archive: pathlib.Path | None, repo_url: str | None, git_ref: str | None,
+    repo_subpath: str | None, keep_all: bool, replace_all: bool,
     decisions: pathlib.Path | None, preview_only: bool, json_output: bool,
 ) -> None:
     """Preview, explicitly decide conflicts, and queue a workspace import."""
+    if archive is not None and repo_url is not None:
+        raise click.UsageError("ARCHIVE and --repo are mutually exclusive.")
+    if archive is None and repo_url is None:
+        raise click.UsageError("Provide ARCHIVE or --repo.")
+    if repo_url is None and (git_ref is not None or repo_subpath is not None):
+        raise click.UsageError("--ref and --path require --repo.")
     async def _run() -> dict[str, Any]:
         client = BifrostClient.get_instance(require_auth=True)
-        with archive.open("rb") as stream:
+        if repo_url is not None:
             response = await client.post(
-                "/api/solutions/import-workspace/preview",
-                files={"file": (archive.name, stream, "application/zip")}, timeout=600,
+                "/api/solutions/import-workspace/preview-repo",
+                json={
+                    "repo_url": repo_url,
+                    "git_ref": git_ref,
+                    "repo_subpath": repo_subpath,
+                }, timeout=600,
             )
+        else:
+            assert archive is not None
+            with archive.open("rb") as stream:
+                response = await client.post(
+                    "/api/solutions/import-workspace/preview",
+                    files={"file": (archive.name, stream, "application/zip")}, timeout=600,
+                )
         if response.status_code != 200:
             raise click.ClickException(f"Workspace preview failed: {response.status_code} {response.text}")
         preview = response.json()
