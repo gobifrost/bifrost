@@ -1,8 +1,0 @@
-workflows:
-  33d316f6-798d-40a9-b918-e238dc538960:
-    id: 33d316f6-798d-40a9-b918-e238dc538960
-    name: Workspace Import Demo (Imported)
-    path: workflows/workspace_import_demo.py
-    function_name: workspace_import_demo
-    organization_id: null
-    access_level: authenticated

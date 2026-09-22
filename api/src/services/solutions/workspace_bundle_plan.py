@@ -40,6 +40,12 @@ _CONFIG_WARNING = (
 _SCOPE_WARNING = (
     "Imported entities are unattached global workspace content (organization_id and solution_id are null)."
 )
+_CONNECTION_WARNING = (
+    "Solution connection schemas are package-only and are not imported into the workspace."
+)
+_FILE_LOCATION_WARNING = (
+    "Solution file-location declarations are package-only and are not imported into the workspace."
+)
 _CLAIMS_WARNING = (
     "Custom claims are package-scoped and have no safe global workspace representation; they were not imported."
 )
@@ -146,10 +152,10 @@ class SolutionPackageWorkspaceProjection:
         warnings = [_SCOPE_WARNING]
         if package.config_schemas:
             warnings.append(_CONFIG_WARNING)
-        if package.connection_schemas or package.file_locations:
-            warnings.append(
-                "Solution connection schemas and file-location declarations are package-only and are not imported into the workspace."
-            )
+        if package.connection_schemas:
+            warnings.append(_CONNECTION_WARNING)
+        if package.file_locations:
+            warnings.append(_FILE_LOCATION_WARNING)
         if package.claims:
             warnings.append(_CLAIMS_WARNING)
         if any("roles" in row or "role_names" in row for rows in (

@@ -1,0 +1,16 @@
+apps:
+  44444444-4444-4444-8444-444444444444:
+    id: 44444444-4444-4444-8444-444444444444
+    slug: sink-board
+    name: Sink Board
+    description: Sink board v2
+    path: apps/sink-board
+    access_level: authenticated
+    app_model: standalone_v2
+    dependencies:
+      lodash: ^4.17.21
+    # Prebuilt dist for the managed install fast-path (skips npm/vite so the
+    # same fixture stays fast in lifecycle tests). Workspace import ignores
+    # dist and applies the real multi-file source above.
+    dist_files:
+      index.html: "<!doctype html><html><body><h1>Sink Board</h1></body></html>"

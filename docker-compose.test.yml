@@ -293,6 +293,11 @@ services:
       - ./api/shared:/app/shared:ro
       - ./api/bifrost:/app/bifrost:ro
       - test-mounts:/mounts
+      # Platform jobs (Solution git sync, workspace imports) run on the
+      # scheduler, so it needs the same file:// fixture repos the api clones
+      # server-side. Same safety shape as the api mount: only the
+      # uid-1000-created fixture subdir, never the LOG_DIR root.
+      - ${LOG_DIR:-/tmp/bifrost}/solution-repo-fixtures:/tmp/bifrost/solution-repo-fixtures
     depends_on:
       pgbouncer:
         condition: service_healthy

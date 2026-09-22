@@ -1,0 +1,9 @@
+file_policies:
+  dddddddd-dddd-4ddd-8ddd-dddddddddddd:
+    id: dddddddd-dddd-4ddd-8ddd-dddddddddddd
+    location: workspace
+    path: sink-uploads
+    policies:
+      - name: sink-read
+        actions:
+          - read

@@ -1,0 +1,14 @@
+agents:
+  77777777-7777-4777-8777-777777777777:
+    id: 77777777-7777-4777-8777-777777777777
+    name: sink_triage
+    description: Triage incoming sink tickets v2
+    system_prompt: You are a triage agent. Classify sink tickets quickly.
+    channels:
+      - chat
+    tool_ids:
+      - 33333333-3333-4333-8333-333333333333
+    system_tools:
+      - execute_workflow
+    llm_max_tokens: 8000
+    max_iterations: 15
