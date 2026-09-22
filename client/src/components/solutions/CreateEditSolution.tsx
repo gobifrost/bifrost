@@ -776,7 +776,6 @@ function CreateDispatch({
 	onSaved: (solution: Solution) => void;
 }) {
 	const intent = mode.intent ?? "install";
-	const session = useInstallSession();
 	const fixedDestination: InstallDestination | null =
 		intent === "reactivate" ? "solution" : null;
 	const initialDestination: InstallDestination | null =
@@ -789,8 +788,8 @@ function CreateDispatch({
 			: (mode.source ?? (mode.repo ? "repo" : mode.file ? "zip" : null));
 	const [destination, setDestination] = useState<InstallDestination | null>(initialDestination);
 	const [source, setSource] = useState<InstallSource | null>(initialSource);
-	// The wide dialog is needed for the workspace collision review surface.
-	useEffect(() => session.setWide(destination === "workspace"), [session, destination]);
+	// Dialog width stays narrow for the pickers and forms; only the workspace
+	// collision review widens it (see WorkspaceImportBody).
 
 	const orgId = mode.organizationId ?? null;
 	const lockOrganization = mode.organizationId !== undefined;
@@ -867,6 +866,12 @@ function WorkspaceImportBody({
 	const [loading, setLoading] = useState(false);
 	const conflicts = preview?.items.filter((item) => item.classification === "conflict") ?? [];
 	const complete = conflicts.every((item) => decisions[item.id]);
+	// Only the two-pane collision review needs the wide dialog; the repo/zip
+	// forms stay narrow. Reset on unmount so Back never leaves it wide.
+	useEffect(() => {
+		session.setWide(preview !== null);
+		return () => session.setWide(false);
+	}, [session, preview]);
 
 	async function loadZip(next: File) {
 		setFile(next); setPreview(null); setDecisions({}); setError(null); setLoading(true);

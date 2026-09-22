@@ -756,7 +756,16 @@ describe("CreateEditSolution — destination-first flow", () => {
 		expect(screen.getByTestId("repo-ref")).toBeInTheDocument();
 	});
 
-	it("workspace + zip opens the wide reviewed import session", async () => {
+	it("workspace forms stay narrow and only the review widens the dialog", async () => {
+		vi.mocked(previewWorkspaceBundle).mockResolvedValue({
+			preview_token: "workspace-preview",
+			package_name: "Workspace",
+			package_sha256: "a".repeat(64),
+			conflict_count: 0,
+			source_kind: "zip",
+			items: [],
+			warnings: [],
+		});
 		const { user } = renderCreate({ kind: "create" });
 
 		await user.click(await screen.findByTestId("destination-workspace"));
@@ -764,7 +773,15 @@ describe("CreateEditSolution — destination-first flow", () => {
 
 		expect(await screen.findByText("Review workspace import")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: /choose solution .zip/i })).toBeInTheDocument();
-		expect(screen.getByTestId("workspace-import-footer")).toBeInTheDocument();
+		// No preview yet: the chooser form stays narrow.
+		expect(screen.getByTestId("solution-dialog")).not.toHaveClass("sm:max-w-6xl");
+
+		const fileInput = document.querySelector<HTMLInputElement>('input[type="file"]');
+		expect(fileInput).not.toBeNull();
+		await user.upload(fileInput!, new File(["zip"], "workspace.zip", { type: "application/zip" }));
+
+		// The two-pane collision review needs the wide dialog.
+		expect(await screen.findByTestId("workspace-import-footer")).toBeInTheDocument();
 		expect(screen.getByTestId("solution-dialog")).toHaveClass("sm:max-w-6xl");
 	});
 
@@ -779,6 +796,8 @@ describe("CreateEditSolution — destination-first flow", () => {
 		expect(screen.getByTestId("workspace-repo-subpath")).toBeInTheDocument();
 		expect(screen.getByText(/one-time snapshot/i)).toBeInTheDocument();
 		expect(screen.queryByTestId("confirm-install-repo")).toBeNull();
+		// The snapshot form is not the review: it stays narrow.
+		expect(screen.getByTestId("solution-dialog")).not.toHaveClass("sm:max-w-6xl");
 	});
 
 	it("workspace + repo previews a snapshot and opens the collision review", async () => {
