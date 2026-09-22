@@ -172,6 +172,35 @@ def _safe_zip_filename(filename: str) -> str:
 _WORKSPACE_PREVIEW_TTL = timedelta(minutes=30)
 
 
+async def _resolve_workspace_scope_org(
+    db: AsyncSession, raw: str | UUID | None,
+) -> UUID | None:
+    """Resolve the workspace-import target scope (None = global content).
+
+    Returns the validated organization UUID, or None for global scope. Fails
+    before any preview token is issued: malformed UUIDs are 422 and unknown
+    organizations are 404, so the durable job can never stamp a dangling scope.
+    """
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return None
+    try:
+        org_id = raw if isinstance(raw, UUID) else UUID(str(raw).strip())
+    except (ValueError, AttributeError, TypeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid organization_id: {raw}",
+        ) from exc
+    from src.models.orm.organizations import Organization
+
+    exists = await db.scalar(select(Organization.id).where(Organization.id == org_id))
+    if exists is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Organization {org_id} not found",
+        )
+    return org_id
+
+
 async def _load_workspace_preview_metadata(
     preview_token: str, *, requested_by: UUID
 ) -> tuple[UUID, WorkspaceBundleStorage, dict]:
@@ -197,12 +226,19 @@ async def _load_workspace_preview_metadata(
 
 @router.post(
     "/import-workspace/preview", response_model=WorkspaceBundlePreview,
-    summary="Preview a Solution archive as global workspace content",
+    summary="Preview a Solution archive as workspace content",
 )
 async def preview_workspace_import(
     file: Annotated[UploadFile, File()], ctx: Context, user: CurrentSuperuser,
+    organization_id: Annotated[str | None, FastapiForm()] = None,
 ) -> WorkspaceBundlePreview:
-    """Stage a requester-bound immutable archive and return its collision plan."""
+    """Stage a requester-bound immutable archive and return its collision plan.
+
+    ``organization_id`` selects the target scope for scoped definitions
+    (absent = global workspace content). Files, integrations, and roles are
+    always global.
+    """
+    scope_org_id = await _resolve_workspace_scope_org(ctx.db, organization_id)
     path = await _spool_upload_to_temp(file, prefix="bifrost-workspace-preview-")
     preview_id = uuid4()
     storage = WorkspaceBundleStorage(preview_id)
@@ -215,9 +251,12 @@ async def preview_workspace_import(
             workspace.mkdir()
             _safe_extract_path(path, str(workspace))
             projection = SolutionPackageWorkspaceProjection.from_preview(
-                _parse_workspace(workspace), preview_id=preview_id, work_dir=workspace
+                _parse_workspace(workspace), preview_id=preview_id, work_dir=workspace,
+                organization_id=scope_org_id,
             )
-            planned = await WorkspaceBundlePlanner(ctx.db, preview_id=preview_id).plan(projection)
+            planned = await WorkspaceBundlePlanner(
+                ctx.db, preview_id=preview_id, organization_id=scope_org_id,
+            ).plan(projection)
             preview = planned.preview.model_copy(update={
                 "preview_token": str(preview_id), "package_sha256": digest,
             })
@@ -225,6 +264,7 @@ async def preview_workspace_import(
                 "requested_by": str(user.user_id),
                 "expires_at": (datetime.now(timezone.utc) + _WORKSPACE_PREVIEW_TTL).isoformat(),
                 "package_sha256": digest,
+                "organization_id": str(scope_org_id) if scope_org_id is not None else None,
                 "preview": preview.model_dump(mode="json"),
                 "manifest": planned.manifest.model_dump(mode="json"),
                 "id_map": {str(source): str(target) for source, target in planned.id_map.items()},
@@ -304,6 +344,7 @@ async def _stage_workspace_preview(
     work_dir: Path,
     staging_zip: Path,
     source_kind: str,
+    organization_id: UUID | None = None,
     repo_url: str | None = None,
     git_ref: str | None = None,
     repo_subpath: str | None = None,
@@ -321,9 +362,12 @@ async def _stage_workspace_preview(
     try:
         digest, _size = await storage.stage_package(staging_zip)
         projection = SolutionPackageWorkspaceProjection.from_preview(
-            _parse_workspace(work_dir), preview_id=preview_id, work_dir=work_dir
+            _parse_workspace(work_dir), preview_id=preview_id, work_dir=work_dir,
+            organization_id=organization_id,
         )
-        planned = await WorkspaceBundlePlanner(ctx.db, preview_id=preview_id).plan(projection)
+        planned = await WorkspaceBundlePlanner(
+            ctx.db, preview_id=preview_id, organization_id=organization_id,
+        ).plan(projection)
         preview = planned.preview.model_copy(update={
             "preview_token": str(preview_id),
             "package_sha256": digest,
@@ -337,6 +381,7 @@ async def _stage_workspace_preview(
             "requested_by": str(user.user_id),
             "expires_at": (datetime.now(timezone.utc) + _WORKSPACE_PREVIEW_TTL).isoformat(),
             "package_sha256": digest,
+            "organization_id": str(organization_id) if organization_id is not None else None,
             "preview": preview.model_dump(mode="json"),
             "manifest": planned.manifest.model_dump(mode="json"),
             "id_map": {str(source): str(target) for source, target in planned.id_map.items()},
@@ -356,7 +401,7 @@ async def _stage_workspace_preview(
 
 @router.post(
     "/import-workspace/preview-repo", response_model=WorkspaceBundlePreview,
-    summary="Preview a Solution repository snapshot as global workspace content",
+    summary="Preview a Solution repository snapshot as workspace content",
 )
 async def preview_workspace_import_repo(
     body: WorkspaceBundleRepoPreviewRequest, ctx: Context, user: CurrentSuperuser,
@@ -367,6 +412,7 @@ async def preview_workspace_import_repo(
     staged preview for audit/retry, but no Solution record, install ID, or
     ongoing package-repository connection is created. Checkout, ref, subfolder,
     or descriptor failures return 422 before any preview token is issued.
+    ``organization_id`` selects the target scope (absent = global).
     """
     import shutil
 
@@ -425,6 +471,7 @@ async def preview_workspace_import_repo(
         return await _stage_workspace_preview(
             ctx, user,
             work_dir=root, staging_zip=staging_zip, source_kind="repo",
+            organization_id=await _resolve_workspace_scope_org(ctx.db, body.organization_id),
             repo_url=body.repo_url, git_ref=body.git_ref,
             repo_subpath=body.repo_subpath, resolved_commit=resolved_commit,
         )

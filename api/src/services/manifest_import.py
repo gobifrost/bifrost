@@ -66,10 +66,18 @@ def filter_partial_manifest(manifest: Manifest, selection: PartialImportSelectio
 
 
 def rewrite_manifest_references(
-    manifest: Manifest, selection: PartialImportSelection
+    manifest: Manifest, selection: PartialImportSelection,
+    organization_id: UUID | None = None,
 ) -> Manifest:
-    """Apply the planner's UUID map and force the global, unattached scope."""
+    """Apply the planner's UUID map and restamp the scope.
+
+    Environment bindings from an install must never leak into the workspace:
+    organization stamps the import target scope (None = global content) and
+    solution linkage plus raw role UUIDs are always stripped. Portable
+    role_names survive for the workspace importer to merge afterwards.
+    """
     id_map = {str(source): str(target) for source, target in selection.target_ids.items()}
+    scope = str(organization_id) if organization_id is not None else None
 
     def rewrite(value: Any, *, field: str | None = None) -> Any:
         if isinstance(value, dict):
@@ -82,7 +90,7 @@ def rewrite_manifest_references(
             }
             # Environment bindings from an install must never leak into _repo.
             if "organization_id" in rewritten:
-                rewritten["organization_id"] = None
+                rewritten["organization_id"] = scope
             if "solution_id" in rewritten:
                 rewritten["solution_id"] = None
             if "roles" in rewritten:
@@ -480,6 +488,15 @@ class ManifestResolver:
         # Their natural-key lookups must not adopt an org or solution row that
         # merely happens to share a path or slug.
         self._workspace_global_scope = False
+        # Target scope for workspace-partial lookups (None = global). Set only
+        # for the duration of plan_partial_import.
+        self._workspace_organization_id: UUID | None = None
+
+    def _workspace_scope_clause(self, column):
+        """Match the workspace-partial target scope (exact org, or IS NULL)."""
+        if self._workspace_organization_id is None:
+            return column.is_(None)
+        return column == self._workspace_organization_id
 
     async def _prefetch_existing_entities(self) -> dict:
         """Prefetch all existing entity IDs/natural-keys in bulk queries.
@@ -534,7 +551,8 @@ class ManifestResolver:
         workflow_query = select(Workflow.id, Workflow.path, Workflow.function_name)
         if self._workspace_global_scope:
             workflow_query = workflow_query.where(
-                Workflow.organization_id.is_(None), Workflow.solution_id.is_(None)
+                self._workspace_scope_clause(Workflow.organization_id),
+                Workflow.solution_id.is_(None),
             )
         wf_result = await self.db.execute(workflow_query)
         cache["wf_ids"] = set()
@@ -569,7 +587,8 @@ class ManifestResolver:
         app_query = select(Application.id, Application.slug)
         if self._workspace_global_scope:
             app_query = app_query.where(
-                Application.organization_id.is_(None), Application.solution_id.is_(None)
+                self._workspace_scope_clause(Application.organization_id),
+                Application.solution_id.is_(None),
             )
         app_result = await self.db.execute(app_query)
         cache["app_by_slug"] = {}
@@ -961,6 +980,7 @@ class ManifestResolver:
         selection: PartialImportSelection,
         work_dir: Path,
         progress_fn=None,
+        organization_id: UUID | None = None,
     ) -> "list[SyncOp]":
         """Apply a selected workspace bundle subset without a stale-row sweep.
 
@@ -968,9 +988,14 @@ class ManifestResolver:
         those methods pair entity import with ``_resolve_deletions``.  A package
         import is additive/explicit-replace only, so absent package entities must
         remain untouched.
+
+        ``organization_id`` scopes natural-key lookups to the import target
+        (None = global): rows outside the target scope are never adopted.
         """
         selected = filter_partial_manifest(manifest, selection)
-        rewritten = rewrite_manifest_references(selected, selection)
+        rewritten = rewrite_manifest_references(
+            selected, selection, organization_id=organization_id,
+        )
         changed_ids = {
             entity.id
             for collection in (
@@ -983,6 +1008,7 @@ class ManifestResolver:
         }
         self._skip_role_sync = True
         self._workspace_global_scope = True
+        self._workspace_organization_id = organization_id
         try:
             ops = await self.plan_import(
                 rewritten, work_dir=work_dir, progress_fn=progress_fn,
@@ -991,6 +1017,7 @@ class ManifestResolver:
         finally:
             self._skip_role_sync = False
             self._workspace_global_scope = False
+            self._workspace_organization_id = None
 
         async def read_workspace(path: str) -> bytes | None:
             candidate = work_dir / path

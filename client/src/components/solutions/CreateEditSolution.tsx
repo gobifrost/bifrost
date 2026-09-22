@@ -75,6 +75,7 @@ import {
 	AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
+import { useOrganizations } from "@/hooks/useOrganizations";
 import { useGitHubConfig, useCreateGitHubRepository } from "@/hooks/useGitHub";
 import {
 	installSolution,
@@ -861,6 +862,7 @@ function WorkspaceImportBody({
 	const [repoUrl, setRepoUrl] = useState(initialRepo?.url ?? "");
 	const [repoSubpath, setRepoSubpath] = useState(initialRepo?.subpath ?? "");
 	const [repoRef, setRepoRef] = useState(initialRepo?.ref ?? "");
+	const [orgId, setOrgId] = useState<string | null>(null);
 	const [preview, setPreview] = useState<WorkspaceBundlePreview | null>(null);
 	const [decisions, setDecisions] = useState<Record<string, "keep" | "replace">>({});
 	const [error, setError] = useState<string | null>(null);
@@ -868,10 +870,22 @@ function WorkspaceImportBody({
 	const [dragging, setDragging] = useState(false);
 	const conflicts = preview?.items.filter((item) => item.classification === "conflict") ?? [];
 	const complete = conflicts.every((item) => decisions[item.id]);
+	const { data: organizations } = useOrganizations();
+	const scopeName = preview?.organization_id
+		? (organizations?.find((org) => org.id === preview?.organization_id)?.name
+			?? preview.organization_id)
+		: "Global";
+
+	// Changing the target scope invalidates the preview it was computed for.
+	function clearPreview() {
+		setPreview(null);
+		setDecisions({});
+		setError(null);
+	}
 
 	async function loadZip(next: File) {
 		setFile(next); setPreview(null); setDecisions({}); setError(null); setLoading(true);
-		try { setPreview(await previewWorkspaceBundle(next)); }
+		try { setPreview(await previewWorkspaceBundle(next, { organizationId: orgId ?? "" })); }
 		catch (cause) { setError(cause instanceof Error ? cause.message : "Failed to preview workspace import"); }
 		finally { setLoading(false); }
 	}
@@ -882,6 +896,7 @@ function WorkspaceImportBody({
 				repo_url: repoUrl.trim(),
 				git_ref: repoRef.trim() || null,
 				repo_subpath: repoSubpath.trim() || null,
+				organization_id: orgId,
 			}));
 		}
 		catch (cause) { setError(cause instanceof Error ? cause.message : "Failed to preview workspace import"); }
@@ -896,6 +911,9 @@ function WorkspaceImportBody({
 			initialPreviewFired.current = true;
 			void loadZip(file);
 		}
+		// Fires at most once (guarded above); depending on loadZip would
+		// re-run it every render as its closure changes.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [source, file]);
 	const start = async () => {
 		if (!preview || !complete) return;
@@ -925,9 +943,17 @@ function WorkspaceImportBody({
 	};
 
 	return <>
-		<DialogHeader className="shrink-0 px-6 pt-6"><DialogTitle>Review workspace import</DialogTitle><DialogDescription>Choose which destination definitions to keep or replace. Creates and unchanged items need no decision.</DialogDescription></DialogHeader>
+		<DialogHeader className="shrink-0 px-6 pt-6"><DialogTitle>Review workspace import</DialogTitle><DialogDescription>Choose which destination definitions to keep or replace. Creates and unchanged items need no decision.</DialogDescription>{preview && <p data-testid="workspace-import-scope" className="pt-1 text-xs text-muted-foreground">Target scope: {scopeName} · files, integrations, and roles are always global.</p>}</DialogHeader>
 		{preview || loading ? null : source === "repo" ? (
 			<div className="flex min-h-0 flex-1 flex-col gap-3 p-6">
+				<div className="grid gap-2">
+					<Label>Target scope</Label>
+					<OrganizationSelect
+						value={orgId}
+						onChange={(value) => { setOrgId(value ?? null); clearPreview(); }}
+						showGlobal
+					/>
+				</div>
 				<div className="grid gap-2">
 					<Label htmlFor="workspace-repo-url">Repository URL</Label>
 					<Input id="workspace-repo-url" data-testid="workspace-repo-url" placeholder="https://github.com/org/solution.git" value={repoUrl} onChange={(event) => setRepoUrl(event.target.value)} />
@@ -951,6 +977,19 @@ function WorkspaceImportBody({
 		) : (
 			<div className="flex min-h-0 flex-1 flex-col gap-3 p-6">
 				<input ref={inputRef} type="file" accept=".zip,application/zip" className="hidden" onChange={(event) => { const next = event.target.files?.[0]; if (next) void loadZip(next); event.target.value = ""; }} />
+				<div className="grid gap-2">
+					<Label>Target scope</Label>
+					<OrganizationSelect
+						value={orgId}
+						onChange={(value) => {
+							setOrgId(value ?? null);
+							setFile(null);
+							if (inputRef.current) inputRef.current.value = "";
+							clearPreview();
+						}}
+						showGlobal
+					/>
+				</div>
 				<button
 					type="button"
 					data-testid="workspace-dialog-dropzone"

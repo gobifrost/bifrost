@@ -62,6 +62,27 @@ vi.mock("@/components/editor/runGitOperation", () => ({
 	runGitOp: (...args: unknown[]) => mockRunGitOp(...args),
 }));
 
+vi.mock("@/components/forms/OrganizationSelect", () => ({
+	OrganizationSelect: ({
+		value,
+		onChange,
+	}: {
+		value?: string | null;
+		onChange: (value: string | null) => void;
+	}) => (
+		<select
+			aria-label="Target scope"
+			value={value ?? "global"}
+			onChange={(event) =>
+				onChange(event.currentTarget.value === "global" ? null : event.currentTarget.value)
+			}
+		>
+			<option value="global">Global</option>
+			<option value="org-1">Acme Corp</option>
+		</select>
+	),
+}));
+
 function makeSolution(overrides: Partial<Solution> = {}): Solution {
 	return {
 		id: "sol-1",
@@ -828,6 +849,7 @@ describe("CreateEditSolution — destination-first flow", () => {
 			repo_url: "https://example.com/repo.git",
 			git_ref: null,
 			repo_subpath: null,
+			organization_id: null,
 		}));
 		expect(await screen.findByTestId("workspace-import-footer")).toBeInTheDocument();
 	});
@@ -848,7 +870,7 @@ describe("CreateEditSolution — destination-first flow", () => {
 		const { user } = renderCreate({ kind: "create", file });
 		await user.click(await screen.findByTestId("destination-workspace"));
 		expect(screen.queryByTestId("source-picker")).toBeNull();
-		await waitFor(() => expect(previewWorkspaceBundle).toHaveBeenCalledWith(file));
+		await waitFor(() => expect(previewWorkspaceBundle).toHaveBeenCalledWith(file, { organizationId: "" }));
 		expect(await screen.findByTestId("workspace-import-footer")).toBeInTheDocument();
 	});
 
@@ -883,8 +905,65 @@ describe("CreateEditSolution — destination-first flow", () => {
 		const { fireEvent } = await import("@testing-library/react");
 		fireEvent.drop(dropzone, { dataTransfer: { files: [file] } });
 
-		await waitFor(() => expect(previewWorkspaceBundle).toHaveBeenCalledWith(file));
+		await waitFor(() => expect(previewWorkspaceBundle).toHaveBeenCalledWith(file, { organizationId: "" }));
 		expect(await screen.findByTestId("workspace-import-footer")).toBeInTheDocument();
+		expect(screen.getByTestId("workspace-import-scope")).toHaveTextContent(/Global/);
+	});
+
+	it("workspace scope defaults to Global and previews in an org on change", async () => {
+		vi.mocked(previewWorkspaceBundleFromRepo).mockResolvedValue({
+			preview_token: "workspace-repo-preview",
+			package_name: "Workspace",
+			package_sha256: "a".repeat(64),
+			conflict_count: 0,
+			source_kind: "repo",
+			repo_url: "https://example.com/repo.git",
+			git_ref: null,
+			repo_subpath: null,
+			resolved_commit: "abc123",
+			organization_id: "org-1",
+			items: [],
+			warnings: [],
+		});
+		const { user } = renderCreate({ kind: "create" });
+
+		await user.click(await screen.findByTestId("destination-workspace"));
+		await user.click(await screen.findByTestId("source-repo"));
+
+		// Global by default.
+		expect(screen.getByLabelText("Target scope")).toHaveValue("global");
+		await user.type(await screen.findByTestId("workspace-repo-url"), "https://example.com/repo.git");
+		await user.selectOptions(screen.getByLabelText("Target scope"), "org-1");
+		await user.click(screen.getByTestId("workspace-repo-preview"));
+
+		await waitFor(() => expect(previewWorkspaceBundleFromRepo).toHaveBeenCalledWith({
+			repo_url: "https://example.com/repo.git",
+			git_ref: null,
+			repo_subpath: null,
+			organization_id: "org-1",
+		}));
+		expect(await screen.findByTestId("workspace-import-scope")).toHaveTextContent(
+			/Acme Corp/,
+		);
+	});
+
+	it("changing scope clears a stale error and resets the chosen file", async () => {
+		vi.mocked(previewWorkspaceBundle).mockRejectedValueOnce(new Error("boom"));
+		renderCreate({
+			kind: "create",
+			destination: "workspace",
+			source: "zip",
+		});
+		const dropzone = await screen.findByTestId("workspace-dialog-dropzone");
+		const file = new File(["zip"], "dropped.zip", { type: "application/zip" });
+		const { fireEvent } = await import("@testing-library/react");
+		fireEvent.drop(dropzone, { dataTransfer: { files: [file] } });
+
+		expect(await screen.findAllByText("boom")).not.toHaveLength(0);
+		fireEvent.change(screen.getByLabelText("Target scope"), { target: { value: "org-1" } });
+
+		await waitFor(() => expect(screen.queryByText("boom")).toBeNull());
+		expect(screen.getByTestId("workspace-dialog-dropzone")).toBeInTheDocument();
 	});
 
 	it("explicit destination + source skips both pickers", async () => {

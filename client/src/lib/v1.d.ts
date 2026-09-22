@@ -8486,8 +8486,12 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Preview a Solution archive as global workspace content
+         * Preview a Solution archive as workspace content
          * @description Stage a requester-bound immutable archive and return its collision plan.
+         *
+         *     ``organization_id`` selects the target scope for scoped definitions
+         *     (absent = global workspace content). Files, integrations, and roles are
+         *     always global.
          */
         post: operations["preview_workspace_import_api_solutions_import_workspace_preview_post"];
         delete?: never;
@@ -8523,13 +8527,14 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Preview a Solution repository snapshot as global workspace content
+         * Preview a Solution repository snapshot as workspace content
          * @description Clone, validate, and plan a one-time repository snapshot.
          *
          *     Snapshot semantics: coordinates and the resolved commit are bound into the
          *     staged preview for audit/retry, but no Solution record, install ID, or
          *     ongoing package-repository connection is created. Checkout, ref, subfolder,
          *     or descriptor failures return 422 before any preview token is issued.
+         *     ``organization_id`` selects the target scope (absent = global).
          */
         post: operations["preview_workspace_import_repo_api_solutions_import_workspace_preview_repo_post"];
         delete?: never;
@@ -13293,6 +13298,8 @@ export interface components {
         Body_preview_workspace_import_api_solutions_import_workspace_preview_post: {
             /** File */
             file: string;
+            /** Organization Id */
+            organization_id?: string | null;
         };
         /** Body_sdk_store_artifact_api_sdk_artifacts_post */
         Body_sdk_store_artifact_api_sdk_artifacts_post: {
@@ -28629,6 +28636,8 @@ export interface components {
             repo_subpath?: string | null;
             /** Resolved Commit */
             resolved_commit?: string | null;
+            /** Organization Id */
+            organization_id?: string | null;
             /** Conflict Count */
             readonly conflict_count: number;
         };
@@ -28647,6 +28656,8 @@ export interface components {
             git_ref?: string | null;
             /** Repo Subpath */
             repo_subpath?: string | null;
+            /** Organization Id */
+            organization_id?: string | null;
         };
         /**
          * OAuthProviderInfo

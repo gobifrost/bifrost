@@ -89,6 +89,7 @@ describe("solutions service", () => {
 				repo_url: "https://example.com/repo.git",
 				git_ref: "main",
 				repo_subpath: "packages/demo",
+				organization_id: null,
 			},
 		});
 		expect(out).toEqual({ preview_token: "preview-2", items: [] });
@@ -100,7 +101,7 @@ describe("solutions service", () => {
 		await previewWorkspaceBundleFromRepo({ repo_url: "https://example.com/repo.git" });
 
 		expect(mockPost).toHaveBeenCalledWith("/api/solutions/import-workspace/preview-repo", {
-			body: { repo_url: "https://example.com/repo.git", git_ref: null, repo_subpath: null },
+			body: { repo_url: "https://example.com/repo.git", git_ref: null, repo_subpath: null, organization_id: null },
 		});
 	});
 	it("lists solutions", async () => {

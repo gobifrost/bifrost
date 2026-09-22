@@ -127,6 +127,106 @@ def test_human_preview_prints_compatibility_warning_and_conflicts(tmp_path) -> N
     assert "unattached workspace content and creates uncommitted workspace Git changes" in result.output
 
 
+def test_org_and_global_are_mutually_exclusive(tmp_path) -> None:
+    from bifrost.commands.solution import solution_group
+
+    archive = tmp_path / "bundle.zip"
+    archive.write_bytes(b"bundle")
+
+    class Client:
+        pass
+
+    with mock.patch("bifrost.client.BifrostClient.get_instance", return_value=Client()):
+        result = CliRunner().invoke(
+            solution_group,
+            ["import-workspace", str(archive), "--org", "acme", "--global", "--preview"],
+            catch_exceptions=False,
+        )
+    assert result.exit_code != 0
+
+
+def test_org_name_resolves_to_uuid_for_repo_preview() -> None:
+    from bifrost.commands.solution import solution_group
+
+    preview = {
+        "preview_token": "preview",
+        "package_sha256": "a" * 64,
+        "source_kind": "repo",
+        "repo_url": "https://example.com/repo.git",
+        "organization_id": "org-uuid-1",
+        "items": [],
+        "warnings": [],
+    }
+    calls: list[tuple[str, dict]] = []
+
+    def response(body):
+        result = mock.MagicMock(status_code=200, text=str(body))
+        result.json.return_value = body
+        return result
+
+    class Client:
+        async def post(self, path, **kwargs):
+            calls.append((path, kwargs))
+            return response(preview)
+
+    class Resolver:
+        def __init__(self, _client) -> None:
+            pass
+
+        async def resolve(self, _kind, value):
+            assert value == "acme"
+            return "org-uuid-1"
+
+    with (
+        mock.patch("bifrost.client.BifrostClient.get_instance", return_value=Client()),
+        mock.patch("bifrost.commands.solution.RefResolver", Resolver),
+    ):
+        result = CliRunner().invoke(
+            solution_group,
+            ["import-workspace", "--repo", "https://example.com/repo.git",
+             "--org", "acme", "--preview", "--json"],
+            catch_exceptions=False,
+        )
+
+    assert result.exit_code == 0, result.output
+    assert calls[0][1]["json"]["organization_id"] == "org-uuid-1"
+    assert '"organization_id": "org-uuid-1"' in result.output
+
+
+def test_global_is_default_for_archive_preview(tmp_path) -> None:
+    from bifrost.commands.solution import solution_group
+
+    archive = tmp_path / "bundle.zip"
+    archive.write_bytes(b"bundle")
+    preview = {
+        "preview_token": "preview",
+        "package_sha256": "a" * 64,
+        "organization_id": None,
+        "items": [],
+        "warnings": [],
+    }
+    calls: list[tuple[str, dict]] = []
+
+    def response(body):
+        result = mock.MagicMock(status_code=200, text=str(body))
+        result.json.return_value = body
+        return result
+
+    class Client:
+        async def post(self, path, **kwargs):
+            calls.append((path, kwargs))
+            return response(preview)
+
+    with mock.patch("bifrost.client.BifrostClient.get_instance", return_value=Client()):
+        result = CliRunner().invoke(
+            solution_group, ["import-workspace", str(archive), "--preview"],
+            catch_exceptions=False,
+        )
+
+    assert result.exit_code == 0, result.output
+    assert "Scope: global workspace content" in result.output
+
+
 def test_archive_and_repo_are_mutually_exclusive(tmp_path) -> None:
     from bifrost.commands.solution import solution_group
 

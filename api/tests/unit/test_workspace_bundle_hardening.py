@@ -228,8 +228,9 @@ def _install_job_doubles(
             return object()
 
     class Planner:
-        def __init__(self, _db, *, preview_id):
+        def __init__(self, _db, *, preview_id, organization_id=None):
             self.preview_id = preview_id
+            self.organization_id = organization_id
 
         async def plan(self, _projection):
             preview = job_module.WorkspaceBundlePreview.model_validate(Storage.metadata["preview"])

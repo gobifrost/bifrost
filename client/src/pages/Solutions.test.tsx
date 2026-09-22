@@ -1357,7 +1357,7 @@ describe("Solutions — page dropzone", () => {
 		await user.click(within(dialog).getByTestId("destination-workspace"));
 		// The dropped file prefills the workspace zip source and previews.
 		await waitFor(() =>
-			expect(mockPreviewWorkspaceBundle).toHaveBeenCalledWith(file),
+			expect(mockPreviewWorkspaceBundle).toHaveBeenCalledWith(file, { organizationId: "" }),
 		);
 		expect(
 			await within(dialog).findByTestId("workspace-import-footer"),

@@ -1,10 +1,12 @@
 # Workspace Import Kitchen Sink
 
 A representative Solution package for the unattached **Import into workspace**
-flow. Every definition below is ordinary portable content; the package-only
-declarations (custom claims, connection schemas, file locations, role bindings)
-are intentionally present so the preview proves they produce explicit warnings
-instead of disappearing silently.
+flow. Every definition below is ordinary portable content, including custom
+claims, connection schemas (imported as never-clobber integration shells),
+and role bindings (merged additively). File-location declarations are the one
+package-only construct: install setup metadata with no workspace analogue, so
+the preview proves they produce an explicit warning instead of disappearing
+silently.
 
 Typed cross-references tie the package together:
 

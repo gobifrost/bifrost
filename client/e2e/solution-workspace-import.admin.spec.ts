@@ -160,6 +160,7 @@ test("reviews collisions and replaces workspace content without installing a Sol
 			dialog.getByText(/Solutions are designed to work together\./),
 		).toBeVisible();
 		await expect(dialog.getByText(/need review/)).toBeVisible();
+		await expect(dialog.getByText(/Target scope: Global/)).toBeVisible();
 		// The full 64-char definition name must fit inside the dialog box —
 		// wrapping is fine, horizontal spill is not.
 		const name = dialog.getByText(functionName, { exact: true });

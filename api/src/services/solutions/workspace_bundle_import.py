@@ -74,7 +74,7 @@ class WorkspaceBundleImporter:
         )
         ops = await ManifestResolver(self.db).plan_partial_import(
             plan.manifest, selection=selection, work_dir=plan.work_dir,
-            progress_fn=self.progress_fn,
+            progress_fn=self.progress_fn, organization_id=plan.organization_id,
         )
         # Declared connections become never-clobber global integration shells
         # (empty credentials for the admin to fill in). Existing integrations

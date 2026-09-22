@@ -66,14 +66,18 @@ def _uuid(value: object, *, preview_id: UUID, stable_key: str) -> UUID:
         return uuid5(preview_id, stable_key)
 
 
-def _entry(entry: dict[str, Any], *, preview_id: UUID, stable_key: str) -> dict[str, Any]:
+def _entry(
+    entry: dict[str, Any], *, preview_id: UUID, stable_key: str,
+    organization_id: UUID | None = None,
+) -> dict[str, Any]:
     result = dict(entry)
     result["id"] = str(_uuid(result.get("id"), preview_id=preview_id, stable_key=stable_key))
-    # A bundle describes an install's binding. Workspace import deliberately
-    # strips that binding before any manifest model validates the entity.
+    # A bundle describes an install's binding. Workspace import restamps it to
+    # the chosen target scope (global null by default) before any manifest
+    # model validates the entity.
     # Raw role UUIDs are source-env-specific and go; portable role_names stay
     # so the import can re-bind (auto-creating missing global roles).
-    result["organization_id"] = None
+    result["organization_id"] = str(organization_id) if organization_id is not None else None
     result.pop("solution_id", None)
     result.pop("roles", None)
     return result
@@ -95,48 +99,49 @@ class SolutionPackageWorkspaceProjection:
 
     @classmethod
     def from_preview(
-        cls, package: PreviewResult, *, preview_id: UUID, work_dir: Path | None = None
+        cls, package: PreviewResult, *, preview_id: UUID, work_dir: Path | None = None,
+        organization_id: UUID | None = None,
     ) -> "SolutionPackageWorkspaceProjection":
         workflows: dict[str, ManifestWorkflow] = {}
         for row in package.workflows:
-            data = _entry(row, preview_id=preview_id, stable_key=f"workflow:{row.get('path')}:{row.get('function_name')}")
+            data = _entry(row, preview_id=preview_id, organization_id=organization_id, stable_key=f"workflow:{row.get('path')}:{row.get('function_name')}")
             data.setdefault("name", data["id"])
             workflows[data["id"]] = ManifestWorkflow.model_validate(data)
 
         apps: dict[str, ManifestApp] = {}
         for row in package.apps:
-            data = _entry(row, preview_id=preview_id, stable_key=f"app:{row.get('slug') or row.get('path')}")
+            data = _entry(row, preview_id=preview_id, organization_id=organization_id, stable_key=f"app:{row.get('slug') or row.get('path')}")
             apps[data["id"]] = ManifestApp.model_validate(data)
 
         tables: dict[str, ManifestTable] = {}
         for row in package.tables:
-            data = _entry(row, preview_id=preview_id, stable_key=f"table:{row.get('name')}")
+            data = _entry(row, preview_id=preview_id, organization_id=organization_id, stable_key=f"table:{row.get('name')}")
             data.setdefault("name", data["id"])
             tables[data["id"]] = ManifestTable.model_validate(data)
 
         forms: dict[str, ManifestForm] = {}
         for row in package.forms:
-            data = _entry(row, preview_id=preview_id, stable_key=f"form:{row.get('name') or row.get('id')}")
+            data = _entry(row, preview_id=preview_id, organization_id=organization_id, stable_key=f"form:{row.get('name') or row.get('id')}")
             forms[data["id"]] = ManifestForm.model_validate(data)
 
         agents: dict[str, ManifestAgent] = {}
         for row in package.agents:
-            data = _entry(row, preview_id=preview_id, stable_key=f"agent:{row.get('name') or row.get('id')}")
+            data = _entry(row, preview_id=preview_id, organization_id=organization_id, stable_key=f"agent:{row.get('name') or row.get('id')}")
             agents[data["id"]] = ManifestAgent.model_validate(data)
 
         events: dict[str, ManifestEventSource] = {}
         for row in package.events:
-            data = _entry(row, preview_id=preview_id, stable_key=f"event:{row.get('name')}")
+            data = _entry(row, preview_id=preview_id, organization_id=organization_id, stable_key=f"event:{row.get('name')}")
             events[data["id"]] = ManifestEventSource.model_validate(data)
 
         file_policies: dict[str, ManifestFilePolicy] = {}
         for row in package.file_policies:
-            data = _entry(row, preview_id=preview_id, stable_key=f"file-policy:{row.get('location')}:{row.get('path')}")
+            data = _entry(row, preview_id=preview_id, organization_id=organization_id, stable_key=f"file-policy:{row.get('location')}:{row.get('path')}")
             file_policies[data["id"]] = ManifestFilePolicy.model_validate(data)
 
         claims: dict[str, ManifestCustomClaim] = {}
         for row in package.claims:
-            data = _entry(row, preview_id=preview_id, stable_key=f"claim:{row.get('name')}")
+            data = _entry(row, preview_id=preview_id, organization_id=organization_id, stable_key=f"claim:{row.get('name')}")
             data.setdefault("name", data["id"])
             claims[data["id"]] = ManifestCustomClaim.model_validate(data)
 
@@ -187,21 +192,48 @@ class PlannedWorkspaceBundle:
     file_hashes: dict[str, str] | None = None
     destination_file_hashes: dict[str, str] | None = None
     connection_schemas: list[dict[str, Any]] | None = None
+    organization_id: UUID | None = None
 
 
 def _display_key(natural_key: tuple) -> str:
     """Render a natural key for the review table (``path :: function``).
 
     The stored lookup stays tuple-shaped; this is only the explainable string
-    the reviewer sees, so ``None`` padding never leaks into it.
+    the reviewer sees. ``None`` padding and raw scope UUIDs never leak into
+    it — the import scope is shown once at the review level instead.
     """
-    return " :: ".join(str(part) for part in natural_key if part is not None)
+    parts: list[str] = []
+    for part in natural_key:
+        if part is None:
+            continue
+        try:
+            UUID(str(part))
+        except (TypeError, ValueError):
+            parts.append(str(part))
+    return " :: ".join(parts)
+
+
+def _scope_holder_description(holder: UUID | None) -> str:
+    return "the global workspace" if holder is None else f"organization {holder}"
 
 
 class WorkspaceBundlePlanner:
-    def __init__(self, db: AsyncSession | None, *, preview_id: UUID):
+    def __init__(
+        self, db: AsyncSession | None, *, preview_id: UUID,
+        organization_id: UUID | None = None,
+    ):
         self.db = db
         self.preview_id = preview_id
+        # Target scope for scoped definitions (None = global). Files,
+        # integrations, and roles are always global; matching never adopts a
+        # row outside this scope.
+        self.organization_id = organization_id
+
+    def _scope_clause(self, column):
+        """Match this planner's target scope (exact org, or IS NULL global)."""
+        if self.organization_id is None:
+            return column.is_(None)
+        return column == self.organization_id
 
     @staticmethod
     def reference_map(items: list[WorkspaceBundleItem]) -> dict[UUID, UUID]:
@@ -228,7 +260,49 @@ class WorkspaceBundlePlanner:
             await self._prefetch_existing_file_hashes(incoming_paths),
             existing_integrations=await self._prefetch_existing_integrations(),
             existing_role_names=await self._prefetch_existing_role_names(),
+            unattached_scope_map=await self._prefetch_unattached_scope_map(),
         )
+
+    def _require_scope_available(
+        self,
+        kind: str,
+        natural_key: tuple,
+        unattached_scope_map: tuple[dict[tuple[str, ...], UUID | None], dict[str, UUID | None]],
+    ) -> None:
+        """Refuse scoped imports that would duplicate a globally-unique key.
+
+        Workflow paths and app slugs are unique across all unattached rows, so
+        the same definition cannot live in two scopes. A scoped import that
+        collides outside its target fails here with an actionable message
+        instead of dying on a DB unique violation mid-job. A match inside the
+        target scope flows through to the normal conflict path.
+        """
+        workflow_scopes, app_scopes = unattached_scope_map
+        if kind == "workflow":
+            key = (str(natural_key[0]), str(natural_key[1]))
+            if key not in workflow_scopes:
+                return  # unused anywhere; every scope may take it
+            holder = workflow_scopes[key]
+            label = f"Workflow {natural_key[0]}"
+        elif kind == "app":
+            key = str(natural_key[0])
+            if key not in app_scopes:
+                return  # unused anywhere; every scope may take it
+            holder = app_scopes[key]
+            label = f"App '{natural_key[0]}'"
+        else:
+            return
+        if holder != self.organization_id:
+            if self.organization_id is None:
+                raise ValueError(
+                    f"{label} already exists in {_scope_holder_description(holder)}; "
+                    "import into that scope to update it in place."
+                )
+            raise ValueError(
+                f"{label} already exists in {_scope_holder_description(holder)}; "
+                "import without a target organization to update it in place, "
+                "or use a different path/slug."
+            )
 
     @staticmethod
     def _incoming_file_paths(projection: SolutionPackageWorkspaceProjection) -> Iterator[str]:
@@ -251,6 +325,7 @@ class WorkspaceBundlePlanner:
         *,
         existing_integrations: dict[str, UUID] | None = None,
         existing_role_names: frozenset[str] | None = None,
+        unattached_scope_map: tuple[dict[tuple[str, ...], UUID | None], dict[str, UUID | None]] | None = None,
     ) -> PlannedWorkspaceBundle:
         items: list[WorkspaceBundleItem] = []
         # Group keys tie a definition to the files implementing it: a workflow
@@ -274,6 +349,8 @@ class WorkspaceBundlePlanner:
             for entity in entries.values():
                 source = UUID(entity.id)
                 natural_key = key_fn(entity)
+                if unattached_scope_map is not None:
+                    self._require_scope_available(kind, natural_key, unattached_scope_map)
                 match = existing.get((kind, natural_key))
                 target = match[0] if match else uuid5(self.preview_id, f"{kind}:{natural_key}")
                 incoming = entity.model_dump(mode="json", exclude={"id"})
@@ -332,7 +409,8 @@ class WorkspaceBundlePlanner:
             )
         return PlannedWorkspaceBundle(
             preview=WorkspaceBundlePreview(preview_token=str(self.preview_id), package_name=projection.package_name,
-                                            package_sha256="", items=items, warnings=warnings),
+                                            package_sha256="", items=items, warnings=warnings,
+                                            organization_id=self.organization_id),
             manifest=projection.manifest, id_map=self.reference_map(items),
             work_dir=projection.work_dir, file_hashes=file_hashes,
             destination_file_hashes={
@@ -341,6 +419,7 @@ class WorkspaceBundlePlanner:
                 if fingerprint is not None
             },
             connection_schemas=[dict(schema) for schema in projection.connection_schemas],
+            organization_id=self.organization_id,
         )
 
     @staticmethod
@@ -348,13 +427,13 @@ class WorkspaceBundlePlanner:
         return (
             ("workflow", manifest.workflows, lambda x: (x.path, x.function_name)),
             ("app", manifest.apps, lambda x: (x.slug or x.path,)),
-            ("table", manifest.tables, lambda x: (x.name, None)),
+            ("table", manifest.tables, lambda x: (x.name,)),
             ("config", manifest.configs, lambda x: (x.key, None, None)),
             ("claim", manifest.claims, lambda x: (x.name, None)),
             ("event", manifest.events, lambda x: (x.name,)),
             ("form", manifest.forms, lambda x: (x.name,)),
             ("agent", manifest.agents, lambda x: (x.name,)),
-            ("file_policy", manifest.file_policies, lambda x: (x.location, x.path, None)),
+            ("file_policy", manifest.file_policies, lambda x: (x.location, x.path, x.organization_id)),
         )
 
     async def _prefetch_existing(self) -> dict[tuple[str, tuple], tuple[UUID, dict[str, Any]]]:
@@ -384,7 +463,7 @@ class WorkspaceBundlePlanner:
             ("config", Config, (Config.key, Config.integration_id, Config.organization_id)),
             ("claim", CustomClaim, (CustomClaim.name, CustomClaim.organization_id)),
         ):
-            query = select(model).where(model.organization_id.is_(None))
+            query = select(model).where(self._scope_clause(model.organization_id))
             if "solution_id" in model.__table__.columns:
                 query = query.where(model.solution_id.is_(None))
             rows = (await self.db.execute(query)).scalars().all()
@@ -398,11 +477,15 @@ class WorkspaceBundlePlanner:
 
         FilePolicy = _load_file_policy_model()
         for kind, model in (("form", Form), ("agent", Agent), ("file_policy", FilePolicy)):
-            query = select(model).where(model.organization_id.is_(None))
+            query = select(model).where(self._scope_clause(model.organization_id))
             if "solution_id" in model.__table__.columns:
                 query = query.where(model.solution_id.is_(None))
             for row in (await self.db.execute(query)).scalars().all():
-                key = ((row.location, row.path, None) if kind == "file_policy" else (row.name,))
+                if kind == "file_policy":
+                    org = row.organization_id
+                    key = (row.location, row.path, str(org) if org is not None else None)
+                else:
+                    key = (row.name,)
                 result[(kind, key)] = (row.id, {})
         return result
 
@@ -416,6 +499,44 @@ class WorkspaceBundlePlanner:
             await self.db.execute(select(Integration.id, Integration.name))
         ).all()
         return {str(name): row_id for row_id, name in rows}
+
+    async def _prefetch_unattached_scope_map(
+        self,
+    ) -> tuple[dict[tuple[str, ...], UUID | None], dict[str, UUID | None]]:
+        """Every unattached workflow path and app slug, mapped to its org.
+
+        Those keys are globally unique, so a scoped import must fail fast when
+        one is taken outside its target instead of dying mid-job.
+        """
+        if self.db is None:
+            return {}, {}
+        from src.models.orm.applications import Application
+        from src.models.orm.workflows import Workflow
+
+        workflows = {
+            (str(path), str(function_name)): (
+                UUID(str(org_id)) if org_id is not None else None
+            )
+            for path, function_name, org_id in (
+                await self.db.execute(
+                    select(
+                        Workflow.path, Workflow.function_name,
+                        Workflow.organization_id,
+                    ).where(Workflow.solution_id.is_(None))
+                )
+            ).all()
+        }
+        apps = {
+            str(slug): (UUID(str(org_id)) if org_id is not None else None)
+            for slug, org_id in (
+                await self.db.execute(
+                    select(
+                        Application.slug, Application.organization_id,
+                    ).where(Application.solution_id.is_(None))
+                )
+            ).all()
+        }
+        return workflows, apps
 
     async def _prefetch_existing_role_names(self) -> frozenset[str]:
         """All role names (roles are global by name)."""

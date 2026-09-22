@@ -531,6 +531,7 @@ async def test_workspace_zip_preview_classifies_every_kind(
     assert beta["target_id"] is not None
     # The tool workflow, audit table, and events are new.
     assert by_match[_key(WF_TOOL_PATH, WF_TOOL_FN)]["classification"] == "create"
+    assert by_match[_key(TABLE_ITEMS)]["classification"] == "unchanged"
     assert by_match[_key(TABLE_AUDIT)]["classification"] == "create"
     assert by_match[_key(EVENT_SCHED)]["classification"] == "create"
     assert by_match[_key(EVENT_HOOK)]["classification"] == "create"
@@ -922,3 +923,155 @@ async def test_managed_solution_install_from_repo_is_git_connected(
     ).scalars().one()
     assert solution.git_connected is True
     assert solution.git_repo_url == repo_url
+
+
+
+SCOPED_WF_PATH = "workflows/scoped_only.py"
+SCOPED_WF_FN = "scoped_only"
+
+
+def _scoped_tree(
+    root: Path, slug: str, *, wf_path: str, wf_fn: str, wf_id: str,
+    table_name: str, table_id: str,
+) -> None:
+    """A small tree with globally-unique paths for scope isolation tests."""
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "bifrost.solution.yaml").write_text(
+        f"slug: {slug}\nname: Scoped Tree\nversion: 1.0.0\n"
+    )
+    (root / "workflows").mkdir(parents=True, exist_ok=True)
+    (root / wf_path).write_text(
+        f"def {wf_fn}():\n    return 2\n"
+    )
+    bifrost = root / ".bifrost"
+    bifrost.mkdir(exist_ok=True)
+    (bifrost / "workflows.yaml").write_text(
+        "workflows:\n"
+        f"  {wf_id}:\n"
+        f"    id: {wf_id}\n"
+        "    name: Scoped Only\n"
+        f"    path: {wf_path}\n"
+        f"    function_name: {wf_fn}\n"
+        "    description: Scoped v2\n"
+    )
+    (bifrost / "tables.yaml").write_text(
+        "tables:\n"
+        f"  {table_id}:\n"
+        f"    id: {table_id}\n"
+        f"    name: {table_name}\n"
+        "    description: Scoped table v2\n"
+        "    schema:\n"
+        "      columns:\n"
+        "        - name: title\n"
+        "          type: text\n"
+    )
+
+
+def _scoped_zip(root: Path) -> bytes:
+    from bifrost.commands.solution import _build_deploy_zip
+
+    return _build_deploy_zip(root, extra_text_files={})
+
+
+async def _preview_zip_scoped(e2e_client, headers: dict[str, str], archive: bytes, org_id) -> dict:
+    response = e2e_client.post(
+        "/api/solutions/import-workspace/preview",
+        headers=_bare_headers(headers),
+        files={"file": ("scoped.zip", archive, "application/zip")},
+        data={"organization_id": str(org_id)},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+async def test_workspace_org_scoped_import_matches_only_target_scope(
+    e2e_client, platform_admin, db_session,
+) -> None:
+    """Scoped previews match rows in that org, stamp new rows there, and fail
+    fast when a globally-unique path is taken elsewhere."""
+    from src.models.orm.organizations import Organization
+    from src.models.orm.tables import Table
+    from src.models.orm.workflows import Workflow
+
+    suffix = uuid.uuid4().hex[:8]
+    org = Organization(name=f"ws-scope-{suffix}", created_by="kitchen-sink-seed")
+    db_session.add(org)
+    await db_session.commit()
+
+    root = _SHARED_ROOT / f"scoped-{suffix}"
+    _CREATED.append(root)
+    _scoped_tree(
+        root, f"scoped-{suffix}", wf_path=SCOPED_WF_PATH, wf_fn=SCOPED_WF_FN,
+        wf_id="99999999-9999-4999-8999-999999999999",
+        table_name="scoped_items", table_id="88888888-8888-4888-8888-888888888888",
+    )
+    archive = _scoped_zip(root)
+
+    # The org holds an older copy of the scoped workflow; nothing global does.
+    org_wf = Workflow(
+        path=SCOPED_WF_PATH, function_name=SCOPED_WF_FN, name="Scoped Only",
+        description="Scoped v1", type="workflow", access_level="authenticated",
+        organization_id=org.id, solution_id=None,
+    )
+    db_session.add(org_wf)
+    await db_session.commit()
+
+    scoped = await _preview_zip_scoped(e2e_client, platform_admin.headers, archive, org.id)
+    assert scoped["organization_id"] == str(org.id)
+    by_match = _items_by_match(scoped)
+    wf_item = by_match[f"{SCOPED_WF_PATH} :: {SCOPED_WF_FN}"]
+    assert wf_item["classification"] == "conflict"
+    assert wf_item["target_id"] == str(org_wf.id)
+
+    job_id = _enqueue(
+        e2e_client, platform_admin.headers, scoped, _decide(scoped, "replace")
+    )
+    _wait_job(e2e_client, platform_admin.headers, job_id)
+
+    await db_session.refresh(org_wf)
+    assert org_wf.description == "Scoped v2"
+    table = (
+        await db_session.execute(
+            select(Table).where(
+                Table.name == "scoped_items", Table.organization_id == org.id
+            )
+        )
+    ).scalars().one()
+    assert table.description == "Scoped table v2"
+    assert table.solution_id is None
+
+
+async def test_workspace_scoped_preview_refuses_taken_global_path(
+    e2e_client, platform_admin, db_session,
+) -> None:
+    """A scoped preview 422s when its workflow path lives in global scope."""
+    from src.models.orm.organizations import Organization
+    from src.models.orm.workflows import Workflow
+
+    suffix = uuid.uuid4().hex[:8]
+    org = Organization(name=f"ws-scope-taken-{suffix}", created_by="kitchen-sink-seed")
+    db_session.add(org)
+    db_session.add(Workflow(
+        path="workflows/scoped_taken.py", function_name="scoped_taken",
+        name="Scoped Taken", description="Global original", type="workflow",
+        access_level="authenticated", organization_id=None, solution_id=None,
+    ))
+    await db_session.commit()
+
+    root = _SHARED_ROOT / f"scoped-taken-{suffix}"
+    _CREATED.append(root)
+    _scoped_tree(
+        root, f"scoped-taken-{suffix}", wf_path="workflows/scoped_taken.py",
+        wf_fn="scoped_taken", wf_id="77777777-7777-4777-8777-777777777777",
+        table_name="scoped_taken_items", table_id="66666666-6666-4666-8666-666666666666",
+    )
+    archive = _scoped_zip(root)
+
+    response = e2e_client.post(
+        "/api/solutions/import-workspace/preview",
+        headers=_bare_headers(platform_admin.headers),
+        files={"file": ("scoped.zip", archive, "application/zip")},
+        data={"organization_id": str(org.id)},
+    )
+    assert response.status_code == 422, response.text
+    assert "global workspace" in response.text

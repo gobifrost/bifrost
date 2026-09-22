@@ -190,6 +190,9 @@ class WorkspaceBundlePreview(BaseModel):
     git_ref: str | None = None
     repo_subpath: str | None = None
     resolved_commit: str | None = None
+    # Target scope for scoped definitions (null = global workspace content).
+    # Files, integrations, and roles are always global; everything else lands here.
+    organization_id: UUID | None = None
 
     @computed_field
     @property
@@ -213,6 +216,8 @@ class WorkspaceBundleRepoPreviewRequest(BaseModel):
     repo_url: str = Field(min_length=1, max_length=2048)
     git_ref: str | None = Field(default=None, max_length=256)
     repo_subpath: str | None = Field(default=None, max_length=1024)
+    # Target scope for scoped definitions (absent/null = global).
+    organization_id: UUID | None = None
 
 
 class WorkspaceBundleImportRequest(BaseModel):

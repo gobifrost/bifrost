@@ -156,8 +156,18 @@ async def run_workspace_bundle_import(
                 )
                 projection = SolutionPackageWorkspaceProjection.from_preview(
                     _parse_workspace(workspace), preview_id=payload.preview_id, work_dir=workspace,
+                    organization_id=(
+                        UUID(metadata["organization_id"])
+                        if metadata.get("organization_id") else None
+                    ),
                 )
-                plan = await WorkspaceBundlePlanner(db, preview_id=payload.preview_id).plan(projection)
+                plan = await WorkspaceBundlePlanner(
+                    db, preview_id=payload.preview_id,
+                    organization_id=(
+                        UUID(metadata["organization_id"])
+                        if metadata.get("organization_id") else None
+                    ),
+                ).plan(projection)
                 if resuming:
                     result = WorkspaceBundleImportResult(
                         imported_item_ids=frozenset(journal["imported_entity_ids"]),

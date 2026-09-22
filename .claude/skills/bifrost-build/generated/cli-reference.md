@@ -2182,6 +2182,9 @@ Options:
                     exclusive with ARCHIVE).
   --ref TEXT        Git ref to import (default branch when omitted).
   --path TEXT       Package subfolder within the repository.
+  --org TEXT        Target organization name or UUID for scoped definitions.
+                    Omit for global workspace content.
+  --global          Target global workspace content (the default).
   --keep-all        Keep every conflicting destination item.
   --replace-all     Replace every conflicting destination item.
   --decisions FILE

@@ -629,9 +629,11 @@ async function parseUploadError(
 /** Stage and classify a Solution archive for an explicit workspace import. */
 export async function previewWorkspaceBundle(
 	file: File,
+	params: { organizationId?: string } = {},
 ): Promise<WorkspaceBundlePreview> {
 	const body = new FormData();
 	body.append("file", file);
+	body.append("organization_id", params.organizationId ?? "");
 	const response = await authFetch("/api/solutions/import-workspace/preview", {
 		method: "POST",
 		body,
@@ -657,13 +659,14 @@ export async function importWorkspaceBundle(
 
 /** Stage and classify a repository snapshot for an explicit workspace import. */
 export async function previewWorkspaceBundleFromRepo(
-	coords: { repo_url: string; git_ref?: string | null; repo_subpath?: string | null },
+	coords: { repo_url: string; git_ref?: string | null; repo_subpath?: string | null; organization_id?: string | null },
 ): Promise<WorkspaceBundlePreview> {
 	const { data, error } = await apiClient.POST("/api/solutions/import-workspace/preview-repo", {
 		body: {
 			repo_url: coords.repo_url,
 			git_ref: coords.git_ref ?? null,
 			repo_subpath: coords.repo_subpath ?? null,
+			organization_id: coords.organization_id ?? null,
 		},
 	});
 	if (error) throw new Error(getErrorMessage(error, "Failed to preview workspace import"));

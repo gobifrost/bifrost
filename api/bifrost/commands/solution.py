@@ -3857,6 +3857,11 @@ def _print_workspace_import_preview(preview: dict[str, Any]) -> None:
         )
         if coords:
             click.echo(f"Source: {coords} (one-time snapshot; no ongoing connection).")
+    scope = preview.get("organization_id")
+    click.echo(
+        f"Scope: {'organization ' + scope if scope else 'global workspace content'} "
+        "(files, integrations, and roles are always global)."
+    )
     click.echo(
         "Review compatibility: package definitions were designed together; "
         "mixed keep/replace choices can change references."
@@ -3888,6 +3893,8 @@ def _print_workspace_import_preview(preview: dict[str, Any]) -> None:
 @click.option("--repo", "repo_url", default=None, help="Solution git repository URL (snapshot import; mutually exclusive with ARCHIVE).")
 @click.option("--ref", "git_ref", default=None, help="Git ref to import (default branch when omitted).")
 @click.option("--path", "repo_subpath", default=None, help="Package subfolder within the repository.")
+@click.option("--org", "org_ref", default=None, help="Target organization name or UUID for scoped definitions. Omit for global workspace content.")
+@click.option("--global", "is_global", is_flag=True, help="Target global workspace content (the default).")
 @click.option("--keep-all", is_flag=True, help="Keep every conflicting destination item.")
 @click.option("--replace-all", is_flag=True, help="Replace every conflicting destination item.")
 @click.option("--decisions", type=click.Path(exists=True, dir_okay=False, path_type=pathlib.Path))
@@ -3895,7 +3902,8 @@ def _print_workspace_import_preview(preview: dict[str, Any]) -> None:
 @click.option("--json", "json_output", is_flag=True, help="Emit raw preview and terminal job JSON.")
 def import_workspace_cmd(
     archive: pathlib.Path | None, repo_url: str | None, git_ref: str | None,
-    repo_subpath: str | None, keep_all: bool, replace_all: bool,
+    repo_subpath: str | None, org_ref: str | None, is_global: bool,
+    keep_all: bool, replace_all: bool,
     decisions: pathlib.Path | None, preview_only: bool, json_output: bool,
 ) -> None:
     """Preview, explicitly decide conflicts, and queue a workspace import."""
@@ -3906,7 +3914,16 @@ def import_workspace_cmd(
     if repo_url is None and (git_ref is not None or repo_subpath is not None):
         raise click.UsageError("--ref and --path require --repo.")
     async def _run() -> dict[str, Any]:
+        from bifrost.org_target import resolve_org_target
+
         client = BifrostClient.get_instance(require_auth=True)
+        # Unlike entity commands (omit = your org), a workspace import defaults
+        # to global content; --org opts a single organization into scope.
+        try:
+            target = await resolve_org_target(org_ref, is_global, RefResolver(client))
+        except ValueError as exc:
+            raise click.UsageError(str(exc)) from exc
+        organization_id = target.organization_id
         if repo_url is not None:
             response = await client.post(
                 "/api/solutions/import-workspace/preview-repo",
@@ -3914,6 +3931,7 @@ def import_workspace_cmd(
                     "repo_url": repo_url,
                     "git_ref": git_ref,
                     "repo_subpath": repo_subpath,
+                    "organization_id": organization_id,
                 }, timeout=600,
             )
         else:
@@ -3921,7 +3939,12 @@ def import_workspace_cmd(
             with archive.open("rb") as stream:
                 response = await client.post(
                     "/api/solutions/import-workspace/preview",
-                    files={"file": (archive.name, stream, "application/zip")}, timeout=600,
+                    files={"file": (archive.name, stream, "application/zip")},
+                    data=(
+                        {"organization_id": organization_id}
+                        if organization_id is not None else {}
+                    ),
+                    timeout=600,
                 )
         if response.status_code != 200:
             raise click.ClickException(f"Workspace preview failed: {response.status_code} {response.text}")

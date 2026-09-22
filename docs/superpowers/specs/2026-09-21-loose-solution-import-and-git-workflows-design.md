@@ -97,6 +97,17 @@ content. The imported files then appear as dirty changes in the workspace's
 existing Git repository. The package source does not remain connected, does
 not detect updates, and does not create another pull/update lifecycle.
 
+The workspace source screens also carry a target-scope picker (Global by
+default, or one organization). Scoped definitions — workflows, apps, tables,
+configs, forms, agents, events, claims, file policies — match and land in the
+chosen scope and never adopt rows outside it. Files, integration shells, and
+roles are always global. Workflow paths and app slugs are unique across all
+unattached rows, so a scoped preview refuses with an actionable error when one
+is taken outside its target instead of duplicating it. Custom claims, empty
+integration shells, and merged role bindings import rather than warn; only
+file-location declarations (per-install setup with no workspace analogue)
+still warn.
+
 Remembered repository recipes and a prefilled **Re-import** action are a future
 enhancement. The v1 API keeps repository coordinates explicit so that feature
 can be added without changing snapshot-import semantics.
