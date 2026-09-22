@@ -1,5 +1,8 @@
 import { useMemo } from "react";
 import { Info } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { ENTITY_CONFIG } from "@/components/entity-management/types";
+import { cn } from "@/lib/utils";
 import {
 	DataTable,
 	DataTableBody,
@@ -13,20 +16,36 @@ import type { WorkspaceBundlePreview } from "@/services/solutions";
 type Decision = "keep" | "replace";
 type Item = WorkspaceBundlePreview["items"][number];
 
-const kindLabel: Record<string, string> = {
-	app: "APP",
-	workflow: "WF",
-	table: "TBL",
-	form: "FRM",
-	agent: "AGT",
-	file: "FILE",
-	config: "CFG",
-	event: "EVT",
-	integration: "INT",
-	file_policy: "POL",
-	policy_rule: "POL",
-	claim: "CLM",
-};
+// Type language shared with Entity Management: full-word labels in the same
+// outline badge. Kinds Entity Management doesn't manage (files, configs,
+// events, policies, claims, integrations) use the same shape, neutrally.
+const EXTRA_KIND_CONFIG = {
+	table: { label: "Table" },
+	config: { label: "Config" },
+	event: { label: "Event" },
+	file: { label: "File" },
+	integration: { label: "Integration" },
+	file_policy: { label: "Policy" },
+	policy_rule: { label: "Policy" },
+	claim: { label: "Claim" },
+} as const;
+
+function TypeBadge({ kind }: { kind: string }) {
+	const shared = (ENTITY_CONFIG as Record<string, { label: string; color: string }>)[kind];
+	if (shared) {
+		return (
+			<Badge variant="outline" className={cn("h-5 shrink-0 px-1.5", shared.color)}>
+				{shared.label}
+			</Badge>
+		);
+	}
+	const extra = (EXTRA_KIND_CONFIG as Record<string, { label: string }>)[kind];
+	return (
+		<Badge variant="outline" className="h-5 shrink-0 px-1.5">
+			{extra?.label ?? kind}
+		</Badge>
+	);
+}
 
 interface DisplayGroup {
 	key: string;
@@ -134,7 +153,7 @@ export function WorkspaceImportReview({
 					)}
 				</div>
 			</div>
-			<div className="flex min-h-12 flex-wrap items-center justify-between gap-2 px-5 py-2">
+			<div className="flex min-h-12 flex-wrap items-center gap-2 px-5 py-2">
 				<p className="text-sm">
 					<span className="font-semibold">
 						{conflicts.length - resolved} need review
@@ -143,20 +162,6 @@ export function WorkspaceImportReview({
 						of {preview.items.length} changes
 					</span>
 				</p>
-				<span className="inline-grid grid-cols-2 rounded-md bg-muted p-0.5 text-xs">
-					<DecisionButton
-						selected={false}
-						onClick={() => chooseAll("keep")}
-					>
-						Keep all
-					</DecisionButton>
-					<DecisionButton
-						selected={false}
-						onClick={() => chooseAll("replace")}
-					>
-						Replace all
-					</DecisionButton>
-				</span>
 			</div>
 			<div className="min-h-0 px-5 pb-5">
 				<DataTable
@@ -167,7 +172,27 @@ export function WorkspaceImportReview({
 						<DataTableRow>
 							<DataTableHead>Item</DataTableHead>
 							<DataTableHead>Matched by</DataTableHead>
-							<DataTableHead className="text-right">Decision</DataTableHead>
+							<DataTableHead className="text-right">
+								<span className="inline-flex flex-col items-end gap-1">
+									<span>Decision</span>
+									<span className="inline-grid grid-cols-2 rounded-md bg-muted p-0.5 text-xs font-medium normal-case">
+										<DecisionButton
+											selected={false}
+											disabled={conflicts.length === 0}
+											onClick={() => chooseAll("keep")}
+										>
+											Keep All
+										</DecisionButton>
+										<DecisionButton
+											selected={false}
+											disabled={conflicts.length === 0}
+											onClick={() => chooseAll("replace")}
+										>
+											Replace All
+										</DecisionButton>
+									</span>
+								</span>
+							</DataTableHead>
 						</DataTableRow>
 					</DataTableHeader>
 					<DataTableBody>
@@ -213,11 +238,7 @@ function ImportGroupRow({
 		<DataTableRow>
 			<DataTableCell className="min-w-0">
 				<span className="flex min-w-0 items-start gap-2">
-					<span
-						className={`mt-0.5 grid size-7 shrink-0 place-items-center rounded-md text-[10px] font-bold ${first.classification === "create" ? "bg-emerald-500/10 text-emerald-700" : "bg-primary/10 text-primary"}`}
-					>
-						{kindLabel[first.kind] ?? first.kind.slice(0, 4).toUpperCase()}
-					</span>
+					<TypeBadge kind={first.kind} />
 					<span className="min-w-0">
 						<span className="block break-words font-medium">
 							{first.name}
@@ -238,11 +259,6 @@ function ImportGroupRow({
 								Also covers {definition.name}
 							</span>
 						))}
-						{first.target_id && (
-							<span className="mt-0.5 block break-all font-mono text-[11px] text-muted-foreground">
-								Preserves destination ID {first.target_id}
-							</span>
-						)}
 					</span>
 				</span>
 			</DataTableCell>
@@ -280,10 +296,12 @@ function ImportGroupRow({
 
 function DecisionButton({
 	selected,
+	disabled,
 	onClick,
 	children,
 }: {
 	selected: boolean;
+	disabled?: boolean;
 	onClick: () => void;
 	children: string;
 }) {
@@ -291,8 +309,9 @@ function DecisionButton({
 		<button
 			type="button"
 			aria-pressed={selected}
+			disabled={disabled}
 			onClick={onClick}
-			className={`rounded-none px-2 py-1 font-medium first:rounded-l last:rounded-r ${selected ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+			className={`rounded-none px-2 py-1 font-medium first:rounded-l last:rounded-r disabled:cursor-not-allowed disabled:opacity-50 ${selected ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
 		>
 			{children}
 		</button>

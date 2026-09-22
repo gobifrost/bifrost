@@ -74,13 +74,20 @@ describe("WorkspaceImportReview", () => {
 		const table = screen.getByTestId("workspace-import-scroller");
 		expect(within(table).getByRole("columnheader", { name: "Item" })).toBeInTheDocument();
 		expect(within(table).getByRole("columnheader", { name: "Matched by" })).toBeInTheDocument();
-		expect(within(table).getByRole("columnheader", { name: "Decision" })).toBeInTheDocument();
+		// The Decision header carries the bulk control, aligned with the rows.
+		const decisionHeader = within(table).getByText("Decision");
+		expect(within(decisionHeader.parentElement as HTMLElement).getByRole("button", { name: "Keep All" })).toBeInTheDocument();
+		expect(within(decisionHeader.parentElement as HTMLElement).getByRole("button", { name: "Replace All" })).toBeInTheDocument();
 		// Four items, three rows: the workflow and its file share one.
 		expect(within(table).getAllByRole("row")).toHaveLength(4);
 		expect(screen.getByText("Sink Alpha")).toBeInTheDocument();
 		expect(screen.getByText("workflows/sink_alpha.py :: sink_alpha")).toBeInTheDocument();
-		// Destination identity stays on the row, not in a side panel.
-		expect(screen.getAllByText(/Preserves destination ID/)).toHaveLength(2);
+		// Type language matches Entity Management: full-word badges.
+		expect(screen.getByText("Workflow")).toBeInTheDocument();
+		expect(screen.getByText("App")).toBeInTheDocument();
+		expect(screen.getByText("File")).toBeInTheDocument();
+		// No destination-ID callout line.
+		expect(screen.queryByText(/Preserves destination ID/)).toBeNull();
 		// No per-file control and no decided-counter noise.
 		expect(screen.queryByText(/Same as/)).toBeNull();
 		expect(screen.queryByText(/of \d+ decided/)).toBeNull();
@@ -103,13 +110,13 @@ describe("WorkspaceImportReview", () => {
 		});
 	});
 
-	it("resolves every conflict with Keep all", async () => {
+	it("resolves every conflict with Keep All", async () => {
 		const onDecisionsChange = vi.fn();
 		const { user } = renderWithProviders(
 			<WorkspaceImportReview preview={preview} decisions={{}} onDecisionsChange={onDecisionsChange} />,
 		);
 
-		await user.click(screen.getByRole("button", { name: "Keep all" }));
+		await user.click(screen.getByRole("button", { name: "Keep All" }));
 		expect(onDecisionsChange).toHaveBeenCalledWith({
 			"entity:workflow:alpha": "keep",
 			"file:workflows/sink_alpha.py": "keep",
