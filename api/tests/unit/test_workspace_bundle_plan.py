@@ -65,13 +65,17 @@ def test_kept_conflicts_remain_in_source_to_target_reference_map() -> None:
     assert result == {source: target}
 
 
-def test_projection_omits_package_only_claims_and_role_bindings_with_warnings() -> None:
+def test_projection_imports_claims_and_keeps_portable_role_names() -> None:
     from src.services.solutions.workspace_bundle_plan import SolutionPackageWorkspaceProjection
     from src.services.solutions.zip_install import PreviewResult
 
     projection = SolutionPackageWorkspaceProjection.from_preview(
         PreviewResult(
-            claims=[{"id": "11111111-1111-1111-1111-111111111111", "name": "claim", "type": "string"}],
+            claims=[{
+                "id": "11111111-1111-1111-1111-111111111111", "name": "claim",
+                "type": "list",
+                "query": {"table": "things", "where": {}, "select": "id"},
+            }],
             workflows=[{
                 "id": "22222222-2222-2222-2222-222222222222", "name": "run",
                 "path": "workflows/run.py", "function_name": "run", "role_names": ["Operators"],
@@ -80,12 +84,16 @@ def test_projection_omits_package_only_claims_and_role_bindings_with_warnings() 
         preview_id=UUID(int=7),
     )
 
-    assert projection.manifest.claims == {}
-    assert any("Custom claims" in warning for warning in projection.warnings)
-    assert any("Role bindings" in warning for warning in projection.warnings)
+    claim = projection.manifest.claims["11111111-1111-1111-1111-111111111111"]
+    assert claim.organization_id is None
+    workflow = next(iter(projection.manifest.workflows.values()))
+    assert workflow.role_names == ["Operators"]
+    assert projection.package_role_names == ("Operators",)
+    assert not any("claims" in warning.lower() for warning in projection.warnings)
+    assert not any("role" in warning.lower() for warning in projection.warnings)
 
 
-def test_projection_warns_when_package_explicitly_declares_empty_roles() -> None:
+def test_projection_strips_raw_role_uuids() -> None:
     from src.services.solutions.workspace_bundle_plan import SolutionPackageWorkspaceProjection
     from src.services.solutions.zip_install import PreviewResult
 
@@ -97,7 +105,51 @@ def test_projection_warns_when_package_explicitly_declares_empty_roles() -> None
         preview_id=UUID(int=7),
     )
 
-    assert any("Role bindings" in warning for warning in projection.warnings)
+    workflow = next(iter(projection.manifest.workflows.values()))
+    assert workflow.roles == []
+    assert projection.package_role_names == ()
+
+
+def test_planner_lists_integration_shells_and_missing_roles() -> None:
+    from uuid import UUID as _UUID
+
+    from src.services.solutions.workspace_bundle_plan import (
+        SolutionPackageWorkspaceProjection,
+        WorkspaceBundlePlanner,
+    )
+    from src.services.solutions.zip_install import PreviewResult
+
+    projection = SolutionPackageWorkspaceProjection.from_preview(
+        PreviewResult(
+            connection_schemas=[
+                {"integration_name": "acme", "template": {}, "position": 0},
+            ],
+            workflows=[{
+                "id": "22222222-2222-2222-2222-222222222222", "name": "run",
+                "path": "workflows/run.py", "function_name": "run",
+                "role_names": ["Viewers"],
+            }],
+        ),
+        preview_id=UUID(int=7),
+    )
+
+    planned = WorkspaceBundlePlanner(None, preview_id=UUID(int=7)).plan_sync(projection)
+    shell = next(item for item in planned.preview.items if item.kind == "integration")
+    assert shell.name == "acme"
+    assert shell.classification == "create"
+    assert shell.match_key == "acme"
+    assert any("Viewers" in warning for warning in planned.preview.warnings)
+
+    planned_known = WorkspaceBundlePlanner(None, preview_id=UUID(int=7))._build_plan(
+        projection, {},
+        {},
+        existing_integrations={"acme": _UUID(int=9)},
+        existing_role_names=frozenset({"Viewers"}),
+    )
+    shell_known = next(item for item in planned_known.preview.items if item.kind == "integration")
+    assert shell_known.classification == "unchanged"
+    assert shell_known.target_id == _UUID(int=9)
+    assert not any("Viewers" in warning for warning in planned_known.preview.warnings)
 
 
 def test_planner_includes_hashed_source_files_and_detects_conflicts(tmp_path) -> None:

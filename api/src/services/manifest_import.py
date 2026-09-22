@@ -2688,18 +2688,26 @@ class ManifestResolver:
 
         fields = mclaim.to_orm_values(Destination.GIT_SYNC).direct
         claim_id = UUID(fields["id"])
-        org_id = UUID(fields["organization_id"])
-        now = datetime.now(timezone.utc)
-        query = fields["query"]
+        # Workspace imports carry global claims (organization_id None); ``== None``
+        # never matches in SQL, so the fallback lookup uses IS NULL explicitly.
+        org_raw = fields["organization_id"]
+        org_id = UUID(org_raw) if org_raw else None
 
         if cache is not None:
             existing_by_natural = cache["claim_by_natural"].get((claim_name, org_id))
         else:
+            org_clause = (
+                CustomClaim.organization_id.is_(None)
+                if org_id is None
+                else CustomClaim.organization_id == org_id
+            )
             natural_q = select(CustomClaim.id).where(
                 CustomClaim.name == claim_name,
-                CustomClaim.organization_id == org_id,
+                org_clause,
             )
             existing_by_natural = (await self.db.execute(natural_q)).scalar_one_or_none()
+        now = datetime.now(timezone.utc)
+        query = fields["query"]
 
         if existing_by_natural is not None:
             # Keep the DB-assigned id stable. Claims are referenced by

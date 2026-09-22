@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -76,11 +76,74 @@ class WorkspaceBundleImporter:
             plan.manifest, selection=selection, work_dir=plan.work_dir,
             progress_fn=self.progress_fn,
         )
+        # Declared connections become never-clobber global integration shells
+        # (empty credentials for the admin to fill in). Existing integrations
+        # are left untouched, so shells need no conflict decisions.
+        from src.services.solutions.integration_shells import (
+            upsert_integration_shells,
+        )
+
+        await upsert_integration_shells(self.db, plan.connection_schemas or [])
+        await self._merge_package_roles(plan, selection)
         return WorkspaceBundleImportResult(
             imported_item_ids=selection.included_source_ids,
             selected_item_ids=frozenset(selected_items),
             operations=tuple(ops),
         )
+
+    async def _merge_package_roles(
+        self, plan: PlannedWorkspaceBundle, selection: "PartialImportSelection",
+    ) -> None:
+        """Merge package role bindings into selected entities (never delete).
+
+        Role names are portable while raw role UUIDs are source-env-specific,
+        so only ``role_names`` are honored; missing names become empty global
+        roles, exactly like installs. Bindings the destination already has are
+        preserved — merging only adds. Entities outside the write selection
+        (kept conflicts, unchanged) are left alone.
+        """
+        from uuid import UUID
+
+        from src.models.orm.agents import AgentRole
+        from src.models.orm.app_roles import AppRole
+        from src.models.orm.forms import FormRole
+        from src.models.orm.workflow_roles import WorkflowRole
+        from src.services.manifest_import import _resolve_role_names
+        from src.services.sync_ops import MergeRoles
+
+        included = selection.included_source_ids
+        candidates: list[tuple[Any, str, UUID, list[str], dict[str, str]]] = []
+        collections = (
+            (plan.manifest.workflows, WorkflowRole, "workflow_id", {}),
+            (plan.manifest.apps, AppRole, "app_id", {}),
+            (plan.manifest.forms, FormRole, "form_id", {"assigned_by": "workspace-import"}),
+            (plan.manifest.agents, AgentRole, "agent_id", {"assigned_by": "workspace-import"}),
+        )
+        for mapping, _junction, _fk, _extra in collections:
+            for source_id, entry in mapping.items():
+                if str(source_id) not in included:
+                    continue
+                names = [name for name in getattr(entry, "role_names", None) or []]
+                if names:
+                    candidates.append((_junction, _fk, entry, names, _extra))
+        if not candidates:
+            return
+        ordered: list[str] = []
+        for _, _, _, names, _ in candidates:
+            for name in names:
+                if name not in ordered:
+                    ordered.append(name)
+        resolved = await _resolve_role_names(self.db, ordered, create_missing=True)
+        by_name = {name: UUID(rid) for name, rid in zip(ordered, resolved)}
+        for junction, fk, entry, names, extra in candidates:
+            target = selection.target_ids.get(UUID(entry.id))
+            if target is None:
+                continue
+            await MergeRoles(
+                junction_model=junction, entity_fk=fk, entity_id=target,
+                role_ids={by_name[name] for name in names},
+                extra_fields=dict(extra),
+            ).execute(self.db)
 
     async def promote_selected_files(
         self,

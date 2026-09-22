@@ -12,7 +12,7 @@ so that they stay testable with any SQLAlchemy-compatible backend.
 
 Usage example::
 
-    ops: list[Upsert | SyncRoles | Delete | Deactivate] = []
+    ops: list[Upsert | SyncRoles | MergeRoles | Delete | Deactivate] = []
     ops.append(Upsert(model=Workflow, id=wf_id, values={"name": "my_wf"}))
     ops.append(SyncRoles(
         junction_model=WorkflowRole,
@@ -33,7 +33,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import delete, insert, update
+from sqlalchemy import delete, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
@@ -198,6 +198,66 @@ class SyncRoles:
         extra = f" extra={sorted(self.extra_fields.keys())}" if self.extra_fields else ""
         return (
             f"SyncRoles {table_name} {self.entity_fk}={self.entity_id} "
+            f"-> {len(self.role_ids)} role(s): {sorted_roles}{extra}"
+        )
+
+
+@dataclass
+class MergeRoles:
+    """Additive role assignments for a single entity.
+
+    Inserts missing ``(entity, role)`` junction rows and never deletes: the
+    destination keeps bindings the package doesn't mention. Workspace imports
+    use this so a replace merges the package's access grants into (rather
+    than full-replacing) the destination's existing assignments.
+
+    Attributes: same as :class:`SyncRoles`.
+    """
+
+    junction_model: type
+    entity_fk: str
+    entity_id: UUID
+    role_ids: set[UUID] = field(default_factory=set)
+    extra_fields: dict[str, Any] = field(default_factory=dict)
+
+    async def execute(self, db: AsyncSession) -> None:
+        """Insert missing role rows, leaving existing ones untouched."""
+        if not self.role_ids:
+            return
+        table = self.junction_model.__table__  # type: ignore[attr-defined]
+        existing = set(
+            (
+                await db.execute(
+                    select(table.c[self.entity_fk], table.c["role_id"]).where(
+                        table.c[self.entity_fk] == self.entity_id
+                    )
+                )
+            ).all()
+        )
+        rows = [
+            {self.entity_fk: self.entity_id, "role_id": role_id, **self.extra_fields}
+            for role_id in self.role_ids
+            if (self.entity_id, role_id) not in existing
+        ]
+        if rows:
+            await db.execute(insert(self.junction_model).values(rows))
+
+        logger.debug(
+            "MergeRoles(%s, %s=%s): merged %d role(s)",
+            self.junction_model.__tablename__,  # type: ignore[attr-defined]
+            self.entity_fk,
+            self.entity_id,
+            len(self.role_ids),
+        )
+
+    def describe(self) -> str:
+        table_name: str = getattr(
+            self.junction_model, "__tablename__", repr(self.junction_model)
+        )
+        sorted_roles = sorted(str(r) for r in self.role_ids)
+        extra = f" extra={sorted(self.extra_fields.keys())}" if self.extra_fields else ""
+        return (
+            f"MergeRoles {table_name} {self.entity_fk}={self.entity_id} "
             f"-> {len(self.role_ids)} role(s): {sorted_roles}{extra}"
         )
 

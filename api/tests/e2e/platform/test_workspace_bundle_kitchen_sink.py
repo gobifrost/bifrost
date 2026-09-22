@@ -222,6 +222,8 @@ FILES: dict[str, str] = {
     ".bifrost/connections.yaml": (
         "connections:\n  acme:\n    integration_name: acme\n"
         "    template: {}\n    position: 0\n"
+        "  contoso:\n    integration_name: contoso\n"
+        "    template: {}\n    position: 1\n"
     ),
     ".bifrost/files.yaml": "locations:\n  - sink-archive\n",
     "docs/runbook.md": (
@@ -368,9 +370,13 @@ async def _seed_destination(db_session) -> dict[str, object]:
     from src.models.orm.agents import Agent
     from src.models.orm.applications import Application
     from src.models.orm.config import Config
+    from src.models.orm.custom_claims import CustomClaim
     from src.models.orm.file_metadata import FilePolicy
     from src.models.orm.forms import Form
+    from src.models.orm.integrations import Integration
     from src.models.orm.tables import Table
+    from src.models.orm.users import Role
+    from src.models.orm.workflow_roles import WorkflowRole
     from src.models.orm.workflows import Workflow
     from src.services.repo_storage import RepoStorage
 
@@ -451,6 +457,39 @@ async def _seed_destination(db_session) -> dict[str, object]:
         {"policies": {"policies": [{"name": "sink-write", "actions": ["write"]}]},
          "organization_id": None, "solution_id": None},
     )
+    await _upsert(
+        CustomClaim,
+        {"name": "sink_vip", "organization_id": None},
+        {"description": "Flags VIP sink customers v1",
+         "type": "list",
+         "query": {
+             "table": "sink_items",
+             "where": {"gt": [{"row": "qty"}, 100]},
+             "select": "title",
+         },
+         "solution_id": None},
+    )
+    await _upsert(
+        Integration,
+        {"name": "acme"},
+        {"description": "configured integration"},
+    )
+    operator = await _upsert(
+        Role,
+        {"name": "Operator"},
+        {"created_by": "kitchen-sink-seed", "description": "Seeded operator role"},
+    )
+    await db_session.flush()
+    binding = (
+        await db_session.execute(
+            select(WorkflowRole).where(
+                WorkflowRole.workflow_id == alpha.id,
+                WorkflowRole.role_id == operator.id,
+            )
+        )
+    ).scalars().first()
+    if binding is None:
+        db_session.add(WorkflowRole(workflow_id=alpha.id, role_id=operator.id))
     await db_session.commit()
 
     repo = RepoStorage()
@@ -501,6 +540,28 @@ async def test_workspace_zip_preview_classifies_every_kind(
     # Verbose config is new; seeded configs conflict on their v1 descriptions.
     assert by_match[_key("SINK_VERBOSE")]["classification"] == "create"
     assert by_match[_key("SINK_TOKEN")]["classification"] == "conflict"
+    # The seeded claim conflicts and keeps its destination ID.
+    claim = by_match["sink_vip"]
+    assert claim["classification"] == "conflict"
+    assert claim["kind"] == "claim"
+    from src.models.orm.custom_claims import CustomClaim
+    from src.models.orm.integrations import Integration
+    from src.models.orm.users import Role
+
+    seeded_claim = (
+        await db_session.execute(select(CustomClaim).where(CustomClaim.name == "sink_vip"))
+    ).scalars().one()
+    assert claim["target_id"] == str(seeded_claim.id)
+    # Declared connections surface as integration shells: the configured one
+    # is untouched, the missing one is created.
+    acme = by_match["acme"]
+    assert acme["classification"] == "unchanged"
+    assert acme["kind"] == "integration"
+    seeded_integration = (
+        await db_session.execute(select(Integration).where(Integration.name == "acme"))
+    ).scalars().one()
+    assert acme["target_id"] == str(seeded_integration.id)
+    assert by_match["contoso"]["classification"] == "create"
     # Files: replaced alpha, identical beta/runbook, new remainder.
     assert by_match[WF_ALPHA_PATH]["classification"] == "conflict"
     assert by_match[WF_BETA_PATH]["classification"] == "unchanged"
@@ -516,17 +577,24 @@ async def test_workspace_zip_preview_classifies_every_kind(
 
     warnings = preview["warnings"]
     assert any("unattached" in w for w in warnings)
-    assert any("claims" in w.lower() for w in warnings)
-    assert any("connection" in w.lower() for w in warnings)
     assert any("file-location" in w.lower() for w in warnings)
-    assert any("role" in w.lower() for w in warnings)
     assert any("config" in w.lower() for w in warnings)
-    # Package-only declarations never become review items.
+    # Claims, connections, and roles import now — only file locations warn.
+    assert not any("claim" in w.lower() for w in warnings)
+    assert not any("connection" in w.lower() for w in warnings)
+    assert not any("role binding" in w.lower() for w in warnings)
+    role_names = set(
+        (await db_session.execute(select(Role.name))).scalars().all()
+    )
+    if "Viewer" not in role_names:
+        assert any("Viewer" in w and "global roles" in w for w in warnings)
+    # Every supported definition is a review item, including claims and shells.
     assert {item["kind"] for item in preview["items"]} <= {
         "workflow", "integration", "config", "app", "table", "event",
         "form", "agent", "claim", "policy_rule", "file_policy", "file",
     }
-    assert not [item for item in preview["items"] if item["kind"] in {"claim", "policy_rule"}]
+    assert [item["kind"] for item in preview["items"]].count("claim") == 1
+    assert [item["kind"] for item in preview["items"]].count("integration") == 2
 
     from src.services.solutions.workspace_bundle_storage import WorkspaceBundleStorage
 
@@ -619,6 +687,47 @@ async def test_workspace_zip_import_preserves_ids_rewrites_refs_and_runtime(
         await db_session.execute(select(Config).where(Config.key == "SINK_RETRIES"))
     ).scalars().all()[-1]
     assert retries.description == "Retry budget v2"
+
+    # Claims import as global definitions with destination IDs preserved.
+    from src.models.orm.custom_claims import CustomClaim
+    from src.models.orm.integrations import Integration
+    from src.models.orm.users import Role
+    from src.models.orm.workflow_roles import WorkflowRole
+
+    claim = (
+        await db_session.execute(select(CustomClaim).where(CustomClaim.name == "sink_vip"))
+    ).scalars().all()[-1]
+    assert claim.description == "Flags VIP sink customers"
+    assert claim.organization_id is None
+    assert claim.solution_id is None
+
+    # Declared connections become shells; configured integrations are untouched.
+    acme = (
+        await db_session.execute(select(Integration).where(Integration.name == "acme"))
+    ).scalars().one()
+    assert acme.description == "configured integration"
+    contoso = (
+        await db_session.execute(select(Integration).where(Integration.name == "contoso"))
+    ).scalars().one()
+    assert contoso.description is None
+
+    # Role bindings merge: the seeded assignment survives and the package
+    # role is auto-created empty and bound.
+    viewer = (
+        await db_session.execute(select(Role).where(Role.name == "Viewer"))
+    ).scalars().one()
+    bound = {
+        str(row.role_id)
+        for row in (
+            await db_session.execute(
+                select(WorkflowRole).where(WorkflowRole.workflow_id == alpha_id)
+            )
+        ).scalars().all()
+    }
+    operator = (
+        await db_session.execute(select(Role).where(Role.name == "Operator"))
+    ).scalars().one()
+    assert bound >= {str(operator.id), str(viewer.id)}
 
     policy = (
         await db_session.execute(
@@ -765,7 +874,7 @@ async def test_managed_solution_install_from_zip_keeps_lifecycle(
     assert body["slug"] == slug
     assert len(body["workflows"]) == 3
     assert len(body["config_schemas"]) == 4
-    assert len(body["connection_schemas"]) == 1
+    assert len(body["connection_schemas"]) == 2
 
     installed = wait_for_install(
         e2e_client,

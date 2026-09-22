@@ -22,6 +22,7 @@ from bifrost.manifest import (
     ManifestAgent,
     ManifestApp,
     ManifestConfig,
+    ManifestCustomClaim,
     ManifestEventSource,
     ManifestFilePolicy,
     ManifestForm,
@@ -40,17 +41,8 @@ _CONFIG_WARNING = (
 _SCOPE_WARNING = (
     "Imported entities are unattached global workspace content (organization_id and solution_id are null)."
 )
-_CONNECTION_WARNING = (
-    "Solution connection schemas are package-only and are not imported into the workspace."
-)
 _FILE_LOCATION_WARNING = (
-    "Solution file-location declarations are package-only and are not imported into the workspace."
-)
-_CLAIMS_WARNING = (
-    "Custom claims are package-scoped and have no safe global workspace representation; they were not imported."
-)
-_ROLES_WARNING = (
-    "Role bindings are environment-specific and were not imported; existing destination role assignments are preserved."
+    "Solution file-location declarations are install setup metadata with no workspace analogue and are not imported."
 )
 _FILE_LOOKUP_BATCH_SIZE = 100
 
@@ -79,10 +71,11 @@ def _entry(entry: dict[str, Any], *, preview_id: UUID, stable_key: str) -> dict[
     result["id"] = str(_uuid(result.get("id"), preview_id=preview_id, stable_key=stable_key))
     # A bundle describes an install's binding. Workspace import deliberately
     # strips that binding before any manifest model validates the entity.
+    # Raw role UUIDs are source-env-specific and go; portable role_names stay
+    # so the import can re-bind (auto-creating missing global roles).
     result["organization_id"] = None
     result.pop("solution_id", None)
     result.pop("roles", None)
-    result.pop("role_names", None)
     return result
 
 
@@ -94,6 +87,11 @@ class SolutionPackageWorkspaceProjection:
     package_name: str
     warnings: list[str]
     work_dir: Path | None = None
+    # Portable role names referenced by package entities (rebound on import,
+    # auto-creating missing global roles) and raw connection declarations
+    # (applied as never-clobber global integration shells).
+    package_role_names: tuple[str, ...] = ()
+    connection_schemas: tuple[dict[str, Any], ...] = ()
 
     @classmethod
     def from_preview(
@@ -136,6 +134,12 @@ class SolutionPackageWorkspaceProjection:
             data = _entry(row, preview_id=preview_id, stable_key=f"file-policy:{row.get('location')}:{row.get('path')}")
             file_policies[data["id"]] = ManifestFilePolicy.model_validate(data)
 
+        claims: dict[str, ManifestCustomClaim] = {}
+        for row in package.claims:
+            data = _entry(row, preview_id=preview_id, stable_key=f"claim:{row.get('name')}")
+            data.setdefault("name", data["id"])
+            claims[data["id"]] = ManifestCustomClaim.model_validate(data)
+
         # This is intentionally *not* ``ManifestConfig.model_validate(row)``.
         # A Solution schema has type/default while a workspace config has
         # config_type/value; required and position have no workspace analogue.
@@ -152,23 +156,25 @@ class SolutionPackageWorkspaceProjection:
         warnings = [_SCOPE_WARNING]
         if package.config_schemas:
             warnings.append(_CONFIG_WARNING)
-        if package.connection_schemas:
-            warnings.append(_CONNECTION_WARNING)
         if package.file_locations:
             warnings.append(_FILE_LOCATION_WARNING)
-        if package.claims:
-            warnings.append(_CLAIMS_WARNING)
-        if any("roles" in row or "role_names" in row for rows in (
-            package.workflows, package.apps, package.tables, package.forms, package.agents,
-        ) for row in rows):
-            warnings.append(_ROLES_WARNING)
+        package_role_names = sorted({
+            str(name)
+            for rows in (package.workflows, package.apps, package.tables, package.forms, package.agents)
+            for row in rows
+            for name in (row.get("role_names") or [])
+        })
         return cls(
             manifest=Manifest(workflows=workflows, apps=apps, tables=tables, forms=forms,
                               agents=agents, configs=configs, events=events,
-                              file_policies=file_policies),
+                              file_policies=file_policies, claims=claims),
             package_name=package.name or package.slug or "Solution package",
             warnings=warnings,
             work_dir=work_dir,
+            package_role_names=tuple(package_role_names),
+            connection_schemas=tuple(
+                dict(schema) for schema in package.connection_schemas
+            ),
         )
 
 
@@ -180,6 +186,7 @@ class PlannedWorkspaceBundle:
     work_dir: Path | None = None
     file_hashes: dict[str, str] | None = None
     destination_file_hashes: dict[str, str] | None = None
+    connection_schemas: list[dict[str, Any]] | None = None
 
 
 def _display_key(natural_key: tuple) -> str:
@@ -219,6 +226,8 @@ class WorkspaceBundlePlanner:
         return self._build_plan(
             projection, await self._prefetch_existing(),
             await self._prefetch_existing_file_hashes(incoming_paths),
+            existing_integrations=await self._prefetch_existing_integrations(),
+            existing_role_names=await self._prefetch_existing_role_names(),
         )
 
     @staticmethod
@@ -239,6 +248,9 @@ class WorkspaceBundlePlanner:
         projection: SolutionPackageWorkspaceProjection,
         existing: dict[tuple[str, tuple], tuple[UUID, dict[str, Any]]],
         existing_file_hashes: dict[str, str | None],
+        *,
+        existing_integrations: dict[str, UUID] | None = None,
+        existing_role_names: frozenset[str] | None = None,
     ) -> PlannedWorkspaceBundle:
         items: list[WorkspaceBundleItem] = []
         # Group keys tie a definition to the files implementing it: a workflow
@@ -296,9 +308,31 @@ class WorkspaceBundlePlanner:
                                     "unchanged" if existing_hash == sha256 else "conflict"),
                     match_key=relative, group_key=_file_group(relative),
                 ))
+        # Declared connections become never-clobber global integration shells:
+        # an existing integration means nothing changes, a missing one is
+        # created with empty credentials for the admin to fill in.
+        for decl in projection.connection_schemas:
+            name = str(decl.get("integration_name") or "")
+            if not name:
+                continue
+            match = (existing_integrations or {}).get(name)
+            target = match if match is not None else uuid5(self.preview_id, f"integration:{name}")
+            items.append(WorkspaceBundleItem(
+                id=f"integration:{name}", kind="integration", name=name,
+                classification=("unchanged" if match is not None else "create"),
+                match_key=name, target_id=target,
+            ))
+        warnings = list(projection.warnings)
+        missing_roles = sorted(set(projection.package_role_names) - set(existing_role_names or ()))
+        if missing_roles:
+            warnings.append(
+                "Import will create global roles: "
+                + ", ".join(missing_roles)
+                + " (empty until assigned)."
+            )
         return PlannedWorkspaceBundle(
             preview=WorkspaceBundlePreview(preview_token=str(self.preview_id), package_name=projection.package_name,
-                                           package_sha256="", items=items, warnings=projection.warnings),
+                                            package_sha256="", items=items, warnings=warnings),
             manifest=projection.manifest, id_map=self.reference_map(items),
             work_dir=projection.work_dir, file_hashes=file_hashes,
             destination_file_hashes={
@@ -306,6 +340,7 @@ class WorkspaceBundlePlanner:
                 for path, fingerprint in existing_file_hashes.items()
                 if fingerprint is not None
             },
+            connection_schemas=[dict(schema) for schema in projection.connection_schemas],
         )
 
     @staticmethod
@@ -330,6 +365,7 @@ class WorkspaceBundlePlanner:
         from src.models.orm.agents import Agent
         from src.models.orm.applications import Application
         from src.models.orm.config import Config
+        from src.models.orm.custom_claims import CustomClaim
         from src.models.orm.forms import Form
         from src.models.orm.tables import Table
         from src.models.orm.workflows import Workflow
@@ -339,12 +375,14 @@ class WorkspaceBundlePlanner:
             "app": lambda row: ManifestApp.from_row(row).model_dump(mode="json", exclude={"id"}),
             "table": lambda row: ManifestTable.from_row(row).model_dump(mode="json", exclude={"id"}),
             "config": lambda row: ManifestConfig.from_row(row).model_dump(mode="json", exclude={"id"}),
+            "claim": lambda row: ManifestCustomClaim.from_row(row).model_dump(mode="json", exclude={"id"}),
         }
         for kind, model, columns in (
             ("workflow", Workflow, (Workflow.path, Workflow.function_name)),
             ("app", Application, (Application.slug,)),
             ("table", Table, (Table.name,)),
             ("config", Config, (Config.key, Config.integration_id, Config.organization_id)),
+            ("claim", CustomClaim, (CustomClaim.name, CustomClaim.organization_id)),
         ):
             query = select(model).where(model.organization_id.is_(None))
             if "solution_id" in model.__table__.columns:
@@ -367,6 +405,26 @@ class WorkspaceBundlePlanner:
                 key = ((row.location, row.path, None) if kind == "file_policy" else (row.name,))
                 result[(kind, key)] = (row.id, {})
         return result
+
+    async def _prefetch_existing_integrations(self) -> dict[str, UUID]:
+        """Global integrations by unique name (shells never clobber)."""
+        if self.db is None:
+            return {}
+        from src.models.orm.integrations import Integration
+
+        rows = (
+            await self.db.execute(select(Integration.id, Integration.name))
+        ).all()
+        return {str(name): row_id for row_id, name in rows}
+
+    async def _prefetch_existing_role_names(self) -> frozenset[str]:
+        """All role names (roles are global by name)."""
+        if self.db is None:
+            return frozenset()
+        from src.models.orm.users import Role
+
+        rows = (await self.db.execute(select(Role.name))).scalars().all()
+        return frozenset(str(name) for name in rows)
 
     async def _prefetch_existing_file_hashes(self, incoming_paths: Iterator[str]) -> dict[str, str | None]:
         from src.services.repo_storage import RepoStorage

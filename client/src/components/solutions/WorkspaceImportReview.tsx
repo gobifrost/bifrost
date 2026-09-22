@@ -1,6 +1,5 @@
 import { useMemo } from "react";
 import { Info } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import {
 	DataTable,
 	DataTableBody,
@@ -26,11 +25,12 @@ const kindLabel: Record<string, string> = {
 	integration: "INT",
 	file_policy: "POL",
 	policy_rule: "POL",
+	claim: "CLM",
 };
 
 interface DisplayGroup {
 	key: string;
-	/** First member in preview order; carries the group's decision control. */
+	/** First member in preview order; names the row and carries its control. */
 	first: Item;
 	members: Item[];
 }
@@ -120,11 +120,18 @@ export function WorkspaceImportReview({
 						and likewise keeping them could materially affect how
 						things in this Solution work together.
 					</p>
-					{warnings.map((warning) => (
-						<p key={warning} className="mt-1">
-							{warning}
-						</p>
-					))}
+					{warnings.length > 0 && (
+						<details>
+							<summary className="mt-1 cursor-pointer hover:text-foreground">
+								Package notices ({warnings.length})
+							</summary>
+							{warnings.map((warning) => (
+								<p key={warning} className="mt-1">
+									{warning}
+								</p>
+							))}
+						</details>
+					)}
 				</div>
 			</div>
 			<div className="flex min-h-12 flex-wrap items-center justify-between gap-2 px-5 py-2">
@@ -136,24 +143,20 @@ export function WorkspaceImportReview({
 						of {preview.items.length} changes
 					</span>
 				</p>
-				<div className="flex gap-2">
-					<Button
-						type="button"
-						size="sm"
-						variant="outline"
+				<span className="inline-grid grid-cols-2 rounded-md bg-muted p-0.5 text-xs">
+					<DecisionButton
+						selected={false}
 						onClick={() => chooseAll("keep")}
 					>
 						Keep all
-					</Button>
-					<Button
-						type="button"
-						size="sm"
-						variant="outline"
+					</DecisionButton>
+					<DecisionButton
+						selected={false}
 						onClick={() => chooseAll("replace")}
 					>
 						Replace all
-					</Button>
-				</div>
+					</DecisionButton>
+				</span>
 			</div>
 			<div className="min-h-0 px-5 pb-5">
 				<DataTable
@@ -169,7 +172,7 @@ export function WorkspaceImportReview({
 					</DataTableHeader>
 					<DataTableBody>
 						{groups.map((group) => (
-							<ImportGroupRows
+							<ImportGroupRow
 								key={group.key}
 								group={group}
 								decisions={decisions}
@@ -183,7 +186,7 @@ export function WorkspaceImportReview({
 	);
 }
 
-function ImportGroupRows({
+function ImportGroupRow({
 	group,
 	decisions,
 	onDecision,
@@ -192,113 +195,82 @@ function ImportGroupRows({
 	decisions: Record<string, Decision>;
 	onDecision: (action: Decision) => void;
 }) {
-	const open = group.members.filter(
+	const { first, members } = group;
+	const open = members.filter(
 		(item) => item.classification === "conflict",
 	);
-	const decided = open.filter((item) => decisions[item.id]);
-	return (
-		<>
-			{group.members.map((item) =>
-				item === group.first ? (
-					<ImportRow
-						key={item.id}
-						item={item}
-						openCount={open.length}
-						decidedCount={decided.length}
-						decision={decisions[item.id]}
-						showControl={open.length > 0}
-						onDecision={onDecision}
-					/>
-				) : (
-					<ImportRow
-						key={item.id}
-						item={item}
-						linkedTo={group.first.name}
-						decision={decisions[item.id]}
-						showControl={false}
-						onDecision={onDecision}
-					/>
-				),
-			)}
-		</>
+	// One control per group: it decides every open conflict in the group, so
+	// a definition and its files can never be split across Keep/Replace. The
+	// control reads from the first open member; the group moves as one.
+	const controlDecision = open.length > 0 ? decisions[open[0].id] : undefined;
+	const files = members.filter(
+		(member) => member !== first && member.kind === "file",
 	);
-}
-
-function ImportRow({
-	item,
-	decision,
-	linkedTo,
-	showControl,
-	openCount,
-	decidedCount,
-	onDecision,
-}: {
-	item: Item;
-	decision?: Decision;
-	linkedTo?: string;
-	showControl: boolean;
-	openCount?: number;
-	decidedCount?: number;
-	onDecision: (action: Decision) => void;
-}) {
-	const conflict = item.classification === "conflict";
+	const extraDefinitions = members.filter(
+		(member) => member !== first && member.kind !== "file",
+	);
 	return (
 		<DataTableRow>
 			<DataTableCell className="min-w-0">
 				<span className="flex min-w-0 items-start gap-2">
 					<span
-						className={`mt-0.5 grid size-7 shrink-0 place-items-center rounded-md text-[10px] font-bold ${item.classification === "create" ? "bg-emerald-500/10 text-emerald-700" : "bg-primary/10 text-primary"}`}
+						className={`mt-0.5 grid size-7 shrink-0 place-items-center rounded-md text-[10px] font-bold ${first.classification === "create" ? "bg-emerald-500/10 text-emerald-700" : "bg-primary/10 text-primary"}`}
 					>
-						{kindLabel[item.kind] ?? item.kind.slice(0, 4).toUpperCase()}
+						{kindLabel[first.kind] ?? first.kind.slice(0, 4).toUpperCase()}
 					</span>
 					<span className="min-w-0">
 						<span className="block break-words font-medium">
-							{item.name}
+							{first.name}
 						</span>
-						{item.target_id && (
+						{files.map((file) => (
+							<span
+								key={file.id}
+								className="mt-0.5 block break-all text-xs text-muted-foreground"
+							>
+								{file.name}
+							</span>
+						))}
+						{extraDefinitions.map((definition) => (
+							<span
+								key={definition.id}
+								className="mt-0.5 block break-words text-xs text-muted-foreground"
+							>
+								Also covers {definition.name}
+							</span>
+						))}
+						{first.target_id && (
 							<span className="mt-0.5 block break-all font-mono text-[11px] text-muted-foreground">
-								Preserves destination ID {item.target_id}
+								Preserves destination ID {first.target_id}
 							</span>
 						)}
 					</span>
 				</span>
 			</DataTableCell>
 			<DataTableCell className="min-w-28 max-w-64 break-words text-xs text-muted-foreground">
-				{item.match_key ??
-					(item.classification === "create" ? "New" : "—")}
+				{first.match_key ??
+					(first.classification === "create" ? "New" : "—")}
 			</DataTableCell>
 			<DataTableCell className="text-right">
-				{showControl ? (
-					<span className="inline-flex items-center gap-2">
-						{openCount !== undefined && openCount > 1 && (
-							<span className="text-xs text-muted-foreground">
-								{decidedCount} of {openCount} decided
-							</span>
-						)}
-						<span className="inline-grid grid-cols-2 rounded-md bg-muted p-0.5 text-xs">
-							<DecisionButton
-								selected={decision === "keep"}
-								onClick={() => onDecision("keep")}
-							>
-								Keep
-							</DecisionButton>
-							<DecisionButton
-								selected={decision === "replace"}
-								onClick={() => onDecision("replace")}
-							>
-								Replace
-							</DecisionButton>
-						</span>
-					</span>
-				) : conflict ? (
-					<span className="inline-block max-w-56 break-words text-xs text-muted-foreground">
-						Same as {linkedTo}
+				{open.length > 0 ? (
+					<span className="inline-grid grid-cols-2 rounded-md bg-muted p-0.5 text-xs">
+						<DecisionButton
+							selected={controlDecision === "keep"}
+							onClick={() => onDecision("keep")}
+						>
+							Keep
+						</DecisionButton>
+						<DecisionButton
+							selected={controlDecision === "replace"}
+							onClick={() => onDecision("replace")}
+						>
+							Replace
+						</DecisionButton>
 					</span>
 				) : (
 					<span
-						className={`text-xs font-medium ${item.classification === "create" ? "text-emerald-700" : "text-muted-foreground"}`}
+						className={`text-xs font-medium ${first.classification === "create" ? "text-emerald-700" : "text-muted-foreground"}`}
 					>
-						{item.classification === "create" ? "Create" : "Unchanged"}
+						{first.classification === "create" ? "Create" : "Unchanged"}
 					</span>
 				)}
 			</DataTableCell>
@@ -320,7 +292,7 @@ function DecisionButton({
 			type="button"
 			aria-pressed={selected}
 			onClick={onClick}
-			className={`rounded px-2 py-1 font-medium ${selected ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+			className={`rounded-none px-2 py-1 font-medium first:rounded-l last:rounded-r ${selected ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
 		>
 			{children}
 		</button>

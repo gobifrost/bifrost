@@ -3,3 +3,7 @@ connections:
     integration_name: acme
     template: {}
     position: 0
+  contoso:
+    integration_name: contoso
+    template: {}
+    position: 1
