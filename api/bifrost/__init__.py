@@ -125,6 +125,7 @@ from .models import (
 
 # ExecutionContext lives in bifrost/ — available in both CLI and platform
 from ._execution_context import ExecutionContext
+from ._service_runtime import attach_service_runtime as _attach_service_runtime
 
 # Import decorators - try platform module first, fall back to local SDK version
 try:
@@ -318,3 +319,10 @@ def _compute_version() -> str:
 
 
 __version__ = _compute_version()
+
+# Bind the supervision namespace (service.ready/is_stopping/...) to
+# whichever `service` object the decorator import above selected, so the
+# namespace exists immediately after `import bifrost` in every mode
+# (platform and CLI/standalone). Kept down here with the other late
+# statements so module-level imports above stay E402-clean.
+_attach_service_runtime(service)

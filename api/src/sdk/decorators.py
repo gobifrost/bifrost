@@ -31,7 +31,6 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from bifrost._service_runtime import attach_service_runtime as _attach_service_runtime
 from src.services.execution.module_loader import (
     DataProviderMetadata,
     ExecutableType,
@@ -373,6 +372,7 @@ def service(
     Returns:
         Decorated function with _executable_metadata attribute
     """
+    _ensure_service_runtime_attached()
     # Warn about deprecated parameters
     if kwargs:
         unknown_params = sorted(kwargs.keys())
@@ -454,4 +454,21 @@ def service(
 # Service supervision SDK: ready() / is_stopping() /
 # wait_until_stopping() live on the `service` decorator namespace so user
 # code calls `service.ready()` etc. (state in bifrost/_service_runtime.py).
-_attach_service_runtime(service)
+# Attached lazily on first `service()` call: importing bifrost.* at module
+# top would cycle back through bifrost/__init__ (which imports this module
+# for `from bifrost import service`), silently downgrading `bifrost.workflow`
+# to the non-extracting fallback.
+_service_runtime_attached = False
+
+
+def _ensure_service_runtime_attached() -> None:
+    """Bind supervision callables to `service` once imports have settled."""
+    global _service_runtime_attached
+    if _service_runtime_attached:
+        return
+    from bifrost._service_runtime import (
+        attach_service_runtime as _attach_service_runtime,
+    )
+
+    _attach_service_runtime(service)
+    _service_runtime_attached = True
