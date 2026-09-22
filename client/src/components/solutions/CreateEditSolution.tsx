@@ -7,13 +7,16 @@ import {
  * CreateEditSolution — the single, state-driven dialog for installing a
  * Solution (create) and editing an existing install (edit).
  *
- * Create mode offers TWO install sources, both routed through the same
- * preview → confirm → install machinery:
- *   - "From a repository": a repo URL + optional subfolder + ref; previews via
- *     `previewSolutionFromRepo` and installs via `installSolutionFromRepo`.
- *   - "From a zip": a dropzone (or a prefilled file from a page drop) that
- *     previews via `previewInstall` and installs via `installSolution`.
- * When neither source is pre-selected, a small source picker is shown first.
+ * Create mode is destination-first: destination (workspace import vs managed
+ * Solution install) is chosen before source (repository vs zip). Reactivate
+ * and other fixed-destination flows skip the destination screen.
+ *   - Workspace destination: a one-time snapshot preview → collision review →
+ *     `workspace.bundle_import` PlatformJob. No Solution record is created and
+ *     the repository is never kept connected.
+ *   - Solution destination: "From a repository" previews via
+ *     `previewSolutionFromRepo` and installs via `installSolutionFromRepo`;
+ *     "From a zip" previews via `previewInstall` and installs via
+ *     `installSolution`.
  * There is NO empty-shell "create with no content" path — content always
  * lands via a zip or a repo.
  *
@@ -34,8 +37,8 @@ import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import {
 	AppWindow,
+	ArrowLeft,
 	Bot,
-	ChevronRight,
 	Database,
 	FileArchive,
 	FileCode,
@@ -79,6 +82,7 @@ import {
 	previewInstall,
 	previewSolutionFromRepo,
 	previewWorkspaceBundle,
+	previewWorkspaceBundleFromRepo,
 	importWorkspaceBundle,
 	updateSolution,
 	type Solution,
@@ -101,14 +105,25 @@ export interface RepoPrefill {
 
 type CreateSolutionIntent = "install" | "update" | "reactivate";
 
+/** Where the package lands. Lifecycle/ownership — the first decision. */
+export type InstallDestination = "workspace" | "solution";
+/** Where the package comes from — the second decision, after destination. */
+export type InstallSource = "repo" | "zip";
+
 export type CreateEditSolutionMode =
 	| {
 			kind: "create";
 			/**
-			 * Which install source to show. When omitted (and no `file`/`repo`
-			 * prefill is present), the source picker is shown first.
+			 * Which destination to show. When omitted (and no prefill implies
+			 * one), the destination picker is shown first.
 			 */
-			source?: "repo" | "zip" | "workspace";
+			destination?: InstallDestination;
+			/**
+			 * Which source to show once the destination is known. When
+			 * omitted (and no `file`/`repo` prefill is present), the source
+			 * picker is shown after the destination.
+			 */
+			source?: InstallSource;
 			/** Prefilled zip (a page drop) — implies the zip source. */
 			file?: File;
 			/** Prefilled repo fields (a deep link) — implies the repo source. */
@@ -745,9 +760,11 @@ export function CreateEditSolution({
 }
 
 /**
- * Decides which create surface to show: the source picker, the From-repository
- * form, or the From-zip dropzone. A prefilled `file`/`repo` (or an explicit
- * `source`) skips the picker.
+ * Decides which create surface to show: destination first (the lifecycle /
+ * ownership decision), then source, then the per-path body. A prefilled
+ * `file`/`repo` (or an explicit `destination`/`source`) skips the
+ * corresponding picker. Reactivate has a fixed destination and skips the
+ * destination screen.
  */
 function CreateDispatch({
 	mode,
@@ -760,18 +777,47 @@ function CreateDispatch({
 }) {
 	const intent = mode.intent ?? "install";
 	const session = useInstallSession();
-	const initialSource: "repo" | "zip" | "workspace" | null =
+	const fixedDestination: InstallDestination | null =
+		intent === "reactivate" ? "solution" : null;
+	const initialDestination: InstallDestination | null =
+		fixedDestination
+			?? mode.destination
+			?? (mode.repo ? "solution" : mode.file ? "solution" : null);
+	const initialSource: InstallSource | null =
 		intent === "reactivate"
 			? "zip"
 			: (mode.source ?? (mode.repo ? "repo" : mode.file ? "zip" : null));
-	const [source, setSource] = useState<"repo" | "zip" | "workspace" | null>(initialSource);
-	useEffect(() => session.setWide(source === "workspace"), [session, source]);
+	const [destination, setDestination] = useState<InstallDestination | null>(initialDestination);
+	const [source, setSource] = useState<InstallSource | null>(initialSource);
+	// The wide dialog is needed for the workspace collision review surface.
+	useEffect(() => session.setWide(destination === "workspace"), [session, destination]);
 
 	const orgId = mode.organizationId ?? null;
 	const lockOrganization = mode.organizationId !== undefined;
 
+	if (destination === null) {
+		return <DestinationPicker intent={intent} onPick={setDestination} />;
+	}
 	if (source === null) {
-		return <SourcePicker intent={intent} onPick={setSource} />;
+		return (
+			<SourcePicker
+				intent={intent}
+				destination={destination}
+				onPick={setSource}
+				onBack={fixedDestination === null ? () => setDestination(null) : null}
+			/>
+		);
+	}
+	if (destination === "workspace") {
+		return (
+			<WorkspaceImportBody
+				source={source}
+				initialRepo={mode.repo ?? null}
+				initialFile={mode.file ?? null}
+				onBack={() => setSource(null)}
+				onClose={onClose}
+			/>
+		);
 	}
 	if (source === "repo") {
 		return (
@@ -782,9 +828,6 @@ function CreateDispatch({
 				onSaved={onSaved}
 			/>
 		);
-	}
-	if (source === "workspace") {
-		return <WorkspaceImportBody onClose={onClose} />;
 	}
 	return (
 		<CreateBody
@@ -798,11 +841,26 @@ function CreateDispatch({
 	);
 }
 
-function WorkspaceImportBody({ onClose }: { onClose: () => void }) {
+function WorkspaceImportBody({
+	source,
+	initialRepo,
+	initialFile,
+	onBack,
+	onClose,
+}: {
+	source: InstallSource;
+	initialRepo: RepoPrefill | null;
+	initialFile: File | null;
+	onBack: () => void;
+	onClose: () => void;
+}) {
 	const session = useInstallSession();
 	const queryClient = useQueryClient();
 	const inputRef = useRef<HTMLInputElement>(null);
-	const [file, setFile] = useState<File | null>(null);
+	const [file, setFile] = useState<File | null>(initialFile);
+	const [repoUrl, setRepoUrl] = useState(initialRepo?.url ?? "");
+	const [repoSubpath, setRepoSubpath] = useState(initialRepo?.subpath ?? "");
+	const [repoRef, setRepoRef] = useState(initialRepo?.ref ?? "");
 	const [preview, setPreview] = useState<WorkspaceBundlePreview | null>(null);
 	const [decisions, setDecisions] = useState<Record<string, "keep" | "replace">>({});
 	const [error, setError] = useState<string | null>(null);
@@ -810,12 +868,34 @@ function WorkspaceImportBody({ onClose }: { onClose: () => void }) {
 	const conflicts = preview?.items.filter((item) => item.classification === "conflict") ?? [];
 	const complete = conflicts.every((item) => decisions[item.id]);
 
-	const load = async (next: File) => {
+	async function loadZip(next: File) {
 		setFile(next); setPreview(null); setDecisions({}); setError(null); setLoading(true);
 		try { setPreview(await previewWorkspaceBundle(next)); }
 		catch (cause) { setError(cause instanceof Error ? cause.message : "Failed to preview workspace import"); }
 		finally { setLoading(false); }
-	};
+	}
+	async function loadRepo() {
+		setPreview(null); setDecisions({}); setError(null); setLoading(true);
+		try {
+			setPreview(await previewWorkspaceBundleFromRepo({
+				repo_url: repoUrl.trim(),
+				git_ref: repoRef.trim() || null,
+				repo_subpath: repoSubpath.trim() || null,
+			}));
+		}
+		catch (cause) { setError(cause instanceof Error ? cause.message : "Failed to preview workspace import"); }
+		finally { setLoading(false); }
+	}
+	// Kick the preview exactly once for a PREFILLED file (page drop). Files
+	// picked through the dialog preview via the input onChange — the ref
+	// starts "fired" when there is nothing prefilled.
+	const initialPreviewFired = useRef(initialFile === null);
+	useEffect(() => {
+		if (source === "zip" && file && !initialPreviewFired.current) {
+			initialPreviewFired.current = true;
+			void loadZip(file);
+		}
+	}, [source, file]);
 	const start = async () => {
 		if (!preview || !complete) return;
 		try {
@@ -845,50 +925,71 @@ function WorkspaceImportBody({ onClose }: { onClose: () => void }) {
 
 	return <>
 		<DialogHeader className="shrink-0 px-6 pt-6"><DialogTitle>Review workspace import</DialogTitle><DialogDescription>Choose which destination definitions to keep or replace. Creates and unchanged items need no decision.</DialogDescription></DialogHeader>
-		<input ref={inputRef} type="file" accept=".zip,application/zip" className="hidden" onChange={(event) => { const next = event.target.files?.[0]; if (next) void load(next); event.target.value = ""; }} />
-		{!file ? <div className="flex min-h-0 flex-1 items-center justify-center p-6"><Button type="button" variant="outline" className="min-h-24 w-full border-dashed" onClick={() => inputRef.current?.click()}><Upload className="mr-2 size-4" />Choose Solution .zip</Button></div> : loading ? <div className="flex min-h-0 flex-1 items-center justify-center gap-2"><Loader2 className="size-4 animate-spin" />Reading package…</div> : preview ? <WorkspaceImportReview preview={preview} decisions={decisions} onDecisionsChange={setDecisions} /> : <div className="flex-1 p-6"><InstallFailure message={error ?? "Could not preview this package."} /></div>}
+		{preview || loading ? null : source === "repo" ? (
+			<div className="flex min-h-0 flex-1 flex-col gap-3 p-6">
+				<div className="grid gap-2">
+					<Label htmlFor="workspace-repo-url">Repository URL</Label>
+					<Input id="workspace-repo-url" data-testid="workspace-repo-url" placeholder="https://github.com/org/solution.git" value={repoUrl} onChange={(event) => setRepoUrl(event.target.value)} />
+				</div>
+				<div className="grid grid-cols-2 gap-3">
+					<div className="grid gap-2">
+						<Label htmlFor="workspace-repo-ref">Ref (optional)</Label>
+						<Input id="workspace-repo-ref" data-testid="workspace-repo-ref" placeholder="main" value={repoRef} onChange={(event) => setRepoRef(event.target.value)} />
+					</div>
+					<div className="grid gap-2">
+						<Label htmlFor="workspace-repo-subpath">Subfolder (optional)</Label>
+						<Input id="workspace-repo-subpath" data-testid="workspace-repo-subpath" placeholder="packages/demo" value={repoSubpath} onChange={(event) => setRepoSubpath(event.target.value)} />
+					</div>
+				</div>
+				<p className="text-xs text-muted-foreground">One-time snapshot — the repository is not kept connected and no Solution is created.</p>
+				{error && <InstallFailure message={error} />}
+				<div className="flex gap-2">
+					<Button type="button" variant="ghost" onClick={onBack}><ArrowLeft className="mr-1 size-4" />Back</Button>
+					<Button type="button" data-testid="workspace-repo-preview" disabled={!repoUrl.trim() || loading} onClick={() => void loadRepo()}>Preview snapshot</Button>
+				</div>
+			</div>
+		) : (
+			<div className="flex min-h-0 flex-1 flex-col gap-3 p-6">
+				<input ref={inputRef} type="file" accept=".zip,application/zip" className="hidden" onChange={(event) => { const next = event.target.files?.[0]; if (next) void loadZip(next); event.target.value = ""; }} />
+				<Button type="button" variant="outline" className="min-h-24 w-full border-dashed" onClick={() => inputRef.current?.click()}><Upload className="mr-2 size-4" />Choose Solution .zip</Button>
+				{error && <InstallFailure message={error} />}
+				<div><Button type="button" variant="ghost" onClick={onBack}><ArrowLeft className="mr-1 size-4" />Back</Button></div>
+			</div>
+		)}
+		{loading ? <div className="flex min-h-0 flex-1 items-center justify-center gap-2"><Loader2 className="size-4 animate-spin" />Reading package…</div> : preview ? <WorkspaceImportReview preview={preview} decisions={decisions} onDecisionsChange={setDecisions} /> : file ? <div className="flex-1 p-6"><InstallFailure message={error ?? "Could not preview this package."} /></div> : null}
 		{error && preview && <div className="px-6"><InstallFailure message={error} /></div>}
-		<DialogFooter data-testid="workspace-import-footer" className="shrink-0 border-t bg-muted/20 px-6 py-4 sm:justify-between"><p className="mr-auto text-xs text-muted-foreground">{preview ? `${conflicts.filter((item) => decisions[item.id]).length} of ${conflicts.length} conflicts resolved · import creates uncommitted Git changes` : ""}</p><div className="flex gap-2"><Button type="button" variant="outline" onClick={onClose}>Cancel</Button><Button type="button" disabled={!preview || !complete || session.pending} onClick={() => session.run(start)}>Start import job</Button></div></DialogFooter>
+		<DialogFooter data-testid="workspace-import-footer" className="shrink-0 border-t bg-muted/20 px-6 py-4 sm:justify-between"><p className="mr-auto text-xs text-muted-foreground">{preview ? `${conflicts.filter((item) => decisions[item.id]).length} of ${conflicts.length} conflicts resolved · import creates uncommitted Git changes` : ""}</p><div className="flex gap-2"><Button type="button" variant="ghost" onClick={onBack}><ArrowLeft className="mr-1 size-4" />Back</Button><Button type="button" variant="outline" onClick={onClose}>Cancel</Button><Button type="button" disabled={!preview || !complete || session.pending} onClick={() => session.run(start)}>Start import job</Button></div></DialogFooter>
 	</>;
 }
 
-/** The two install sources — a repository (marketplace) or a local zip. */
-function SourcePicker({
+/** Step 1: destination — the lifecycle/ownership decision. Two equal choices. */
+function DestinationPicker({
 	intent,
 	onPick,
 }: {
 	intent: CreateSolutionIntent;
-	onPick: (s: "repo" | "zip" | "workspace") => void;
+	onPick: (d: InstallDestination) => void;
 }) {
 	const options: {
-		source: "repo" | "zip" | "workspace";
+		destination: InstallDestination;
 		icon: typeof GitBranch;
 		title: string;
 		description: string;
 		testid: string;
 	}[] = [
 		{
-			source: "repo",
-			icon: GitBranch,
-			title: "From a repository",
-			description:
-				"Install from a GitHub repository — the marketplace path.",
-			testid: "source-repo",
-		},
-		{
-			source: "workspace",
+			destination: "workspace",
 			icon: GitCompareArrows,
 			title: "Import into workspace",
-			description: "Bring definitions and source into the global workspace with reviewed collision decisions.",
-			testid: "source-workspace",
+			description: "Bring definitions and source into the global workspace as unattached content with uncommitted Git changes.",
+			testid: "destination-workspace",
 		},
 		{
-			source: "zip",
-			icon: FileArchive,
-			title: "From a zip",
-			description:
-				"Install from an exported Solution .zip on your machine.",
-			testid: "source-zip",
+			destination: "solution",
+			icon: AppWindow,
+			title: "Import as a Solution",
+			description: "Create or update an isolated, lifecycle-managed Solution installation.",
+			testid: "destination-solution",
 		},
 	];
 	return (
@@ -902,18 +1003,18 @@ function SourcePicker({
 							: "Install Solution"}
 				</DialogTitle>
 				<DialogDescription>
-					Choose where this Solution comes from.
+					Choose where this package should go.
 				</DialogDescription>
 			</DialogHeader>
-			<div className="space-y-3" data-testid="source-picker">
+			<div className="grid grid-cols-2 gap-3" data-testid="destination-picker">
 				{options.map(
-					({ source, icon: Icon, title, description, testid }) => (
+					({ destination, icon: Icon, title, description, testid }) => (
 						<button
-							key={source}
+							key={destination}
 							type="button"
 							data-testid={testid}
-							onClick={() => onPick(source)}
-							className="flex w-full items-center gap-3 rounded-lg border p-4 text-left transition-colors hover:border-primary/60 hover:bg-accent/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+							onClick={() => onPick(destination)}
+							className="flex w-full flex-col gap-2 rounded-lg border p-4 text-left transition-colors hover:border-primary/60 hover:bg-accent/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 						>
 							<Icon className="h-6 w-6 shrink-0 text-muted-foreground" />
 							<div className="min-w-0 flex-1">
@@ -922,11 +1023,96 @@ function SourcePicker({
 									{description}
 								</p>
 							</div>
-							<ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
 						</button>
 					),
 				)}
 			</div>
+		</>
+	);
+}
+
+/** Step 2: source — the same two package origins for either destination. */
+function SourcePicker({
+	intent,
+	destination,
+	onPick,
+	onBack,
+}: {
+	intent: CreateSolutionIntent;
+	destination: InstallDestination;
+	onPick: (s: InstallSource) => void;
+	onBack: (() => void) | null;
+}) {
+	const options: {
+		source: InstallSource;
+		icon: typeof GitBranch;
+		title: string;
+		description: string;
+		testid: string;
+	}[] = [
+		{
+			source: "repo",
+			icon: GitBranch,
+			title: "From a repository",
+			description:
+				destination === "workspace"
+					? "Import a one-time snapshot from a Git repository — the repository is not kept connected."
+					: "Install from a Git repository — the marketplace path.",
+			testid: "source-repo",
+		},
+		{
+			source: "zip",
+			icon: FileArchive,
+			title: "From a zip",
+			description:
+				destination === "workspace"
+					? "Import a one-time snapshot from an exported Solution .zip on your machine."
+					: "Install from an exported Solution .zip on your machine.",
+			testid: "source-zip",
+		},
+	];
+	return (
+		<>
+			<DialogHeader>
+				<DialogTitle>
+					{intent === "reactivate"
+						? "Reactivate Solution"
+						: intent === "update"
+							? "Update Solution"
+							: destination === "workspace"
+								? "Import into workspace"
+								: "Install Solution"}
+				</DialogTitle>
+				<DialogDescription>
+					Choose where this package comes from.
+				</DialogDescription>
+			</DialogHeader>
+			<div className="grid grid-cols-2 gap-3" data-testid="source-picker">
+				{options.map(
+					({ source, icon: Icon, title, description, testid }) => (
+						<button
+							key={source}
+							type="button"
+							data-testid={testid}
+							onClick={() => onPick(source)}
+							className="flex w-full flex-col gap-2 rounded-lg border p-4 text-left transition-colors hover:border-primary/60 hover:bg-accent/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+						>
+							<Icon className="h-6 w-6 shrink-0 text-muted-foreground" />
+							<div className="min-w-0 flex-1">
+								<p className="text-sm font-semibold">{title}</p>
+								<p className="text-xs text-muted-foreground">
+									{description}
+								</p>
+							</div>
+						</button>
+					),
+				)}
+			</div>
+			{onBack && (
+				<div className="pt-3">
+					<Button type="button" variant="ghost" onClick={onBack}><ArrowLeft className="mr-1 size-4" />Back</Button>
+				</div>
+			)}
 		</>
 	);
 }

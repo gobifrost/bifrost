@@ -655,6 +655,21 @@ export async function importWorkspaceBundle(
 	return data;
 }
 
+/** Stage and classify a repository snapshot for an explicit workspace import. */
+export async function previewWorkspaceBundleFromRepo(
+	coords: { repo_url: string; git_ref?: string | null; repo_subpath?: string | null },
+): Promise<WorkspaceBundlePreview> {
+	const { data, error } = await apiClient.POST("/api/solutions/import-workspace/preview-repo", {
+		body: {
+			repo_url: coords.repo_url,
+			git_ref: coords.git_ref ?? null,
+			repo_subpath: coords.repo_subpath ?? null,
+		},
+	});
+	if (error) throw new Error(getErrorMessage(error, "Failed to preview workspace import"));
+	return data;
+}
+
 /**
  * Preview a Solution install zip (parse-only). Posts a multipart `file` and an
  * optional `organization_id` (empty/absent = global) so the server can match

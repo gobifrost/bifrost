@@ -124,7 +124,25 @@ test("reviews collisions and replaces workspace content without installing a Sol
 	try {
 		await page.goto("/solutions");
 		await page.getByRole("button", { name: "Install Solution" }).click();
-		await page.getByText("Import into workspace", { exact: true }).click();
+
+		// Screen 1 — destination. Exactly two equally weighted choices.
+		const destination = page.getByTestId("destination-picker");
+		await expect(destination).toBeVisible();
+		await testInfo.attach("workspace-import-destination", {
+			body: await page.getByRole("dialog").screenshot(),
+			contentType: "image/png",
+		});
+		await page.getByTestId("destination-workspace").click();
+
+		// Screen 2 — source. Same two origins for either destination.
+		const source = page.getByTestId("source-picker");
+		await expect(source).toBeVisible();
+		await testInfo.attach("workspace-import-source", {
+			body: await page.getByRole("dialog").screenshot(),
+			contentType: "image/png",
+		});
+		await page.getByTestId("source-zip").click();
+
 		await page
 			.getByRole("dialog", { name: "Review workspace import" })
 			.locator('input[type="file"]')

@@ -35,6 +35,7 @@ import {
 	previewInstall,
 	previewSolutionFromRepo,
 	previewWorkspaceBundle,
+	previewWorkspaceBundleFromRepo,
 	importWorkspaceBundle,
 	putSolutionReadme,
 	syncSolution,
@@ -71,6 +72,35 @@ describe("solutions service", () => {
 
 		expect(mockPost).toHaveBeenCalledWith("/api/solutions/import-workspace", {
 			body: { preview_token: "preview-1", decisions: [] },
+		});
+	});
+
+	it("previews a workspace bundle from repository coordinates", async () => {
+		mockPost.mockResolvedValue({ data: { preview_token: "preview-2", items: [] } });
+
+		const out = await previewWorkspaceBundleFromRepo({
+			repo_url: "https://example.com/repo.git",
+			git_ref: "main",
+			repo_subpath: "packages/demo",
+		});
+
+		expect(mockPost).toHaveBeenCalledWith("/api/solutions/import-workspace/preview-repo", {
+			body: {
+				repo_url: "https://example.com/repo.git",
+				git_ref: "main",
+				repo_subpath: "packages/demo",
+			},
+		});
+		expect(out).toEqual({ preview_token: "preview-2", items: [] });
+	});
+
+	it("normalizes empty workspace repo coordinates to null", async () => {
+		mockPost.mockResolvedValue({ data: { preview_token: "preview-3", items: [] } });
+
+		await previewWorkspaceBundleFromRepo({ repo_url: "https://example.com/repo.git" });
+
+		expect(mockPost).toHaveBeenCalledWith("/api/solutions/import-workspace/preview-repo", {
+			body: { repo_url: "https://example.com/repo.git", git_ref: null, repo_subpath: null },
 		});
 	});
 	it("lists solutions", async () => {

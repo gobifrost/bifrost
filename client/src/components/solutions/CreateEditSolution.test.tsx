@@ -14,6 +14,7 @@ import {
 	previewInstall,
 	previewSolutionFromRepo,
 	previewWorkspaceBundle,
+	previewWorkspaceBundleFromRepo,
 	importWorkspaceBundle,
 	type Solution,
 	type SolutionInstallPreview,
@@ -49,6 +50,7 @@ vi.mock("@/services/solutions", () => ({
 	installSolutionFromRepo: vi.fn(),
 	previewSolutionFromRepo: vi.fn(),
 	previewWorkspaceBundle: vi.fn(),
+	previewWorkspaceBundleFromRepo: vi.fn(),
 	importWorkspaceBundle: vi.fn(),
 	updateSolution: (...a: unknown[]) => mockUpdateSolution(...a),
 }));
@@ -671,7 +673,7 @@ describe("CreateEditSolution — full-backup password prompt", () => {
 	});
 });
 
-describe("CreateEditSolution — source picker", () => {
+describe("CreateEditSolution — destination-first flow", () => {
 	function renderCreate(
 		mode: Parameters<typeof CreateEditSolution>[0]["mode"],
 	) {
@@ -688,8 +690,26 @@ describe("CreateEditSolution — source picker", () => {
 		return { ...utils, onSaved, onClose };
 	}
 
-	it("offers managed and workspace import destinations when no source is chosen", async () => {
+	it("offers exactly two destinations first (workspace vs Solution)", async () => {
 		renderCreate({ kind: "create" });
+
+		const picker = await screen.findByTestId("destination-picker");
+		expect(within(picker).getByTestId("destination-workspace")).toHaveTextContent(
+			/import into workspace/i,
+		);
+		expect(within(picker).getByTestId("destination-solution")).toHaveTextContent(
+			/import as a solution/i,
+		);
+		expect(within(picker).queryByTestId("source-repo")).toBeNull();
+		expect(within(picker).queryByTestId("source-zip")).toBeNull();
+		// No empty-shell create form — no name field, no install button yet.
+		expect(screen.queryByTestId("confirm-install")).toBeNull();
+		expect(screen.queryByTestId("confirm-install-repo")).toBeNull();
+	});
+
+	it("workspace destination leads to a two-option source screen", async () => {
+		const { user } = renderCreate({ kind: "create" });
+		await user.click(await screen.findByTestId("destination-workspace"));
 
 		const picker = await screen.findByTestId("source-picker");
 		expect(within(picker).getByTestId("source-repo")).toHaveTextContent(
@@ -698,39 +718,122 @@ describe("CreateEditSolution — source picker", () => {
 		expect(within(picker).getByTestId("source-zip")).toHaveTextContent(
 			/from a zip/i,
 		);
-		expect(within(picker).getByTestId("source-workspace")).toHaveTextContent(
-			/import into workspace/i,
-		);
-		// No empty-shell create form — no name field, no install button yet.
-		expect(screen.queryByTestId("confirm-install")).toBeNull();
-		expect(screen.queryByTestId("confirm-install-repo")).toBeNull();
 	});
 
-	it("picking From-zip shows the dropzone (zip path)", async () => {
+	it("solution destination leads to the same two source options", async () => {
 		const { user } = renderCreate({ kind: "create" });
+		await user.click(await screen.findByTestId("destination-solution"));
+
+		const picker = await screen.findByTestId("source-picker");
+		expect(within(picker).getByTestId("source-repo")).toBeInTheDocument();
+		expect(within(picker).getByTestId("source-zip")).toBeInTheDocument();
+	});
+
+	it("source screen Back returns to the destination screen", async () => {
+		const { user } = renderCreate({ kind: "create" });
+		await user.click(await screen.findByTestId("destination-workspace"));
+		await screen.findByTestId("source-picker");
+
+		await user.click(screen.getByRole("button", { name: /back/i }));
+		expect(await screen.findByTestId("destination-picker")).toBeInTheDocument();
+	});
+
+	it("solution + zip shows the managed dropzone (zip path)", async () => {
+		const { user } = renderCreate({ kind: "create" });
+		await user.click(await screen.findByTestId("destination-solution"));
 		await user.click(await screen.findByTestId("source-zip"));
 		expect(
 			await screen.findByTestId("dialog-dropzone"),
 		).toBeInTheDocument();
 	});
 
-	it("picking From-repository shows the repo form", async () => {
+	it("solution + repo shows the managed repo form", async () => {
 		const { user } = renderCreate({ kind: "create" });
+		await user.click(await screen.findByTestId("destination-solution"));
 		await user.click(await screen.findByTestId("source-repo"));
 		expect(await screen.findByTestId("repo-url")).toBeInTheDocument();
 		expect(screen.getByTestId("repo-subpath")).toBeInTheDocument();
 		expect(screen.getByTestId("repo-ref")).toBeInTheDocument();
 	});
 
-	it("picking Workspace import opens the wide reviewed import session", async () => {
+	it("workspace + zip opens the wide reviewed import session", async () => {
 		const { user } = renderCreate({ kind: "create" });
 
-		await user.click(await screen.findByTestId("source-workspace"));
+		await user.click(await screen.findByTestId("destination-workspace"));
+		await user.click(await screen.findByTestId("source-zip"));
 
 		expect(await screen.findByText("Review workspace import")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: /choose solution .zip/i })).toBeInTheDocument();
 		expect(screen.getByTestId("workspace-import-footer")).toBeInTheDocument();
 		expect(screen.getByTestId("solution-dialog")).toHaveClass("sm:max-w-6xl");
+	});
+
+	it("workspace + repo shows the snapshot repo form (no Solution lifecycle)", async () => {
+		const { user } = renderCreate({ kind: "create" });
+
+		await user.click(await screen.findByTestId("destination-workspace"));
+		await user.click(await screen.findByTestId("source-repo"));
+
+		expect(await screen.findByTestId("workspace-repo-url")).toBeInTheDocument();
+		expect(screen.getByTestId("workspace-repo-ref")).toBeInTheDocument();
+		expect(screen.getByTestId("workspace-repo-subpath")).toBeInTheDocument();
+		expect(screen.getByText(/one-time snapshot/i)).toBeInTheDocument();
+		expect(screen.queryByTestId("confirm-install-repo")).toBeNull();
+	});
+
+	it("workspace + repo previews a snapshot and opens the collision review", async () => {
+		vi.mocked(previewWorkspaceBundleFromRepo).mockResolvedValue({
+			preview_token: "workspace-repo-preview",
+			package_name: "Workspace",
+			package_sha256: "a".repeat(64),
+			conflict_count: 0,
+			source_kind: "repo",
+			repo_url: "https://example.com/repo.git",
+			git_ref: "main",
+			repo_subpath: null,
+			resolved_commit: "abc123",
+			items: [],
+			warnings: [],
+		});
+		const { user } = renderCreate({ kind: "create" });
+
+		await user.click(await screen.findByTestId("destination-workspace"));
+		await user.click(await screen.findByTestId("source-repo"));
+		await user.type(await screen.findByTestId("workspace-repo-url"), "https://example.com/repo.git");
+		await user.click(screen.getByTestId("workspace-repo-preview"));
+
+		await waitFor(() => expect(previewWorkspaceBundleFromRepo).toHaveBeenCalledWith({
+			repo_url: "https://example.com/repo.git",
+			git_ref: null,
+			repo_subpath: null,
+		}));
+		expect(await screen.findByTestId("workspace-import-footer")).toBeInTheDocument();
+	});
+
+	it("explicit destination + source skips both pickers", async () => {
+		renderCreate({ kind: "create", destination: "solution", source: "zip" });
+
+		expect(await screen.findByTestId("dialog-dropzone")).toBeInTheDocument();
+		expect(screen.queryByTestId("destination-picker")).toBeNull();
+		expect(screen.queryByTestId("source-picker")).toBeNull();
+	});
+
+	it("reactivate skips the destination screen (fixed destination)", async () => {
+		renderCreate({ kind: "create", intent: "reactivate" });
+
+		expect(screen.queryByTestId("destination-picker")).toBeNull();
+		expect(await screen.findByTestId("dialog-dropzone")).toBeInTheDocument();
+	});
+
+	it("repo prefill implies the managed repo path without pickers", async () => {
+		renderCreate({
+			kind: "create",
+			repo: { url: "https://example.com/repo.git", subpath: null, ref: null },
+		});
+
+		expect(await screen.findByTestId("repo-url")).toBeInTheDocument();
+		expect(screen.queryByTestId("destination-picker")).toBeNull();
+		expect(screen.queryByTestId("source-picker")).toBeNull();
 	});
 
 	it("queues a reviewed workspace import through the shared platform-job observer", async () => {
@@ -739,6 +842,7 @@ describe("CreateEditSolution — source picker", () => {
 			package_name: "Workspace",
 			package_sha256: "a".repeat(64),
 			conflict_count: 0,
+			source_kind: "zip",
 			items: [],
 			warnings: [],
 		});
@@ -755,7 +859,7 @@ describe("CreateEditSolution — source picker", () => {
 		});
 		const onClose = vi.fn();
 		const { user } = renderWithProviders(
-			<CreateEditSolution mode={{ kind: "create", source: "workspace" }} open onClose={onClose} onSaved={vi.fn()} />,
+			<CreateEditSolution mode={{ kind: "create", destination: "workspace", source: "zip" }} open onClose={onClose} onSaved={vi.fn()} />,
 		);
 
 		const fileInput = document.querySelector<HTMLInputElement>('input[type="file"]');
@@ -804,7 +908,7 @@ describe("CreateEditSolution — repo install path", () => {
 		const onSaved = vi.fn();
 		const { user } = renderWithProviders(
 			<CreateEditSolution
-				mode={{ kind: "create", source: "repo" }}
+				mode={{ kind: "create", destination: "solution", source: "repo" }}
 				open
 				onClose={vi.fn()}
 				onSaved={onSaved}
@@ -860,6 +964,7 @@ describe("CreateEditSolution — repo install path", () => {
 			<CreateEditSolution
 				mode={{
 					kind: "create",
+					destination: "solution",
 					source: "repo",
 					repo: {
 						url: "https://github.com/acme/solutions",
@@ -884,7 +989,7 @@ describe("CreateEditSolution — repo install path", () => {
 		vi.mocked(previewSolutionFromRepo).mockResolvedValue(makePreview());
 		const { user } = renderWithProviders(
 			<CreateEditSolution
-				mode={{ kind: "create", source: "repo" }}
+				mode={{ kind: "create", destination: "solution", source: "repo" }}
 				open
 				onClose={vi.fn()}
 				onSaved={vi.fn()}
