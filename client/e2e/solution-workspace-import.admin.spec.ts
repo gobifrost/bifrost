@@ -156,7 +156,9 @@ test("reviews collisions and replaces workspace content without installing a Sol
 			name: "Review workspace import",
 		});
 		await expect(dialog).toBeVisible();
-		await expect(dialog.getByText("Review compatibility.")).toBeVisible();
+		await expect(
+			dialog.getByText(/Solutions are designed to work together\./),
+		).toBeVisible();
 		await expect(dialog.getByText(/need review/)).toBeVisible();
 		await testInfo.attach("workspace-import-review", {
 			body: await dialog.screenshot(),

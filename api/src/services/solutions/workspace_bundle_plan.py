@@ -182,6 +182,15 @@ class PlannedWorkspaceBundle:
     destination_file_hashes: dict[str, str] | None = None
 
 
+def _display_key(natural_key: tuple) -> str:
+    """Render a natural key for the review table (``path :: function``).
+
+    The stored lookup stays tuple-shaped; this is only the explainable string
+    the reviewer sees, so ``None`` padding never leaks into it.
+    """
+    return " :: ".join(str(part) for part in natural_key if part is not None)
+
+
 class WorkspaceBundlePlanner:
     def __init__(self, db: AsyncSession | None, *, preview_id: UUID):
         self.db = db
@@ -232,6 +241,23 @@ class WorkspaceBundlePlanner:
         existing_file_hashes: dict[str, str | None],
     ) -> PlannedWorkspaceBundle:
         items: list[WorkspaceBundleItem] = []
+        # Group keys tie a definition to the files implementing it: a workflow
+        # (or an app) and its source are always decided together, since one
+        # without the other is never a working import.
+        workflow_paths = {wf.path for wf in projection.manifest.workflows.values()}
+        app_prefixes = {
+            f"{app.path.rstrip('/')}/": f"app:{app.slug or app.path}"
+            for app in projection.manifest.apps.values() if app.path
+        }
+
+        def _file_group(relative: str) -> str | None:
+            if relative in workflow_paths:
+                return f"file:{relative}"
+            for prefix, group in app_prefixes.items():
+                if relative.startswith(prefix):
+                    return group
+            return None
+
         for kind, entries, key_fn in self._collections(projection.manifest):
             for entity in entries.values():
                 source = UUID(entity.id)
@@ -242,9 +268,15 @@ class WorkspaceBundlePlanner:
                 classification = "create" if match is None else (
                     "unchanged" if incoming == match[1] else "conflict"
                 )
+                group_key: str | None = None
+                if kind == "workflow":
+                    group_key = f"file:{natural_key[0]}"
+                elif kind == "app":
+                    group_key = f"app:{getattr(entity, 'slug', None) or getattr(entity, 'path', None)}"
                 items.append(WorkspaceBundleItem(
                     id=f"entity:{kind}:{source}", kind=kind, name=str(getattr(entity, "name", None) or getattr(entity, "key", source)),
-                    classification=classification, match_key=str(natural_key), source_id=source, target_id=target,
+                    classification=classification, match_key=_display_key(natural_key), source_id=source, target_id=target,
+                    group_key=group_key,
                 ))
         file_hashes: dict[str, str] = {}
         if projection.work_dir is not None:
@@ -262,7 +294,7 @@ class WorkspaceBundlePlanner:
                     id=f"file:{relative}", kind="file", name=relative,
                     classification=("create" if relative not in existing_file_hashes else
                                     "unchanged" if existing_hash == sha256 else "conflict"),
-                    match_key=relative,
+                    match_key=relative, group_key=_file_group(relative),
                 ))
         return PlannedWorkspaceBundle(
             preview=WorkspaceBundlePreview(preview_token=str(self.preview_id), package_name=projection.package_name,

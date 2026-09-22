@@ -170,6 +170,10 @@ class WorkspaceBundleItem(BaseModel):
     match_key: str | None = None
     source_id: UUID | None = None
     target_id: UUID | None = None
+    # Links a definition to the source files that implement it (a workflow and
+    # its .py, an app and its source tree) so the review can decide them
+    # together. Items without an owning definition carry None.
+    group_key: str | None = None
     diff: list[WorkspaceBundleDiffLine] = Field(default_factory=list)
 
 

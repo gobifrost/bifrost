@@ -320,6 +320,11 @@ def _items_by_match(preview: dict) -> dict[str, dict]:
     return {item.get("match_key") or item["id"]: item for item in preview["items"]}
 
 
+def _key(*parts: object) -> str:
+    """The review-table form of a natural key (mirrors the planner)."""
+    return " :: ".join(str(part) for part in parts if part is not None)
+
+
 def _decide(preview: dict, action: str, *, keep: set[str] | None = None) -> list[dict]:
     keep = keep or set()
     return [
@@ -456,10 +461,6 @@ async def _seed_destination(db_session) -> dict[str, object]:
     return {"alpha_id": alpha.id, "alpha_created_at": alpha.created_at}
 
 
-def _alpha_match_key() -> str:
-    return str((WF_ALPHA_PATH, WF_ALPHA_FN))
-
-
 async def _replace_all_import(e2e_client, headers, archive: bytes) -> tuple[dict, dict]:
     preview = _preview_zip(e2e_client, headers, archive)
     job_id = _enqueue(e2e_client, headers, preview, _decide(preview, "replace"))
@@ -482,29 +483,36 @@ async def test_workspace_zip_preview_classifies_every_kind(
     assert {"create", "unchanged", "conflict"} <= kinds
 
     # Entity conflicts keep their destination identity for the decision UI.
-    alpha = by_match[_alpha_match_key()]
+    alpha = by_match[_key(WF_ALPHA_PATH, WF_ALPHA_FN)]
     assert alpha["classification"] == "conflict"
     assert alpha["kind"] == "workflow"
     assert alpha["target_id"] is not None
-    beta = by_match[str((WF_BETA_PATH, WF_BETA_FN))]
+    beta = by_match[_key(WF_BETA_PATH, WF_BETA_FN)]
     assert beta["classification"] == "unchanged"
     assert beta["target_id"] is not None
     # The tool workflow, audit table, and events are new.
-    assert by_match[str((WF_TOOL_PATH, WF_TOOL_FN))]["classification"] == "create"
-    assert by_match[f"('{TABLE_AUDIT}', None)"]["classification"] == "create"
-    assert by_match[f"('{EVENT_SCHED}',)"]["classification"] == "create"
-    assert by_match[f"('{EVENT_HOOK}',)"]["classification"] == "create"
+    assert by_match[_key(WF_TOOL_PATH, WF_TOOL_FN)]["classification"] == "create"
+    assert by_match[_key(TABLE_AUDIT)]["classification"] == "create"
+    assert by_match[_key(EVENT_SCHED)]["classification"] == "create"
+    assert by_match[_key(EVENT_HOOK)]["classification"] == "create"
     # The app and file policy collide on natural keys and keep destination IDs.
-    assert by_match[f"('{APP_SLUG}',)"]["classification"] == "conflict"
-    assert by_match[f"('{FP_LOCATION}', '{FP_PATH}', None)"]["classification"] == "conflict"
+    assert by_match[_key(APP_SLUG)]["classification"] == "conflict"
+    assert by_match[_key(FP_LOCATION, FP_PATH)]["classification"] == "conflict"
     # Verbose config is new; seeded configs conflict on their v1 descriptions.
-    assert by_match["('SINK_VERBOSE', None, None)"]["classification"] == "create"
-    assert by_match["('SINK_TOKEN', None, None)"]["classification"] == "conflict"
+    assert by_match[_key("SINK_VERBOSE")]["classification"] == "create"
+    assert by_match[_key("SINK_TOKEN")]["classification"] == "conflict"
     # Files: replaced alpha, identical beta/runbook, new remainder.
     assert by_match[WF_ALPHA_PATH]["classification"] == "conflict"
     assert by_match[WF_BETA_PATH]["classification"] == "unchanged"
     assert by_match[RUNBOOK_PATH]["classification"] == "unchanged"
     assert by_match[f"{APP_PATH}/App.tsx"]["classification"] == "conflict"
+    # Definitions link to the files implementing them for combined decisions.
+    assert alpha["group_key"] is not None
+    assert alpha["group_key"] == by_match[WF_ALPHA_PATH]["group_key"]
+    app_item = by_match[_key(APP_SLUG)]
+    assert app_item["group_key"] is not None
+    assert app_item["group_key"] == by_match[f"{APP_PATH}/App.tsx"]["group_key"]
+    assert by_match[RUNBOOK_PATH]["group_key"] is None
 
     warnings = preview["warnings"]
     assert any("unattached" in w for w in warnings)
@@ -666,8 +674,8 @@ async def test_workspace_import_keep_preserves_destination_content(
 
     preview = _preview_zip(e2e_client, platform_admin.headers, archive)
     by_match = _items_by_match(preview)
-    assert by_match[str((WF_BETA_PATH, WF_BETA_FN))]["classification"] == "conflict"
-    keep_id = by_match[str((WF_BETA_PATH, WF_BETA_FN))]["id"]
+    assert by_match[_key(WF_BETA_PATH, WF_BETA_FN)]["classification"] == "conflict"
+    keep_id = by_match[_key(WF_BETA_PATH, WF_BETA_FN)]["id"]
     job_id = _enqueue(
         e2e_client, platform_admin.headers, preview, _decide(preview, "replace", keep={keep_id})
     )

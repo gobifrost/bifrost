@@ -28595,6 +28595,8 @@ export interface components {
             source_id?: string | null;
             /** Target Id */
             target_id?: string | null;
+            /** Group Key */
+            group_key?: string | null;
             /** Diff */
             diff?: components["schemas"]["WorkspaceBundleDiffLine"][];
         };

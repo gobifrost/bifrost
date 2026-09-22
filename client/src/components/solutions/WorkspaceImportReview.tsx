@@ -1,6 +1,14 @@
-import { useMemo, useState } from "react";
-import { AlertTriangle, FileCode2, GitCompareArrows } from "lucide-react";
+import { useMemo } from "react";
+import { Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+	DataTable,
+	DataTableBody,
+	DataTableCell,
+	DataTableHead,
+	DataTableHeader,
+	DataTableRow,
+} from "@/components/ui/data-table";
 import type { WorkspaceBundlePreview } from "@/services/solutions";
 
 type Decision = "keep" | "replace";
@@ -20,6 +28,55 @@ const kindLabel: Record<string, string> = {
 	policy_rule: "POL",
 };
 
+interface DisplayGroup {
+	key: string;
+	/** First member in preview order; carries the group's decision control. */
+	first: Item;
+	members: Item[];
+}
+
+function groupItems(items: Item[]): DisplayGroup[] {
+	const byKey = new Map<string, Item[]>();
+	const solo: Item[] = [];
+	for (const item of items) {
+		if (item.group_key) {
+			const list = byKey.get(item.group_key) ?? [];
+			list.push(item);
+			byKey.set(item.group_key, list);
+		} else {
+			solo.push(item);
+		}
+	}
+	const emitted = new Set<string>();
+	const groups: DisplayGroup[] = [];
+	const takeGroup = (key: string): DisplayGroup | null => {
+		const members = byKey.get(key);
+		if (!members || emitted.has(key)) return null;
+		emitted.add(key);
+		return { key, first: members[0], members };
+	};
+	// Definitions first in preview order, each followed by their files, so a
+	// definition and the source implementing it are always decided together.
+	for (const item of items) {
+		if (item.kind === "file" || !item.group_key) continue;
+		const group = takeGroup(item.group_key);
+		if (group) groups.push(group);
+	}
+	for (const item of solo) {
+		groups.push({ key: item.id, first: item, members: [item] });
+	}
+	// Defensive: grouped files whose definition is absent stay usable alone.
+	for (const [key, members] of byKey) {
+		if (!emitted.has(key)) {
+			emitted.add(key);
+			for (const member of members) {
+				groups.push({ key: member.id, first: member, members: [member] });
+			}
+		}
+	}
+	return groups;
+}
+
 export function WorkspaceImportReview({
 	preview,
 	decisions,
@@ -34,15 +91,18 @@ export function WorkspaceImportReview({
 			preview.items.filter((item) => item.classification === "conflict"),
 		[preview.items],
 	);
-	const [selectedId, setSelectedId] = useState(
-		conflicts[0]?.id ?? preview.items[0]?.id ?? null,
-	);
-	const selected =
-		preview.items.find((item) => item.id === selectedId) ?? null;
+	const groups = useMemo(() => groupItems(preview.items), [preview.items]);
 	const resolved = conflicts.filter((item) => decisions[item.id]).length;
 	const warnings = preview.warnings ?? [];
-	const choose = (id: string, action: Decision) =>
-		onDecisionsChange({ ...decisions, [id]: action });
+	const groupConflicts = (group: DisplayGroup) =>
+		group.members.filter((item) => item.classification === "conflict");
+	const chooseGroup = (group: DisplayGroup, action: Decision) =>
+		onDecisionsChange({
+			...decisions,
+			...Object.fromEntries(
+				groupConflicts(group).map((item) => [item.id, action]),
+			),
+		});
 	const chooseAll = (action: Decision) =>
 		onDecisionsChange(
 			Object.fromEntries(conflicts.map((item) => [item.id, action])),
@@ -50,16 +110,15 @@ export function WorkspaceImportReview({
 
 	return (
 		<div className="min-h-0">
-			<div className="mx-5 mt-4 flex gap-2 rounded-lg border border-amber-500/35 bg-amber-500/5 p-3 text-xs text-muted-foreground">
-				<AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600" />
+			<div className="flex gap-2 px-5 pt-4 text-xs text-muted-foreground">
+				<Info className="mt-0.5 size-4 shrink-0" />
 				<div>
 					<p>
-						<span className="font-semibold text-foreground">
-							Review compatibility.
-						</span>{" "}
-						Package definitions were designed together; mixing kept
-						and replaced items can change references. Validate the
-						workspace before committing.
+						Solutions are designed to work together. Replacing items
+						in your workspace will overwrite local changes that
+						could be important to other things in your workspace,
+						and likewise keeping them could materially affect how
+						things in this Solution work together.
 					</p>
 					{warnings.map((warning) => (
 						<p key={warning} className="mt-1">
@@ -68,140 +127,182 @@ export function WorkspaceImportReview({
 					))}
 				</div>
 			</div>
-			<div
-				data-testid="workspace-import-scroller"
-				className="min-h-0 max-h-[58dvh] overflow-y-auto border-y md:grid md:grid-cols-[minmax(0,1.45fr)_minmax(20rem,.75fr)]"
-			>
-				<section className="min-w-0 border-b md:border-b-0 md:border-r">
-					<div className="flex min-h-12 flex-wrap items-center justify-between gap-2 border-b bg-muted/30 px-3 py-2">
-						<p className="text-sm">
-							<span className="font-semibold">
-								{conflicts.length - resolved} need review
-							</span>
-							<span className="ml-2 text-muted-foreground">
-								of {preview.items.length} changes
-							</span>
-						</p>
-						<div className="flex gap-2">
-							<Button
-								type="button"
-								size="sm"
-								variant="outline"
-								onClick={() => chooseAll("keep")}
-							>
-								Keep all
-							</Button>
-							<Button
-								type="button"
-								size="sm"
-								variant="outline"
-								onClick={() => chooseAll("replace")}
-							>
-								Replace all
-							</Button>
-						</div>
-					</div>
-					<div className="hidden grid-cols-[2rem_minmax(9rem,1fr)_6rem_10rem] gap-2 border-b px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground md:grid">
-						<span />
-						<span>Item</span>
-						<span>Matched by</span>
-						<span>Decision</span>
-					</div>
-					<div>
-						{preview.items.map((item) => (
-							<ImportRow
-								key={item.id}
-								item={item}
-								active={selectedId === item.id}
-								decision={decisions[item.id]}
-								onSelect={() => setSelectedId(item.id)}
-								onDecision={(action) => choose(item.id, action)}
+			<div className="flex min-h-12 flex-wrap items-center justify-between gap-2 px-5 py-2">
+				<p className="text-sm">
+					<span className="font-semibold">
+						{conflicts.length - resolved} need review
+					</span>
+					<span className="ml-2 text-muted-foreground">
+						of {preview.items.length} changes
+					</span>
+				</p>
+				<div className="flex gap-2">
+					<Button
+						type="button"
+						size="sm"
+						variant="outline"
+						onClick={() => chooseAll("keep")}
+					>
+						Keep all
+					</Button>
+					<Button
+						type="button"
+						size="sm"
+						variant="outline"
+						onClick={() => chooseAll("replace")}
+					>
+						Replace all
+					</Button>
+				</div>
+			</div>
+			<div className="min-h-0 px-5 pb-5">
+				<DataTable
+					data-testid="workspace-import-scroller"
+					className="max-h-[52dvh]"
+				>
+					<DataTableHeader>
+						<DataTableRow>
+							<DataTableHead>Item</DataTableHead>
+							<DataTableHead>Matched by</DataTableHead>
+							<DataTableHead className="text-right">Decision</DataTableHead>
+						</DataTableRow>
+					</DataTableHeader>
+					<DataTableBody>
+						{groups.map((group) => (
+							<ImportGroupRows
+								key={group.key}
+								group={group}
+								decisions={decisions}
+								onDecision={(action) => chooseGroup(group, action)}
 							/>
 						))}
-					</div>
-				</section>
-				<ImportInspector
-					item={selected}
-					decision={selected ? decisions[selected.id] : undefined}
-					onDecision={(action) =>
-						selected && choose(selected.id, action)
-					}
-				/>
+					</DataTableBody>
+				</DataTable>
 			</div>
 		</div>
 	);
 }
 
+function ImportGroupRows({
+	group,
+	decisions,
+	onDecision,
+}: {
+	group: DisplayGroup;
+	decisions: Record<string, Decision>;
+	onDecision: (action: Decision) => void;
+}) {
+	const open = group.members.filter(
+		(item) => item.classification === "conflict",
+	);
+	const decided = open.filter((item) => decisions[item.id]);
+	return (
+		<>
+			{group.members.map((item) =>
+				item === group.first ? (
+					<ImportRow
+						key={item.id}
+						item={item}
+						openCount={open.length}
+						decidedCount={decided.length}
+						decision={decisions[item.id]}
+						showControl={open.length > 0}
+						onDecision={onDecision}
+					/>
+				) : (
+					<ImportRow
+						key={item.id}
+						item={item}
+						linkedTo={group.first.name}
+						decision={decisions[item.id]}
+						showControl={false}
+						onDecision={onDecision}
+					/>
+				),
+			)}
+		</>
+	);
+}
+
 function ImportRow({
 	item,
-	active,
 	decision,
-	onSelect,
+	linkedTo,
+	showControl,
+	openCount,
+	decidedCount,
 	onDecision,
 }: {
 	item: Item;
-	active: boolean;
 	decision?: Decision;
-	onSelect: () => void;
+	linkedTo?: string;
+	showControl: boolean;
+	openCount?: number;
+	decidedCount?: number;
 	onDecision: (action: Decision) => void;
 }) {
 	const conflict = item.classification === "conflict";
 	return (
-		<div
-			className={`grid min-h-14 grid-cols-[2rem_minmax(0,1fr)] gap-x-2 border-b px-3 py-2 text-sm md:grid-cols-[2rem_minmax(9rem,1fr)_6rem_10rem] ${active ? "bg-primary/5 shadow-[inset_3px_0_0_hsl(var(--primary))]" : "hover:bg-muted/40"}`}
-		>
-			<button
-				type="button"
-				aria-label={`Inspect ${item.name}`}
-				onClick={onSelect}
-				className={`grid size-7 place-items-center rounded-md text-[10px] font-bold ${item.classification === "create" ? "bg-emerald-500/10 text-emerald-700" : "bg-primary/10 text-primary"}`}
-			>
-				{kindLabel[item.kind] ?? item.kind.slice(0, 4).toUpperCase()}
-			</button>
-			<button
-				type="button"
-				onClick={onSelect}
-				className="min-w-0 text-left"
-			>
-				<span className="block truncate font-medium">{item.name}</span>
-				<span className="block truncate text-xs text-muted-foreground">
-					{item.classification === "create"
-						? "New workspace content"
-						: item.classification === "unchanged"
-							? "No definition change"
-							: item.id}
+		<DataTableRow>
+			<DataTableCell className="min-w-0">
+				<span className="flex min-w-0 items-start gap-2">
+					<span
+						className={`mt-0.5 grid size-7 shrink-0 place-items-center rounded-md text-[10px] font-bold ${item.classification === "create" ? "bg-emerald-500/10 text-emerald-700" : "bg-primary/10 text-primary"}`}
+					>
+						{kindLabel[item.kind] ?? item.kind.slice(0, 4).toUpperCase()}
+					</span>
+					<span className="min-w-0">
+						<span className="block break-words font-medium">
+							{item.name}
+						</span>
+						{item.target_id && (
+							<span className="mt-0.5 block break-all font-mono text-[11px] text-muted-foreground">
+								Preserves destination ID {item.target_id}
+							</span>
+						)}
+					</span>
 				</span>
-			</button>
-			<span
-				title={item.match_key ?? undefined}
-				className="col-start-2 mt-1 min-w-0 truncate text-xs text-muted-foreground md:col-start-auto md:mt-0"
-			>
+			</DataTableCell>
+			<DataTableCell className="min-w-28 max-w-64 break-words text-xs text-muted-foreground">
 				{item.match_key ??
 					(item.classification === "create" ? "New" : "—")}
-			</span>
-			{conflict ? (
-				<div className="col-start-2 mt-2 grid grid-cols-2 rounded-md bg-muted p-0.5 text-xs md:col-start-auto md:mt-0">
-					<DecisionButton
-						selected={decision === "keep"}
-						onClick={() => onDecision("keep")}
+			</DataTableCell>
+			<DataTableCell className="text-right">
+				{showControl ? (
+					<span className="inline-flex items-center gap-2">
+						{openCount !== undefined && openCount > 1 && (
+							<span className="text-xs text-muted-foreground">
+								{decidedCount} of {openCount} decided
+							</span>
+						)}
+						<span className="inline-grid grid-cols-2 rounded-md bg-muted p-0.5 text-xs">
+							<DecisionButton
+								selected={decision === "keep"}
+								onClick={() => onDecision("keep")}
+							>
+								Keep
+							</DecisionButton>
+							<DecisionButton
+								selected={decision === "replace"}
+								onClick={() => onDecision("replace")}
+							>
+								Replace
+							</DecisionButton>
+						</span>
+					</span>
+				) : conflict ? (
+					<span className="inline-block max-w-56 break-words text-xs text-muted-foreground">
+						Same as {linkedTo}
+					</span>
+				) : (
+					<span
+						className={`text-xs font-medium ${item.classification === "create" ? "text-emerald-700" : "text-muted-foreground"}`}
 					>
-						Keep
-					</DecisionButton>
-					<DecisionButton
-						selected={decision === "replace"}
-						onClick={() => onDecision("replace")}
-					>
-						Replace
-					</DecisionButton>
-				</div>
-			) : (
-				<span
-					className={`col-start-2 mt-1 text-xs font-medium md:col-start-auto md:mt-0 ${item.classification === "create" ? "text-emerald-700" : "text-muted-foreground"}`}
-				>
-					{item.classification === "create" ? "Create" : "Unchanged"}
-				</span>
-			)}
-		</div>
+						{item.classification === "create" ? "Create" : "Unchanged"}
+					</span>
+				)}
+			</DataTableCell>
+		</DataTableRow>
 	);
 }
 
@@ -223,94 +324,5 @@ function DecisionButton({
 		>
 			{children}
 		</button>
-	);
-}
-
-function ImportInspector({
-	item,
-	decision,
-	onDecision,
-}: {
-	item: Item | null;
-	decision?: Decision;
-	onDecision: (action: Decision) => void;
-}) {
-	if (!item)
-		return (
-			<aside className="p-5 text-sm text-muted-foreground">
-				Select an import item to inspect it.
-			</aside>
-		);
-	const conflict = item.classification === "conflict";
-	const diff = item.diff ?? [];
-	return (
-		<aside className="min-w-0 bg-muted/20 p-5">
-			<div className="flex min-w-0 items-start justify-between gap-2">
-				<div className="min-w-0">
-					<p className="text-[11px] font-semibold uppercase tracking-wide text-primary">
-						{item.kind}
-					</p>
-					<h3 className="mt-1 break-words font-semibold">
-						{item.name}
-					</h3>
-					<p className="mt-1 break-words text-xs text-muted-foreground">
-						{item.match_key
-							? `Matched by ${item.match_key}`
-							: "New workspace content"}
-					</p>
-				</div>
-				<GitCompareArrows className="size-4 shrink-0 text-muted-foreground" />
-			</div>
-			{item.target_id && (
-				<p className="mt-4 break-words rounded-md bg-primary/5 p-2 text-xs text-muted-foreground">
-					Replacing preserves destination ID{" "}
-					<span className="break-all font-mono">
-						{item.target_id}
-					</span>
-					.
-				</p>
-			)}
-			{diff.length > 0 ? (
-				<div className="mt-4 overflow-hidden rounded-md border bg-background font-mono text-xs">
-					{diff.map((line) => (
-						<div
-							key={line.field}
-							className="border-b px-3 py-1 last:border-0"
-						>
-							<span className="text-muted-foreground">
-								{line.field}:{" "}
-							</span>
-							{String(line.existing ?? "—")} →{" "}
-							{String(line.incoming ?? "—")}
-						</div>
-					))}
-				</div>
-			) : (
-				<p className="mt-4 rounded-md border bg-background p-3 text-xs text-muted-foreground">
-					<FileCode2 className="mr-1 inline size-3.5" />
-					No field-level diff is available for this item.
-				</p>
-			)}
-			{conflict && (
-				<div className="mt-4 grid grid-cols-2 gap-2">
-					<Button
-						type="button"
-						variant={decision === "keep" ? "default" : "outline"}
-						size="sm"
-						onClick={() => onDecision("keep")}
-					>
-						Keep existing
-					</Button>
-					<Button
-						type="button"
-						variant={decision === "replace" ? "default" : "outline"}
-						size="sm"
-						onClick={() => onDecision("replace")}
-					>
-						Replace definition
-					</Button>
-				</div>
-			)}
-		</aside>
 	);
 }
