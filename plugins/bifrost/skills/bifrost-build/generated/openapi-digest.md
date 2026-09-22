@@ -487,6 +487,16 @@
 | GET | `/api/sdk/sessions/{session_id}/pending` |
 | POST | `/api/sdk/tables/create` |
 | POST | `/api/sdk/tables/list` |
+| GET | `/api/services` |
+| GET | `/api/services/{service_id}` |
+| PATCH | `/api/services/{service_id}` |
+| GET | `/api/services/{service_id}/attempts` |
+| POST | `/api/services/{service_id}/disable` |
+| POST | `/api/services/{service_id}/enable` |
+| GET | `/api/services/{service_id}/logs` |
+| POST | `/api/services/{service_id}/restart` |
+| POST | `/api/services/{service_id}/start` |
+| POST | `/api/services/{service_id}/stop` |
 | GET | `/api/settings/ai/pricing` |
 | POST | `/api/settings/ai/pricing` |
 | DELETE | `/api/settings/ai/pricing/{pricing_id}` |
