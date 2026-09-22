@@ -164,7 +164,7 @@ test("reviews collisions and replaces workspace content without installing a Sol
 			body: await dialog.screenshot(),
 			contentType: "image/png",
 		});
-		await dialog.getByRole("button", { name: "Replace all" }).click();
+		await dialog.getByRole("button", { name: "Replace All" }).click();
 		await expect(dialog.getByText(/of 2 conflicts resolved/)).toBeVisible();
 		await dialog.getByRole("button", { name: "Start import job" }).click();
 		await expect(dialog).not.toBeVisible();
