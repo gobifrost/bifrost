@@ -312,7 +312,7 @@ async def test_flush_never_raises(db_session, redis_holder):
 
     class _Boom:
         def __getattr__(self, name):
-            raise RuntimeError("redis down")
+            raise AttributeError("redis down")
 
     redis_holder["redis"] = _Boom()
     assert await service_log_flush.flush_attempt_logs(
@@ -432,8 +432,9 @@ async def test_completion_takeover_mid_store_does_not_resurrect_cursor(
         )
         await asyncio.wait_for(drained.wait(), 10)
         release.set()
-        await store_task
-        await comp_task
+        # Join both tasks: surfaces any task exception and guarantees the
+        # completion ran before the end-state assertions below.
+        await asyncio.gather(store_task, comp_task)
 
     # The stale write landed before the takeover clear (lock-serialized),
     # so no resurrected key is left behind.

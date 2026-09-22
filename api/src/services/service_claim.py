@@ -214,6 +214,8 @@ class ServiceClaimLoop:
                 error=f"Service did not report ready within {grace}s.",
             )
         except lifecycle.StaleLeaseError:
+            # Lost the race: another owner already moved the attempt, so
+            # our completion was fenced and there is nothing to roll back.
             pass
         await self._drop_ownership(owned)
         return True
@@ -449,6 +451,8 @@ class ServiceClaimLoop:
             try:
                 await self.pool.stop_service_child(str(owned.attempt_id))
             except Exception:
+                # Best-effort child stop during ownership drop: the DB
+                # lease expiry (not this signal) owns the lifetime.
                 pass
 
     # -- claiming ------------------------------------------------------
@@ -754,6 +758,8 @@ class ServiceClaimLoop:
                         self._completed_cursors.add(str(attempt_id))
                         await _slf.clear_log_cursor(attempt_uuid)
                 except Exception:
+                    # Best-effort cursor cleanup after commit: rows are
+                    # durable, and a leftover key expires via TTL.
                     pass
             if owned is not None:
                 try:
@@ -766,6 +772,9 @@ class ServiceClaimLoop:
                             service_ready_key(str(attempt_id)),
                         )
                 except Exception:
+                    # Best-effort credential-channel cleanup: leaked keys
+                    # expire via TTL and carry no authority without the
+                    # DB lease.
                     pass
 
     @staticmethod
@@ -806,8 +815,13 @@ class ServiceClaimLoop:
                             service_stop_key(str(item.attempt_id)), 300, "1"
                         )
                     except Exception:
+                        # Best-effort stop hint per child: an unnotified
+                        # child keeps running until its lease expires and
+                        # restarts elsewhere.
                         pass
         except Exception:
+            # Redis unreachable during handover: children stop via lease
+            # expiry and completions still reschedule through the DB.
             pass
         if self.pool is not None:
             await asyncio.gather(*(

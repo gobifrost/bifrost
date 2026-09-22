@@ -403,7 +403,7 @@ def _parse_log_date(value: str | None, name: str) -> datetime | None:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
         return parsed
     except ValueError:
-        logger.debug("invalid %s %r, ignoring filter", name, value)
+        logger.debug("invalid %s %r, ignoring filter", name, log_safe(value))
         return None
 
 

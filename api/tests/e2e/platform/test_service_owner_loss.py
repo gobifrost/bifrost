@@ -282,6 +282,7 @@ class TestServiceOwnerLoss:
         try:
             await first_loop._task
         except asyncio.CancelledError:
+            # Expected: killed without handover (owner-death path).
             pass
         await pool.stop()
 

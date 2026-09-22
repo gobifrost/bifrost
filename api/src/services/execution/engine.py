@@ -791,6 +791,8 @@ async def execute_service(
             loop.add_signal_handler(sig, stop_event.set)
             installed_signals.append(sig)
         except (NotImplementedError, RuntimeError, ValueError):
+            # Non-Unix loop or unsupported signal: cooperative stop still
+            # works via the stop-event mirror; signals are best-effort.
             pass
 
     supervisor_task: asyncio.Task[None] | None = None
@@ -865,11 +867,13 @@ async def execute_service(
             try:
                 await supervisor_task
             except asyncio.CancelledError:
+                # Expected: we just cancelled it and awaited shutdown.
                 pass
         for sig in installed_signals:
             try:
                 loop.remove_signal_handler(sig)
             except (NotImplementedError, RuntimeError, ValueError):
+                # Handler was never installed (see install guard above).
                 pass
         clear_service_runtime()
         if BIFROST_CONTEXT_AVAILABLE:
@@ -1062,6 +1066,7 @@ async def _execute_service_with_trace(
                 try:
                     await user_task
                 except asyncio.CancelledError:
+                    # Expected: we just cancelled it and awaited shutdown.
                     pass
             return None, service_logs, True
 
