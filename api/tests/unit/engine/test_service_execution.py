@@ -12,6 +12,8 @@ import os
 from contextlib import asynccontextmanager
 from unittest.mock import patch
 
+import pytest
+
 from src.core.cache.keys import (
     service_ready_key,
     service_stop_key,
@@ -27,6 +29,34 @@ from src.services.execution.engine import (
     _service_supervisor,
     execute,
 )
+
+_SERVICE_ENV_VARS = (
+    "BIFROST_API_URL",
+    "BIFROST_ACCESS_TOKEN",
+    "BIFROST_REFRESH_TOKEN",
+)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_service_env():
+    """Contain install_service_credentials' process env (no teardown).
+
+    The supervisor installs service tokens as process-global env vars
+    (scoped to the child process in production); in-process that leaks
+    phantom credentials into every later suite (SDK "without context"
+    tests, URL assertions). Snapshot explicitly: monkeypatch.delenv on
+    an absent var records nothing, so writes made after the call are
+    never undone.
+    """
+    saved = {var: os.environ.get(var) for var in _SERVICE_ENV_VARS}
+    for var in _SERVICE_ENV_VARS:
+        os.environ.pop(var, None)
+    yield
+    for var in _SERVICE_ENV_VARS:
+        if saved[var] is None:
+            os.environ.pop(var, None)
+        else:
+            os.environ[var] = saved[var]
 
 
 def _caller():
