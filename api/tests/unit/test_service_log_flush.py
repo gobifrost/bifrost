@@ -82,6 +82,63 @@ def _patch_redis(redis_holder):
         yield
 
 
+# Rows committed through the loop's own sessions (not db_session) persist
+# past the test: claim_eligible_service claims ANY eligible service, so
+# leftovers would leak into other tests' claims. Track and remove them
+# (same pattern as test_service_claim.py).
+_created_definition_ids: list = []
+_created_workflow_ids: list = []
+_created_org_ids: list = []
+
+
+@pytest.fixture(autouse=True)
+async def _cleanup_services(async_session_factory):
+    _created_definition_ids.clear()
+    _created_workflow_ids.clear()
+    _created_org_ids.clear()
+    yield
+    from sqlalchemy import delete as sa_delete
+
+    from src.models.orm.organizations import Organization
+    from src.models.orm.services import (
+        ServiceAttempt,
+        ServiceDefinition,
+        ServiceLog,
+    )
+    from src.models.orm.workflows import Workflow
+
+    async with async_session_factory() as session:
+        if _created_definition_ids:
+            await session.execute(
+                sa_delete(ServiceLog).where(
+                    ServiceLog.service_id.in_(_created_definition_ids)
+                )
+            )
+            await session.execute(
+                sa_delete(ServiceAttempt).where(
+                    ServiceAttempt.service_id.in_(_created_definition_ids)
+                )
+            )
+            await session.execute(
+                sa_delete(ServiceDefinition).where(
+                    ServiceDefinition.id.in_(_created_definition_ids)
+                )
+            )
+        if _created_workflow_ids:
+            await session.execute(
+                sa_delete(Workflow).where(
+                    Workflow.id.in_(_created_workflow_ids)
+                )
+            )
+        if _created_org_ids:
+            await session.execute(
+                sa_delete(Organization).where(
+                    Organization.id.in_(_created_org_ids)
+                )
+            )
+        await session.commit()
+
+
 async def _ensure_service(db_session):
     from src.models.orm.organizations import Organization
     from src.models.orm.workflows import Workflow
@@ -107,6 +164,9 @@ async def _ensure_service(db_session):
         db_session, wf, created_by="tester"
     )
     await db_session.flush()
+    _created_definition_ids.append(definition.id)
+    _created_workflow_ids.append(wf.id)
+    _created_org_ids.append(org.id)
     return definition
 
 
@@ -288,6 +348,165 @@ async def test_claim_loop_stages_and_stores_cursors(db_session, redis_holder):
     await loop._store_cursors()
     assert loop._pending_cursors == {}
     assert redis.values[service_logs_cursor_key(str(attempt.id))] == "1-0"
+
+
+@pytest.mark.asyncio
+async def test_completion_takeover_mid_store_does_not_resurrect_cursor(
+    db_session, redis_holder
+):
+    """Completion clearing the cursor mid-store must not resurrect it.
+
+    Forces the audited interleave with an event rendezvous (no sleeps):
+    ``_store_cursors`` is suspended inside its Redis write — check passed,
+    lock held — while the real completion path runs its final drain, then
+    takes over (set-add + clear) once the store finishes. End state is
+    benign by construction: the attempt is terminal with every line
+    persisted (no gaps), rows stay bounded (the accepted at-least-once
+    replay of one beat tail), and the cursor key stays absent — never
+    resurrected, never consulted again (reads come from Postgres; flushes
+    only run for owned live attempts).
+    """
+    import asyncio
+
+    from sqlalchemy import select as sa_select
+
+    from src.core.cache.keys import service_logs_cursor_key
+    from src.models.orm.services import ServiceAttempt, ServiceLog
+    from src.services.service_claim import OwnedAttempt, ServiceClaimLoop
+
+    definition = await _ensure_service(db_session)
+    attempt = await _attempt(db_session, definition)
+    await db_session.commit()
+    attempt_id = str(attempt.id)
+    redis = redis_holder["redis"]
+    await _log_line(redis, attempt.id, "one")
+    await _log_line(redis, attempt.id, "two")
+
+    loop = ServiceClaimLoop(worker_id="worker-1", pool=None)
+    owned = OwnedAttempt(
+        attempt_id=attempt.id,
+        service_id=definition.id,
+        lease_token="tok",
+    )
+    loop._owned[attempt_id] = owned
+    await loop._flush_logs(db_session, owned)
+    await db_session.commit()  # tick commit: rows durable, cursor staged
+    assert loop._pending_cursors == {attempt_id: "2-0"}
+
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    drained = asyncio.Event()
+    real_store = service_log_flush.store_log_cursor
+    real_flush = service_log_flush.flush_attempt_logs
+
+    async def _gated_store(store_attempt_id, last_id):
+        entered.set()
+        await release.wait()
+        return await real_store(store_attempt_id, last_id)
+
+    async def _signaling_flush(*args, **kwargs):
+        out = await real_flush(*args, **kwargs)
+        drained.set()
+        return out
+
+    cursor_key = service_logs_cursor_key(attempt_id)
+    with (
+        patch.object(service_log_flush, "store_log_cursor", _gated_store),
+        patch.object(service_log_flush, "flush_attempt_logs", _signaling_flush),
+    ):
+        store_task = asyncio.create_task(loop._store_cursors())
+        await asyncio.wait_for(entered.wait(), 10)
+        # Completion runs while the store is suspended: final drain
+        # (cursor still absent, so it replays the beat tail — bounded
+        # at-least-once), then it blocks on the cursor lock until the
+        # store finishes and takes over with set-add + clear.
+        comp_task = asyncio.create_task(
+            loop.handle_service_result({
+                "success": True,
+                "service": {
+                    "service_id": str(definition.id),
+                    "attempt_id": attempt_id,
+                    "lease_token": "tok",
+                },
+            })
+        )
+        await asyncio.wait_for(drained.wait(), 10)
+        release.set()
+        await store_task
+        await comp_task
+
+    # The stale write landed before the takeover clear (lock-serialized),
+    # so no resurrected key is left behind.
+    assert cursor_key not in redis.values
+
+    fresh = await db_session.get(ServiceAttempt, attempt.id)
+    # expire_on_commit=False in this harness: refresh past the identity map.
+    await db_session.refresh(fresh)
+    assert fresh.state == "stopped"
+    messages = (
+        (
+            await db_session.execute(
+                sa_select(ServiceLog.message).where(
+                    ServiceLog.attempt_id == attempt.id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert set(messages) == {"one", "two"}  # no gaps
+    assert len(messages) <= 4  # bounded: beat tail + one drain replay
+
+    # The takeover entry is pruned by the next store pass (terminal IDs
+    # are never re-staged, so the set cannot grow without bound).
+    attempt2 = await _attempt(db_session, definition)
+    await db_session.commit()
+    await _log_line(redis, attempt2.id, "three")
+    owned2 = OwnedAttempt(
+        attempt_id=attempt2.id,
+        service_id=definition.id,
+        lease_token="tok",
+    )
+    await loop._flush_logs(db_session, owned2)
+    await loop._store_cursors()
+    assert redis.values[service_logs_cursor_key(str(attempt2.id))] == "3-0"
+    assert attempt_id not in loop._completed_cursors
+
+
+@pytest.mark.asyncio
+async def test_store_cursors_drops_write_after_takeover(db_session):
+    """A store detached before the takeover must skip, not resurrect.
+
+    Unit-level companion to the interleave test above: with the takeover
+    recorded, ``_store_cursors`` consumes the staging without touching
+    Redis — this is the skip branch the lock-serialized interleave takes
+    when the takeover wins the race.
+    """
+    from src.services.service_claim import ServiceClaimLoop
+
+    definition = await _ensure_service(db_session)
+    attempt = await _attempt(db_session, definition)
+    await db_session.commit()
+    attempt_id = str(attempt.id)
+
+    stores: list = []
+
+    async def _recording_store(store_attempt_id, last_id):
+        stores.append((store_attempt_id, last_id))
+        return True
+
+    loop = ServiceClaimLoop(worker_id="worker-1", pool=None)
+    loop._pending_cursors = {attempt_id: "2-0"}
+    loop._completed_cursors = {attempt_id}  # takeover already recorded
+    with patch.object(
+        service_log_flush, "store_log_cursor", _recording_store
+    ):
+        await loop._store_cursors()
+
+    assert stores == []
+    assert loop._pending_cursors == {}
+    # Kept until the next store pass prunes it (pruning covered above).
+    assert loop._completed_cursors == {attempt_id}
 
 
 @pytest.mark.asyncio

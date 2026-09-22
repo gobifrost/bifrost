@@ -40,40 +40,15 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/services", tags=["Services"])
 
 
-async def _build_service_response(
-    db: DbSession,
-    definition: ServiceDefinition,
-    memory_by_attempt: dict[str, float] | None = None,
+def _assemble_service_response(
+    loaded: ServiceDefinition,
+    live: ServiceAttempt | None,
+    last_terminal: ServiceAttempt | None,
+    total_attempts: int,
+    memory_by_attempt: dict[str, float],
 ) -> ServiceResponse:
-    """Assemble the public view with source identity and observed state.
-
-    Embeds the live-attempt summary, the newest terminal exit reason, and
-    live memory (one pool-hash scan per request — callers pass a shared
-    map so list rows don't each rescan).
-    """
-    result = await db.execute(
-        select(ServiceDefinition)
-        .options(joinedload(ServiceDefinition.workflow))
-        .where(ServiceDefinition.id == definition.id)
-    )
-    loaded = result.unique().scalar_one()
+    """Pure assembly: no I/O, shared by the single and batch paths."""
     workflow = loaded.workflow
-    live = await service_lifecycle.get_live_attempt(db, loaded.id)
-    last_terminal = await service_lifecycle.get_last_terminal_attempt(
-        db, loaded.id
-    )
-    if memory_by_attempt is None:
-        memory_by_attempt = await service_memory.read_service_memory()
-    from sqlalchemy import func as sa_func
-
-    total_attempts = (
-        await db.scalar(
-            select(sa_func.count(ServiceAttempt.id)).where(
-                ServiceAttempt.service_id == loaded.id
-            )
-        )
-        or 0
-    )
     return ServiceResponse(
         id=loaded.id,
         workflow_id=loaded.workflow_id,
@@ -112,6 +87,72 @@ async def _build_service_response(
     )
 
 
+async def _build_service_response(
+    db: DbSession,
+    definition: ServiceDefinition,
+    memory_by_attempt: dict[str, float] | None = None,
+) -> ServiceResponse:
+    """Assemble the public view with source identity and observed state.
+
+    Single-row path (get/update endpoints): reloads the definition with
+    its workflow plus the per-row observed-state lookups. The list
+    endpoint uses the batch path below instead.
+    """
+    result = await db.execute(
+        select(ServiceDefinition)
+        .options(joinedload(ServiceDefinition.workflow))
+        .where(ServiceDefinition.id == definition.id)
+    )
+    loaded = result.unique().scalar_one()
+    live = await service_lifecycle.get_live_attempt(db, loaded.id)
+    last_terminal = await service_lifecycle.get_last_terminal_attempt(
+        db, loaded.id
+    )
+    if memory_by_attempt is None:
+        memory_by_attempt = await service_memory.read_service_memory()
+    from sqlalchemy import func as sa_func
+
+    total_attempts = (
+        await db.scalar(
+            select(sa_func.count(ServiceAttempt.id)).where(
+                ServiceAttempt.service_id == loaded.id
+            )
+        )
+        or 0
+    )
+    return _assemble_service_response(
+        loaded, live, last_terminal, total_attempts, memory_by_attempt
+    )
+
+
+async def _build_service_response_batch(
+    db: DbSession,
+    definitions: list[ServiceDefinition],
+    memory_by_attempt: dict[str, float],
+) -> list[ServiceResponse]:
+    """Assemble one page: 3 observed-state queries total, not 3N.
+
+    Definitions already carry their workflow (list_definitions
+    joinedloads it); live/terminal/count maps come from one batched
+    lookup each. The response contract is identical to the single path.
+    """
+    live_map, terminal_map, count_map = (
+        await service_lifecycle.batch_list_embedding(
+            db, [d.id for d in definitions]
+        )
+    )
+    return [
+        _assemble_service_response(
+            d,
+            live_map.get(d.id),
+            terminal_map.get(d.id),
+            count_map.get(d.id, 0),
+            memory_by_attempt,
+        )
+        for d in definitions
+    ]
+
+
 async def _get_definition_or_404(db: DbSession, service_id: UUID) -> ServiceDefinition:
     definition = await service_lifecycle.get_definition(db, service_id)
     if definition is None:
@@ -136,10 +177,7 @@ async def list_services(
     )
     # One pool-hash scan serves every row in the page (no per-row rescan).
     memory_by_attempt = await service_memory.read_service_memory()
-    items = [
-        await _build_service_response(db, d, memory_by_attempt)
-        for d in definitions
-    ]
+    items = await _build_service_response_batch(db, definitions, memory_by_attempt)
     return ServiceListResponse(items=items, total=total)
 
 
@@ -326,6 +364,19 @@ async def list_service_logs(
         )
     from src.repositories.execution_logs import decode_execution_log_cursor
 
+    # Strict like the executions logs endpoint: a token that decodes to
+    # nothing is corruption (or a hand-typed value), and silently
+    # restarting at page one would duplicate lines into the reader.
+    # No legacy-offset fallback: this endpoint only ever minted keysets.
+    cursor = None
+    if continuation_token:
+        cursor = decode_execution_log_cursor(continuation_token)
+        if cursor is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="continuation_token is invalid",
+            )
+
     rows, total, next_token = await service_lifecycle.list_service_logs(
         db,
         service_id,
@@ -334,11 +385,7 @@ async def list_service_logs(
         start=start,
         end=end,
         limit=limit,
-        cursor=(
-            decode_execution_log_cursor(continuation_token)
-            if continuation_token
-            else None
-        ),
+        cursor=cursor,
         newest_first=order == "newest_first",
     )
     return ServiceLogListResponse(

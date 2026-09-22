@@ -28,6 +28,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload
 
 from src.models.orm.services import _SERVICE_LIVE_STATES, ServiceAttempt, ServiceDefinition, ServiceLog
 from src.models.orm.workflows import Workflow
@@ -212,11 +213,12 @@ async def list_definitions(
     total = await db.scalar(select(func.count(ServiceDefinition.id))) or 0
     result = await db.execute(
         select(ServiceDefinition)
+        .options(joinedload(ServiceDefinition.workflow))
         .order_by(ServiceDefinition.created_at.desc(), ServiceDefinition.id.desc())
         .limit(limit)
         .offset(offset)
     )
-    return list(result.scalars().all()), total
+    return list(result.unique().scalars().all()), total
 
 
 async def update_policy(
@@ -407,6 +409,78 @@ async def get_last_terminal_attempt(
         .limit(1)
     )
     return result.scalars().first()
+
+
+async def batch_list_embedding(
+    db: AsyncSession, service_ids: list[UUID]
+) -> tuple[
+    dict[UUID, ServiceAttempt], dict[UUID, ServiceAttempt], dict[UUID, int]
+]:
+    """Batch the list endpoint's per-row observed-state lookups.
+
+    Three queries total regardless of page size (replacing the 3N
+    fan-out): live attempts, newest terminal attempt per service, and
+    attempt counts. Returns ``(live_by_service, last_terminal_by_service,
+    count_by_service)``; services with no matching rows are absent from
+    each map. Ordering matches the single-row helpers (newest first).
+    """
+    live_by_service: dict[UUID, ServiceAttempt] = {}
+    last_terminal_by_service: dict[UUID, ServiceAttempt] = {}
+    count_by_service: dict[UUID, int] = {}
+    if not service_ids:
+        return live_by_service, last_terminal_by_service, count_by_service
+
+    live_result = await db.execute(
+        select(ServiceAttempt)
+        .where(
+            ServiceAttempt.service_id.in_(service_ids),
+            ServiceAttempt.state.in_(_SERVICE_LIVE_STATES),
+        )
+        .order_by(ServiceAttempt.created_at.desc())
+    )
+    for attempt in live_result.scalars().all():
+        # At most one live attempt per service (partial unique index);
+        # newest-first order keeps the same row get_live_attempt returns.
+        live_by_service.setdefault(attempt.service_id, attempt)
+
+    ranked = (
+        select(
+            ServiceAttempt.id.label("attempt_id"),
+            func.row_number()
+            .over(
+                partition_by=ServiceAttempt.service_id,
+                order_by=(
+                    ServiceAttempt.created_at.desc(),
+                    ServiceAttempt.id.desc(),
+                ),
+            )
+            .label("rn"),
+        )
+        .where(
+            ServiceAttempt.service_id.in_(service_ids),
+            ServiceAttempt.state.in_(TERMINAL_ATTEMPT_STATES),
+        )
+        .subquery()
+    )
+    terminal_result = await db.execute(
+        select(ServiceAttempt)
+        .join(ranked, ServiceAttempt.id == ranked.c.attempt_id)
+        .where(ranked.c.rn == 1)
+    )
+    for attempt in terminal_result.scalars().all():
+        last_terminal_by_service[attempt.service_id] = attempt
+
+    count_result = await db.execute(
+        select(
+            ServiceAttempt.service_id,
+            func.count(ServiceAttempt.id),
+        )
+        .where(ServiceAttempt.service_id.in_(service_ids))
+        .group_by(ServiceAttempt.service_id)
+    )
+    for service_id, count in count_result.all():
+        count_by_service[service_id] = int(count or 0)
+    return live_by_service, last_terminal_by_service, count_by_service
 
 
 async def list_service_logs(

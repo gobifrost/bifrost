@@ -70,6 +70,15 @@ class ServiceClaimLoop:
     # Staged flush cursors (attempt_id -> last stream ID), written to Redis
     # only after the tick's commit — never before (see service_log_flush).
     _pending_cursors: dict[str, str] = field(default_factory=dict)
+    # Attempt IDs whose cursors the completion path has taken over (pop +
+    # clear). A store in flight for a taken-over attempt must drop its
+    # staged write instead of resurrecting the cleared key: the attempt is
+    # terminal, so nothing will ever read it again. Guarded by
+    # ``_cursor_lock`` against the completion path (same loop, separate
+    # task). Stale-lease drops do NOT join this set — their staged cursor
+    # is still the freshest resume point for the next owner.
+    _completed_cursors: set[str] = field(default_factory=set)
+    _cursor_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     # -- lifecycle -----------------------------------------------------
 
@@ -333,27 +342,31 @@ class ServiceClaimLoop:
         from src.services import service_log_flush
 
         pending, self._pending_cursors = self._pending_cursors, {}
-        # NOTE (audit 2026-09-22): entries are detached before awaiting
-        # Redis, so a concurrent completion may pop + clear the same
-        # attempt's cursor mid-store and the stale write can land after
-        # the clear. This is benign: cursor keys are per-attempt, the
-        # attempt is terminal (no path flushes it again — beats only
-        # touch owned live attempts, and the completion drain already
-        # ran), and the resurrected key expires via TTL. Serializing the
-        # two paths (e.g. a lock) would not change that outcome, so the
-        # race is documented, not synchronized.
+        # Terminal attempt IDs are never re-staged, so a takeover entry
+        # for anything outside this batch is unobservable — prune it
+        # instead of letting the set grow with every completion.
+        self._completed_cursors &= set(pending)
         for attempt_id, last_id in pending.items():
-            try:
-                stored = await service_log_flush.store_log_cursor(
-                    UUID(attempt_id), last_id
-                )
-            except Exception as e:
-                stored = False
-                logger.debug(
-                    "service log cursor store failed for %s: %s",
-                    attempt_id,
-                    e,
-                )
+            async with self._cursor_lock:
+                if attempt_id in self._completed_cursors:
+                    # Completion took cursor ownership (and cleared the
+                    # key) after this tick staged: drop the stale write
+                    # instead of resurrecting it. The lock makes the
+                    # check-and-store atomic against the completion's
+                    # take-over-and-clear, so neither interleave leaves a
+                    # stale key behind.
+                    continue
+                try:
+                    stored = await service_log_flush.store_log_cursor(
+                        UUID(attempt_id), last_id
+                    )
+                except Exception as e:
+                    stored = False
+                    logger.debug(
+                        "service log cursor store failed for %s: %s",
+                        attempt_id,
+                        e,
+                    )
             if not stored:
                 # Redis was unreachable: retry next tick. The rows are
                 # already committed, so a crash before the retry replays
@@ -734,7 +747,12 @@ class ServiceClaimLoop:
                 try:
                     from src.services import service_log_flush as _slf
 
-                    await _slf.clear_log_cursor(attempt_uuid)
+                    async with self._cursor_lock:
+                        # Take cursor ownership before clearing so an in-flight
+                        # _store_cursors drops its staged write instead of
+                        # resurrecting the key (see _store_cursors).
+                        self._completed_cursors.add(str(attempt_id))
+                        await _slf.clear_log_cursor(attempt_uuid)
                 except Exception:
                     pass
             if owned is not None:

@@ -288,7 +288,13 @@ async def _resolve_service(
 ) -> tuple[str, list[dict[str, Any]]]:
     # Services are keyed by definition UUID; the source workflow name is the
     # friendly alias (matched against the list's workflow_name).
-    data = await _get_json(client, "/api/services")
+    # NOTE: request the max page — the server defaults limit=100, which would
+    # silently miss definitions past 100 and break ambiguity detection.
+    # Sibling resolvers are left unpaged deliberately: each list endpoint has
+    # its own paging contract (different param names/limits, some unpaged),
+    # so a shared paging helper risks 422s. Revisit if a sibling grows a
+    # matching limit=1000 contract.
+    data = await _get_json(client, "/api/services", params={"limit": 1000})
     items = data.get("items", []) if isinstance(data, dict) else data
     matches = [
         s

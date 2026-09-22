@@ -338,3 +338,33 @@ class TestServiceRefResolver:
         )
         with pytest.raises(AmbiguousRefError):
             await resolve_ref(client, "service", "dup")  # type: ignore[arg-type]
+
+    @pytest.mark.asyncio
+    async def test_name_past_default_page_limit_still_resolves(self) -> None:
+        """The resolver must request the max page, not the server default.
+
+        Regression test: ``GET /api/services`` defaults to ``limit=100``,
+        so a name-only fetch missed definitions past item 100 (and saw an
+        incomplete candidate set for ambiguity detection). The resolver
+        now passes ``limit=1000`` — the endpoint max.
+        """
+
+        seen: list[dict] = []
+
+        class _RecordingClient(_FakeListClient):
+            async def get(self, path: str, **kwargs: object) -> httpx.Response:  # type: ignore[no-untyped-def]
+                seen.append({"path": path, **kwargs})
+                return await super().get(path, **kwargs)
+
+        items = [
+            _service_item(f"00000000-0000-4000-8000-{i:012d}", f"svc-{i:03d}")
+            for i in range(149)
+        ]
+        target = _service_item(_SVC_UUID, "deep-target")
+        items.insert(120, target)  # past the server's default limit=100
+        client = _RecordingClient({"items": items, "total": 150})
+
+        resolved = await resolve_ref(client, "service", "deep-target")  # type: ignore[arg-type]
+
+        assert resolved == _SVC_UUID
+        assert seen[0].get("params") == {"limit": 1000}

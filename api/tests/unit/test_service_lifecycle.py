@@ -677,3 +677,81 @@ async def test_last_terminal_attempt_none_without_terminals(db_session):
         )
         is None
     )
+
+
+@pytest.mark.asyncio
+async def test_batch_list_embedding_matches_single_lookups(db_session):
+    """Batch observed-state maps equal the per-row helpers, all shapes.
+
+    Seeds a live+history service, a terminal-only service, and an
+    attempt-less service (plus an unknown id): the batch path must agree
+    with get_live_attempt / get_last_terminal_attempt / count for every
+    row, so the list endpoint's 3-query page renders the identical
+    contract as the per-row path.
+    """
+    from datetime import timedelta
+    from uuid import uuid4
+
+    from sqlalchemy import func as sa_func
+
+    def _row(definition, state, age_hours, exit_reason=None):
+        base = service_lifecycle._now()
+        return ServiceAttempt(
+            id=uuid4(),
+            service_id=definition.id,
+            lease_token=f"tok-{uuid4().hex[:8]}",
+            lease_expires_at=base + timedelta(seconds=60),
+            state=state,
+            exit_reason=exit_reason,
+            created_at=base - timedelta(hours=age_hours),
+        )
+
+    live_def, _ = await _ensure(db_session)
+    term_def, _ = await _ensure(db_session)
+    empty_def, _ = await _ensure(db_session)
+    db_session.add_all([
+        _row(live_def, "failed", 3, exit_reason="old crash"),
+        _row(live_def, "stopped", 2, exit_reason="old stop"),
+        _row(live_def, "running", 0),
+        _row(term_def, "failed", 1, exit_reason="only exit"),
+    ])
+    await db_session.flush()
+
+    ids = [live_def.id, term_def.id, empty_def.id, uuid4()]
+    live_map, terminal_map, count_map = await service_lifecycle.batch_list_embedding(
+        db_session, ids
+    )
+
+    for definition, want_live_state, want_exit, want_count in (
+        (live_def, "running", "old stop", 3),
+        (term_def, None, "only exit", 1),
+        (empty_def, None, None, 0),
+    ):
+        live = await service_lifecycle.get_live_attempt(
+            db_session, definition.id
+        )
+        assert (live_map.get(definition.id) is None) == (live is None)
+        if live is not None:
+            assert live_map[definition.id].id == live.id
+            assert live_map[definition.id].state == want_live_state
+
+        last = await service_lifecycle.get_last_terminal_attempt(
+            db_session, definition.id
+        )
+        assert (terminal_map.get(definition.id) is None) == (last is None)
+        if last is not None:
+            assert terminal_map[definition.id].id == last.id
+            assert terminal_map[definition.id].exit_reason == want_exit
+
+        count = await db_session.scalar(
+            select(sa_func.count(ServiceAttempt.id)).where(
+                ServiceAttempt.service_id == definition.id
+            )
+        )
+        assert count_map.get(definition.id, 0) == (count or 0) == want_count
+
+    assert await service_lifecycle.batch_list_embedding(db_session, []) == (
+        {},
+        {},
+        {},
+    )

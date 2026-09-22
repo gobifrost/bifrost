@@ -221,6 +221,25 @@ def test_unknown_service_404s(e2e_client, platform_admin):
         assert response.status_code == 404, (method, path)
 
 
+def test_logs_reject_malformed_continuation_token(
+    e2e_client, platform_admin, service_workflow
+):
+    """Garbage continuation tokens 422 instead of restarting at page one.
+
+    Matches the executions logs endpoint: a token that decodes to nothing
+    is corruption, and silently serving page one would duplicate lines
+    into the reader.
+    """
+    service_id = _service_id(e2e_client, platform_admin.headers, service_workflow["id"])
+
+    response = e2e_client.get(
+        f"/api/services/{service_id}/logs?continuation_token=not-a-cursor",
+        headers=platform_admin.headers,
+    )
+    assert response.status_code == 422
+    assert "continuation_token" in response.json()["detail"]
+
+
 def test_subscription_rejects_service_target(e2e_client, platform_admin, service_workflow):
     """Event subscriptions cannot target service workflows."""
     import uuid as uuid_module
