@@ -472,7 +472,7 @@ describe("CreateEditSolution — install collision prompt", () => {
 		});
 		const { user } = renderWithProviders(
 			<CreateEditSolution
-				mode={{ kind: "create", file, organizationId: null }}
+				mode={{ kind: "create", destination: "solution", file, organizationId: null }}
 				open
 				onClose={vi.fn()}
 				onSaved={onSaved}
@@ -514,7 +514,7 @@ describe("CreateEditSolution — install collision prompt", () => {
 		});
 		const { user } = renderWithProviders(
 			<CreateEditSolution
-				mode={{ kind: "create", file, organizationId: null }}
+				mode={{ kind: "create", destination: "solution", file, organizationId: null }}
 				open
 				onClose={vi.fn()}
 				onSaved={vi.fn()}
@@ -543,7 +543,7 @@ describe("CreateEditSolution — full-backup password prompt", () => {
 		});
 		renderWithProviders(
 			<CreateEditSolution
-				mode={{ kind: "create", file, organizationId: null }}
+				mode={{ kind: "create", destination: "solution", file, organizationId: null }}
 				open
 				onClose={vi.fn()}
 				onSaved={vi.fn()}
@@ -568,7 +568,7 @@ describe("CreateEditSolution — full-backup password prompt", () => {
 		});
 		renderWithProviders(
 			<CreateEditSolution
-				mode={{ kind: "create", file, organizationId: null }}
+				mode={{ kind: "create", destination: "solution", file, organizationId: null }}
 				open
 				onClose={vi.fn()}
 				onSaved={vi.fn()}
@@ -593,7 +593,7 @@ describe("CreateEditSolution — full-backup password prompt", () => {
 		const onSaved = vi.fn();
 		const { user } = renderWithProviders(
 			<CreateEditSolution
-				mode={{ kind: "create", file, organizationId: null }}
+				mode={{ kind: "create", destination: "solution", file, organizationId: null }}
 				open
 				onClose={vi.fn()}
 				onSaved={onSaved}
@@ -636,7 +636,7 @@ describe("CreateEditSolution — full-backup password prompt", () => {
 		const onSaved = vi.fn();
 		const { user } = renderWithProviders(
 			<CreateEditSolution
-				mode={{ kind: "create", file, organizationId: null }}
+				mode={{ kind: "create", destination: "solution", file, organizationId: null }}
 				open
 				onClose={vi.fn()}
 				onSaved={onSaved}
@@ -772,9 +772,10 @@ describe("CreateEditSolution — destination-first flow", () => {
 		await user.click(await screen.findByTestId("source-zip"));
 
 		expect(await screen.findByText("Review workspace import")).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: /choose solution .zip/i })).toBeInTheDocument();
-		// No preview yet: the chooser form stays narrow.
+		expect(screen.getByTestId("workspace-dialog-dropzone")).toBeInTheDocument();
+		// No preview yet: the chooser form stays narrow with a single footer Back.
 		expect(screen.getByTestId("solution-dialog")).not.toHaveClass("sm:max-w-6xl");
+		expect(screen.getAllByRole("button", { name: /^back$/i })).toHaveLength(1);
 
 		const fileInput = document.querySelector<HTMLInputElement>('input[type="file"]');
 		expect(fileInput).not.toBeNull();
@@ -798,6 +799,8 @@ describe("CreateEditSolution — destination-first flow", () => {
 		expect(screen.queryByTestId("confirm-install-repo")).toBeNull();
 		// The snapshot form is not the review: it stays narrow.
 		expect(screen.getByTestId("solution-dialog")).not.toHaveClass("sm:max-w-6xl");
+		// Exactly one Back, in the footer — the form body has none.
+		expect(screen.getAllByRole("button", { name: /^back$/i })).toHaveLength(1);
 	});
 
 	it("workspace + repo previews a snapshot and opens the collision review", async () => {
@@ -826,6 +829,61 @@ describe("CreateEditSolution — destination-first flow", () => {
 			git_ref: null,
 			repo_subpath: null,
 		}));
+		expect(await screen.findByTestId("workspace-import-footer")).toBeInTheDocument();
+	});
+
+	it("a prefilled file asks for the destination; each choice uses the file", async () => {
+		vi.mocked(previewWorkspaceBundle).mockResolvedValue({
+			preview_token: "workspace-preview",
+			package_name: "Workspace",
+			package_sha256: "a".repeat(64),
+			conflict_count: 0,
+			source_kind: "zip",
+			items: [],
+			warnings: [],
+		});
+		const file = new File(["zip"], "dropped.zip", { type: "application/zip" });
+
+		// Workspace branch: the file prefills the zip source and auto-previews.
+		const { user } = renderCreate({ kind: "create", file });
+		await user.click(await screen.findByTestId("destination-workspace"));
+		expect(screen.queryByTestId("source-picker")).toBeNull();
+		await waitFor(() => expect(previewWorkspaceBundle).toHaveBeenCalledWith(file));
+		expect(await screen.findByTestId("workspace-import-footer")).toBeInTheDocument();
+	});
+
+	it("a prefilled file routes to the managed zip body on the solution destination", async () => {
+		vi.mocked(previewInstall).mockResolvedValue(makePreview());
+		const file = new File(["zip"], "dropped.zip", { type: "application/zip" });
+		const { user } = renderCreate({ kind: "create", file });
+
+		expect(await screen.findByTestId("destination-picker")).toBeInTheDocument();
+		await user.click(screen.getByTestId("destination-solution"));
+		expect(screen.queryByTestId("source-picker")).toBeNull();
+		expect(await screen.findByText(file.name)).toBeInTheDocument();
+	});
+
+	it("dropping a file on the workspace dropzone previews it", async () => {
+		vi.mocked(previewWorkspaceBundle).mockResolvedValue({
+			preview_token: "workspace-preview",
+			package_name: "Workspace",
+			package_sha256: "a".repeat(64),
+			conflict_count: 0,
+			source_kind: "zip",
+			items: [],
+			warnings: [],
+		});
+		renderCreate({
+			kind: "create",
+			destination: "workspace",
+			source: "zip",
+		});
+		const dropzone = await screen.findByTestId("workspace-dialog-dropzone");
+		const file = new File(["zip"], "dropped.zip", { type: "application/zip" });
+		const { fireEvent } = await import("@testing-library/react");
+		fireEvent.drop(dropzone, { dataTransfer: { files: [file] } });
+
+		await waitFor(() => expect(previewWorkspaceBundle).toHaveBeenCalledWith(file));
 		expect(await screen.findByTestId("workspace-import-footer")).toBeInTheDocument();
 	});
 
@@ -1045,6 +1103,7 @@ it("retains secret replacement confirmation and retries the same overwrite choic
 		<CreateEditSolution
 			mode={{
 				kind: "create",
+				destination: "solution",
 				file: new File(["fixture"], "fixture.zip"),
 				organizationId: null,
 			}}

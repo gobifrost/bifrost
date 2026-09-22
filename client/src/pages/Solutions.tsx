@@ -5,8 +5,9 @@ import { SolutionCounts } from "./solutions/SolutionCounts";
  * Operator home for managing Solution installs. Mirrors the Applications page
  * conventions: grid/table view toggle, search, and the standard Organization
  * filter at the top. Installing goes through the CreateEditSolution dialog
- * (opened by the + button → a From-repo / From-zip source picker, prefilled by
- * dropping a .zip anywhere on the page, or deep-linked into the From-repo form
+ * (opened by the + button → a destination picker, then a From-repo / From-zip
+ * source picker; dropping a .zip anywhere on the page prefills the file and
+ * still asks for the destination first, or deep-links into the From-repo form
  * via `?repo=<url>&path=<subpath>&ref=<ref>`). Uninstall lives on the
  * individual Solution page.
  */
@@ -327,7 +328,8 @@ export function Solutions() {
 	}
 
 	// Whole-page drag-and-drop: dropping a .zip opens the install dialog
-	// prefilled with that file.
+	// with that file prefilled. The destination picker still comes first —
+	// the file only prefills the source screen.
 	function handleDragEnter(e: React.DragEvent) {
 		if (!e.dataTransfer?.types?.includes("Files")) return;
 		e.preventDefault();
@@ -447,7 +449,7 @@ export function Solutions() {
 					<div className="flex flex-col items-center gap-3 text-primary">
 						<Upload className="h-10 w-10" />
 						<p className="text-lg font-semibold">
-							Drop a Solution .zip to install
+							Drop a Solution .zip to install or import
 						</p>
 					</div>
 				</div>

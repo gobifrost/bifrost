@@ -778,10 +778,11 @@ function CreateDispatch({
 	const intent = mode.intent ?? "install";
 	const fixedDestination: InstallDestination | null =
 		intent === "reactivate" ? "solution" : null;
+	// A dropped/picked file is a zip, but its destination is unknown — the
+	// destination picker keeps it and the source screen is skipped. A repo
+	// prefill implies the managed repo path (deep links target installs).
 	const initialDestination: InstallDestination | null =
-		fixedDestination
-			?? mode.destination
-			?? (mode.repo ? "solution" : mode.file ? "solution" : null);
+		fixedDestination ?? mode.destination ?? (mode.repo ? "solution" : null);
 	const initialSource: InstallSource | null =
 		intent === "reactivate"
 			? "zip"
@@ -864,6 +865,7 @@ function WorkspaceImportBody({
 	const [decisions, setDecisions] = useState<Record<string, "keep" | "replace">>({});
 	const [error, setError] = useState<string | null>(null);
 	const [loading, setLoading] = useState(false);
+	const [dragging, setDragging] = useState(false);
 	const conflicts = preview?.items.filter((item) => item.classification === "conflict") ?? [];
 	const complete = conflicts.every((item) => decisions[item.id]);
 	// Only the two-pane collision review needs the wide dialog; the repo/zip
@@ -949,16 +951,43 @@ function WorkspaceImportBody({
 				<p className="text-xs text-muted-foreground">One-time snapshot — the repository is not kept connected and no Solution is created.</p>
 				{error && <InstallFailure message={error} />}
 				<div className="flex gap-2">
-					<Button type="button" variant="ghost" onClick={onBack}><ArrowLeft className="mr-1 size-4" />Back</Button>
 					<Button type="button" data-testid="workspace-repo-preview" disabled={!repoUrl.trim() || loading} onClick={() => void loadRepo()}>Preview snapshot</Button>
 				</div>
 			</div>
 		) : (
 			<div className="flex min-h-0 flex-1 flex-col gap-3 p-6">
 				<input ref={inputRef} type="file" accept=".zip,application/zip" className="hidden" onChange={(event) => { const next = event.target.files?.[0]; if (next) void loadZip(next); event.target.value = ""; }} />
-				<Button type="button" variant="outline" className="min-h-24 w-full border-dashed" onClick={() => inputRef.current?.click()}><Upload className="mr-2 size-4" />Choose Solution .zip</Button>
+				<button
+					type="button"
+					data-testid="workspace-dialog-dropzone"
+					onClick={() => inputRef.current?.click()}
+					onDragOver={(e) => {
+						e.preventDefault();
+						setDragging(true);
+					}}
+					onDragLeave={() => setDragging(false)}
+					onDrop={(e) => {
+						e.preventDefault();
+						setDragging(false);
+						const next = e.dataTransfer?.files?.[0];
+						if (next) void loadZip(next);
+					}}
+					className={
+						"flex min-h-24 w-full flex-col items-center justify-center rounded-lg border-2 border-dashed text-center transition-colors " +
+						(dragging
+							? "border-primary bg-accent/40"
+							: "hover:border-primary/60 hover:bg-accent/30")
+					}
+				>
+					<Upload className="h-8 w-8 text-muted-foreground" />
+					<p className="mt-2 text-sm font-medium">
+						Drop a Solution .zip here
+					</p>
+					<p className="text-xs text-muted-foreground">
+						or click to choose a file
+					</p>
+				</button>
 				{error && <InstallFailure message={error} />}
-				<div><Button type="button" variant="ghost" onClick={onBack}><ArrowLeft className="mr-1 size-4" />Back</Button></div>
 			</div>
 		)}
 		{loading ? <div className="flex min-h-0 flex-1 items-center justify-center gap-2"><Loader2 className="size-4 animate-spin" />Reading package…</div> : preview ? <WorkspaceImportReview preview={preview} decisions={decisions} onDecisionsChange={setDecisions} /> : file ? <div className="flex-1 p-6"><InstallFailure message={error ?? "Could not preview this package."} /></div> : null}
