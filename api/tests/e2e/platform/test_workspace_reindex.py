@@ -78,6 +78,15 @@ async def clean_tables(db_session: AsyncSession):
     """
     from sqlalchemy import delete
     from src.models import Execution
+    from src.models.orm.services import ServiceDefinition
+
+    def _test_workflow_ids():
+        return select(Workflow.id).where(
+            (Workflow.path.like("workflow_%")) |
+            (Workflow.path.like("%_workflow.py")) |
+            (Workflow.path.like("%_provider.py")) |
+            (Workflow.path == "documented_workflow.py")
+        )
 
     # SETUP: Clean up any leftover state from previous tests BEFORE this test
     # Delete executions first (they reference workflows via api_key_id)
@@ -91,6 +100,13 @@ async def clean_tables(db_session: AsyncSession):
                     (Workflow.path == "documented_workflow.py")
                 )
             )
+        )
+    )
+    # Delete service definitions before their workflows (RESTRICT FK;
+    # attempts and logs cascade from the definition rows).
+    await db_session.execute(
+        delete(ServiceDefinition).where(
+            ServiceDefinition.workflow_id.in_(_test_workflow_ids())
         )
     )
     # Now delete workflows
@@ -141,6 +157,12 @@ async def clean_tables(db_session: AsyncSession):
                     (Workflow.path == "documented_workflow.py")
                 )
             )
+        )
+    )
+    # Delete service definitions before their workflows (RESTRICT FK).
+    await db_session.execute(
+        delete(ServiceDefinition).where(
+            ServiceDefinition.workflow_id.in_(_test_workflow_ids())
         )
     )
     # Now delete workflows
