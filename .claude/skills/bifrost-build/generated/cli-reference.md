@@ -1985,6 +1985,190 @@ Options:
   --help              Show this message and exit.
 ```
 
+## `services`
+
+```
+Usage: services [OPTIONS] COMMAND [ARGS]...
+
+  Manage supervised services.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+
+Commands:
+  attempts  List attempt history newest-first for a service.
+  disable   Disable a service: stops the live attempt, blocks future claims.
+  enable    Enable a service (distinct from start: no desired-state change).
+  get       Get a single service by definition UUID or workflow name.
+  list      List service definitions (wrapped ``{items, total}`` payload).
+  logs      List trailing persisted logs for a service.
+  restart   Rolling restart: stays desired-running, stops the live...
+  start     Request running: clears suppression so the claim loop picks...
+  stop      Request stopped: durable desire is stored before termination.
+  update    Update a service's lifecycle policy.
+```
+
+### `services attempts`
+
+```
+Usage: services attempts [OPTIONS] REF
+
+  List attempt history newest-first for a service.
+
+  ``REF`` is a definition UUID or workflow name.
+
+Options:
+  --limit INTEGER   Max results (server default 100, max 1000).
+  --offset INTEGER  Skip results.
+  --json            Emit JSON instead of human-readable output.
+  --help            Show this message and exit.
+```
+
+### `services disable`
+
+```
+Usage: services disable [OPTIONS] REF
+
+  Disable a service: stops the live attempt, blocks future claims.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `services enable`
+
+```
+Usage: services enable [OPTIONS] REF
+
+  Enable a service (distinct from start: no desired-state change).
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `services get`
+
+```
+Usage: services get [OPTIONS] REF
+
+  Get a single service by definition UUID or workflow name.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `services list`
+
+```
+Usage: services list [OPTIONS]
+
+  List service definitions (wrapped ``{items, total}`` payload).
+
+Options:
+  --limit INTEGER   Max results (server default 100, max 1000).
+  --offset INTEGER  Skip results.
+  --json            Emit JSON instead of human-readable output.
+  --help            Show this message and exit.
+```
+
+### `services logs`
+
+```
+Usage: services logs [OPTIONS] REF
+
+  List trailing persisted logs for a service.
+
+  ``REF`` is a definition UUID or workflow name. Page through older lines by
+  passing the previous response's ``continuation_token`` back via
+  ``--continuation-token``.
+
+Options:
+  --attempt-id TEXT               Scope to one attempt UUID.
+  --level TEXT                    Level allowlist, e.g. INFO. Repeat for
+                                  multiple values.
+  --start-date TEXT               ISO timestamp lower bound.
+  --end-date TEXT                 ISO timestamp upper bound.
+  --limit INTEGER                 Max lines per page (server default 200, max
+                                  1000).
+  --continuation-token TEXT       Keyset cursor from the previous page (load-
+                                  older paging).
+  --order [chronological|newest_first]
+                                  Log order (server default chronological).
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
+```
+
+### `services restart`
+
+```
+Usage: services restart [OPTIONS] REF
+
+  Rolling restart: stays desired-running, stops the live attempt if any.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `services start`
+
+```
+Usage: services start [OPTIONS] REF
+
+  Request running: clears suppression so the claim loop picks it up.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `services stop`
+
+```
+Usage: services stop [OPTIONS] REF
+
+  Request stopped: durable desire is stored before termination.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `services update`
+
+```
+Usage: services update [OPTIONS] REF
+
+  Update a service's lifecycle policy.
+
+  ``REF`` is a definition UUID or workflow name. Unset flags are omitted from
+  the payload so only the supplied fields are patched.
+
+Options:
+  --startup-policy [automatic|manual]
+                                  startup_policy
+  --restart-policy [always|on_failure|never]
+                                  restart_policy
+  --graceful-shutdown-seconds INTEGER
+                                  graceful_shutdown_seconds
+  --startup-grace-seconds INTEGER
+                                  startup_grace_seconds
+  --restart-backoff-initial-seconds INTEGER
+                                  restart_backoff_initial_seconds
+  --restart-backoff-max-seconds INTEGER
+                                  restart_backoff_max_seconds
+  --crash-loop-max-restarts INTEGER
+                                  crash_loop_max_restarts
+  --crash-loop-window-seconds INTEGER
+                                  crash_loop_window_seconds
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
+```
+
 ## `solution`
 
 ```
@@ -2706,9 +2890,9 @@ Usage: workflows replace [OPTIONS] REF
 
   ``REF`` is a UUID or workflow name (use ``bifrost workflows list-orphaned``
   to find orphaned UUIDs). The target file must exist in the workspace and
-  contain a ``@workflow``, ``@tool``, or ``@data_provider`` decorated function
-  with the given name. The workflow UUID is preserved so form/agent references
-  remain intact.
+  contain a ``@workflow``, ``@tool``, ``@data_provider``, or ``@service``
+  decorated function with the given name. The workflow UUID is preserved so
+  form/agent references remain intact.
 
 Options:
   --path TEXT           Workspace-relative path to the .py file containing the

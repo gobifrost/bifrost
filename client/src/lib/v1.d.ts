@@ -8146,6 +8146,194 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/services": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List services
+         * @description List service definitions (platform admin only).
+         */
+        get: operations["list_services_api_services_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/services/{service_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get service
+         * @description Get a service definition with observed state (platform admin only).
+         */
+        get: operations["get_service_api_services__service_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update service policy
+         * @description Update lifecycle policy fields (platform admin only).
+         */
+        patch: operations["update_service_policy_api_services__service_id__patch"];
+        trace?: never;
+    };
+    "/api/services/{service_id}/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start service
+         * @description Request running: clears suppression so the claim loop picks it up.
+         */
+        post: operations["start_service_api_services__service_id__start_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/services/{service_id}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Stop service
+         * @description Request stopped: durable desire is stored before termination.
+         */
+        post: operations["stop_service_api_services__service_id__stop_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/services/{service_id}/restart": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restart service
+         * @description Rolling restart: stays desired-running and stops the live attempt, if any.
+         */
+        post: operations["restart_service_api_services__service_id__restart_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/services/{service_id}/enable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Enable service
+         * @description Enable a service (distinct from start: no desired-state change).
+         */
+        post: operations["enable_service_api_services__service_id__enable_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/services/{service_id}/disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Disable service
+         * @description Disable a service: stops the live attempt and blocks future claims.
+         */
+        post: operations["disable_service_api_services__service_id__disable_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/services/{service_id}/attempts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List service attempts
+         * @description List attempt history newest-first (platform admin only).
+         */
+        get: operations["list_service_attempts_api_services__service_id__attempts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/services/{service_id}/logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List service logs
+         * @description Trailing service logs from Postgres (platform admin only).
+         *
+         *     The surface is platform-admin-only, so no DEBUG/TRACEBACK hiding applies
+         *     (unlike execution logs, which serve non-admins). Live tail (<10s old,
+         *     pre-flush) arrives over the service WebSocket channel, not here.
+         */
+        get: operations["list_service_logs_api_services__service_id__logs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/hooks/health": {
         parameters: {
             query?: never;
@@ -12966,7 +13154,7 @@ export interface components {
              * @description Type of decorator
              * @enum {string}
              */
-            decorator_type: "workflow" | "tool" | "data_provider";
+            decorator_type: "workflow" | "tool" | "data_provider" | "service";
             /**
              * Similarity Score
              * @description Similarity score to the deactivated workflow (0.0-1.0)
@@ -15098,7 +15286,7 @@ export interface components {
              * Decorator Type
              * @enum {string}
              */
-            decorator_type: "workflow" | "data_provider" | "tool";
+            decorator_type: "workflow" | "data_provider" | "tool" | "service";
             /** Function Name */
             function_name: string;
             /**
@@ -16852,7 +17040,7 @@ export interface components {
          * @description Type discriminator for all executable user code.
          * @enum {string}
          */
-        ExecutableType: "workflow" | "tool" | "data_provider";
+        ExecutableType: "workflow" | "tool" | "data_provider" | "service";
         /**
          * ExecutionLogPublic
          * @description Single log entry from workflow execution (API response model)
@@ -22542,7 +22730,7 @@ export interface components {
              * @description Type of decorator
              * @enum {string}
              */
-            decorator_type: "workflow" | "tool" | "data_provider";
+            decorator_type: "workflow" | "tool" | "data_provider" | "service";
             /**
              * Has Executions
              * @description Whether this workflow has execution history
@@ -24820,6 +25008,355 @@ export interface components {
         SendInviteRequest: {
             /** Registration Url */
             registration_url: string;
+        };
+        /**
+         * ServiceAttemptListResponse
+         * @description Paginated service attempts, newest first.
+         */
+        ServiceAttemptListResponse: {
+            /**
+             * Items
+             * @description Attempts
+             */
+            items: components["schemas"]["ServiceAttemptResponse"][];
+            /**
+             * Total
+             * @description Total attempts for this service
+             */
+            total: number;
+        };
+        /**
+         * ServiceAttemptResponse
+         * @description One supervised run of a service.
+         */
+        ServiceAttemptResponse: {
+            /**
+             * Id
+             * Format: uuid
+             * @description Attempt UUID
+             */
+            id: string;
+            /**
+             * Service Id
+             * Format: uuid
+             * @description Parent definition UUID
+             */
+            service_id: string;
+            /**
+             * Revision
+             * @description Source revision launched
+             */
+            revision?: string | null;
+            /**
+             * Worker Id
+             * @description Owning worker (informational; fencing is by lease token)
+             */
+            worker_id?: string | null;
+            /**
+             * State
+             * @description starting | running | stopping | stopped | failed
+             */
+            state: string;
+            /** Ready At */
+            ready_at?: string | null;
+            /** Started At */
+            started_at?: string | null;
+            /** Heartbeat At */
+            heartbeat_at?: string | null;
+            /** Stop Requested At */
+            stop_requested_at?: string | null;
+            /** Stopped At */
+            stopped_at?: string | null;
+            /** Exit Code */
+            exit_code?: number | null;
+            /** Exit Reason */
+            exit_reason?: string | null;
+            /** Error */
+            error?: string | null;
+            /**
+             * Restart Number
+             * @description Attempts claimed before this one
+             */
+            restart_number: number;
+            /**
+             * Created At
+             * Format: date-time
+             * @description Claim timestamp
+             */
+            created_at: string;
+        };
+        /**
+         * ServiceListResponse
+         * @description Paginated service definitions.
+         */
+        ServiceListResponse: {
+            /**
+             * Items
+             * @description Service definitions
+             */
+            items: components["schemas"]["ServiceResponse"][];
+            /**
+             * Total
+             * @description Total matching definitions
+             */
+            total: number;
+        };
+        /**
+         * ServiceLogListResponse
+         * @description Trailing service logs in the requested order (with total).
+         */
+        ServiceLogListResponse: {
+            /**
+             * Items
+             * @description Log lines
+             */
+            items: components["schemas"]["ServiceLogResponse"][];
+            /**
+             * Total
+             * @description Total lines matching the filters
+             */
+            total: number;
+            /**
+             * Continuation Token
+             * @description Keyset cursor for the next page (same encoding as execution logs), if any
+             */
+            continuation_token?: string | null;
+        };
+        /**
+         * ServiceLogResponse
+         * @description One persisted service log line.
+         */
+        ServiceLogResponse: {
+            /**
+             * Id
+             * @description Row id (chronological within a service)
+             */
+            id: number;
+            /**
+             * Service Id
+             * Format: uuid
+             * @description Parent definition UUID
+             */
+            service_id: string;
+            /**
+             * Attempt Id
+             * Format: uuid
+             * @description Attempt that emitted the line
+             */
+            attempt_id: string;
+            /**
+             * Level
+             * @description INFO | WARNING | ERROR | DEBUG | ...
+             */
+            level: string;
+            /**
+             * Message
+             * @description Log message text
+             */
+            message: string;
+            /**
+             * Timestamp
+             * Format: date-time
+             * @description Emission timestamp
+             */
+            timestamp: string;
+        };
+        /**
+         * ServicePolicyUpdate
+         * @description Patch service lifecycle policy. All fields optional.
+         */
+        ServicePolicyUpdate: {
+            /**
+             * Startup Policy
+             * @description automatic | manual
+             */
+            startup_policy?: ("automatic" | "manual") | null;
+            /**
+             * Restart Policy
+             * @description always | on_failure | never
+             */
+            restart_policy?: ("always" | "on_failure" | "never") | null;
+            /**
+             * Graceful Shutdown Seconds
+             * @description SIGTERM grace before SIGKILL
+             */
+            graceful_shutdown_seconds?: number | null;
+            /**
+             * Startup Grace Seconds
+             * @description Max time to report ready
+             */
+            startup_grace_seconds?: number | null;
+            /**
+             * Restart Backoff Initial Seconds
+             * @description First restart delay
+             */
+            restart_backoff_initial_seconds?: number | null;
+            /**
+             * Restart Backoff Max Seconds
+             * @description Backoff cap (0 = no delay)
+             */
+            restart_backoff_max_seconds?: number | null;
+            /**
+             * Crash Loop Max Restarts
+             * @description Restarts before crash-loop
+             */
+            crash_loop_max_restarts?: number | null;
+            /**
+             * Crash Loop Window Seconds
+             * @description Rolling window for crash accounting
+             */
+            crash_loop_window_seconds?: number | null;
+        };
+        /**
+         * ServiceResponse
+         * @description A service definition with its source identity and observed state.
+         */
+        ServiceResponse: {
+            /**
+             * Id
+             * Format: uuid
+             * @description Service definition UUID
+             */
+            id: string;
+            /**
+             * Workflow Id
+             * Format: uuid
+             * @description Source workflow row UUID
+             */
+            workflow_id: string;
+            /**
+             * Workflow Name
+             * @description Source workflow display name
+             */
+            workflow_name: string;
+            /**
+             * Workflow Path
+             * @description Source file path
+             */
+            workflow_path: string;
+            /**
+             * Organization Id
+             * @description Org scope (null = global)
+             */
+            organization_id?: string | null;
+            /**
+             * Solution Id
+             * @description Owning Solution install (null = ad-hoc)
+             */
+            solution_id?: string | null;
+            /**
+             * Enabled
+             * @description Operator switch; disabled services never run
+             */
+            enabled: boolean;
+            /**
+             * Startup Policy
+             * @description automatic | manual
+             * @enum {string}
+             */
+            startup_policy: "automatic" | "manual";
+            /**
+             * Restart Policy
+             * @description always | on_failure | never
+             * @enum {string}
+             */
+            restart_policy: "always" | "on_failure" | "never";
+            /**
+             * Desired State
+             * @description running | stopped
+             * @enum {string}
+             */
+            desired_state: "running" | "stopped";
+            /**
+             * Blocked Reason
+             * @description Launch suppression, if any
+             */
+            blocked_reason?: ("policy" | "crash_loop" | "disabled") | null;
+            /**
+             * Restart Eligible At
+             * @description Earliest next attempt
+             */
+            restart_eligible_at?: string | null;
+            /**
+             * Current Revision
+             * @description Pinned source revision
+             */
+            current_revision?: string | null;
+            /**
+             * Graceful Shutdown Seconds
+             * @description SIGTERM grace before SIGKILL
+             */
+            graceful_shutdown_seconds: number;
+            /**
+             * Startup Grace Seconds
+             * @description Max time to report ready
+             */
+            startup_grace_seconds: number;
+            /**
+             * Restart Backoff Initial Seconds
+             * @description First restart delay
+             */
+            restart_backoff_initial_seconds: number;
+            /**
+             * Restart Backoff Max Seconds
+             * @description Backoff cap
+             */
+            restart_backoff_max_seconds: number;
+            /**
+             * Crash Loop Max Restarts
+             * @description Restarts before crash-loop
+             */
+            crash_loop_max_restarts: number;
+            /**
+             * Crash Loop Window Seconds
+             * @description Rolling window for crash accounting
+             */
+            crash_loop_window_seconds: number;
+            /**
+             * Observed State
+             * @description stopped | starting | running | stopping | restarting | crash_loop
+             */
+            observed_state: string;
+            /**
+             * Active Attempt Id
+             * @description Live attempt, if any
+             */
+            active_attempt_id?: string | null;
+            /** @description Live attempt summary, if any */
+            active_attempt?: components["schemas"]["ServiceAttemptResponse"] | null;
+            /**
+             * Last Exit Reason
+             * @description Newest terminal attempt's exit reason, if any
+             */
+            last_exit_reason?: string | null;
+            /**
+             * Memory Mb
+             * @description Live child memory from the owning worker's pool hash (<90s old), if any
+             */
+            memory_mb?: number | null;
+            /**
+             * Restart Count
+             * @description Total attempts ever claimed
+             * @default 0
+             */
+            restart_count: number;
+            /**
+             * Created By
+             * @description Who created the definition
+             */
+            created_by: string;
+            /**
+             * Created At
+             * Format: date-time
+             * @description Creation timestamp
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             * @description Last update timestamp
+             */
+            updated_at: string;
         };
         /**
          * SetConfigRequest
@@ -27977,7 +28514,7 @@ export interface components {
              */
             description?: string | null;
             /**
-             * @description Executable type: workflow, tool, or data_provider
+             * @description Executable type: workflow, tool, data_provider, or service
              * @default workflow
              */
             type: components["schemas"]["ExecutableType"];
@@ -43087,6 +43624,343 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RetryDeliveryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_services_api_services_get: {
+        parameters: {
+            query?: {
+                /** @description Max results */
+                limit?: number;
+                /** @description Skip results */
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServiceListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_service_api_services__service_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                service_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServiceResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_service_policy_api_services__service_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                service_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ServicePolicyUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServiceResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_service_api_services__service_id__start_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                service_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServiceResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stop_service_api_services__service_id__stop_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                service_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServiceResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    restart_service_api_services__service_id__restart_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                service_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServiceResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    enable_service_api_services__service_id__enable_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                service_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServiceResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    disable_service_api_services__service_id__disable_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                service_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServiceResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_service_attempts_api_services__service_id__attempts_get: {
+        parameters: {
+            query?: {
+                /** @description Max results */
+                limit?: number;
+                /** @description Skip results */
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                service_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServiceAttemptListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_service_logs_api_services__service_id__logs_get: {
+        parameters: {
+            query?: {
+                /** @description Scope to one attempt */
+                attempt_id?: string | null;
+                /** @description Level allowlist (e.g. ?levels=INFO&levels=ERROR) */
+                levels?: string[] | null;
+                /** @description ISO timestamp lower bound */
+                start_date?: string | null;
+                /** @description ISO timestamp upper bound */
+                end_date?: string | null;
+                /** @description Max lines per page */
+                limit?: number;
+                /** @description Keyset cursor from the previous page (load-older paging) */
+                continuation_token?: string | null;
+                /** @description chronological | newest_first */
+                order?: string;
+            };
+            header?: never;
+            path: {
+                service_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServiceLogListResponse"];
                 };
             };
             /** @description Validation Error */

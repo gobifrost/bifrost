@@ -231,6 +231,71 @@ def log_and_broadcast(
 
 
 # =============================================================================
+# Service logs: attempt-scoped streams for supervised @service executions
+# =============================================================================
+
+
+def publish_service_log(
+    service_id: str,
+    attempt_id: str,
+    level: str,
+    message: str,
+    timestamp: datetime | None = None,
+) -> str | None:
+    """
+    Append a service log line to the attempt's Redis Stream and publish it
+    for live delivery.
+
+    Attempt-scoped by construction (``bifrost:service-logs:{attempt_id}``,
+    bounded ``MAXLEN ~10000`` like execution streams): a stale fenced attempt
+    keeps appending to its own superseded stream, which no reader follows
+    after reassignment. Postgres persistence and the service-wide timeline
+    arrive in Slice 4; this is the continuous bounded flush substrate.
+
+    Args:
+        service_id: Parent service definition UUID (fan-out correlation)
+        attempt_id: Owning attempt UUID (stream scope)
+        level: Log level (INFO, WARNING, ERROR, DEBUG, CRITICAL)
+        message: Log message text (caller scrubs secrets first)
+        timestamp: Optional timestamp (defaults to now)
+
+    Returns:
+        Stream entry ID if successful, None on error
+    """
+    from src.core.cache.keys import service_logs_stream_key
+
+    ts = timestamp or datetime.now(timezone.utc)
+    stream_key = service_logs_stream_key(str(attempt_id))
+    entry = {
+        "service_id": str(service_id),
+        "attempt_id": str(attempt_id),
+        "level": level.upper(),
+        "message": message,
+        "timestamp": ts.isoformat(),
+    }
+
+    try:
+        r = _get_sync_redis()
+        entry_id: str = r.xadd(stream_key, entry, maxlen=10000)  # type: ignore[misc]
+    except Exception as e:
+        logger.warning(f"Failed to append service log to stream: {e}")
+        _local.redis = None
+        return None
+
+    try:
+        r = _get_sync_redis()
+        r.publish(
+            stream_key,
+            json.dumps({"type": "service_log", **entry}),
+        )
+    except Exception as e:
+        logger.warning(f"Failed to publish service log to PubSub: {e}")
+        _local.redis = None
+
+    return entry_id
+
+
+# =============================================================================
 # Async versions for use in async contexts (API routes, consumers)
 # =============================================================================
 

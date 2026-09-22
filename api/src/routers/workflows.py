@@ -1316,7 +1316,7 @@ async def register_workflow(
                 dec_name = dec.id
             elif isinstance(dec, ast.Call) and isinstance(dec.func, ast.Name):
                 dec_name = dec.func.id
-            if dec_name in ("workflow", "tool", "data_provider"):
+            if dec_name in ("workflow", "tool", "data_provider", "service"):
                 target_node = node
                 target_decorator_type = dec_name
                 break
@@ -1339,8 +1339,19 @@ async def register_workflow(
     existing_wf = existing.scalar_one_or_none()
 
     wf_type = "data_provider" if target_decorator_type == "data_provider" else (
-        "tool" if target_decorator_type == "tool" else "workflow"
+        "tool" if target_decorator_type == "tool" else (
+            "service" if target_decorator_type == "service" else "workflow"
+        )
     )
+
+    # Services hold a connection indefinitely on the event loop — a sync
+    # function would block its worker forever. Reject at registration.
+    if wf_type == "service" and not isinstance(target_node, ast.AsyncFunctionDef):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Service '{request.function_name}' must be declared with "
+            "'async def'. Long-lived services run on the worker event loop.",
+        )
 
     # Org targeting follows the unified --org standard (mirrors config's
     # set_config): if organization_id was explicitly provided (even as null),
@@ -1436,6 +1447,13 @@ async def register_workflow(
         select(WorkflowORM).where(WorkflowORM.id == workflow_id)
     )
     workflow = result.scalar_one()
+
+    # 6b. Reconcile the service definition with the registered row: service
+    # rows get an ensured definition; rows converting away from service are
+    # parked (disabled + stopped) so stale desire can never launch them.
+    from src.services.service_lifecycle import sync_definition_for_registration
+
+    await sync_definition_for_registration(db, workflow, created_by=user.email)
 
     # Commit before refreshing MCP tools. refresh_workflow_tools() opens its
     # own session via get_db_context(), and at READ COMMITTED it cannot see

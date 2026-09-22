@@ -332,6 +332,11 @@ class DeactivationProtectionService:
 
         if count > 0:
             logger.info(f"Selectively deactivated {count} workflow(s) by ID")
+            from src.services.service_lifecycle import park_definitions_for_workflows
+
+            await park_definitions_for_workflows(
+                self.db, uuids, reason="workflow deactivated"
+            )
 
         return count
 
@@ -359,6 +364,26 @@ class DeactivationProtectionService:
         # functions. Scope to _repo/ rows (solution_id IS NULL): a workspace file
         # save must never deactivate a solution-managed workflow sharing this path
         # (deploy owns those rows — Codex #14).
+        # Park service definitions for removed rows before deactivating, so a
+        # live attempt is asked to stop promptly (the claim join on
+        # type/is_active is the ultimate launch guard regardless).
+        from sqlalchemy import select as sa_select
+
+        from src.models import Workflow as WorkflowORM
+
+        affected_stmt = sa_select(WorkflowORM.id).where(
+            WorkflowORM.path == path,
+            WorkflowORM.is_active == True,  # noqa: E712
+            WorkflowORM.solution_id.is_(None),
+            WorkflowORM.type == "service",
+        )
+        if remaining_function_names:
+            affected_stmt = affected_stmt.where(
+                ~WorkflowORM.function_name.in_(remaining_function_names)
+            )
+        affected = await self.db.execute(affected_stmt)
+        affected_ids = list(affected.scalars().all())
+
         if remaining_function_names:
             stmt = (
                 update(Workflow)
@@ -388,6 +413,11 @@ class DeactivationProtectionService:
             logger.info(
                 f"Deactivated {count} workflow(s) from {log_safe(path)} "
                 f"via force_deactivation"
+            )
+            from src.services.service_lifecycle import park_definitions_for_workflows
+
+            await park_definitions_for_workflows(
+                self.db, affected_ids, reason="source function removed"
             )
 
         return count

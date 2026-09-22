@@ -53,6 +53,27 @@ def is_engine_user(user) -> bool:
         return False
 
 
+def is_service_principal(user) -> bool:
+    """True for renewable service-scoped credentials (mint_service_token).
+
+    The engine sentinel as subject with a service identity attached and
+    WITHOUT superuser: an org-scoped service attempt calling the API on its
+    own behalf. Workflow engine tokens (superuser, no service claims) and
+    ordinary users are both False. Routers admit service principals only to
+    explicitly service-safe endpoints with org confinement enforced there.
+    """
+    from src.core.constants import SYSTEM_USER_UUID
+
+    try:
+        return (
+            user.user_id == SYSTEM_USER_UUID
+            and not user.is_superuser
+            and user.service_id is not None
+        )
+    except AttributeError:
+        return False
+
+
 async def resolve_trustworthy_caller(db: AsyncSession, ctx) -> UUID | None:
     """SPIKE: the caller's OWN install, from a trustworthy source only.
 

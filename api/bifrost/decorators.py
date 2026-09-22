@@ -8,6 +8,7 @@ All executable types are stored in the workflows table with a type discriminator
 - @workflow: type='workflow' - Standard workflows
 - @tool: type='tool' - AI agent tools
 - @data_provider: type='data_provider' - Data providers for forms/app builder
+- @service: type='service' - Long-lived supervised services (connections/listeners)
 
 Parameter information is derived from function signatures - no @param decorator needed.
 
@@ -30,12 +31,14 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal, TypeVar
 
+from bifrost._service_runtime import attach_service_runtime as _attach_service_runtime
+
 logger = logging.getLogger(__name__)
 
 F = TypeVar("F", bound=Callable[..., Any])
 
 # Type discriminator for all executable types
-ExecutableType = Literal["workflow", "tool", "data_provider"]
+ExecutableType = Literal["workflow", "tool", "data_provider", "service"]
 
 
 @dataclass
@@ -307,3 +310,79 @@ def data_provider(
     if _func is not None:
         return decorator(_func)
     return decorator
+
+
+def service(
+    _func: Callable | None = None,
+    *,
+    # Identity parameters only
+    name: str | None = None,
+    description: str | None = None,
+    category: str = "General",
+    tags: list[str] | None = None,
+    # Accept unknown params for backwards compatibility
+    **kwargs: Any,
+) -> Callable[[F], F] | F:
+    """
+    Decorator for long-lived supervised service functions.
+
+    Services hold a connection, subscription, or listener indefinitely
+    (e.g. Telegram long-polling, Discord gateway, MQTT subscriber) and bridge
+    external systems into Bifrost by emitting events. They run under service
+    supervision (desired state, fenced leases, restart policy) instead of
+    producing a terminal result like workflows.
+
+    Only identity parameters are accepted - lifecycle configuration
+    (startup/restart policy, shutdown grace) is managed via UI/API.
+
+    Usage:
+        @service
+        async def telegram_bridge() -> None:
+            '''Bridge Telegram messages into Bifrost events.'''
+            ...
+
+    Args:
+        name: Service name (defaults to function name)
+        description: Description (defaults to first line of docstring)
+        category: Category for organization (default: "General")
+        tags: Optional list of tags for filtering
+
+    Returns:
+        Decorated function with _executable_metadata attribute
+    """
+    # Warn about deprecated parameters
+    if kwargs:
+        unknown_params = sorted(kwargs.keys())
+        logger.warning(
+            "Unknown @service parameters ignored: %s. "
+            "Configuration should be set via UI/API.",
+            ", ".join(unknown_params),
+        )
+
+    def decorator(func: F) -> F:
+        func_description = description
+        if func_description is None and func.__doc__:
+            func_description = func.__doc__.split("\n")[0].strip()
+
+        metadata = WorkflowMetadata(
+            name=name or func.__name__,
+            description=func_description or "",
+            category=category,
+            tags=tags or [],
+            type="service",
+        )
+
+        # Attach metadata to function (all executable types use same attribute)
+        func._executable_metadata = metadata  # type: ignore
+        return func
+
+    if _func is not None:
+        return decorator(_func)
+    return decorator
+
+
+# Service supervision SDK: ready() / is_stopping() /
+# wait_until_stopping() live on the `service` decorator namespace so user
+# code calls `service.ready()` etc. State is process-local (see
+# bifrost/_service_runtime.py); the engine installs it per service run.
+_attach_service_runtime(service)

@@ -48,6 +48,7 @@ from src.routers.oauth_config import router as oauth_config_router
 from src.routers.tools import router as tools_router
 from src.routers.mcp import router as mcp_router
 from src.routers.events import router as events_router
+from src.routers.services import router as services_router
 from src.routers.hooks import router as hooks_router
 from src.routers.tables import router as tables_router
 from src.routers.claims import router as claims_router
@@ -130,6 +131,7 @@ __all__ = [
     "tools_router",
     "mcp_router",
     "events_router",
+    "services_router",
     "hooks_router",
     "tables_router",
     "claims_router",

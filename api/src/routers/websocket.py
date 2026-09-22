@@ -861,6 +861,23 @@ async def can_access_execution(user: UserPrincipal, execution_id: str) -> bool:
         return row == user.user_id
 
 
+async def can_access_service(user: UserPrincipal, service_id: str) -> bool:
+    """Check if a user may subscribe to a service log channel.
+
+    The services surface (REST + UI) is platform-admin-only, and the
+    channel carries raw log output — so subscription is superusers only.
+    Unknown IDs are allowed through (they receive nothing, same as the
+    execution-channel convention); malformed IDs are rejected.
+    """
+    if not user.is_superuser:
+        return False
+    try:
+        UUID(service_id)
+    except ValueError:
+        return False
+    return True
+
+
 async def can_access_app(user: UserPrincipal, app_id: str) -> bool:
     """
     Check if user can access an application.
@@ -922,6 +939,7 @@ async def websocket_connect(
 
     Connect and subscribe to channels:
     - execution:{execution_id} - Execution updates and logs
+    - service:{service_id} - Supervised service log streaming (platform admins)
     - user:{user_id} - User notifications
     - system - System broadcasts
 
@@ -933,7 +951,7 @@ async def websocket_connect(
 
     Messages are JSON with structure:
         {
-            "type": "execution_update" | "execution_log" | "notification" | "system_event",
+            "type": "execution_update" | "execution_log" | "service_log" | "notification" | "system_event",
             ...payload
         }
     """
@@ -963,6 +981,13 @@ async def websocket_connect(
             # Validate user has access to this execution
             execution_id = channel.split(":", 1)[1]
             if await can_access_execution(user, execution_id):
+                allowed_channels.append(channel)
+        elif channel.startswith("service:"):
+            # Service log streaming - platform admins only (the services
+            # surface is admin-only; the pubsub bridge fans attempt logs
+            # out to this channel)
+            service_id = channel.split(":", 1)[1]
+            if await can_access_service(user, service_id):
                 allowed_channels.append(channel)
         elif channel == "package:install":
             # Package installation channel - shared, superusers only
@@ -1104,6 +1129,23 @@ async def websocket_connect(
                         # Validate execution access before subscribing
                         execution_id = channel.split(":", 1)[1]
                         if not await can_access_execution(user, execution_id):
+                            await websocket.send_json({
+                                "type": "error",
+                                "channel": channel,
+                                "message": "Access denied"
+                            })
+                            continue
+                        if channel not in manager.connections:
+                            manager.connections[channel] = set()
+                        manager.connections[channel].add(websocket)
+                        await websocket.send_json({
+                            "type": "subscribed",
+                            "channel": channel
+                        })
+                    elif channel.startswith("service:"):
+                        # Service log streaming - platform admins only
+                        service_id = channel.split(":", 1)[1]
+                        if not await can_access_service(user, service_id):
                             await websocket.send_json({
                                 "type": "error",
                                 "channel": channel,

@@ -70,6 +70,7 @@ from src.models.contracts.solutions import (  # noqa: E402
     SolutionDeployJobStatus,
 )
 from src.models.contracts.policy_rule import PolicyRuleCreate, PolicyRuleUpdate  # noqa: E402
+from src.models.contracts.services import ServicePolicyUpdate  # noqa: E402
 from src.models.contracts.tables import TableCreate, TableUpdate  # noqa: E402
 from src.models.contracts.users import RoleCreate, RoleUpdate  # noqa: E402
 from src.models.contracts.workflows import WorkflowUpdateRequest  # noqa: E402
@@ -119,6 +120,7 @@ _COMMAND_DTOS: list[type] = [
     SolutionDeployJobStatus,
     PolicyRuleCreate,
     PolicyRuleUpdate,
+    ServicePolicyUpdate,
 ]
 
 #: Every request/response DTO the in-workflow SDK sends/parses against
@@ -246,7 +248,11 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     #
     # PlatformJobPublic gained execution_backend (2026-09-17). ADDITIVE: old
     # clients ignore the placement detail and keep polling status as before.
-    "2c73f2dc8656f083d92b9bc25cceeb327f580428f1063b968ab077b92675660c"
+    #
+    # ServicePolicyUpdate newly fingerprinted (2026-09-22): `bifrost services
+    # update` sends it (greenfield coverage — no old CLI sends this DTO, so
+    # nothing breaks). Fingerprint refreshed only.
+    "9641fe20f9e561dd73c924919590bd3fa895b2a5be473f7088afe7f102099ce4"
 )
 
 

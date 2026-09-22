@@ -240,7 +240,7 @@ class TestDetectPendingDeactivationsLogic:
 
     def test_all_decorator_types_representable(self):
         """Test all decorator types can be represented in deactivation info."""
-        types = ["workflow", "tool", "data_provider"]
+        types = ["workflow", "tool", "data_provider", "service"]
 
         for decorator_type in types:
             info = PendingDeactivationInfo(

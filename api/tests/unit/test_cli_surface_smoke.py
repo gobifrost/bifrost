@@ -175,6 +175,18 @@ EXPECTED_CRUD_COMMANDS: dict[str, set[str]] = {
         "subscribe",
         "update-subscription",
     },
+    "services": {
+        "list",
+        "get",
+        "update",
+        "start",
+        "stop",
+        "restart",
+        "enable",
+        "disable",
+        "attempts",
+        "logs",
+    },
 }
 
 

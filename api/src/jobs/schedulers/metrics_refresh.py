@@ -51,7 +51,7 @@ async def refresh_metrics_snapshot() -> dict[str, Any]:
             counts_query = select(
                 select(func.count(Workflow.id))
                 .where(Workflow.is_active.is_(True))
-                .where(Workflow.type != "data_provider")  # Exclude data providers
+                .where(Workflow.type.not_in(["data_provider", "service"]))  # Exclude providers and services
                 .correlate(None)
                 .scalar_subquery()
                 .label("workflow_count"),

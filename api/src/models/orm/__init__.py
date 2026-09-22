@@ -69,6 +69,7 @@ from src.models.orm.workflows import Workflow
 from src.models.orm.file_index import FileIndex
 from src.models.orm.file_metadata import FileMetadata, FilePolicy
 from src.models.orm.policy_rule import PolicyRule
+from src.models.orm.services import ServiceAttempt, ServiceDefinition, ServiceLog
 from src.models.orm.worker_metric import WorkerMetric
 
 __all__ = [
@@ -142,6 +143,10 @@ __all__ = [
     # Workflows
     "Workflow",
     "WorkflowRole",
+    # Services (supervised executables)
+    "ServiceDefinition",
+    "ServiceAttempt",
+    "ServiceLog",
     # OAuth
     "OAuthProvider",
     "OAuthToken",

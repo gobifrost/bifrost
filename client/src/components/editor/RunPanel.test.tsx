@@ -266,3 +266,48 @@ it("keeps cached run controls available after a metadata refresh fails", () => {
 	);
 	expect(screen.getByRole("button", { name: "Run Workflow" })).toBeVisible();
 });
+
+describe("RunPanel service files", () => {
+	it("offers supervision instead of Run Workflow for @service files", async () => {
+		metadataOverrides = {
+			data: {
+				workflows: [
+					{
+						id: "svc-1",
+						name: "telegram_bridge",
+						description: "Bridge Telegram messages",
+						relative_file_path: "workflows/telegram_bridge.py",
+						source_file_path: "workflows/telegram_bridge.py",
+						type: "service",
+						parameters: [],
+					},
+				],
+			},
+		};
+		useEditorStore.setState((state) => ({
+			tabs: state.tabs.map((tab, index) =>
+				index === 0
+					? {
+							...tab,
+							file: {
+								...tab.file,
+								name: "telegram_bridge.py",
+								path: "workflows/telegram_bridge.py",
+								entity_id: "svc-1",
+							},
+						}
+					: tab,
+			),
+		}));
+		renderWithProviders(<RunPanel />);
+		expect(
+			await screen.findByText(/supervised service/i),
+		).toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", { name: "Run Workflow" }),
+		).not.toBeInTheDocument();
+		expect(
+			screen.getByRole("button", { name: "Open Services" }),
+		).toBeInTheDocument();
+	});
+});

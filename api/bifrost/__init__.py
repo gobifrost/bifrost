@@ -128,10 +128,10 @@ from ._execution_context import ExecutionContext
 
 # Import decorators - try platform module first, fall back to local SDK version
 try:
-    from src.sdk.decorators import workflow, data_provider, tool
+    from src.sdk.decorators import workflow, data_provider, tool, service
 except ImportError:
     # CLI/standalone mode - use local decorators
-    from .decorators import workflow, data_provider, tool
+    from .decorators import workflow, data_provider, tool, service
     _ = WorkflowMetadata  # noqa: F401 - re-exported from .models above
 
 # Import context proxy for accessing ExecutionContext without parameter
@@ -284,6 +284,7 @@ __all__ = [
     'workflow',
     'data_provider',
     'tool',
+    'service',
     # Context
     'context',
     'ExecutionContext',

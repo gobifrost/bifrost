@@ -155,3 +155,95 @@ it.each(["grid", "table"] as const)(
 		);
 	},
 );
+
+describe("service rows", () => {
+	it.each(["grid", "table"] as const)(
+		"labels services and removes execute navigation in %s",
+		(viewMode) => {
+			const workflow = {
+				id: "svc-1",
+				name: "telegram_bridge",
+				type: "service",
+			} as WorkflowListItem;
+			renderWithProviders(
+				<WorkflowListSurface
+					workflows={[workflow]}
+					viewMode={viewMode}
+					isPlatformAdmin
+					canManageWorkflows
+					getOrgName={() => "Global"}
+					onExecute={vi.fn()}
+				/>,
+			);
+
+			expect(screen.getByText("Service")).toBeVisible();
+			expect(
+				screen.queryByRole("link", { name: "telegram_bridge" }),
+			).not.toBeInTheDocument();
+		},
+	);
+
+	it("does not navigate to execute when clicking a service row", async () => {
+		const workflow = {
+			id: "svc-1",
+			name: "telegram_bridge",
+			type: "service",
+		} as WorkflowListItem;
+		const onExecute = vi.fn();
+		const { user } = renderWithProviders(
+			<>
+				<WorkflowListSurface
+					workflows={[workflow]}
+					viewMode="table"
+					isPlatformAdmin
+					canManageWorkflows
+					getOrgName={() => "Global"}
+					onExecute={onExecute}
+				/>
+				<LocationProbe />
+			</>,
+		);
+
+		await user.click(screen.getByRole("row", { name: /telegram_bridge/i }));
+
+		expect(screen.getByLabelText("location")).toHaveTextContent("/");
+		expect(onExecute).not.toHaveBeenCalled();
+	});
+});
+
+describe("service detail links", () => {
+	it.each(["grid", "table"] as const)(
+		"navigates service rows to the detail route in %s mode",
+		async (viewMode) => {
+			const workflow = {
+				id: "svc-1",
+				name: "telegram_bridge",
+				type: "service",
+			} as WorkflowListItem;
+			const onExecute = vi.fn();
+			const { user } = renderWithProviders(
+				<>
+					<WorkflowListSurface
+						workflows={[workflow]}
+						viewMode={viewMode}
+						isPlatformAdmin
+						canManageWorkflows
+						getOrgName={() => "Global"}
+						onExecute={onExecute}
+						getServiceHref={() => "/services/svc-1"}
+					/>
+					<LocationProbe />
+				</>,
+			);
+
+			await user.click(
+				screen.getByRole("link", { name: "telegram_bridge" }),
+			);
+
+			expect(screen.getByLabelText("location")).toHaveTextContent(
+				"/services/svc-1",
+			);
+			expect(onExecute).not.toHaveBeenCalled();
+		},
+	);
+});

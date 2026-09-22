@@ -120,6 +120,15 @@ export interface ExecutionLog {
 	sequence?: number; // Only present when sequencing is enabled
 }
 
+/** Live service log line (bridged from the attempt stream, snake_case). */
+export interface ServiceLog {
+	serviceId: string;
+	attemptId: string;
+	timestamp: string;
+	level: string;
+	message: string;
+}
+
 export interface NewExecution {
 	execution_id: string;
 	workflow_name: string;
@@ -367,6 +376,7 @@ type WebSocketMessage =
 	| { type: "pong" }
 	| { type: "execution_update"; executionId: string; [key: string]: unknown }
 	| { type: "execution_log"; executionId: string; [key: string]: unknown }
+	| { type: "service_log"; service_id: string; [key: string]: unknown }
 	| { type: "history_update"; [key: string]: unknown }
 	| { type: "notification_created"; notification: NotificationPayload }
 	| { type: "notification_updated"; notification: NotificationPayload }
@@ -452,6 +462,7 @@ interface NotificationPayload {
 
 type ExecutionUpdateCallback = (update: ExecutionUpdate) => void;
 type ExecutionLogCallback = (log: ExecutionLog) => void;
+type ServiceLogCallback = (log: ServiceLog) => void;
 type NewExecutionCallback = (execution: NewExecution) => void;
 type HistoryUpdateCallback = (update: HistoryUpdate) => void;
 type PackageProgressCallback = (p: PackageProgress) => void;
@@ -522,6 +533,7 @@ class WebSocketService {
 		string,
 		Set<ExecutionLogCallback>
 	>();
+	private serviceLogCallbacks = new Map<string, Set<ServiceLogCallback>>();
 	private newExecutionCallbacks = new Set<NewExecutionCallback>();
 	private historyUpdateCallbacks = new Set<HistoryUpdateCallback>();
 	private packageProgressCallbacks = new Set<PackageProgressCallback>();
@@ -774,6 +786,10 @@ class WebSocketService {
 
 			case "execution_log":
 				this.dispatchExecutionLog(message);
+				break;
+
+			case "service_log":
+				this.dispatchServiceLog(message);
 				break;
 
 			case "history_update":
@@ -1131,6 +1147,25 @@ class WebSocketService {
 		callbacks?.forEach((cb) => cb(log));
 	}
 
+	private dispatchServiceLog(
+		message: { type: "service_log"; service_id: string } & Record<
+			string,
+			unknown
+		>,
+	) {
+		const log: ServiceLog = {
+			serviceId: message.service_id,
+			attemptId: (message["attempt_id"] as string) || "",
+			timestamp:
+				(message["timestamp"] as string) || new Date().toISOString(),
+			level: (message["level"] as string) || "info",
+			message: (message["message"] as string) || "",
+		};
+
+		const callbacks = this.serviceLogCallbacks.get(message.service_id);
+		callbacks?.forEach((cb) => cb(log));
+	}
+
 	/**
 	 * Handle notification message from backend
 	 */
@@ -1232,6 +1267,44 @@ class WebSocketService {
 			this.executionLogCallbacks.get(executionId)?.delete(callback);
 			if (this.executionLogCallbacks.get(executionId)?.size === 0) {
 				this.executionLogCallbacks.delete(executionId);
+			}
+		};
+	}
+
+	/**
+	 * Connect to a specific service (log streaming channel)
+	 */
+	async connectToService(serviceId: string): Promise<void> {
+		const channel = `service:${serviceId}`;
+		if (this.subscribedChannels.has(channel)) {
+			return;
+		}
+
+		if (this.ws?.readyState === WebSocket.OPEN) {
+			await this.subscribe(channel);
+			return;
+		}
+
+		await this.connect([channel]);
+	}
+
+	/**
+	 * Subscribe to live log lines for a specific service
+	 */
+	onServiceLog(
+		serviceId: string,
+		callback: ServiceLogCallback,
+	): () => void {
+		if (!this.serviceLogCallbacks.has(serviceId)) {
+			this.serviceLogCallbacks.set(serviceId, new Set());
+		}
+		this.serviceLogCallbacks.get(serviceId)!.add(callback);
+
+		// Return unsubscribe function
+		return () => {
+			this.serviceLogCallbacks.get(serviceId)?.delete(callback);
+			if (this.serviceLogCallbacks.get(serviceId)?.size === 0) {
+				this.serviceLogCallbacks.delete(serviceId);
 			}
 		};
 	}

@@ -655,7 +655,7 @@ async def _compute_metrics_directly(ctx: Context) -> DashboardMetricsResponse:
     counts_query = select(
         select(func.count(Workflow.id))
         .where(Workflow.is_active.is_(True))
-        .where(Workflow.type != "data_provider")  # Exclude data providers from workflow count
+        .where(Workflow.type.not_in(["data_provider", "service"]))  # Exclude providers and services from workflow count
         .correlate(None)
         .scalar_subquery()
         .label("workflow_count"),

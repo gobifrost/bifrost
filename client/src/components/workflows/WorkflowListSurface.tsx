@@ -11,6 +11,7 @@ import {
 	Loader2,
 	Pencil,
 	PlayCircle,
+	Radio,
 	Shield,
 	Unlink,
 	Users,
@@ -66,6 +67,12 @@ export interface WorkflowListSurfaceProps {
 	onEditEndpoint?: (workflow: WorkflowListItem) => void;
 	onResolveOrphaned?: (workflow: WorkflowListItem) => void;
 	onExecute: (workflow: WorkflowListItem) => void;
+	/**
+	 * Deep link for service rows. Services never one-shot execute, so
+	 * without this they render inert; with it they navigate to the
+	 * service detail surface instead.
+	 */
+	getServiceHref?: (workflow: WorkflowListItem) => string | undefined;
 	onOpenEmpty?: () => void;
 	emptySearchActive?: boolean;
 }
@@ -95,6 +102,18 @@ function WorkflowTypeBadge({ workflow }: { workflow: WorkflowListItem }) {
 			</Badge>
 		);
 	}
+	if (workflow.type === "service") {
+		return (
+			<Badge
+				variant="secondary"
+				className="bg-[var(--bf-info-soft)] text-[var(--bf-info)]"
+				title="Long-lived supervised service — managed via start/stop, not one-shot execution"
+			>
+				<Radio className="mr-1 h-3 w-3" />
+				Service
+			</Badge>
+		);
+	}
 	return (
 		<Badge variant="secondary" title="Executable workflow">
 			<PlayCircle className="mr-1 h-3 w-3" />
@@ -106,6 +125,7 @@ function WorkflowTypeBadge({ workflow }: { workflow: WorkflowListItem }) {
 function workflowTypeLabel(workflow: WorkflowListItem): string {
 	if (workflow.type === "tool") return "Tool";
 	if (workflow.type === "data_provider") return "Data Provider";
+	if (workflow.type === "service") return "Service";
 	return "Workflow";
 }
 
@@ -132,6 +152,7 @@ export function WorkflowListSurface({
 	onEditEndpoint,
 	onResolveOrphaned,
 	onExecute,
+	getServiceHref,
 	onOpenEmpty,
 	emptySearchActive = false,
 }: WorkflowListSurfaceProps) {
@@ -263,25 +284,33 @@ export function WorkflowListSurface({
 								workflow,
 								navigationSearch,
 							);
+							const serviceHref =
+								workflow.type === "service"
+									? getServiceHref?.(workflow)
+									: undefined;
+							// Services run under supervision (start/stop), never
+							// one-shot execution — same dead-end as orphaned rows,
+							// unless a detail link is provided.
+							const executable =
+								!workflow.is_orphaned &&
+								(workflow.type !== "service" ||
+									serviceHref !== undefined);
+							const href = serviceHref ?? executeHref;
 							return (
 								<DataTableRow
 									key={workflow.id ?? workflow.name}
-									clickable={!workflow.is_orphaned}
-									href={
-										!workflow.is_orphaned
-											? executeHref
-											: undefined
-									}
+									clickable={executable}
+									href={executable ? href : undefined}
 									onClick={
-										!workflow.is_orphaned
-											? () => navigate(executeHref)
+										executable
+											? () => navigate(href)
 											: undefined
 									}
 								>
 									<DataTableCell className="min-w-0 whitespace-normal align-top">
-										{!workflow.is_orphaned ? (
+										{executable ? (
 											<Link
-												to={executeHref}
+												to={href}
 												className="inline-flex min-h-11 min-w-0 items-center font-mono font-medium text-left [overflow-wrap:anywhere] hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 											>
 												{workflow.name}
@@ -345,7 +374,15 @@ export function WorkflowListSurface({
 
 	return (
 		<div className="grid grid-cols-1 gap-4 sm:grid-cols-[repeat(auto-fill,minmax(min(100%,300px),1fr))]">
-			{workflows.map((workflow) => (
+			{workflows.map((workflow) => {
+				const serviceHref =
+					workflow.type === "service"
+						? getServiceHref?.(workflow)
+						: undefined;
+				const openable =
+					!workflow.is_orphaned &&
+					(workflow.type !== "service" || serviceHref !== undefined);
+				return (
 				<ResourceCatalogCard
 					key={workflow.id ?? workflow.name}
 					icon={
@@ -435,13 +472,17 @@ export function WorkflowListSurface({
 							</div>
 						</div>
 					}
-					onOpen={() => onExecute(workflow)}
+					onOpen={() => {
+						if (serviceHref) navigate(serviceHref);
+						else onExecute(workflow);
+					}}
 					href={
-						!workflow.is_orphaned
+						serviceHref ??
+						(!workflow.is_orphaned && workflow.type !== "service"
 							? workflowExecuteHref(workflow, navigationSearch)
-							: undefined
+							: undefined)
 					}
-					disabled={workflow.is_orphaned}
+					disabled={!openable}
 				>
 					{(workflow.endpoint_enabled ||
 						workflow.is_orphaned ||
@@ -510,7 +551,8 @@ export function WorkflowListSurface({
 						</div>
 					)}
 				</ResourceCatalogCard>
-			))}
+				);
+			})}
 		</div>
 	);
 }

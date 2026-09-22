@@ -38,6 +38,7 @@ class Workflow(Base):
     - workflow: Standard workflows (@workflow decorator)
     - tool: AI agent tools (@tool decorator)
     - data_provider: Data providers for forms/app builder (@data_provider decorator)
+    - service: Long-lived supervised services (@service decorator)
     """
 
     __tablename__ = "workflows"

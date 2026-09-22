@@ -657,7 +657,7 @@ class RedisClient:
         Get cached workflow metadata by ID.
 
         Used by execution service to skip DB lookup for workflow metadata.
-        Returns: {id, name, file_path, timeout_seconds, time_saved, value, execution_mode}
+        Returns: {id, name, file_path, timeout_seconds, time_saved, value, execution_mode, type}
 
         Args:
             workflow_id: Workflow UUID
@@ -686,6 +686,7 @@ class RedisClient:
         time_saved: int,
         value: float,
         execution_mode: str,
+        type: str = "workflow",
     ) -> None:
         """
         Cache workflow metadata.
@@ -700,6 +701,7 @@ class RedisClient:
             time_saved: ROI time saved value
             value: ROI monetary value
             execution_mode: "sync" or "async"
+            type: Executable type discriminator (workflow, tool, data_provider, service)
         """
         redis_client = await self._get_redis()
         key = f"{WORKFLOW_METADATA_CACHE_PREFIX}{workflow_id}"
@@ -714,6 +716,7 @@ class RedisClient:
             "time_saved": time_saved,
             "value": normalized_value,
             "execution_mode": execution_mode,
+            "type": type,
         }
 
         try:

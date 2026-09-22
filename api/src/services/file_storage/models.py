@@ -33,7 +33,7 @@ class PendingDeactivationInfo:
     function_name: str  # Python function name
     path: str  # File path
     description: str | None
-    decorator_type: str  # "workflow", "tool", "data_provider"
+    decorator_type: str  # "workflow", "tool", "data_provider", "service"
     has_executions: bool
     last_execution_at: str | None  # ISO 8601
     endpoint_enabled: bool
@@ -46,7 +46,7 @@ class AvailableReplacementInfo:
 
     function_name: str
     name: str  # From decorator or function name
-    decorator_type: str  # "workflow", "tool", "data_provider"
+    decorator_type: str  # "workflow", "tool", "data_provider", "service"
     similarity_score: float  # 0.0-1.0
 
 

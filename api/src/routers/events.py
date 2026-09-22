@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import joinedload
 
-from src.core.auth import Context, CurrentSuperuser
+from src.core.auth import Context, CurrentActiveUser, CurrentSuperuser
 from src.core.db_deps import DbSession
 from src.core.error_messages import format_exception_message
 from src.core.log_safety import log_safe
@@ -890,6 +890,22 @@ async def create_subscription(
     elif request.target_type == "workflow":
         if not request.workflow_id:
             raise HTTPException(status_code=400, detail="workflow_id required when target_type is 'workflow'")
+        # Services run under supervision and cannot be one-shot event targets.
+        from src.models.orm.workflows import Workflow as WorkflowORM
+
+        target = await db.get(WorkflowORM, request.workflow_id)
+        if target is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Workflow '{request.workflow_id}' not found",
+            )
+        if target.type == "service":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Workflow '{target.name}' is a long-lived service "
+                "(type='service') and cannot be an event subscription target. "
+                "Services emit events; workflows and agents consume them.",
+            )
 
     subscription = EventSubscription(
         event_source_id=source_id,
@@ -1157,9 +1173,17 @@ async def list_events(
 async def emit_topic_event(
     request: EmitEventRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
 ) -> EmitEventResponse:
     """Emit a topic event and return the event_id and subscriber count."""
+    from src.services.solution_scope import is_service_principal
+
+    service_caller = is_service_principal(user)
+    if not user.is_superuser and not service_caller:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to emit events",
+        )
     try:
         validate_topic(request.topic)
     except ValueError as exc:
@@ -1176,6 +1200,14 @@ async def emit_topic_event(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid scope: must be a UUID or 'GLOBAL', got '{request.scope}'",
+            )
+    if service_caller:
+        # Services emit org-scoped only, into their own org: the token's
+        # organization is the confinement boundary (no GLOBAL, no cross-org).
+        if organization_id is None or organization_id != user.organization_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Services may only emit into their own organization",
             )
 
     solution_id: UUID | None = None

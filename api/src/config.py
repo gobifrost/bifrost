@@ -108,6 +108,30 @@ class Settings(BaseSettings):
         description="Reject new forks when container memory usage exceeds this ratio (0.0-1.0)"
     )
 
+    # ==========================================================================
+    # Supervised Services (Slice 3)
+    # ==========================================================================
+    max_service_workers: int = Field(
+        default=20,
+        description="Maximum concurrent service children per worker (never consumes max_workers workflow slots)"
+    )
+    service_claim_interval_seconds: int = Field(
+        default=5,
+        description="Worker-pull claim loop tick: expire leases, beat owned attempts, claim eligible services"
+    )
+    service_heartbeat_interval_seconds: int = Field(
+        default=10,
+        description="Per-owned-attempt supervisor beat: renew DB lease, mirror stop, mint rotation token"
+    )
+    service_lease_ttl_seconds: int = Field(
+        default=60,
+        description="DB lease TTL for claimed service attempts"
+    )
+    service_token_lifetime_seconds: int = Field(
+        default=900,
+        description="Lifetime of renewable service-scoped credentials (15 min; parent-rotated via Redis)"
+    )
+
 
     # ==========================================================================
     # Platform build jobs

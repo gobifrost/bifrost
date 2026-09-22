@@ -129,7 +129,7 @@ class PendingDeactivation(BaseModel):
     function_name: str = Field(..., description="Python function name")
     path: str = Field(..., description="File path")
     description: str | None = Field(default=None, description="Workflow description")
-    decorator_type: Literal["workflow", "tool", "data_provider"] = Field(
+    decorator_type: Literal["workflow", "tool", "data_provider", "service"] = Field(
         ..., description="Type of decorator"
     )
     has_executions: bool = Field(
@@ -153,7 +153,7 @@ class AvailableReplacement(BaseModel):
     """Function that could replace a deactivated workflow."""
     function_name: str = Field(..., description="Python function name")
     name: str = Field(..., description="Display name from decorator or function name")
-    decorator_type: Literal["workflow", "tool", "data_provider"] = Field(
+    decorator_type: Literal["workflow", "tool", "data_provider", "service"] = Field(
         ..., description="Type of decorator"
     )
     similarity_score: float = Field(
