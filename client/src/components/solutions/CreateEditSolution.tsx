@@ -868,12 +868,6 @@ function WorkspaceImportBody({
 	const [dragging, setDragging] = useState(false);
 	const conflicts = preview?.items.filter((item) => item.classification === "conflict") ?? [];
 	const complete = conflicts.every((item) => decisions[item.id]);
-	// Only the two-pane collision review needs the wide dialog; the repo/zip
-	// forms stay narrow. Reset on unmount so Back never leaves it wide.
-	useEffect(() => {
-		session.setWide(preview !== null);
-		return () => session.setWide(false);
-	}, [session, preview]);
 
 	async function loadZip(next: File) {
 		setFile(next); setPreview(null); setDecisions({}); setError(null); setLoading(true);
@@ -992,7 +986,7 @@ function WorkspaceImportBody({
 		)}
 		{loading ? <div className="flex min-h-0 flex-1 items-center justify-center gap-2"><Loader2 className="size-4 animate-spin" />Reading package…</div> : preview ? <WorkspaceImportReview preview={preview} decisions={decisions} onDecisionsChange={setDecisions} /> : file ? <div className="flex-1 p-6"><InstallFailure message={error ?? "Could not preview this package."} /></div> : null}
 		{error && preview && <div className="px-6"><InstallFailure message={error} /></div>}
-		<DialogFooter data-testid="workspace-import-footer" className="shrink-0 border-t bg-muted/20 px-6 py-4 sm:justify-between"><p className="mr-auto text-xs text-muted-foreground">{preview ? `${conflicts.filter((item) => decisions[item.id]).length} of ${conflicts.length} conflicts resolved · import creates uncommitted Git changes` : ""}</p><div className="flex gap-2"><Button type="button" variant="ghost" onClick={onBack}><ArrowLeft className="mr-1 size-4" />Back</Button><Button type="button" variant="outline" onClick={onClose}>Cancel</Button><Button type="button" disabled={!preview || !complete || session.pending} onClick={() => session.run(start)}>Start import job</Button></div></DialogFooter>
+		<DialogFooter data-testid="workspace-import-footer" className="shrink-0 flex-col items-stretch gap-3 border-t bg-muted/20 px-6 py-4 sm:flex-col"><p className="text-xs text-muted-foreground">{preview ? `${conflicts.filter((item) => decisions[item.id]).length} of ${conflicts.length} conflicts resolved · import creates uncommitted Git changes` : ""}</p><div className="flex items-center justify-between gap-2"><Button type="button" variant="ghost" onClick={onBack}><ArrowLeft className="mr-1 size-4" />Back</Button><div className="flex gap-2"><Button type="button" variant="outline" onClick={onClose}>Cancel</Button><Button type="button" disabled={!preview || !complete || session.pending} onClick={() => session.run(start)}>Start import job</Button></div></div></DialogFooter>
 	</>;
 }
 

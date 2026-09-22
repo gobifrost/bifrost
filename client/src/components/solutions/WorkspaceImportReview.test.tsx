@@ -73,15 +73,16 @@ describe("WorkspaceImportReview", () => {
 
 		const table = screen.getByTestId("workspace-import-scroller");
 		expect(within(table).getByRole("columnheader", { name: "Item" })).toBeInTheDocument();
-		expect(within(table).getByRole("columnheader", { name: "Matched by" })).toBeInTheDocument();
-		// The Decision header carries the bulk control, aligned with the rows.
-		const decisionHeader = within(table).getByText("Decision");
-		expect(within(decisionHeader.parentElement as HTMLElement).getByRole("button", { name: "Keep All" })).toBeInTheDocument();
-		expect(within(decisionHeader.parentElement as HTMLElement).getByRole("button", { name: "Replace All" })).toBeInTheDocument();
+		expect(within(table).getByRole("columnheader", { name: "Decision" })).toBeInTheDocument();
+		// The bulk control sits with the count, styled like the row controls.
+		expect(screen.getByRole("button", { name: "Keep All" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Replace All" })).toBeInTheDocument();
 		// Four items, three rows: the workflow and its file share one.
 		expect(within(table).getAllByRole("row")).toHaveLength(4);
 		expect(screen.getByText("Sink Alpha")).toBeInTheDocument();
-		expect(screen.getByText("workflows/sink_alpha.py :: sink_alpha")).toBeInTheDocument();
+		// No match-key column and no file-path sub-line.
+		expect(screen.queryByText("workflows/sink_alpha.py :: sink_alpha")).toBeNull();
+		expect(screen.queryByText("workflows/sink_alpha.py")).toBeNull();
 		// Type language matches Entity Management: full-word badges.
 		expect(screen.getByText("Workflow")).toBeInTheDocument();
 		expect(screen.getByText("App")).toBeInTheDocument();

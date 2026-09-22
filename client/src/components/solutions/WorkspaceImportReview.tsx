@@ -129,10 +129,10 @@ export function WorkspaceImportReview({
 
 	return (
 		<div className="min-h-0">
-			<div className="flex gap-2 px-5 pt-4 text-xs text-muted-foreground">
-				<Info className="mt-0.5 size-4 shrink-0" />
-				<div>
-					<p>
+			<div className="flex min-w-0 gap-2 px-5 pt-4 text-sm text-foreground/80">
+				<Info className="mt-0.5 size-4 shrink-0 text-primary" />
+				<div className="min-w-0">
+					<p className="break-words">
 						Solutions are designed to work together. Replacing items
 						in your workspace will overwrite local changes that
 						could be important to other things in your workspace,
@@ -141,19 +141,19 @@ export function WorkspaceImportReview({
 					</p>
 					{warnings.length > 0 && (
 						<details>
-							<summary className="mt-1 cursor-pointer hover:text-foreground">
+							<summary className="mt-1.5 cursor-pointer font-medium hover:text-foreground">
 								Package notices ({warnings.length})
 							</summary>
-							{warnings.map((warning) => (
-								<p key={warning} className="mt-1">
-									{warning}
-								</p>
-							))}
+							<ul className="mt-1.5 list-disc space-y-1 pl-5">
+								{warnings.map((warning) => (
+									<li key={warning}>{warning}</li>
+								))}
+							</ul>
 						</details>
 					)}
 				</div>
 			</div>
-			<div className="flex min-h-12 flex-wrap items-center gap-2 px-5 py-2">
+			<div className="flex min-h-12 flex-wrap items-center justify-between gap-2 px-5 py-2">
 				<p className="text-sm">
 					<span className="font-semibold">
 						{conflicts.length - resolved} need review
@@ -162,6 +162,22 @@ export function WorkspaceImportReview({
 						of {preview.items.length} changes
 					</span>
 				</p>
+				<span className="inline-grid grid-cols-2 rounded-md bg-muted p-0.5 text-xs">
+					<DecisionButton
+						selected={false}
+						disabled={conflicts.length === 0}
+						onClick={() => chooseAll("keep")}
+					>
+						Keep All
+					</DecisionButton>
+					<DecisionButton
+						selected={false}
+						disabled={conflicts.length === 0}
+						onClick={() => chooseAll("replace")}
+					>
+						Replace All
+					</DecisionButton>
+				</span>
 			</div>
 			<div className="min-h-0 px-5 pb-5">
 				<DataTable
@@ -171,28 +187,7 @@ export function WorkspaceImportReview({
 					<DataTableHeader>
 						<DataTableRow>
 							<DataTableHead>Item</DataTableHead>
-							<DataTableHead>Matched by</DataTableHead>
-							<DataTableHead className="text-right">
-								<span className="inline-flex flex-col items-end gap-1">
-									<span>Decision</span>
-									<span className="inline-grid grid-cols-2 rounded-md bg-muted p-0.5 text-xs font-medium normal-case">
-										<DecisionButton
-											selected={false}
-											disabled={conflicts.length === 0}
-											onClick={() => chooseAll("keep")}
-										>
-											Keep All
-										</DecisionButton>
-										<DecisionButton
-											selected={false}
-											disabled={conflicts.length === 0}
-											onClick={() => chooseAll("replace")}
-										>
-											Replace All
-										</DecisionButton>
-									</span>
-								</span>
-							</DataTableHead>
+							<DataTableHead className="w-44 text-right">Decision</DataTableHead>
 						</DataTableRow>
 					</DataTableHeader>
 					<DataTableBody>
@@ -228,9 +223,6 @@ function ImportGroupRow({
 	// a definition and its files can never be split across Keep/Replace. The
 	// control reads from the first open member; the group moves as one.
 	const controlDecision = open.length > 0 ? decisions[open[0].id] : undefined;
-	const files = members.filter(
-		(member) => member !== first && member.kind === "file",
-	);
 	const extraDefinitions = members.filter(
 		(member) => member !== first && member.kind !== "file",
 	);
@@ -240,21 +232,13 @@ function ImportGroupRow({
 				<span className="flex min-w-0 items-start gap-2">
 					<TypeBadge kind={first.kind} />
 					<span className="min-w-0">
-						<span className="block break-words font-medium">
+						<span className="block break-all font-medium">
 							{first.name}
 						</span>
-						{files.map((file) => (
-							<span
-								key={file.id}
-								className="mt-0.5 block break-all text-xs text-muted-foreground"
-							>
-								{file.name}
-							</span>
-						))}
 						{extraDefinitions.map((definition) => (
 							<span
 								key={definition.id}
-								className="mt-0.5 block break-words text-xs text-muted-foreground"
+								className="mt-0.5 block break-all text-xs text-muted-foreground"
 							>
 								Also covers {definition.name}
 							</span>
@@ -262,11 +246,7 @@ function ImportGroupRow({
 					</span>
 				</span>
 			</DataTableCell>
-			<DataTableCell className="min-w-28 max-w-64 break-words text-xs text-muted-foreground">
-				{first.match_key ??
-					(first.classification === "create" ? "New" : "—")}
-			</DataTableCell>
-			<DataTableCell className="text-right">
+			<DataTableCell className="w-44 text-right">
 				{open.length > 0 ? (
 					<span className="inline-grid grid-cols-2 rounded-md bg-muted p-0.5 text-xs">
 						<DecisionButton

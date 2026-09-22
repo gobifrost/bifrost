@@ -160,6 +160,20 @@ test("reviews collisions and replaces workspace content without installing a Sol
 			dialog.getByText(/Solutions are designed to work together\./),
 		).toBeVisible();
 		await expect(dialog.getByText(/need review/)).toBeVisible();
+		// The full 64-char definition name must fit inside the dialog box —
+		// wrapping is fine, horizontal spill is not.
+		const name = dialog.getByText(functionName, { exact: true });
+		await expect(name).toBeVisible();
+		const [nameBox, dialogBox] = await Promise.all([
+			name.boundingBox(),
+			dialog.boundingBox(),
+		]);
+		expect(nameBox, "definition name has layout").not.toBeNull();
+		expect(dialogBox, "dialog has layout").not.toBeNull();
+		expect(nameBox!.x).toBeGreaterThanOrEqual(dialogBox!.x);
+		expect(nameBox!.x + nameBox!.width).toBeLessThanOrEqual(
+			dialogBox!.x + dialogBox!.width + 1,
+		);
 		await testInfo.attach("workspace-import-review", {
 			body: await dialog.screenshot(),
 			contentType: "image/png",

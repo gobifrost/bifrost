@@ -756,7 +756,7 @@ describe("CreateEditSolution — destination-first flow", () => {
 		expect(screen.getByTestId("repo-ref")).toBeInTheDocument();
 	});
 
-	it("workspace forms stay narrow and only the review widens the dialog", async () => {
+	it("workspace flow stays in the narrow dialog end to end", async () => {
 		vi.mocked(previewWorkspaceBundle).mockResolvedValue({
 			preview_token: "workspace-preview",
 			package_name: "Workspace",
@@ -781,9 +781,9 @@ describe("CreateEditSolution — destination-first flow", () => {
 		expect(fileInput).not.toBeNull();
 		await user.upload(fileInput!, new File(["zip"], "workspace.zip", { type: "application/zip" }));
 
-		// The two-pane collision review needs the wide dialog.
+		// The review fits the standard narrow dialog.
 		expect(await screen.findByTestId("workspace-import-footer")).toBeInTheDocument();
-		expect(screen.getByTestId("solution-dialog")).toHaveClass("sm:max-w-6xl");
+		expect(screen.getByTestId("solution-dialog")).not.toHaveClass("sm:max-w-6xl");
 	});
 
 	it("workspace + repo shows the snapshot repo form (no Solution lifecycle)", async () => {
