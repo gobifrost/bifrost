@@ -372,6 +372,7 @@ def _wait_job(e2e_client, headers: dict[str, str], job_id: str, timeout: float =
 
 async def _seed_destination(db_session) -> dict[str, object]:
     """Idempotently seed older/conflicting destination content (unattached rows)."""
+    from shared.policies.probe import make_seed_admin_bypass
     from src.models.enums import ConfigType
     from src.models.orm.agents import Agent
     from src.models.orm.applications import Application
@@ -415,6 +416,7 @@ async def _seed_destination(db_session) -> dict[str, object]:
         {"name": TABLE_ITEMS},
         {"schema": {"columns": [
             {"name": "title", "type": "text"}, {"name": "qty", "type": "integer"}]},
+         "access": make_seed_admin_bypass(),
          "organization_id": None, "solution_id": None},
     )
     await _upsert(
@@ -612,6 +614,7 @@ async def test_workspace_zip_import_accepts_declared_config_values(
     assert all("default" not in schema and "value" not in schema for schema in preview["config_schemas"])
     assert next(schema for schema in preview["config_schemas"] if schema["key"] == "SINK_TOKEN")["required"] is True
     assert next(schema for schema in preview["config_schemas"] if schema["key"] == "SINK_TOKEN")["requires_input"] is False
+    assert next(schema for schema in preview["config_schemas"] if schema["key"] == "SINK_TOKEN")["has_existing_value"] is True
     assert next(schema for schema in preview["config_schemas"] if schema["key"] == "SINK_API_URL")["requires_input"] is False
 
     invalid = e2e_client.post(
@@ -752,6 +755,12 @@ async def test_workspace_zip_import_preserves_ids_rewrites_refs_and_runtime(
     ).scalars().all()
     assert hook_sources, "webhook event source was not imported"
 
+    repeated = _items_by_match(_preview_zip(e2e_client, platform_admin.headers, archive))
+    assert repeated[_key(EVENT_SCHED)]["classification"] == "unchanged"
+    assert repeated[_key(EVENT_HOOK)]["classification"] == "unchanged"
+    assert repeated[_key("SINK_API_URL")]["classification"] == "unchanged"
+    assert repeated[_key(AGENT_NAME)]["classification"] == "unchanged"
+
     # Runtime-owned state survives replacement.
     token = (
         await db_session.execute(select(Config).where(Config.key == "SINK_TOKEN"))
@@ -764,6 +773,7 @@ async def test_workspace_zip_import_preserves_ids_rewrites_refs_and_runtime(
     ).scalars().all()[-1]
     assert retries.description == "Retry budget v2"
     assert (retries.required, retries.position) == (False, 1)
+    assert retries.value == 3
 
     # Claims import as global definitions with destination IDs preserved.
     from src.models.orm.custom_claims import CustomClaim

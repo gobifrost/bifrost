@@ -270,6 +270,11 @@ function ImportGroupRow({
 							{first.name}
 						</span>
 						{first.scope_change && <span className="block text-xs text-muted-foreground">Replace moves this item to the selected scope</span>}
+						{first.kind === "table" && first.classification === "conflict" && (
+							<span className="block text-xs text-muted-foreground">
+								Replace updates the table definition and access policies; existing rows stay.
+							</span>
+						)}
 						{extraDefinitions.map((definition) => (
 							<span
 								key={definition.id}

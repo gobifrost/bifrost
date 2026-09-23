@@ -1041,6 +1041,26 @@ describe("CreateEditSolution — destination-first flow", () => {
 		expect(mockRunGitOp).toHaveBeenCalledTimes(1);
 		expect(onClose).toHaveBeenCalledTimes(1);
 	});
+
+	it("explains when an existing config value satisfies a required declaration", async () => {
+		vi.mocked(previewWorkspaceBundle).mockResolvedValue({
+			preview_token: "workspace-preview",
+			package_name: "Workspace",
+			package_sha256: "a".repeat(64),
+			conflict_count: 0,
+			source_kind: "zip",
+			items: [{ id: "entity:config:cfg-1", kind: "config", name: "API_TOKEN", classification: "unchanged", scope_change: false }],
+			config_schemas: [{ key: "API_TOKEN", type: "secret", required: true, requires_input: false, exists: true, has_existing_value: true }],
+		});
+		const { user } = renderWithProviders(
+			<CreateEditSolution mode={{ kind: "create", destination: "workspace", source: "zip" }} open onClose={vi.fn()} onSaved={vi.fn()} />,
+		);
+		const fileInput = document.querySelector<HTMLInputElement>('input[type="file"]');
+		await user.upload(fileInput!, new File(["zip"], "workspace.zip", { type: "application/zip" }));
+		const tokenInput = await screen.findByLabelText(/API_TOKEN/);
+		expect(tokenInput).not.toHaveAttribute("aria-required", "true");
+		expect(screen.getByText("Existing value will be kept if left blank.")).toBeInTheDocument();
+	});
 });
 
 describe("CreateEditSolution — repo install path", () => {

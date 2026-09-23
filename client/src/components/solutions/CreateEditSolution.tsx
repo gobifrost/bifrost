@@ -139,6 +139,9 @@ interface PreviewConfigSchema {
 	type: string;
 	required: boolean;
 	requiresInput: boolean;
+	exists: boolean;
+	hasExistingValue: boolean;
+	hasPackageDefault: boolean;
 	description: string | null;
 }
 
@@ -155,6 +158,9 @@ function asConfigSchemas(
 				type: typeof item.type === "string" ? item.type : "string",
 				required: item.required === true,
 				requiresInput: item.requires_input === true,
+				exists: item.exists === true,
+				hasExistingValue: item.has_existing_value === true,
+				hasPackageDefault: item.has_package_default === true,
 				description:
 					typeof item.description === "string"
 						? item.description
@@ -190,6 +196,9 @@ function ConfigValueFields({
 					{cfg.required && <span className="text-destructive" aria-hidden>*</span>}
 				</Label>
 				{cfg.description && <p className="text-xs text-muted-foreground">{cfg.description}</p>}
+				{cfg.hasExistingValue && <p className="text-xs text-muted-foreground">Existing value will be kept if left blank.</p>}
+				{cfg.exists && !cfg.hasExistingValue && <p className="text-xs text-muted-foreground">Already in this workspace; no value is set.</p>}
+				{!cfg.exists && cfg.hasPackageDefault && <p className="text-xs text-muted-foreground">Package default will be used if left blank.</p>}
 				<Input
 					id={`cfg-${cfg.key}`}
 					type={isSecretType(cfg.type) ? "password" : "text"}

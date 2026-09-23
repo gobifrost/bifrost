@@ -61,6 +61,23 @@ describe("WorkspaceImportReview", () => {
 		expect(screen.queryByText(/Package notices/)).toBeNull();
 	});
 
+	it("explains what replacing a table changes", () => {
+		const tablePreview = {
+			preview_token: "preview-1",
+			package_name: "Customer operations",
+			package_sha256: "a".repeat(64),
+			source_kind: "zip",
+			items: [{
+				id: "entity:table:items", kind: "table", name: "Items",
+				classification: "conflict", match_key: "Items", diff: [],
+			}],
+		} as never;
+		renderWithProviders(
+			<WorkspaceImportReview preview={tablePreview} decisions={{}} onDecisionsChange={vi.fn()} />,
+		);
+		expect(screen.getByText(/Replace updates the table definition and access policies; existing rows stay\./)).toBeInTheDocument();
+	});
+
 	it("renders one row per definition with its files, in a standard table", async () => {
 		renderWithProviders(
 			<WorkspaceImportReview preview={preview} decisions={{}} onDecisionsChange={vi.fn()} />,

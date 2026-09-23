@@ -106,6 +106,19 @@ class WorkspaceBundleImporter:
             included_source_ids=frozenset(item for item in included if item),
             target_ids=plan.id_map,
         )
+        # A package config declaration may update metadata, but an existing
+        # workspace value belongs to this environment. Keep it unless the
+        # reviewer explicitly enters a replacement below.
+        from src.models.orm.config import Config
+        for item in plan.preview.items:
+            if item.kind != "config" or item.id not in selected_items or item.classification != "conflict":
+                continue
+            declaration = plan.manifest.configs[item.name]
+            if declaration.config_type == "secret" or item.target_id is None:
+                continue
+            existing = await self.db.get(Config, item.target_id)
+            if existing is not None:
+                declaration.value = existing.value
         ops = await ManifestResolver(self.db).plan_partial_import(
             plan.manifest, selection=selection, work_dir=plan.work_dir,
             progress_fn=self.progress_fn, organization_id=plan.organization_id,

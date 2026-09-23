@@ -15,6 +15,7 @@ from uuid import UUID, uuid5
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from bifrost.manifest import (
     Manifest,
@@ -25,11 +26,13 @@ from bifrost.manifest import (
     ManifestEventSource,
     ManifestFilePolicy,
     ManifestForm,
+    ManifestPolicy,
     ManifestTable,
     ManifestWorkflow,
 )
 from bifrost.ignore_patterns import DEFAULT_IGNORE_PATTERNS
 from shared.file_policies_seed import make_seed_admin_bypass_file
+from shared.policies.probe import make_seed_admin_bypass
 from src.services.solutions.file_locations import normalize_file_locations
 from src.models.contracts.solutions import WorkspaceBundleItem, WorkspaceBundlePreview
 from src.services.git_repo_manager import hash_file, iter_repo_files
@@ -37,6 +40,11 @@ from src.services.solutions.zip_install import PreviewResult
 
 _ID_NAMESPACE = UUID("f4b9f7ce-b035-48b8-bfdd-d18a02e34731")
 _FILE_LOOKUP_BATCH_SIZE = 100
+_REFERENCE_FIELDS = frozenset({
+    "workflow_id", "launch_workflow_id", "agent_id", "tool_ids",
+    "delegated_agent_ids", "mcp_connection_ids", "webhook_integration_id",
+    "data_provider_id", "default_entity_id", "list_entities_data_provider_id",
+})
 
 
 def _has_config_value(value: object) -> bool:
@@ -222,6 +230,41 @@ def _display_key(natural_key: tuple) -> str:
     return " :: ".join(parts)
 
 
+def _comparable_snapshot(kind: str, snapshot: dict[str, Any], *, incoming: bool) -> dict[str, Any]:
+    """Compare effective definitions rather than package transport details."""
+    data = dict(snapshot)
+    if kind == "table" and incoming and data.get("policies") is None:
+        data["policies"] = [
+            ManifestPolicy.model_validate(policy).model_dump(mode="json")
+            for policy in make_seed_admin_bypass()["policies"]
+        ]
+    if kind == "config":
+        # Package defaults only initialize new configs. Existing workspace
+        # values are preserved unless the reviewer explicitly enters one.
+        data.pop("value", None)
+    if kind == "event":
+        if incoming and data.get("source_type") == "schedule" and data.get("cron_expression"):
+            data["timezone"] = data.get("timezone") or "UTC"
+            data["schedule_enabled"] = True if data.get("schedule_enabled") is None else data["schedule_enabled"]
+            data["overlap_policy"] = data.get("overlap_policy") or "skip"
+        data["subscriptions"] = sorted(
+            ({key: value for key, value in sub.items() if key != "id"}
+             for sub in data.get("subscriptions", [])),
+            key=str,
+        )
+    return data
+
+
+def _remap_references(value: Any, targets: dict[str, str], *, field: str | None = None) -> Any:
+    if isinstance(value, str):
+        return targets.get(value, value) if field in _REFERENCE_FIELDS else value
+    if isinstance(value, list):
+        return [_remap_references(entry, targets, field=field) for entry in value]
+    if isinstance(value, dict):
+        return {key: _remap_references(entry, targets, field=key) for key, entry in value.items()}
+    return value
+
+
 class WorkspaceBundlePlanner:
     def __init__(
         self, db: AsyncSession | None, *, preview_id: UUID,
@@ -296,6 +339,15 @@ class WorkspaceBundlePlanner:
             f"{app.path.rstrip('/')}/": f"app:{app.slug or app.path}"
             for app in projection.manifest.apps.values() if app.path
         }
+        source_targets = {
+            entity.id: str(
+                existing[(kind, key_fn(entity))][0]
+                if (kind, key_fn(entity)) in existing
+                else uuid5(self.preview_id, f"{kind}:{key_fn(entity)}")
+            )
+            for kind, entries, key_fn in self._collections(projection.manifest)
+            for entity in entries.values()
+        }
 
         def _file_group(relative: str) -> str | None:
             if relative in workflow_paths:
@@ -311,13 +363,21 @@ class WorkspaceBundlePlanner:
                 natural_key = key_fn(entity)
                 match = existing.get((kind, natural_key))
                 target = match[0] if match else uuid5(self.preview_id, f"{kind}:{natural_key}")
-                incoming = entity.model_dump(mode="json", exclude={"id"})
+                incoming = _remap_references(
+                    entity.model_dump(mode="json", exclude={"id"}), source_targets,
+                )
+                if match and kind in {"form", "agent"}:
+                    # Omitted portable access grants leave the destination's
+                    # environment-owned settings alone during import.
+                    for field in ("access_level", "role_names"):
+                        if incoming.get(field) is None:
+                            incoming[field] = match[1].get(field)
                 scope_change = bool(
                     match and kind in {"workflow", "app"}
                     and match[1].get("organization_id") != incoming.get("organization_id")
                 )
                 classification = "create" if match is None else (
-                    "unchanged" if incoming == match[1] else "conflict"
+                    "unchanged" if _comparable_snapshot(kind, incoming, incoming=True) == _comparable_snapshot(kind, match[1], incoming=False) else "conflict"
                 )
                 group_key: str | None = None
                 if kind == "workflow":
@@ -368,6 +428,9 @@ class WorkspaceBundlePlanner:
             match = existing.get(("config", (key, None, self.organization_id)))
             config_schemas.append({
                 **schema,
+                "exists": match is not None,
+                "has_existing_value": bool(match and match[2]),
+                "has_package_default": _has_config_value(declaration.value),
                 "requires_input": bool(
                     schema["required"]
                     and not _has_config_value(declaration.value)
@@ -396,8 +459,8 @@ class WorkspaceBundlePlanner:
             ("workflow", manifest.workflows, lambda x: (x.path, x.function_name)),
             ("app", manifest.apps, lambda x: (x.slug or x.path,)),
             ("table", manifest.tables, lambda x: (x.name,)),
-            ("config", manifest.configs, lambda x: (x.key, None, None)),
-            ("claim", manifest.claims, lambda x: (x.name, None)),
+            ("config", manifest.configs, lambda x: (x.key, None, UUID(x.organization_id) if x.organization_id else None)),
+            ("claim", manifest.claims, lambda x: (x.name, UUID(x.organization_id) if x.organization_id else None)),
             ("event", manifest.events, lambda x: (x.name,)),
             ("form", manifest.forms, lambda x: (x.name,)),
             ("agent", manifest.agents, lambda x: (x.name,)),
@@ -409,11 +472,14 @@ class WorkspaceBundlePlanner:
             return {}
         # Natural keys are intentionally limited to unattached workspace rows.
         # Solution-owned rows are install content and never candidates here.
-        from src.models.orm.agents import Agent
+        from src.models.orm.agents import Agent, AgentDelegation, AgentRole, AgentTool
         from src.models.orm.applications import Application
         from src.models.orm.config import Config
         from src.models.orm.custom_claims import CustomClaim
-        from src.models.orm.forms import Form
+        from src.models.orm.events import EventSource, EventSubscription, ScheduleSource, WebhookSource
+        from src.models.orm.external_mcp import AgentMCPConnection
+        from src.models.orm.forms import Form, FormField, FormRole
+        from src.models.orm.users import Role
         from src.models.orm.tables import Table
         from src.models.orm.workflows import Workflow
         result: dict[tuple[str, tuple], tuple[UUID, dict[str, Any], bool]] = {}
@@ -443,23 +509,105 @@ class WorkspaceBundlePlanner:
                     row.id, serializers[kind](row),
                     _has_config_value(row.value) if kind == "config" else False,
                 )
-        # Forms and agents have no package-portable natural key more reliable
-        # than their name.  Keep them global-only too, instead of accidentally
-        # matching an identically named installed entity.
+        event_rows = (await self.db.execute(
+            select(EventSource).where(
+                self._scope_clause(EventSource.organization_id),
+                EventSource.solution_id.is_(None),
+            )
+        )).scalars().all()
+        if event_rows:
+            event_ids = [row.id for row in event_rows]
+            schedules = {row.event_source_id: row for row in (await self.db.execute(
+                select(ScheduleSource).where(ScheduleSource.event_source_id.in_(event_ids))
+            )).scalars()}
+            webhooks = {row.event_source_id: row for row in (await self.db.execute(
+                select(WebhookSource).where(WebhookSource.event_source_id.in_(event_ids))
+            )).scalars()}
+            subscriptions: dict[UUID, list] = {}
+            for row in (await self.db.execute(
+                select(EventSubscription).where(EventSubscription.event_source_id.in_(event_ids))
+            )).scalars():
+                subscriptions.setdefault(row.event_source_id, []).append(row)
+            for row in event_rows:
+                snapshot = ManifestEventSource.from_row(
+                    row, schedule=schedules.get(row.id), webhook=webhooks.get(row.id),
+                    subscriptions=subscriptions.get(row.id, []),
+                ).model_dump(mode="json", exclude={"id"})
+                result[("event", (row.name,))] = (row.id, snapshot, False)
+        # Load the inline form/agent content and bindings before comparing. A
+        # name match with an empty snapshot would mark every agent as Replace.
         from src.services.manifest_import import _load_file_policy_model
 
         FilePolicy = _load_file_policy_model()
+        scoped_rows = {}
         for kind, model in (("form", Form), ("agent", Agent), ("file_policy", FilePolicy)):
             query = select(model).where(self._scope_clause(model.organization_id))
+            if kind == "agent":
+                query = query.options(selectinload(Agent.llm_profile))
             if "solution_id" in model.__table__.columns:
                 query = query.where(model.solution_id.is_(None))
-            for row in (await self.db.execute(query)).scalars().all():
+            scoped_rows[kind] = (await self.db.execute(query)).scalars().all()
+        form_ids = [row.id for row in scoped_rows["form"]]
+        agent_ids = [row.id for row in scoped_rows["agent"]]
+        form_fields: dict[UUID, list] = {}
+        for row in (await self.db.execute(
+            select(FormField).where(FormField.form_id.in_(form_ids)).order_by(FormField.position)
+        )).scalars():
+            form_fields.setdefault(row.form_id, []).append(row)
+        role_names = dict((await self.db.execute(select(Role.id, Role.name))).all())
+        form_roles: dict[UUID, list[str]] = {}
+        for form_id, role_id in (await self.db.execute(
+            select(FormRole.form_id, FormRole.role_id).where(FormRole.form_id.in_(form_ids))
+        )).all():
+            form_roles.setdefault(form_id, []).append(role_names[role_id])
+        agent_roles: dict[UUID, list[str]] = {}
+        for agent_id, role_id in (await self.db.execute(
+            select(AgentRole.agent_id, AgentRole.role_id).where(AgentRole.agent_id.in_(agent_ids))
+        )).all():
+            agent_roles.setdefault(agent_id, []).append(role_names[role_id])
+        agent_tools: dict[UUID, list[UUID]] = {}
+        for agent_id, workflow_id in (await self.db.execute(
+            select(AgentTool.agent_id, AgentTool.workflow_id).where(AgentTool.agent_id.in_(agent_ids))
+        )).all():
+            agent_tools.setdefault(agent_id, []).append(workflow_id)
+        agent_delegations: dict[UUID, list[UUID]] = {}
+        for parent_id, child_id in (await self.db.execute(
+            select(AgentDelegation.parent_agent_id, AgentDelegation.child_agent_id).where(
+                AgentDelegation.parent_agent_id.in_(agent_ids)
+            )
+        )).all():
+            agent_delegations.setdefault(parent_id, []).append(child_id)
+        agent_mcp: dict[UUID, list[UUID]] = {}
+        for agent_id, connection_id in (await self.db.execute(
+            select(AgentMCPConnection.agent_id, AgentMCPConnection.connection_id).where(
+                AgentMCPConnection.agent_id.in_(agent_ids)
+            )
+        )).all():
+            agent_mcp.setdefault(agent_id, []).append(connection_id)
+        for kind, rows in scoped_rows.items():
+            for row in rows:
                 if kind == "file_policy":
                     org = row.organization_id
                     key = (row.location, row.path, str(org) if org is not None else None)
                 else:
                     key = (row.name,)
-                result[(kind, key)] = (row.id, {}, False)
+                if kind == "form":
+                    snapshot = ManifestForm.from_row(
+                        row, fields=form_fields.get(row.id),
+                    ).model_dump(mode="json", exclude={"id"})
+                    if form_roles.get(row.id):
+                        snapshot["role_names"] = sorted(form_roles[row.id])
+                elif kind == "agent":
+                    snapshot = ManifestAgent.from_row(
+                        row, tool_ids=sorted(agent_tools.get(row.id, [])),
+                        delegated_agent_ids=sorted(agent_delegations.get(row.id, [])),
+                        mcp_connection_ids=sorted(agent_mcp.get(row.id, [])),
+                    ).model_dump(mode="json", exclude={"id"})
+                    if agent_roles.get(row.id):
+                        snapshot["role_names"] = sorted(agent_roles[row.id])
+                else:
+                    snapshot = ManifestFilePolicy.from_row(row).model_dump(mode="json", exclude={"id"})
+                result[(kind, key)] = (row.id, snapshot, False)
         return result
 
     async def _prefetch_existing_integrations(self) -> dict[str, UUID]:

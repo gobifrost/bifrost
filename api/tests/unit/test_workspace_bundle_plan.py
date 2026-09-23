@@ -94,6 +94,90 @@ def test_created_entities_receive_stable_target_ids() -> None:
     ]
 
 
+def test_preview_recognizes_existing_scoped_definitions_and_remapped_references() -> None:
+    from src.services.solutions.workspace_bundle_plan import (
+        SolutionPackageWorkspaceProjection,
+        WorkspaceBundlePlanner,
+    )
+    from src.services.solutions.zip_install import PreviewResult
+
+    org = UUID(int=8)
+    workflow_source = UUID(int=11)
+    workflow_target = UUID(int=12)
+    agent_source = UUID(int=13)
+    agent_target = UUID(int=14)
+    event_source = UUID(int=15)
+    event_target = UUID(int=16)
+    config_target = UUID(int=17)
+    projection = SolutionPackageWorkspaceProjection.from_preview(
+        PreviewResult(
+            workflows=[{
+                "id": str(workflow_source), "name": "run", "path": "workflows/run.py",
+                "function_name": "run",
+            }],
+            agents=[{
+                "id": str(agent_source), "name": "helper", "tool_ids": [str(workflow_source)],
+            }],
+            events=[{
+                "id": str(event_source), "name": "trigger", "source_type": "topic",
+                "subscriptions": [{"id": str(UUID(int=19)), "workflow_id": str(workflow_source)}],
+            }],
+            config_schemas=[{"key": "API_URL", "type": "string", "default": "https://example.test"}],
+        ),
+        preview_id=UUID(int=7), organization_id=org,
+    )
+    workflow = next(iter(projection.manifest.workflows.values()))
+    agent = next(iter(projection.manifest.agents.values()))
+    event = next(iter(projection.manifest.events.values()))
+    config = projection.manifest.configs["API_URL"]
+    workflow_snapshot = workflow.model_dump(mode="json", exclude={"id"})
+    agent_snapshot = agent.model_dump(mode="json", exclude={"id"})
+    agent_snapshot["tool_ids"] = [str(workflow_target)]
+    event_snapshot = event.model_dump(mode="json", exclude={"id"})
+    event_snapshot["subscriptions"][0]["workflow_id"] = str(workflow_target)
+    event_snapshot["subscriptions"][0]["id"] = str(UUID(int=20))
+    config_snapshot = config.model_dump(mode="json", exclude={"id"})
+    config_snapshot["value"] = {"value": "https://example.test"}
+    existing = {
+        ("workflow", ("workflows/run.py", "run")): (workflow_target, workflow_snapshot, False),
+        ("agent", ("helper",)): (agent_target, agent_snapshot, False),
+        ("event", ("trigger",)): (event_target, event_snapshot, False),
+        ("config", ("API_URL", None, org)): (config_target, config_snapshot, True),
+    }
+    preview = WorkspaceBundlePlanner(None, preview_id=UUID(int=7), organization_id=org)._build_plan(
+        projection, existing, {},
+    ).preview
+    assert {item.kind: item.classification for item in preview.items} == {
+        "workflow": "unchanged", "agent": "unchanged", "event": "unchanged", "config": "unchanged",
+    }
+    assert preview.config_schemas[0]["requires_input"] is False
+
+
+def test_table_preview_treats_the_import_seed_policy_as_unchanged() -> None:
+    from bifrost.manifest import ManifestPolicy
+    from shared.policies.probe import make_seed_admin_bypass
+    from src.services.solutions.workspace_bundle_plan import (
+        SolutionPackageWorkspaceProjection,
+        WorkspaceBundlePlanner,
+    )
+    from src.services.solutions.zip_install import PreviewResult
+
+    projection = SolutionPackageWorkspaceProjection.from_preview(
+        PreviewResult(tables=[{"id": str(UUID(int=10)), "name": "orders", "schema": {"columns": []}}]),
+        preview_id=UUID(int=7),
+    )
+    table = next(iter(projection.manifest.tables.values()))
+    existing = table.model_dump(mode="json", exclude={"id"})
+    existing["policies"] = [
+        ManifestPolicy.model_validate(policy).model_dump(mode="json")
+        for policy in make_seed_admin_bypass()["policies"]
+    ]
+    preview = WorkspaceBundlePlanner(None, preview_id=UUID(int=7))._build_plan(
+        projection, {("table", ("orders",)): (UUID(int=11), existing, False)}, {},
+    ).preview
+    assert preview.items[0].classification == "unchanged"
+
+
 def test_kept_conflicts_remain_in_source_to_target_reference_map() -> None:
     from src.services.solutions.workspace_bundle_plan import WorkspaceBundlePlanner
     from src.models.contracts.solutions import WorkspaceBundleItem
