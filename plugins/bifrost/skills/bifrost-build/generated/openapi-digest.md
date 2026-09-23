@@ -252,7 +252,8 @@
 | POST | `/api/github/commit` |
 | GET | `/api/github/commits` |
 | GET | `/api/github/config` |
-| POST | `/api/github/configure` |
+| POST | `/api/github/connect` |
+| POST | `/api/github/connect/preview` |
 | POST | `/api/github/create-repository` |
 | POST | `/api/github/diff` |
 | POST | `/api/github/discard` |
@@ -514,6 +515,9 @@
 | GET | `/api/solutions/deploy-jobs/{job_id}` |
 | GET | `/api/solutions/export-jobs/{job_id}` |
 | GET | `/api/solutions/export-jobs/{job_id}/download` |
+| POST | `/api/solutions/import-workspace` |
+| POST | `/api/solutions/import-workspace/preview` |
+| POST | `/api/solutions/import-workspace/preview-repo` |
 | POST | `/api/solutions/install` |
 | POST | `/api/solutions/install/from-repo` |
 | POST | `/api/solutions/install/preview` |

@@ -2180,20 +2180,25 @@ Options:
   --help  Show this message and exit.
 
 Commands:
-  bind          Bind this local Solution workspace to an existing install.
-  capture       Adopt loose _repo/ entities into an install (migration).
-  create        Create a Solution workspace and remote install.
-  deploy        Non-interactive full-replace deploy of the current...
-  export        Download a Solution's workspace zip (shareable or full...
-  init          Alias for `solution create`: scaffold and create a remote...
-  install       Install a Solution from a workspace zip (drag-and-drop...
-  migrate-app   Migrate a v1 inline App directory to a scaffolded V2 App:...
-  pull          Pull captured entities into the local .bifrost/ manifest...
-  scaffold-app  Scaffold a standalone_v2 React app (package.json, vite,...
-  sdk           Manage the app's vendored Bifrost SDK.
-  start         Run the app's dev server + local workflows on one stable...
-  swap-slugs    Atomically exchange two apps' slugs (v1→v2 migration...
-  update        Edit install-local fields (name, scope, access gates) of...
+  bind              Bind this local Solution workspace to an existing...
+  capture           Adopt loose _repo/ entities into an install (migration).
+  create            Create a Solution workspace and remote install.
+  deploy            Non-interactive full-replace deploy of the current...
+  export            Download a Solution's workspace zip (shareable or...
+  git               Connect or disconnect a managed Solution repository.
+  import-workspace  Import a Solution package as unattached workspace...
+  init              Alias for `solution create`: scaffold and create a...
+  install           Install a Solution from a workspace zip...
+  install-repo      Install a Solution from a repository and make Git its...
+  migrate-app       Migrate a v1 inline App directory to a scaffolded V2...
+  pull              Pull captured entities into the local .bifrost/...
+  pull-manifests    Pull captured entities into the local .bifrost/...
+  scaffold-app      Scaffold a standalone_v2 React app (package.json,...
+  sdk               Manage the app's vendored Bifrost SDK.
+  start             Run the app's dev server + local workflows on one...
+  swap-slugs        Atomically exchange two apps' slugs (v1→v2 migration...
+  sync              Update a Git-connected Solution from its configured ref.
+  update            Edit install-local fields (name, scope, access gates)...
 ```
 
 ### `solution bind`
@@ -2309,6 +2314,70 @@ Options:
   --help                   Show this message and exit.
 ```
 
+### `solution git`
+
+```
+Usage: solution git [OPTIONS] COMMAND [ARGS]...
+
+  Connect or disconnect a managed Solution repository.
+
+Options:
+  --help  Show this message and exit.
+
+Commands:
+  connect     Connect an existing install; repository updates become its...
+  disconnect  Disconnect Git so future updates are manual Solution...
+```
+
+#### `solution git connect`
+
+```
+Usage: solution git connect [OPTIONS] SOLUTION_REF REPOSITORY_URL
+
+  Connect an existing install; repository updates become its sole writer.
+
+Options:
+  --subpath TEXT  Solution workspace path inside the repository.
+  --ref TEXT      Git ref to update from.  [default: main]
+  --help          Show this message and exit.
+```
+
+#### `solution git disconnect`
+
+```
+Usage: solution git disconnect [OPTIONS] SOLUTION_REF
+
+  Disconnect Git so future updates are manual Solution deployments.
+
+Options:
+  --help  Show this message and exit.
+```
+
+### `solution import-workspace`
+
+```
+Usage: solution import-workspace [OPTIONS] [ARCHIVE]
+
+  Import a Solution package as unattached workspace content (one-time
+  snapshot).
+
+Options:
+  --repo TEXT       Solution git repository URL (snapshot import; mutually
+                    exclusive with ARCHIVE).
+  --ref TEXT        Git ref to import (default branch when omitted).
+  --path TEXT       Package subfolder within the repository.
+  --org TEXT        Target organization name or UUID for scoped definitions.
+                    Omit for global workspace content.
+  --global          Target global workspace content (the default).
+  --keep-all        Keep every conflicting destination item.
+  --replace-all     Replace every conflicting destination item.
+  --decisions FILE
+  --preview         Print the staged collision preview without queuing an
+                    import.
+  --json            Emit raw preview and terminal job JSON.
+  --help            Show this message and exit.
+```
+
 ### `solution init`
 
 ```
@@ -2367,6 +2436,19 @@ Options:
   --help                          Show this message and exit.
 ```
 
+### `solution install-repo`
+
+```
+Usage: solution install-repo [OPTIONS] REPOSITORY_URL
+
+  Install a Solution from a repository and make Git its sole writer.
+
+Options:
+  --subpath TEXT  Solution workspace path inside the repository.
+  --ref TEXT      Git ref to install.  [default: main]
+  --help          Show this message and exit.
+```
+
 ### `solution migrate-app`
 
 ```
@@ -2385,6 +2467,25 @@ Options:
 
 ```
 Usage: solution pull [OPTIONS] [PATH]
+
+  Pull captured entities into the local .bifrost/ manifest (does not touch
+  source code).
+
+Options:
+  --solution TEXT                 Target install id (override when ambiguous).
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
+  --help                          Show this message and exit.
+```
+
+### `solution pull-manifests`
+
+```
+Usage: solution pull-manifests [OPTIONS] [PATH]
 
   Pull captured entities into the local .bifrost/ manifest (does not touch
   source code).
@@ -2491,6 +2592,17 @@ Options:
 Usage: solution swap-slugs [OPTIONS] APP_A APP_B
 
   Atomically exchange two apps' slugs (v1→v2 migration cutover).
+
+Options:
+  --help  Show this message and exit.
+```
+
+### `solution sync`
+
+```
+Usage: solution sync [OPTIONS] SOLUTION_REF
+
+  Update a Git-connected Solution from its configured ref.
 
 Options:
   --help  Show this message and exit.
