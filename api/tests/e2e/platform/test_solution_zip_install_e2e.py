@@ -81,57 +81,6 @@ def _make_zip(
     return buf.getvalue()
 
 
-async def test_zip_install_atomic_deploy_and_values(e2e_client, platform_admin):
-    headers = platform_admin.headers
-    # httpx sets the multipart Content-Type itself; the auth headers carry an
-    # application/json Content-Type that would otherwise override it and make the
-    # server fail to parse the upload — strip it for the multipart requests.
-    upload_headers = {
-        k: v for k, v in headers.items() if k.lower() != "content-type"
-    }
-    slug = f"zip-e2e-{uuid.uuid4().hex[:8]}"
-    data = _make_zip(slug)
-
-    # PREVIEW: parse-only, nothing persisted.
-    pv = e2e_client.post(
-        "/api/solutions/install/preview",
-        headers=upload_headers,
-        files={"file": (f"{slug}.zip", data, "application/zip")},
-    )
-    assert pv.status_code == 200, pv.text
-    body = pv.json()
-    assert body["slug"] == slug
-    assert len(body["workflows"]) == 1
-    assert any(c["key"] == "API_KEY" for c in body["config_schemas"])
-
-    # INSTALL: deploy + apply the secret value atomically (async: 202 → poll).
-    inst = wait_for_install(
-        e2e_client,
-        e2e_client.post(
-            "/api/solutions/install",
-            headers=upload_headers,
-            files={"file": (f"{slug}.zip", data, "application/zip")},
-            data={"config_values": '{"API_KEY": "sk_x"}'},
-        ),
-        headers,
-    )
-    assert inst.status_code in (200, 201), inst.text
-    sid = inst.json()["id"]
-
-    # The deployed workflow landed and the secret VALUE is set (atomic with deploy).
-    ent = e2e_client.get(f"/api/solutions/{sid}/entities", headers=headers)
-    assert ent.status_code == 200, ent.text
-    entities = ent.json()
-    assert len(entities["workflows"]) >= 1, "workflow should have deployed"
-
-    api_key = next((c for c in entities["configs"] if c["key"] == "API_KEY"), None)
-    assert api_key is not None, "API_KEY declaration should be present"
-    assert api_key["value_set"] is True, "the provided secret value should be set"
-    assert "API_KEY" not in entities["required_configs_unset"], (
-        "a provided required value must not be reported as unset"
-    )
-
-
 async def test_zip_install_refused_into_git_connected_install(e2e_client, platform_admin):
     """A zip POSTed for a slug+scope that already has a git-connected install
     must be refused with 409 — auto-pull is that install's only writer."""
@@ -312,6 +261,19 @@ async def test_export_round_trips_the_installed_bundle(e2e_client, platform_admi
     slug = f"zip-exp-{uuid.uuid4().hex[:8]}"
     data = _make_zip(slug, "1.0.0")
 
+    # Preview the original upload before it creates an install.
+    original_preview = e2e_client.post(
+        "/api/solutions/install/preview",
+        headers=upload_headers,
+        files={"file": (f"{slug}.zip", data, "application/zip")},
+    )
+    assert original_preview.status_code == 200, original_preview.text
+    original = original_preview.json()
+    assert original["slug"] == slug
+    assert len(original["workflows"]) == 1
+    assert any(c["key"] == "API_KEY" for c in original["config_schemas"])
+    assert original["existing_install"] is None
+
     inst = wait_for_install(
         e2e_client,
         e2e_client.post(
@@ -324,6 +286,15 @@ async def test_export_round_trips_the_installed_bundle(e2e_client, platform_admi
     )
     assert inst.status_code in (200, 201), inst.text
     sid = inst.json()["id"]
+
+    # The workflow and required secret value are visible as soon as install finishes.
+    ent = e2e_client.get(f"/api/solutions/{sid}/entities", headers=headers)
+    assert ent.status_code == 200, ent.text
+    entities = ent.json()
+    assert len(entities["workflows"]) == 1
+    api_key = next((c for c in entities["configs"] if c["key"] == "API_KEY"), None)
+    assert api_key is not None and api_key["value_set"] is True
+    assert "API_KEY" not in entities["required_configs_unset"]
 
     # EXPORT: the stored bundle, as a workspace zip.
     exp = e2e_client.post(f"/api/solutions/{sid}/export", json={}, headers=headers)

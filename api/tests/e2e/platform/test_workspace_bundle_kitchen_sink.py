@@ -906,8 +906,7 @@ async def test_workspace_import_keep_preserves_destination_content(
 ) -> None:
     """Keep decisions leave destination definitions (and their IDs) in place."""
     _, archive = _stage_zip()
-    await _seed_destination(db_session)
-    await _replace_all_import(e2e_client, platform_admin.headers, archive)
+    seeded = await _seed_destination(db_session)
 
     from src.models.orm.forms import Form
     from src.models.orm.workflows import Workflow
@@ -936,7 +935,8 @@ async def test_workspace_import_keep_preserves_destination_content(
     forms = (
         await db_session.execute(select(Form).where(Form.name == FORM_NAME))
     ).scalars().all()
-    assert forms, "kept import must retain usable form references"
+    assert forms, "kept import must create the declared form"
+    assert forms[-1].workflow_id == str(seeded["alpha_id"])
 
     from src.services.solutions.workspace_bundle_storage import WorkspaceBundleStorage
 

@@ -48,15 +48,16 @@ def _deploy(e2e_client, headers, solution_id: str, *, python_files: dict, workfl
     return resp.json()
 
 
-def test_deploy_and_run_solution_local_import(e2e_client, platform_admin):
-    """A solution workflow imports its own modules/* and runs (criteria 2,3)."""
+def test_solution_deploy_resolves_local_workflows_and_blocks_global_import(
+    e2e_client, platform_admin,
+):
+    """One deploy checks local modules, function identity, and repo isolation."""
     from tests.e2e.conftest import execute_workflow_sync
 
     headers = platform_admin.headers
     slug = f"sol-import-{uuid.uuid4().hex[:8]}"
     sid = _create_solution(e2e_client, headers, slug=slug, global_repo_access=False)
 
-    wf_id = str(uuid.uuid4())
     _deploy(
         e2e_client,
         headers,
@@ -70,84 +71,12 @@ def test_deploy_and_run_solution_local_import(e2e_client, platform_admin):
                 "async def answer():\n"
                 "    return {'value': VALUE}\n"
             ),
-        },
-        workflows=[{
-            "id": wf_id,
-            "name": f"answer_{slug}",
-            "function_name": "answer",
-            "path": "workflows/answer.py",
-            "type": "workflow",
-        }],
-    )
-
-    # Execute by PORTABLE path::fn ref (what a v2 app / form uses) — the deployed
-    # row id is remapped per-install (uuid5), so the manifest UUID is not a valid
-    # execution handle; the path ref resolves within the install's scope (R7-P1-c).
-    result = execute_workflow_sync(
-        e2e_client, headers, "workflows/answer.py::answer", request_sync=True
-    )
-    assert result["status"] == "Success", f"unexpected: {result}"
-    assert result["result"] == {"value": 42}
-
-
-def test_deploy_and_run_when_name_diverges_from_function(e2e_client, platform_admin):
-    """Regression for the "Executable 'hello' not found" bug.
-
-    Deploy a workflow whose manifest ``name`` differs from BOTH the decorator
-    display name AND the Python ``function_name``. Execution must still run it —
-    resolution is by ``function_name`` (service.py / module_loader.py), and the
-    DB ``name`` is identity/display only. Before the fix, execution matched the
-    decorator display name against the DB name and raised "Executable not found".
-    """
-    from tests.e2e.conftest import execute_workflow_sync
-
-    headers = platform_admin.headers
-    slug = f"sol-namediv-{uuid.uuid4().hex[:8]}"
-    sid = _create_solution(e2e_client, headers, slug=slug, global_repo_access=False)
-
-    _deploy(
-        e2e_client,
-        headers,
-        sid,
-        python_files={
             "workflows/snap.py": (
                 "from bifrost import workflow\n\n"
-                '@workflow(name="Sandbox Ticket Snapshot")\n'  # decorator display name
-                "async def snapshot():\n"  # function_name = "snapshot"
+                '@workflow(name="Sandbox Ticket Snapshot")\n'
+                "async def snapshot():\n"
                 "    return {'ok': True}\n"
             ),
-        },
-        workflows=[{
-            "id": str(uuid.uuid4()),
-            "name": "hello",  # manifest name diverges from decorator AND function
-            "function_name": "snapshot",
-            "path": "workflows/snap.py",
-            "type": "workflow",
-        }],
-    )
-
-    result = execute_workflow_sync(
-        e2e_client, headers, "workflows/snap.py::snapshot", request_sync=True
-    )
-    assert result["status"] == "Success", f"name-divergent workflow failed to run: {result}"
-    assert result["result"] == {"ok": True}
-
-
-def test_global_repo_import_blocked_when_flag_off(e2e_client, platform_admin):
-    """With global_repo_access OFF, importing a _repo/ `shared.*` module must
-    NOT resolve — no silent fallback (criterion 4)."""
-    from tests.e2e.conftest import execute_workflow_sync
-
-    headers = platform_admin.headers
-    slug = f"sol-noglobal-{uuid.uuid4().hex[:8]}"
-    sid = _create_solution(e2e_client, headers, slug=slug, global_repo_access=False)
-
-    wf_id = str(uuid.uuid4())
-    _deploy(
-        e2e_client,
-        headers,
-        sid,
-        python_files={
             "workflows/needs_shared.py": (
                 "import shared.definitely_not_in_solution  # noqa\n"
                 "from bifrost import workflow\n\n"
@@ -156,21 +85,55 @@ def test_global_repo_import_blocked_when_flag_off(e2e_client, platform_admin):
                 "    return 1\n"
             ),
         },
-        workflows=[{
-            "id": wf_id,
-            "name": f"needs_shared_{slug}",
-            "function_name": "go",
-            "path": "workflows/needs_shared.py",
-            "type": "workflow",
-        }],
+        workflows=[
+            {
+                "id": str(uuid.uuid4()),
+                "name": f"answer_{slug}",
+                "function_name": "answer",
+                "path": "workflows/answer.py",
+                "type": "workflow",
+            },
+            {
+                "id": str(uuid.uuid4()),
+                "name": "hello",  # diverges from decorator name and function_name
+                "function_name": "snapshot",
+                "path": "workflows/snap.py",
+                "type": "workflow",
+            },
+            {
+                "id": str(uuid.uuid4()),
+                "name": f"needs_shared_{slug}",
+                "function_name": "go",
+                "path": "workflows/needs_shared.py",
+                "type": "workflow",
+            },
+        ],
     )
 
-    result = execute_workflow_sync(
+    # Portable path::fn references resolve within this install, even though
+    # manifest UUIDs are remapped during deployment.
+    local = execute_workflow_sync(
+        e2e_client, headers, "workflows/answer.py::answer", request_sync=True
+    )
+    assert local["status"] == "Success", local
+    assert local["result"] == {"value": 42}
+
+    # Execution uses function_name; the manifest name and decorator display
+    # name are intentionally different.
+    named = execute_workflow_sync(
+        e2e_client, headers, "workflows/snap.py::snapshot", request_sync=True
+    )
+    assert named["status"] == "Success", named
+    assert named["result"] == {"ok": True}
+
+    # global_repo_access=False forbids silently resolving a shared.* import
+    # from the workspace repository.
+    blocked = execute_workflow_sync(
         e2e_client, headers, "workflows/needs_shared.py::go", request_sync=True
     )
-    assert result["status"] == "Failed", f"expected import failure, got: {result}"
-    blob = f"{result.get('error')} {result.get('error_type')}".lower()
-    assert "module" in blob or "import" in blob, f"unexpected error: {result}"
+    assert blocked["status"] == "Failed", blocked
+    error = f"{blocked.get('error')} {blocked.get('error_type')}".lower()
+    assert "module" in error or "import" in error, blocked
 
 
 def _execute_with_app(e2e_client, headers, workflow_ref: str, app_id: str) -> dict:

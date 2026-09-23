@@ -173,9 +173,10 @@ def emitting_def(e2e_client, platform_admin):
 
 
 class TestServiceWorkerMode:
-    async def test_claim_runs_ready_and_streams_logs(
+    async def test_claim_ready_logs_and_stop_without_restart(
         self, e2e_client, platform_admin, service_def
     ):
+        """One live attempt reaches ready, persists logs, and stops cleanly."""
         definition_id = service_def["id"]
         observed = await _wait_for(e2e_client, platform_admin.headers, definition_id, "running")
         assert observed["active_attempt_id"]
@@ -200,18 +201,7 @@ class TestServiceWorkerMode:
         assert any("e2e service live" in m for m in messages), messages
         assert any("service starting" in m for m in messages), messages
 
-    async def test_logs_endpoint_serves_flushed_stream(
-        self, e2e_client, platform_admin, service_def
-    ):
-        """Beat flush persists stream lines; the logs endpoint reads them.
-
-        Polls until the claim-loop beat drains the live stream into
-        Postgres, then asserts the read contract (shape, filters) and that
-        rows survive the stop transition (final drain on completion).
-        """
-        definition_id = service_def["id"]
-        await _wait_for(e2e_client, platform_admin.headers, definition_id, "running")
-
+        # A worker beat must flush the live Redis stream into Postgres.
         deadline = time.monotonic() + 90.0
         logs: dict = {"items": [], "total": 0}
         while time.monotonic() < deadline:
@@ -266,6 +256,10 @@ class TestServiceWorkerMode:
         assert resp.status_code == 200, resp.text
         assert resp.json()["items"] == []
 
+        before_attempts = e2e_client.get(
+            f"/api/services/{definition_id}/attempts", headers=platform_admin.headers
+        ).json()["total"]
+
         # Rows survive the stop transition (final drain on completion).
         resp = e2e_client.post(
             f"/api/services/{definition_id}/stop",
@@ -301,19 +295,6 @@ class TestServiceWorkerMode:
         )
         assert resp.status_code == 422, resp.text
 
-    async def test_stop_completes_without_restart(
-        self, e2e_client, platform_admin, service_def
-    ):
-        definition_id = service_def["id"]
-        await _wait_for(e2e_client, platform_admin.headers, definition_id, "running")
-        before = e2e_client.get(
-            f"/api/services/{definition_id}/attempts", headers=platform_admin.headers
-        ).json()["total"]
-
-        resp = e2e_client.post(f"/api/services/{definition_id}/stop", headers=platform_admin.headers)
-        assert resp.status_code == 200, resp.text
-        await _wait_for(e2e_client, platform_admin.headers, definition_id, "stopped")
-
         await asyncio.sleep(6.0)
         observed = e2e_client.get(
             f"/api/services/{definition_id}", headers=platform_admin.headers
@@ -322,7 +303,7 @@ class TestServiceWorkerMode:
         after = e2e_client.get(
             f"/api/services/{definition_id}/attempts", headers=platform_admin.headers
         ).json()["total"]
-        assert after == before
+        assert after == before_attempts
 
     async def test_rolling_restart_starts_new_attempt(
         self, e2e_client, platform_admin, service_def
