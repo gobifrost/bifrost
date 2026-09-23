@@ -36,6 +36,24 @@ from src.core.redis_reconnect import ResilientPubSubListener
 logger = logging.getLogger(__name__)
 
 
+def service_channel_for_log(channel: str, data: Any) -> str | None:
+    """Service-wide channel for an attempt-scoped log pubsub message.
+
+    Children publish to ``service-logs:{attempt_id}``; the Services UI
+    subscribes per service (``service:{service_id}``), so the API fans
+    each line out to its service channel. Returns None for anything that
+    is not a service log line (no bridge, no re-publish).
+    """
+    if not channel.startswith("service-logs:"):
+        return None
+    if not isinstance(data, dict):
+        return None
+    service_id = data.get("service_id")
+    if not service_id:
+        return None
+    return f"service:{service_id}"
+
+
 _PUBLISH_CHAT_RUN_EVENT_SCRIPT = """
 local sequence = redis.call('INCR', KEYS[2])
 local envelope = cjson.decode(ARGV[1])
@@ -119,6 +137,19 @@ class ConnectionManager:
         if not published:
             await self._send_local(channel, message)
 
+    async def _bridge_service_log(self, channel: str, data: Any) -> None:
+        """Fan one attempt-scoped log line out to its service channel.
+
+        Delivered locally only: EVERY API instance pattern-receives the
+        original pubsub message, so each instance serves its own
+        subscribers exactly once with no extra Redis hop. (Re-publishing
+        here would duplicate every line once per API instance.) A
+        different channel name means bridged lines never re-bridge.
+        """
+        service_channel = service_channel_for_log(channel, data)
+        if service_channel is not None:
+            await self._send_local(service_channel, data)
+
     async def _send_local(self, channel: str, message: dict[str, Any]) -> None:
         """Send message to local WebSocket connections.
 
@@ -187,6 +218,7 @@ class ConnectionManager:
                 # Strip "bifrost:" prefix from channel
                 local_channel = channel.replace("bifrost:", "")
                 await self._send_local(local_channel, data)
+                await self._bridge_service_log(local_channel, data)
 
             self._pubsub_listener = ResilientPubSubListener(
                 redis_url=settings.redis_url,

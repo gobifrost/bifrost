@@ -99,6 +99,14 @@ const FormBuilder = lazyWithReload(() =>
 const Workflows = lazyWithReload(() =>
 	import("@/pages/Workflows").then((m) => ({ default: m.Workflows })),
 );
+const ServiceDetail = lazyWithReload(() =>
+	import("@/pages/ServiceDetail").then((m) => ({
+		default: m.ServiceDetail,
+	})),
+);
+const Services = lazyWithReload(() =>
+	import("@/pages/Services").then((m) => ({ default: m.Services })),
+);
 const ExecuteWorkflow = lazyWithReload(() =>
 	import("@/pages/ExecuteWorkflow").then((m) => ({
 		default: m.ExecuteWorkflow,
@@ -378,6 +386,22 @@ const routeElements = (
 				element={
 					<ProtectedRoute requirePlatformAdmin>
 						<Workflows />
+					</ProtectedRoute>
+				}
+			/>
+			<Route
+				path="services"
+				element={
+					<ProtectedRoute requirePlatformAdmin>
+						<Services />
+					</ProtectedRoute>
+				}
+			/>
+			<Route
+				path="services/:serviceId"
+				element={
+					<ProtectedRoute requirePlatformAdmin>
+						<ServiceDetail />
 					</ProtectedRoute>
 				}
 			/>

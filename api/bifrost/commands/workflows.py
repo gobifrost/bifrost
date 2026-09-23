@@ -615,9 +615,9 @@ async def replace_workflow(
 
     ``REF`` is a UUID or workflow name (use ``bifrost workflows list-orphaned``
     to find orphaned UUIDs). The target file must exist in the workspace and
-    contain a ``@workflow``, ``@tool``, or ``@data_provider`` decorated function
-    with the given name. The workflow UUID is preserved so form/agent references
-    remain intact.
+    contain a ``@workflow``, ``@tool``, ``@data_provider``, or ``@service``
+    decorated function with the given name. The workflow UUID is preserved so
+    form/agent references remain intact.
     """
     workflow_uuid = await resolver.resolve("workflow", ref)
     body: dict[str, Any] = {

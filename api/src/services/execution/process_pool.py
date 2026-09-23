@@ -221,6 +221,27 @@ class ExecutionInfo:
 
 
 @dataclass
+class ServiceInfo:
+    """
+    Identity of the supervised service attempt a child is running.
+
+    Service children never hold a workflow slot: they live in
+    ``service_processes`` under the ``max_service_workers`` cap and report
+    through ``on_service_result`` instead of ``on_result``.
+    """
+
+    service_id: str
+    attempt_id: str
+    lease_token: str
+    graceful_shutdown_seconds: int = 30
+    # Set when the pool itself ends the child (template recycle, worker
+    # shutdown). Completions for recycled children map to a requested stop
+    # with this exit reason instead of failure accounting.
+    recycled: bool = False
+    recycle_reason: str | None = None
+
+
+@dataclass
 class ProcessHandle:
     """
     Represents a worker process managed by the pool.
@@ -262,6 +283,9 @@ class ProcessHandle:
     # producing its one result. None once readiness fires or the handle is
     # removed through timeout/cancellation/crash cleanup.
     result_reader_fd: int | None = None
+    # Set for supervised service children (which live in service_processes).
+    # None for one-shot workflow children.
+    service: ServiceInfo | None = None
 
     @property
     def is_alive(self) -> bool:
@@ -364,6 +388,8 @@ class ProcessPoolManager:
         heartbeat_interval_seconds: int = 10,
         registration_ttl_seconds: int = 30,
         on_result: ResultCallback | None = None,
+        max_service_workers: int = 20,
+        on_service_result: ResultCallback | None = None,
     ):
         """
         Initialize the process pool manager.
@@ -371,10 +397,18 @@ class ProcessPoolManager:
         Args:
             max_workers: Maximum number of concurrent worker processes
             execution_timeout_seconds: Default execution timeout in seconds
-            graceful_shutdown_seconds: Seconds to wait between SIGTERM and SIGKILL
+            graceful_shutdown_seconds: Seconds to wait after SIGTERM before SIGKILL
             heartbeat_interval_seconds: Interval for heartbeat publications
             registration_ttl_seconds: TTL for worker registration in Redis
             on_result: Async callback for handling execution results
+            max_service_workers: Maximum concurrent supervised service
+                children. Service slots are separate from max_workers:
+                services never consume workflow capacity. Service children
+                are light (~tens of MB like workflow children), so this
+                bounds connection/file-descriptor sprawl and keeps rolling
+                restarts snappy rather than boxing memory; the cgroup
+                pressure gate remains the dynamic backstop.
+            on_service_result: Async callback for service attempt outcomes
         """
         self.max_workers = max_workers
         self.execution_timeout_seconds = execution_timeout_seconds
@@ -382,12 +416,16 @@ class ProcessPoolManager:
         self.heartbeat_interval_seconds = heartbeat_interval_seconds
         self.registration_ttl_seconds = registration_ttl_seconds
         self.on_result = on_result
+        self.max_service_workers = max_service_workers
+        self.on_service_result = on_service_result
 
         # Worker ID from HOSTNAME env var (Docker container name) or UUID
         self.worker_id = os.environ.get("HOSTNAME", str(uuid.uuid4()))
 
         # Process tracking
         self.processes: dict[str, ProcessHandle] = {}
+        # Supervised service children (separate slot accounting).
+        self.service_processes: dict[str, ProcessHandle] = {}
         self._process_counter = 0
 
         # State
@@ -412,6 +450,8 @@ class ProcessPoolManager:
         # route_execution use this to wake up the moment a slot opens
         # rather than spinning on a timeout.
         self._slot_condition = asyncio.Condition()
+        # Same for service slots (waiters in route_service).
+        self._service_slot_condition = asyncio.Condition()
 
         # Template process for fork-based workers
         self._template: TemplateProcess | None = None
@@ -476,6 +516,17 @@ class ProcessPoolManager:
         wait for the previous restart to complete rather than racing.
         """
         async with self._restart_lock:
+            # Controlled all-service rollout (§18.6): service children cannot
+            # drain like one-shot workers, so they are marked recycled up
+            # front. However they end — graceful unwind after SIGTERM or
+            # SIGKILL — their completion maps to a requested stop
+            # (template_recycle), never failure accounting, and the claim
+            # loop relaunches them from the refreshed template.
+            for handle in list(self.service_processes.values()):
+                if handle.service is not None:
+                    handle.service.recycled = True
+                    handle.service.recycle_reason = "template_recycle"
+
             # Wait for in-flight one-shot workers to finish (bounded).
             deadline = time.monotonic() + drain_timeout
             while time.monotonic() < deadline:
@@ -488,6 +539,17 @@ class ProcessPoolManager:
                 if handle.id in self.processes:
                     del self.processes[handle.id]
                 await self._terminate_process(handle)
+
+            # Ask service children to stop gracefully. Their handles stay
+            # registered so terminal results (or crash/orphan envelopes from
+            # the health loop) still route to on_service_result; the claim
+            # loop owns DB completion and relaunch. Terminations run
+            # concurrently so the drain costs one grace period, not one per
+            # service.
+            await asyncio.gather(*(
+                self._terminate_process(handle, keep_result_reader=True)
+                for handle in list(self.service_processes.values())
+            ))
 
             # Wake anyone blocked on a slot — drain may have removed
             # everything from self.processes while the route-side waiter
@@ -706,8 +768,11 @@ class ProcessPoolManager:
                     # Expected — we just cancelled the task; no log needed
                     pass
 
-        # Terminate all processes
+        # Terminate all processes (workflow one-shots and service children;
+        # service children get their per-attempt grace via _terminate_process).
         for handle in list(self.processes.values()):
+            await self._terminate_process(handle)
+        for handle in list(self.service_processes.values()):
             await self._terminate_process(handle)
 
         # Shutdown template process
@@ -724,19 +789,29 @@ class ProcessPoolManager:
             self._redis = None
 
         self.processes.clear()
+        self.service_processes.clear()
         self._result_tasks.clear()
         self._started = False
 
         logger.info("ProcessPoolManager stopped")
 
-    async def _terminate_process(self, handle: ProcessHandle) -> None:
+    async def _terminate_process(
+        self, handle: ProcessHandle, grace_seconds: float | None = None,
+        keep_result_reader: bool = False,
+    ) -> None:
         """
         Terminate a process gracefully (SIGTERM -> wait -> SIGKILL).
 
         Args:
             handle: ProcessHandle to terminate
+            grace_seconds: Override for the wait between SIGTERM and SIGKILL
+                (service children use their per-attempt policy).
+            keep_result_reader: Leave the result pipe watched so a graceful
+                service unwind still routes its terminal result. Workflow
+                kills keep the default (their terminal callback owns it).
         """
-        self._unregister_result_reader(handle)
+        if not keep_result_reader:
+            self._unregister_result_reader(handle)
 
         # Mark as KILLED immediately to prevent route_execution from sending
         # work to this process during the graceful_shutdown_seconds sleep.
@@ -758,8 +833,20 @@ class ProcessPoolManager:
         except ProcessLookupError:
             return
 
-        # Wait for graceful shutdown
-        await asyncio.sleep(self.graceful_shutdown_seconds)
+        # Wait for graceful shutdown, returning early when the child exits
+        # on its own (a graceful service unwind must not cost the full
+        # grace period on every stop).
+        if grace_seconds is None:
+            grace_seconds = (
+                handle.service.graceful_shutdown_seconds
+                if handle.service is not None
+                else self.graceful_shutdown_seconds
+            )
+        deadline = time.monotonic() + grace_seconds
+        while time.monotonic() < deadline:
+            if not handle.process.is_alive():
+                return
+            await asyncio.sleep(min(0.2, max(deadline - time.monotonic(), 0)))
 
         # SIGKILL if still alive
         if handle.process.is_alive():
@@ -895,6 +982,113 @@ class ProcessPoolManager:
             f"Routed {execution_id[:8]}... to {handle.id} "
             f"(timeout={timeout}s)"
         )
+
+    async def route_service(
+        self,
+        *,
+        service_id: str,
+        attempt_id: str,
+        lease_token: str,
+        context: dict[str, Any],
+        graceful_shutdown_seconds: int = 30,
+    ) -> None:
+        """
+        Fork a supervised service child for one claimed attempt.
+
+        Service children run indefinitely (until the attempt ends) under the
+        separate ``max_service_workers`` cap — they never consume
+        ``max_workers`` workflow slots and are never timeout-killed. The
+        context travels over the private work pipe like executions; the DB
+        attempt row (not Redis) is the durable record, so no context or lease
+        keys are written here.
+
+        Raises:
+            RuntimeError: No service slot available (the claim loop retries
+                on its next tick).
+            MemoryError: Memory pressure rejects the fork.
+        """
+        settings = get_settings()
+        if not has_sufficient_memory_cgroup(threshold=settings.memory_pressure_threshold):
+            raise MemoryError(
+                f"Cannot route service {service_id[:8]}: memory pressure "
+                f"exceeds {settings.memory_pressure_threshold:.0%} threshold"
+            )
+
+        # Keep template drain/restart mutually exclusive with forking, as
+        # with route_execution.
+        async with self._restart_lock:
+            if len(self.service_processes) >= self.max_service_workers:
+                raise RuntimeError("No service slot available")
+
+            handle = self._fork_process()
+            handle.service = ServiceInfo(
+                service_id=service_id,
+                attempt_id=attempt_id,
+                lease_token=lease_token,
+                graceful_shutdown_seconds=graceful_shutdown_seconds,
+            )
+            # Service children live under service-slot accounting, not the
+            # workflow pool.
+            del self.processes[handle.id]
+            self.service_processes[handle.id] = handle
+
+            self._register_result_reader(handle)
+
+            try:
+                handle.work_queue.put_nowait((attempt_id, context))
+            except Exception:
+                self._unregister_result_reader(handle)
+                self.service_processes.pop(handle.id, None)
+                await self._notify_service_slot_free()
+                raise
+
+            logger.info(
+                f"Routed service {service_id[:8]}... attempt {attempt_id[:8]}... "
+                f"to {handle.id}"
+            )
+
+    async def _notify_service_slot_free(self) -> None:
+        """Wake any tasks blocked waiting for a service slot."""
+        async with self._service_slot_condition:
+            self._service_slot_condition.notify_all()
+
+    def service_owned_attempt_ids(self) -> set[str]:
+        """Attempt IDs of service children currently owned by this worker."""
+        return {
+            handle.service.attempt_id
+            for handle in self.service_processes.values()
+            if handle.service is not None
+        }
+
+    def get_service_memory_mb(self, attempt_id: str) -> float | None:
+        """Current memory footprint of one owned service child, if present.
+
+        Reported into the pool registration hash by the claim loop so the
+        API can serve live memory without reaching into worker processes.
+        """
+        for handle in self.service_processes.values():
+            if handle.service is not None and handle.service.attempt_id == attempt_id:
+                private_dirty_kb = (
+                    _get_private_dirty_kb(handle.pid) if handle.pid else -1
+                )
+                if private_dirty_kb >= 0:
+                    return private_dirty_kb / 1024
+                return self._get_process_memory(handle.pid)
+        return None
+
+    async def stop_service_child(self, attempt_id: str) -> bool:
+        """SIGTERM one owned service child (grace → SIGKILL by its policy).
+
+        Used for operator stops mirrored by the claim loop and for worker
+        shutdown handover. The terminal result (or crash envelope) still
+        flows through on_service_result, which owns DB completion. Returns
+        False when no local child owns the attempt.
+        """
+        for handle in list(self.service_processes.values()):
+            if handle.service is not None and handle.service.attempt_id == attempt_id:
+                await self._terminate_process(handle, keep_result_reader=True)
+                return True
+        return False
 
     async def _write_context_to_redis(
         self,
@@ -1371,13 +1565,25 @@ class ProcessPoolManager:
         self._collect_child_exit_statuses()
 
         # Snapshot to a list — items() iterator is unsafe across the awaits
-        # below (peer coroutines like _handle_result mutate self.processes).
-        for process_id, handle in list(self.processes.items()):
+        # below (peer coroutines like _handle_result mutate the dicts).
+        # Service children are covered by the same crash/orphan sweep; only
+        # the reporting path differs (on_service_result).
+        all_handles = list(self.processes.items()) + list(
+            self.service_processes.items()
+        )
+        for process_id, handle in all_handles:
             # Peer may have already cleaned this id during a prior await.
-            if process_id not in self.processes:
+            if (
+                process_id not in self.processes
+                and process_id not in self.service_processes
+            ):
                 continue
             if not handle.is_alive and handle.state != ProcessState.KILLED:
-                if handle.current_execution and not handle.result_reported:
+                owns_result = (
+                    handle.current_execution is not None
+                    or handle.service is not None
+                )
+                if owns_result and not handle.result_reported:
                     try:
                         result = handle.result_queue.get_nowait()
                     except (Empty, EOFError, OSError):
@@ -1402,26 +1608,47 @@ class ProcessPoolManager:
 
                 if handle.current_execution and not handle.result_reported:
                     await self._report_crash(handle)
+                elif handle.service is not None and not handle.result_reported:
+                    await self._report_service_crash(handle)
 
                 to_remove.append(process_id)
 
-            elif handle.state == ProcessState.KILLED and handle.current_execution:
+            elif handle.state == ProcessState.KILLED and (
+                handle.current_execution
+                or (
+                    handle.service is not None
+                    and not handle.result_reported
+                )
+            ):
                 # Case B: KILLED — wait out the kill grace window before treating
                 # as orphaned. During the legitimate cancel/timeout grace-sleep,
                 # the cancel/timeout path is *about to* fire its own callback;
-                # orphan-sweeping now would duplicate it.
-                grace_buffer = self.graceful_shutdown_seconds + 1.0
+                # orphan-sweeping now would duplicate it. Service children use
+                # their per-attempt grace, which may far exceed the pool default.
+                if handle.service is not None:
+                    grace_buffer = (
+                        handle.service.graceful_shutdown_seconds + 1.0
+                    )
+                else:
+                    grace_buffer = self.graceful_shutdown_seconds + 1.0
                 killed_at = handle.killed_at
                 if killed_at is None or (datetime.now(timezone.utc) - killed_at).total_seconds() < grace_buffer:
                     continue  # not yet time to consider this orphaned
 
                 if not handle.result_reported:
-                    logger.warning(
-                        f"Process {process_id} is KILLED but execution "
-                        f"{handle.current_execution.execution_id[:8]}... was never reported — "
-                        f"firing orphan callback"
-                    )
-                    await self._report_orphan(handle)
+                    if handle.service is not None:
+                        logger.warning(
+                            f"Service process {process_id} is KILLED but its "
+                            f"attempt was never reported — firing orphan callback"
+                        )
+                        await self._report_service_orphan(handle)
+                    else:
+                        logger.warning(
+                            f"Process {process_id} is KILLED but execution "
+                            f"{handle.current_execution.execution_id[:8]}... was never reported — "
+                            f"firing orphan callback"
+                        )
+                        await self._report_orphan(handle)
                 to_remove.append(process_id)
 
         # Remove crashed/orphaned processes.
@@ -1431,14 +1658,22 @@ class ProcessPoolManager:
         # peer-delete path also notifies and double-notify is harmless.
         if to_remove:
             removed_any = False
+            removed_service_any = False
             for process_id in to_remove:
                 handle = self.processes.get(process_id)
                 if handle is not None:
                     self._unregister_result_reader(handle)
                 if self.processes.pop(process_id, None) is not None:
                     removed_any = True
+                handle = self.service_processes.get(process_id)
+                if handle is not None:
+                    self._unregister_result_reader(handle)
+                if self.service_processes.pop(process_id, None) is not None:
+                    removed_service_any = True
             if removed_any:
                 await self._notify_slot_free()
+            if removed_service_any:
+                await self._notify_service_slot_free()
 
     def _collect_child_exit_statuses(self) -> None:
         """Apply exit statuses gathered by the template that owns the children."""
@@ -1531,10 +1766,17 @@ class ProcessPoolManager:
         asyncio.get_running_loop().remove_reader(fd)
         handle.result_reader_fd = None
 
+    def _find_handle(self, process_id: str) -> ProcessHandle | None:
+        """Look up a child handle in workflow or service slot accounting."""
+        handle = self.processes.get(process_id)
+        if handle is None:
+            handle = self.service_processes.get(process_id)
+        return handle
+
     def _on_result_ready(self, process_id: str, fd: int) -> None:
         """Convert an asyncio pipe-readiness callback into async result work."""
         asyncio.get_running_loop().remove_reader(fd)
-        handle = self.processes.get(process_id)
+        handle = self._find_handle(process_id)
         if handle is None:
             return
         handle.result_reader_fd = None
@@ -1547,7 +1789,7 @@ class ProcessPoolManager:
 
     async def _consume_ready_result(self, process_id: str) -> None:
         """Drain one readable child pipe and forward its result."""
-        handle = self.processes.get(process_id)
+        handle = self._find_handle(process_id)
         if handle is None:
             return
         try:
@@ -1555,7 +1797,7 @@ class ProcessPoolManager:
         except Empty:
             # Readiness can be transient when a peer concurrently inspects the
             # pipe. Re-arm only while this handle still owns the execution.
-            if self.processes.get(process_id) is handle:
+            if self._find_handle(process_id) is handle:
                 self._register_result_reader(handle)
             return
         except (EOFError, OSError) as exc:
@@ -1575,16 +1817,18 @@ class ProcessPoolManager:
         result: dict[str, Any],
     ) -> None:
         """
-        Handle a result from a one-shot worker process.
+        Handle a result from a worker process.
 
-        The child has already exited (or is about to); remove the handle,
-        wake any waiters blocked on a free slot, then fire the callback.
-
-        Args:
-            handle: ProcessHandle that produced the result
-            result: Result data from the worker
+        One-shot workflow children have already exited (or are about to);
+        their handle is removed, freeing a max_workers slot. Service
+        children report terminal attempt outcomes through on_service_result
+        and free a service slot instead.
         """
         self._unregister_result_reader(handle)
+
+        if handle.service is not None:
+            await self._handle_service_result(handle, result)
+            return
 
         execution = handle.current_execution
         if execution is None:
@@ -1620,6 +1864,96 @@ class ProcessPoolManager:
                 await self.on_result(result)
             except Exception as e:
                 logger.exception(f"Error in result callback: {e}")
+
+    def _service_envelope(
+        self, handle: ProcessHandle, result: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Merge a service child result with parent-owned attempt identity."""
+        service = handle.service
+        assert service is not None
+        envelope = dict(result)
+        envelope.setdefault("service", {})
+        if isinstance(envelope["service"], dict):
+            envelope["service"].setdefault("service_id", service.service_id)
+            envelope["service"].setdefault("attempt_id", service.attempt_id)
+            envelope["service"].setdefault("lease_token", service.lease_token)
+        envelope["recycled"] = service.recycled
+        if service.recycle_reason is not None:
+            envelope["recycle_reason"] = service.recycle_reason
+        return envelope
+
+    async def _handle_service_result(
+        self,
+        handle: ProcessHandle,
+        result: dict[str, Any],
+    ) -> None:
+        """Forward a service attempt outcome and free its service slot."""
+        callback_already_owned = handle.result_reported
+        handle.result_reported = True
+        handle.current_execution = None
+        handle.executions_completed += 1
+
+        # pop() not check-then-del: race-safe against concurrent cleaners.
+        self.service_processes.pop(handle.id, None)
+        await self._notify_service_slot_free()
+
+        if callback_already_owned:
+            logger.info(
+                "Suppressing late service result for attempt %s; "
+                "terminal callback already owns it",
+                handle.service.attempt_id if handle.service else "?",
+            )
+            return
+
+        if self.on_service_result:
+            try:
+                await self.on_service_result(
+                    self._service_envelope(handle, result)
+                )
+            except Exception as e:
+                logger.exception(f"Error in service result callback: {e}")
+
+    async def _report_service_orphan(self, handle: ProcessHandle) -> None:
+        """Report a KILLED service child whose attempt was never reported."""
+        if handle.service is None:
+            return
+        handle.result_reported = True
+        if self.on_service_result is None:
+            return
+        try:
+            await self.on_service_result(
+                self._service_envelope(handle, {
+                    "type": "result",
+                    "attempt_id": handle.service.attempt_id,
+                    "success": False,
+                    "status": "Failed",
+                    "error": "Service child was killed but its attempt was never reported",
+                    "error_type": "OrphanedService",
+                })
+            )
+        except Exception as e:
+            logger.exception(f"Error reporting service orphan: {e}")
+
+    async def _report_service_crash(self, handle: ProcessHandle) -> None:
+        """Report a service child crash through on_service_result."""
+        if handle.service is None:
+            return
+        handle.result_reported = True
+        if self.on_service_result is None:
+            return
+        try:
+            await self.on_service_result(
+                self._service_envelope(handle, {
+                    "type": "result",
+                    "attempt_id": handle.service.attempt_id,
+                    "success": False,
+                    "status": "Failed",
+                    "error": "Service worker process crashed unexpectedly",
+                    "error_type": "ProcessCrashError",
+                })
+            )
+        except Exception as e:
+            logger.exception(f"Error reporting service crash: {e}")
 
     async def _notify_slot_free(self) -> None:
         """Wake any tasks blocked in `_wait_for_slot`."""
@@ -1774,6 +2108,28 @@ class ProcessPoolManager:
                 }
             processes.append(info)
 
+        service_children = []
+        for p in self.service_processes.values():
+            private_dirty_kb = _get_private_dirty_kb(p.pid) if p.pid else -1
+            if private_dirty_kb >= 0:
+                service_memory_mb: float = private_dirty_kb / 1024
+            else:
+                service_memory_mb = self._get_process_memory(p.pid)
+            child: dict[str, Any] = {
+                "pid": p.pid,
+                "process_id": p.id,
+                "state": p.state.value,
+                "memory_mb": service_memory_mb,
+                "private_dirty_kb": private_dirty_kb,
+                "uptime_seconds": p.uptime_seconds,
+            }
+            if p.service is not None:
+                child["service"] = {
+                    "service_id": p.service.service_id,
+                    "attempt_id": p.service.attempt_id,
+                }
+            service_children.append(child)
+
         # One-shot handles are never idle; retain the field for the heartbeat
         # contract consumed by the worker dashboard.
         idle_count = 0
@@ -1792,6 +2148,8 @@ class ProcessPoolManager:
             "pool_size": len(self.processes),
             "idle_count": idle_count,
             "busy_count": busy_count,
+            "service_count": len(self.service_processes),
+            "service_children": service_children,
             "requirements_installed": self._requirements_installed,
             "requirements_total": self._requirements_total,
             "memory_current_bytes": memory_current,
@@ -1842,6 +2200,7 @@ class ProcessPoolManager:
             "shutdown": self._shutdown,
             "worker_id": self.worker_id,
             "pool_size": len(self.processes),
+            "service_count": len(self.service_processes),
             "processes": [
                 {
                     "process_id": p.id,
@@ -1853,6 +2212,18 @@ class ProcessPoolManager:
                     "current_execution": p.current_execution.execution_id if p.current_execution else None,
                 }
                 for p in self.processes.values()
+            ],
+            "service_processes": [
+                {
+                    "process_id": p.id,
+                    "pid": p.pid,
+                    "state": p.state.value,
+                    "uptime_seconds": p.uptime_seconds,
+                    "is_alive": p.is_alive,
+                    "service_id": p.service.service_id if p.service else None,
+                    "attempt_id": p.service.attempt_id if p.service else None,
+                }
+                for p in self.service_processes.values()
             ],
         }
 
@@ -1876,6 +2247,7 @@ def get_process_pool() -> ProcessPoolManager:
             graceful_shutdown_seconds=settings.graceful_shutdown_seconds,
             heartbeat_interval_seconds=settings.worker_heartbeat_interval_seconds,
             registration_ttl_seconds=settings.worker_registration_ttl_seconds,
+            max_service_workers=settings.max_service_workers,
         )
     return _pool
 

@@ -106,8 +106,8 @@ class ManifestWorkflow(EntityCodec, BaseModel):
     id: str = Field(description="Workflow UUID", **classify(FieldClass.IDENTITY))
     name: str = Field(default="", description="MCP tool name; defaults to function_name on registration", **classify(FieldClass.CONTENT))
     path: str = Field(description="Relative path to Python file (e.g. 'workflows/onboard.py')", **classify(FieldClass.CONTENT, match_key=True))
-    function_name: str = Field(description="Python function name decorated with @workflow/@tool/@data_provider", **classify(FieldClass.CONTENT, match_key=True))
-    type: str = Field(default="workflow", description="workflow | tool | data_provider", **classify(FieldClass.CONTENT))
+    function_name: str = Field(description="Python function name decorated with @workflow/@tool/@data_provider/@service", **classify(FieldClass.CONTENT, match_key=True))
+    type: Literal["workflow", "tool", "data_provider", "service"] = Field(default="workflow", description="workflow | tool | data_provider | service", **classify(FieldClass.CONTENT))
     organization_id: str | None = Field(default=None, description="Org UUID (null = global)", **classify(FieldClass.ENVIRONMENT))
     # roles/role_names are ENVIRONMENT but install MUST carry them — they are the
     # access grant the deployer re-binds in the target org (capture also passes

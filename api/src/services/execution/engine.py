@@ -3,10 +3,12 @@ Unified Execution Engine
 Single source of truth for all code execution (workflows, scripts, data providers)
 """
 
+import asyncio
 import inspect
 import json
 import logging
 import os
+import signal
 import sys
 from contextlib import redirect_stdout, redirect_stderr
 from dataclasses import dataclass, field
@@ -69,6 +71,22 @@ except ImportError:
     clear_write_buffer = None  # type: ignore
 
 @dataclass
+class ServiceRunConfig:
+    """Supervision config for one service attempt (engine service mode)."""
+
+    service_id: str
+    attempt_id: str
+    lease_token: str
+    revision: str | None = None
+    graceful_shutdown_seconds: int = 30
+    startup_grace_seconds: int = 60
+    # Initial renewable credential; the supervisor installs fresher ones
+    # from the parent's Redis handoff as they arrive.
+    token: str = ""
+    token_expires_at: str = ""
+
+
+@dataclass
 class ExecutionRequest:
     """Request to execute code or a function"""
     execution_id: str
@@ -118,6 +136,11 @@ class ExecutionRequest:
     # entity — own-first, then _repo/. None for plain _repo/ executions.
     solution_id: str | None = None
     artifact_workspace_id: str | None = None
+
+    # Service mode (Slice 3): set for supervised @service runs. The engine
+    # invokes the service coroutine with cooperative stop (no timeout kill,
+    # no variable tracing) and attempt-scoped log streaming.
+    service: ServiceRunConfig | None = None
 
 
 @dataclass
@@ -251,6 +274,11 @@ async def execute(request: ExecutionRequest) -> ExecutionResult:
         ValueError: If neither func nor code provided
     """
     start_time = datetime.now(timezone.utc)
+
+    # Supervised service mode: cooperative stop, no timeout kill, no
+    # variable tracing, attempt-scoped log streaming.
+    if request.service is not None:
+        return await execute_service(request, start_time=start_time)
 
     # Resolve what we're executing
     func = None
@@ -670,6 +698,381 @@ async def execute(request: ExecutionRequest) -> ExecutionResult:
                 logger.debug(f"Closed broadcaster for execution {request.execution_id}")
             except Exception as e:
                 logger.warning(f"Error closing broadcaster: {e}")
+
+
+# Maximum age of a cached rotation token before the supervisor re-reads it.
+_SERVICE_TOKEN_REFRESH_SECONDS = 60.0
+
+
+async def execute_service(
+    request: ExecutionRequest,
+    start_time: datetime | None = None,
+) -> ExecutionResult:
+    """Run one supervised @service attempt to a terminal outcome.
+
+    Service-mode semantics (vs one-shot workflows):
+    - the service coroutine runs indefinitely until it returns, raises, or
+      a stop is requested — no timeout kill, no ``sys.settrace`` variable
+      capture, no completion Postgres flush;
+    - stop arrives cooperatively: SIGTERM/SIGINT sets the supervision event
+      (installed on the loop, overriding the pool's loop-top flag handler)
+      and the parent mirrors ``stop_requested`` over a Redis key as backup;
+    - logs stream continuously to the attempt-scoped Redis stream
+      (``publish_service_log``) with the same MAXLEN bound as executions;
+    - ``service.ready()`` reports are drained to the parent's Redis ready key
+      and the renewable credential is refreshed from the parent's handoff.
+    """
+    from src.config import get_settings
+
+    cfg = request.service
+    assert cfg is not None
+    start_time = start_time or datetime.now(timezone.utc)
+    func = request.func
+    if func is None:
+        raise ValueError("Service execution requires request.func")
+    metadata = getattr(func, "_executable_metadata", None)
+    if metadata is not None and getattr(metadata, "type", None) != "service":
+        raise ValueError(
+            f"Service execution requires a @service function, got type="
+            f"{getattr(metadata, 'type', None)!r}"
+        )
+
+    from src.sdk.context import ROIContext
+
+    roi = ROIContext()
+    if request.roi:
+        roi.time_saved = request.roi.get("time_saved", 0)
+        roi.value = request.roi.get("value", 0.0)
+
+    context = ExecutionContext(
+        user_id=request.caller.user_id,
+        email=request.caller.email,
+        name=request.caller.name,
+        scope=request.organization.id if request.organization else "GLOBAL",
+        organization=request.organization,
+        is_platform_admin=False,
+        is_function_key=False,
+        execution_id=cfg.attempt_id,
+        workflow_name=request.name or "",
+        public_url=get_settings().public_url,
+        startup=request.startup,
+        form_inputs=request.form_inputs,
+        embed=request.embed,
+        roi=roi,
+        event=request.event,
+        solution_id=request.solution_id,
+        artifact_workspace_id=request.artifact_workspace_id,
+    )
+
+    if BIFROST_CONTEXT_AVAILABLE:
+        set_execution_context(context)
+
+    # Install the initial renewable credential handed down at dispatch.
+    if cfg.token:
+        from bifrost._service_runtime import install_service_credentials
+
+        install_service_credentials(cfg.token)
+
+    stop_event = asyncio.Event()
+    from bifrost._service_runtime import (
+        clear_service_runtime,
+        install_service_runtime,
+    )
+
+    install_service_runtime(stop_event)
+
+    # Cooperative stop: SIGTERM/SIGINT resolves wait_until_stopping() even
+    # when user code is parked in an await (the pool's loop-top SIGTERM flag
+    # alone cannot interrupt that). Guarded for non-Unix loops.
+    loop = asyncio.get_running_loop()
+    installed_signals: list[int] = []
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(sig, stop_event.set)
+            installed_signals.append(sig)
+        except (NotImplementedError, RuntimeError, ValueError):
+            # Non-Unix loop or unsupported signal: cooperative stop still
+            # works via the stop-event mirror; signals are best-effort.
+            pass
+
+    supervisor_task: asyncio.Task[None] | None = None
+    try:
+        with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+            supervisor_task = asyncio.create_task(
+                _service_supervisor(cfg, stop_event),
+                name=f"service-supervisor-{cfg.attempt_id[:8]}",
+            )
+            service_logger = logging.getLogger(
+                getattr(func, "__module__", __name__)
+            )
+            service_logger.info(
+                "service starting (revision %s)", cfg.revision or "unknown"
+            )
+            # The parent decides the completion reason from durable state
+            # (stop_requested_at set → 'requested'); the local flag only
+            # records that this run unwound via the stop path.
+            result, service_logs, _ = await _execute_service_with_trace(
+                func, context, request.parameters or {}, cfg, stop_event
+            )
+
+        duration_ms = int(
+            (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
+        )
+        return ExecutionResult(
+            execution_id=cfg.attempt_id,
+            status=ExecutionStatus.SUCCESS,
+            result=result,
+            duration_ms=duration_ms,
+            logs=service_logs,
+            variables=None,
+            integration_calls=context._integration_calls,
+            execution_context=None,
+            error_message=None,
+            error_type=None,
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        duration_ms = int(
+            (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
+        )
+        service_logger = logging.getLogger(getattr(func, "__module__", __name__))
+        # The user-facing log line is scrubbed by the log handler, but the
+        # persisted error string is built here: redact fetched secrets or
+        # they land verbatim in ServiceAttempt.error via the attempts API.
+        secret_values = context._collect_secret_values()
+        raw_message = format_exception_message(e)
+        error_message = (
+            redact_secrets(raw_message, secret_values)
+            if secret_values
+            else raw_message
+        )
+        service_logger.error("service failed: %s", error_message)
+        e.__traceback__ = None
+        return ExecutionResult(
+            execution_id=cfg.attempt_id,
+            status=ExecutionStatus.FAILED,
+            result=None,
+            duration_ms=duration_ms,
+            logs=[],
+            variables=None,
+            integration_calls=[],
+            execution_context=None,
+            error_message=error_message,
+            error_type=type(e).__name__,
+        )
+    finally:
+        if supervisor_task is not None:
+            supervisor_task.cancel()
+            try:
+                await supervisor_task
+            except asyncio.CancelledError:
+                # Expected: we just cancelled it and awaited shutdown.
+                pass
+        for sig in installed_signals:
+            try:
+                loop.remove_signal_handler(sig)
+            except (NotImplementedError, RuntimeError, ValueError):
+                # Handler was never installed (see install guard above).
+                pass
+        clear_service_runtime()
+        if BIFROST_CONTEXT_AVAILABLE:
+            clear_execution_context()
+
+
+async def _service_supervisor(
+    cfg: ServiceRunConfig, stop_event: asyncio.Event
+) -> None:
+    """Bridge process-local supervision state and the parent's Redis keys.
+
+    1s tick: drain ``service.ready()`` reports to the ready key; mirror the
+    parent's stop key into the stop event. Every 60s: install a fresher
+    rotation token from the parent's handoff when one arrived.
+    """
+    import json as _json
+
+    from src.core.cache import get_redis
+    from src.core.cache.keys import (
+        service_ready_key,
+        service_stop_key,
+        service_token_key,
+    )
+    from bifrost._service_runtime import (
+        install_service_credentials,
+        take_ready_report,
+    )
+
+    current_expires_at = cfg.token_expires_at
+    last_token_check = 0.0
+    while not stop_event.is_set():
+        try:
+            async with get_redis() as r:
+                if take_ready_report():
+                    await r.setex(
+                        service_ready_key(cfg.attempt_id), 120, "1"
+                    )
+                stop_flag = await r.get(service_stop_key(cfg.attempt_id))
+                if stop_flag:
+                    stop_event.set()
+                    break
+                now = asyncio.get_running_loop().time()
+                if now - last_token_check >= _SERVICE_TOKEN_REFRESH_SECONDS:
+                    last_token_check = now
+                    raw = await r.get(service_token_key(cfg.attempt_id))
+                    if raw:
+                        try:
+                            payload = _json.loads(raw)
+                        except (ValueError, TypeError):
+                            payload = None
+                        if (
+                            isinstance(payload, dict)
+                            and payload.get("token")
+                            and payload.get("expires_at", "")
+                            > current_expires_at
+                        ):
+                            install_service_credentials(payload["token"])
+                            current_expires_at = payload["expires_at"]
+                            cfg.token_expires_at = current_expires_at
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.debug("service supervisor tick failed: %s", e)
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=1.0)
+        except asyncio.TimeoutError:
+            continue
+
+
+async def _execute_service_with_trace(
+    func: Any,
+    context: ExecutionContext,
+    parameters: dict[str, Any],
+    cfg: ServiceRunConfig,
+    stop_event: asyncio.Event,
+) -> tuple[Any, list[dict[str, Any]], bool]:
+    """Invoke the @service coroutine with log capture and stop supervision.
+
+    Returns (result, service_logs, stopped). No variable tracing: services
+    never persist ``variables``/``execution_context`` snapshots.
+    """
+    from bifrost._logging import publish_service_log
+
+    service_logs: list[dict[str, Any]] = []
+    workflow_module_file = func.__code__.co_filename
+
+    class ServiceLogHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            workflow_basename = os.path.basename(workflow_module_file)
+            record_basename = os.path.basename(record.pathname)
+            is_workspace_log = (
+                "workspace" in record.pathname or "/repo/" in record.pathname
+            )
+            # System rows (starting/ready/stopping) are emitted by the
+            # engine itself: same logger name as the service module but an
+            # engine pathname. They are first-class service log entries.
+            is_service_system = record.name == getattr(
+                func, "__module__", None
+            )
+            if (
+                record_basename != workflow_basename
+                and not is_workspace_log
+                and not is_service_system
+            ):
+                return
+            message = record.getMessage()
+            current_secrets = context._collect_secret_values()
+            if current_secrets:
+                message = redact_secrets(message, current_secrets)
+            service_logs.append(
+                {"level": record.levelname, "message": message}
+            )
+            try:
+                publish_service_log(
+                    cfg.service_id, cfg.attempt_id, record.levelname, message
+                )
+            except Exception as e:
+                logger.debug("service log publish failed: %s", e)
+
+    handler = ServiceLogHandler()
+    handler.setLevel(logging.DEBUG)
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.DEBUG)
+    root_logger.addHandler(handler)
+    # System rows are first-class service log entries: starting is emitted
+    # here so the handler above captures it like every later row.
+    logging.getLogger(getattr(func, "__module__", __name__)).info(
+        "service starting (revision %s)", cfg.revision or "unknown"
+    )
+    try:
+        sig = inspect.signature(func)
+        params = list(sig.parameters.values())
+        accepted_param_names = {p.name for p in params}
+        has_var_keyword = any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in params
+        )
+        if has_var_keyword:
+            accepted_params = _coerce_params_to_type_hints(func, parameters)
+        else:
+            accepted_params = _coerce_params_to_type_hints(
+                func,
+                {
+                    k: v
+                    for k, v in parameters.items()
+                    if k in accepted_param_names
+                },
+            )
+        context.parameters = dict(parameters)
+
+        first_param_is_context = False
+        if params:
+            first_param = params[0]
+            annotation = first_param.annotation
+            if annotation is not inspect.Parameter.empty:
+                if annotation is ExecutionContext:
+                    first_param_is_context = True
+                elif (
+                    isinstance(annotation, str)
+                    and "ExecutionContext" in annotation
+                ):
+                    first_param_is_context = True
+            if not first_param_is_context and first_param.name == "context":
+                first_param_is_context = True
+
+        async def _run_service_async():
+            if first_param_is_context:
+                return await func(context, **accepted_params)
+            return await func(**accepted_params)
+
+        user_task = asyncio.ensure_future(_run_service_async())
+        stop_waiter = asyncio.ensure_future(stop_event.wait())
+        try:
+            await asyncio.wait(
+                {user_task, stop_waiter},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            if not stop_waiter.done():
+                stop_waiter.cancel()
+
+        # A set stop event at completion time owns the outcome — even when
+        # the user coroutine returned in the same tick. The parent completes
+        # stop-requested attempts as 'requested' no matter how the child
+        # exited, so the racing value is dropped and the run reports stopped.
+        if stop_event.is_set():
+            service_logger = logging.getLogger(func.__module__)
+            service_logger.info("service stopping")
+            if not user_task.done():
+                user_task.cancel()
+                try:
+                    await user_task
+                except asyncio.CancelledError:
+                    # Expected: we just cancelled it and awaited shutdown.
+                    pass
+            return None, service_logs, True
+
+        return user_task.result(), service_logs, False
+    finally:
+        root_logger.removeHandler(handler)
 
 
 def _script_to_callable(code: str, name: str):

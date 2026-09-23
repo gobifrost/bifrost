@@ -410,6 +410,69 @@ def validate_csrf_token(cookie_token: str, header_token: str) -> bool:
 NO_TIMEOUT_TOKEN_SECONDS = 86_400
 """Engine-token base lifetime for workflows configured with timeout_seconds=0 (no timeout)."""
 
+SERVICE_TOKEN_LIFETIME_SECONDS = 900
+"""Service-token lifetime (15 min). Services outlive any single token: the
+owning worker parent mints a fresh token on every lease heartbeat and hands
+it to the child over Redis (see docs/plans/2026-09-20-services-credential-design.md).
+Short enough to bound a fenced child's residual API access; long enough that
+a missed heartbeat never strands a healthy child."""
+
+
+def mint_service_token(
+    *,
+    service_id: str,
+    attempt_id: str,
+    organization_id: str,
+    solution_id: str | None,
+    global_repo_access: bool,
+    lifetime_seconds: int = SERVICE_TOKEN_LIFETIME_SECONDS,
+) -> tuple[str, str]:
+    """
+    Mint a short-lived, service-scoped credential parent-side.
+
+    Called by the owning worker (which legitimately holds SECRET_KEY) when
+    claiming an attempt and on every subsequent lease heartbeat. The child
+    installs the token as process-scoped SDK credentials — no SECRET_KEY or
+    persistent credential write is required there.
+
+    Shape (see docs/plans/2026-09-20-services-credential-design.md D1):
+    an engine token minus superuser plus org scope. ``sub`` stays the engine
+    sentinel so the signed module-fetch scope (``sdk_modules``) and engine
+    attestation paths (``solution_scope``, ``tables`` created_by override)
+    keep working with zero auth-path changes; ``is_superuser=False`` plus the
+    definition's ``org_id`` reduces the token to org-member data-plane power.
+
+    Services are always org-scoped: a non-superuser token without ``org_id``
+    is rejected at authentication, so organization_id is required.
+
+    Returns:
+        (token, expires_at_iso): JWT string and ISO-8601 expiry timestamp.
+    """
+    from src.core.constants import SYSTEM_USER_ID
+
+    if not organization_id:
+        raise ValueError("Service tokens require an organization_id.")
+
+    short_id = service_id.replace("-", "")[:12]
+    token_data = {
+        "sub": SYSTEM_USER_ID,
+        "email": f"service-{short_id}@bifrost.internal",
+        "name": f"service-{short_id}",
+        "is_superuser": False,
+        "org_id": organization_id,
+        "engine_execution_id": attempt_id,
+        "engine_solution_id": solution_id,
+        "engine_global_repo_access": bool(global_repo_access),
+        "service_id": service_id,
+        "service_attempt_id": attempt_id,
+    }
+
+    lifetime = timedelta(seconds=lifetime_seconds)
+    expires_at = datetime.now(timezone.utc) + lifetime
+    token = create_access_token(token_data, expires_delta=lifetime)
+
+    return token, expires_at.isoformat()
+
 
 def mint_engine_token(
     *,

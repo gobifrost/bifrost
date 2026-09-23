@@ -240,7 +240,7 @@ async def _execute_async(
         if baseline_pss > 0 and end_pss > 0:
             metrics["peak_memory_bytes"] = max(0, end_pss - baseline_pss)
 
-        return {
+        envelope: dict[str, Any] = {
             "execution_id": execution_id,
             "success": success,
             "status": status,
@@ -258,6 +258,11 @@ async def _execute_async(
             "execution_context": result.get("execution_context"),
             "worker_id": worker_id,
         }
+        # Supervised services: pass the identity block through so the pool
+        # routes the envelope to attempt completion, not the execution path.
+        if isinstance(result.get("service"), dict):
+            envelope["service"] = result["service"]
+        return envelope
 
     except Exception as e:
         duration_ms = int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000)

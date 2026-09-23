@@ -200,7 +200,7 @@ export async function initializeMonaco(monaco: typeof Monaco) {
 	});
 
 	// CodeLens provider for Python files — shows Register/Registered on decorators
-	const decoratorRegex = /^(\s*)@(workflow|tool|data_provider)\b/;
+	const decoratorRegex = /^(\s*)@(workflow|tool|data_provider|service)\b/;
 	const defRegex = /^(\s*)(?:async\s+)?def\s+(\w+)\s*\(/;
 
 	monaco.languages.registerCodeLensProvider("python", {

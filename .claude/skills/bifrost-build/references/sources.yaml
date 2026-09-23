@@ -118,6 +118,16 @@ references:
       - client/src/lib/app-sdk/use-table.ts
     verified_at_sha: 3b29c703c87059b382aad7c90b41c9054d3c719e
 
+  - file: references/services.md
+    source_globs:
+      - api/bifrost/decorators.py
+      - api/bifrost/_service_runtime.py
+      - api/bifrost/commands/services.py
+      - api/src/sdk/decorators.py
+      - api/src/routers/services.py
+      - api/src/services/service_lifecycle.py
+    verified_at_sha: c3f8e2cadbcd33972d6c192f2f35b5290f85e3e4
+
   - file: references/web-sdk-v2.md
     source_globs:
       - client/src/lib/app-sdk/index.v2.ts

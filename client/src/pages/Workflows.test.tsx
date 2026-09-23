@@ -6,6 +6,7 @@ import { Workflows } from "./Workflows";
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { useLocation } from "react-router-dom";
 import { renderWithProviders, screen, within } from "@/test-utils";
 
 const mockUseWorkflowsFiltered = vi.fn();
@@ -62,6 +63,13 @@ vi.mock("@/components/forms/OrganizationSelect", () => ({
 const mockReadFile = vi.fn();
 vi.mock("@/services/fileService", () => ({ fileService: { readFile: (...args: unknown[]) => mockReadFile(...args) } }));
 
+const mockUseServicesList = vi.fn();
+vi.mock("@/components/services/useServiceQueries", () => ({
+	useServicesList: (...args: unknown[]) => mockUseServicesList(...args),
+	useServiceDetail: () => ({ data: undefined }),
+	useServiceAttempts: () => ({ data: undefined }),
+}));
+
 function makeWorkflow(overrides: Partial<Record<string, unknown>> = {}) {
 	return {
 		id: "wf-1",
@@ -87,10 +95,25 @@ beforeEach(() => {
 		isLoading: false,
 		refetch: vi.fn(),
 	});
+	mockUseServicesList.mockReturnValue({ data: { items: [], total: 0 } });
 });
 
+function LocationProbe() {
+	const location = useLocation();
+	return (
+		<output aria-label="location">
+			{location.pathname + location.search}
+		</output>
+	);
+}
+
 async function renderPage() {
-	return renderWithProviders(<Workflows />);
+	return renderWithProviders(
+		<>
+			<LocationProbe />
+			<Workflows />
+		</>,
+	);
 }
 
 describe("Workflows — solution-managed badge (grid view)", () => {
@@ -326,5 +349,59 @@ it("finds the edited display name and excludes unrelated workflows", async () =>
  const { user } = await renderPage();
  await user.type(screen.getByRole("textbox", { name: "Search by name, description, or category..." }), "Customer onboarding");
  await vi.waitFor(() => expect(screen.queryByRole("button", { name: "archive_logs actions" })).not.toBeInTheDocument());
- expect(screen.getByRole("button", { name: "sync_tickets actions" })).toBeInTheDocument();
+	expect(screen.getByRole("button", { name: "sync_tickets actions" })).toBeInTheDocument();
+});
+
+describe("Workflows — service row links", () => {
+	it("links workflow-list service rows to the detail route", async () => {
+		mockUseWorkflowsFiltered.mockReturnValue({
+			data: [
+				makeWorkflow({
+					id: "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1",
+					name: "telegram_bridge",
+					type: "service",
+				}),
+			],
+			isLoading: false,
+			refetch: vi.fn(),
+		});
+		mockUseServicesList.mockReturnValue({
+			data: {
+				items: [
+					{
+						id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+						workflow_id: "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1",
+					},
+				],
+				total: 1,
+			},
+		});
+		await renderPage();
+		const link = screen.getByRole("link", { name: "telegram_bridge" });
+		expect(link).toHaveAttribute(
+			"href",
+			"/services/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+		);
+	});
+
+	it("shows no service link when the workflow has no live definition", async () => {
+		mockUseWorkflowsFiltered.mockReturnValue({
+			data: [
+				makeWorkflow({
+					id: "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1",
+					name: "telegram_bridge",
+					type: "service",
+				}),
+			],
+			isLoading: false,
+			refetch: vi.fn(),
+		});
+		mockUseServicesList.mockReturnValue({
+			data: { items: [], total: 0 },
+		});
+		await renderPage();
+		expect(
+			screen.queryByRole("link", { name: "telegram_bridge" }),
+		).not.toBeInTheDocument();
+	});
 });

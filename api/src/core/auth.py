@@ -199,6 +199,8 @@ async def get_current_user_optional(
         verified_context=payload.get("verified_context"),
         engine_execution_id=payload.get("engine_execution_id"),
         engine_solution_id=payload.get("engine_solution_id"),
+        service_id=payload.get("service_id"),
+        service_attempt_id=payload.get("service_attempt_id"),
         capability_fingerprint=payload.get("capability_fingerprint"),
         token_exp=payload.get("exp"),
     )
@@ -565,6 +567,8 @@ async def get_current_user_ws(websocket) -> UserPrincipal | None:
         verified_context=payload.get("verified_context"),
         engine_execution_id=payload.get("engine_execution_id"),
         engine_solution_id=payload.get("engine_solution_id"),
+        service_id=payload.get("service_id"),
+        service_attempt_id=payload.get("service_attempt_id"),
         capability_fingerprint=payload.get("capability_fingerprint"),
         token_exp=payload.get("exp"),
     )

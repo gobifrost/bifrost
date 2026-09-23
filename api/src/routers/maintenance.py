@@ -6,6 +6,7 @@ Platform admin resource - no org scoping.
 """
 
 import logging
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel
@@ -339,6 +340,16 @@ async def cleanup_orphaned(
                     path=wf.path,
                 ))
 
+        # Park service definitions for orphaned rows so live attempts stop
+        # promptly (the claim join on type/is_active is the ultimate guard).
+        from src.services.service_lifecycle import park_definitions_for_workflows
+
+        await park_definitions_for_workflows(
+            db,
+            [UUID(w.entity_id) for w in cleaned if w.entity_type == "workflow"],
+            reason="source file missing (orphan cleanup)",
+        )
+
         await db.commit()
 
         if cleaned:
@@ -585,7 +596,7 @@ async def run_preflight(
     # at a time and `del` the tree + strings before the next iteration so
     # peak RSS is bounded to a single file's AST, not the whole workspace.
     py_files = [f for f in all_files if f.path.endswith(".py")]
-    decorator_names = {"workflow", "tool", "data_provider"}
+    decorator_names = {"workflow", "tool", "data_provider", "service"}
     for py_file in py_files:
         # Parse → collect candidate function names → release AST. All of
         # this is synchronous so when the block exits the AST and content

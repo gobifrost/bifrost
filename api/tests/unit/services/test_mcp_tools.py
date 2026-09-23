@@ -1164,7 +1164,7 @@ class TestRegisterWorkflow:
 
         data = result.structured_content
         assert "error" in data
-        assert "No @workflow/@tool/@data_provider decorated function" in data["error"]
+        assert "No @workflow/@tool/@data_provider/@service decorated function" in data["error"]
 
 
 class TestMCPContextInputCoercion:

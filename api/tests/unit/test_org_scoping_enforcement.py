@@ -252,7 +252,11 @@ IDENTITY_MODELS: set[str] = {
     # Artifacts are opaque file identities authorized by creator/org and
     # workspace membership. They are never resolved through the name cascade.
     "Artifact",
-    # File policies resolve with the SAME org→global cascade-and-override as
+    # Service definitions are platform-admin-only control-plane records
+    # (all endpoints require CurrentSuperuser). They are resolved by
+    # definition UUID, never through the org-to-global name cascade;
+    # worker access is lease-fenced, not cascade-resolved.
+    "ServiceDefinition",    # File policies resolve with the SAME org→global cascade-and-override as
     # OrgScopedRepository (org-specific prefix wins; fall back to the global
     # (org=NULL) prefix), so a global `shared/<prefix>` policy cascades to every
     # org's users. They are allow-listed rather than routed through

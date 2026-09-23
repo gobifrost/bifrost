@@ -115,6 +115,10 @@ async def run_execution(execution_id: str, context_data: dict[str, Any]) -> dict
     from src.models.enums import ExecutionStatus
     from bifrost.credentials import is_token_expired
 
+    service_cfg = context_data.get("service")
+    if service_cfg:
+        return await run_service(service_cfg, context_data)
+
     # Engine credentials: prefer the pre-minted token handed down from the
     # consumer via context_data["engine_token"].  This keeps SECRET_KEY out of
     # the child process entirely.
@@ -343,3 +347,198 @@ async def run_execution(execution_id: str, context_data: dict[str, Any]) -> dict
         # Always clear the solution import root before any final cleanup in this
         # execution process. Current pool children are one-shot.
         clear_solution_context()
+
+
+async def run_service(
+    service_cfg: dict[str, Any], context_data: dict[str, Any]
+) -> dict[str, Any]:
+    """Run one supervised @service attempt in this child process.
+
+    Mirrors ``run_execution`` loading (Solution scope, module cache, content
+    hash) but invokes the engine in service mode: the coroutine runs until it
+    returns, raises, or a stop is requested. The returned envelope carries
+    the service identity so the parent routes it to attempt completion
+    instead of the one-shot execution callback.
+    """
+    from datetime import datetime, timezone
+
+    from src.sdk.context import Caller, Organization
+    from src.services.execution.engine import (
+        ExecutionRequest,
+        ServiceRunConfig,
+        execute,
+    )
+    from src.models.enums import ExecutionStatus
+
+    start_time = datetime.now(timezone.utc)
+    attempt_id = str(service_cfg.get("attempt_id", context_data.get("execution_id")))
+
+    from src.core.module_cache_sync import clear_solution_context, set_solution_context
+
+    _exec_solution_id = context_data.get("solution_id")
+    if _exec_solution_id:
+        set_solution_context(
+            _exec_solution_id,
+            global_repo_access=bool(context_data.get("solution_global_repo_access", False)),
+        )
+
+    try:
+        _clear_workspace_modules()
+
+        org = None
+        org_data = context_data.get("organization")
+        if org_data:
+            org = Organization(
+                id=org_data["id"],
+                name=org_data["name"],
+                is_active=org_data.get("is_active", True),
+                is_provider=org_data.get("is_provider", False),
+            )
+
+        caller_data = context_data["caller"]
+        caller = Caller(
+            user_id=caller_data["user_id"],
+            email=caller_data["email"],
+            name=caller_data["name"],
+        )
+
+        # Renewable service credential handed down at dispatch (no SECRET_KEY
+        # in the child). The engine supervisor refreshes it from the parent's
+        # Redis handoff for the life of the attempt.
+        from bifrost._service_runtime import install_service_credentials
+
+        install_service_credentials(service_cfg.get("token", ""))
+
+        # Load the @service function (same DB-first loader as workflows).
+        service_func = None
+        load_error: str | None = None
+        loaded_code: str | None = None
+        function_name = context_data.get("function_name")
+        file_path = context_data.get("file_path")
+        if function_name and file_path:
+            try:
+                from src.core.module_cache_sync import get_module_sync
+                from src.services.execution.module_loader import load_workflow_from_db
+
+                cached = get_module_sync(file_path)
+                if cached:
+                    loaded_code = cached["content"]
+                    service_func, _, load_error = load_workflow_from_db(
+                        code=loaded_code,
+                        path=file_path,
+                        function_name=function_name,
+                    )
+                else:
+                    load_error = (
+                        f"Service code not found in cache or S3: "
+                        f"function_name={function_name}, file_path={file_path}"
+                    )
+            except Exception as e:
+                load_error = f"Cache load failed: {e}"
+        else:
+            load_error = (
+                f"Missing required fields for service execution: "
+                f"function_name={function_name}, file_path={file_path}"
+            )
+
+        content_hash = context_data.get("content_hash")
+        if content_hash and loaded_code:
+            import hashlib
+
+            actual_hash = hashlib.sha256(loaded_code.encode("utf-8")).hexdigest()
+            if actual_hash != content_hash:
+                logger.warning(
+                    "Content hash mismatch for %s: expected=%s... actual=%s...",
+                    file_path,
+                    content_hash[:12],
+                    actual_hash[:12],
+                )
+
+        if service_func is None:
+            return _service_result(
+                service_cfg, start_time, ExecutionStatus.FAILED.value,
+                result=None,
+                error_message=load_error or "Service function not found",
+                error_type="WorkflowLoadError" if load_error else "ExecutableNotFound",
+            )
+
+        request = ExecutionRequest(
+            execution_id=attempt_id,
+            caller=caller,
+            organization=org,
+            func=service_func,
+            name=context_data.get("name"),
+            tags=["service"],
+            timeout_seconds=0,
+            parameters={},
+            is_platform_admin=False,
+            broadcaster=None,
+            solution_id=context_data.get("solution_id"),
+            artifact_workspace_id=context_data.get("artifact_workspace_id"),
+            service=ServiceRunConfig(
+                service_id=str(service_cfg.get("service_id")),
+                attempt_id=attempt_id,
+                lease_token=str(service_cfg.get("lease_token", "")),
+                revision=service_cfg.get("revision"),
+                graceful_shutdown_seconds=int(
+                    service_cfg.get("graceful_shutdown_seconds", 30)
+                ),
+                startup_grace_seconds=int(
+                    service_cfg.get("startup_grace_seconds", 60)
+                ),
+                token=service_cfg.get("token", ""),
+                token_expires_at=service_cfg.get("token_expires_at", ""),
+            ),
+        )
+
+        exec_result = await execute(request)
+        return _service_result(
+            service_cfg, start_time, exec_result.status.value,
+            result=exec_result.result,
+            error_message=exec_result.error_message,
+            error_type=exec_result.error_type,
+        )
+    except Exception as e:
+        logger.exception("Service execution failed: %s", e)
+        e.__traceback__ = None
+        return _service_result(
+            service_cfg, start_time, ExecutionStatus.FAILED.value,
+            result=None,
+            error_message=str(e),
+            error_type=type(e).__name__,
+        )
+    finally:
+        clear_solution_context()
+
+
+def _service_result(
+    service_cfg: dict[str, Any],
+    start_time: Any,
+    status: str,
+    result: Any,
+    error_message: str | None,
+    error_type: str | None,
+) -> dict[str, Any]:
+    """Internal result shape (mirrors run_execution) plus service identity.
+
+    ``_execute_async`` maps this onto the transport envelope and passes the
+    ``service`` block through so the pool routes it to attempt completion.
+    """
+    from datetime import datetime, timezone
+
+    return {
+        "status": status,
+        "result": result,
+        "duration_ms": int(
+            (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
+        ),
+        "logs": [],
+        "variables": None,
+        "error_message": error_message,
+        "error_type": error_type,
+        "service": {
+            "service_id": str(service_cfg.get("service_id")),
+            "attempt_id": str(service_cfg.get("attempt_id")),
+            "lease_token": str(service_cfg.get("lease_token", "")),
+        },
+    }

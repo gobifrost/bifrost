@@ -25,7 +25,7 @@ class ASTMetadataParser:
         """
         # Handle @workflow (no parentheses)
         if isinstance(decorator, ast.Name):
-            if decorator.id in ("workflow", "tool", "data_provider"):
+            if decorator.id in ("workflow", "tool", "data_provider", "service"):
                 return decorator.id, {}
             return None
 
@@ -39,7 +39,7 @@ class ASTMetadataParser:
             else:
                 return None
 
-            if decorator_name not in ("workflow", "tool", "data_provider"):
+            if decorator_name not in ("workflow", "tool", "data_provider", "service"):
                 return None
 
             # Extract keyword arguments

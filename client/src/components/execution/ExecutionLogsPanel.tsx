@@ -1,11 +1,21 @@
 import { LogEntryRow } from "./LogEntryRow";
-import { useRef, useEffect, useCallback, useMemo, useState } from "react";
-import { ArrowDown, Check, Copy, Download, Search, X } from "lucide-react";
+import {
+	useRef,
+	useEffect,
+	useCallback,
+	useMemo,
+	useState,
+	type ReactNode,
+} from "react";
+import { ArrowDown, ArrowUp, Check, Copy, Download, Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
+import { DateRangePicker } from "@/components/ui/date-range-picker";
+import { endOfDay, startOfDay } from "date-fns";
+import type { DateRange } from "react-day-picker";
 import {
 	Select,
 	SelectContent,
@@ -43,6 +53,28 @@ interface ExecutionLogsPanelProps {
 	maxHeight?: string;
 	/** Larger, page-primary rendering with full controls. */
 	variant?: "default" | "primary";
+	/**
+	 * Optional date-range window (day granularity). Rendered as a native
+	 * picker beside the level filter when `showDateFilter` is set; applied
+	 * locally here, server-side by consumers that paginate (same contract).
+	 */
+	dateRange?: DateRange | undefined;
+	onDateRangeChange?: (range: DateRange | undefined) => void;
+	showDateFilter?: boolean;
+	/**
+	 * Display order. `asc` (default) renders oldest-first and follows
+	 * the bottom edge; `desc` renders newest-first and follows the top
+	 * edge. Consumers pass chronologically-ordered logs either way.
+	 */
+	sortOrder?: "asc" | "desc";
+	/**
+	 * Pagination node rendered in the persistent bottom bar (border-t)
+	 * next to the follow control — e.g. a line count plus a
+	 * load-older button. The bar renders while logs exist, so paging
+	 * never shifts layout. Without it, the follow control floats over
+	 * the list only while following is paused.
+	 */
+	pagination?: ReactNode;
 }
 
 const levelColors: Record<string, string> = {
@@ -96,6 +128,11 @@ export function ExecutionLogsPanel({
 	className,
 	maxHeight = "600px",
 	variant = "default",
+	dateRange,
+	onDateRangeChange,
+	showDateFilter = false,
+	sortOrder = "asc",
+	pagination,
 }: ExecutionLogsPanelProps) {
 	const logsContainerRef = useRef<HTMLDivElement>(null);
 	const [autoScroll, setAutoScroll] = useState(true);
@@ -119,6 +156,14 @@ export function ExecutionLogsPanel({
 		return logs.filter((log) => {
 			const level = (log.level || "info").toLowerCase();
 			if (levelFilter !== "all" && level !== levelFilter) return false;
+			const at = Date.parse(log.timestamp || "");
+			if (
+				dateRange?.from &&
+				!(at >= startOfDay(dateRange.from).getTime())
+			)
+				return false;
+			if (dateRange?.to && !(at <= endOfDay(dateRange.to).getTime()))
+				return false;
 			if (!normalizedQuery) return true;
 			const data =
 				"data" in log && log.data ? JSON.stringify(log.data) : "";
@@ -126,38 +171,48 @@ export function ExecutionLogsPanel({
 				.toLowerCase()
 				.includes(normalizedQuery);
 		});
-	}, [logs, query, levelFilter]);
+	}, [logs, query, levelFilter, dateRange]);
 
-	const renderItems = useMemo(
-		() => coalesceTracebacks(visibleLogs),
-		[visibleLogs],
+	const orderedLogs = useMemo(
+		() =>
+			sortOrder === "desc" ? [...visibleLogs].reverse() : visibleLogs,
+		[visibleLogs, sortOrder],
 	);
 
-	// Auto-scroll to bottom when new logs arrive.
-	// Uses scrollTop instead of scrollIntoView to avoid scrolling the outer page.
+	const renderItems = useMemo(
+		() => coalesceTracebacks(orderedLogs),
+		[orderedLogs],
+	);
+
+	// Auto-scroll to the follow edge when new logs arrive while following:
+	// bottom for chronological feeds, top for newest-first feeds.
 	useEffect(() => {
 		const container = logsContainerRef.current;
 		if (autoScroll && container && visibleLogs.length > 0) {
-			container.scrollTop = container.scrollHeight;
+			container.scrollTop =
+				sortOrder === "desc" ? 0 : container.scrollHeight;
 		}
-	}, [visibleLogs.length, autoScroll]);
+	}, [visibleLogs.length, autoScroll, sortOrder]);
 
-	// Handle scroll to detect if user has scrolled up (pause auto-scroll)
+	// Handle scroll to detect if user has scrolled away from the follow
+	// edge (pause auto-scroll)
 	const handleLogsScroll = useCallback(() => {
 		const container = logsContainerRef.current;
 		if (!container) return;
 
-		// Check if scrolled to bottom (with 50px threshold)
-		const isAtBottom =
-			container.scrollHeight -
-				container.scrollTop -
-				container.clientHeight <
-			50;
-		setAutoScroll(isAtBottom);
-	}, []);
+		// Check if at the follow edge (with 50px threshold)
+		const isFollowing =
+			sortOrder === "desc"
+				? container.scrollTop < 50
+				: container.scrollHeight -
+						container.scrollTop -
+						container.clientHeight <
+					50;
+		setAutoScroll(isFollowing);
+	}, [sortOrder]);
 
 	const handleCopyLogs = useCallback(async () => {
-		const text = visibleLogs
+		const text = orderedLogs
 			.map((log) => {
 				const time = formatLogTime(log.timestamp);
 				const level = (log.level || "INFO").toUpperCase();
@@ -171,7 +226,7 @@ export function ExecutionLogsPanel({
 		} else {
 			toast.error("Failed to copy logs");
 		}
-	}, [visibleLogs]);
+	}, [orderedLogs]);
 
 	const handleDownloadLogs = useCallback(() => {
 		const text = logs
@@ -294,6 +349,16 @@ export function ExecutionLogsPanel({
 	const visibleCount = visibleLogs.length;
 	const countLabel = `${lineCount} line${lineCount !== 1 ? "s" : ""}`;
 
+	// Resume following at the follow edge (top for newest-first, bottom
+	// otherwise) — shared by the bottom bar and the floating control.
+	const resumeFollowing = useCallback(() => {
+		setAutoScroll(true);
+		const container = logsContainerRef.current;
+		if (container)
+			container.scrollTop =
+				sortOrder === "desc" ? 0 : container.scrollHeight;
+	}, [sortOrder]);
+
 	// Inspector panel: one step-1 surface framed by a hairline ring, with a
 	// step-2 header band — same idiom in the drawer and the details page.
 	const logsContent =
@@ -324,6 +389,7 @@ export function ExecutionLogsPanel({
 					onClick={() => {
 						setQuery("");
 						setLevelFilter("all");
+						onDateRangeChange?.(undefined);
 					}}
 				>
 					Clear filters
@@ -336,7 +402,7 @@ export function ExecutionLogsPanel({
 	return (
 		<div
 			className={cn(
-				"@container min-w-0 overflow-hidden rounded-[var(--bf-radius-surface)] border border-border bg-muted/50",
+				"@container relative min-w-0 overflow-hidden rounded-[var(--bf-radius-surface)] border border-border bg-muted/50",
 				variant === "primary" &&
 					"bg-background xl:flex xl:min-h-0 xl:flex-1 xl:flex-col xl:[--execution-log-max-height:none]",
 				className,
@@ -385,7 +451,13 @@ export function ExecutionLogsPanel({
 					</div>
 				</div>
 				{logs.length > 0 && (
-					<div className="grid gap-2 @lg:grid-cols-[minmax(0,1fr)_9rem]">
+					<div
+						className={
+							showDateFilter
+								? "grid gap-2 @lg:grid-cols-[minmax(0,1fr)_9rem_auto]"
+								: "grid gap-2 @lg:grid-cols-[minmax(0,1fr)_9rem]"
+						}
+					>
 						<div className="relative min-w-0">
 							<Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
 							<Input
@@ -430,11 +502,17 @@ export function ExecutionLogsPanel({
 								<SelectItem value="traceback">
 									Traceback
 								</SelectItem>
-								{isPlatformAdmin && (
-									<SelectItem value="debug">Debug</SelectItem>
-								)}
+							{isPlatformAdmin && (
+								<SelectItem value="debug">Debug</SelectItem>
+							)}
 							</SelectContent>
 						</Select>
+						{showDateFilter && onDateRangeChange && (
+							<DateRangePicker
+								dateRange={dateRange}
+								onDateRangeChange={onDateRangeChange}
+							/>
+						)}
 					</div>
 				)}
 			</div>
@@ -449,8 +527,47 @@ export function ExecutionLogsPanel({
 			)}
 			{/* Content */}
 			{logsContent}
-			{!autoScroll && visibleLogs.length > 0 && (
-				<div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-border bg-muted px-3 py-2">
+			{pagination && logs.length > 0 && (
+				<div className="flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-2 border-t border-border bg-muted px-3 py-2">
+					<div className="flex min-h-11 items-center gap-1.5 text-sm text-muted-foreground">
+						{!autoScroll ? (
+							<Button
+								variant="outline"
+								className="min-h-11"
+								onClick={resumeFollowing}
+							>
+								{sortOrder === "desc" ? (
+									<ArrowUp
+										aria-hidden="true"
+										className="h-4 w-4"
+									/>
+								) : (
+									<ArrowDown
+										aria-hidden="true"
+										className="h-4 w-4"
+									/>
+								)}
+								{sortOrder === "desc"
+									? "Back to Top"
+									: "Jump to latest"}
+							</Button>
+						) : isConnected ? (
+							<span className="inline-flex items-center gap-1.5">
+								<span
+									aria-hidden="true"
+									className="h-2 w-2 rounded-full bg-[image:var(--bf-activity-gradient)] motion-safe:animate-pulse motion-reduce:animate-none"
+								/>
+								Following live updates
+							</span>
+						) : (
+							<span>Live updates unavailable</span>
+						)}
+					</div>
+					{pagination}
+				</div>
+			)}
+			{!pagination && !autoScroll && visibleLogs.length > 0 && (
+				<div className="absolute inset-x-0 bottom-0 z-10 flex flex-wrap items-center justify-between gap-2 border-t border-border bg-muted px-3 py-2">
 					<span
 						role="status"
 						className="text-xs text-muted-foreground"
@@ -460,12 +577,7 @@ export function ExecutionLogsPanel({
 					<Button
 						variant="outline"
 						className="min-h-11"
-						onClick={() => {
-							setAutoScroll(true);
-							const container = logsContainerRef.current;
-							if (container)
-								container.scrollTop = container.scrollHeight;
-						}}
+						onClick={resumeFollowing}
 					>
 						<ArrowDown className="h-4 w-4" />
 						Jump to latest

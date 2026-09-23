@@ -73,6 +73,7 @@ async def get_workflow_metadata_only(
             time_saved=cached.get("time_saved", 0),
             value=cached.get("value", 0.0),
             execution_mode=cached.get("execution_mode", "sync"),
+            type=cached.get("type", "workflow"),
         )
         metadata.id = cached["id"]
         metadata.source_file_path = cached["file_path"]
@@ -104,6 +105,7 @@ async def get_workflow_metadata_only(
         time_saved=workflow_record.time_saved or 0,
         value=float(workflow_record.value) if workflow_record.value else 0.0,
         execution_mode=workflow_record.execution_mode or "sync",
+        type=workflow_record.type or "workflow",
     )
     metadata.id = str(workflow_record.id)
     metadata.source_file_path = workflow_record.path
@@ -117,6 +119,7 @@ async def get_workflow_metadata_only(
         time_saved=workflow_record.time_saved or 0,
         value=float(workflow_record.value) if workflow_record.value else 0.0,
         execution_mode=workflow_record.execution_mode or "sync",
+        type=workflow_record.type or "workflow",
     )
 
     logger.debug(f"Loaded workflow metadata from DB: {workflow_id} -> {workflow_record.name}")
@@ -392,9 +395,21 @@ async def run_workflow(
             raise WorkflowNotFoundError(
                 f"Failed to validate workflow '{workflow_id}': {str(e)}"
             )
+        if workflow_metadata.type == "service":
+            raise ValueError(
+                f"Workflow '{workflow_name}' is a long-lived service "
+                "(type='service'). One-shot execution is not supported; "
+                "manage it through the services lifecycle (start/stop/restart)."
+            )
     else:
         workflow_name = dispatch_metadata["name"]
         timeout_seconds = dispatch_metadata["timeout_seconds"]
+        if dispatch_metadata.get("type") == "service":
+            raise ValueError(
+                f"Workflow '{workflow_name}' is a long-lived service "
+                "(type='service'). One-shot execution is not supported; "
+                "manage it through the services lifecycle (start/stop/restart)."
+            )
 
     # Enqueue for execution via worker
     # sync is only True when explicitly passed by the caller (e.g. endpoints.py)

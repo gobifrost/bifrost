@@ -201,7 +201,7 @@ def test_root_model_all_preserves_public_exports_and_resolves_every_symbol() -> 
         """
     )
 
-    assert result["count"] == 541
+    assert result["count"] == 544
     assert result["failed"] == []
     assert result["contract_tail_matches"] is True
 

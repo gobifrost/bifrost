@@ -70,6 +70,7 @@ from src.models.contracts.solutions import (  # noqa: E402
     SolutionDeployJobStatus,
 )
 from src.models.contracts.policy_rule import PolicyRuleCreate, PolicyRuleUpdate  # noqa: E402
+from src.models.contracts.services import ServicePolicyUpdate  # noqa: E402
 from src.models.contracts.tables import TableCreate, TableUpdate  # noqa: E402
 from src.models.contracts.users import RoleCreate, RoleUpdate  # noqa: E402
 from src.models.contracts.workflows import WorkflowUpdateRequest  # noqa: E402
@@ -119,6 +120,7 @@ _COMMAND_DTOS: list[type] = [
     SolutionDeployJobStatus,
     PolicyRuleCreate,
     PolicyRuleUpdate,
+    ServicePolicyUpdate,
 ]
 
 #: Every request/response DTO the in-workflow SDK sends/parses against
@@ -250,7 +252,11 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # PlatformJobStatus gained requires_action (2026-09-21). BREAKING: older
     # polling CLIs cannot parse the new PlatformJobPublic enum value, so
     # MIN_CLI_VERSION was raised to 1.4.2. CONTRACT_VERSION remains frozen.
-    "127eb9802995bb48661182b4e8363dbcb819f7b146cb306c739c871a248520e9"
+    #
+    # ServicePolicyUpdate newly fingerprinted (2026-09-22): `bifrost services
+    # update` sends it (greenfield coverage — no old CLI sends this DTO, so
+    # nothing breaks). Fingerprint refreshed only.
+    "15581748fa3f44098bec3703c4e8c4bea8681be96dedf6dfbc419a1c5a900dec"
 )
 
 

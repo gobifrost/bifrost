@@ -37,7 +37,7 @@ from src.repositories.org_scoped import OrgScopedRepository
 logger = logging.getLogger(__name__)
 
 # Type discriminator values
-WorkflowType = Literal["workflow", "tool", "data_provider"]
+WorkflowType = Literal["workflow", "tool", "data_provider", "service"]
 
 
 class WorkflowRepository(OrgScopedRepository[Workflow]):
@@ -589,6 +589,7 @@ class WorkflowRepository(OrgScopedRepository[Workflow]):
             .where(Workflow.id == workflow_id)
             .where(Workflow.endpoint_enabled.is_(True))
             .where(Workflow.is_active.is_(True))
+            .where(Workflow.type != "service")
         )
         return result.scalar_one_or_none()
 
@@ -614,6 +615,7 @@ class WorkflowRepository(OrgScopedRepository[Workflow]):
             .where(Workflow.name == name)
             .where(Workflow.endpoint_enabled.is_(True))
             .where(Workflow.is_active.is_(True))
+            .where(Workflow.type != "service")
         )
         workflows = list(result.scalars().all())
 
