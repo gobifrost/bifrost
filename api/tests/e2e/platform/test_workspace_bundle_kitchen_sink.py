@@ -4,7 +4,7 @@ The fixture is a representative Solution package (workflows + modules, a
 source-backed app, tables, an inline form, an inline agent with tool bindings,
 multi-type config declarations, schedule + webhook events, file policies,
 ordinary files, README/metadata) plus package-only declarations (custom claims,
-connection schemas, file locations, role bindings) that must warn explicitly.
+connection schemas, file locations, role bindings) that workspace import handles.
 
 The same tree exercises all four destination/source combinations:
 
@@ -563,6 +563,8 @@ async def test_workspace_zip_preview_classifies_every_kind(
     ).scalars().one()
     assert acme["target_id"] == str(seeded_integration.id)
     assert by_match["contoso"]["classification"] == "create"
+    assert by_match["sink-archive"]["kind"] == "file_policy"
+    assert by_match["sink-archive"]["classification"] == "create"
     # Files: replaced alpha, identical beta/runbook, new remainder.
     assert by_match[WF_ALPHA_PATH]["classification"] == "conflict"
     assert by_match[WF_BETA_PATH]["classification"] == "unchanged"
@@ -577,10 +579,10 @@ async def test_workspace_zip_preview_classifies_every_kind(
     assert by_match[RUNBOOK_PATH]["group_key"] is None
 
     warnings = preview["warnings"]
-    assert any("unattached" in w for w in warnings)
-    assert any("file-location" in w.lower() for w in warnings)
+    assert not any("unattached" in w for w in warnings)
+    assert not any("file-location" in w.lower() for w in warnings)
     assert any("config" in w.lower() for w in warnings)
-    # Claims, connections, and roles import now — only file locations warn.
+    # Claims, connections, roles, and file locations import.
     assert not any("claim" in w.lower() for w in warnings)
     assert not any("connection" in w.lower() for w in warnings)
     assert not any("role binding" in w.lower() for w in warnings)
@@ -737,6 +739,16 @@ async def test_workspace_zip_import_preserves_ids_rewrites_refs_and_runtime(
         )
     ).scalars().all()[-1]
     assert policy.solution_id is None
+    share_policy = (
+        await db_session.execute(
+            select(FilePolicy).where(
+                FilePolicy.location == "sink-archive", FilePolicy.path == "",
+                FilePolicy.solution_id.is_(None),
+            )
+        )
+    ).scalars().one()
+    assert share_policy.organization_id is None
+    assert share_policy.policies == {"policies": [{"$ref": "admin_bypass"}]}
 
     app = (
         await db_session.execute(select(Application).where(Application.slug == APP_SLUG))

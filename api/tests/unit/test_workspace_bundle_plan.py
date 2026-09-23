@@ -23,7 +23,29 @@ def test_solution_package_projection_normalizes_schema_without_coercing_it() -> 
     config = projection.manifest.configs["API_KEY"]
     assert config.config_type == "secret"
     assert config.value == "not-a-secret"
-    assert "Solution config declarations import as global workspace configs; required and position are not retained." in projection.warnings
+    assert "Solution config declarations import as workspace configs; required and position are not retained." in projection.warnings
+
+
+def test_declared_file_location_becomes_scoped_root_policy() -> None:
+    from src.services.solutions.workspace_bundle_plan import SolutionPackageWorkspaceProjection
+    from src.services.solutions.zip_install import PreviewResult
+
+    organization_id = UUID(int=8)
+    projection = SolutionPackageWorkspaceProjection.from_preview(
+        PreviewResult(
+            file_locations=["shared"],
+            config_schemas=[{"key": "ARCHIVE_KEY", "type": "string"}],
+        ),
+        preview_id=UUID(int=7), organization_id=organization_id,
+    )
+
+    policy = next(iter(projection.manifest.file_policies.values()))
+    assert (policy.location, policy.path, policy.organization_id) == (
+        "shared", "", str(organization_id),
+    )
+    assert policy.policies == [{"$ref": "admin_bypass"}]
+    assert projection.manifest.configs["ARCHIVE_KEY"].organization_id == str(organization_id)
+    assert not any("file-location" in warning.lower() for warning in projection.warnings)
 
 
 def test_created_entities_receive_stable_target_ids() -> None:

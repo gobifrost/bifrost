@@ -30,19 +30,15 @@ from bifrost.manifest import (
     ManifestWorkflow,
 )
 from bifrost.ignore_patterns import DEFAULT_IGNORE_PATTERNS
+from shared.file_policies_seed import make_seed_admin_bypass_file
+from src.services.solutions.file_locations import normalize_file_locations
 from src.models.contracts.solutions import WorkspaceBundleItem, WorkspaceBundlePreview
 from src.services.git_repo_manager import hash_file, iter_repo_files
 from src.services.solutions.zip_install import PreviewResult
 
 _ID_NAMESPACE = UUID("f4b9f7ce-b035-48b8-bfdd-d18a02e34731")
 _CONFIG_WARNING = (
-    "Solution config declarations import as global workspace configs; required and position are not retained."
-)
-_SCOPE_WARNING = (
-    "Imported entities are unattached global workspace content (organization_id and solution_id are null)."
-)
-_FILE_LOCATION_WARNING = (
-    "Solution file-location declarations are install setup metadata with no workspace analogue and are not imported."
+    "Solution config declarations import as workspace configs; required and position are not retained."
 )
 _FILE_LOOKUP_BATCH_SIZE = 100
 
@@ -139,6 +135,20 @@ class SolutionPackageWorkspaceProjection:
             data = _entry(row, preview_id=preview_id, organization_id=organization_id, stable_key=f"file-policy:{row.get('location')}:{row.get('path')}")
             file_policies[data["id"]] = ManifestFilePolicy.model_validate(data)
 
+        # A workspace share exists as soon as it has a root policy. Give each
+        # declared location the same visible, revocable admin seed policy that
+        # an install receives, unless the package supplies an explicit root.
+        declared_locations = normalize_file_locations(package.file_locations)
+        seeded_policies = make_seed_admin_bypass_file()["policies"]
+        for location in declared_locations:
+            if any(policy.location == location and policy.path == "" for policy in file_policies.values()):
+                continue
+            policy_id = uuid5(_ID_NAMESPACE, f"file-location:{organization_id}:{location}")
+            file_policies[str(policy_id)] = ManifestFilePolicy(
+                id=str(policy_id), organization_id=str(organization_id) if organization_id else None,
+                location=location, path="", policies=seeded_policies,
+            )
+
         claims: dict[str, ManifestCustomClaim] = {}
         for row in package.claims:
             data = _entry(row, preview_id=preview_id, organization_id=organization_id, stable_key=f"claim:{row.get('name')}")
@@ -155,14 +165,13 @@ class SolutionPackageWorkspaceProjection:
             configs[key] = ManifestConfig(
                 id=str(config_id), key=key, config_type=str(row.get("type", "string")),
                 description=row.get("description"), value=row.get("default"),
-                organization_id=None, integration_id=None,
+                organization_id=str(organization_id) if organization_id else None,
+                integration_id=None,
             )
 
-        warnings = [_SCOPE_WARNING]
+        warnings: list[str] = []
         if package.config_schemas:
             warnings.append(_CONFIG_WARNING)
-        if package.file_locations:
-            warnings.append(_FILE_LOCATION_WARNING)
         package_role_names = sorted({
             str(name)
             for rows in (package.workflows, package.apps, package.tables, package.forms, package.agents)
@@ -204,7 +213,7 @@ def _display_key(natural_key: tuple) -> str:
     """
     parts: list[str] = []
     for part in natural_key:
-        if part is None:
+        if part is None or part == "":
             continue
         try:
             UUID(str(part))
