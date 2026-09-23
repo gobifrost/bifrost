@@ -123,7 +123,8 @@ async def test_workspace_bundle_job_imports_entities_files_indexes_cache_and_dir
     assert job["status"] == "succeeded", job
 
     from src.core.module_cache import get_module
-    from src.core.repo_dirty import get_repo_dirty_since
+    from src.core.cache.redis_client import get_redis
+    from src.core.repo_dirty import DIRTY_KEY
     from src.models.orm.file_index import FileIndex
     from src.models.orm.workflows import Workflow
     from src.services.repo_storage import RepoStorage
@@ -137,4 +138,5 @@ async def test_workspace_bundle_job_imports_entities_files_indexes_cache_and_dir
     cached = await get_module(path)
     assert cached is not None
     assert cached["content"] == source
-    assert await get_repo_dirty_since() is not None
+    async with get_redis() as redis:
+        assert await redis.get(DIRTY_KEY) is not None

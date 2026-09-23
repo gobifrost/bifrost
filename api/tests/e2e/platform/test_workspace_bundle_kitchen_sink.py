@@ -600,6 +600,32 @@ async def test_workspace_zip_preview_classifies_every_kind(
     await WorkspaceBundleStorage(preview["preview_token"]).delete()
 
 
+async def test_workspace_preview_handles_independent_apps_without_repo_source(
+    e2e_client, platform_admin, db_session,
+) -> None:
+    """Only matching Apps are compared, and a pathless slug collision is reviewable."""
+    from src.models.orm.applications import Application
+
+    app_slug = f"pathless-{uuid.uuid4().hex[:8]}"
+    matching = Application(
+        name="Independent App", slug=app_slug, repo_path=None,
+        app_model="standalone_v2",
+    )
+    unrelated = Application(
+        name="Another Independent App",
+        slug=f"unrelated-{uuid.uuid4().hex[:8]}", repo_path=None,
+        app_model="standalone_v2",
+    )
+    db_session.add_all([matching, unrelated])
+    await db_session.commit()
+
+    _, archive, _, _ = _stage_source_tree(app_slug=app_slug)
+    preview = _preview_zip(e2e_client, platform_admin.headers, archive)
+    matched = _items_by_match(preview)[_key(app_slug)]
+    assert matched["classification"] == "conflict"
+    assert matched["target_id"] == str(matching.id)
+
+
 async def test_workspace_zip_import_accepts_declared_config_values(
     e2e_client, platform_admin, db_session,
 ) -> None:

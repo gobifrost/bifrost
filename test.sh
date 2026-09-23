@@ -30,7 +30,7 @@
 #   ./test.sh client e2e e2e/auth.unauth.spec.ts   Pass through to playwright.
 #
 # CI escape hatch:
-#   ./test.sh pr-preflight              Local repository, unit, quality, and CodeQL gate before opening a PR.
+#   ./test.sh pr-preflight              Local repository, changed E2E, unit, quality, and CodeQL gate before opening a PR.
 #   ./test.sh pre-pr                    Optional full local reproduction of the merge gate (diagnostic).
 #   ./test.sh ci                        Full isolated run: up, all tests, down.
 #
@@ -614,11 +614,24 @@ cmd_pre_pr() {
 }
 
 cmd_pr_preflight() {
+    local path
+    local -a changed_e2e_tests=()
     git fetch --quiet origin main
     repository_ci_checks
     quality_api
     stack_up
     cmd_unit
+    while IFS= read -r path; do
+        if [[ "${path##*/}" == test_*.py ]]; then
+            changed_e2e_tests+=("${path#api/}")
+        fi
+    done < <(git diff --name-only --diff-filter=ACMR origin/main...HEAD -- api/tests/e2e/)
+    if ((${#changed_e2e_tests[@]})); then
+        echo "Running changed backend E2E test files: ${changed_e2e_tests[*]}"
+        # Match CI's credential-free E2E lane; optional live GitHub tests use
+        # a separate external repository and do not run in the merge queue.
+        GITHUB_TEST_PAT= run_pytest "${changed_e2e_tests[@]}" -v
+    fi
     client_ci_checks
     scripts/codeql-local.sh --rebuild --changed-only --fail-on-alerts
     scripts/codeql-local.sh --rebuild --lang javascript --changed-only --fail-on-alerts

@@ -464,13 +464,13 @@ class TestFirstGitConnection:
         write_entity_to_repo(sync_service._persistent_dir, "modules/local.py", "local")
         write_entity_to_repo(sync_service._persistent_dir, "modules/same.py", "same")
         write_entity_to_repo(sync_service._persistent_dir, "modules/shared.py", "ours")
-        write_entity_to_repo(working_clone, "modules/remote.py", "remote")
-        write_entity_to_repo(working_clone, "modules/same.py", "same")
-        write_entity_to_repo(working_clone, "modules/shared.py", "theirs")
-        repo = Repo(str(working_clone))
-        repo.git.add(A=True)
-        repo.index.commit("remote workspace")
-        repo.remotes.origin.push(refspec="main:main")
+        work_path = Path(working_clone.working_tree_dir)
+        write_entity_to_repo(work_path, "modules/remote.py", "remote")
+        write_entity_to_repo(work_path, "modules/same.py", "same")
+        write_entity_to_repo(work_path, "modules/shared.py", "theirs")
+        working_clone.git.add(A=True)
+        working_clone.index.commit("remote workspace")
+        working_clone.remotes.origin.push(refspec="main:main")
 
         preview = await sync_service.preview_connect(
             str(bare_repo),
@@ -491,11 +491,10 @@ class TestFirstGitConnection:
     ) -> None:
         """The preview hash prevents a reviewed decision from applying to changed local bytes."""
         write_entity_to_repo(sync_service._persistent_dir, "modules/shared.py", "ours")
-        write_entity_to_repo(working_clone, "modules/shared.py", "theirs")
-        repo = Repo(str(working_clone))
-        repo.git.add(A=True)
-        repo.index.commit("remote conflict")
-        repo.remotes.origin.push(refspec="main:main")
+        write_entity_to_repo(Path(working_clone.working_tree_dir), "modules/shared.py", "theirs")
+        working_clone.git.add(A=True)
+        working_clone.index.commit("remote conflict")
+        working_clone.remotes.origin.push(refspec="main:main")
         preview = await sync_service.preview_connect(
             str(bare_repo), "main", requested_by_user_id="connect-stale-user", organization_id=None,
         )
@@ -3198,6 +3197,11 @@ class TestCrossInstanceManifestReconciliation:
         working_clone.remotes.origin.pull("main")
         configs_path = Path(working_clone.working_dir) / ".bifrost" / "configs.yaml"
         configs = yaml.safe_load(configs_path.read_text())
+        remote_delete_target = next(
+            config for config in configs["configs"].values()
+            if config["key"] == "delete_this"
+        )
+        remote_delete_target["value"] = "changed_remotely"
         configs["configs"]["new_from_remote"] = {
             "id": str(uuid4()),
             "key": "new_from_remote",

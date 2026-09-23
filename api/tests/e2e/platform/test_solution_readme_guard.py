@@ -14,24 +14,16 @@ pytestmark = pytest.mark.e2e
 def _create_solution(e2e_client, headers, slug: str, *, git: bool) -> str:
     body: dict = {"slug": slug, "name": slug.upper(), "organization_id": None}
     if git:
-        # A git-connected install carries a repo URL; create disconnected then
-        # PATCH the git fields on (mirrors how the UI connects an install).
-        pass
+        body.update({
+            "git_connected": True,
+            "git_repo_url": "https://example.com/acme/widget.git",
+            "repo_subpath": "widget",
+            "git_ref": "main",
+        })
     r = e2e_client.post("/api/solutions", headers=headers, json=body)
     assert r.status_code in (200, 201), r.text
-    sid = r.json()["id"]
-    if git:
-        r2 = e2e_client.patch(
-            f"/api/solutions/{sid}",
-            headers=headers,
-            json={
-                "git_connected": True,
-                "git_repo_url": "https://example.com/acme/widget.git",
-            },
-        )
-        assert r2.status_code == 200, r2.text
-        assert r2.json()["git_connected"] is True
-    return sid
+    assert r.json()["git_connected"] is git
+    return r.json()["id"]
 
 
 def test_readme_put_succeeds_on_disconnected_install(e2e_client, platform_admin):

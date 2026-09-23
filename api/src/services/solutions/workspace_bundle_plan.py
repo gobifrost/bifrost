@@ -304,7 +304,7 @@ class WorkspaceBundlePlanner:
     async def plan(self, projection: SolutionPackageWorkspaceProjection) -> PlannedWorkspaceBundle:
         incoming_paths = self._incoming_file_paths(projection)
         return self._build_plan(
-            projection, await self._prefetch_existing(),
+            projection, await self._prefetch_existing(projection.manifest),
             await self._prefetch_existing_file_hashes(incoming_paths),
             existing_integrations=await self._prefetch_existing_integrations(),
         )
@@ -467,9 +467,16 @@ class WorkspaceBundlePlanner:
             ("file_policy", manifest.file_policies, lambda x: (x.location, x.path, x.organization_id)),
         )
 
-    async def _prefetch_existing(self) -> dict[tuple[str, tuple], tuple[UUID, dict[str, Any], bool]]:
+    async def _prefetch_existing(
+        self, manifest: Manifest,
+    ) -> dict[tuple[str, tuple], tuple[UUID, dict[str, Any], bool]]:
         if self.db is None:
             return {}
+        incoming_keys = {
+            (kind, key_fn(entity))
+            for kind, entries, key_fn in self._collections(manifest)
+            for entity in entries.values()
+        }
         # Natural keys are intentionally limited to unattached workspace rows.
         # Solution-owned rows are install content and never candidates here.
         from src.models.orm.agents import Agent, AgentDelegation, AgentRole, AgentTool
@@ -505,8 +512,16 @@ class WorkspaceBundlePlanner:
             rows = (await self.db.execute(query)).scalars().all()
             for row in rows:
                 key = tuple(getattr(row, column.key) for column in columns)
+                if (kind, key) not in incoming_keys:
+                    continue
+                if kind == "app" and row.repo_path is None:
+                    # Independent Apps have no workspace source. A matching slug
+                    # must be reviewed as a conflict, never serialized as a manifest App.
+                    snapshot = {"path": None, "slug": row.slug, "name": row.name}
+                else:
+                    snapshot = serializers[kind](row)
                 result[(kind, key)] = (
-                    row.id, serializers[kind](row),
+                    row.id, snapshot,
                     _has_config_value(row.value) if kind == "config" else False,
                 )
         event_rows = (await self.db.execute(
@@ -515,6 +530,9 @@ class WorkspaceBundlePlanner:
                 EventSource.solution_id.is_(None),
             )
         )).scalars().all()
+        event_rows = [
+            row for row in event_rows if ("event", (row.name,)) in incoming_keys
+        ]
         if event_rows:
             event_ids = [row.id for row in event_rows]
             schedules = {row.event_source_id: row for row in (await self.db.execute(
@@ -546,7 +564,19 @@ class WorkspaceBundlePlanner:
                 query = query.options(selectinload(Agent.llm_profile))
             if "solution_id" in model.__table__.columns:
                 query = query.where(model.solution_id.is_(None))
-            scoped_rows[kind] = (await self.db.execute(query)).scalars().all()
+            rows = (await self.db.execute(query)).scalars().all()
+            if kind == "file_policy":
+                scoped_rows[kind] = [
+                    row for row in rows
+                    if (kind, (
+                        row.location, row.path,
+                        str(row.organization_id) if row.organization_id else None,
+                    )) in incoming_keys
+                ]
+            else:
+                scoped_rows[kind] = [
+                    row for row in rows if (kind, (row.name,)) in incoming_keys
+                ]
         form_ids = [row.id for row in scoped_rows["form"]]
         agent_ids = [row.id for row in scoped_rows["agent"]]
         form_fields: dict[UUID, list] = {}

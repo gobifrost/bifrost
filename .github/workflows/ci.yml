@@ -466,6 +466,13 @@ jobs:
           echo "Shard ${{ matrix.shard }}/2: ${#shard_files[@]} files"
           ./test.sh "${shard_files[@]}" -v --durations=50
 
+      - name: Show API errors after E2E failure
+        if: failure()
+        run: |
+          source scripts/lib/test_helpers.sh
+          bifrost_test_project="$(compute_project_name .)"
+          COMPOSE_PROJECT_NAME="$bifrost_test_project" docker compose -f docker-compose.test.yml logs --tail=300 api
+
   # Aggregate gate — required check named "E2E Tests" (matches ruleset 15329014).
   # Fails if either backend E2E shard, the client unit suite, or the critical
   # browser smoke failed/cancelled. The component/browser jobs have their own
