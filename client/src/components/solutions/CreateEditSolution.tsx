@@ -189,20 +189,25 @@ function ConfigValueFields({
 	return configs.map((cfg) => {
 		const value = values[cfg.key] ?? "";
 		const disabled = disabledKeys?.has(cfg.key) ?? false;
+		const placeholder = cfg.hasExistingValue
+			? "Existing value if left blank"
+			: cfg.exists
+				? "No value set"
+				: cfg.hasPackageDefault
+					? "Package default if left blank"
+					: cfg.description ?? undefined;
 		return (
 			<div key={cfg.key} className="min-w-0 space-y-1">
 				<Label htmlFor={`cfg-${cfg.key}`} className="flex items-center gap-1 break-all">
 					{cfg.key}
 					{cfg.required && <span className="text-destructive" aria-hidden>*</span>}
 				</Label>
-				{cfg.description && <p className="text-xs text-muted-foreground">{cfg.description}</p>}
-				{cfg.hasExistingValue && <p className="text-xs text-muted-foreground">Existing value will be kept if left blank.</p>}
-				{cfg.exists && !cfg.hasExistingValue && <p className="text-xs text-muted-foreground">Already in this workspace; no value is set.</p>}
-				{!cfg.exists && cfg.hasPackageDefault && <p className="text-xs text-muted-foreground">Package default will be used if left blank.</p>}
 				<Input
 					id={`cfg-${cfg.key}`}
 					type={isSecretType(cfg.type) ? "password" : "text"}
 					value={value}
+					placeholder={placeholder}
+					aria-description={cfg.description ?? undefined}
 					disabled={disabled}
 					aria-required={cfg.required && !disabled}
 					onChange={(event) => onChange(cfg.key, event.target.value)}

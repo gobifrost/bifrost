@@ -1042,15 +1042,23 @@ describe("CreateEditSolution — destination-first flow", () => {
 		expect(onClose).toHaveBeenCalledTimes(1);
 	});
 
-	it("explains when an existing config value satisfies a required declaration", async () => {
+	it("shows config guidance in placeholders without changing their values", async () => {
 		vi.mocked(previewWorkspaceBundle).mockResolvedValue({
 			preview_token: "workspace-preview",
 			package_name: "Workspace",
 			package_sha256: "a".repeat(64),
 			conflict_count: 0,
 			source_kind: "zip",
-			items: [{ id: "entity:config:cfg-1", kind: "config", name: "API_TOKEN", classification: "unchanged", scope_change: false }],
-			config_schemas: [{ key: "API_TOKEN", type: "secret", required: true, requires_input: false, exists: true, has_existing_value: true }],
+			items: [
+				{ id: "entity:config:cfg-1", kind: "config", name: "API_TOKEN", classification: "unchanged", scope_change: false },
+				{ id: "entity:config:cfg-2", kind: "config", name: "REGION", classification: "create", scope_change: false },
+				{ id: "entity:config:cfg-3", kind: "config", name: "OWNER", classification: "create", scope_change: false },
+			],
+			config_schemas: [
+				{ key: "API_TOKEN", type: "secret", required: true, requires_input: false, exists: true, has_existing_value: true },
+				{ key: "REGION", type: "string", required: false, requires_input: false, has_package_default: true },
+				{ key: "OWNER", type: "string", required: false, requires_input: false, description: "Workspace owner" },
+			],
 		});
 		const { user } = renderWithProviders(
 			<CreateEditSolution mode={{ kind: "create", destination: "workspace", source: "zip" }} open onClose={vi.fn()} onSaved={vi.fn()} />,
@@ -1059,7 +1067,11 @@ describe("CreateEditSolution — destination-first flow", () => {
 		await user.upload(fileInput!, new File(["zip"], "workspace.zip", { type: "application/zip" }));
 		const tokenInput = await screen.findByLabelText(/API_TOKEN/);
 		expect(tokenInput).not.toHaveAttribute("aria-required", "true");
-		expect(screen.getByText("Existing value will be kept if left blank.")).toBeInTheDocument();
+		expect(tokenInput).toHaveValue("");
+		expect(tokenInput).toHaveAttribute("placeholder", "Existing value if left blank");
+		expect(screen.getByLabelText(/REGION/)).toHaveAttribute("placeholder", "Package default if left blank");
+		expect(screen.getByLabelText(/OWNER/)).toHaveAttribute("placeholder", "Workspace owner");
+		expect(screen.queryByText("Existing value will be kept if left blank.")).toBeNull();
 	});
 });
 
