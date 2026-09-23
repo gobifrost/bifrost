@@ -910,7 +910,7 @@ class TestDocumentUpsertVerb:
         self, e2e_client, platform_admin, non_admin_user, org1
     ):
         """If a row already exists, the upsert is gated by the `update` action
-        on the pre-image (same as PATCH semantics)."""
+        on both the pre-image and the post-image (same as PATCH semantics)."""
         org1_id = org1["id"]
         table_name = f"upsert_gate_{uuid4().hex[:8]}"
         # Policy: anyone can create, but only admins can update
