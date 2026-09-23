@@ -5,7 +5,7 @@ import hashlib
 from uuid import UUID
 
 
-def test_solution_package_projection_normalizes_schema_without_coercing_it() -> None:
+def test_solution_package_projection_maps_config_declaration_to_workspace_value() -> None:
     from src.services.solutions.workspace_bundle_plan import SolutionPackageWorkspaceProjection
     from src.services.solutions.zip_install import PreviewResult
 
@@ -23,7 +23,6 @@ def test_solution_package_projection_normalizes_schema_without_coercing_it() -> 
     config = projection.manifest.configs["API_KEY"]
     assert config.config_type == "secret"
     assert config.value == "not-a-secret"
-    assert "Solution config declarations import as workspace configs; required and position are not retained." in projection.warnings
 
 
 def test_declared_file_location_becomes_scoped_root_policy() -> None:
@@ -45,7 +44,6 @@ def test_declared_file_location_becomes_scoped_root_policy() -> None:
     )
     assert policy.policies == [{"$ref": "admin_bypass"}]
     assert projection.manifest.configs["ARCHIVE_KEY"].organization_id == str(organization_id)
-    assert not any("file-location" in warning.lower() for warning in projection.warnings)
 
 
 def test_created_entities_receive_stable_target_ids() -> None:
@@ -110,9 +108,6 @@ def test_projection_imports_claims_and_keeps_portable_role_names() -> None:
     assert claim.organization_id is None
     workflow = next(iter(projection.manifest.workflows.values()))
     assert workflow.role_names == ["Operators"]
-    assert projection.package_role_names == ("Operators",)
-    assert not any("claims" in warning.lower() for warning in projection.warnings)
-    assert not any("role" in warning.lower() for warning in projection.warnings)
 
 
 def test_projection_strips_raw_role_uuids() -> None:
@@ -129,10 +124,9 @@ def test_projection_strips_raw_role_uuids() -> None:
 
     workflow = next(iter(projection.manifest.workflows.values()))
     assert workflow.roles == []
-    assert projection.package_role_names == ()
 
 
-def test_planner_lists_integration_shells_and_missing_roles() -> None:
+def test_planner_lists_integration_shells() -> None:
     from uuid import UUID as _UUID
 
     from src.services.solutions.workspace_bundle_plan import (
@@ -160,18 +154,15 @@ def test_planner_lists_integration_shells_and_missing_roles() -> None:
     assert shell.name == "acme"
     assert shell.classification == "create"
     assert shell.match_key == "acme"
-    assert any("Viewers" in warning for warning in planned.preview.warnings)
 
     planned_known = WorkspaceBundlePlanner(None, preview_id=UUID(int=7))._build_plan(
         projection, {},
         {},
         existing_integrations={"acme": _UUID(int=9)},
-        existing_role_names=frozenset({"Viewers"}),
     )
     shell_known = next(item for item in planned_known.preview.items if item.kind == "integration")
     assert shell_known.classification == "unchanged"
     assert shell_known.target_id == _UUID(int=9)
-    assert not any("Viewers" in warning for warning in planned_known.preview.warnings)
 
 
 def test_planner_includes_hashed_source_files_and_detects_conflicts(tmp_path) -> None:

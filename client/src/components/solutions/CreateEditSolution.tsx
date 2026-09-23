@@ -856,10 +856,11 @@ function WorkspaceImportBody({
 }) {
 	const session = useInstallSession();
 	const setWide = session.setWide;
+	const setTall = session.setTall;
 	useEffect(() => {
 		setWide(true);
-		return () => setWide(false);
-	}, [setWide]);
+		return () => { setWide(false); setTall(false); };
+	}, [setWide, setTall]);
 	const queryClient = useQueryClient();
 	const inputRef = useRef<HTMLInputElement>(null);
 	const [file, setFile] = useState<File | null>(initialFile);

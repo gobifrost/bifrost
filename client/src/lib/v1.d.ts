@@ -29157,8 +29157,6 @@ export interface components {
             package_sha256: string;
             /** Items */
             items: components["schemas"]["WorkspaceBundleItem"][];
-            /** Warnings */
-            warnings?: string[];
             /**
              * Source Kind
              * @default zip

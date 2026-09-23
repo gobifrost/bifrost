@@ -184,7 +184,6 @@ class WorkspaceBundlePreview(BaseModel):
     package_name: str
     package_sha256: str
     items: list[WorkspaceBundleItem]
-    warnings: list[str] = Field(default_factory=list)
     source_kind: Literal["zip", "repo"] = "zip"
     repo_url: str | None = None
     git_ref: str | None = None

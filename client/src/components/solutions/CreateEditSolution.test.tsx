@@ -785,7 +785,6 @@ describe("CreateEditSolution — destination-first flow", () => {
 			conflict_count: 0,
 			source_kind: "zip",
 			items: [],
-			warnings: [],
 		});
 		const { user } = renderCreate({ kind: "create" });
 
@@ -835,7 +834,6 @@ describe("CreateEditSolution — destination-first flow", () => {
 			repo_subpath: null,
 			resolved_commit: "abc123",
 			items: [],
-			warnings: [],
 		});
 		const { user } = renderCreate({ kind: "create" });
 
@@ -861,7 +859,6 @@ describe("CreateEditSolution — destination-first flow", () => {
 			conflict_count: 0,
 			source_kind: "zip",
 			items: [],
-			warnings: [],
 		});
 		const file = new File(["zip"], "dropped.zip", { type: "application/zip" });
 
@@ -892,7 +889,6 @@ describe("CreateEditSolution — destination-first flow", () => {
 			conflict_count: 0,
 			source_kind: "zip",
 			items: [],
-			warnings: [],
 		});
 		renderCreate({
 			kind: "create",
@@ -922,7 +918,6 @@ describe("CreateEditSolution — destination-first flow", () => {
 			resolved_commit: "abc123",
 			organization_id: "org-1",
 			items: [],
-			warnings: [],
 		});
 		const { user } = renderCreate({ kind: "create" });
 
@@ -952,7 +947,6 @@ describe("CreateEditSolution — destination-first flow", () => {
 			package_sha256: "a".repeat(64),
 			organization_id: "org-1",
 			items: [],
-			warnings: [],
 		} as never);
 		renderCreate({
 			kind: "create",
@@ -1008,7 +1002,6 @@ describe("CreateEditSolution — destination-first flow", () => {
 			conflict_count: 0,
 			source_kind: "zip",
 			items: [],
-			warnings: [],
 		});
 		vi.mocked(importWorkspaceBundle).mockResolvedValue({
 			job_id: "workspace-job",

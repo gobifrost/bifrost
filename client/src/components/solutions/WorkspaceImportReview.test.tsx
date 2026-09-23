@@ -7,7 +7,6 @@ const preview = {
 	package_name: "Customer operations",
 	package_sha256: "a".repeat(64),
 	source_kind: "zip",
-	warnings: ["Imported entities are unattached global workspace content."],
 	items: [
 		{
 			id: "entity:workflow:alpha",
@@ -50,20 +49,15 @@ const preview = {
 } as never;
 
 describe("WorkspaceImportReview", () => {
-	it("states the compatibility warning simply and collapses package notices", async () => {
-		const { user } = renderWithProviders(
+	it("states the compatibility warning simply", () => {
+		renderWithProviders(
 			<WorkspaceImportReview preview={preview} decisions={{}} onDecisionsChange={vi.fn()} />,
 		);
 
 		expect(
 			screen.getByText(/Solutions are designed to work together\./),
 		).toBeInTheDocument();
-		// Declaration warnings hide behind one labeled expander, not a wall.
-		expect(screen.getByText(/Imported entities are unattached/)).not.toBeVisible();
-		await user.click(screen.getByText(/Package notices \(1\)/));
-		expect(
-			screen.getByText(/Imported entities are unattached/),
-		).toBeVisible();
+		expect(screen.queryByText(/Package notices/)).toBeNull();
 	});
 
 	it("renders one row per definition with its files, in a standard table", async () => {

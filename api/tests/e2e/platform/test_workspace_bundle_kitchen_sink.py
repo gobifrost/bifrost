@@ -512,7 +512,7 @@ async def _replace_all_import(e2e_client, headers, archive: bytes) -> tuple[dict
 async def test_workspace_zip_preview_classifies_every_kind(
     e2e_client, platform_admin, db_session,
 ) -> None:
-    """One seeded preview contains creates, unchanged, conflicts, and warnings."""
+    """One seeded preview contains creates, unchanged items, and conflicts."""
     _, archive, _, _ = _stage_source_tree()
     await _seed_destination(db_session)
     preview = _preview_zip(e2e_client, platform_admin.headers, archive)
@@ -549,7 +549,6 @@ async def test_workspace_zip_preview_classifies_every_kind(
     assert claim["kind"] == "claim"
     from src.models.orm.custom_claims import CustomClaim
     from src.models.orm.integrations import Integration
-    from src.models.orm.users import Role
 
     seeded_claim = (
         await db_session.execute(select(CustomClaim).where(CustomClaim.name == "sink_vip"))
@@ -580,19 +579,8 @@ async def test_workspace_zip_preview_classifies_every_kind(
     assert app_item["group_key"] == by_match[f"{APP_PATH}/App.tsx"]["group_key"]
     assert by_match[RUNBOOK_PATH]["group_key"] is None
 
-    warnings = preview["warnings"]
-    assert not any("unattached" in w for w in warnings)
-    assert not any("file-location" in w.lower() for w in warnings)
-    assert any("config" in w.lower() for w in warnings)
-    # Claims, connections, roles, and file locations import.
-    assert not any("claim" in w.lower() for w in warnings)
-    assert not any("connection" in w.lower() for w in warnings)
-    assert not any("role binding" in w.lower() for w in warnings)
-    role_names = set(
-        (await db_session.execute(select(Role.name))).scalars().all()
-    )
-    if "Viewer" not in role_names:
-        assert any("Viewer" in w and "global roles" in w for w in warnings)
+    # Claims, connections, roles, and file locations import without notices.
+    assert "warnings" not in preview
     # Every supported definition is a review item, including claims and shells.
     assert {item["kind"] for item in preview["items"]} <= {
         "workflow", "integration", "config", "app", "table", "event",

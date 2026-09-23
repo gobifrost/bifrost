@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { Info } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { ENTITY_CONFIG } from "@/components/entity-management/types";
@@ -12,6 +12,7 @@ import {
 	DataTableRow,
 } from "@/components/ui/data-table";
 import type { WorkspaceBundlePreview } from "@/services/solutions";
+import { useInstallSession } from "./InstallSession";
 
 type Decision = "keep" | "replace";
 type Item = WorkspaceBundlePreview["items"][number];
@@ -105,13 +106,35 @@ export function WorkspaceImportReview({
 	decisions: Record<string, Decision>;
 	onDecisionsChange: (decisions: Record<string, Decision>) => void;
 }) {
+	const reviewRef = useRef<HTMLDivElement>(null);
+	const { setTall } = useInstallSession();
+	useLayoutEffect(() => {
+		const dialog = reviewRef.current?.closest<HTMLElement>("[data-testid=solution-dialog]");
+		if (!dialog) return;
+		let frame = 0;
+		const measureContent = () => {
+			// Measure at natural height, then give overflowing reviews a definite
+			// height so the table can own the scroll area.
+			setTall(false);
+			cancelAnimationFrame(frame);
+			frame = requestAnimationFrame(() => {
+				setTall(dialog.scrollHeight > dialog.clientHeight + 1);
+			});
+		};
+		measureContent();
+		window.addEventListener("resize", measureContent);
+		return () => {
+			cancelAnimationFrame(frame);
+			window.removeEventListener("resize", measureContent);
+		};
+	}, [preview.items, setTall]);
+	useEffect(() => () => setTall(false), [setTall]);
 	const conflicts = useMemo(
 		() =>
 			preview.items.filter((item) => item.classification === "conflict"),
 		[preview.items],
 	);
 	const groups = useMemo(() => groupItems(preview.items), [preview.items]);
-	const warnings = preview.warnings ?? [];
 	const groupConflicts = (group: DisplayGroup) =>
 		group.members.filter((item) => item.classification === "conflict");
 	const reviewGroups = groups.filter((group) => groupConflicts(group).length > 0);
@@ -131,7 +154,7 @@ export function WorkspaceImportReview({
 		);
 
 	return (
-		<div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+		<div ref={reviewRef} className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
 			<div className="flex min-w-0 shrink-0 gap-2 px-5 pt-4 text-sm text-foreground/80">
 				<Info className="mt-0.5 size-4 shrink-0 text-primary" />
 				<div className="min-w-0">
@@ -142,18 +165,6 @@ export function WorkspaceImportReview({
 						and likewise keeping them could materially affect how
 						things in this Solution work together.
 					</p>
-					{warnings.length > 0 && (
-						<details>
-							<summary className="mt-1.5 cursor-pointer font-medium hover:text-foreground">
-								Package notices ({warnings.length})
-							</summary>
-							<ul className="mt-1.5 list-disc space-y-1 pl-5">
-								{warnings.map((warning) => (
-									<li key={warning}>{warning}</li>
-								))}
-							</ul>
-						</details>
-					)}
 				</div>
 			</div>
 			<div className="flex min-h-12 shrink-0 flex-wrap items-center justify-between gap-2 px-5 py-2">
@@ -187,7 +198,7 @@ export function WorkspaceImportReview({
 			<div className="flex min-h-0 min-w-0 flex-1 flex-col px-5 pb-5">
 				<DataTable
 					data-testid="workspace-import-scroller"
-					className="max-h-full"
+					className="min-h-0 flex-1"
 				>
 					<DataTableHeader className="max-sm:hidden">
 						<DataTableRow>

@@ -76,6 +76,46 @@ async function readFile(api: AuthedApi, path: string): Promise<string> {
 
 test.use({ viewport: { width: 1440, height: 900 } });
 
+test("scrolls a long workspace import entity list", async ({ page }, testInfo) => {
+	await page.route("**/api/solutions/import-workspace/preview", (route) =>
+		route.fulfill({
+			json: {
+				preview_token: "scroll-layout-preview",
+				package_name: "Scroll review",
+				package_sha256: "a".repeat(64),
+				items: Array.from({ length: 60 }, (_, index) => ({
+					id: `file:notes/review-${String(index).padStart(2, "0")}.txt`,
+					kind: "file",
+					name: `notes/review-${String(index).padStart(2, "0")}.txt`,
+					classification: "create",
+					group_key: null,
+				})),
+			},
+		}),
+	);
+
+	await page.goto("/solutions");
+	await page.getByRole("button", { name: "Install Solution" }).click();
+	await page.getByTestId("destination-workspace").click();
+	await page.getByTestId("source-zip").click();
+	await page.getByRole("dialog", { name: "Import into workspace" })
+		.locator('input[type="file"]')
+		.setInputFiles({ name: "scroll-review.zip", mimeType: "application/zip", buffer: Buffer.from("layout fixture") });
+
+	const dialog = page.getByRole("dialog", { name: "Review workspace import" });
+	await expect(dialog.getByText("of 60 items")).toBeVisible();
+	const scroller = dialog.getByTestId("workspace-import-scroller").locator(".overflow-auto");
+	await expect.poll(() => scroller.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+	await scroller.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+	await expect.poll(() => scroller.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+	await expect(dialog.getByText("notes/review-59.txt")).toBeVisible();
+	await expect(dialog.getByRole("button", { name: "Start import job" })).toBeInViewport();
+	await testInfo.attach("workspace-import-long-list-bottom", {
+		body: await page.screenshot(),
+		contentType: "image/png",
+	});
+});
+
 test("reviews collisions and replaces workspace content without installing a Solution", async ({
 	page,
 	api,

@@ -1,9 +1,8 @@
 """Normalize an install-format Solution package into a workspace-import plan.
 
 Install packages are intentionally not manifests: notably their config entries
-are declarations, not ``ManifestConfig`` values.  Keeping that conversion here
-makes the lossy boundary explicit and prevents the install deployer shape from
-leaking into workspace reconciliation.
+are declarations, not ``ManifestConfig`` values. Keeping that conversion here
+prevents the install deployer shape from leaking into workspace reconciliation.
 """
 from __future__ import annotations
 
@@ -37,9 +36,6 @@ from src.services.git_repo_manager import hash_file, iter_repo_files
 from src.services.solutions.zip_install import PreviewResult
 
 _ID_NAMESPACE = UUID("f4b9f7ce-b035-48b8-bfdd-d18a02e34731")
-_CONFIG_WARNING = (
-    "Solution config declarations import as workspace configs; required and position are not retained."
-)
 _FILE_LOOKUP_BATCH_SIZE = 100
 
 
@@ -81,16 +77,12 @@ def _entry(
 
 @dataclass(frozen=True)
 class SolutionPackageWorkspaceProjection:
-    """The explicitly lossy projection from package/install to workspace scope."""
+    """Projection from package/install to workspace scope."""
 
     manifest: Manifest
     package_name: str
-    warnings: list[str]
     work_dir: Path | None = None
-    # Portable role names referenced by package entities (rebound on import,
-    # auto-creating missing global roles) and raw connection declarations
-    # (applied as never-clobber global integration shells).
-    package_role_names: tuple[str, ...] = ()
+    # Raw connection declarations become never-clobber global integration shells.
     connection_schemas: tuple[dict[str, Any], ...] = ()
 
     @classmethod
@@ -169,23 +161,12 @@ class SolutionPackageWorkspaceProjection:
                 integration_id=None,
             )
 
-        warnings: list[str] = []
-        if package.config_schemas:
-            warnings.append(_CONFIG_WARNING)
-        package_role_names = sorted({
-            str(name)
-            for rows in (package.workflows, package.apps, package.tables, package.forms, package.agents)
-            for row in rows
-            for name in (row.get("role_names") or [])
-        })
         return cls(
             manifest=Manifest(workflows=workflows, apps=apps, tables=tables, forms=forms,
                               agents=agents, configs=configs, events=events,
                               file_policies=file_policies, claims=claims),
             package_name=package.name or package.slug or "Solution package",
-            warnings=warnings,
             work_dir=work_dir,
-            package_role_names=tuple(package_role_names),
             connection_schemas=tuple(
                 dict(schema) for schema in package.connection_schemas
             ),
@@ -268,7 +249,6 @@ class WorkspaceBundlePlanner:
             projection, await self._prefetch_existing(),
             await self._prefetch_existing_file_hashes(incoming_paths),
             existing_integrations=await self._prefetch_existing_integrations(),
-            existing_role_names=await self._prefetch_existing_role_names(),
             unattached_scope_map=await self._prefetch_unattached_scope_map(),
         )
 
@@ -333,7 +313,6 @@ class WorkspaceBundlePlanner:
         existing_file_hashes: dict[str, str | None],
         *,
         existing_integrations: dict[str, UUID] | None = None,
-        existing_role_names: frozenset[str] | None = None,
         unattached_scope_map: tuple[dict[tuple[str, ...], UUID | None], dict[str, UUID | None]] | None = None,
     ) -> PlannedWorkspaceBundle:
         items: list[WorkspaceBundleItem] = []
@@ -408,17 +387,9 @@ class WorkspaceBundlePlanner:
                 classification=("unchanged" if match is not None else "create"),
                 match_key=name, target_id=target,
             ))
-        warnings = list(projection.warnings)
-        missing_roles = sorted(set(projection.package_role_names) - set(existing_role_names or ()))
-        if missing_roles:
-            warnings.append(
-                "Import will create global roles: "
-                + ", ".join(missing_roles)
-                + " (empty until assigned)."
-            )
         return PlannedWorkspaceBundle(
             preview=WorkspaceBundlePreview(preview_token=str(self.preview_id), package_name=projection.package_name,
-                                            package_sha256="", items=items, warnings=warnings,
+                                            package_sha256="", items=items,
                                             organization_id=self.organization_id),
             manifest=projection.manifest, id_map=self.reference_map(items),
             work_dir=projection.work_dir, file_hashes=file_hashes,
@@ -546,15 +517,6 @@ class WorkspaceBundlePlanner:
             ).all()
         }
         return workflows, apps
-
-    async def _prefetch_existing_role_names(self) -> frozenset[str]:
-        """All role names (roles are global by name)."""
-        if self.db is None:
-            return frozenset()
-        from src.models.orm.users import Role
-
-        rows = (await self.db.execute(select(Role.name))).scalars().all()
-        return frozenset(str(name) for name in rows)
 
     async def _prefetch_existing_file_hashes(self, incoming_paths: Iterator[str]) -> dict[str, str | None]:
         from src.services.repo_storage import RepoStorage
