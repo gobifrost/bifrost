@@ -144,7 +144,13 @@ async def _entered_configs_match(db, plan, payload: WorkspaceBundleImportPayload
                 )
             )
         ).scalar_one_or_none()
-        if row is None or row.config_type.value != declaration.config_type or row.description != declaration.description:
+        if (
+            row is None
+            or row.config_type.value != declaration.config_type
+            or row.description != declaration.description
+            or row.required != declaration.required
+            or row.position != declaration.position
+        ):
             return False
         stored = row.value.get("value") if isinstance(row.value, dict) else row.value
         if row.config_type == ConfigType.SECRET:

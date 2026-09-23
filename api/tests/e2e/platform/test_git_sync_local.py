@@ -2098,6 +2098,8 @@ class TestSplitManifestFormat:
                     "key": "app/api_url",
                     "config_type": "string",
                     "description": "API Base URL",
+                    "required": True,
+                    "position": 7,
                     "value": "https://api.example.com",
                 },
             },
@@ -2117,6 +2119,65 @@ class TestSplitManifestFormat:
         assert cfg.key == "app/api_url"
         assert cfg.config_type == "string"
         assert cfg.value == "https://api.example.com"
+        assert cfg.required is True
+        assert cfg.position == 7
+
+    async def test_pull_removes_stale_subscription_before_its_workflow(
+        self,
+        db_session: AsyncSession,
+        sync_service,
+        working_clone,
+    ):
+        """Deletion preview and apply agree when a stale workflow owns a subscription."""
+        from src.models.orm.events import EventSource, EventSubscription
+
+        workflow_id = uuid4()
+        event_id = uuid4()
+        subscription_id = uuid4()
+        db_session.add(Workflow(
+            id=workflow_id,
+            name="Stale subscription workflow",
+            function_name="stale_subscription_workflow",
+            path="workflows/stale_subscription.py",
+            is_active=True,
+        ))
+        db_session.add(EventSource(
+            id=event_id,
+            name="Stale subscription source",
+            source_type="schedule",
+            is_active=True,
+            created_by="git-sync",
+        ))
+        db_session.add(EventSubscription(
+            id=subscription_id,
+            event_source_id=event_id,
+            workflow_id=workflow_id,
+            is_active=True,
+            created_by="git-sync",
+        ))
+        await db_session.commit()
+
+        work_dir = Path(working_clone.working_dir)
+        bifrost_dir = work_dir / ".bifrost"
+        bifrost_dir.mkdir(exist_ok=True)
+        (bifrost_dir / "configs.yaml").write_text(yaml.dump({
+            "configs": {
+                "stale/subscription/sync_marker": {
+                    "id": str(uuid4()),
+                    "key": "stale/subscription/sync_marker",
+                    "config_type": "string",
+                    "value": "present",
+                },
+            },
+        }))
+        working_clone.index.add([".bifrost/configs.yaml"])
+        working_clone.index.commit("remove stale subscription and workflow")
+        working_clone.remotes.origin.push()
+
+        result = await sync_service.desktop_sync(confirm_deletes=True)
+        assert result.success is True
+        assert await db_session.get(EventSubscription, subscription_id) is None
+        assert await db_session.get(Workflow, workflow_id) is None
 
     async def test_pull_integration_config_links_config_schema_id(
         self,

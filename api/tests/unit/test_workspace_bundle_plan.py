@@ -23,6 +23,7 @@ def test_solution_package_projection_exposes_config_fields_without_secret_defaul
     config = projection.manifest.configs["API_KEY"]
     assert config.config_type == "secret"
     assert config.value is None
+    assert (config.required, config.position) == (True, 3)
     assert projection.config_schemas == ({
         "key": "API_KEY", "type": "secret", "required": True, "description": None,
     },)

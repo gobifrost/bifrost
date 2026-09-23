@@ -14775,6 +14775,16 @@ export interface components {
             integration_name?: string | null;
             /** Description */
             description?: string | null;
+            /**
+             * Required
+             * @default false
+             */
+            required: boolean;
+            /**
+             * Position
+             * @default 0
+             */
+            position: number;
             /** Updated At */
             updated_at?: string | null;
             /** Updated By */

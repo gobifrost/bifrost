@@ -1391,6 +1391,8 @@ class TestConfigDictKeyCollision:
                     integration_id=integ_id,
                     key="api_url",
                     config_type="string",
+                    required=True,
+                    position=2,
                     organization_id=org_id_1,
                     value="https://org1.example.com",
                 ),
@@ -1411,6 +1413,7 @@ class TestConfigDictKeyCollision:
         assert config_id_1 in restored.configs
         assert config_id_2 in restored.configs
         assert restored.configs[config_id_1].value == "https://org1.example.com"
+        assert (restored.configs[config_id_1].required, restored.configs[config_id_1].position) == (True, 2)
         assert restored.configs[config_id_2].value == "https://org2.example.com"
 
 

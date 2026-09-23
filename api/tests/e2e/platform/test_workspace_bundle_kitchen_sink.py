@@ -755,11 +755,13 @@ async def test_workspace_zip_import_preserves_ids_rewrites_refs_and_runtime(
         await db_session.execute(select(Config).where(Config.key == "SINK_TOKEN"))
     ).scalars().all()[-1]
     assert token.value == {"value": "live-token"}
-    assert token.description == "Sink API token v1"
+    assert token.description == "Sink API token"
+    assert (token.required, token.position) == (True, 3)
     retries = (
         await db_session.execute(select(Config).where(Config.key == "SINK_RETRIES"))
     ).scalars().all()[-1]
     assert retries.description == "Retry budget v2"
+    assert (retries.required, retries.position) == (False, 1)
 
     # Claims import as global definitions with destination IDs preserved.
     from src.models.orm.custom_claims import CustomClaim

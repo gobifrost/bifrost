@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, Enum as SQLAlchemyEnum, ForeignKey, Index, LargeBinary, String, Text, text
+from sqlalchemy import Boolean, DateTime, Enum as SQLAlchemyEnum, ForeignKey, Index, LargeBinary, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -47,6 +47,8 @@ class Config(Base):
         default=ConfigType.STRING,
     )
     description: Mapped[str | None] = mapped_column(Text, default=None)
+    required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
+    position: Mapped[int] = mapped_column(nullable=False, default=0, server_default=text("0"))
     organization_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("organizations.id"), default=None
     )

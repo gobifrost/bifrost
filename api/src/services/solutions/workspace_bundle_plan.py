@@ -150,7 +150,7 @@ class SolutionPackageWorkspaceProjection:
 
         # This is intentionally *not* ``ManifestConfig.model_validate(row)``.
         # A Solution schema has type/default while a workspace config has
-        # config_type/value; required and position have no workspace analogue.
+        # config_type/value. Declaration metadata carries through separately.
         configs: dict[str, ManifestConfig] = {}
         for row in package.config_schemas:
             key = str(row.get("key") or row.get("id"))
@@ -158,6 +158,8 @@ class SolutionPackageWorkspaceProjection:
             configs[key] = ManifestConfig(
                 id=str(config_id), key=key, config_type=str(row.get("type", "string")),
                 description=row.get("description"),
+                required=row.get("required") is True,
+                position=int(row.get("position") or 0),
                 value=None if row.get("type") == "secret" else row.get("default"),
                 organization_id=str(organization_id) if organization_id else None,
                 integration_id=None,

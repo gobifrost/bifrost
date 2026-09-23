@@ -33,6 +33,8 @@ class ConfigResponse(BaseModel):
     integration_name: str | None = Field(
         default=None, description="Integration name (if config is managed by an integration)")
     description: str | None = None
+    required: bool = False
+    position: int = 0
     updated_at: datetime | None = None
     updated_by: str | None = None
 

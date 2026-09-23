@@ -745,6 +745,8 @@ class ManifestConfig(EntityCodec, BaseModel):
     key: str = Field(description="Config key name", **classify(FieldClass.CONTENT, match_key=True))
     config_type: str = Field(default="string", description="string | int | bool | json | secret", **classify(FieldClass.CONTENT))
     description: str | None = Field(default=None, description="Human-readable description", **classify(FieldClass.CONTENT))
+    required: bool = Field(default=False, description="Whether this config needs a value", **classify(FieldClass.CONTENT))
+    position: int = Field(default=0, description="Display order", **classify(FieldClass.CONTENT))
     organization_id: str | None = Field(default=None, description="Org UUID (null = global)", **classify(FieldClass.ENVIRONMENT, match_key=True))
     value: object | None = Field(default=None, description="Config value (null for secret type)", **classify(FieldClass.CONTENT, predicate="config_value"))
 
@@ -769,6 +771,8 @@ class ManifestConfig(EntityCodec, BaseModel):
             key=cfg.key,
             config_type=config_type,
             description=cfg.description,
+            required=cfg.required,
+            position=cfg.position,
             organization_id=str(cfg.organization_id) if cfg.organization_id else None,
             value=value,
         )
@@ -785,6 +789,8 @@ class ManifestConfig(EntityCodec, BaseModel):
                 "config_type": self.config_type,
                 "value": self.value,
                 "description": self.description,
+                "required": self.required,
+                "position": self.position,
             },
             indexer_content={},
             restamp={},

@@ -1714,6 +1714,11 @@ class ManifestResolver:
                 )
             return len(stale_ids)
 
+        # Delete subscriptions before workflows. Workflow deletion cascades to
+        # subscriptions; preview and dry-run revalidation must see the same
+        # explicit deletion set as the real apply phase.
+        await _bulk_delete(EventSubscription, [], present_sub_uuids, "event_subscriptions")
+
         # Delete workflows synced from git that are no longer present
         await _bulk_delete(
             Workflow,
@@ -1803,9 +1808,6 @@ class ManifestResolver:
             present_policy_rule_uuids,
             "policy_rules",
         )
-
-        # Delete event subscriptions not in manifest
-        await _bulk_delete(EventSubscription, [], present_sub_uuids, "event_subscriptions")
 
         # Delete event sources not in manifest
         await _bulk_delete(EventSource, [], present_event_uuids, "events")
@@ -2141,8 +2143,8 @@ class ManifestResolver:
     def _resolve_config(self, mcfg, cache: dict) -> "list[SyncOp]":
         """Resolve a config entry from manifest into SyncOps.
 
-        Uses prefetch cache for lookup. Skips writing value if type=SECRET
-        and existing value is non-null. Returns ops list.
+        Uses prefetch cache for lookup. Secret values are never replaced by
+        portable manifest content; declaration metadata still updates.
         """
         from uuid import UUID
 
@@ -2178,11 +2180,7 @@ class ManifestResolver:
         is_secret = ct == ConfigType.SECRET
 
         if cache_hit is not None:
-            existing_id, existing_value, _config_schema_id = cache_hit
-
-            # Secret with existing value — don't overwrite
-            if is_secret and existing_value is not None and schema_id is None:
-                return []
+            existing_id, _existing_value, _config_schema_id = cache_hit
 
             # Update existing row (including ID if it changed)
             update_values: dict = {
@@ -2190,6 +2188,8 @@ class ManifestResolver:
                 "key": vals["key"],
                 "config_type": ct,
                 "description": vals["description"],
+                "required": vals["required"],
+                "position": vals["position"],
                 "integration_id": integ_id,
                 "organization_id": org_id,
                 "updated_by": "git-sync",
@@ -2211,6 +2211,8 @@ class ManifestResolver:
                 "key": vals["key"],
                 "config_type": ct,
                 "description": vals["description"],
+                "required": vals["required"],
+                "position": vals["position"],
                 "integration_id": integ_id,
                 "organization_id": org_id,
                 "value": vals["value"] if vals["value"] is not None else {},
