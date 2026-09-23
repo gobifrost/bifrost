@@ -117,19 +117,30 @@ async def test_zip_install_refused_into_git_connected_install(e2e_client, platfo
     assert "git-connected" in inst.json()["detail"]
 
 
-async def test_zip_install_upgrade_and_downgrade_gate(e2e_client, platform_admin):
-    """Versioned zip install (Task 20):
+async def test_zip_install_downgrade_gate_and_force(e2e_client, platform_admin, db_session):
+    """The HTTP force flag reaches a versioned install's downgrade gate.
 
-    * install v1 → install v2 (same slug+scope) is an UPGRADE of the SAME
-      install (no second install row); version + upgraded_from_version recorded.
-    * an older zip (v0.9) → 409 with the downgrade detail.
-    * the same older zip with ?force=true → succeeds and records the downgrade.
+    Version bookkeeping and an ordinary upgrade are covered directly by
+    test_solution_deploy_version, without two extra async install jobs here.
     """
+    from src.models.orm.solutions import Solution
+
     headers = platform_admin.headers
     upload_headers = {
         k: v for k, v in headers.items() if k.lower() != "content-type"
     }
     slug = f"zip-ver-{uuid.uuid4().hex[:8]}"
+    created = e2e_client.post(
+        "/api/solutions",
+        headers=headers,
+        json={"slug": slug, "name": slug.upper(), "organization_id": None},
+    )
+    assert created.status_code in (200, 201), created.text
+    sid = created.json()["id"]
+    install = await db_session.get(Solution, uuid.UUID(sid))
+    assert install is not None
+    install.version = "1.1.0"
+    await db_session.commit()
 
     def _install(version: str, force: bool = False):
         url = "/api/solutions/install" + ("?force=true" if force else "")
@@ -144,20 +155,7 @@ async def test_zip_install_upgrade_and_downgrade_gate(e2e_client, platform_admin
             headers,
         )
 
-    # Install v1.0.0.
-    v1 = _install("1.0.0")
-    assert v1.status_code in (200, 201), v1.text
-    sid = v1.json()["id"]
-    assert v1.json()["version"] == "1.0.0"
-
-    # Install v1.1.0 for the same slug+scope → SAME install id, version updated.
-    v2 = _install("1.1.0")
-    assert v2.status_code in (200, 201), v2.text
-    assert v2.json()["id"] == sid, "upgrade must not create a second install"
-    assert v2.json()["version"] == "1.1.0"
-    assert v2.json()["upgraded_from_version"] == "1.0.0"
-
-    # An older zip is refused with the downgrade detail.
+    # An older zip is refused by the queued install job.
     down = _install("0.9.0")
     assert down.status_code == 409, down.text
     detail = down.json()["detail"]

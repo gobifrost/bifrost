@@ -54,6 +54,14 @@ def _deploy_workflow_and_app(e2e_client, headers, sid: str):
     return real_wf, real_app
 
 
+@pytest.fixture(scope="module")
+def managed_workflow_and_app(e2e_client, platform_admin):
+    """One deployed pair for independent read-only endpoint checks."""
+    headers = platform_admin.headers
+    sid = _solution(e2e_client, headers, f"rofull-shared-{uuid.uuid4().hex[:8]}")
+    return _deploy_workflow_and_app(e2e_client, headers, sid)
+
+
 def test_solution_managed_trigger_is_locked(e2e_client, platform_admin):
     """A deployed schedule trigger (EventSource) is read-only: PATCH/DELETE on
     the source must 409 (deploy is the only writer; uninstall removes it)."""
@@ -91,10 +99,11 @@ def test_solution_managed_trigger_is_locked(e2e_client, platform_admin):
     assert delete.status_code == 409, f"{delete.status_code} {delete.text}"
 
 
-def test_workflow_secondary_mutations_are_locked(e2e_client, platform_admin):
+def test_workflow_secondary_mutations_are_locked(
+    e2e_client, platform_admin, managed_workflow_and_app,
+):
     headers = platform_admin.headers
-    sid = _solution(e2e_client, headers, f"rofull-wf-{uuid.uuid4().hex[:8]}")
-    wf_id, _ = _deploy_workflow_and_app(e2e_client, headers, sid)
+    wf_id, _ = managed_workflow_and_app
     role_id = str(uuid.uuid4())
 
     # Each of these is a non-deploy mutation surface → must 409 with the message.
@@ -112,10 +121,11 @@ def test_workflow_secondary_mutations_are_locked(e2e_client, platform_admin):
         assert resp.json()["detail"] == _MSG, f"{method.upper()} {path}: {resp.json()}"
 
 
-def test_app_secondary_mutations_are_locked(e2e_client, platform_admin):
+def test_app_secondary_mutations_are_locked(
+    e2e_client, platform_admin, managed_workflow_and_app,
+):
     headers = platform_admin.headers
-    sid = _solution(e2e_client, headers, f"rofull-app-{uuid.uuid4().hex[:8]}")
-    _, app_id = _deploy_workflow_and_app(e2e_client, headers, sid)
+    _, app_id = managed_workflow_and_app
 
     cases = [
         ("post", f"/api/applications/{app_id}/publish", {}),
@@ -133,12 +143,13 @@ def test_app_secondary_mutations_are_locked(e2e_client, platform_admin):
         assert resp.json()["detail"] == _MSG, f"{method.upper()} {path}: {resp.json()}"
 
 
-def test_role_endpoints_locked_for_managed_workflow(e2e_client, platform_admin):
+def test_role_endpoints_locked_for_managed_workflow(
+    e2e_client, platform_admin, managed_workflow_and_app,
+):
     """Role-centric endpoints (/api/roles/{id}/workflows) must refuse to mutate
     role bindings on a solution-managed entity (Codex P1-a)."""
     headers = platform_admin.headers
-    sid = _solution(e2e_client, headers, f"role-{uuid.uuid4().hex[:8]}")
-    wf_id, _ = _deploy_workflow_and_app(e2e_client, headers, sid)
+    wf_id, _ = managed_workflow_and_app
     # Create a role to assign.
     r = e2e_client.post("/api/roles", headers=headers, json={"name": f"r-{uuid.uuid4().hex[:6]}"})
     assert r.status_code in (200, 201), r.text

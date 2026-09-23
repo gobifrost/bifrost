@@ -123,10 +123,16 @@ def service_def(e2e_client, platform_admin):
 
 @pytest.fixture
 def crashing_def(e2e_client, platform_admin):
-    """Register a self-crashing fixture service; park it afterwards."""
+    """Register one real crash; unit tests cover repeated-failure accounting."""
     suffix = uuid4().hex[:8]
     registered = _register(e2e_client, platform_admin.headers, suffix, _CRASHING_SOURCE)
     definition = _definition_for(e2e_client, platform_admin.headers, registered["id"])
+    policy = e2e_client.patch(
+        f"/api/services/{definition['id']}",
+        headers=platform_admin.headers,
+        json={"crash_loop_max_restarts": 1},
+    )
+    assert policy.status_code == 200, policy.text
     yield definition
     e2e_client.post(f"/api/services/{definition['id']}/stop", headers=platform_admin.headers)
     e2e_client.post(f"/api/services/{definition['id']}/disable", headers=platform_admin.headers)
@@ -341,7 +347,7 @@ class TestServiceWorkerMode:
             f"/api/services/{definition_id}/attempts", headers=platform_admin.headers
         ).json()["items"]
         failed = [a for a in attempts if a["state"] == "failed"]
-        assert len(failed) >= 5, f"expected crash-loop failures, got {len(failed)}"
+        assert failed, "the child process must report a failed attempt"
         assert any("e2e boom" in (a.get("error") or "") for a in failed)
 
         # Manual restart clears the loop — but the code still fails, so park
