@@ -142,9 +142,15 @@ test("reviews collisions and replaces workspace content without installing a Sol
 			contentType: "image/png",
 		});
 		await page.getByTestId("source-zip").click();
+		const uploadDialog = page.getByRole("dialog", { name: "Import into workspace" });
+		await expect(uploadDialog.getByRole("combobox", { name: "Target scope" })).toBeVisible();
+		await testInfo.attach("workspace-import-upload", {
+			body: await uploadDialog.screenshot(),
+			contentType: "image/png",
+		});
 
 		await page
-			.getByRole("dialog", { name: "Review workspace import" })
+			.getByRole("dialog", { name: "Import into workspace" })
 			.locator('input[type="file"]')
 			.setInputFiles({
 				name: "workspace-import-review.zip",
@@ -160,7 +166,8 @@ test("reviews collisions and replaces workspace content without installing a Sol
 			dialog.getByText(/Solutions are designed to work together\./),
 		).toBeVisible();
 		await expect(dialog.getByText(/1 item needs review/)).toBeVisible();
-		await expect(dialog.getByText(/Target scope: Global/)).toBeVisible();
+		await expect(dialog.getByRole("combobox", { name: "Target scope" })).toBeVisible();
+		await expect(dialog.getByTestId("workspace-import-scope")).toContainText("Global");
 		// The full 64-char definition name must fit inside the dialog box —
 		// wrapping is fine, horizontal spill is not.
 		const name = dialog.getByText(functionName, { exact: true });
@@ -171,12 +178,30 @@ test("reviews collisions and replaces workspace content without installing a Sol
 		]);
 		expect(nameBox, "definition name has layout").not.toBeNull();
 		expect(dialogBox, "dialog has layout").not.toBeNull();
+		expect(dialogBox!.width, "review dialog uses the available desktop width").toBeGreaterThan(760);
 		expect(nameBox!.x).toBeGreaterThanOrEqual(dialogBox!.x);
 		expect(nameBox!.x + nameBox!.width).toBeLessThanOrEqual(
 			dialogBox!.x + dialogBox!.width + 1,
 		);
 		await testInfo.attach("workspace-import-review", {
 			body: await dialog.screenshot(),
+			contentType: "image/png",
+		});
+		await page.setViewportSize({ width: 390, height: 844 });
+		await expect(dialog.getByRole("combobox", { name: "Target scope" })).toBeVisible();
+		expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+		const [mobileDialogBox, mobileHeaderBox, mobileFooterBox, mobileStartBox] = await Promise.all([
+			dialog.boundingBox(),
+			dialog.getByRole("heading", { name: "Review workspace import" }).boundingBox(),
+			dialog.getByTestId("workspace-import-footer").boundingBox(),
+			dialog.getByRole("button", { name: "Start import job" }).boundingBox(),
+		]);
+		expect(mobileDialogBox).not.toBeNull();
+		expect(mobileHeaderBox!.y).toBeGreaterThanOrEqual(mobileDialogBox!.y);
+		expect(mobileFooterBox!.y + mobileFooterBox!.height).toBeLessThanOrEqual(mobileDialogBox!.y + mobileDialogBox!.height + 1);
+		expect(mobileStartBox!.y + mobileStartBox!.height).toBeLessThanOrEqual(mobileDialogBox!.y + mobileDialogBox!.height + 1);
+		await testInfo.attach("workspace-import-review-mobile", {
+			body: await page.screenshot(),
 			contentType: "image/png",
 		});
 		await dialog.getByRole("button", { name: "Replace All" }).click();

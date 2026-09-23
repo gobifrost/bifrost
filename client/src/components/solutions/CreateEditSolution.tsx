@@ -75,7 +75,6 @@ import {
 	AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
-import { useOrganizations } from "@/hooks/useOrganizations";
 import { useGitHubConfig, useCreateGitHubRepository } from "@/hooks/useGitHub";
 import {
 	installSolution,
@@ -790,8 +789,8 @@ function CreateDispatch({
 			: (mode.source ?? (mode.repo ? "repo" : mode.file ? "zip" : null));
 	const [destination, setDestination] = useState<InstallDestination | null>(initialDestination);
 	const [source, setSource] = useState<InstallSource | null>(initialSource);
-	// Dialog width stays narrow for the pickers and forms; only the workspace
-	// collision review widens it (see WorkspaceImportBody).
+	// Pickers stay compact; WorkspaceImportBody widens the dialog for upload
+	// fields and the review table.
 
 	const orgId = mode.organizationId ?? null;
 	const lockOrganization = mode.organizationId !== undefined;
@@ -856,6 +855,11 @@ function WorkspaceImportBody({
 	onClose: () => void;
 }) {
 	const session = useInstallSession();
+	const setWide = session.setWide;
+	useEffect(() => {
+		setWide(true);
+		return () => setWide(false);
+	}, [setWide]);
 	const queryClient = useQueryClient();
 	const inputRef = useRef<HTMLInputElement>(null);
 	const [file, setFile] = useState<File | null>(initialFile);
@@ -868,39 +872,52 @@ function WorkspaceImportBody({
 	const [error, setError] = useState<string | null>(null);
 	const [loading, setLoading] = useState(false);
 	const [dragging, setDragging] = useState(false);
+	const previewRequest = useRef(0);
 	const conflicts = preview?.items.filter((item) => item.classification === "conflict") ?? [];
 	const complete = conflicts.every((item) => decisions[item.id]);
-	const { data: organizations } = useOrganizations();
-	const scopeName = preview?.organization_id
-		? (organizations?.find((org) => org.id === preview?.organization_id)?.name
-			?? preview.organization_id)
-		: "Global";
 
 	// Changing the target scope invalidates the preview it was computed for.
 	function clearPreview() {
+		previewRequest.current += 1;
 		setPreview(null);
 		setDecisions({});
 		setError(null);
+		setLoading(false);
 	}
 
-	async function loadZip(next: File) {
+	async function loadZip(next: File, targetOrgId = orgId) {
+		const request = ++previewRequest.current;
 		setFile(next); setPreview(null); setDecisions({}); setError(null); setLoading(true);
-		try { setPreview(await previewWorkspaceBundle(next, { organizationId: orgId ?? "" })); }
-		catch (cause) { setError(cause instanceof Error ? cause.message : "Failed to preview workspace import"); }
-		finally { setLoading(false); }
+		try {
+			const result = await previewWorkspaceBundle(next, { organizationId: targetOrgId ?? "" });
+			if (request === previewRequest.current) setPreview(result);
+		} catch (cause) {
+			if (request === previewRequest.current) setError(cause instanceof Error ? cause.message : "Failed to preview workspace import");
+		} finally {
+			if (request === previewRequest.current) setLoading(false);
+		}
 	}
-	async function loadRepo() {
+	async function loadRepo(targetOrgId = orgId) {
+		const request = ++previewRequest.current;
 		setPreview(null); setDecisions({}); setError(null); setLoading(true);
 		try {
-			setPreview(await previewWorkspaceBundleFromRepo({
+			const result = await previewWorkspaceBundleFromRepo({
 				repo_url: repoUrl.trim(),
 				git_ref: repoRef.trim() || null,
 				repo_subpath: repoSubpath.trim() || null,
-				organization_id: orgId,
-			}));
+				organization_id: targetOrgId,
+			});
+			if (request === previewRequest.current) setPreview(result);
 		}
-		catch (cause) { setError(cause instanceof Error ? cause.message : "Failed to preview workspace import"); }
-		finally { setLoading(false); }
+		catch (cause) { if (request === previewRequest.current) setError(cause instanceof Error ? cause.message : "Failed to preview workspace import"); }
+		finally { if (request === previewRequest.current) setLoading(false); }
+	}
+	function changeScope(nextOrgId: string | null) {
+		const hadPreview = preview !== null;
+		setOrgId(nextOrgId);
+		clearPreview();
+		if (source === "zip" && file) void loadZip(file, nextOrgId);
+		if (source === "repo" && hadPreview) void loadRepo(nextOrgId);
 	}
 	// Kick the preview exactly once for a PREFILLED file (page drop). Files
 	// picked through the dialog preview via the input onChange — the ref
@@ -943,17 +960,14 @@ function WorkspaceImportBody({
 	};
 
 	return <>
-		<DialogHeader className="shrink-0 px-6 pt-6"><DialogTitle>Review workspace import</DialogTitle><DialogDescription>Choose which destination definitions to keep or replace. Creates and unchanged items need no decision.</DialogDescription>{preview && <p data-testid="workspace-import-scope" className="pt-1 text-xs text-muted-foreground">Target scope: {scopeName} · files, integrations, and roles are always global.</p>}</DialogHeader>
+		<DialogHeader className="shrink-0 px-6 pt-6"><DialogTitle>{preview ? "Review workspace import" : "Import into workspace"}</DialogTitle><DialogDescription>{preview ? "Choose which destination definitions to keep or replace. Creates and unchanged items need no decision." : "Choose a target scope and a Solution package to import."}</DialogDescription></DialogHeader>
+		<div data-testid="workspace-import-scope" className="grid shrink-0 gap-2 px-6 pt-4">
+			<Label>Target scope</Label>
+			<OrganizationSelect value={orgId} onChange={(value) => changeScope(value ?? null)} showGlobal aria-label="Target scope" />
+			<p className="text-xs text-muted-foreground">Files, integrations, and roles are always global.</p>
+		</div>
 		{preview || loading ? null : source === "repo" ? (
 			<div className="flex min-h-0 flex-1 flex-col gap-3 p-6">
-				<div className="grid gap-2">
-					<Label>Target scope</Label>
-					<OrganizationSelect
-						value={orgId}
-						onChange={(value) => { setOrgId(value ?? null); clearPreview(); }}
-						showGlobal
-					/>
-				</div>
 				<div className="grid gap-2">
 					<Label htmlFor="workspace-repo-url">Repository URL</Label>
 					<Input id="workspace-repo-url" data-testid="workspace-repo-url" placeholder="https://github.com/org/solution.git" value={repoUrl} onChange={(event) => setRepoUrl(event.target.value)} />
@@ -977,19 +991,6 @@ function WorkspaceImportBody({
 		) : (
 			<div className="flex min-h-0 flex-1 flex-col gap-3 p-6">
 				<input ref={inputRef} type="file" accept=".zip,application/zip" className="hidden" onChange={(event) => { const next = event.target.files?.[0]; if (next) void loadZip(next); event.target.value = ""; }} />
-				<div className="grid gap-2">
-					<Label>Target scope</Label>
-					<OrganizationSelect
-						value={orgId}
-						onChange={(value) => {
-							setOrgId(value ?? null);
-							setFile(null);
-							if (inputRef.current) inputRef.current.value = "";
-							clearPreview();
-						}}
-						showGlobal
-					/>
-				</div>
 				<button
 					type="button"
 					data-testid="workspace-dialog-dropzone"
@@ -1025,7 +1026,7 @@ function WorkspaceImportBody({
 		)}
 		{loading ? <div className="flex min-h-0 flex-1 items-center justify-center gap-2"><Loader2 className="size-4 animate-spin" />Reading package…</div> : preview ? <WorkspaceImportReview preview={preview} decisions={decisions} onDecisionsChange={setDecisions} /> : file ? <div className="flex-1 p-6"><InstallFailure message={error ?? "Could not preview this package."} /></div> : null}
 		{error && preview && <div className="px-6"><InstallFailure message={error} /></div>}
-		<DialogFooter data-testid="workspace-import-footer" className="shrink-0 flex-col items-stretch gap-3 border-t bg-muted/20 px-6 py-4 sm:flex-col"><p className="text-xs text-muted-foreground">{preview ? "Import creates uncommitted Git changes" : ""}</p><div className="flex items-center justify-between gap-2"><Button type="button" variant="ghost" onClick={onBack}><ArrowLeft className="mr-1 size-4" />Back</Button><div className="flex gap-2"><Button type="button" variant="outline" onClick={onClose}>Cancel</Button><Button type="button" disabled={!preview || !complete || session.pending} onClick={() => session.run(start)}>Start import job</Button></div></div></DialogFooter>
+		<DialogFooter data-testid="workspace-import-footer" className="min-w-0 shrink-0 flex-col items-stretch gap-3 border-t bg-muted/20 px-6 py-4 sm:flex-col"><p className="text-xs text-muted-foreground">{preview ? "Import creates uncommitted Git changes" : ""}</p><div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><Button type="button" variant="ghost" className="self-start" onClick={onBack}><ArrowLeft className="mr-1 size-4" />Back</Button><div className="flex min-w-0 flex-wrap justify-end gap-2"><Button type="button" variant="outline" onClick={onClose}>Cancel</Button><Button type="button" disabled={!preview || !complete || session.pending} onClick={() => session.run(start)}>Start import job</Button></div></div></DialogFooter>
 	</>;
 }
 

@@ -51,12 +51,12 @@ export function InstallSession({
 				<DialogContent
 					{...focus}
 					showCloseButton={!pending}
-					className={wide ? "flex max-h-[90dvh] flex-col overflow-hidden sm:max-w-6xl" : "max-h-[90dvh] overflow-y-auto sm:max-w-lg"}
+					className={wide ? "flex min-w-0 max-h-[90dvh] flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl" : "max-h-[90dvh] overflow-y-auto sm:max-w-lg"}
 					data-testid="solution-dialog"
 				>
 					<fieldset
 						disabled={pending}
-						className={wide ? "flex min-h-0 flex-1 flex-col" : "contents"}
+						className={wide ? "flex min-h-0 min-w-0 flex-1 flex-col" : "contents"}
 						aria-busy={pending}
 					>
 						{children}

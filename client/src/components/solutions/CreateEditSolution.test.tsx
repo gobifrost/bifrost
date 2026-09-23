@@ -777,7 +777,7 @@ describe("CreateEditSolution — destination-first flow", () => {
 		expect(screen.getByTestId("repo-ref")).toBeInTheDocument();
 	});
 
-	it("workspace flow stays in the narrow dialog end to end", async () => {
+	it("workspace upload and review use the wider dialog", async () => {
 		vi.mocked(previewWorkspaceBundle).mockResolvedValue({
 			preview_token: "workspace-preview",
 			package_name: "Workspace",
@@ -792,19 +792,18 @@ describe("CreateEditSolution — destination-first flow", () => {
 		await user.click(await screen.findByTestId("destination-workspace"));
 		await user.click(await screen.findByTestId("source-zip"));
 
-		expect(await screen.findByText("Review workspace import")).toBeInTheDocument();
+		expect(await screen.findByText("Import into workspace")).toBeInTheDocument();
 		expect(screen.getByTestId("workspace-dialog-dropzone")).toBeInTheDocument();
-		// No preview yet: the chooser form stays narrow with a single footer Back.
-		expect(screen.getByTestId("solution-dialog")).not.toHaveClass("sm:max-w-6xl");
+		expect(screen.getByTestId("solution-dialog")).toHaveClass("sm:max-w-4xl");
 		expect(screen.getAllByRole("button", { name: /^back$/i })).toHaveLength(1);
 
 		const fileInput = document.querySelector<HTMLInputElement>('input[type="file"]');
 		expect(fileInput).not.toBeNull();
 		await user.upload(fileInput!, new File(["zip"], "workspace.zip", { type: "application/zip" }));
 
-		// The review fits the standard narrow dialog.
+		expect(await screen.findByText("Review workspace import")).toBeInTheDocument();
 		expect(await screen.findByTestId("workspace-import-footer")).toBeInTheDocument();
-		expect(screen.getByTestId("solution-dialog")).not.toHaveClass("sm:max-w-6xl");
+		expect(screen.getByTestId("solution-dialog")).toHaveClass("sm:max-w-4xl");
 	});
 
 	it("workspace + repo shows the snapshot repo form (no Solution lifecycle)", async () => {
@@ -907,7 +906,7 @@ describe("CreateEditSolution — destination-first flow", () => {
 
 		await waitFor(() => expect(previewWorkspaceBundle).toHaveBeenCalledWith(file, { organizationId: "" }));
 		expect(await screen.findByTestId("workspace-import-footer")).toBeInTheDocument();
-		expect(screen.getByTestId("workspace-import-scope")).toHaveTextContent(/Global/);
+		expect(screen.getByLabelText("Target scope")).toHaveValue("global");
 	});
 
 	it("workspace scope defaults to Global and previews in an org on change", async () => {
@@ -942,13 +941,19 @@ describe("CreateEditSolution — destination-first flow", () => {
 			repo_subpath: null,
 			organization_id: "org-1",
 		}));
-		expect(await screen.findByTestId("workspace-import-scope")).toHaveTextContent(
-			/Acme Corp/,
-		);
+		expect(screen.getByLabelText("Target scope")).toHaveValue("org-1");
 	});
 
-	it("changing scope clears a stale error and resets the chosen file", async () => {
+	it("changing scope keeps the chosen file and previews it in the new scope", async () => {
 		vi.mocked(previewWorkspaceBundle).mockRejectedValueOnce(new Error("boom"));
+		vi.mocked(previewWorkspaceBundle).mockResolvedValueOnce({
+			preview_token: "scoped-preview",
+			package_name: "Workspace",
+			package_sha256: "a".repeat(64),
+			organization_id: "org-1",
+			items: [],
+			warnings: [],
+		} as never);
 		renderCreate({
 			kind: "create",
 			destination: "workspace",
@@ -963,7 +968,10 @@ describe("CreateEditSolution — destination-first flow", () => {
 		fireEvent.change(screen.getByLabelText("Target scope"), { target: { value: "org-1" } });
 
 		await waitFor(() => expect(screen.queryByText("boom")).toBeNull());
-		expect(screen.getByTestId("workspace-dialog-dropzone")).toBeInTheDocument();
+		await waitFor(() => expect(previewWorkspaceBundle).toHaveBeenLastCalledWith(file, { organizationId: "org-1" }));
+		expect(screen.getByLabelText("Target scope")).toHaveValue("org-1");
+		expect(screen.getByLabelText("Target scope")).toHaveValue("org-1");
+		expect(screen.getByTestId("solution-dialog")).toHaveClass("sm:max-w-4xl");
 	});
 
 	it("explicit destination + source skips both pickers", async () => {

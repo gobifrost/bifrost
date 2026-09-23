@@ -131,8 +131,8 @@ export function WorkspaceImportReview({
 		);
 
 	return (
-		<div className="min-h-0">
-			<div className="flex min-w-0 gap-2 px-5 pt-4 text-sm text-foreground/80">
+		<div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+			<div className="flex min-w-0 shrink-0 gap-2 px-5 pt-4 text-sm text-foreground/80">
 				<Info className="mt-0.5 size-4 shrink-0 text-primary" />
 				<div className="min-w-0">
 					<p className="break-words">
@@ -156,7 +156,7 @@ export function WorkspaceImportReview({
 					)}
 				</div>
 			</div>
-			<div className="flex min-h-12 flex-wrap items-center justify-between gap-2 px-5 py-2">
+			<div className="flex min-h-12 shrink-0 flex-wrap items-center justify-between gap-2 px-5 py-2">
 				<p className="text-sm">
 					<span className="font-semibold">
 						{remainingGroups === 0
@@ -184,15 +184,15 @@ export function WorkspaceImportReview({
 					</DecisionButton>
 				</span>
 			</div>
-			<div className="min-h-0 px-5 pb-5">
+			<div className="flex min-h-0 min-w-0 flex-1 flex-col px-5 pb-5">
 				<DataTable
 					data-testid="workspace-import-scroller"
-					className="max-h-[52dvh]"
+					className="max-h-full"
 				>
-					<DataTableHeader>
+					<DataTableHeader className="max-sm:hidden">
 						<DataTableRow>
 							<DataTableHead>Item</DataTableHead>
-							<DataTableHead className="w-44 text-right">Decision</DataTableHead>
+							<DataTableHead className="w-32 text-right sm:w-44">Decision</DataTableHead>
 						</DataTableRow>
 					</DataTableHeader>
 					<DataTableBody>
@@ -232,7 +232,7 @@ function ImportGroupRow({
 		(member) => member !== first && member.kind !== "file",
 	);
 	return (
-		<DataTableRow>
+		<DataTableRow className="max-sm:grid max-sm:grid-cols-1">
 			<DataTableCell className="min-w-0">
 				<span className="flex min-w-0 items-start gap-2">
 					<TypeBadge kind={first.kind} />
@@ -251,7 +251,7 @@ function ImportGroupRow({
 					</span>
 				</span>
 			</DataTableCell>
-			<DataTableCell className="w-44 text-right">
+			<DataTableCell className="w-32 text-right max-sm:flex max-sm:w-full max-sm:justify-end max-sm:pt-0 sm:w-44">
 				{open.length > 0 ? (
 					<span className="inline-grid grid-cols-2 rounded-md bg-muted p-0.5 text-xs">
 						<DecisionButton
