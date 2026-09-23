@@ -139,7 +139,7 @@ def _install_job_doubles(
     """Replace only process/external boundaries; exercise the real job phases."""
     from src.jobs.platform.base import PlatformJobCancelled
     from src.services.solutions.workspace_bundle_import import WorkspaceBundleImportResult
-    import src.jobs.platform.workspace_bundle_import as job_module
+    from src.jobs.platform import workspace_bundle_import as job_module
     import src.services.solutions.zip_install as zip_install
 
     class Storage:

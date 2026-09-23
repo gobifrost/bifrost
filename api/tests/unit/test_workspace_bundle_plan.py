@@ -338,7 +338,7 @@ def test_planner_passes_large_incoming_paths_to_lookup_lazily(tmp_path, monkeypa
         WorkspaceBundlePlanner,
     )
     from src.services.solutions.zip_install import PreviewResult
-    import src.services.solutions.workspace_bundle_plan as plan_module
+    from src.services.solutions import workspace_bundle_plan as plan_module
 
     projection = SolutionPackageWorkspaceProjection.from_preview(
         PreviewResult(name="P"), preview_id=UUID(int=7), work_dir=tmp_path,

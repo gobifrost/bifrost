@@ -107,7 +107,7 @@ async def test_large_bundle_staging_keeps_rss_and_chunk_size_bounded(tmp_path) -
 @pytest.mark.asyncio
 async def test_expired_preview_with_active_job_is_retained_for_retry(monkeypatch) -> None:
     """TTL cleanup must not delete the archive a queued retry still needs."""
-    import src.services.solutions.workspace_bundle_storage as storage_module
+    from src.services.solutions import workspace_bundle_storage as storage_module
 
     preview_id = str(uuid4())
     removed: list[str] = []
@@ -145,7 +145,10 @@ async def test_expired_preview_with_active_job_is_retained_for_retry(monkeypatch
     async def db_context():
         yield Db()
 
-    monkeypatch.setattr(storage_module, "get_settings", lambda: type("Settings", (), {"s3_bucket": "test"})())
+    class Settings:
+        s3_bucket = "test"
+
+    monkeypatch.setattr(storage_module, "get_settings", Settings)
     monkeypatch.setattr(storage_module, "S3StorageClient", RootStorage)
     monkeypatch.setattr(storage_module, "WorkspaceBundleStorage", Preview)
     monkeypatch.setattr("src.core.database.get_db_context", db_context)

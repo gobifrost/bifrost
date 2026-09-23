@@ -178,7 +178,7 @@ def test_workspace_bundle_job_reuses_the_shared_workspace_lock() -> None:
 @pytest.mark.asyncio
 async def test_promoted_python_refreshes_module_cache_and_oversized_text_removes_stale_index(tmp_path, monkeypatch) -> None:
     """The file phase must never leave search or module reads on old content."""
-    import src.services.file_index_service as index_module
+    from src.services import file_index_service as index_module
     from src.services.file_index_service import MAX_INDEXABLE_TEXT_BYTES, FileIndexService
 
     class Storage:

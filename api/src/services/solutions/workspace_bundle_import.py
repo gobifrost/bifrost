@@ -44,7 +44,8 @@ def require_workspace_config_values(
 
 
 class _FileIndexWriter(Protocol):
-    async def write_file(self, path: str, source, *, expected_hash: str) -> str: ...
+    async def write_file(self, path: str, source, *, expected_hash: str) -> str:
+        raise NotImplementedError
 
 
 @dataclass(frozen=True)

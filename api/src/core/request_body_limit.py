@@ -41,11 +41,12 @@ class RouteBodyLimitMiddleware:
         )
         if content_length is not None:
             try:
-                if int(content_length) > limit:
-                    await self._reject(scope, receive, send)
-                    return
+                declared_length = int(content_length)
             except ValueError:
-                pass
+                declared_length = None
+            if declared_length is not None and declared_length > limit:
+                await self._reject(scope, receive, send)
+                return
 
         received = 0
 

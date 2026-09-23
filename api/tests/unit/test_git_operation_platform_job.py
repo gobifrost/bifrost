@@ -41,6 +41,7 @@ async def test_git_job_calls_sync_service_directly(
         "src.jobs.platform.git_operation.GitHubSyncService",
         lambda **_kwargs: SimpleNamespace(desktop_sync=sync),
     )
+    monkeypatch.setattr("src.core.repo_dirty.clear_repo_dirty", AsyncMock())
 
     context = SimpleNamespace(
         job_id=uuid4(),
