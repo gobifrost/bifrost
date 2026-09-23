@@ -159,7 +159,7 @@ test("reviews collisions and replaces workspace content without installing a Sol
 		await expect(
 			dialog.getByText(/Solutions are designed to work together\./),
 		).toBeVisible();
-		await expect(dialog.getByText(/need review/)).toBeVisible();
+		await expect(dialog.getByText(/1 item needs review/)).toBeVisible();
 		await expect(dialog.getByText(/Target scope: Global/)).toBeVisible();
 		// The full 64-char definition name must fit inside the dialog box —
 		// wrapping is fine, horizontal spill is not.
@@ -180,7 +180,7 @@ test("reviews collisions and replaces workspace content without installing a Sol
 			contentType: "image/png",
 		});
 		await dialog.getByRole("button", { name: "Replace All" }).click();
-		await expect(dialog.getByText(/of 2 conflicts resolved/)).toBeVisible();
+		await expect(dialog.getByText("All reviewed")).toBeVisible();
 		await dialog.getByRole("button", { name: "Start import job" }).click();
 		await expect(dialog).not.toBeVisible();
 

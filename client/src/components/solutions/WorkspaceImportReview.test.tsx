@@ -79,6 +79,8 @@ describe("WorkspaceImportReview", () => {
 		expect(screen.getByRole("button", { name: "Replace All" })).toBeInTheDocument();
 		// Four items, three rows: the workflow and its file share one.
 		expect(within(table).getAllByRole("row")).toHaveLength(4);
+		expect(screen.getByText("2 items need review")).toBeInTheDocument();
+		expect(screen.getByText("of 3 items")).toBeInTheDocument();
 		expect(screen.getByText("Sink Alpha")).toBeInTheDocument();
 		// No match-key column and no file-path sub-line.
 		expect(screen.queryByText("workflows/sink_alpha.py :: sink_alpha")).toBeNull();
@@ -109,6 +111,21 @@ describe("WorkspaceImportReview", () => {
 			"entity:workflow:alpha": "replace",
 			"file:workflows/sink_alpha.py": "replace",
 		});
+	});
+
+	it("counts a definition and its file as one review decision", () => {
+		renderWithProviders(
+			<WorkspaceImportReview
+				preview={preview}
+				decisions={{
+					"entity:workflow:alpha": "replace",
+					"file:workflows/sink_alpha.py": "replace",
+				}}
+				onDecisionsChange={vi.fn()}
+			/>,
+		);
+
+		expect(screen.getByText("1 item needs review")).toBeInTheDocument();
 	});
 
 	it("resolves every conflict with Keep All", async () => {

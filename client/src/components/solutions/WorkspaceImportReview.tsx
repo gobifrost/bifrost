@@ -111,10 +111,13 @@ export function WorkspaceImportReview({
 		[preview.items],
 	);
 	const groups = useMemo(() => groupItems(preview.items), [preview.items]);
-	const resolved = conflicts.filter((item) => decisions[item.id]).length;
 	const warnings = preview.warnings ?? [];
 	const groupConflicts = (group: DisplayGroup) =>
 		group.members.filter((item) => item.classification === "conflict");
+	const reviewGroups = groups.filter((group) => groupConflicts(group).length > 0);
+	const remainingGroups = reviewGroups.filter((group) =>
+		groupConflicts(group).some((item) => !decisions[item.id]),
+	).length;
 	const chooseGroup = (group: DisplayGroup, action: Decision) =>
 		onDecisionsChange({
 			...decisions,
@@ -156,10 +159,12 @@ export function WorkspaceImportReview({
 			<div className="flex min-h-12 flex-wrap items-center justify-between gap-2 px-5 py-2">
 				<p className="text-sm">
 					<span className="font-semibold">
-						{conflicts.length - resolved} need review
+						{remainingGroups === 0
+							? "All reviewed"
+							: `${remainingGroups} ${remainingGroups === 1 ? "item needs" : "items need"} review`}
 					</span>
 					<span className="ml-2 text-muted-foreground">
-						of {preview.items.length} changes
+						of {groups.length} items
 					</span>
 				</p>
 				<span className="inline-grid grid-cols-2 rounded-md bg-muted p-0.5 text-xs">
