@@ -56,7 +56,7 @@ describe("WorkspaceImportReview", () => {
 		);
 
 		expect(
-			screen.getByText(/Solutions are designed to work together\./),
+			screen.getByText(/Keep and Replace decisions can affect other workspace content\./),
 		).toBeInTheDocument();
 		expect(screen.queryByText(/Package notices/)).toBeNull();
 	});

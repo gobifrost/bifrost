@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 import { Info } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { ENTITY_CONFIG } from "@/components/entity-management/types";
@@ -101,10 +101,12 @@ export function WorkspaceImportReview({
 	preview,
 	decisions,
 	onDecisionsChange,
+	configuration,
 }: {
 	preview: WorkspaceBundlePreview;
 	decisions: Record<string, Decision>;
 	onDecisionsChange: (decisions: Record<string, Decision>) => void;
+	configuration?: ReactNode;
 }) {
 	const reviewRef = useRef<HTMLDivElement>(null);
 	const { setTall } = useInstallSession();
@@ -145,7 +147,7 @@ export function WorkspaceImportReview({
 			window.removeEventListener("resize", measureContent);
 			review.style.maxHeight = "";
 		};
-	}, [preview.items, setTall]);
+	}, [preview.items, configuration, setTall]);
 	useEffect(() => () => setTall(false), [setTall]);
 	const conflicts = useMemo(
 		() =>
@@ -172,19 +174,17 @@ export function WorkspaceImportReview({
 		);
 
 	return (
-		<div ref={reviewRef} className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+		<div ref={reviewRef} className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden max-sm:overflow-y-auto">
 			<div className="flex min-w-0 shrink-0 gap-2 px-5 pt-4 text-sm text-foreground/80">
 				<Info className="mt-0.5 size-4 shrink-0 text-primary" />
 				<div className="min-w-0">
 					<p className="break-words">
-						Solutions are designed to work together. Replacing items
-						in your workspace will overwrite local changes that
-						could be important to other things in your workspace,
-						and likewise keeping them could materially affect how
-						things in this Solution work together.
+						Keep and Replace decisions can affect other workspace content.
+						Review each conflict before importing.
 					</p>
 				</div>
 			</div>
+			{configuration}
 			<div className="flex min-h-12 shrink-0 flex-wrap items-center justify-between gap-2 px-5 py-2">
 				<p className="text-sm">
 					<span className="font-semibold">
@@ -213,10 +213,10 @@ export function WorkspaceImportReview({
 					</DecisionButton>
 				</span>
 			</div>
-			<div className="flex min-h-0 min-w-0 flex-1 flex-col px-5 pb-5">
+			<div className="flex min-h-0 min-w-0 flex-1 flex-col px-5 pb-5 max-sm:flex-none">
 				<DataTable
 					data-testid="workspace-import-scroller"
-					className="min-h-0 flex-1"
+					className="min-h-0 flex-1 max-sm:max-h-none max-sm:flex-none"
 				>
 					<DataTableHeader className="max-sm:hidden">
 						<DataTableRow>

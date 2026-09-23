@@ -76,6 +76,20 @@ async function readFile(api: AuthedApi, path: string): Promise<string> {
 
 test.use({ viewport: { width: 1440, height: 900 } });
 
+test("managed Solution ZIP dialog has room for its install options", async ({ page }, testInfo) => {
+	await page.goto("/solutions");
+	await page.getByRole("button", { name: "Install Solution" }).click();
+	await page.getByTestId("destination-solution").click();
+	await page.getByTestId("source-zip").click();
+	const dialog = page.getByTestId("solution-dialog");
+	await expect(dialog.getByTestId("dialog-dropzone")).toBeVisible();
+	await expect.poll(async () => (await dialog.boundingBox())?.width).toBeGreaterThanOrEqual(570);
+	await testInfo.attach("solution-install-upload", {
+		body: await dialog.screenshot(),
+		contentType: "image/png",
+	});
+});
+
 test("scrolls a long workspace import entity list", async ({ page }, testInfo) => {
 	let releasePreview = () => {};
 	const previewGate = new Promise<void>((resolve) => { releasePreview = resolve; });
@@ -137,6 +151,7 @@ test("reviews collisions and replaces workspace content without installing a Sol
 	const existingSource = `from bifrost import workflow\n\n@workflow(name="${functionName}")\nasync def ${functionName}() -> dict:\n    return {"source": "existing"}\n`;
 	const importedSource = existingSource.replace('"existing"', '"imported"');
 	const workflowId = randomUUID();
+	const configKey = `WORKSPACE_IMPORT_TOKEN_${suffix.toUpperCase()}`;
 
 	await writeFile(api, path, existingSource);
 	const register = await api.post("/api/workflows/register", {
@@ -169,6 +184,12 @@ test("reviews collisions and replaces workspace content without installing a Sol
 					},
 				},
 			}),
+		},
+		{
+			path: ".bifrost/configs.yaml",
+			content: JSON.stringify({ configs: {
+				[configKey]: { key: configKey, type: "secret", required: true, description: "Import token" },
+			} }),
 		},
 	]);
 
@@ -214,11 +235,14 @@ test("reviews collisions and replaces workspace content without installing a Sol
 		});
 		await expect(dialog).toBeVisible();
 		await expect(
-			dialog.getByText(/Solutions are designed to work together\./),
+			dialog.getByText(/Keep and Replace decisions can affect other workspace content\./),
 		).toBeVisible();
 		await expect(dialog.getByText(/1 item needs review/)).toBeVisible();
 		await expect(dialog.getByRole("combobox", { name: "Target scope" })).toBeVisible();
 		await expect(dialog.getByTestId("workspace-import-scope")).toContainText("Global");
+		const configInput = dialog.getByLabel(new RegExp(configKey));
+		await expect(configInput).toHaveAttribute("type", "password");
+		await configInput.fill("browser-test-token");
 		await dialog.getByRole("combobox", { name: "Target scope" }).click();
 		await page.getByRole("option", { name: /Bifrost Dev Org/ }).click();
 		await expect(dialog.getByText("Replace moves this item to the selected scope")).toBeVisible();
@@ -248,6 +272,9 @@ test("reviews collisions and replaces workspace content without installing a Sol
 		await page.setViewportSize({ width: 390, height: 844 });
 		await expect(dialog.getByRole("combobox", { name: "Target scope" })).toBeVisible();
 		expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+		const mobileReview = dialog.locator("[data-testid=workspace-import-config-section]").locator("..");
+		await mobileReview.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+		await expect(dialog.getByTestId("workspace-import-scroller").getByText(configKey, { exact: true })).toBeInViewport();
 		const [mobileDialogBox, mobileHeaderBox, mobileFooterBox, mobileStartBox] = await Promise.all([
 			dialog.boundingBox(),
 			dialog.getByRole("heading", { name: "Review workspace import" }).boundingBox(),

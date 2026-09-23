@@ -6,7 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from sqlalchemy import select
 
 from src.jobs.platform.base import (
     PlatformJobContext,
@@ -35,6 +36,7 @@ class WorkspaceBundleImportPayload(BaseModel):
     preview_id: UUID
     package_sha256: str
     decisions: list[WorkspaceBundleDecision]
+    config_values: dict[str, str] = Field(default_factory=dict)
 
 
 def _require_requester(metadata: dict, context: PlatformJobContext, payload: WorkspaceBundleImportPayload) -> None:
@@ -79,6 +81,7 @@ def _checkpoint_matches_replanned_bundle(
     reviewed: WorkspaceBundlePreview,
     current: WorkspaceBundlePreview,
     selected_item_ids: set[str],
+    entered_config_keys: set[str] | None = None,
 ) -> bool:
     """Recognize the only state transition made before the durable checkpoint.
 
@@ -104,7 +107,50 @@ def _checkpoint_matches_replanned_bundle(
         expected_classification = reviewed_item.classification
         if item_id in selected_item_ids and reviewed_item.kind != "file":
             expected_classification = "unchanged"
+        if reviewed_item.kind == "config" and reviewed_item.name in (entered_config_keys or set()):
+            # An explicitly entered value may differ from the package default
+            # even after the config row was committed successfully.
+            if current_item.classification in {"unchanged", "conflict"}:
+                continue
         if current_item.classification != expected_classification:
+            return False
+    return True
+
+
+async def _entered_configs_match(db, plan, payload: WorkspaceBundleImportPayload) -> bool:
+    """Prove entered values committed before resuming after runner loss."""
+    from src.core.security import decrypt_secret
+    from src.models.enums import ConfigType
+    from src.models.orm.config import Config
+
+    kept = {
+        decision.item_id for decision in payload.decisions
+        if decision.action == "keep"
+    }
+    for key, value in payload.config_values.items():
+        if not value.strip():
+            continue
+        declaration = plan.manifest.configs.get(key)
+        if declaration is None:
+            return False
+        if f"entity:config:{declaration.id}" in kept:
+            continue
+        row = (
+            await db.execute(
+                select(Config).where(
+                    Config.key == key,
+                    Config.organization_id == plan.organization_id,
+                    Config.integration_id.is_(None),
+                )
+            )
+        ).scalar_one_or_none()
+        if row is None or row.config_type.value != declaration.config_type or row.description != declaration.description:
+            return False
+        stored = row.value.get("value") if isinstance(row.value, dict) else row.value
+        if row.config_type == ConfigType.SECRET:
+            if not isinstance(stored, str) or decrypt_secret(stored) != value:
+                return False
+        elif stored != value:
             return False
     return True
 
@@ -181,8 +227,17 @@ async def run_workspace_bundle_import(
                     and journal.get("package_sha256") == payload.package_sha256
                     and _checkpoint_matches_replanned_bundle(
                         reviewed_preview, plan.preview, set(journal["selected_item_ids"]),
+                        {
+                            key for key, value in payload.config_values.items()
+                            if value.strip() and key in plan.manifest.configs and not any(
+                                decision.item_id == f"entity:config:{plan.manifest.configs[key].id}"
+                                and decision.action == "keep"
+                                for decision in payload.decisions
+                            )
+                        },
                     )
                     and reviewed_file_hashes == (plan.file_hashes or {})
+                    and await _entered_configs_match(db, plan, payload)
                 ):
                     # A runner may have been lost between db.commit() and the
                     # following checkpoint.  The pre-apply checkpoint plus the
@@ -197,7 +252,10 @@ async def run_workspace_bundle_import(
                     _require_preview_is_current(
                         reviewed_preview, reviewed_file_hashes, plan.preview, plan.file_hashes or {},
                     )
-                    result = await importer.apply(plan, payload.decisions)
+                    result = await importer.apply(
+                        plan, payload.decisions, config_values=payload.config_values,
+                        updated_by=context.requested_by_email,
+                    )
                     await context.save_checkpoint(
                         _journal_for_db_apply(payload, result),
                         phase="Applying workspace entity changes",
@@ -205,6 +263,22 @@ async def run_workspace_bundle_import(
                 # Make entity upserts durable before the idempotent S3 phase.
                 await context.report("Committing workspace entity changes", percent=60)
                 await db.commit()
+                from src.core.cache import invalidate_config
+
+                selected_config_keys = {
+                    item.name for item in plan.preview.items
+                    if item.kind == "config" and (
+                        item.id in result.selected_item_ids
+                        or (item.name in payload.config_values and not any(
+                            decision.item_id == item.id and decision.action == "keep"
+                            for decision in payload.decisions
+                        ))
+                    )
+                }
+                for key in selected_config_keys:
+                    await invalidate_config(
+                        str(plan.organization_id) if plan.organization_id else None, key
+                    )
                 journal = _journal_for_db_apply(payload, result) | {"db_applied": True}
                 await context.save_checkpoint(journal, phase="Database import committed; finalizing files")
                 await context.report("Promoting selected workspace files", percent=70)

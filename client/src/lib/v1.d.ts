@@ -29113,6 +29113,10 @@ export interface components {
             preview_token: string;
             /** Decisions */
             decisions: components["schemas"]["WorkspaceBundleDecision"][];
+            /** Config Values */
+            config_values?: {
+                [key: string]: string;
+            };
         };
         /**
          * WorkspaceBundleItem
@@ -29162,6 +29166,10 @@ export interface components {
             package_sha256: string;
             /** Items */
             items: components["schemas"]["WorkspaceBundleItem"][];
+            /** Config Schemas */
+            config_schemas?: {
+                [key: string]: unknown;
+            }[];
             /**
              * Source Kind
              * @default zip

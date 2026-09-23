@@ -43,6 +43,9 @@ class WorkspaceBundleImporter:
         self,
         plan: PlannedWorkspaceBundle,
         decisions: Sequence[WorkspaceBundleDecision],
+        *,
+        config_values: dict[str, str] | None = None,
+        updated_by: str = "workspace-import",
     ) -> WorkspaceBundleImportResult:
         by_id = {decision.item_id: decision.action for decision in decisions}
         conflicts = {
@@ -90,11 +93,53 @@ class WorkspaceBundleImporter:
 
         await upsert_integration_shells(self.db, plan.connection_schemas or [])
         await self._merge_package_roles(plan, selection)
+        await self._set_config_values(
+            plan, selected_items, by_id, config_values or {}, updated_by
+        )
         return WorkspaceBundleImportResult(
             imported_item_ids=selection.included_source_ids,
             selected_item_ids=frozenset(selected_items),
             operations=tuple(ops),
         )
+
+    async def _set_config_values(
+        self,
+        plan: PlannedWorkspaceBundle,
+        selected_items: set[str],
+        decisions: dict[str, str],
+        config_values: dict[str, str],
+        updated_by: str,
+    ) -> None:
+        """Apply entered values through ConfigRepository so secrets are encrypted."""
+        if not config_values:
+            return
+        from src.models.contracts.config import SetConfigRequest
+        from src.models.enums import ConfigType
+        from src.repositories.config import ConfigRepository
+
+        declarations = plan.manifest.configs
+        if set(config_values) - set(declarations):
+            raise WorkspaceBundleDecisionError("config values must match declared keys")
+        repo = ConfigRepository(
+            self.db, org_id=plan.organization_id, is_superuser=True
+        )
+        for key, value in config_values.items():
+            item_id = f"entity:config:{declarations[key].id}"
+            if decisions.get(item_id) == "keep" or not value.strip():
+                continue
+            if item_id not in selected_items and not any(
+                item.id == item_id and item.classification == "unchanged"
+                for item in plan.preview.items
+            ):
+                continue
+            config = declarations[key]
+            await repo.set_config(
+                SetConfigRequest(
+                    key=key, value=value, type=ConfigType(config.config_type),
+                    description=config.description, organization_id=plan.organization_id,
+                ),
+                updated_by=updated_by,
+            )
 
     async def _merge_package_roles(
         self, plan: PlannedWorkspaceBundle, selection: "PartialImportSelection",

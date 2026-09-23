@@ -972,6 +972,7 @@ describe("CreateEditSolution — destination-first flow", () => {
 		renderCreate({ kind: "create", destination: "solution", source: "zip" });
 
 		expect(await screen.findByTestId("dialog-dropzone")).toBeInTheDocument();
+		expect(screen.getByTestId("solution-dialog")).toHaveClass("sm:max-w-xl");
 		expect(screen.queryByTestId("destination-picker")).toBeNull();
 		expect(screen.queryByTestId("source-picker")).toBeNull();
 	});
@@ -1001,7 +1002,8 @@ describe("CreateEditSolution — destination-first flow", () => {
 			package_sha256: "a".repeat(64),
 			conflict_count: 0,
 			source_kind: "zip",
-			items: [],
+			items: [{ id: "entity:config:cfg-1", kind: "config", name: "API_TOKEN", classification: "create", scope_change: false }],
+			config_schemas: [{ key: "API_TOKEN", type: "secret", required: true, description: "API access token" }],
 		});
 		vi.mocked(importWorkspaceBundle).mockResolvedValue({
 			job_id: "workspace-job",
@@ -1022,11 +1024,15 @@ describe("CreateEditSolution — destination-first flow", () => {
 		const fileInput = document.querySelector<HTMLInputElement>('input[type="file"]');
 		expect(fileInput).not.toBeNull();
 		await user.upload(fileInput!, new File(["zip"], "workspace.zip", { type: "application/zip" }));
+		const tokenInput = await screen.findByLabelText(/API_TOKEN/);
+		expect(tokenInput).toHaveAttribute("type", "password");
+		await user.type(tokenInput, "entered-test-token");
 		await user.click(await screen.findByRole("button", { name: /start import job/i }));
 
 		await waitFor(() => expect(importWorkspaceBundle).toHaveBeenCalledWith({
 			preview_token: "workspace-preview",
 			decisions: [],
+			config_values: { API_TOKEN: "entered-test-token" },
 		}));
 		expect(mockRunGitOp).toHaveBeenCalledTimes(1);
 		expect(onClose).toHaveBeenCalledTimes(1);

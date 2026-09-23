@@ -84,6 +84,7 @@ class SolutionPackageWorkspaceProjection:
     work_dir: Path | None = None
     # Raw connection declarations become never-clobber global integration shells.
     connection_schemas: tuple[dict[str, Any], ...] = ()
+    config_schemas: tuple[dict[str, Any], ...] = ()
 
     @classmethod
     def from_preview(
@@ -156,7 +157,8 @@ class SolutionPackageWorkspaceProjection:
             config_id = _uuid(row.get("id"), preview_id=preview_id, stable_key=f"config:{key}")
             configs[key] = ManifestConfig(
                 id=str(config_id), key=key, config_type=str(row.get("type", "string")),
-                description=row.get("description"), value=row.get("default"),
+                description=row.get("description"),
+                value=None if row.get("type") == "secret" else row.get("default"),
                 organization_id=str(organization_id) if organization_id else None,
                 integration_id=None,
             )
@@ -169,6 +171,15 @@ class SolutionPackageWorkspaceProjection:
             work_dir=work_dir,
             connection_schemas=tuple(
                 dict(schema) for schema in package.connection_schemas
+            ),
+            config_schemas=tuple(
+                {
+                    "key": str(schema["key"]),
+                    "type": str(schema.get("type") or "string"),
+                    "required": schema.get("required") is True,
+                    "description": schema.get("description"),
+                }
+                for schema in package.config_schemas if schema.get("key")
             ),
         )
 
@@ -345,6 +356,7 @@ class WorkspaceBundlePlanner:
         return PlannedWorkspaceBundle(
             preview=WorkspaceBundlePreview(preview_token=str(self.preview_id), package_name=projection.package_name,
                                             package_sha256="", items=items,
+                                            config_schemas=list(projection.config_schemas),
                                             organization_id=self.organization_id),
             manifest=projection.manifest, id_map=self.reference_map(items),
             work_dir=projection.work_dir, file_hashes=file_hashes,

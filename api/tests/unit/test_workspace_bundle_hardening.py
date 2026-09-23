@@ -185,7 +185,7 @@ def _install_job_doubles(
         def __init__(self, _db, *, progress_fn=None):
             pass
 
-        async def apply(self, _plan, _decisions):
+        async def apply(self, _plan, _decisions, *, config_values, updated_by):
             type(self).apply_calls += 1
             return WorkspaceBundleImportResult(
                 imported_item_ids=frozenset({"entity:workflow:one"}),
@@ -246,6 +246,7 @@ def _install_job_doubles(
     class Context:
         def __init__(self, checkpoint=None, crash_after_db_commit=lose_after_db_commit):
             self.requested_by_user_id = "owner"
+            self.requested_by_email = "owner@example.invalid"
             self.job_id = uuid4()
             self.checkpoint = checkpoint
             self.crash_after_db_commit = crash_after_db_commit

@@ -338,11 +338,15 @@ def _decide(preview: dict, action: str, *, keep: set[str] | None = None) -> list
     ]
 
 
-def _enqueue(e2e_client, headers: dict[str, str], preview: dict, decisions: list[dict]) -> str:
+def _enqueue(
+    e2e_client, headers: dict[str, str], preview: dict, decisions: list[dict],
+    config_values: dict[str, str] | None = None,
+) -> str:
     response = e2e_client.post(
         "/api/solutions/import-workspace",
         headers=headers,
-        json={"preview_token": preview["preview_token"], "decisions": decisions},
+        json={"preview_token": preview["preview_token"], "decisions": decisions,
+              "config_values": config_values or {}},
     )
     assert response.status_code == 202, response.text
     return response.json()["job_id"]
@@ -592,6 +596,82 @@ async def test_workspace_zip_preview_classifies_every_kind(
     from src.services.solutions.workspace_bundle_storage import WorkspaceBundleStorage
 
     await WorkspaceBundleStorage(preview["preview_token"]).delete()
+
+
+async def test_workspace_zip_import_accepts_declared_config_values(
+    e2e_client, platform_admin, db_session,
+) -> None:
+    from src.models.orm.config import Config
+
+    _, archive, _, _ = _stage_source_tree()
+    await _seed_destination(db_session)
+    preview = _preview_zip(e2e_client, platform_admin.headers, archive)
+    assert [schema["key"] for schema in preview["config_schemas"]] == [
+        "SINK_API_URL", "SINK_RETRIES", "SINK_VERBOSE", "SINK_TOKEN",
+    ]
+    assert all("default" not in schema and "value" not in schema for schema in preview["config_schemas"])
+    assert next(schema for schema in preview["config_schemas"] if schema["key"] == "SINK_TOKEN")["required"] is True
+
+    invalid = e2e_client.post(
+        "/api/solutions/import-workspace", headers=platform_admin.headers,
+        json={"preview_token": preview["preview_token"],
+              "decisions": _decide(preview, "keep"),
+              "config_values": {"UNKNOWN_KEY": "value"}},
+    )
+    assert invalid.status_code == 422
+
+    api_url_item_id = next(
+        item["id"] for item in preview["items"]
+        if item["kind"] == "config" and item["name"] == "SINK_API_URL"
+    )
+    decisions = [
+        {**decision, "action": "replace"} if decision["item_id"] == api_url_item_id else decision
+        for decision in _decide(preview, "keep")
+    ]
+    job_id = _enqueue(
+        e2e_client, platform_admin.headers, preview, decisions,
+        {"SINK_API_URL": "https://configured.example.invalid", "SINK_TOKEN": "entered-test-token"},
+    )
+    _wait_job(e2e_client, platform_admin.headers, job_id)
+
+    api_url = (
+        await db_session.execute(select(Config).where(Config.key == "SINK_API_URL"))
+    ).scalars().one()
+    assert api_url.value == {"value": "https://configured.example.invalid"}
+    token = (
+        await db_session.execute(select(Config).where(Config.key == "SINK_TOKEN"))
+    ).scalars().one()
+    assert token.value == {"value": "live-token"}, "Keep must retain the existing secret"
+
+
+async def test_workspace_zip_import_encrypts_entered_secret(
+    e2e_client, platform_admin, db_session,
+) -> None:
+    from src.core.security import decrypt_secret
+    from src.models.orm.config import Config
+
+    _, archive, _, _ = _stage_source_tree()
+    await _seed_destination(db_session)
+    preview = _preview_zip(e2e_client, platform_admin.headers, archive)
+    token_item_id = next(
+        item["id"] for item in preview["items"]
+        if item["kind"] == "config" and item["name"] == "SINK_TOKEN"
+    )
+    decisions = _decide(preview, "keep")
+    decisions = [
+        {**decision, "action": "replace"} if decision["item_id"] == token_item_id else decision
+        for decision in decisions
+    ]
+    job_id = _enqueue(
+        e2e_client, platform_admin.headers, preview, decisions,
+        {"SINK_TOKEN": "entered-test-token"},
+    )
+    _wait_job(e2e_client, platform_admin.headers, job_id)
+    token = (
+        await db_session.execute(select(Config).where(Config.key == "SINK_TOKEN"))
+    ).scalars().one()
+    assert token.value != {"value": "entered-test-token"}
+    assert decrypt_secret(token.value["value"]) == "entered-test-token"
 
 
 async def test_workspace_zip_import_preserves_ids_rewrites_refs_and_runtime(
@@ -1001,6 +1081,7 @@ async def test_workspace_org_scoped_import_matches_only_target_scope(
 ) -> None:
     """Scoped previews match rows in that org and stamp new rows there."""
     from src.models.orm.organizations import Organization
+    from src.models.orm.config import Config
     from src.models.orm.tables import Table
     from src.models.orm.workflows import Workflow
 
@@ -1015,6 +1096,14 @@ async def test_workspace_org_scoped_import_matches_only_target_scope(
         root, f"scoped-{suffix}", wf_path=SCOPED_WF_PATH, wf_fn=SCOPED_WF_FN,
         wf_id="99999999-9999-4999-8999-999999999999",
         table_name="scoped_items", table_id="88888888-8888-4888-8888-888888888888",
+    )
+    config_key = f"SCOPED_IMPORT_{suffix.upper()}"
+    (root / ".bifrost" / "configs.yaml").write_text(
+        "configs:\n"
+        f"  {config_key}:\n"
+        f"    key: {config_key}\n"
+        "    type: string\n"
+        "    required: true\n"
     )
     archive = _scoped_zip(root)
 
@@ -1033,9 +1122,11 @@ async def test_workspace_org_scoped_import_matches_only_target_scope(
     wf_item = by_match[f"{SCOPED_WF_PATH} :: {SCOPED_WF_FN}"]
     assert wf_item["classification"] == "conflict"
     assert wf_item["target_id"] == str(org_wf.id)
+    assert scoped["config_schemas"][0]["key"] == config_key
 
     job_id = _enqueue(
-        e2e_client, platform_admin.headers, scoped, _decide(scoped, "replace")
+        e2e_client, platform_admin.headers, scoped, _decide(scoped, "replace"),
+        {config_key: "org-specific-value"},
     )
     _wait_job(e2e_client, platform_admin.headers, job_id)
 
@@ -1050,6 +1141,12 @@ async def test_workspace_org_scoped_import_matches_only_target_scope(
     ).scalars().one()
     assert table.description == "Scoped table v2"
     assert table.solution_id is None
+    config = (
+        await db_session.execute(
+            select(Config).where(Config.key == config_key, Config.organization_id == org.id)
+        )
+    ).scalars().one()
+    assert config.value == {"value": "org-specific-value"}
 
 
 async def test_workspace_scoped_preview_reviews_and_moves_taken_global_path(

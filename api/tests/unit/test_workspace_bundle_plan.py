@@ -5,7 +5,7 @@ import hashlib
 from uuid import UUID
 
 
-def test_solution_package_projection_maps_config_declaration_to_workspace_value() -> None:
+def test_solution_package_projection_exposes_config_fields_without_secret_default() -> None:
     from src.services.solutions.workspace_bundle_plan import SolutionPackageWorkspaceProjection
     from src.services.solutions.zip_install import PreviewResult
 
@@ -22,7 +22,10 @@ def test_solution_package_projection_maps_config_declaration_to_workspace_value(
 
     config = projection.manifest.configs["API_KEY"]
     assert config.config_type == "secret"
-    assert config.value == "not-a-secret"
+    assert config.value is None
+    assert projection.config_schemas == ({
+        "key": "API_KEY", "type": "secret", "required": True, "description": None,
+    },)
 
 
 def test_declared_file_location_becomes_scoped_root_policy() -> None:

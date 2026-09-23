@@ -53,7 +53,7 @@ export function InstallSession({
 				<DialogContent
 					{...focus}
 					showCloseButton={!pending}
-					className={wide ? `flex min-w-0 max-h-[90dvh] flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl ${tall ? "h-[90dvh]" : ""}` : "max-h-[90dvh] overflow-y-auto sm:max-w-lg"}
+					className={wide ? `flex min-w-0 max-h-[90dvh] flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl ${tall ? "h-[90dvh]" : ""}` : "max-h-[90dvh] overflow-y-auto sm:max-w-xl"}
 					data-testid="solution-dialog"
 				>
 					<fieldset

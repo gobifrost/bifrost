@@ -297,8 +297,15 @@ async def enqueue_workspace_import(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="every workspace import conflict requires exactly one decision",
         )
+    declared_config_keys = {str(schema["key"]) for schema in preview.config_schemas}
+    if set(body.config_values) - declared_config_keys:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="workspace import config values must match declared keys",
+        )
     payload = WorkspaceBundleImportPayload(
-        preview_id=preview_id, package_sha256=preview.package_sha256, decisions=body.decisions,
+        preview_id=preview_id, package_sha256=preview.package_sha256,
+        decisions=body.decisions, config_values=body.config_values,
     )
     job, reused = await enqueue_platform_job(
         ctx.db,
@@ -492,6 +499,7 @@ def _same_workspace_bundle_decisions(
         and active.package_sha256 == requested.package_sha256
         and sorted((decision.item_id, decision.action) for decision in active.decisions)
         == sorted((decision.item_id, decision.action) for decision in requested.decisions)
+        and active.config_values == requested.config_values
     )
 
 

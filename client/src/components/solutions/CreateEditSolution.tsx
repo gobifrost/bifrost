@@ -167,6 +167,47 @@ function isSecretType(type: string): boolean {
 	return t === "secret" || t === "password";
 }
 
+function ConfigValueFields({
+	configs,
+	values,
+	onChange,
+	laterVerb,
+	disabledKeys,
+}: {
+	configs: PreviewConfigSchema[];
+	values: Record<string, string>;
+	onChange: (key: string, value: string) => void;
+	laterVerb: "install" | "import";
+	disabledKeys?: Set<string>;
+}) {
+	return configs.map((cfg) => {
+		const value = values[cfg.key] ?? "";
+		const disabled = disabledKeys?.has(cfg.key) ?? false;
+		const missing = cfg.required && !disabled && value.trim() === "";
+		return (
+			<div key={cfg.key} className="min-w-0 space-y-1">
+				<Label htmlFor={`cfg-${cfg.key}`} className="flex items-center gap-1 break-all">
+					{cfg.key}
+					{cfg.required && <span className="text-destructive" aria-hidden>*</span>}
+				</Label>
+				{cfg.description && <p className="text-xs text-muted-foreground">{cfg.description}</p>}
+				<Input
+					id={`cfg-${cfg.key}`}
+					type={isSecretType(cfg.type) ? "password" : "text"}
+					value={value}
+					disabled={disabled}
+					onChange={(event) => onChange(cfg.key, event.target.value)}
+				/>
+				{missing && (
+					<p className="text-xs text-yellow-600 dark:text-yellow-500">
+						Required — you can still {laterVerb} and set this later.
+					</p>
+				)}
+			</div>
+		);
+	});
+}
+
 /**
  * Distinct knowledge namespaces referenced by the bundle's agents. A Solution
  * ships its agents but NOT their knowledge corpus (the documents live outside
@@ -870,6 +911,7 @@ function WorkspaceImportBody({
 	const [orgId, setOrgId] = useState<string | null>(null);
 	const [preview, setPreview] = useState<WorkspaceBundlePreview | null>(null);
 	const [decisions, setDecisions] = useState<Record<string, "keep" | "replace">>({});
+	const [configValues, setConfigValues] = useState<Record<string, string>>({});
 	const [error, setError] = useState<string | null>(null);
 	const [loading, setLoading] = useState(false);
 	const [dragging, setDragging] = useState(false);
@@ -882,13 +924,14 @@ function WorkspaceImportBody({
 		previewRequest.current += 1;
 		setPreview(null);
 		setDecisions({});
+		setConfigValues({});
 		setError(null);
 		setLoading(false);
 	}
 
 	async function loadZip(next: File, targetOrgId = orgId) {
 		const request = ++previewRequest.current;
-		setFile(next); setPreview(null); setDecisions({}); setError(null); setLoading(true);
+		setFile(next); setPreview(null); setDecisions({}); setConfigValues({}); setError(null); setLoading(true);
 		try {
 			const result = await previewWorkspaceBundle(next, { organizationId: targetOrgId ?? "" });
 			if (request === previewRequest.current) setPreview(result);
@@ -900,7 +943,7 @@ function WorkspaceImportBody({
 	}
 	async function loadRepo(targetOrgId = orgId) {
 		const request = ++previewRequest.current;
-		setPreview(null); setDecisions({}); setError(null); setLoading(true);
+		setPreview(null); setDecisions({}); setConfigValues({}); setError(null); setLoading(true);
 		try {
 			const result = await previewWorkspaceBundleFromRepo({
 				repo_url: repoUrl.trim(),
@@ -941,6 +984,7 @@ function WorkspaceImportBody({
 					const accepted = await importWorkspaceBundle({
 						preview_token: preview.preview_token,
 						decisions: conflicts.map((item) => ({ item_id: item.id, action: decisions[item.id] })),
+						config_values: nonBlankConfigValues(configValues),
 					});
 					return { job_id: String(accepted.job_id), status: accepted.status };
 				},
@@ -1025,7 +1069,21 @@ function WorkspaceImportBody({
 				{error && <InstallFailure message={error} />}
 			</div>
 		)}
-		{loading ? <div className="flex min-h-0 flex-1 items-center justify-center gap-2 px-6 py-8"><Loader2 className="size-4 animate-spin" />Reading package…</div> : preview ? <WorkspaceImportReview preview={preview} decisions={decisions} onDecisionsChange={setDecisions} /> : null}
+		{loading ? <div className="flex min-h-0 flex-1 items-center justify-center gap-2 px-6 py-8"><Loader2 className="size-4 animate-spin" />Reading package…</div> : preview ? <WorkspaceImportReview preview={preview} decisions={decisions} onDecisionsChange={setDecisions} configuration={preview.config_schemas?.length ? (
+			<div className="shrink-0 px-5 pt-4" data-testid="workspace-import-config-section">
+				<p className="text-sm font-medium">Configuration</p>
+				<p className="mb-3 text-xs text-muted-foreground">Entered values are saved during import. Kept conflicts retain their current values.</p>
+				<div className="grid max-h-[22dvh] gap-3 overflow-auto pr-1 sm:grid-cols-2">
+					<ConfigValueFields
+						configs={asConfigSchemas(preview.config_schemas)}
+						values={configValues}
+						onChange={(key, value) => setConfigValues((previous) => ({ ...previous, [key]: value }))}
+						laterVerb="import"
+						disabledKeys={new Set(preview.items.filter((item) => item.kind === "config" && decisions[item.id] === "keep").map((item) => item.name))}
+					/>
+				</div>
+			</div>
+		) : null} /> : null}
 		{error && preview && <div className="px-6"><InstallFailure message={error} /></div>}
 		<DialogFooter data-testid="workspace-import-footer" className={`min-w-0 shrink-0 flex-col items-stretch gap-3 bg-muted/20 px-6 py-4 sm:flex-col ${preview ? "border-t" : ""}`}>{preview && <p className="text-xs text-muted-foreground">Import creates uncommitted Git changes</p>}<div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><Button type="button" variant="ghost" className="self-start" onClick={onBack}><ArrowLeft className="mr-1 size-4" />Back</Button><div className="flex min-w-0 flex-wrap justify-end gap-2"><Button type="button" variant="outline" onClick={onClose}>Cancel</Button><Button type="button" disabled={!preview || !complete || session.pending} onClick={() => session.run(start)}>Start import job</Button></div></div></DialogFooter>
 	</>;
@@ -1296,54 +1354,12 @@ function PreviewConfirmation({
 							</p>
 						</div>
 					) : (
-						declaredConfigs.map((cfg) => {
-							const value = configValues?.[cfg.key] ?? "";
-							const missing = cfg.required && value.trim() === "";
-							return (
-								<div key={cfg.key} className="space-y-1">
-									<Label
-										htmlFor={`cfg-${cfg.key}`}
-										className="flex items-center gap-1"
-									>
-										{cfg.key}
-										{cfg.required && (
-											<span
-												className="text-destructive"
-												aria-hidden
-											>
-												*
-											</span>
-										)}
-									</Label>
-									{cfg.description && (
-										<p className="text-xs text-muted-foreground">
-											{cfg.description}
-										</p>
-									)}
-									<Input
-										id={`cfg-${cfg.key}`}
-										type={
-											isSecretType(cfg.type)
-												? "password"
-												: "text"
-										}
-										value={value}
-										onChange={(e) =>
-											onConfigChange?.(
-												cfg.key,
-												e.target.value,
-											)
-										}
-									/>
-									{missing && (
-										<p className="text-xs text-yellow-600 dark:text-yellow-500">
-											Required — you can still install and
-											set this later.
-										</p>
-									)}
-								</div>
-							);
-						})
+						<ConfigValueFields
+							configs={declaredConfigs}
+							values={configValues ?? {}}
+							onChange={(key, value) => onConfigChange?.(key, value)}
+							laterVerb="install"
+						/>
 					)}
 				</div>
 			)}
