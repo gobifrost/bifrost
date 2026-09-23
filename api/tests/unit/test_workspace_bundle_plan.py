@@ -7,6 +7,15 @@ from uuid import UUID
 import pytest
 
 
+def test_solution_config_declaration_fields_have_workspace_projection_review() -> None:
+    """A new declaration field must prompt review of the manual workspace mapping."""
+    from bifrost.manifest import ManifestSolutionConfigSchema
+
+    assert set(ManifestSolutionConfigSchema.model_fields) == {
+        "id", "key", "type", "required", "description", "default", "position",
+    }
+
+
 def test_solution_package_projection_exposes_config_fields_without_secret_default() -> None:
     from src.services.solutions.workspace_bundle_plan import SolutionPackageWorkspaceProjection, WorkspaceBundlePlanner
     from src.services.solutions.zip_install import PreviewResult

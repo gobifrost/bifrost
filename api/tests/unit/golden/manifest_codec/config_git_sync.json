@@ -5,5 +5,7 @@
   "integration_id": null,
   "key": "RT_CONFIG_GOLDEN",
   "organization_id": "<volatile>",
+  "position": 3,
+  "required": true,
   "value": "golden-value"
 }
