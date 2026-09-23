@@ -32,6 +32,7 @@ from shared.table_batch_writes import (
     ConcurrentBatchWrite,
     DuplicateBatchIds,
     _row_from_doc,
+    _update_post_image_row,
     write_table_batch,
 )
 from src.core.auth import Context, CurrentSuperuser
@@ -171,6 +172,61 @@ async def _check_action_or_403(
     # audit trail is lost. FOOTGUN: this also commits any uncommitted
     # mutations on `db` from the caller. See docstring — callers must
     # have a clean session at this point.
+    await db.commit()
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Access denied",
+    )
+
+
+async def _check_update_or_403(
+    table: Table,
+    old_row: dict[str, Any],
+    new_row: dict[str, Any],
+    user: UserPrincipal,
+    *,
+    db: AsyncSession,
+) -> None:
+    """Require the ``update`` policy on BOTH pre-image and post-image.
+
+    The pre-image check alone authorizes the caller against the row as it
+    exists; the post-image check authorizes the value they are writing. Both
+    must pass — otherwise a user who can write a row because its org field
+    matches their own org could retarget the row to another org's id in the
+    same write.
+
+    Same audit/commit contract as :func:`_check_action_or_403`: a single
+    ``policy.deny`` audit row on either failure, generic 403 detail, and no
+    uncommitted caller mutations allowed at call time.
+    """
+    policies = await load_resolved_table_policies(table, db)
+    await preresolve_for_policies(
+        user,
+        policies,
+        db,
+        table.organization_id,
+        table.solution_id,
+    )
+    if evaluate_action("update", policies, old_row, user) and evaluate_action(
+        "update", policies, new_row, user
+    ):
+        return
+
+    raw_id = old_row.get("id")
+    resource_id: UUID | None = None
+    if raw_id is not None:
+        try:
+            resource_id = raw_id if isinstance(raw_id, UUID) else UUID(str(raw_id))
+        except (ValueError, TypeError):
+            resource_id = None
+
+    await emit_table_policy_deny(
+        db,
+        policy_action="update",
+        table_id=table.id,
+        table_name=table.name,
+        resource_id=resource_id,
+    )
     await db.commit()
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
@@ -1108,11 +1164,19 @@ async def insert_document(
 
     if body.upsert and body.id:
         # Upsert: update if exists, otherwise insert. Check `update` against
-        # the existing row, `create` against the candidate row.
+        # BOTH the existing row and the merged post-image, `create` against
+        # the candidate row.
         existing = await repo.get(body.id)
         if existing is not None:
             old_row = _row_from_doc(existing)
-            await _check_action_or_403("update", table, old_row, ctx.user, db=ctx.db)
+            new_row = _update_post_image_row(
+                old_row,
+                body.data,
+                updated_by=updated_by,
+                now=datetime.now(timezone.utc),
+                replace=False,
+            )
+            await _check_update_or_403(table, old_row, new_row, ctx.user, db=ctx.db)
             doc = await repo.update(body.id, body.data, updated_by=updated_by)
             if doc is None:
                 raise HTTPException(status_code=404, detail="Document not found")
@@ -1165,8 +1229,8 @@ async def upsert_document(
     PATCH ``/{doc_id}`` for partial updates with merge semantics.
 
     The candidate row is policy-checked for ``create``; if a row already
-    exists, it is also policy-checked for ``update`` against its pre-image.
-    Either denial returns 403; the row is not written.
+    exists, ``update`` is additionally required on BOTH its pre-image and
+    the replaced post-image. Any denial returns 403; the row is not written.
 
     NOTE: This route is declared BEFORE ``GET /{table_id}/documents/{doc_id}``
     so the literal ``/upsert`` segment matches first. Reversing the order
@@ -1183,7 +1247,14 @@ async def upsert_document(
     old_row: dict[str, Any] | None = None
     if existing is not None:
         old_row = _row_from_doc(existing)
-        await _check_action_or_403("update", table, old_row, ctx.user, db=ctx.db)
+        new_row = _update_post_image_row(
+            old_row,
+            body.data,
+            updated_by=updated_by,
+            now=datetime.now(timezone.utc),
+            replace=True,
+        )
+        await _check_update_or_403(table, old_row, new_row, ctx.user, db=ctx.db)
     candidate_row: dict[str, Any] = {
         **body.data,
         "id": body.id,
@@ -1286,7 +1357,13 @@ async def update_document(
         description="Target organization scope: 'global' or org UUID. Defaults to caller's home org. Provider admins only for non-self orgs.",
     ),
 ) -> DocumentPublic:
-    """Update a document (partial update, merges with existing)."""
+    """Update a document (partial update, merges with existing).
+
+    The ``update`` policy must pass on BOTH the pre-image and the merged
+    post-image — mutating a row into a value the caller could not write
+    (e.g. retargeting ``organization_id``) is denied with 403 and the row
+    is left untouched.
+    """
     table = await get_table_or_404(ctx, table_id, scope=scope)
     await _assert_solution_write_targets_owned_table(ctx, table)
     repo = DocumentRepository(ctx.db, table)
@@ -1295,7 +1372,14 @@ async def update_document(
     if existing is None:
         raise HTTPException(status_code=404, detail="Document not found")
     old_row = _row_from_doc(existing)
-    await _check_action_or_403("update", table, old_row, ctx.user, db=ctx.db)
+    new_row = _update_post_image_row(
+        old_row,
+        body.data,
+        updated_by=updated_by,
+        now=datetime.now(timezone.utc),
+        replace=False,
+    )
+    await _check_update_or_403(table, old_row, new_row, ctx.user, db=ctx.db)
     doc = await repo.update(doc_id, body.data, updated_by=updated_by)
     if doc is None:
         # Lost a race with a concurrent delete after we fetched + access-checked.

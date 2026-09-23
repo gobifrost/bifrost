@@ -228,8 +228,26 @@ class TestPoliciesMatrix:
             "tenant|001"
         ]
 
-    def test_state_locked_update(self, e2e_client, platform_admin, alice_user):
-        """Owner can update while status=open; cannot once status=done (pre-update semantics)."""
+    def test_state_transition_allowed_when_update_rule_ignores_status(
+        self, e2e_client, platform_admin, alice_user
+    ):
+        """A status transition (open→done) still succeeds when the UPDATE
+        rule does not depend on the transitioning field.
+
+        Dual-gate (Fixes #790) denies a write only when the POST-image fails
+        the ``update`` action. Here ``update``/``create`` are gated on
+        ownership alone — stable across the transition — while ``read``
+        additionally requires ``status == open``. Alice can therefore close
+        her own row, after which her own read filter hides it ("self-hide on
+        close" is opt-in via the read rule, not a side effect of
+        pre-image-only update gating).
+
+        Note: with row-state-only rules, allowing a transition INTO a state
+        also allows edits WITHIN that state — the rules see the post-image,
+        not the transition, so they cannot distinguish open→done from
+        done→done. A hard lock ("done is immutable even by its owner")
+        cannot be expressed this way; it would need transition-aware rules.
+        """
         table_id = _create_table(
             e2e_client, platform_admin.headers, f"locked_{uuid.uuid4().hex[:8]}",
         )
@@ -240,14 +258,19 @@ class TestPoliciesMatrix:
                 "when": {"user": "is_platform_admin"},
             },
             {
-                "name": "owner_open",
-                "actions": ["read", "create", "update"],
+                "name": "owner_open_read",
+                "actions": ["read"],
                 "when": {
                     "and": [
                         {"eq": [{"row": "created_by"}, {"user": "user_id"}]},
                         {"eq": [{"row": "status"}, "open"]},
                     ]
                 },
+            },
+            {
+                "name": "owner_write",
+                "actions": ["create", "update"],
+                "when": {"eq": [{"row": "created_by"}, {"user": "user_id"}]},
             },
         ]})
 
@@ -256,7 +279,7 @@ class TestPoliciesMatrix:
         assert r.status_code == 201, r.text
         doc_id = r.json()["id"]
 
-        # Alice can update while open
+        # Alice can update while open (pre- and post-image are both hers)
         u1 = e2e_client.patch(
             f"/api/tables/{table_id}/documents/{doc_id}",
             headers=alice_user.headers,
@@ -264,7 +287,8 @@ class TestPoliciesMatrix:
         )
         assert u1.status_code == 200, u1.text
 
-        # Alice flips to done (pre-update state was open → allowed)
+        # Alice flips to done — the update rule ignores status, so both
+        # gates pass on ownership alone.
         u2 = e2e_client.patch(
             f"/api/tables/{table_id}/documents/{doc_id}",
             headers=alice_user.headers,
@@ -272,13 +296,20 @@ class TestPoliciesMatrix:
         )
         assert u2.status_code == 200, u2.text
 
-        # Now status is done; further updates should be denied
-        u3 = e2e_client.patch(
-            f"/api/tables/{table_id}/documents/{doc_id}",
-            headers=alice_user.headers,
-            json={"data": {"status": "done", "title": "edit-after-done"}},
+        # Post-transition, alice's own read filter (status==open) hides the
+        # row — while admin (admin_bypass) still sees it as done.
+        aq = _query(e2e_client, alice_user.headers, table_id).json()["documents"]
+        assert all(d["id"] != doc_id for d in aq), (
+            f"closed row should be hidden from alice by her read rule; saw {aq}"
         )
-        assert u3.status_code == 403, u3.text
+        admin_q = _query(
+            e2e_client, platform_admin.headers, table_id,
+        ).json()["documents"]
+        target = next((d for d in admin_q if d["id"] == doc_id), None)
+        assert target is not None, admin_q
+        assert target["data"].get("status") == "done", (
+            f"expected status=done; got {target['data']!r}"
+        )
 
     def test_role_gated_via_has_role(self, e2e_client, platform_admin, alice_user):
         """has_role() in policy gates by role membership."""
@@ -605,34 +636,26 @@ class TestPoliciesMatrix:
             f"delete must be gated independently of update; got {dele.status_code}"
         )
 
-    def test_update_gates_on_pre_image_only(
+    def test_update_gates_on_both_pre_and_post_image(
         self, e2e_client, platform_admin, alice_user
     ):
-        """OBSERVED BEHAVIOR (not aspirational): the PATCH handler runs the
-        ``update`` policy check against the PRE-update row only.
+        """DUAL-GATE (Fixes #790): the PATCH handler runs the ``update``
+        policy check against BOTH the pre-update row and the merged
+        post-image. A user with update permission on a row they own can no
+        longer mutate it into a row the ``update`` policy would deny —
+        e.g. flipping ``status`` from ``open`` to ``closed`` when the update
+        rule requires ``status == open`` is denied with 403 and the row is
+        left untouched.
 
-        See ``api/src/routers/tables.py::update_document``: ``old_row`` is
-        passed to ``_check_action_or_403("update", ...)``; the post-image is
-        not re-checked. As a consequence, a user with update permission on a
-        row they own can mutate it into a row that ``read`` would no longer
-        permit them to see. The user then loses visibility of their own row.
-
-        This test pins that behavior. If the handler ever starts re-checking
-        the post-image, this test must be updated and the change advertised
-        — the new semantics may break apps that rely on "self-hide on close."
+        See ``api/src/routers/tables.py::update_document``: ``old_row`` and
+        the merged ``new_row`` are both passed to ``_check_update_or_403``.
+        This replaces the old pre-image-only semantics (which let a user
+        "self-hide" a row by closing it).
         """
         table_id = _create_table(
             e2e_client, platform_admin.headers, f"posthide_{uuid.uuid4().hex[:8]}",
         )
-        # Read+update gated on created_by==self. Post-update, alice can flip
-        # `created_by` in the JSONB data — but the policy resolves
-        # `row.created_by` to the COLUMN, not the JSONB. So actually the
-        # COLUMN-level created_by stays alice's, the policy still matches,
-        # and the row remains visible. The drift surface this test pins is
-        # different: alice can mutate `data.status` such that a hypothetical
-        # "read where status==open" policy would hide it post-update — but
-        # the update was already authorized, and the row is now invisible to
-        # her on subsequent reads.
+        # Read+update gated on created_by==self AND status==open.
         _set_policies(e2e_client, platform_admin.headers, table_id, {"policies": [
             {
                 "name": "admin_bypass",
@@ -663,31 +686,276 @@ class TestPoliciesMatrix:
         aq = _query(e2e_client, alice_user.headers, table_id).json()["documents"]
         assert any(d["id"] == doc_id for d in aq)
 
-        # Alice flips status to "closed" — pre-image had status==open and
-        # created_by==alice, so the update is authorized and succeeds.
+        # Alice tries to flip status to "closed" — the pre-image passes
+        # (status==open, owned) but the post-image fails owner_open_only,
+        # so the update is denied and the row is untouched.
         upd = e2e_client.patch(
             f"/api/tables/{table_id}/documents/{doc_id}",
             headers=alice_user.headers,
             json={"data": {"status": "closed", "v": "hers"}},
         )
-        assert upd.status_code == 200, upd.text
-
-        # Post-update, the row no longer satisfies `status==open`, so alice's
-        # read filter excludes it. She has just made one of her own rows
-        # invisible to herself. This is the observed semantics — the test
-        # exists to lock it in, not endorse it.
-        aq2 = _query(e2e_client, alice_user.headers, table_id).json()["documents"]
-        assert all(d["id"] != doc_id for d in aq2), (
-            f"post-update read filter should now exclude doc {doc_id}; saw {aq2}"
+        assert upd.status_code == 403, (
+            f"update must gate on post-image too; got {upd.status_code} body={upd.text}"
         )
 
-        # Admin can still see the row (admin_bypass) — the row was not deleted.
+        # The row is unchanged and still visible to alice.
+        aq2 = _query(e2e_client, alice_user.headers, table_id).json()["documents"]
+        target = next((d for d in aq2 if d["id"] == doc_id), None)
+        assert target is not None, (
+            f"denied PATCH must leave the row readable; alice sees {aq2}"
+        )
+        assert target["data"].get("status") == "open", (
+            f"row mutated despite 403; got {target['data']!r}"
+        )
+
+        # A policy-neutral edit still succeeds: flipping `v` keeps
+        # status==open on the post-image, so both gates pass.
+        ok = e2e_client.patch(
+            f"/api/tables/{table_id}/documents/{doc_id}",
+            headers=alice_user.headers,
+            json={"data": {"v": "edited"}},
+        )
+        assert ok.status_code == 200, ok.text
+        assert ok.json()["data"]["v"] == "edited"
+
+    def test_cannot_retarget_organization_id_via_patch(
+        self, e2e_client, platform_admin, alice_user, org2_user
+    ):
+        """Fixes #790: alice (org1) cannot PATCH her OWN row to carry
+        org2's id, even though the pre-image satisfies ``own_org_full``.
+
+        This is the reported hole: write access granted by
+        ``organization_id == :organization_id`` (theirs) must not extend to
+        a target value carrying another org's id.
+        """
+        table_id = _create_table(
+            e2e_client, platform_admin.headers,
+            f"orghop_{uuid.uuid4().hex[:8]}",
+        )
+        _set_policies(e2e_client, platform_admin.headers, table_id, {"policies": [
+            {
+                "name": "admin_bypass",
+                "actions": ["read", "create", "update", "delete"],
+                "when": {"user": "is_platform_admin"},
+            },
+            {
+                "name": "own_org_full",
+                "actions": ["read", "create", "update", "delete"],
+                "when": {
+                    "eq": [
+                        {"row": "organization_id"},
+                        {"user": "organization_id"},
+                    ]
+                },
+            },
+        ]})
+
+        org2_org = str(org2_user.organization_id)
+        alice_org = str(alice_user.organization_id)
+        assert alice_org != org2_org, "fixture sanity: orgs must differ"
+
+        # Alice inserts her own row carrying her org id.
+        ins = _insert(
+            e2e_client, alice_user.headers, table_id,
+            {"who": "alice", "organization_id": alice_org},
+        )
+        assert ins.status_code == 201, ins.text
+        doc_id = ins.json()["id"]
+
+        # Alice tries to retarget the row to org2 — pre-image passes, the
+        # post-image (organization_id == org2) does not match her org.
+        hop = e2e_client.patch(
+            f"/api/tables/{table_id}/documents/{doc_id}",
+            headers=alice_user.headers,
+            json={"data": {"organization_id": org2_org}},
+        )
+        assert hop.status_code == 403, (
+            f"org-hop PATCH must be denied; got {hop.status_code} body={hop.text}"
+        )
+
+        # Side-effect check: admin reads the row and confirms it's untouched
+        # and still carries alice's org.
         admin_q = _query(
             e2e_client, platform_admin.headers, table_id,
         ).json()["documents"]
-        assert any(d["id"] == doc_id for d in admin_q), (
-            f"admin should still see the closed row; saw {admin_q}"
+        target = next((d for d in admin_q if d["id"] == doc_id), None)
+        assert target is not None, admin_q
+        assert target["data"].get("organization_id") == alice_org, (
+            f"row retargeted despite 403; got {target['data']!r}"
         )
+
+        # Alice still reads her (unchanged) row, and a policy-neutral edit
+        # that keeps her org on the post-image still succeeds.
+        aq = _query(e2e_client, alice_user.headers, table_id).json()["documents"]
+        assert any(d["id"] == doc_id for d in aq), (
+            f"alice lost visibility of her own row after denied PATCH; sees {aq}"
+        )
+        ok = e2e_client.patch(
+            f"/api/tables/{table_id}/documents/{doc_id}",
+            headers=alice_user.headers,
+            json={"data": {"who": "alice-edited"}},
+        )
+        assert ok.status_code == 200, ok.text
+
+    def test_cannot_retarget_organization_id_via_upsert(
+        self, e2e_client, platform_admin, alice_user, org2_user
+    ):
+        """Fixes #790: the single-row upsert verbs deny org-hop on replace.
+
+        Both ``POST /documents`` with ``upsert=true`` (merge) and
+        ``POST /documents/upsert`` (replace) require ``update`` on the
+        pre-image AND the post-image when the id already exists.
+        """
+        table_id = _create_table(
+            e2e_client, platform_admin.headers,
+            f"orghopups_{uuid.uuid4().hex[:8]}",
+        )
+        _set_policies(e2e_client, platform_admin.headers, table_id, {"policies": [
+            {
+                "name": "admin_bypass",
+                "actions": ["read", "create", "update", "delete"],
+                "when": {"user": "is_platform_admin"},
+            },
+            {
+                "name": "own_org_full",
+                "actions": ["read", "create", "update", "delete"],
+                "when": {
+                    "eq": [
+                        {"row": "organization_id"},
+                        {"user": "organization_id"},
+                    ]
+                },
+            },
+        ]})
+
+        org2_org = str(org2_user.organization_id)
+        alice_org = str(alice_user.organization_id)
+        assert alice_org != org2_org, "fixture sanity: orgs must differ"
+
+        doc_id = str(uuid.uuid4())
+        ins = _insert(
+            e2e_client, alice_user.headers, table_id,
+            {"who": "alice", "organization_id": alice_org},
+            doc_id=doc_id,
+        )
+        assert ins.status_code == 201, ins.text
+
+        # Replace-upsert retargeting to org2 → 403.
+        rep = e2e_client.post(
+            f"/api/tables/{table_id}/documents/upsert",
+            headers=alice_user.headers,
+            json={"id": doc_id, "data": {"who": "alice", "organization_id": org2_org}},
+        )
+        assert rep.status_code == 403, (
+            f"org-hop replace-upsert must be denied; got {rep.status_code} body={rep.text}"
+        )
+
+        # Merge-upsert (upsert=true) retargeting to org2 → 403.
+        mrg = e2e_client.post(
+            f"/api/tables/{table_id}/documents",
+            headers=alice_user.headers,
+            json={
+                "id": doc_id,
+                "upsert": True,
+                "data": {"organization_id": org2_org},
+            },
+        )
+        assert mrg.status_code == 403, (
+            f"org-hop merge-upsert must be denied; got {mrg.status_code} body={mrg.text}"
+        )
+
+        # Row untouched — still alice's org.
+        admin_q = _query(
+            e2e_client, platform_admin.headers, table_id,
+        ).json()["documents"]
+        target = next((d for d in admin_q if d["id"] == doc_id), None)
+        assert target is not None, admin_q
+        assert target["data"].get("organization_id") == alice_org, (
+            f"row retargeted via upsert despite 403; got {target['data']!r}"
+        )
+
+    def test_batch_upsert_cannot_retarget_organization_id(
+        self, e2e_client, platform_admin, alice_user, org2_user
+    ):
+        """Fixes #790: batch ``merge_upsert`` / ``replace_upsert`` deny
+        org-hop rows atomically — the whole batch 403s and nothing is
+        written — while policy-neutral batch edits still succeed.
+        """
+        table_id = _create_table(
+            e2e_client, platform_admin.headers,
+            f"orghopbatch_{uuid.uuid4().hex[:8]}",
+        )
+        _set_policies(e2e_client, platform_admin.headers, table_id, {"policies": [
+            {
+                "name": "admin_bypass",
+                "actions": ["read", "create", "update", "delete"],
+                "when": {"user": "is_platform_admin"},
+            },
+            {
+                "name": "own_org_full",
+                "actions": ["read", "create", "update", "delete"],
+                "when": {
+                    "eq": [
+                        {"row": "organization_id"},
+                        {"user": "organization_id"},
+                    ]
+                },
+            },
+        ]})
+
+        org2_org = str(org2_user.organization_id)
+        alice_org = str(alice_user.organization_id)
+        assert alice_org != org2_org, "fixture sanity: orgs must differ"
+
+        doc_id = str(uuid.uuid4())
+        ins = _insert(
+            e2e_client, alice_user.headers, table_id,
+            {"who": "alice", "organization_id": alice_org},
+            doc_id=doc_id,
+        )
+        assert ins.status_code == 201, ins.text
+
+        for mode in ("merge_upsert", "replace_upsert"):
+            r = e2e_client.post(
+                f"/api/tables/{table_id}/documents/batch",
+                headers=alice_user.headers,
+                json={
+                    "write_mode": mode,
+                    "documents": [
+                        {"id": doc_id, "data": {"organization_id": org2_org}},
+                    ],
+                },
+            )
+            assert r.status_code == 403, (
+                f"org-hop batch {mode} must be denied; "
+                f"got {r.status_code} body={r.text}"
+            )
+            body = r.json()
+            if isinstance(body.get("detail"), dict):
+                assert body["detail"].get("denied_row_indices") == [0], body
+
+        # Nothing was written by either denied batch — still alice's org.
+        admin_q = _query(
+            e2e_client, platform_admin.headers, table_id,
+        ).json()["documents"]
+        target = next((d for d in admin_q if d["id"] == doc_id), None)
+        assert target is not None, admin_q
+        assert target["data"].get("organization_id") == alice_org, (
+            f"row retargeted via batch despite 403s; got {target['data']!r}"
+        )
+
+        # Policy-neutral batch edit (keeps her org) still succeeds.
+        ok = e2e_client.post(
+            f"/api/tables/{table_id}/documents/batch",
+            headers=alice_user.headers,
+            json={
+                "write_mode": "merge_upsert",
+                "documents": [
+                    {"id": doc_id, "data": {"who": "alice-edited"}},
+                ],
+            },
+        )
+        assert ok.status_code == 200, ok.text
 
     def test_cannot_patch_to_make_visible_to_self(
         self, e2e_client, platform_admin, alice_user
@@ -697,9 +965,10 @@ class TestPoliciesMatrix:
 
         Concretely: a row with ``created_by=admin`` is invisible to alice under
         ``own_row``. She tries to PATCH that row's data — the handler fetches
-        the OLD row, runs ``_check_action_or_403("update", old_row, ...)``,
-        which fails because no rule grants alice update on a row she does not
-        own. She cannot mutate the row to flip ownership.
+        the OLD row and requires ``update`` on both it and the merged
+        post-image (``_check_update_or_403``), which fails on the pre-image
+        because no rule grants alice update on a row she does not own. She
+        cannot mutate the row to flip ownership.
 
         Security boundary: prevents "write-via-update" exfiltration where
         unauthorized writes would otherwise mutate a row to satisfy a read
@@ -727,10 +996,10 @@ class TestPoliciesMatrix:
         assert ar.status_code == 201, ar.text
         admin_doc_id = ar.json()["id"]
 
-        # Alice tries to PATCH it — pre-update row's created_by is admin, so
+        # Alice tries to PATCH it — pre-image's created_by is admin, so
         # own_row_full does not match her, and she has no other update rule.
         # The fact that she might claim her own user_id in the patch body is
-        # irrelevant: PATCH gates on the PRE-image only.
+        # irrelevant: the dual update gate fails on the pre-image.
         flip = e2e_client.patch(
             f"/api/tables/{table_id}/documents/{admin_doc_id}",
             headers=alice_user.headers,
@@ -805,10 +1074,10 @@ class TestPoliciesMatrix:
         """Alice (org1) cannot UPDATE a doc whose data.organization_id == org2.
 
         Security boundary: same row-level org policy that gates READ also
-        gates UPDATE. The handler runs ``_check_action_or_403("update", ...)``
-        against the PRE-image; alice is from org1, the row carries org2's id,
-        so own_org_full does NOT match her — even though both users are on
-        the same global table.
+        gates UPDATE. The handler requires ``update`` on both the pre-image
+        and the merged post-image; alice is from org1, the row carries
+        org2's id, so own_org_full does NOT match her on the pre-image —
+        even though both users are on the same global table.
         """
         table_id = _create_table(
             e2e_client, platform_admin.headers,
@@ -1106,9 +1375,9 @@ class TestPoliciesMatrix:
 
         Security boundary: see ``insert_document`` in
         ``api/src/routers/tables.py`` — the upsert branch fetches the
-        existing row and calls ``_check_action_or_403("update", ...)`` on
-        the pre-image. If that gate were removed, a "create-only" grant
-        would silently allow row mutation.
+        existing row and calls ``_check_update_or_403`` on the pre-image
+        plus the merged post-image. If that gate were removed, a
+        "create-only" grant would silently allow row mutation.
         """
         table_id = _create_table(
             e2e_client, platform_admin.headers,
