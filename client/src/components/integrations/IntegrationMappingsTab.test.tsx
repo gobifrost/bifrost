@@ -115,6 +115,40 @@ describe("IntegrationMappingsTab — populated", () => {
 		expect(screen.getByText("Not Mapped")).toBeInTheDocument();
 	});
 
+	it("shows Mapped for a config-only mapping with an empty entity_id", () => {
+		renderTab({
+			orgsWithMappings: [
+				{
+					id: "org-3",
+					name: "Gamma",
+					mapping: {
+						id: "map-3",
+						integration_id: "int-1",
+						organization_id: "org-3",
+						entity_id: "",
+						entity_name: "",
+						oauth_token_id: null,
+						config: { api_key: "secret" },
+					} as unknown as OrgWithMapping["mapping"],
+					formData: {
+						organization_id: "org-3",
+						entity_id: "",
+						entity_name: "",
+						config: { api_key: "secret" },
+					},
+				},
+			],
+			entities: [{ value: "ent-a", label: "Entity A" }],
+		});
+
+		// Saving overrides for an unmapped org creates the mapping row with an
+		// empty entity_id — the row counts as mapped from then on.
+		const row = screen.getByText("Gamma").closest("li")!;
+		expect(within(row).getByText("Mapped")).toBeInTheDocument();
+		expect(within(row).queryByText("Not Mapped")).not.toBeInTheDocument();
+		expect(within(row).queryByText("New")).not.toBeInTheDocument();
+	});
+
 	it("keeps the entity selector searchable inside a compact mapping row", async () => {
 		const { user, onUpdateOrgMapping } = renderTab({
 			orgsWithMappings: orgs,
@@ -248,6 +282,21 @@ describe("IntegrationMappingsTab — populated", () => {
 		);
 		await user.click(screen.getByRole("menuitem", { name: "Configure" }));
 		expect(onOpenConfigDialog).toHaveBeenCalledWith("org-1");
+	});
+
+	it("opens the config dialog for an org without a mapping", async () => {
+		const { user, onOpenConfigDialog } = renderTab({
+			orgsWithMappings: orgs,
+			entities: [{ value: "ent-a", label: "Entity A" }],
+		});
+
+		await user.click(
+			screen.getByRole("button", { name: "Mapping actions for Beta" }),
+		);
+		await user.click(screen.getByRole("menuitem", { name: "Configure" }));
+		// Saving creates the mapping row on the fly, so Configure stays
+		// available before a mapping exists.
+		expect(onOpenConfigDialog).toHaveBeenCalledWith("org-2");
 	});
 
 	it("marks rows with non-default config inside the actions menu", async () => {
