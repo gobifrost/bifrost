@@ -283,15 +283,22 @@ def _git_repo(root: Path) -> tuple[str, str]:
     return f"file://{root}", out.stdout.strip()
 
 
-def _stage_source_tree(
+def _stage_zip(
     slug: str = FIXTURE_SLUG, app_slug: str = APP_SLUG,
-) -> tuple[Path, bytes, str, str]:
-    """Write the fixture tree to the shared mount; return (root, zip, repo_url, commit)."""
+) -> tuple[Path, bytes]:
+    """Write the fixture tree and package it for ZIP import."""
     _SHARED_ROOT.mkdir(parents=True, exist_ok=True)
     root = _SHARED_ROOT / f"kitchen-{uuid.uuid4().hex[:8]}"
     _CREATED.append(root)
     _write_tree(root, slug, app_slug)
-    archive = _zip_bytes(root)
+    return root, _zip_bytes(root)
+
+
+def _stage_repo(
+    slug: str = FIXTURE_SLUG, app_slug: str = APP_SLUG,
+) -> tuple[Path, bytes, str, str]:
+    """Package the same tree and commit it for ZIP versus repository checks."""
+    root, archive = _stage_zip(slug, app_slug)
     repo_url, commit = _git_repo(root)
     return root, archive, repo_url, commit
 
@@ -519,7 +526,7 @@ async def test_workspace_zip_preview_classifies_every_kind(
     e2e_client, platform_admin, db_session,
 ) -> None:
     """One seeded preview contains creates, unchanged items, and conflicts."""
-    _, archive, _, _ = _stage_source_tree()
+    _, archive = _stage_zip()
     await _seed_destination(db_session)
     preview = _preview_zip(e2e_client, platform_admin.headers, archive)
 
@@ -619,7 +626,7 @@ async def test_workspace_preview_handles_independent_apps_without_repo_source(
     db_session.add_all([matching, unrelated])
     await db_session.commit()
 
-    _, archive, _, _ = _stage_source_tree(app_slug=app_slug)
+    _, archive = _stage_zip(app_slug=app_slug)
     preview = _preview_zip(e2e_client, platform_admin.headers, archive)
     matched = _items_by_match(preview)[_key(app_slug)]
     assert matched["classification"] == "conflict"
@@ -631,7 +638,7 @@ async def test_workspace_zip_import_accepts_declared_config_values(
 ) -> None:
     from src.models.orm.config import Config
 
-    _, archive, _, _ = _stage_source_tree()
+    _, archive = _stage_zip()
     await _seed_destination(db_session)
     preview = _preview_zip(e2e_client, platform_admin.headers, archive)
     assert [schema["key"] for schema in preview["config_schemas"]] == [
@@ -681,7 +688,7 @@ async def test_workspace_zip_import_encrypts_entered_secret(
     from src.core.security import decrypt_secret
     from src.models.orm.config import Config
 
-    _, archive, _, _ = _stage_source_tree()
+    _, archive = _stage_zip()
     await _seed_destination(db_session)
     preview = _preview_zip(e2e_client, platform_admin.headers, archive)
     token_item_id = next(
@@ -709,7 +716,7 @@ async def test_workspace_zip_import_preserves_ids_rewrites_refs_and_runtime(
     e2e_client, platform_admin, db_session,
 ) -> None:
     """Replace-all through the durable job keeps IDs, remaps refs, keeps runtime."""
-    _, archive, _, _ = _stage_source_tree()
+    _, archive = _stage_zip()
     seeded = await _seed_destination(db_session)
     preview, _ = await _replace_all_import(e2e_client, platform_admin.headers, archive)
 
@@ -898,7 +905,7 @@ async def test_workspace_import_keep_preserves_destination_content(
     e2e_client, platform_admin, db_session,
 ) -> None:
     """Keep decisions leave destination definitions (and their IDs) in place."""
-    _, archive, _, _ = _stage_source_tree()
+    _, archive = _stage_zip()
     await _seed_destination(db_session)
     await _replace_all_import(e2e_client, platform_admin.headers, archive)
 
@@ -940,7 +947,7 @@ async def test_workspace_repo_import_converges_and_shares_the_job(
     e2e_client, platform_admin, db_session,
 ) -> None:
     """Repository snapshots plan like ZIPs and apply through the same job + lock."""
-    _, archive, repo_url, commit = _stage_source_tree()
+    _, archive, repo_url, commit = _stage_repo()
     await _seed_destination(db_session)
 
     zipped = _preview_zip(e2e_client, platform_admin.headers, archive)
@@ -995,7 +1002,7 @@ async def test_managed_solution_install_from_zip_keeps_lifecycle(
     from tests.e2e.platform.conftest import wait_for_install
 
     slug = f"{FIXTURE_SLUG}-{uuid.uuid4().hex[:8]}"
-    _, archive, _, _ = _stage_source_tree(slug, f"{APP_SLUG}-{slug}")
+    _, archive = _stage_zip(slug, f"{APP_SLUG}-{slug}")
 
     preview = e2e_client.post(
         "/api/solutions/install/preview",
@@ -1035,7 +1042,7 @@ async def test_managed_solution_install_from_repo_is_git_connected(
     from tests.e2e.platform.conftest import wait_for_install
 
     slug = f"{FIXTURE_SLUG}-{uuid.uuid4().hex[:8]}"
-    _, _, repo_url, _ = _stage_source_tree(slug, f"{APP_SLUG}-{slug}")
+    _, _, repo_url, _ = _stage_repo(slug, f"{APP_SLUG}-{slug}")
 
     installed = wait_for_install(
         e2e_client,

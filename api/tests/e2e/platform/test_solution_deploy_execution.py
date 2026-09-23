@@ -242,34 +242,21 @@ def _deploy_install_with_app(e2e_client, headers, marker: str, org_id: str | Non
     }
 
 
-def test_two_installs_same_path_resolve_own_workflow_via_app_id(e2e_client, platform_admin):
-    """Codex #8 P1 end-to-end: two Solution installs each ship
-    workflows/main.py::main (different return values) AND an app. Executing each
-    app's workflow ref with that app's app_id resolves THAT install's own
-    workflow — deterministically, not a sibling install's that shares the path."""
+def test_two_installs_same_path_resolve_own_workflow_via_app_scope(e2e_client, platform_admin):
+    """Both body app_id and the browser's X-Bifrost-App header resolve the
+    workflow from the matching install when two installs share a path."""
     headers = platform_admin.headers
 
     app_a = _deploy_install_with_app(e2e_client, headers, "aaa")["app_id"]
     app_b = _deploy_install_with_app(e2e_client, headers, "bbb")["app_id"]
 
-    # Each app's path-ref resolves to ITS OWN install's workflow.
+    # Each app's path-ref resolves to its own install via the body scope.
     res_a = _execute_with_app(e2e_client, headers, "workflows/main.py::main", app_a)
     res_b = _execute_with_app(e2e_client, headers, "workflows/main.py::main", app_b)
     assert res_a["status"] == "Success", res_a
     assert res_b["status"] == "Success", res_b
     assert res_a["result"] == {"marker": "aaa"}, res_a
     assert res_b["result"] == {"marker": "bbb"}, res_b
-
-
-def test_app_header_alone_scopes_workflow_execution(e2e_client, platform_admin):
-    """The deployed-browser transport contract: X-Bifrost-App header, NO body
-    app_id. Auth derives ctx.solution_id from the header; workflow execution
-    must honor that context scope so a path::fn ref resolves the install's own
-    workflow — same as tables/files already do."""
-    headers = platform_admin.headers
-
-    app_a = _deploy_install_with_app(e2e_client, headers, "hdr-aaa")["app_id"]
-    app_b = _deploy_install_with_app(e2e_client, headers, "hdr-bbb")["app_id"]
 
     def _execute_with_header(app_id: str) -> dict:
         resp = e2e_client.post(
@@ -280,12 +267,13 @@ def test_app_header_alone_scopes_workflow_execution(e2e_client, platform_admin):
         assert resp.status_code == 200, f"execute failed: {resp.status_code} {resp.text}"
         return resp.json()
 
-    res_a = _execute_with_header(app_a)
-    res_b = _execute_with_header(app_b)
-    assert res_a["status"] == "Success", res_a
-    assert res_b["status"] == "Success", res_b
-    assert res_a["result"] == {"marker": "hdr-aaa"}, res_a
-    assert res_b["result"] == {"marker": "hdr-bbb"}, res_b
+    # The deployed browser sends only X-Bifrost-App, with no body app_id.
+    header_a = _execute_with_header(app_a)
+    header_b = _execute_with_header(app_b)
+    assert header_a["status"] == "Success", header_a
+    assert header_b["status"] == "Success", header_b
+    assert header_a["result"] == {"marker": "aaa"}, header_a
+    assert header_b["result"] == {"marker": "bbb"}, header_b
 
 
 def test_workflow_404_includes_scope_diagnostics(e2e_client, platform_admin):
