@@ -223,7 +223,9 @@ FILES: dict[str, str] = {
         "connections:\n  acme:\n    integration_name: acme\n"
         "    template: {}\n    position: 0\n"
         "  contoso:\n    integration_name: contoso\n"
-        "    template: {}\n    position: 1\n"
+        "    template:\n      config_schema:\n"
+        "        - key: endpoint\n          type: string\n"
+        "          required: true\n    position: 1\n"
     ),
     ".bifrost/files.yaml": "locations:\n  - sink-archive\n",
     "docs/runbook.md": (
@@ -693,7 +695,7 @@ async def test_workspace_zip_import_preserves_ids_rewrites_refs_and_runtime(
 
     # Claims import as global definitions with destination IDs preserved.
     from src.models.orm.custom_claims import CustomClaim
-    from src.models.orm.integrations import Integration
+    from src.models.orm.integrations import Integration, IntegrationConfigSchema
     from src.models.orm.users import Role
     from src.models.orm.workflow_roles import WorkflowRole
 
@@ -713,6 +715,16 @@ async def test_workspace_zip_import_preserves_ids_rewrites_refs_and_runtime(
         await db_session.execute(select(Integration).where(Integration.name == "contoso"))
     ).scalars().one()
     assert contoso.description is None
+    endpoint_schema = (
+        await db_session.execute(
+            select(IntegrationConfigSchema).where(
+                IntegrationConfigSchema.integration_id == contoso.id,
+                IntegrationConfigSchema.key == "endpoint",
+            )
+        )
+    ).scalars().one()
+    assert endpoint_schema.type == "string"
+    assert endpoint_schema.required is True
 
     # Role bindings merge: the seeded assignment survives and the package
     # role is auto-created empty and bound.

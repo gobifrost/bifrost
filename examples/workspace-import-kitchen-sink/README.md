@@ -3,10 +3,8 @@
 A representative Solution package for the unattached **Import into workspace**
 flow. Every definition below is ordinary portable content, including custom
 claims, connection schemas (imported as never-clobber integration shells),
-and role bindings (merged additively). File-location declarations are the one
-package-only construct: install setup metadata with no workspace analogue, so
-the preview proves they produce an explicit warning instead of disappearing
-silently.
+and role bindings (merged additively). File-location declarations become
+reviewable root policies for workspace shares.
 
 Typed cross-references tie the package together:
 
