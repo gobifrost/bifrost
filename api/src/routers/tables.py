@@ -191,9 +191,9 @@ async def _check_update_or_403(
 
     The pre-image check alone authorizes the caller against the row as it
     exists; the post-image check authorizes the value they are writing. Both
-    must pass — otherwise a user who can write a row because
-    ``row.organization_id == user.organization_id`` could retarget the row
-    to another org's id in the same write.
+    must pass — otherwise a user who can write a row because its org field
+    matches their own org could retarget the row to another org's id in the
+    same write.
 
     Same audit/commit contract as :func:`_check_action_or_403`: a single
     ``policy.deny`` audit row on either failure, generic 403 detail, and no
