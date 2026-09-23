@@ -35,14 +35,14 @@ function TypeBadge({ kind }: { kind: string }) {
 	const shared = (ENTITY_CONFIG as Record<string, { label: string; color: string }>)[kind];
 	if (shared) {
 		return (
-			<Badge variant="outline" className={cn("h-5 shrink-0 px-1.5", shared.color)}>
+			<Badge variant="outline" className={cn("h-5 w-24 shrink-0 justify-center px-1.5", shared.color)}>
 				{shared.label}
 			</Badge>
 		);
 	}
 	const extra = (EXTRA_KIND_CONFIG as Record<string, { label: string }>)[kind];
 	return (
-		<Badge variant="outline" className="h-5 shrink-0 px-1.5">
+		<Badge variant="outline" className="h-5 w-24 shrink-0 justify-center px-1.5">
 			{extra?.label ?? kind}
 		</Badge>
 	);
@@ -109,16 +109,33 @@ export function WorkspaceImportReview({
 	const reviewRef = useRef<HTMLDivElement>(null);
 	const { setTall } = useInstallSession();
 	useLayoutEffect(() => {
-		const dialog = reviewRef.current?.closest<HTMLElement>("[data-testid=solution-dialog]");
-		if (!dialog) return;
+		const review = reviewRef.current;
+		const fieldset = review?.parentElement;
+		const dialog = review?.closest<HTMLElement>("[data-testid=solution-dialog]");
+		if (!review || !fieldset || !dialog) return;
 		let frame = 0;
 		const measureContent = () => {
-			// Measure at natural height, then give overflowing reviews a definite
-			// height so the table can own the scroll area.
-			setTall(false);
 			cancelAnimationFrame(frame);
 			frame = requestAnimationFrame(() => {
-				setTall(dialog.scrollHeight > dialog.clientHeight + 1);
+				const table = review.querySelector("table");
+				const list = review.lastElementChild as HTMLElement | null;
+				if (!table || !list) return;
+				const fixedHeight = [...fieldset.children]
+					.filter((child) => child !== review)
+					.reduce((height, child) => height + (child as HTMLElement).offsetHeight, 0);
+				const reviewHeaderHeight = [...review.children]
+					.slice(0, -1)
+					.reduce((height, child) => height + (child as HTMLElement).offsetHeight, 0);
+				const listStyle = getComputedStyle(list);
+				const listPadding = parseFloat(listStyle.paddingTop) + parseFloat(listStyle.paddingBottom);
+				const naturalHeight = fixedHeight + reviewHeaderHeight + listPadding + table.getBoundingClientRect().height + 4;
+				const constrained = naturalHeight > window.innerHeight * 0.9;
+				// Fieldset's flex child can retain its intrinsic table height even
+				// after the dialog itself is capped. Give that child an explicit cap.
+				review.style.maxHeight = constrained
+					? `${Math.max(0, window.innerHeight * 0.9 - fixedHeight - 4)}px`
+					: "";
+				setTall(constrained);
 			});
 		};
 		measureContent();
@@ -126,6 +143,7 @@ export function WorkspaceImportReview({
 		return () => {
 			cancelAnimationFrame(frame);
 			window.removeEventListener("resize", measureContent);
+			review.style.maxHeight = "";
 		};
 	}, [preview.items, setTall]);
 	useEffect(() => () => setTall(false), [setTall]);
@@ -251,6 +269,7 @@ function ImportGroupRow({
 						<span className="block break-all font-medium">
 							{first.name}
 						</span>
+						{first.scope_change && <span className="block text-xs text-muted-foreground">Replace moves this item to the selected scope</span>}
 						{extraDefinitions.map((definition) => (
 							<span
 								key={definition.id}

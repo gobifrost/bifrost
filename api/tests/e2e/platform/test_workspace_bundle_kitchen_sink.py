@@ -999,8 +999,7 @@ async def _preview_zip_scoped(e2e_client, headers: dict[str, str], archive: byte
 async def test_workspace_org_scoped_import_matches_only_target_scope(
     e2e_client, platform_admin, db_session,
 ) -> None:
-    """Scoped previews match rows in that org, stamp new rows there, and fail
-    fast when a globally-unique path is taken elsewhere."""
+    """Scoped previews match rows in that org and stamp new rows there."""
     from src.models.orm.organizations import Organization
     from src.models.orm.tables import Table
     from src.models.orm.workflows import Workflow
@@ -1053,22 +1052,27 @@ async def test_workspace_org_scoped_import_matches_only_target_scope(
     assert table.solution_id is None
 
 
-async def test_workspace_scoped_preview_refuses_taken_global_path(
+async def test_workspace_scoped_preview_reviews_and_moves_taken_global_path(
     e2e_client, platform_admin, db_session,
 ) -> None:
-    """A scoped preview 422s when its workflow path lives in global scope."""
+    """A reviewed Replace moves a globally unique workflow into the org."""
     from src.models.orm.organizations import Organization
     from src.models.orm.workflows import Workflow
+    from src.services.repo_storage import RepoStorage
 
     suffix = uuid.uuid4().hex[:8]
     org = Organization(name=f"ws-scope-taken-{suffix}", created_by="kitchen-sink-seed")
     db_session.add(org)
-    db_session.add(Workflow(
+    global_wf = Workflow(
         path="workflows/scoped_taken.py", function_name="scoped_taken",
         name="Scoped Taken", description="Global original", type="workflow",
         access_level="authenticated", organization_id=None, solution_id=None,
-    ))
+    )
+    db_session.add(global_wf)
     await db_session.commit()
+    repo = RepoStorage()
+    original_source = b"def scoped_taken():\n    return 1\n"
+    await repo.write("workflows/scoped_taken.py", original_source)
 
     root = _SHARED_ROOT / f"scoped-taken-{suffix}"
     _CREATED.append(root)
@@ -1079,11 +1083,26 @@ async def test_workspace_scoped_preview_refuses_taken_global_path(
     )
     archive = _scoped_zip(root)
 
-    response = e2e_client.post(
-        "/api/solutions/import-workspace/preview",
-        headers=_bare_headers(platform_admin.headers),
-        files={"file": ("scoped.zip", archive, "application/zip")},
-        data={"organization_id": str(org.id)},
+    scoped = await _preview_zip_scoped(e2e_client, platform_admin.headers, archive, org.id)
+    workflow = _items_by_match(scoped)["workflows/scoped_taken.py :: scoped_taken"]
+    assert workflow["classification"] == "conflict"
+    assert workflow["scope_change"] is True
+    assert workflow["target_id"] == str(global_wf.id)
+    keep_job = _enqueue(
+        e2e_client, platform_admin.headers, scoped, _decide(scoped, "keep")
     )
-    assert response.status_code == 422, response.text
-    assert "global workspace" in response.text
+    _wait_job(e2e_client, platform_admin.headers, keep_job)
+    await db_session.refresh(global_wf)
+    assert global_wf.organization_id is None
+    assert global_wf.description == "Global original"
+    assert await repo.read("workflows/scoped_taken.py") == original_source
+
+    scoped = await _preview_zip_scoped(e2e_client, platform_admin.headers, archive, org.id)
+    job_id = _enqueue(
+        e2e_client, platform_admin.headers, scoped, _decide(scoped, "replace")
+    )
+    _wait_job(e2e_client, platform_admin.headers, job_id)
+    await db_session.refresh(global_wf)
+    assert global_wf.organization_id == org.id
+    assert global_wf.description == "Scoped v2"
+    assert await repo.read("workflows/scoped_taken.py") == b"def scoped_taken():\n    return 2\n"

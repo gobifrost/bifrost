@@ -77,8 +77,11 @@ async function readFile(api: AuthedApi, path: string): Promise<string> {
 test.use({ viewport: { width: 1440, height: 900 } });
 
 test("scrolls a long workspace import entity list", async ({ page }, testInfo) => {
-	await page.route("**/api/solutions/import-workspace/preview", (route) =>
-		route.fulfill({
+	let releasePreview = () => {};
+	const previewGate = new Promise<void>((resolve) => { releasePreview = resolve; });
+	await page.route("**/api/solutions/import-workspace/preview", async (route) => {
+		await previewGate;
+		await route.fulfill({
 			json: {
 				preview_token: "scroll-layout-preview",
 				package_name: "Scroll review",
@@ -91,8 +94,8 @@ test("scrolls a long workspace import entity list", async ({ page }, testInfo) =
 					group_key: null,
 				})),
 			},
-		}),
-	);
+		});
+	});
 
 	await page.goto("/solutions");
 	await page.getByRole("button", { name: "Install Solution" }).click();
@@ -101,6 +104,14 @@ test("scrolls a long workspace import entity list", async ({ page }, testInfo) =
 	await page.getByRole("dialog", { name: "Import into workspace" })
 		.locator('input[type="file"]')
 		.setInputFiles({ name: "scroll-review.zip", mimeType: "application/zip", buffer: Buffer.from("layout fixture") });
+	const loadingDialog = page.getByRole("dialog", { name: "Import into workspace" });
+	await expect(loadingDialog.getByText("Reading package…")).toBeVisible();
+	await expect(loadingDialog.getByTestId("workspace-import-footer")).not.toHaveClass(/border-t/);
+	await testInfo.attach("workspace-import-loading", {
+		body: await loadingDialog.screenshot(),
+		contentType: "image/png",
+	});
+	releasePreview();
 
 	const dialog = page.getByRole("dialog", { name: "Review workspace import" });
 	await expect(dialog.getByText("of 60 items")).toBeVisible();
@@ -208,6 +219,13 @@ test("reviews collisions and replaces workspace content without installing a Sol
 		await expect(dialog.getByText(/1 item needs review/)).toBeVisible();
 		await expect(dialog.getByRole("combobox", { name: "Target scope" })).toBeVisible();
 		await expect(dialog.getByTestId("workspace-import-scope")).toContainText("Global");
+		await dialog.getByRole("combobox", { name: "Target scope" }).click();
+		await page.getByRole("option", { name: /Bifrost Dev Org/ }).click();
+		await expect(dialog.getByText("Replace moves this item to the selected scope")).toBeVisible();
+		await expect(dialog.getByText(/1 item needs review/)).toBeVisible();
+		await dialog.getByRole("combobox", { name: "Target scope" }).click();
+		await page.getByRole("option", { name: /Global/ }).click();
+		await expect(dialog.getByText("Replace moves this item to the selected scope")).toHaveCount(0);
 		// The full 64-char definition name must fit inside the dialog box —
 		// wrapping is fine, horizontal spill is not.
 		const name = dialog.getByText(functionName, { exact: true });

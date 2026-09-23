@@ -29141,6 +29141,11 @@ export interface components {
             target_id?: string | null;
             /** Group Key */
             group_key?: string | null;
+            /**
+             * Scope Change
+             * @default false
+             */
+            scope_change: boolean;
             /** Diff */
             diff?: components["schemas"]["WorkspaceBundleDiffLine"][];
         };

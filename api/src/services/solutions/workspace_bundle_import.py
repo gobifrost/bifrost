@@ -55,10 +55,15 @@ class WorkspaceBundleImporter:
         if plan.work_dir is None:
             raise ValueError("workspace bundle import requires an extracted package directory")
 
+        kept_groups = {
+            item.group_key for item in plan.preview.items
+            if item.group_key and by_id.get(item.id) == "keep"
+        }
         selected_items = {
             item.id
             for item in plan.preview.items
-            if item.classification == "create" or by_id.get(item.id) == "replace"
+            if item.group_key not in kept_groups
+            and (item.classification == "create" or by_id.get(item.id) == "replace")
         }
         included = {
             item.source_id and str(item.source_id)

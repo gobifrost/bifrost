@@ -174,6 +174,8 @@ class WorkspaceBundleItem(BaseModel):
     # its .py, an app and its source tree) so the review can decide them
     # together. Items without an owning definition carry None.
     group_key: str | None = None
+    # Replacing a globally unique workflow/app match changes its org scope.
+    scope_change: bool = False
     diff: list[WorkspaceBundleDiffLine] = Field(default_factory=list)
 
 

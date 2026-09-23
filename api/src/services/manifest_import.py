@@ -484,9 +484,9 @@ class ManifestResolver:
         # changed non-secret value) does not keep serving stale until TTL.
         self.configs_touched: set[tuple[str | None, str]] = set()
         self._skip_role_sync = False
-        # Partial workspace-bundle imports are explicitly global and unattached.
-        # Their natural-key lookups must not adopt an org or solution row that
-        # merely happens to share a path or slug.
+        # Partial workspace-bundle imports only match unattached rows. A
+        # globally unique workflow path or app slug can be moved across scopes
+        # by an explicit Replace decision in the workspace review.
         self._workspace_global_scope = False
         # Target scope for workspace-partial lookups (None = global). Set only
         # for the duration of plan_partial_import.
@@ -551,7 +551,6 @@ class ManifestResolver:
         workflow_query = select(Workflow.id, Workflow.path, Workflow.function_name)
         if self._workspace_global_scope:
             workflow_query = workflow_query.where(
-                self._workspace_scope_clause(Workflow.organization_id),
                 Workflow.solution_id.is_(None),
             )
         wf_result = await self.db.execute(workflow_query)
@@ -587,7 +586,6 @@ class ManifestResolver:
         app_query = select(Application.id, Application.slug)
         if self._workspace_global_scope:
             app_query = app_query.where(
-                self._workspace_scope_clause(Application.organization_id),
                 Application.solution_id.is_(None),
             )
         app_result = await self.db.execute(app_query)
@@ -989,8 +987,9 @@ class ManifestResolver:
         import is additive/explicit-replace only, so absent package entities must
         remain untouched.
 
-        ``organization_id`` scopes natural-key lookups to the import target
-        (None = global): rows outside the target scope are never adopted.
+        ``organization_id`` scopes definitions to the import target (None =
+        global). A reviewed workflow or app collision may move an unattached
+        row between scopes while preserving its identity.
         """
         selected = filter_partial_manifest(manifest, selection)
         rewritten = rewrite_manifest_references(

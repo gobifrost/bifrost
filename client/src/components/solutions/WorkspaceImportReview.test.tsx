@@ -16,6 +16,7 @@ const preview = {
 			match_key: "workflows/sink_alpha.py :: sink_alpha",
 			target_id: "destination-alpha-id",
 			group_key: "file:workflows/sink_alpha.py",
+			scope_change: true,
 			diff: [],
 		},
 		{
@@ -76,6 +77,7 @@ describe("WorkspaceImportReview", () => {
 		expect(screen.getByText("2 items need review")).toBeInTheDocument();
 		expect(screen.getByText("of 3 items")).toBeInTheDocument();
 		expect(screen.getByText("Sink Alpha")).toBeInTheDocument();
+		expect(screen.getByText("Replace moves this item to the selected scope")).toBeInTheDocument();
 		// No match-key column and no file-path sub-line.
 		expect(screen.queryByText("workflows/sink_alpha.py :: sink_alpha")).toBeNull();
 		expect(screen.queryByText("workflows/sink_alpha.py")).toBeNull();
@@ -83,6 +85,8 @@ describe("WorkspaceImportReview", () => {
 		expect(screen.getByText("Workflow")).toBeInTheDocument();
 		expect(screen.getByText("App")).toBeInTheDocument();
 		expect(screen.getByText("File")).toBeInTheDocument();
+		expect(screen.getByText("Workflow")).toHaveClass("w-24");
+		expect(screen.getByText("App")).toHaveClass("w-24");
 		// No destination-ID callout line.
 		expect(screen.queryByText(/Preserves destination ID/)).toBeNull();
 		// No per-file control and no decided-counter noise.

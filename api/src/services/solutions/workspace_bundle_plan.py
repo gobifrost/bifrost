@@ -203,10 +203,6 @@ def _display_key(natural_key: tuple) -> str:
     return " :: ".join(parts)
 
 
-def _scope_holder_description(holder: UUID | None) -> str:
-    return "the global workspace" if holder is None else f"organization {holder}"
-
-
 class WorkspaceBundlePlanner:
     def __init__(
         self, db: AsyncSession | None, *, preview_id: UUID,
@@ -215,8 +211,8 @@ class WorkspaceBundlePlanner:
         self.db = db
         self.preview_id = preview_id
         # Target scope for scoped definitions (None = global). Files,
-        # integrations, and roles are always global; matching never adopts a
-        # row outside this scope.
+        # integrations, and roles are always global. Workflow paths and app
+        # slugs are unique across workspace scopes, so those matches can move.
         self.organization_id = organization_id
 
     def _scope_clause(self, column):
@@ -249,49 +245,7 @@ class WorkspaceBundlePlanner:
             projection, await self._prefetch_existing(),
             await self._prefetch_existing_file_hashes(incoming_paths),
             existing_integrations=await self._prefetch_existing_integrations(),
-            unattached_scope_map=await self._prefetch_unattached_scope_map(),
         )
-
-    def _require_scope_available(
-        self,
-        kind: str,
-        natural_key: tuple,
-        unattached_scope_map: tuple[dict[tuple[str, ...], UUID | None], dict[str, UUID | None]],
-    ) -> None:
-        """Refuse scoped imports that would duplicate a globally-unique key.
-
-        Workflow paths and app slugs are unique across all unattached rows, so
-        the same definition cannot live in two scopes. A scoped import that
-        collides outside its target fails here with an actionable message
-        instead of dying on a DB unique violation mid-job. A match inside the
-        target scope flows through to the normal conflict path.
-        """
-        workflow_scopes, app_scopes = unattached_scope_map
-        if kind == "workflow":
-            key = (str(natural_key[0]), str(natural_key[1]))
-            if key not in workflow_scopes:
-                return  # unused anywhere; every scope may take it
-            holder = workflow_scopes[key]
-            label = f"Workflow {natural_key[0]}"
-        elif kind == "app":
-            key = str(natural_key[0])
-            if key not in app_scopes:
-                return  # unused anywhere; every scope may take it
-            holder = app_scopes[key]
-            label = f"App '{natural_key[0]}'"
-        else:
-            return
-        if holder != self.organization_id:
-            if self.organization_id is None:
-                raise ValueError(
-                    f"{label} already exists in {_scope_holder_description(holder)}; "
-                    "import into that scope to update it in place."
-                )
-            raise ValueError(
-                f"{label} already exists in {_scope_holder_description(holder)}; "
-                "import without a target organization to update it in place, "
-                "or use a different path/slug."
-            )
 
     @staticmethod
     def _incoming_file_paths(projection: SolutionPackageWorkspaceProjection) -> Iterator[str]:
@@ -313,7 +267,6 @@ class WorkspaceBundlePlanner:
         existing_file_hashes: dict[str, str | None],
         *,
         existing_integrations: dict[str, UUID] | None = None,
-        unattached_scope_map: tuple[dict[tuple[str, ...], UUID | None], dict[str, UUID | None]] | None = None,
     ) -> PlannedWorkspaceBundle:
         items: list[WorkspaceBundleItem] = []
         # Group keys tie a definition to the files implementing it: a workflow
@@ -337,11 +290,13 @@ class WorkspaceBundlePlanner:
             for entity in entries.values():
                 source = UUID(entity.id)
                 natural_key = key_fn(entity)
-                if unattached_scope_map is not None:
-                    self._require_scope_available(kind, natural_key, unattached_scope_map)
                 match = existing.get((kind, natural_key))
                 target = match[0] if match else uuid5(self.preview_id, f"{kind}:{natural_key}")
                 incoming = entity.model_dump(mode="json", exclude={"id"})
+                scope_change = bool(
+                    match and kind in {"workflow", "app"}
+                    and match[1].get("organization_id") != incoming.get("organization_id")
+                )
                 classification = "create" if match is None else (
                     "unchanged" if incoming == match[1] else "conflict"
                 )
@@ -353,7 +308,7 @@ class WorkspaceBundlePlanner:
                 items.append(WorkspaceBundleItem(
                     id=f"entity:{kind}:{source}", kind=kind, name=str(getattr(entity, "name", None) or getattr(entity, "key", source)),
                     classification=classification, match_key=_display_key(natural_key), source_id=source, target_id=target,
-                    group_key=group_key,
+                    group_key=group_key, scope_change=scope_change,
                 ))
         file_hashes: dict[str, str] = {}
         if projection.work_dir is not None:
@@ -443,7 +398,9 @@ class WorkspaceBundlePlanner:
             ("config", Config, (Config.key, Config.integration_id, Config.organization_id)),
             ("claim", CustomClaim, (CustomClaim.name, CustomClaim.organization_id)),
         ):
-            query = select(model).where(self._scope_clause(model.organization_id))
+            query = select(model)
+            if kind not in {"workflow", "app"}:
+                query = query.where(self._scope_clause(model.organization_id))
             if "solution_id" in model.__table__.columns:
                 query = query.where(model.solution_id.is_(None))
             rows = (await self.db.execute(query)).scalars().all()
@@ -479,44 +436,6 @@ class WorkspaceBundlePlanner:
             await self.db.execute(select(Integration.id, Integration.name))
         ).all()
         return {str(name): row_id for row_id, name in rows}
-
-    async def _prefetch_unattached_scope_map(
-        self,
-    ) -> tuple[dict[tuple[str, ...], UUID | None], dict[str, UUID | None]]:
-        """Every unattached workflow path and app slug, mapped to its org.
-
-        Those keys are globally unique, so a scoped import must fail fast when
-        one is taken outside its target instead of dying mid-job.
-        """
-        if self.db is None:
-            return {}, {}
-        from src.models.orm.applications import Application
-        from src.models.orm.workflows import Workflow
-
-        workflows = {
-            (str(path), str(function_name)): (
-                UUID(str(org_id)) if org_id is not None else None
-            )
-            for path, function_name, org_id in (
-                await self.db.execute(
-                    select(
-                        Workflow.path, Workflow.function_name,
-                        Workflow.organization_id,
-                    ).where(Workflow.solution_id.is_(None))
-                )
-            ).all()
-        }
-        apps = {
-            str(slug): (UUID(str(org_id)) if org_id is not None else None)
-            for slug, org_id in (
-                await self.db.execute(
-                    select(
-                        Application.slug, Application.organization_id,
-                    ).where(Application.solution_id.is_(None))
-                )
-            ).all()
-        }
-        return workflows, apps
 
     async def _prefetch_existing_file_hashes(self, incoming_paths: Iterator[str]) -> dict[str, str | None]:
         from src.services.repo_storage import RepoStorage

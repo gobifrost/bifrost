@@ -958,7 +958,7 @@ describe("CreateEditSolution — destination-first flow", () => {
 		const { fireEvent } = await import("@testing-library/react");
 		fireEvent.drop(dropzone, { dataTransfer: { files: [file] } });
 
-		expect(await screen.findAllByText("boom")).not.toHaveLength(0);
+		expect(await screen.findAllByText("boom")).toHaveLength(1);
 		fireEvent.change(screen.getByLabelText("Target scope"), { target: { value: "org-1" } });
 
 		await waitFor(() => expect(screen.queryByText("boom")).toBeNull());
