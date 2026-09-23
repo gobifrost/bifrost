@@ -611,6 +611,8 @@ async def test_workspace_zip_import_accepts_declared_config_values(
     ]
     assert all("default" not in schema and "value" not in schema for schema in preview["config_schemas"])
     assert next(schema for schema in preview["config_schemas"] if schema["key"] == "SINK_TOKEN")["required"] is True
+    assert next(schema for schema in preview["config_schemas"] if schema["key"] == "SINK_TOKEN")["requires_input"] is False
+    assert next(schema for schema in preview["config_schemas"] if schema["key"] == "SINK_API_URL")["requires_input"] is False
 
     invalid = e2e_client.post(
         "/api/solutions/import-workspace", headers=platform_admin.headers,
@@ -1125,6 +1127,15 @@ async def test_workspace_org_scoped_import_matches_only_target_scope(
     assert wf_item["classification"] == "conflict"
     assert wf_item["target_id"] == str(org_wf.id)
     assert scoped["config_schemas"][0]["key"] == config_key
+    assert scoped["config_schemas"][0]["requires_input"] is True
+
+    missing_value = e2e_client.post(
+        "/api/solutions/import-workspace", headers=platform_admin.headers,
+        json={"preview_token": scoped["preview_token"],
+              "decisions": _decide(scoped, "replace"), "config_values": {}},
+    )
+    assert missing_value.status_code == 422
+    assert config_key in missing_value.json()["detail"]
 
     job_id = _enqueue(
         e2e_client, platform_admin.headers, scoped, _decide(scoped, "replace"),

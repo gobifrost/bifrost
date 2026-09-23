@@ -186,7 +186,7 @@ class WorkspaceBundlePreview(BaseModel):
     package_name: str
     package_sha256: str
     items: list[WorkspaceBundleItem]
-    # Declared keys only; values and defaults are never sent in the preview.
+    # Declared keys and whether input is needed; values and defaults stay private.
     config_schemas: list[dict[str, Any]] = Field(default_factory=list)
     source_kind: Literal["zip", "repo"] = "zip"
     repo_url: str | None = None

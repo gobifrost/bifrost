@@ -39,6 +39,12 @@ _ID_NAMESPACE = UUID("f4b9f7ce-b035-48b8-bfdd-d18a02e34731")
 _FILE_LOOKUP_BATCH_SIZE = 100
 
 
+def _has_config_value(value: object) -> bool:
+    if isinstance(value, dict) and "value" in value:
+        value = value["value"]
+    return value is not None and value != {} and (not isinstance(value, str) or bool(value.strip()))
+
+
 @lru_cache(maxsize=1)
 def _workspace_source_ignore_spec():
     import pathspec
@@ -276,7 +282,7 @@ class WorkspaceBundlePlanner:
     def _build_plan(
         self,
         projection: SolutionPackageWorkspaceProjection,
-        existing: dict[tuple[str, tuple], tuple[UUID, dict[str, Any]]],
+        existing: dict[tuple[str, tuple], tuple[UUID, dict[str, Any], bool]],
         existing_file_hashes: dict[str, str | None],
         *,
         existing_integrations: dict[str, UUID] | None = None,
@@ -355,10 +361,23 @@ class WorkspaceBundlePlanner:
                 classification=("unchanged" if match is not None else "create"),
                 match_key=name, target_id=target,
             ))
+        config_schemas = []
+        for schema in projection.config_schemas:
+            key = schema["key"]
+            declaration = projection.manifest.configs[key]
+            match = existing.get(("config", (key, None, self.organization_id)))
+            config_schemas.append({
+                **schema,
+                "requires_input": bool(
+                    schema["required"]
+                    and not _has_config_value(declaration.value)
+                    and not (match and match[2])
+                ),
+            })
         return PlannedWorkspaceBundle(
             preview=WorkspaceBundlePreview(preview_token=str(self.preview_id), package_name=projection.package_name,
                                             package_sha256="", items=items,
-                                            config_schemas=list(projection.config_schemas),
+                                            config_schemas=config_schemas,
                                             organization_id=self.organization_id),
             manifest=projection.manifest, id_map=self.reference_map(items),
             work_dir=projection.work_dir, file_hashes=file_hashes,
@@ -385,7 +404,7 @@ class WorkspaceBundlePlanner:
             ("file_policy", manifest.file_policies, lambda x: (x.location, x.path, x.organization_id)),
         )
 
-    async def _prefetch_existing(self) -> dict[tuple[str, tuple], tuple[UUID, dict[str, Any]]]:
+    async def _prefetch_existing(self) -> dict[tuple[str, tuple], tuple[UUID, dict[str, Any], bool]]:
         if self.db is None:
             return {}
         # Natural keys are intentionally limited to unattached workspace rows.
@@ -397,7 +416,7 @@ class WorkspaceBundlePlanner:
         from src.models.orm.forms import Form
         from src.models.orm.tables import Table
         from src.models.orm.workflows import Workflow
-        result: dict[tuple[str, tuple], tuple[UUID, dict[str, Any]]] = {}
+        result: dict[tuple[str, tuple], tuple[UUID, dict[str, Any], bool]] = {}
         serializers = {
             "workflow": lambda row: ManifestWorkflow.from_row(row).model_dump(mode="json", exclude={"id"}),
             "app": lambda row: ManifestApp.from_row(row).model_dump(mode="json", exclude={"id"}),
@@ -420,7 +439,10 @@ class WorkspaceBundlePlanner:
             rows = (await self.db.execute(query)).scalars().all()
             for row in rows:
                 key = tuple(getattr(row, column.key) for column in columns)
-                result[(kind, key)] = (row.id, serializers[kind](row))
+                result[(kind, key)] = (
+                    row.id, serializers[kind](row),
+                    _has_config_value(row.value) if kind == "config" else False,
+                )
         # Forms and agents have no package-portable natural key more reliable
         # than their name.  Keep them global-only too, instead of accidentally
         # matching an identically named installed entity.
@@ -437,7 +459,7 @@ class WorkspaceBundlePlanner:
                     key = (row.location, row.path, str(org) if org is not None else None)
                 else:
                     key = (row.name,)
-                result[(kind, key)] = (row.id, {})
+                result[(kind, key)] = (row.id, {}, False)
         return result
 
     async def _prefetch_existing_integrations(self) -> dict[str, UUID]:

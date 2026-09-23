@@ -70,7 +70,11 @@ def _require_preview_is_current(
             for item in preview.items
         }
 
-    if items(reviewed) != items(current) or reviewed_file_hashes != current_file_hashes:
+    if (
+        items(reviewed) != items(current)
+        or reviewed.config_schemas != current.config_schemas
+        or reviewed_file_hashes != current_file_hashes
+    ):
         raise PlatformJobFailure(
             "preview_stale",
             "The workspace changed since preview; create a new preview before importing.",

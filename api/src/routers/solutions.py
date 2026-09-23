@@ -123,6 +123,10 @@ from src.services.solutions.workspace_bundle_plan import (
     WorkspaceBundlePlanner,
 )
 from src.services.solutions.workspace_bundle_storage import WorkspaceBundleStorage
+from src.services.solutions.workspace_bundle_import import (
+    WorkspaceBundleDecisionError,
+    require_workspace_config_values,
+)
 from src.services.solutions.zip_install import MAX_SOLUTION_ARCHIVE_BYTES
 from src.services.platform_jobs import ACTIVE_PLATFORM_JOB_STATUSES
 from src.services.application_sdk_status import (
@@ -303,6 +307,12 @@ async def enqueue_workspace_import(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="workspace import config values must match declared keys",
         )
+    try:
+        require_workspace_config_values(preview, body.decisions, body.config_values)
+    except WorkspaceBundleDecisionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc),
+        ) from exc
     payload = WorkspaceBundleImportPayload(
         preview_id=preview_id, package_sha256=preview.package_sha256,
         decisions=body.decisions, config_values=body.config_values,

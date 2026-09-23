@@ -4,9 +4,11 @@ from __future__ import annotations
 import hashlib
 from uuid import UUID
 
+import pytest
+
 
 def test_solution_package_projection_exposes_config_fields_without_secret_default() -> None:
-    from src.services.solutions.workspace_bundle_plan import SolutionPackageWorkspaceProjection
+    from src.services.solutions.workspace_bundle_plan import SolutionPackageWorkspaceProjection, WorkspaceBundlePlanner
     from src.services.solutions.zip_install import PreviewResult
 
     projection = SolutionPackageWorkspaceProjection.from_preview(
@@ -24,6 +26,25 @@ def test_solution_package_projection_exposes_config_fields_without_secret_defaul
     assert config.config_type == "secret"
     assert config.value is None
     assert (config.required, config.position) == (True, 3)
+    planned = WorkspaceBundlePlanner(None, preview_id=UUID(int=7)).plan_sync(projection)
+    assert planned.preview.config_schemas[0]["requires_input"] is True
+    from src.services.solutions.workspace_bundle_import import (
+        WorkspaceBundleDecisionError,
+        require_workspace_config_values,
+    )
+    from src.models.contracts.solutions import WorkspaceBundleDecision
+
+    with pytest.raises(WorkspaceBundleDecisionError, match="API_KEY"):
+        require_workspace_config_values(planned.preview, [], {})
+    require_workspace_config_values(planned.preview, [], {"API_KEY": "entered"})
+    conflict = planned.preview.model_copy(update={
+        "items": [planned.preview.items[0].model_copy(update={"classification": "conflict"})],
+    })
+    require_workspace_config_values(
+        conflict,
+        [WorkspaceBundleDecision(item_id=conflict.items[0].id, action="keep")],
+        {},
+    )
     assert projection.config_schemas == ({
         "key": "API_KEY", "type": "secret", "required": True, "description": None,
     },)

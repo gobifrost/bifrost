@@ -7,7 +7,7 @@ from typing import Any, Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.models.contracts.solutions import WorkspaceBundleDecision
+from src.models.contracts.solutions import WorkspaceBundleDecision, WorkspaceBundlePreview
 from src.services.repo_storage import RepoStorage
 from src.services.manifest_import import ManifestResolver, PartialImportSelection
 from src.services.solutions.workspace_bundle_plan import PlannedWorkspaceBundle
@@ -16,6 +16,31 @@ from src.services.sync_ops import SyncOp
 
 class WorkspaceBundleDecisionError(ValueError):
     """The request no longer exactly represents the preview's conflicts."""
+
+
+def require_workspace_config_values(
+    preview: WorkspaceBundlePreview,
+    decisions: Sequence[WorkspaceBundleDecision],
+    values: dict[str, str],
+) -> None:
+    """Require values only for selected declarations with no usable value."""
+    actions = {decision.item_id: decision.action for decision in decisions}
+    items = {item.name: item for item in preview.items if item.kind == "config"}
+    missing = []
+    for schema in preview.config_schemas:
+        key = str(schema["key"])
+        item = items.get(key)
+        if not item or not schema.get("requires_input"):
+            continue
+        selected = item.classification == "create" or (
+            item.classification == "conflict" and actions.get(item.id) == "replace"
+        )
+        if selected and not values.get(key, "").strip():
+            missing.append(key)
+    if missing:
+        raise WorkspaceBundleDecisionError(
+            "Enter required configuration values: " + ", ".join(missing)
+        )
 
 
 class _FileIndexWriter(Protocol):
@@ -55,6 +80,7 @@ class WorkspaceBundleImporter:
             raise WorkspaceBundleDecisionError(
                 "every conflict requires exactly one keep or replace decision"
             )
+        require_workspace_config_values(plan.preview, decisions, config_values or {})
         if plan.work_dir is None:
             raise ValueError("workspace bundle import requires an extracted package directory")
 

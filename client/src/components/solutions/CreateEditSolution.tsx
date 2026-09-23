@@ -138,6 +138,7 @@ interface PreviewConfigSchema {
 	key: string;
 	type: string;
 	required: boolean;
+	requiresInput: boolean;
 	description: string | null;
 }
 
@@ -153,6 +154,7 @@ function asConfigSchemas(
 				key,
 				type: typeof item.type === "string" ? item.type : "string",
 				required: item.required === true,
+				requiresInput: item.requires_input === true,
 				description:
 					typeof item.description === "string"
 						? item.description
@@ -171,19 +173,16 @@ function ConfigValueFields({
 	configs,
 	values,
 	onChange,
-	laterVerb,
 	disabledKeys,
 }: {
 	configs: PreviewConfigSchema[];
 	values: Record<string, string>;
 	onChange: (key: string, value: string) => void;
-	laterVerb: "install" | "import";
 	disabledKeys?: Set<string>;
 }) {
 	return configs.map((cfg) => {
 		const value = values[cfg.key] ?? "";
 		const disabled = disabledKeys?.has(cfg.key) ?? false;
-		const missing = cfg.required && !disabled && value.trim() === "";
 		return (
 			<div key={cfg.key} className="min-w-0 space-y-1">
 				<Label htmlFor={`cfg-${cfg.key}`} className="flex items-center gap-1 break-all">
@@ -196,13 +195,9 @@ function ConfigValueFields({
 					type={isSecretType(cfg.type) ? "password" : "text"}
 					value={value}
 					disabled={disabled}
+					aria-required={cfg.required && !disabled}
 					onChange={(event) => onChange(cfg.key, event.target.value)}
 				/>
-				{missing && (
-					<p className="text-xs text-yellow-600 dark:text-yellow-500">
-						Required — you can still {laterVerb} and set this later.
-					</p>
-				)}
 			</div>
 		);
 	});
@@ -917,7 +912,15 @@ function WorkspaceImportBody({
 	const [dragging, setDragging] = useState(false);
 	const previewRequest = useRef(0);
 	const conflicts = preview?.items.filter((item) => item.classification === "conflict") ?? [];
-	const complete = conflicts.every((item) => decisions[item.id]);
+	const requiredConfigs = asConfigSchemas(preview?.config_schemas ?? []).filter((cfg) => {
+		const item = preview?.items.find((candidate) => candidate.kind === "config" && candidate.name === cfg.key);
+		return cfg.requiresInput && item && (
+			item.classification === "create" ||
+			(item.classification === "conflict" && decisions[item.id] === "replace")
+		);
+	});
+	const complete = conflicts.every((item) => decisions[item.id]) &&
+		requiredConfigs.every((cfg) => Boolean(configValues[cfg.key]?.trim()));
 
 	// Changing the target scope invalidates the preview it was computed for.
 	function clearPreview() {
@@ -1075,10 +1078,12 @@ function WorkspaceImportBody({
 				<p className="mb-3 text-xs text-muted-foreground">Entered values are saved during import. Kept conflicts retain their current values.</p>
 				<div className="grid max-h-[22dvh] gap-3 overflow-auto pr-1 sm:grid-cols-2">
 					<ConfigValueFields
-						configs={asConfigSchemas(preview.config_schemas)}
+						configs={asConfigSchemas(preview.config_schemas).map((cfg) => ({
+							...cfg,
+							required: requiredConfigs.some((required) => required.key === cfg.key),
+						}))}
 						values={configValues}
 						onChange={(key, value) => setConfigValues((previous) => ({ ...previous, [key]: value }))}
-						laterVerb="import"
 						disabledKeys={new Set(preview.items.filter((item) => item.kind === "config" && decisions[item.id] === "keep").map((item) => item.name))}
 					/>
 				</div>
@@ -1355,10 +1360,9 @@ function PreviewConfirmation({
 						</div>
 					) : (
 						<ConfigValueFields
-							configs={declaredConfigs}
+							configs={declaredConfigs.map((cfg) => ({ ...cfg, required: false }))}
 							values={configValues ?? {}}
 							onChange={(key, value) => onConfigChange?.(key, value)}
-							laterVerb="install"
 						/>
 					)}
 				</div>
@@ -1574,7 +1578,7 @@ function CreateBody({
 							? "Choose the exported package for this inactive install. Confirming reactivates the existing install in place."
 							: intent === "update"
 								? "Choose a package to update this install in place."
-								: "Choose a package and an organization, review what it creates, and set any required configuration values."}
+								: "Choose a package and an organization, then review what it creates."}
 				</DialogDescription>
 			</DialogHeader>
 

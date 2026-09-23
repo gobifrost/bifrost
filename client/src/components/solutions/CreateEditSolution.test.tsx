@@ -1003,7 +1003,7 @@ describe("CreateEditSolution — destination-first flow", () => {
 			conflict_count: 0,
 			source_kind: "zip",
 			items: [{ id: "entity:config:cfg-1", kind: "config", name: "API_TOKEN", classification: "create", scope_change: false }],
-			config_schemas: [{ key: "API_TOKEN", type: "secret", required: true, description: "API access token" }],
+			config_schemas: [{ key: "API_TOKEN", type: "secret", required: true, requires_input: true, description: "API access token" }],
 		});
 		vi.mocked(importWorkspaceBundle).mockResolvedValue({
 			job_id: "workspace-job",
@@ -1026,7 +1026,11 @@ describe("CreateEditSolution — destination-first flow", () => {
 		await user.upload(fileInput!, new File(["zip"], "workspace.zip", { type: "application/zip" }));
 		const tokenInput = await screen.findByLabelText(/API_TOKEN/);
 		expect(tokenInput).toHaveAttribute("type", "password");
+		expect(tokenInput).toHaveAttribute("aria-required", "true");
+		expect(screen.getByRole("button", { name: /start import job/i })).toBeDisabled();
+		expect(screen.queryByText(/you can still import/i)).not.toBeInTheDocument();
 		await user.type(tokenInput, "entered-test-token");
+		expect(screen.getByRole("button", { name: /start import job/i })).toBeEnabled();
 		await user.click(await screen.findByRole("button", { name: /start import job/i }));
 
 		await waitFor(() => expect(importWorkspaceBundle).toHaveBeenCalledWith({

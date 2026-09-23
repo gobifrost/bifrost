@@ -242,6 +242,9 @@ test("reviews collisions and replaces workspace content without installing a Sol
 		await expect(dialog.getByTestId("workspace-import-scope")).toContainText("Global");
 		const configInput = dialog.getByLabel(new RegExp(configKey));
 		await expect(configInput).toHaveAttribute("type", "password");
+		await expect(configInput).toHaveAttribute("aria-required", "true");
+		await expect(dialog.getByRole("button", { name: "Start import job" })).toBeDisabled();
+		await expect(dialog.getByText(/you can still import/i)).toHaveCount(0);
 		await configInput.fill("browser-test-token");
 		await dialog.getByRole("combobox", { name: "Target scope" }).click();
 		await page.getByRole("option", { name: /Bifrost Dev Org/ }).click();
@@ -250,6 +253,8 @@ test("reviews collisions and replaces workspace content without installing a Sol
 		await dialog.getByRole("combobox", { name: "Target scope" }).click();
 		await page.getByRole("option", { name: /Global/ }).click();
 		await expect(dialog.getByText("Replace moves this item to the selected scope")).toHaveCount(0);
+		await expect(dialog.getByRole("button", { name: "Start import job" })).toBeDisabled();
+		await dialog.getByLabel(new RegExp(configKey)).fill("browser-test-token");
 		// The full 64-char definition name must fit inside the dialog box —
 		// wrapping is fine, horizontal spill is not.
 		const name = dialog.getByText(functionName, { exact: true });
