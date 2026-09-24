@@ -83,6 +83,8 @@ services:
   # Used for workspace files (enables horizontal scaling of workers)
   seaweedfs:
     image: chrislusf/seaweedfs:latest
+    # Its default admin gRPC port 33646 can collide with an ephemeral port.
+    command: ["mini", "-dir=/data", "-admin.port=12646"]
     container_name: bifrost-seaweedfs
     environment:
       AWS_ACCESS_KEY_ID: ${SEAWEEDFS_ACCESS_KEY:-bifrost}
