@@ -1,5 +1,8 @@
-"""End-to-end (live REST): deploy a Solution table, seed rows, redeploy with a
-changed schema, and confirm rows are preserved (criterion 11)."""
+"""Live REST checks for Solution table namespace and scoped row access.
+
+Schema changes preserving rows are covered through SolutionDeployer with a
+real database in test_solution_table_deploy.py.
+"""
 from __future__ import annotations
 
 import uuid
@@ -19,43 +22,6 @@ def _create_solution(e2e_client, headers, slug: str) -> str:
     })
     assert r.status_code in (200, 201), r.text
     return r.json()["id"]
-
-
-def test_table_deploy_preserves_rows_across_schema_change(e2e_client, platform_admin):
-    headers = platform_admin.headers
-    slug = f"tbl-e2e-{uuid.uuid4().hex[:8]}"
-    sid = _create_solution(e2e_client, headers, slug)
-    tid = str(uuid.uuid4())
-
-    # Deploy v1 (schema with one column).
-    dep = e2e_client.post(f"/api/solutions/{sid}/deploy", headers=headers, json={
-        "tables": [{"id": tid, "name": f"people_{slug}", "schema": {"columns": [{"name": "email"}]}, "policies": None}],
-    })
-    dep = wait_for_deploy(e2e_client, dep, headers)
-    assert dep.status_code in (200, 201), dep.text
-    assert dep.json()["tables_upserted"] == 1
-
-    # Deploy remaps the manifest id to uuid5(install_id, manifest_id); the table is
-    # addressable only by the remapped id.
-    real_id = str(solution_entity_id(UUID(sid), UUID(tid)))
-
-    # Seed a runtime row via the documents API (this is NOT part of the bundle).
-    doc = e2e_client.post(f"/api/tables/{real_id}/documents", headers=headers, json={
-        "id": "row-1", "data": {"email": "a@x.com"},
-    })
-    assert doc.status_code in (200, 201), doc.text
-
-    # Redeploy with a CHANGED schema (added column).
-    dep2 = e2e_client.post(f"/api/solutions/{sid}/deploy", headers=headers, json={
-        "tables": [{"id": tid, "name": f"people_{slug}", "schema": {"columns": [{"name": "email"}, {"name": "phone"}]}, "policies": None}],
-    })
-    dep2 = wait_for_deploy(e2e_client, dep2, headers)
-    assert dep2.status_code in (200, 201), dep2.text
-
-    # Row survives the schema migration.
-    got = e2e_client.get(f"/api/tables/{real_id}/documents/row-1", headers=headers)
-    assert got.status_code == 200, got.text
-    assert got.json()["data"]["email"] == "a@x.com"
 
 
 def test_repo_table_coexists_with_solution_table_same_name(e2e_client, platform_admin):
@@ -94,33 +60,6 @@ def test_repo_table_coexists_with_solution_table_same_name(e2e_client, platform_
     rep = e2e_client.get(f"/api/tables/{repo_table_id}", headers=headers)
     assert rep.status_code == 200, rep.text
     assert rep.json().get("solution_id") is None
-
-
-def test_solution_table_coexists_with_existing_repo_table(e2e_client, platform_admin):
-    """Reverse order (already worked, regression guard): create a _repo table, then
-    install a solution shipping the same name → both coexist."""
-    headers = platform_admin.headers
-    slug = f"corev-{uuid.uuid4().hex[:8]}"
-    name = f"corev_{slug.replace('-', '_')}"
-
-    create = e2e_client.post("/api/tables?scope=global", headers=headers, json={
-        "name": name, "schema": {"columns": [{"name": "phone"}]},
-    })
-    assert create.status_code in (200, 201), create.text
-    repo_table_id = create.json()["id"]
-
-    sid = _create_solution(e2e_client, headers, slug)
-    tid = str(uuid.uuid4())
-    dep = e2e_client.post(f"/api/solutions/{sid}/deploy", headers=headers, json={
-        "tables": [{"id": tid, "name": name, "schema": {"columns": [{"name": "email"}]}, "policies": None}],
-    })
-    dep = wait_for_deploy(e2e_client, dep, headers)
-    assert dep.status_code in (200, 201), f"solution deploy blocked by _repo row: {dep.text}"
-    sol_table_id = str(solution_entity_id(UUID(sid), UUID(tid)))
-
-    assert repo_table_id != sol_table_id
-    assert e2e_client.get(f"/api/tables/{repo_table_id}", headers=headers).status_code == 200
-    assert e2e_client.get(f"/api/tables/{sol_table_id}", headers=headers).status_code == 200
 
 
 def test_solution_app_and_workflow_resolve_their_table_by_name(e2e_client, platform_admin):

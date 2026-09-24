@@ -60,6 +60,13 @@ async def test_uninstall_flips_status_and_freezes_data(
     sid = _create_solution(e2e_client, headers, slug)
     real_tid = _deploy_with_table(e2e_client, headers, sid, slug)
 
+    summary = e2e_client.get(
+        f"/api/solutions/{sid}/deletion-summary", headers=headers
+    )
+    assert summary.status_code == 200, summary.text
+    assert summary.json()["solution_id"] == sid
+    assert summary.json()["tables"] >= 1
+
     r = e2e_client.post(f"/api/solutions/{sid}/uninstall", headers=headers)
     assert r.status_code == 200, r.text
     assert r.json()["status"] == "inactive"
@@ -167,29 +174,3 @@ async def test_hard_delete_cascades_all_owned_rows(e2e_client, platform_admin, d
         await db_session.execute(select(Workflow).where(Workflow.solution_id == UUID(sid)))
     ).scalars().all()
     assert wf_rows == [], f"owned workflows survived hard-delete: {len(wf_rows)}"
-
-
-async def test_deletion_summary_returns_counts(e2e_client, platform_admin, db_session):
-    """GET /deletion-summary returns counts of owned entities before any delete."""
-    headers = platform_admin.headers
-    slug = f"summ-{uuid.uuid4().hex[:8]}"
-    sid = _create_solution(e2e_client, headers, slug)
-
-    bundle_tid = str(uuid.uuid4())
-    dep = e2e_client.post(f"/api/solutions/{sid}/deploy", headers=headers, json={
-        "tables": [{
-            "id": bundle_tid,
-            "name": f"sum_tbl_{slug}",
-            "description": "summary test",
-            "schema": {"columns": [{"name": "x"}]},
-            "policies": None,
-        }],
-    })
-    dep = wait_for_deploy(e2e_client, dep, headers)
-    assert dep.status_code == 200, dep.text
-
-    r = e2e_client.get(f"/api/solutions/{sid}/deletion-summary", headers=headers)
-    assert r.status_code == 200, r.text
-    body = r.json()
-    assert body["solution_id"] == sid
-    assert body["tables"] >= 1

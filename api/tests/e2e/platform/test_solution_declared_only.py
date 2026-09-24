@@ -324,7 +324,12 @@ async def test_non_solution_custom_file_location_write_still_succeeds(
     assert result.scalar_one_or_none() is not None
 
 
-def test_solution_table_insert_declared_succeeds(e2e_client, platform_admin):
+@pytest.mark.asyncio
+async def test_solution_table_insert_declared_succeeds(
+    e2e_client,
+    platform_admin,
+    db_session,
+):
     headers = platform_admin.headers
     solution = _create_solution(
         e2e_client,
@@ -344,32 +349,16 @@ def test_solution_table_insert_declared_succeeds(e2e_client, platform_admin):
     assert response.status_code in (200, 201), response.text
     assert response.json()["data"]["label"] == "ok"
 
-
-@pytest.mark.asyncio
-async def test_solution_app_header_table_insert_declared_succeeds(
-    e2e_client,
-    platform_admin,
-    db_session,
-):
-    headers = platform_admin.headers
-    solution = _create_solution(
-        e2e_client,
-        headers,
-        f"app-decl-table-{uuid.uuid4().hex[:8]}",
-    )
-    solution_id = solution["id"]
-    table_name = f"app_declared_{uuid.uuid4().hex[:8]}"
-    _deploy_table(e2e_client, headers, solution_id, table_name)
     app_id = await _create_solution_app(db_session, solution_id)
 
     response = e2e_client.post(
         f"/api/tables/{table_name}/documents",
         headers={**headers, "X-Bifrost-App": app_id},
-        json={"id": "row-1", "data": {"label": "ok"}},
+        json={"id": "row-2", "data": {"label": "app-ok"}},
     )
 
     assert response.status_code in (200, 201), response.text
-    assert response.json()["data"]["label"] == "ok"
+    assert response.json()["data"]["label"] == "app-ok"
 
 
 @pytest.mark.asyncio
