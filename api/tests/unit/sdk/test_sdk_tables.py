@@ -239,6 +239,7 @@ async def test_tables_query_forwards_document_id_pagination_and_skip_count(monke
             "document_ids": ["tenant|drive|item-001", "tenant|drive|item-002"],
             "skip_count": True,
         },
+        retry_transient=True,
     )
 
 
