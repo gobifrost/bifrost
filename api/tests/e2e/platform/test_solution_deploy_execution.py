@@ -51,40 +51,61 @@ def _deploy(e2e_client, headers, solution_id: str, *, python_files: dict, workfl
 def test_solution_deploy_resolves_local_workflows_and_blocks_global_import(
     e2e_client, platform_admin,
 ):
-    """One deploy checks local modules, function identity, and repo isolation."""
+    """One deploy checks local modules, vendored shared imports, function
+    identity, and repo isolation."""
+    import asyncio
+
+    from src.services.solutions.deploy import solution_entity_id
+    from src.services.solutions.vendoring import vendor_shared_deps
     from tests.e2e.conftest import execute_workflow_sync
 
     headers = platform_admin.headers
     slug = f"sol-import-{uuid.uuid4().hex[:8]}"
     sid = _create_solution(e2e_client, headers, slug=slug, global_repo_access=False)
+    vendored_workflow_id = uuid.uuid4()
+
+    solution_files = {
+        "modules/calc.py": "VALUE = 42\n",
+        "workflows/answer.py": (
+            "from modules.calc import VALUE\n"
+            "from bifrost import workflow\n\n"
+            "@workflow\n"
+            "async def answer():\n"
+            "    return {'value': VALUE}\n"
+        ),
+        "workflows/uses_shared.py": (
+            "from shared.vend_calc import VALUE\n"
+            "from bifrost import workflow\n\n"
+            "@workflow\n"
+            "async def go():\n"
+            "    return {'value': VALUE}\n"
+        ),
+        "workflows/snap.py": (
+            "from bifrost import workflow\n\n"
+            '@workflow(name="Sandbox Ticket Snapshot")\n'
+            "async def snapshot():\n"
+            "    return {'ok': True}\n"
+        ),
+        "workflows/needs_shared.py": (
+            "import shared.definitely_not_in_solution  # noqa\n"
+            "from bifrost import workflow\n\n"
+            "@workflow\n"
+            "async def go():\n"
+            "    return 1\n"
+        ),
+    }
+
+    async def repo_read(path: str):
+        return {"shared/vend_calc.py": "VALUE = 7\n"}.get(path)
+
+    vendored_files = asyncio.run(vendor_shared_deps(solution_files, repo_read))
+    assert vendored_files == {"shared/vend_calc.py": "VALUE = 7\n"}
 
     _deploy(
         e2e_client,
         headers,
         sid,
-        python_files={
-            "modules/calc.py": "VALUE = 42\n",
-            "workflows/answer.py": (
-                "from modules.calc import VALUE\n"
-                "from bifrost import workflow\n\n"
-                "@workflow\n"
-                "async def answer():\n"
-                "    return {'value': VALUE}\n"
-            ),
-            "workflows/snap.py": (
-                "from bifrost import workflow\n\n"
-                '@workflow(name="Sandbox Ticket Snapshot")\n'
-                "async def snapshot():\n"
-                "    return {'ok': True}\n"
-            ),
-            "workflows/needs_shared.py": (
-                "import shared.definitely_not_in_solution  # noqa\n"
-                "from bifrost import workflow\n\n"
-                "@workflow\n"
-                "async def go():\n"
-                "    return 1\n"
-            ),
-        },
+        python_files={**solution_files, **vendored_files},
         workflows=[
             {
                 "id": str(uuid.uuid4()),
@@ -98,6 +119,13 @@ def test_solution_deploy_resolves_local_workflows_and_blocks_global_import(
                 "name": "hello",  # diverges from decorator name and function_name
                 "function_name": "snapshot",
                 "path": "workflows/snap.py",
+                "type": "workflow",
+            },
+            {
+                "id": str(vendored_workflow_id),
+                "name": f"uses_shared_{slug}",
+                "function_name": "go",
+                "path": "workflows/uses_shared.py",
                 "type": "workflow",
             },
             {
@@ -117,6 +145,17 @@ def test_solution_deploy_resolves_local_workflows_and_blocks_global_import(
     )
     assert local["status"] == "Success", local
     assert local["result"] == {"value": 42}
+
+    # The vendored module resolves after deploy by the remapped entity ID,
+    # even though global_repo_access is disabled.
+    vendored = execute_workflow_sync(
+        e2e_client,
+        headers,
+        str(solution_entity_id(uuid.UUID(sid), vendored_workflow_id)),
+        request_sync=True,
+    )
+    assert vendored["status"] == "Success", vendored
+    assert vendored["result"] == {"value": 7}
 
     # Execution uses function_name; the manifest name and decorator display
     # name are intentionally different.

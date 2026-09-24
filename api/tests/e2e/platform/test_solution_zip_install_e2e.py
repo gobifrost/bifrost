@@ -101,6 +101,7 @@ def installed_zip(e2e_client, platform_admin):
         headers,
     )
     assert inst.status_code in (200, 201), inst.text
+    assert inst.json()["setup_complete"] is True
     return {"slug": slug, "id": inst.json()["id"]}
 
 
@@ -179,6 +180,7 @@ async def test_zip_install_force_reaches_downgrade_gate(e2e_client, platform_adm
     assert forced.json()["id"] == sid
     assert forced.json()["version"] == "0.9.0"
     assert forced.json()["upgraded_from_version"] == "1.1.0"
+    assert forced.json()["setup_complete"] is False
 
 
 async def test_zip_preview_returns_upgrade_diff_for_existing_install(
