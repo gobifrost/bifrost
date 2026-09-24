@@ -18,7 +18,9 @@ from src.routers.solutions import export_solution
 from src.services.solutions.deploy import SolutionBundle
 from src.services.solutions.export import (
     add_encrypted_content_to_workspace_zip,
+    add_live_content_to_workspace_zip_file,
     build_workspace_zip,
+    copy_workspace_zip_with_readme,
 )
 from src.services.solutions.secrets_blob import SolutionContent, decode_secrets_blob
 from src.services.solutions.source_artifact import SolutionSourceArtifactStorage
@@ -256,6 +258,44 @@ def test_full_export_replaces_any_existing_encrypted_content() -> None:
         blob = z.read(".bifrost/secrets.enc").decode()
     content = decode_secrets_blob(blob, password="new")
     assert content.config_values == {"NEW": "value"}
+
+
+@pytest.mark.parametrize("current_readme", ["# Updated\n", None])
+def test_stored_source_export_uses_current_readme(tmp_path: Path, current_readme: str | None) -> None:
+    bundle = _bundle()
+    bundle.readme = "# Deploy-time\n"
+    source = tmp_path / "source.zip"
+    dest = tmp_path / "export.zip"
+    source.write_bytes(build_workspace_zip(bundle))
+
+    copy_workspace_zip_with_readme(source, dest, current_readme)
+
+    with zipfile.ZipFile(dest) as exported:
+        assert exported.read("workflows/main.py") == bundle.python_files["workflows/main.py"].encode()
+        if current_readme is None:
+            assert "README.md" not in exported.namelist()
+        else:
+            assert exported.namelist().count("README.md") == 1
+            assert exported.read("README.md") == current_readme.encode()
+
+
+async def test_full_stored_source_export_overlays_readme_and_runtime(tmp_path: Path) -> None:
+    bundle = _bundle()
+    bundle.readme = "# Updated\n"
+    bundle.config_values = {"API_KEY": "secret-value"}
+    source = tmp_path / "source.zip"
+    dest = tmp_path / "export.zip"
+    source_bundle = _bundle()
+    source_bundle.readme = "# Deploy-time\n"
+    source.write_bytes(build_workspace_zip(source_bundle))
+
+    await add_live_content_to_workspace_zip_file(source, bundle, None, dest, password="pw")
+
+    with zipfile.ZipFile(dest) as exported:
+        assert exported.namelist().count("README.md") == 1
+        assert exported.read("README.md") == b"# Updated\n"
+        content = decode_secrets_blob(exported.read(".bifrost/secrets.enc").decode(), password="pw")
+        assert content.config_values == {"API_KEY": "secret-value"}
 
 
 @pytest.mark.e2e

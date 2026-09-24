@@ -2,7 +2,7 @@
 """Print the e2e test files for one shard of an N-shard split.
 
 Usage:
-    scripts/e2e_shard.py --shard-id 1 --total 2
+    scripts/e2e_shard.py --shard-id 1 --total 3
 
 Allocates files by source size so new and changed tests affect the split
 without a manually maintained timing map. Each file stays on one shard.

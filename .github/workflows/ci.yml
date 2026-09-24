@@ -409,11 +409,10 @@ jobs:
           ./test.sh unit
 
   # =============================================================================
-  # E2E Tests - Sharded across 2 parallel runners. Each shard boots its own
+  # E2E Tests - Sharded across 3 parallel runners. Each shard boots its own
   # isolated test stack (no xdist, no shared services between shards).
-  # scripts/e2e_shard.py deterministically allocates test files: heavies
-  # bin-packed first, then round-robin in sorted order — adding a file only
-  # moves files in shards downstream of the insertion point.
+  # scripts/e2e_shard.py deterministically assigns larger source files first
+  # to the shard with the least assigned source, with no maintained timing map.
   #
   # The complete suite intentionally runs on merge_group rather than ordinary
   # pull_request events. The merge queue's synthetic ref is the exact candidate
@@ -421,7 +420,7 @@ jobs:
   # workflow_dispatch runs remain complete as well.
   #
   # The internal matrix job (test-e2e) uses shard names like
-  # "E2E Tests (shard 1/2)". The aggregate gate job below (test-e2e-gate)
+  # "E2E Tests (shard 1/3)". The aggregate gate job below (test-e2e-gate)
   # is named EXACTLY "E2E Tests" to match the required status check name —
   # no ruleset edits needed.
   # =============================================================================
@@ -431,11 +430,11 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
-    name: E2E Tests (shard ${{ matrix.shard }}/2)
+    name: E2E Tests (shard ${{ matrix.shard }}/3)
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3]
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -454,19 +453,19 @@ jobs:
           cache-from: type=gha,scope=test-api-dev
           cache-to: type=gha,scope=test-api-dev,mode=max
 
-      - name: Run E2E tests (shard ${{ matrix.shard }}/2)
+      - name: Run E2E tests (shard ${{ matrix.shard }}/3)
         env:
           BIFROST_SKIP_BUILD: "1"
           BIFROST_TEST_USE_CLEAN_BOOT: "1"
         run: |
           chmod +x test.sh
           ./test.sh stack up
-          mapfile -t shard_files < <(python3 scripts/e2e_shard.py --shard-id ${{ matrix.shard }} --total 2)
+          mapfile -t shard_files < <(python3 scripts/e2e_shard.py --shard-id ${{ matrix.shard }} --total 3)
           if [ ${#shard_files[@]} -eq 0 ]; then
             echo "ERROR: shard ${{ matrix.shard }} resolved to zero files" >&2
             exit 1
           fi
-          echo "Shard ${{ matrix.shard }}/2: ${#shard_files[@]} files"
+          echo "Shard ${{ matrix.shard }}/3: ${#shard_files[@]} files"
           ./test.sh "${shard_files[@]}" -v --durations=50
 
       - name: Show API errors after E2E failure
@@ -477,7 +476,7 @@ jobs:
           COMPOSE_PROJECT_NAME="$bifrost_test_project" docker compose -f docker-compose.test.yml logs --tail=300 api
 
   # Aggregate gate — required check named "E2E Tests" (matches ruleset 15329014).
-  # Fails if either backend E2E shard, the client unit suite, or the critical
+  # Fails if any backend E2E shard, the client unit suite, or the critical
   # browser smoke failed/cancelled. The component/browser jobs have their own
   # visible names but are folded into this required context so the repository
   # settings do not need to change.

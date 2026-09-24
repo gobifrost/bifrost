@@ -31,6 +31,23 @@ class E2EShardTests(unittest.TestCase):
             self.assertEqual([101, 101], [sum(lengths[f] for f in shard) for shard in shards])
             self.assertCountEqual(files, [file for shard in shards for file in shard])
 
+    def test_three_shards_cover_every_file_once(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            files = [f"tests/e2e/test_{index}.py" for index in range(9)]
+            for index, name in enumerate(files):
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"x" * (index + 1))
+
+            with patch.object(e2e_shard, "API_ROOT", root):
+                shards = e2e_shard.split(files, 3)
+                self.assertEqual(shards, e2e_shard.split(list(reversed(files)), 3))
+
+            self.assertEqual(3, len(shards))
+            self.assertTrue(all(shards))
+            self.assertCountEqual(files, [file for shard in shards for file in shard])
+
 
 if __name__ == "__main__":
     unittest.main()
