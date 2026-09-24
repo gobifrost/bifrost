@@ -75,7 +75,12 @@ class FakeClient:
     def __init__(self) -> None:
         self.urls: list[str] = []
 
-    async def post(self, url: str, json: dict[str, Any] | None = None) -> FakeResponse:
+    async def post(
+        self,
+        url: str,
+        json: dict[str, Any] | None = None,
+        retry_transient: bool = False,
+    ) -> FakeResponse:
         self.urls.append(url)
         if url.startswith("/api/tables/") and len(self.urls) == 1:
             return FakeResponse(404, {"detail": "Table not found"}, url)

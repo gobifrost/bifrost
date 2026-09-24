@@ -24,6 +24,23 @@ async def test_table_upsert_opts_into_retry(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_table_update_opts_into_retry(monkeypatch):
+    module = importlib.import_module("bifrost.tables")
+    response = MagicMock(status_code=200)
+    response.json.return_value = {"id": "customer-1", "table_id": "table-1", "data": {"healthy": True}}
+    client = MagicMock(patch=AsyncMock(return_value=response))
+    monkeypatch.setattr(module, "get_client", lambda: client)
+
+    await module.tables.update("backups", "customer-1", {"healthy": True}, scope="global")
+
+    client.patch.assert_awaited_once_with(
+        "/api/tables/backups/documents/customer-1?scope=global",
+        json={"data": {"healthy": True}},
+        retry_transient=True,
+    )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("method", "documents", "retryable"),
     [

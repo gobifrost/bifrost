@@ -415,6 +415,7 @@ class tables:
         response = await client.patch(
             f"/api/tables/{table}/documents/{doc_id}{_scope_query(effective_scope)}",
             json=body,
+            retry_transient=True,
         )
         if response.status_code == 404:
             return None
