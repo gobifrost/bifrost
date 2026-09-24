@@ -81,6 +81,29 @@ def _make_zip(
     return buf.getvalue()
 
 
+@pytest.fixture(scope="module")
+def installed_zip(e2e_client, platform_admin):
+    """One installed bundle for preview and export round-trip contracts."""
+    headers = platform_admin.headers
+    upload_headers = {
+        k: v for k, v in headers.items() if k.lower() != "content-type"
+    }
+    slug = f"zip-shared-{uuid.uuid4().hex[:8]}"
+    data = _make_zip(slug, "1.0.0")
+    inst = wait_for_install(
+        e2e_client,
+        e2e_client.post(
+            "/api/solutions/install",
+            headers=upload_headers,
+            files={"file": (f"{slug}.zip", data, "application/zip")},
+            data={"config_values": '{"API_KEY": "sk_x"}'},
+        ),
+        headers,
+    )
+    assert inst.status_code in (200, 201), inst.text
+    return {"slug": slug, "id": inst.json()["id"]}
+
+
 async def test_zip_install_refused_into_git_connected_install(e2e_client, platform_admin):
     """A zip POSTed for a slug+scope that already has a git-connected install
     must be refused with 409 — auto-pull is that install's only writer."""
@@ -117,11 +140,11 @@ async def test_zip_install_refused_into_git_connected_install(e2e_client, platfo
     assert "git-connected" in inst.json()["detail"]
 
 
-async def test_zip_install_downgrade_gate_and_force(e2e_client, platform_admin, db_session):
+async def test_zip_install_force_reaches_downgrade_gate(e2e_client, platform_admin, db_session):
     """The HTTP force flag reaches a versioned install's downgrade gate.
 
-    Version bookkeeping and an ordinary upgrade are covered directly by
-    test_solution_deploy_version, without two extra async install jobs here.
+    The refusal, version bookkeeping, and ordinary upgrade are covered directly
+    by test_solution_deploy_version, without extra async install jobs here.
     """
     from src.models.orm.solutions import Solution
 
@@ -142,27 +165,16 @@ async def test_zip_install_downgrade_gate_and_force(e2e_client, platform_admin, 
     install.version = "1.1.0"
     await db_session.commit()
 
-    def _install(version: str, force: bool = False):
-        url = "/api/solutions/install" + ("?force=true" if force else "")
-        return wait_for_install(
-            e2e_client,
-            e2e_client.post(
-                url,
-                headers=upload_headers,
-                files={"file": (f"{slug}.zip", _make_zip(slug, version), "application/zip")},
-                data={"config_values": "{}"},
-            ),
-            headers,
-        )
-
-    # An older zip is refused by the queued install job.
-    down = _install("0.9.0")
-    assert down.status_code == 409, down.text
-    detail = down.json()["detail"]
-    assert "0.9.0" in detail and "1.1.0" in detail and "force" in detail
-
-    # Same zip, ?force=true → succeeds and records the downgrade.
-    forced = _install("0.9.0", force=True)
+    forced = wait_for_install(
+        e2e_client,
+        e2e_client.post(
+            "/api/solutions/install?force=true",
+            headers=upload_headers,
+            files={"file": (f"{slug}.zip", _make_zip(slug, "0.9.0"), "application/zip")},
+            data={"config_values": "{}"},
+        ),
+        headers,
+    )
     assert forced.status_code in (200, 201), forced.text
     assert forced.json()["id"] == sid
     assert forced.json()["version"] == "0.9.0"
@@ -170,7 +182,7 @@ async def test_zip_install_downgrade_gate_and_force(e2e_client, platform_admin, 
 
 
 async def test_zip_preview_returns_upgrade_diff_for_existing_install(
-    e2e_client, platform_admin
+    e2e_client, platform_admin, installed_zip
 ):
     """Preview of a v2 zip whose slug+scope matches an existing install (Task 22):
 
@@ -183,21 +195,8 @@ async def test_zip_preview_returns_upgrade_diff_for_existing_install(
     upload_headers = {
         k: v for k, v in headers.items() if k.lower() != "content-type"
     }
-    slug = f"zip-diff-{uuid.uuid4().hex[:8]}"
-
-    # Install v1 (one workflow, API_KEY declared as secret).
-    v1 = wait_for_install(
-        e2e_client,
-        e2e_client.post(
-            "/api/solutions/install",
-            headers=upload_headers,
-            files={"file": (f"{slug}.zip", _make_zip(slug, "1.0.0"), "application/zip")},
-            data={"config_values": "{}"},
-        ),
-        headers,
-    )
-    assert v1.status_code in (200, 201), v1.text
-    sid = v1.json()["id"]
+    slug = installed_zip["slug"]
+    sid = installed_zip["id"]
 
     # Preview a v2 zip: same slug+scope, one extra workflow, API_KEY type changed.
     v2_zip = _make_zip(slug, "2.0.0", extra_workflow=True, api_key_type="string")
@@ -244,46 +243,20 @@ async def test_zip_preview_returns_upgrade_diff_for_existing_install(
     assert [s for s in listing2.json()["solutions"] if s["slug"] == fresh_slug] == []
 
 
-async def test_export_round_trips_the_installed_bundle(e2e_client, platform_admin):
+async def test_export_round_trips_the_installed_bundle(
+    e2e_client, platform_admin, installed_zip
+):
     """GET /{id}/export returns the workspace zip the install's last write
     produced — re-parseable AND re-installable (the full round trip):
 
-    install zip v1 → export → the export previews identically → installing the
-    EXPORT as a new slug-scoped... (same slug+scope resolves to the same
-    install) → re-INSTALLING the export onto the same install succeeds as a
-    no-op full replace."""
+    install zip v1 → export → the export previews identically → re-INSTALLING
+    the export onto the same install succeeds as a no-op full replace."""
     headers = platform_admin.headers
     upload_headers = {
         k: v for k, v in headers.items() if k.lower() != "content-type"
     }
-    slug = f"zip-exp-{uuid.uuid4().hex[:8]}"
-    data = _make_zip(slug, "1.0.0")
-
-    # Preview the original upload before it creates an install.
-    original_preview = e2e_client.post(
-        "/api/solutions/install/preview",
-        headers=upload_headers,
-        files={"file": (f"{slug}.zip", data, "application/zip")},
-    )
-    assert original_preview.status_code == 200, original_preview.text
-    original = original_preview.json()
-    assert original["slug"] == slug
-    assert len(original["workflows"]) == 1
-    assert any(c["key"] == "API_KEY" for c in original["config_schemas"])
-    assert original["existing_install"] is None
-
-    inst = wait_for_install(
-        e2e_client,
-        e2e_client.post(
-            "/api/solutions/install",
-            headers=upload_headers,
-            files={"file": (f"{slug}.zip", data, "application/zip")},
-            data={"config_values": '{"API_KEY": "sk_x"}'},
-        ),
-        headers,
-    )
-    assert inst.status_code in (200, 201), inst.text
-    sid = inst.json()["id"]
+    slug = installed_zip["slug"]
+    sid = installed_zip["id"]
 
     # The workflow and required secret value are visible as soon as install finishes.
     ent = e2e_client.get(f"/api/solutions/{sid}/entities", headers=headers)

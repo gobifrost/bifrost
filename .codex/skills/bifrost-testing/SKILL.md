@@ -45,6 +45,10 @@ Already in `CLAUDE.md`:
 - Anything hitting API / DB / queue / S3 → `api/tests/e2e/`
 
 See also `authoring-rules.md` alongside this file for expanded examples.
+When a test would start a deploy, install, publish, build, sync, or another
+background job, follow **Expensive backend E2E tests** in that file before
+adding the case. Count the jobs, identify the unique boundary each proves,
+and compare its cost with an existing full-path test.
 
 ## Workflow
 
@@ -118,7 +122,7 @@ If the repair is bounded, make it in the current change. If it is substantial an
 
 Diagnostics:
 - Logs per service: `/tmp/bifrost-<project-name>/*.log` (per-worktree).
-- JUnit: `/tmp/bifrost/test-results.xml`.
+- JUnit on the host: `/tmp/bifrost-<project>/test-results.xml` (`./test.sh stack status` prints the project name).
 - To isolate a test, run it alone: `./test.sh tests/e2e/path/test_foo.py::TestClass::test_method -v`.
 
 ### 7. Prefer simple tests
@@ -126,6 +130,13 @@ Diagnostics:
 Test complexity is a liability, not evidence of rigor. Prefer one observable contract, minimal fixtures, deterministic state, explicit cleanup, and the lowest test layer that can catch the regression. An end-to-end test should prove the primary integration or user journey, not reproduce every validation rule and edge case already covered below it.
 
 When simplifying or deleting a test, preserve its unique behavioral signal. Do not preserve incidental implementation assertions merely because they already exist.
+
+For a new or changed E2E case that takes at least 2 seconds, run it with
+`--durations=0` and inspect setup, call, and teardown time. Report whether the
+time is spent in test setup, ordinary requests, or a background job; use a
+direct service/database test for isolated edge cases. Treat 2 seconds as a
+review trigger, not a pass/fail threshold. See **Expensive backend E2E tests**
+in `authoring-rules.md` for the full decision rule.
 
 ## Definition-of-Done Checklist
 
