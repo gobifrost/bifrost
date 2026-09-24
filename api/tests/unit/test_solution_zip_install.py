@@ -14,6 +14,8 @@ from pathlib import Path
 from src.services.solutions.zip_install import (
     BadExportPassword,
     PreviewResult,
+    UnmetDependency,
+    install_zip,
     preview_zip,
     validate_install_zip,
 )
@@ -79,6 +81,37 @@ def _make_workspace_zip(extra: dict[str, str] | None = None) -> bytes:
         for name, content in files.items():
             z.writestr(name, content)
     return buf.getvalue()
+
+
+@pytest.mark.e2e
+async def test_install_zip_rejects_missing_module_before_persisting(db_session) -> None:
+    """The installer invokes the dependency gate before committing an install."""
+    from sqlalchemy import select
+
+    from src.models.orm.solutions import Solution
+
+    bundle = _make_workspace_zip(
+        extra={
+            "workflows/main.py": (
+                "from modules.absent import x\n\n"
+                "def run(sdk):\n    return x\n"
+            )
+        }
+    )
+    with pytest.raises(UnmetDependency, match="modules.absent"):
+        await install_zip(
+            db_session,
+            bundle,
+            organization_id=None,
+            config_values={},
+            deployer_email="dev@gobifrost.com",
+        )
+
+    await db_session.rollback()
+    rows = (await db_session.execute(
+        select(Solution).where(Solution.slug == "zip-demo")
+    )).scalars().all()
+    assert rows == []
 
 
 def test_preview_lists_entities_and_config_schemas() -> None:

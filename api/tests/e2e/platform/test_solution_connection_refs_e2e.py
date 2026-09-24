@@ -26,7 +26,7 @@ therefore exercised in the two realistic halves the design intends — template
 fidelity+scrub on export (integration present), and shell-creation on deploy
 (integration absent) — both against real endpoints.
 
-NOTE: the install-blocking (test_solution_install_blocking.py) and runtime-424
+NOTE: the install-blocking (test_solution_zip_install.py) and runtime-424
 (test_solution_connection_runtime.py) behaviors live in their own files and are
 NOT duplicated here.
 """
