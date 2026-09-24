@@ -166,10 +166,10 @@ class GitRepoManager:
             await client.aclose()
 
     async def sync_down(self, target: Path) -> None:
-        """Sync _repo/ from S3 to a local directory."""
+        """Mirror S3 _repo/ into a local directory, removing stale local files."""
         target.mkdir(parents=True, exist_ok=True)
         s3_uri = self._s3_uri()
-        cmd = self._build_sync_cmd(source=s3_uri, dest=str(target))
+        cmd = self._build_sync_cmd(source=s3_uri, dest=str(target), delete=True)
         logger.info(f"sync_down: {s3_uri} -> {target}")
         await self._run_aws_cli(cmd)
 

@@ -3,7 +3,6 @@ everything it owns (workflows/apps/forms/agents/tables) and its config
 declarations paired with whether each has a value set (admin only)."""
 from __future__ import annotations
 
-import base64
 import io
 import uuid
 from uuid import UUID
@@ -12,10 +11,11 @@ import pytest
 from PIL import Image
 from sqlalchemy import select
 
+from shared.logo_processing import process_logo
+from src.models.orm.applications import Application
 from src.models.orm.solution_config_schema import SolutionConfigSchema
 from src.models.orm.solution_file_location import SolutionFileLocation
 from src.services.solutions.deploy import solution_entity_id
-from tests.e2e.platform.conftest import wait_for_deploy
 
 pytestmark = pytest.mark.e2e
 
@@ -47,29 +47,32 @@ async def test_get_solution_entities_reports_config_status_and_app_logo(
     sid = _create_solution(e2e_client, headers, slug)
     app_id = str(uuid.uuid4())
     real_app_id = str(solution_entity_id(UUID(sid), UUID(app_id)))
-    logo_b64 = base64.b64encode(CLEAN_PNG).decode("ascii")
-
-    dep = e2e_client.post(f"/api/solutions/{sid}/deploy", headers=headers, json={
-        "config_schemas": [{
-            "id": str(uuid.uuid4()), "key": "API_KEY", "type": "secret",
-            "required": True, "description": "needed", "position": 0,
-        }],
-        "apps": [{
-            "id": app_id,
-            "slug": f"summary-app-{uuid.uuid4().hex[:8]}",
-            "name": "Summary App",
-            "app_model": "standalone_v2",
-            "dependencies": {},
-            "access_level": "authenticated",
-            "logo_b64": logo_b64,
-            "logo_content_type": "image/png",
-            "dist_files": {
-                "index.html": '<!doctype html><html><body><div id="root"></div></body></html>',
-            },
-        }],
-    })
-    dep = wait_for_deploy(e2e_client, dep, headers)
-    assert dep.status_code == 200, dep.text
+    logo = process_logo(CLEAN_PNG, "image/png")
+    db_session.add_all([
+        SolutionConfigSchema(
+            solution_id=UUID(sid),
+            key="API_KEY",
+            type="secret",
+            required=True,
+            description="needed",
+            position=0,
+        ),
+        Application(
+            id=UUID(real_app_id),
+            solution_id=UUID(sid),
+            slug=f"summary-app-{uuid.uuid4().hex[:8]}",
+            name="Summary App",
+            app_model="standalone_v2",
+            dependencies={},
+            access_level="authenticated",
+            logo_data=logo.original_data,
+            logo_content_type=logo.original_content_type,
+            logo_thumbnail_data=logo.thumbnail_data,
+            logo_thumbnail_content_type=logo.thumbnail_content_type,
+            logo_thumbnail_version=logo.thumbnail_version,
+        ),
+    ])
+    await db_session.commit()
 
     declarations = (await db_session.execute(
         select(SolutionConfigSchema).where(
