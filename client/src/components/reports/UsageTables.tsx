@@ -86,7 +86,7 @@ export function WorkflowTable({
 	endDate,
 	isDemo,
 }: WorkflowTableProps) {
-	const [sort, toggleSort] = useToggleSort({ by: "cost", dir: "desc" });
+	const [sort, toggleSort] = useToggleSort({ by: "cpu", dir: "desc" });
 
 	const sorted = useMemo(() => {
 		if (!workflows) return [];

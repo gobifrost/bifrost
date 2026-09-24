@@ -434,6 +434,7 @@ test.describe("Operational reports acceptance (admin)", () => {
 			page.getByRole("heading", { name: "Usage Reports", exact: true }),
 		).toBeVisible({ timeout: 10_000 });
 		await expect(page.getByText("Total AI Cost")).toBeVisible();
+		await expect(page.getByRole("cell", { name: WORKFLOW_NAME, exact: true })).toBeVisible();
 		await expect(page.getByText("Usage by Conversation")).toBeVisible();
 
 		const chatUsageResponsePromise = page.waitForResponse(

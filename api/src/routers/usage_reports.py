@@ -160,30 +160,44 @@ async def get_usage_report(
     # 3. Get usage by workflow (only if source includes executions)
     by_workflow: list[WorkflowUsage] = []
     if source in ("executions", "all"):
+        total_cpu = func.coalesce(func.sum(Execution.cpu_total_seconds), 0.0)
+        ai_by_execution = (
+            select(
+                AIUsage.execution_id.label("execution_id"),
+                func.sum(AIUsage.input_tokens).label("input_tokens"),
+                func.sum(AIUsage.output_tokens).label("output_tokens"),
+                func.sum(AIUsage.cost).label("ai_cost"),
+            )
+            .where(AIUsage.execution_id.isnot(None))
+            .where(func.date(AIUsage.timestamp) >= start_date)
+            .where(func.date(AIUsage.timestamp) <= end_date)
+            .group_by(AIUsage.execution_id)
+            .subquery()
+        )
         workflow_query = (
             select(
                 Execution.workflow_name,
-                func.count(func.distinct(Execution.id)).label("execution_count"),
-                func.coalesce(func.sum(AIUsage.input_tokens), 0).label("input_tokens"),
-                func.coalesce(func.sum(AIUsage.output_tokens), 0).label("output_tokens"),
-                func.coalesce(func.sum(AIUsage.cost), Decimal("0")).label("ai_cost"),
-                func.coalesce(func.sum(Execution.cpu_total_seconds), 0.0).label("cpu_seconds"),
+                func.count(Execution.id).label("execution_count"),
+                func.coalesce(func.sum(ai_by_execution.c.input_tokens), 0).label("input_tokens"),
+                func.coalesce(func.sum(ai_by_execution.c.output_tokens), 0).label("output_tokens"),
+                func.coalesce(func.sum(ai_by_execution.c.ai_cost), Decimal("0")).label("ai_cost"),
+                total_cpu.label("cpu_seconds"),
                 func.coalesce(func.max(Execution.peak_memory_bytes), 0).label("memory_bytes"),
             )
-            .join(Execution, AIUsage.execution_id == Execution.id)
+            .outerjoin(ai_by_execution, ai_by_execution.c.execution_id == Execution.id)
             .where(
-                AIUsage.execution_id.isnot(None),
-                func.date(AIUsage.timestamp) >= start_date,
-                func.date(AIUsage.timestamp) <= end_date,
+                func.date(Execution.started_at) >= start_date,
+                func.date(Execution.started_at) <= end_date,
+                Execution.workflow_name.isnot(None),
             )
         )
 
         if filter_org_id:
-            workflow_query = workflow_query.where(AIUsage.organization_id == filter_org_id)
+            workflow_query = workflow_query.where(Execution.organization_id == filter_org_id)
 
         workflow_query = workflow_query.group_by(Execution.workflow_name).order_by(
-            func.sum(AIUsage.cost).desc()
-        ).limit(50)
+            total_cpu.desc(), Execution.workflow_name
+        ).limit(100)
 
         workflow_result = await db.execute(workflow_query)
         by_workflow = [
