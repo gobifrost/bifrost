@@ -377,8 +377,11 @@ class TestProcessPoolManagerRouting:
         assert h.state == ProcessState.BUSY
         assert h.current_execution is not None
         assert h.current_execution.execution_id == "exec-123"
-        h.work_queue.put_nowait.assert_called_once_with(
-            ("exec-123", {"timeout_seconds": 300})
+        queued_id, queued_context = h.work_queue.put_nowait.call_args.args[0]
+        assert queued_id == "exec-123"
+        assert queued_context["timeout_seconds"] == 300
+        assert datetime.fromisoformat(queued_context["workflow_deadline"]) == (
+            h.current_execution.started_at + timedelta(seconds=300)
         )
 
     @pytest.mark.asyncio
@@ -1238,8 +1241,11 @@ class TestProcessPoolManagerIntegration:
 
         handle = pool.processes["process-1"]
         assert handle.state == ProcessState.BUSY
-        mock_work_queue.put_nowait.assert_called_once_with(
-            ("exec-123", {"timeout_seconds": 300})
+        queued_id, queued_context = mock_work_queue.put_nowait.call_args.args[0]
+        assert queued_id == "exec-123"
+        assert queued_context["timeout_seconds"] == 300
+        assert datetime.fromisoformat(queued_context["workflow_deadline"]) == (
+            handle.current_execution.started_at + timedelta(seconds=300)
         )
 
         result_data = {

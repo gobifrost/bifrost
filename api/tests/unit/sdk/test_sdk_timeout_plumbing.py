@@ -1,13 +1,10 @@
-"""SDK helpers that accept ``timeout`` must forward it to the httpx call.
-
-Without this, the SDK's hardcoded 30s client read-timeout tears the
-connection down before the server can respond — even when the caller
-explicitly asked for longer. Regression coverage for #301.
-"""
+"""SDK wait deadlines and unrelated HTTP timeout plumbing."""
 from __future__ import annotations
 
 import importlib
 import sys
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -26,50 +23,115 @@ def _knowledge_module():
 
 
 @pytest.mark.asyncio
-async def test_agents_run_forwards_timeout_to_httpx_with_buffer(monkeypatch):
-    """``agents.run(timeout=N)`` must pass ``timeout=N+10`` to ``client.post``
-    so httpx waits long enough for the server-side cap to expire first."""
+async def test_agents_run_waits_through_short_status_requests(monkeypatch):
     mod = _agents_module()
+    run = MagicMock(status="running")
+    completed = MagicMock(status="completed", output={"text": "ok"})
+    monkeypatch.setattr(mod.agents, "enqueue", AsyncMock(return_value=MagicMock(run_id="run-1")))
+    monkeypatch.setattr(mod.agents, "get_run", AsyncMock(side_effect=[run, completed]))
+    sleep = AsyncMock()
+    monkeypatch.setattr(mod.asyncio, "sleep", sleep)
 
-    mock_response = MagicMock()
-    mock_response.is_success = True
-    mock_response.json.return_value = {"output": "ok", "status": "completed"}
-    mock_response.status_code = 200
+    assert await mod.agents.run("Foo") == "ok"
+    sleep.assert_awaited_once_with(2.0)
+    assert mod.agents.get_run.await_count == 2
 
-    mock_client = MagicMock()
-    mock_client.post = AsyncMock(return_value=mock_response)
-    monkeypatch.setattr(mod, "get_client", lambda: mock_client)
 
-    await mod.agents.run("Foo", input={}, timeout=300)
-
-    mock_client.post.assert_awaited_once()
-    kwargs = mock_client.post.call_args.kwargs
-    assert kwargs.get("timeout") == 310, (
-        f"expected client.post(timeout=310), got {kwargs.get('timeout')!r}"
-    )
-    assert kwargs["json"]["timeout"] == 300, (
-        "server-side cap must still be sent in the body"
-    )
+def test_agents_polling_slows_as_run_ages():
+    mod = _agents_module()
+    assert mod._poll_interval(0) == 2.0
+    assert mod._poll_interval(30) == 5.0
+    assert mod._poll_interval(300) == 10.0
 
 
 @pytest.mark.asyncio
-async def test_agents_run_default_timeout_forwarded(monkeypatch):
-    """Default ``timeout=1800`` must reach httpx as 1810, not silently 30."""
+async def test_agents_run_returns_run_id_when_wait_expires(monkeypatch):
     mod = _agents_module()
+    monkeypatch.setattr(mod.agents, "enqueue", AsyncMock(return_value=MagicMock(run_id="run-1")))
+    get_run = AsyncMock()
+    monkeypatch.setattr(mod.agents, "get_run", get_run)
 
-    mock_response = MagicMock()
-    mock_response.is_success = True
-    mock_response.json.return_value = {"output": "ok"}
-    mock_response.status_code = 200
+    pending = await mod.agents.run("Foo", timeout=0)
 
-    mock_client = MagicMock()
-    mock_client.post = AsyncMock(return_value=mock_response)
-    monkeypatch.setattr(mod, "get_client", lambda: mock_client)
+    assert pending.run_id == "run-1"
+    assert pending.reason == "wait_timeout"
+    assert pending.last_known_status is None
+    get_run.assert_not_awaited()
 
-    await mod.agents.run("Foo")
 
-    kwargs = mock_client.post.call_args.kwargs
-    assert kwargs.get("timeout") == 1810
+@pytest.mark.asyncio
+async def test_agents_run_rejects_negative_timeout_before_enqueue(monkeypatch):
+    mod = _agents_module()
+    enqueue = AsyncMock()
+    monkeypatch.setattr(mod.agents, "enqueue", enqueue)
+
+    with pytest.raises(ValueError, match="non-negative"):
+        await mod.agents.run("Foo", timeout=-1)
+
+    enqueue.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_agents_run_respects_workflow_deadline_margin(monkeypatch):
+    mod = _agents_module()
+    monkeypatch.setattr(mod.agents, "enqueue", AsyncMock(return_value=MagicMock(run_id="run-2")))
+    get_run = AsyncMock()
+    monkeypatch.setattr(mod.agents, "get_run", get_run)
+    token = mod._execution_context.set(SimpleNamespace(
+        workflow_deadline=datetime.now(timezone.utc) + timedelta(seconds=5),
+        workflow_timeout_seconds=60,
+    ))
+    try:
+        pending = await mod.agents.run("Foo")
+    finally:
+        mod._execution_context.reset(token)
+
+    assert pending.run_id == "run-2"
+    assert pending.reason == "workflow_deadline"
+    get_run.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_sixty_second_workflow_can_wait_for_agent(monkeypatch):
+    mod = _agents_module()
+    monkeypatch.setattr(mod.agents, "enqueue", AsyncMock(return_value=MagicMock(run_id="run-4")))
+    get_run = AsyncMock(return_value=MagicMock(status="completed", output={"text": "done"}))
+    monkeypatch.setattr(mod.agents, "get_run", get_run)
+    token = mod._execution_context.set(SimpleNamespace(
+        workflow_deadline=datetime.now(timezone.utc) + timedelta(seconds=60),
+        workflow_timeout_seconds=60,
+    ))
+    try:
+        result = await mod.agents.run("Foo")
+    finally:
+        mod._execution_context.reset(token)
+
+    assert result == "done"
+    get_run.assert_awaited_once_with("run-4")
+    assert mod._workflow_return_margin(60) == 9.0
+
+
+@pytest.mark.asyncio
+async def test_agents_wait_observes_cancelling_until_terminal(monkeypatch):
+    mod = _agents_module()
+    monkeypatch.setattr(mod.agents, "get_run", AsyncMock(side_effect=[
+        MagicMock(status="cancelling"),
+        MagicMock(status="cancelled", error="Cancelled by caller"),
+    ]))
+    monkeypatch.setattr(mod.asyncio, "sleep", AsyncMock())
+
+    with pytest.raises(RuntimeError, match="Cancelled by caller"):
+        await mod.agents.wait("run-3")
+
+
+@pytest.mark.asyncio
+async def test_agents_wait_preserves_budget_exceeded_output(monkeypatch):
+    mod = _agents_module()
+    monkeypatch.setattr(mod.agents, "get_run", AsyncMock(return_value=MagicMock(
+        status="budget_exceeded", output={"text": "Partial answer"},
+    )))
+
+    assert await mod.agents.wait("run-4") == "Partial answer"
 
 
 @pytest.mark.asyncio

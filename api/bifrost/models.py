@@ -143,6 +143,14 @@ class AgentRunHandle(BaseModel):
     status: Literal["queued"] = "queued"
 
 
+class AgentRunPending(BaseModel):
+    """The SDK wait ended before an agent run's result was observed."""
+
+    run_id: str
+    last_known_status: Literal["queued", "running", "cancelling"] | None = None
+    reason: Literal["wait_timeout", "workflow_deadline"]
+
+
 class AgentRun(BaseModel):
     """Agent run status and result."""
 

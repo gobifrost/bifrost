@@ -1,4 +1,4 @@
-"""SDK helper raises AgentPausedError when /execute returns paused body."""
+"""SDK helper preserves paused and completed run behavior."""
 from __future__ import annotations
 
 import importlib
@@ -19,7 +19,7 @@ def _agents_module():
 
 @pytest.mark.asyncio
 async def test_run_raises_agent_paused_error_on_paused_response(monkeypatch):
-    """When /execute returns ``status='paused'``, the SDK helper raises a typed
+    """When /enqueue returns ``status='paused'``, the SDK helper raises a typed
     exception so workflow code does not silently receive ``None``."""
     mod = _agents_module()
     paused_body = {
@@ -48,18 +48,23 @@ async def test_run_raises_agent_paused_error_on_paused_response(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_run_returns_output_for_normal_completion(monkeypatch):
-    """Normal (non-paused) responses still return the output as before."""
+    """A completed run still returns plain text to an unstructured caller."""
     mod = _agents_module()
 
     mock_response = MagicMock()
     mock_response.is_success = True
-    mock_response.json.return_value = {"output": "hello", "status": "completed"}
+    mock_response.json.return_value = {"run_id": "run-1", "status": "queued"}
     mock_response.status_code = 200
 
     mock_client = MagicMock()
     mock_client.post = AsyncMock(return_value=mock_response)
 
     monkeypatch.setattr(mod, "get_client", lambda: mock_client)
+    monkeypatch.setattr(
+        mod.agents,
+        "get_run",
+        AsyncMock(return_value=MagicMock(status="completed", output={"text": "hello"})),
+    )
 
     result = await mod.agents.run("Foo", input={"x": 1})
     assert result == "hello"

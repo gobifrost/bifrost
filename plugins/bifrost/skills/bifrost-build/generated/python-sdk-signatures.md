@@ -12,8 +12,11 @@ Agent execution operations.
 **`agents.get_run(run_id: str) -> AgentRun`**
   Get the current status and result for an agent run.
 
-**`agents.run(agent_name: str, input: dict[str, Any] | None = None, output_schema: dict[str, Any] | None = None, timeout: int = 1800) -> dict[str, Any] | str`**
+**`agents.run(agent_name: str, input: dict[str, Any] | None = None, output_schema: dict[str, Any] | None = None, timeout: float | None = None) -> dict[str, Any] | str | AgentRunPending`**
   Run an agent and wait for the result.
+
+**`agents.wait(run_id: str, output_schema: dict[str, Any] | None = None, timeout: float | None = None) -> dict[str, Any] | str | AgentRunPending`**
+  Wait for a previously enqueued run using short status requests.
 
 ### ai
 
