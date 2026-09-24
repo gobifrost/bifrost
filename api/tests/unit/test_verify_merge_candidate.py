@@ -46,14 +46,26 @@ def test_accepts_exact_candidate_only_when_every_gate_job_passed() -> None:
 def test_rejects_failed_or_missing_gate_jobs() -> None:
     conclusions = {name: "success" for name in REQUIRED_JOBS}
     conclusions["Critical Browser Smoke"] = "failure"
-    del conclusions["E2E Tests (shard 2/2)"]
+    del conclusions["E2E Tests (shard 2/3)"]
 
     violations = verify_merge_candidate(
         "gobifrost/bifrost", SHA, _fetcher(conclusions)
     )
 
     assert any("Critical Browser Smoke" in violation for violation in violations)
-    assert any("E2E Tests (shard 2/2)" in violation for violation in violations)
+    assert any("E2E Tests (shard 2/3)" in violation for violation in violations)
+
+
+def test_rejects_missing_api_or_client_candidate() -> None:
+    for candidate in ("Build API Dev Candidate", "Build Client Dev Candidate"):
+        conclusions = {name: "success" for name in REQUIRED_JOBS}
+        del conclusions[candidate]
+
+        violations = verify_merge_candidate(
+            "gobifrost/bifrost", SHA, _fetcher(conclusions)
+        )
+
+        assert any(candidate in violation for violation in violations)
 
 
 def test_rejects_ambiguous_duplicate_required_context() -> None:

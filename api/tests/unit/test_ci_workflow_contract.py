@@ -12,6 +12,8 @@ from typing import Any
 
 import yaml
 
+from scripts.verify_merge_candidate import REQUIRED_JOBS
+
 
 def _repository_root() -> Path:
     # Host tests see <repo>/api/tests; the Dockerized test runner mounts the API
@@ -40,6 +42,33 @@ def _load_workflow(path: Path) -> dict[str, Any]:
 
 def _normalized(expression: str) -> str:
     return " ".join(expression.split())
+
+
+def test_promotion_verifier_requires_every_merge_candidate_job() -> None:
+    jobs = _load_workflow(CI_WORKFLOW)["jobs"]
+    shard_job = jobs["test-e2e"]
+    shards = shard_job["strategy"]["matrix"]["shard"]
+    name_template = shard_job["name"]
+    assert "${{ matrix.shard }}" in name_template
+    assert name_template.endswith(f"/{len(shards)})")
+
+    expected = {
+        jobs[job_id]["name"]
+        for job_id in (
+            "lint",
+            "test-unit",
+            "test-client-unit",
+            "test-client-smoke",
+            "build-dev-api-candidate",
+            "build-dev-client-candidate",
+            "test-e2e-gate",
+        )
+    }
+    expected.update(
+        name_template.replace("${{ matrix.shard }}", shard) for shard in shards
+    )
+
+    assert REQUIRED_JOBS == expected
 
 
 def test_full_suite_gates_exact_merge_candidate_before_dev_image() -> None:
