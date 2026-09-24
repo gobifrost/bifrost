@@ -68,7 +68,9 @@ def _poll_notification(
     )
 
 
-def test_enqueue_poll_and_success(e2e_client, platform_admin):
+def test_enqueue_poll_success_and_requester_visibility(
+    e2e_client, platform_admin, org1_user
+):
     app = _create_app(
         e2e_client,
         platform_admin.headers,
@@ -93,6 +95,11 @@ def test_enqueue_poll_and_success(e2e_client, platform_admin):
     assert visible.status_code == 200, visible.text
     assert "payload" not in visible.json()
     assert visible.json()["job_type"] == "application.publish"
+    hidden = e2e_client.get(
+        f"/api/platform-jobs/{accepted['job_id']}",
+        headers=org1_user.headers,
+    )
+    assert hidden.status_code == 404
     body = _poll(
         e2e_client,
         platform_admin.headers,
@@ -114,34 +121,6 @@ def test_enqueue_poll_and_success(e2e_client, platform_admin):
         "completed",
     )
     assert notification["percent"] == 100
-
-
-def test_job_is_not_visible_to_another_user(
-    e2e_client,
-    platform_admin,
-    org1_user,
-):
-    app = _create_app(
-        e2e_client,
-        platform_admin.headers,
-        f"private-publish-{uuid.uuid4().hex[:8]}",
-    )
-    response = e2e_client.post(
-        f"/api/applications/{app['id']}/publish",
-        headers=platform_admin.headers,
-    )
-    assert response.status_code == 202, response.text
-    hidden = e2e_client.get(
-        f"/api/platform-jobs/{response.json()['job_id']}",
-        headers=org1_user.headers,
-    )
-    assert hidden.status_code == 404
-    terminal = _poll(
-        e2e_client,
-        platform_admin.headers,
-        response.json()["job_id"],
-    )
-    assert terminal["status"] == "succeeded", terminal
 
 
 def test_concurrent_enqueue_reuses_active_job(

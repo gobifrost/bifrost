@@ -211,9 +211,10 @@ async def test_deploy_creates_integration_shell_and_readme_round_trips(
     globally. The real deploy endpoint must:
       (a) create an EMPTY Integration shell (config schema + an OAuth provider
           whose client_id is empty) — integrations_shell_created == 1,
-      (b) re-deploying with the SAME declaration must NOT clobber it (shell
-          count 0 the second time),
-      (c) the README carried on the deploy bundle round-trips to /readme.
+      (b) the README carried on the deploy bundle round-trips to /readme.
+
+    Existing-shell preservation is covered directly by
+    test_solution_deploy_shells, without a second queued deploy here.
     """
     headers = platform_admin.headers
     tok = uuid.uuid4().hex[:8]
@@ -283,17 +284,7 @@ async def test_deploy_creates_integration_shell_and_readme_round_trips(
     assert provider.client_id == "", "shell OAuth must have empty client_id"
     assert provider.encrypted_client_secret == b""
 
-    # (b) Re-deploy with the same declaration must NOT clobber → 0 shells created.
-    dep2 = e2e_client.post(
-        f"/api/solutions/{sid}/deploy", headers=headers, json=deploy_body
-    )
-    dep2 = wait_for_deploy(e2e_client, dep2, headers)
-    assert dep2.status_code == 200, dep2.text
-    assert dep2.json()["integrations_shell_created"] == 0, (
-        "re-deploy must not re-create / clobber the existing integration"
-    )
-
-    # (c) README round-trips to the readme endpoint.
+    # README round-trips to the readme endpoint.
     rd = e2e_client.get(f"/api/solutions/{sid}/readme", headers=headers)
     assert rd.status_code == 200, rd.text
     assert rd.json()["readme"] == readme_md, "README did not round-trip"
