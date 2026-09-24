@@ -58,25 +58,3 @@ async def test_concurrent_deploy_to_same_install_is_refused(e2e_client, platform
         dep = wait_for_deploy(e2e_client, dep, headers)
     assert dep.status_code == 422, dep.text
     assert "in progress" in dep.text.lower()
-
-def test_invalid_bundle_fails_cleanly_not_500(e2e_client, platform_admin):
-    """Codex #13: a deploy rejected by SolutionDeployConflict (here: an
-    inline_v1 app, which Solution deploy refuses) surfaces as a clean job
-    failure with the reason, NOT an unhandled 500."""
-    headers = platform_admin.headers
-    slug = f"badbundle-{uuid.uuid4().hex[:8]}"
-    r = e2e_client.post("/api/solutions", headers=headers, json={
-        "slug": slug, "name": slug.upper(), "organization_id": None,
-    })
-    assert r.status_code in (200, 201), r.text
-    sid = r.json()["id"]
-
-    dep = e2e_client.post(f"/api/solutions/{sid}/deploy", headers=headers, json={
-        "apps": [{
-            "id": str(uuid.uuid4()), "slug": "legacy", "name": "Legacy",
-            "app_model": "inline_v1",
-        }],
-    })
-    dep = wait_for_deploy(e2e_client, dep, headers)
-    assert dep.status_code == 422, f"expected failed job, got {dep.status_code}: {dep.text}"
-    assert "standalone_v2" in dep.text

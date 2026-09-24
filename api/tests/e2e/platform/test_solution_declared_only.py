@@ -6,13 +6,12 @@ from uuid import UUID
 import pytest
 from sqlalchemy import select
 
+from shared.policies.probe import make_seed_admin_bypass
 from src.models.orm.file_metadata import FileMetadata
 from src.models.orm.applications import Application
 from src.models.orm.solution_file_location import SolutionFileLocation
 from src.models.orm.tables import Table
-from src.services.solutions.deploy import solution_entity_id
 from tests.e2e.file_policy_helpers import grant_file_policy
-from tests.e2e.platform.conftest import wait_for_deploy
 
 pytestmark = pytest.mark.e2e
 
@@ -55,27 +54,6 @@ async def _create_solution_app(
     )
     await db_session.commit()
     return str(app_id)
-
-
-def _deploy_table(e2e_client, headers, solution_id: str, table_name: str) -> str:
-    manifest_id = str(uuid.uuid4())
-    response = e2e_client.post(
-        f"/api/solutions/{solution_id}/deploy",
-        headers=headers,
-        json={
-            "tables": [
-                {
-                    "id": manifest_id,
-                    "name": table_name,
-                    "schema": {"columns": [{"name": "label"}]},
-                    "policies": None,
-                }
-            ],
-        },
-    )
-    deployed = wait_for_deploy(e2e_client, response, headers)
-    assert deployed.status_code in (200, 201), deployed.text
-    return str(solution_entity_id(UUID(solution_id), UUID(manifest_id)))
 
 
 async def _repo_table_by_name(db_session, name: str) -> Table | None:
@@ -338,7 +316,17 @@ async def test_solution_table_insert_declared_succeeds(
     )
     solution_id = solution["id"]
     table_name = f"declared_{uuid.uuid4().hex[:8]}"
-    _deploy_table(e2e_client, headers, solution_id, table_name)
+    # This checks table-name routing after ownership is established. Bundle
+    # deployment of table metadata is covered by the Solution deploy tests.
+    db_session.add(
+        Table(
+            name=table_name,
+            solution_id=UUID(solution_id),
+            schema={"columns": [{"name": "label"}]},
+            access=make_seed_admin_bypass(),
+        )
+    )
+    await db_session.commit()
 
     response = e2e_client.post(
         f"/api/tables/{table_name}/documents?solution={solution_id}",

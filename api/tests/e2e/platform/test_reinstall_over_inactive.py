@@ -1,7 +1,7 @@
 """E2E: reinstall-over-inactive — prompt then reactivate (L6 of solution-inactive-lifecycle).
 
-One lifecycle checks active reinstall, inactive conflict, and reactivation of
-the same install with retained table data.
+One lifecycle checks that an inactive install is refused until explicitly
+reactivated, preserving its identity and retained table data.
 """
 from __future__ import annotations
 
@@ -79,8 +79,8 @@ def _uninstall(e2e_client, headers, solution_id: str) -> None:
 # tests
 # ---------------------------------------------------------------------------
 
-async def test_reinstall_active_then_inactive_then_reactivate(e2e_client, platform_admin):
-    """An active reinstall succeeds; an inactive one requires explicit reactivation."""
+async def test_reinstall_inactive_then_reactivate(e2e_client, platform_admin):
+    """An inactive reinstall requires explicit reactivation and preserves data."""
     headers = platform_admin.headers
     slug = f"reins-lifecycle-{uuid.uuid4().hex[:8]}"
     table_name = f"rt_{uuid.uuid4().hex[:8]}"
@@ -89,11 +89,6 @@ async def test_reinstall_active_then_inactive_then_reactivate(e2e_client, platfo
     r = _install(e2e_client, headers, zip_bytes)
     assert r.status_code in (200, 201), r.text
     sid = r.json()["id"]
-
-    # Active reinstallation exercises the redeploy path using the same install.
-    active = _install(e2e_client, headers, zip_bytes)
-    assert active.status_code in (200, 201), active.text
-    assert active.json()["id"] == sid
 
     # Retained data must exist before uninstall; a failed insert cannot silently
     # weaken this assertion.

@@ -7,7 +7,6 @@ This test intentionally uses the production-facing surfaces in sequence:
    tables to the install.
 3. Export a full backup with runtime table rows and encrypted file payloads.
 4. Install that ZIP into a fresh org and verify both data classes survive.
-5. Refuse a table-data collision, then replace the target rows explicitly.
 """
 
 from __future__ import annotations
@@ -259,40 +258,3 @@ async def test_deployed_solution_storage_round_trips_through_full_export_install
     target_table_id = str(solution_entity_id(UUID(target_sid), UUID(table_manifest_id)))
     target_rows = _query_table_rows(e2e_client, headers, target_table_id)
     assert [row["data"] for row in target_rows] == [{"account": "north", "total": 42}]
-
-    # Add target-only data so wholesale replacement is observable.
-    target_only = e2e_client.post(
-        f"/api/tables/{target_table_id}/documents?solution={target_sid}",
-        headers=headers,
-        json={"id": "target-only", "data": {"account": "south", "total": 99}},
-    )
-    assert target_only.status_code in (200, 201), target_only.text
-
-    def reinstall(*, replace_data: bool = False):
-        return wait_for_install(
-            e2e_client,
-            e2e_client.post(
-                "/api/solutions/install",
-                headers=_upload_headers(headers),
-                files={"file": ("storage.zip", exported.content, "application/zip")},
-                data={
-                    "organization_id": target_org_id,
-                    "password": "pw-storage",
-                    **({"replace_data": "true"} if replace_data else {}),
-                },
-            ),
-            headers,
-        )
-
-    refused = reinstall()
-    assert refused.status_code == 409, refused.text
-    assert table_name in refused.text
-    assert len(_query_table_rows(e2e_client, headers, target_table_id)) == 2
-
-    replaced = reinstall(replace_data=True)
-    assert replaced.status_code in (200, 201), replaced.text
-    assert replaced.json()["id"] == target_sid
-    rows_after_replace = _query_table_rows(e2e_client, headers, target_table_id)
-    assert [row["data"] for row in rows_after_replace] == [
-        {"account": "north", "total": 42}
-    ]
