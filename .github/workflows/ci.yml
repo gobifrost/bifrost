@@ -82,6 +82,9 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: python3 api/scripts/check_github_action_pins.py --verify-versions
 
+      - name: Check E2E shard allocation
+        run: python3 -m unittest scripts.test_e2e_shard
+
       # Codex skill mirrors (plugins/bifrost/skills/, .codex/skills/) are
       # generated from the canonical .claude/skills/ source. Regenerate and fail
       # if the committed mirrors drift. NOTE: ci.yml paths-ignore skips CI for

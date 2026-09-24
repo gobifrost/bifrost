@@ -405,6 +405,7 @@ client_ci_checks() {
 repository_ci_checks() {
     bash scripts/lib/test_stack_lock_test.sh
     python3 -m unittest scripts.test_codeql_changed_lines
+    python3 -m unittest scripts.test_e2e_shard
     echo "Checking GitHub Action pins..."
     python3 api/scripts/check_github_action_pins.py --verify-versions
 
