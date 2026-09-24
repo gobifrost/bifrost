@@ -935,9 +935,14 @@ class ProcessPoolManager:
 
         handle = self._fork_process()
 
+        started_at = datetime.now(timezone.utc)
+        context["workflow_deadline"] = (
+            (started_at + timedelta(seconds=timeout)).isoformat()
+            if timeout > 0 else None
+        )
         handle.current_execution = ExecutionInfo(
             execution_id=execution_id,
-            started_at=datetime.now(timezone.utc),
+            started_at=started_at,
             timeout_seconds=timeout,
             active_execution=active_execution,
         )

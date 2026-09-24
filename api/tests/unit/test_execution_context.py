@@ -1,4 +1,5 @@
 import dataclasses
+from datetime import datetime, timezone
 
 from src.sdk.context import ExecutionContext, Organization, ROIContext
 
@@ -15,6 +16,8 @@ class TestToPublicDict:
             is_platform_admin=True,
             is_function_key=False,
             execution_id="exec-789",
+            workflow_deadline=datetime(2026, 9, 24, 12, 30, tzinfo=timezone.utc),
+            workflow_timeout_seconds=60,
             workflow_name="my_workflow",
             is_agent=False,
             public_url="https://bifrost.example.com",
@@ -34,6 +37,8 @@ class TestToPublicDict:
         assert result["is_platform_admin"] is True
         assert result["is_function_key"] is False
         assert result["execution_id"] == "exec-789"
+        assert result["workflow_deadline"] == "2026-09-24T12:30:00+00:00"
+        assert result["workflow_timeout_seconds"] == 60
         assert result["workflow_name"] == "my_workflow"
         assert result["is_agent"] is False
         assert result["public_url"] == "https://bifrost.example.com"

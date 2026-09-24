@@ -105,6 +105,9 @@ class ExecutionContext:
 
     # ==================== EXECUTION ====================
     execution_id: str
+    # UTC deadline for a timed workflow; None when timeout_seconds=0.
+    workflow_deadline: datetime | None = None
+    workflow_timeout_seconds: int | None = None
     workflow_name: str = field(default="")  # Name of the executing workflow
     is_agent: bool = False  # True when triggered by an autonomous agent
     # Shared file workspace inherited by nested tools. Chat uses the
@@ -243,6 +246,10 @@ class ExecutionContext:
             "is_platform_admin": self.is_platform_admin,
             "is_function_key": self.is_function_key,
             "execution_id": self.execution_id,
+            "workflow_deadline": (
+                self.workflow_deadline.isoformat() if self.workflow_deadline else None
+            ),
+            "workflow_timeout_seconds": self.workflow_timeout_seconds,
             "workflow_name": self.workflow_name,
             "is_agent": self.is_agent,
             "artifact_workspace_id": self.artifact_workspace_id,

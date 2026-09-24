@@ -275,6 +275,10 @@ async def run_execution(execution_id: str, context_data: dict[str, Any]) -> dict
             name=context_data.get("name"),
             tags=context_data.get("tags", []),
             timeout_seconds=context_data.get("timeout_seconds", 1800),
+            workflow_deadline=(
+                datetime.fromisoformat(context_data["workflow_deadline"])
+                if context_data.get("workflow_deadline") else None
+            ),
             cache_ttl_seconds=context_data.get("cache_ttl_seconds", 300),
             parameters=context_data.get("parameters", {}),
             startup=context_data.get("startup"),  # Launch workflow results

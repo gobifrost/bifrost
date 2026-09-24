@@ -106,6 +106,7 @@ class ExecutionRequest:
 
     # Execution settings
     timeout_seconds: int = 1800          # Default 30 minutes
+    workflow_deadline: datetime | None = None
     cache_ttl_seconds: int = 300         # For data providers
 
     # Parameters
@@ -320,6 +321,8 @@ async def execute(request: ExecutionRequest) -> ExecutionResult:
         is_platform_admin=request.is_platform_admin,
         is_function_key=False,  # Engine executions are not function key based
         execution_id=request.execution_id,
+        workflow_deadline=request.workflow_deadline,
+        workflow_timeout_seconds=request.timeout_seconds,
         workflow_name=request.name or "",  # Workflow/script name for context
         public_url=get_settings().public_url,
         startup=request.startup,  # Launch workflow results (from form execution)
