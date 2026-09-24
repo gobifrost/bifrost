@@ -9,7 +9,9 @@ from pydantic import BaseModel, Field, model_validator
 from src.models.contracts.artifacts import ModelCapabilities
 from src.models.contracts.llm import LLMModelInfo
 
-AIProviderKind = Literal["openai", "anthropic", "google", "openrouter", "openai_compatible"]
+AIProviderKind = Literal[
+    "openai", "anthropic", "google", "openrouter", "openai_compatible", "opencode_go"
+]
 AIModelAssignmentKey = Literal[
     "primary",
     "summarization",

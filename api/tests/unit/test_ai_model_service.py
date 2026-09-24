@@ -6,6 +6,7 @@ import pytest
 from src.models.orm.agents import Agent
 from src.services.ai_model_service import (
     AIModelService,
+    OPENCODE_GO_DEFAULT_ENDPOINT,
     OPENROUTER_DEFAULT_ENDPOINT,
     PROVIDER_DEFAULT_ENDPOINTS,
 )
@@ -93,7 +94,9 @@ async def test_create_connection_requires_key_and_defaults_openrouter_endpoint(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("provider", ["openai", "openrouter", "google", "anthropic"])
+@pytest.mark.parametrize(
+    "provider", ["openai", "openrouter", "opencode_go", "google", "anthropic"]
+)
 async def test_create_connection_defaults_builtin_provider_endpoints(
     db_session, provider
 ):
@@ -120,6 +123,54 @@ async def test_openai_compatible_connection_requires_endpoint(db_session):
             api_key="sk-test",
             endpoint=None,
         )
+
+
+@pytest.mark.asyncio
+async def test_opencode_go_profiles_route_models_to_their_wire_surface(db_session):
+    service = AIModelService(db_session)
+    connection = await service.create_connection(
+        name="Go",
+        provider="opencode_go",
+        api_key="oc_sk-test",
+        endpoint=None,
+    )
+
+    chat = await service.create_profile(
+        name="Go Chat",
+        connection_id=connection.id,
+        model="deepseek-v4.1-flash",
+        capabilities=None,
+        enabled_for_chat=True,
+    )
+    responses = await service.create_profile(
+        name="Go Responses",
+        connection_id=connection.id,
+        model="gpt-6-luna",
+        capabilities=None,
+        enabled_for_chat=True,
+    )
+    messages = await service.create_profile(
+        name="Go Messages",
+        connection_id=connection.id,
+        model="qwen3.8-flash",
+        capabilities=None,
+        enabled_for_chat=True,
+    )
+
+    chat_config = await service.resolve_config(profile_id=chat.id)
+    assert chat_config.provider == "openai"
+    assert chat_config.endpoint == OPENCODE_GO_DEFAULT_ENDPOINT
+    assert chat_config.openai_transport == "chat_completions"
+
+    responses_config = await service.resolve_config(profile_id=responses.id)
+    assert responses_config.provider == "openai"
+    assert responses_config.endpoint == OPENCODE_GO_DEFAULT_ENDPOINT
+    assert responses_config.openai_transport == "responses"
+
+    messages_config = await service.resolve_config(profile_id=messages.id)
+    assert messages_config.provider == "anthropic"
+    assert messages_config.endpoint == "https://opencode.ai/zen/go"
+    assert messages_config.openai_transport is None
 
 
 @pytest.mark.asyncio

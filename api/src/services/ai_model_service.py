@@ -24,6 +24,12 @@ from src.models.orm.ai_models import (
     AIModelProfile,
     AIProviderConnection,
 )
+from src.services.opencode_go import (
+    OPENCODE_GO_DEFAULT_ENDPOINT,
+    opencode_go_anthropic_endpoint,
+    opencode_go_extra_headers,
+    opencode_go_wire_api,
+)
 
 if TYPE_CHECKING:
     from src.services.embeddings.base import EmbeddingConfig
@@ -41,6 +47,7 @@ PROVIDER_DEFAULT_ENDPOINTS: dict[AIProviderKind, str] = {
     "anthropic": "https://api.anthropic.com",
     "google": "https://generativelanguage.googleapis.com",
     "openrouter": OPENROUTER_DEFAULT_ENDPOINT,
+    "opencode_go": OPENCODE_GO_DEFAULT_ENDPOINT,
 }
 ASSIGNMENT_KEYS: tuple[AIModelAssignmentKey, ...] = (
     "primary",
@@ -190,7 +197,7 @@ class AIModelService:
         return PROVIDER_DEFAULT_ENDPOINTS[provider]
 
     def client_provider(self, provider: AIProviderKind) -> str:
-        if provider in ("openrouter", "openai_compatible"):
+        if provider in ("openrouter", "openai_compatible", "opencode_go"):
             return "openai"
         return provider
 
@@ -355,6 +362,18 @@ class AIModelService:
 
         connection = profile.connection
         provider = self.client_provider(connection.provider)
+        endpoint = connection.endpoint
+        openai_transport = profile.openai_transport
+        if connection.provider == "opencode_go":
+            # The Go catalog spreads models across three wire surfaces; route
+            # each model to the one its catalog entry documents. The Messages
+            # surface needs the Anthropic client and its own base URL.
+            wire_api = opencode_go_wire_api(profile.model)
+            if wire_api == "messages":
+                provider = "anthropic"
+                endpoint = opencode_go_anthropic_endpoint(endpoint)
+            else:
+                openai_transport = wire_api
         if provider not in ("openai", "anthropic", "google"):
             raise ValueError(f"Unsupported LLM provider '{connection.provider}'.")
 
@@ -365,7 +384,6 @@ class AIModelService:
                 "Please configure the API key in System Settings > AI Configuration."
             )
 
-        openai_transport = profile.openai_transport
         if connection.provider == "openai_compatible" and openai_transport is None:
             from src.services.openai_transport_detection import (
                 detect_openai_transport,
@@ -384,7 +402,7 @@ class AIModelService:
             provider=provider,
             model=profile.model,
             api_key=api_key,
-            endpoint=connection.endpoint,
+            endpoint=endpoint,
             openai_transport=openai_transport,
             provider_connection_id=connection.id,
             anthropic_prompt_cache_supported=connection.anthropic_prompt_cache_supported,
@@ -962,7 +980,14 @@ class AIModelService:
         provider = self.client_provider(config.provider)
         endpoint = self.normalize_endpoint(config.provider, config.endpoint)
         if provider == "openai":
-            return await service.list_openai(config.api_key, endpoint)
+            extra_headers = (
+                opencode_go_extra_headers()
+                if config.provider == "opencode_go"
+                else None
+            )
+            return await service.list_openai(
+                config.api_key, endpoint, extra_headers=extra_headers
+            )
         if provider == "anthropic":
             return await service.list_anthropic(config.api_key, endpoint)
         if provider == "google":

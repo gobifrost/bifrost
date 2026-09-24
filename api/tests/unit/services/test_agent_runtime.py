@@ -362,6 +362,201 @@ def test_openrouter_stream_class_uses_bifrost_usage_mapper() -> None:
     assert stream.provider_details["cost"] == Decimal("0.000106904")
 
 
+OPENCODE_GO_ENDPOINT = "https://opencode.ai/zen/go/v1"
+
+
+def test_opencode_go_settings_carry_identity_headers() -> None:
+    config = LLMConfig(
+        provider="openai",
+        model="glm-5.3",
+        api_key="test-key",
+        endpoint=OPENCODE_GO_ENDPOINT,
+    )
+
+    assert provider_name_for_config(config) == "opencode_go"
+    settings = agent_model_settings(config, max_tokens=2_048, session_id="run-123")
+    headers = cast(dict[str, str], settings["extra_headers"])
+
+    assert settings["max_tokens"] == 2_048
+    assert headers["User-Agent"].startswith("Bifrost/")
+    assert headers["x-opencode-session"] == "run-123"
+    assert "openai_store" not in settings
+    assert "extra_body" not in settings
+
+
+def test_create_agent_model_uses_chat_completions_for_opencode_go() -> None:
+    from pydantic_ai.models.openai import OpenAIChatModel
+
+    config = LLMConfig(
+        provider="openai",
+        model="glm-5.3",
+        api_key="test-key",
+        endpoint=OPENCODE_GO_ENDPOINT,
+    )
+
+    model = create_agent_model(config)
+
+    assert isinstance(model, OpenAIChatModel)
+    assert model.provider.client.max_retries == 0
+
+
+def test_create_agent_model_uses_responses_for_opencode_go_responses_models() -> None:
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+
+    config = LLMConfig(
+        provider="openai",
+        model="grok-4.7",
+        api_key="test-key",
+        endpoint=OPENCODE_GO_ENDPOINT,
+    )
+
+    model = create_agent_model(config)
+
+    assert isinstance(model, OpenAIResponsesModel)
+    settings = agent_model_settings(config, max_tokens=64, session_id="run-1")
+    assert "openai_store" not in settings
+    headers = cast(dict[str, str], settings["extra_headers"])
+    assert headers["x-opencode-session"] == "run-1"
+
+
+def test_create_agent_model_uses_anthropic_messages_for_opencode_go_messages_models() -> None:
+    from pydantic_ai.models.anthropic import AnthropicModel
+
+    config = LLMConfig(
+        provider="anthropic",
+        model="qwen3.8-flash",
+        api_key="test-key",
+        endpoint="https://opencode.ai/zen/go",
+    )
+
+    model = create_agent_model(config)
+
+    assert isinstance(model, AnthropicModel)
+    settings = agent_model_settings(config, max_tokens=64, session_id="run-1")
+    headers = cast(dict[str, str], settings["extra_headers"])
+    assert headers["x-opencode-session"] == "run-1"
+    assert headers["User-Agent"].startswith("Bifrost/")
+
+
+@pytest.mark.asyncio
+async def test_opencode_go_messages_requests_target_the_messages_surface() -> None:
+    import httpx2
+
+    seen_requests: list[httpx2.Request] = []
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        seen_requests.append(request)
+        return httpx2.Response(
+            200,
+            json={
+                "id": "msg-test",
+                "type": "message",
+                "role": "assistant",
+                "model": "qwen3.8-flash",
+                "content": [{"type": "text", "text": "hi"}],
+                "stop_reason": "end_turn",
+                "stop_sequence": None,
+                "usage": {"input_tokens": 3, "output_tokens": 1},
+            },
+        )
+
+    config = LLMConfig(
+        provider="anthropic",
+        model="qwen3.8-flash",
+        api_key="test-key",
+        endpoint="https://opencode.ai/zen/go",
+    )
+    settings = agent_model_settings(config, max_tokens=64, session_id="conv-msg")
+
+    http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+    try:
+        with patch(
+            "src.services.agent_runtime.model_factory.get_ai_retry_http_client",
+            return_value=http_client,
+        ):
+            model = create_agent_model(config)
+            response = await model.request(
+                [ModelRequest(parts=[UserPromptPart(content="hello")])],
+                cast(ModelSettings, settings),
+                ModelRequestParameters(),
+            )
+    finally:
+        await http_client.aclose()
+
+    assert response.text == "hi"
+    assert len(seen_requests) == 1
+    request = seen_requests[0]
+    assert request.url.path == "/zen/go/v1/messages"
+    assert request.headers["x-opencode-session"] == "conv-msg"
+    assert request.headers["User-Agent"].startswith("Bifrost/")
+
+
+@pytest.mark.asyncio
+async def test_opencode_go_requests_send_identity_headers_on_the_wire() -> None:
+    import json
+
+    import httpx2
+
+    seen_requests: list[httpx2.Request] = []
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        seen_requests.append(request)
+        return httpx2.Response(
+            200,
+            json={
+                "id": "chatcmpl-test",
+                "object": "chat.completion",
+                "created": 1_700_000_000,
+                "model": "deepseek-v4.1-flash",
+                "choices": [
+                    {
+                        "index": 0,
+                        "finish_reason": "stop",
+                        "message": {"role": "assistant", "content": "hi"},
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 5,
+                    "completion_tokens": 3,
+                    "total_tokens": 8,
+                },
+            },
+        )
+
+    config = LLMConfig(
+        provider="openai",
+        model="deepseek-v4.1-flash",
+        api_key="test-key",
+        endpoint=OPENCODE_GO_ENDPOINT,
+    )
+    settings = agent_model_settings(config, max_tokens=64, session_id="conv-9")
+
+    http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+    try:
+        with patch(
+            "src.services.agent_runtime.model_factory.get_ai_retry_http_client",
+            return_value=http_client,
+        ):
+            model = create_agent_model(config)
+            response = await model.request(
+                [ModelRequest(parts=[UserPromptPart(content="hello")])],
+                cast(ModelSettings, settings),
+                ModelRequestParameters(),
+            )
+    finally:
+        await http_client.aclose()
+
+    assert response.text == "hi"
+    assert len(seen_requests) == 1
+    request = seen_requests[0]
+    assert request.headers["x-opencode-session"] == "conv-9"
+    assert request.headers["User-Agent"].startswith("Bifrost/")
+    body = json.loads(request.content.decode("utf-8"))
+    # DeepSeek through Go keeps the legacy plain ``max_tokens`` wire field.
+    assert body["max_tokens"] == 64
+    assert "max_completion_tokens" not in body
+
+
 def test_budget_is_enforced_before_requests_and_warns_before_hard_stop() -> None:
     budget = AgentRunBudget(max_requests=9, max_total_tokens=100_000)
 

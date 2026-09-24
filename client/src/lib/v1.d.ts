@@ -11470,7 +11470,7 @@ export interface components {
              * Provider
              * @enum {string}
              */
-            provider: "openai" | "anthropic" | "google" | "openrouter" | "openai_compatible";
+            provider: "openai" | "anthropic" | "google" | "openrouter" | "openai_compatible" | "opencode_go";
             /** Models */
             models: components["schemas"]["LLMModelInfo"][];
         };
@@ -11482,7 +11482,7 @@ export interface components {
              * Provider
              * @enum {string}
              */
-            provider: "openai" | "anthropic" | "google" | "openrouter" | "openai_compatible";
+            provider: "openai" | "anthropic" | "google" | "openrouter" | "openai_compatible" | "opencode_go";
             /** Api Key */
             api_key: string;
             /** Endpoint */
@@ -11501,7 +11501,7 @@ export interface components {
              * Provider
              * @enum {string}
              */
-            provider: "openai" | "anthropic" | "google" | "openrouter" | "openai_compatible";
+            provider: "openai" | "anthropic" | "google" | "openrouter" | "openai_compatible" | "opencode_go";
             /** Endpoint */
             endpoint?: string | null;
             /** Api Key Set */
@@ -11537,7 +11537,7 @@ export interface components {
              * Provider
              * @enum {string}
              */
-            provider: "openai" | "anthropic" | "google" | "openrouter" | "openai_compatible";
+            provider: "openai" | "anthropic" | "google" | "openrouter" | "openai_compatible" | "opencode_go";
             /** Endpoint */
             endpoint?: string | null;
             /** Anthropic Prompt Cache Supported */
@@ -11548,7 +11548,7 @@ export interface components {
             /** Name */
             name?: string | null;
             /** Provider */
-            provider?: ("openai" | "anthropic" | "google" | "openrouter" | "openai_compatible") | null;
+            provider?: ("openai" | "anthropic" | "google" | "openrouter" | "openai_compatible" | "opencode_go") | null;
             /** Api Key */
             api_key?: string | null;
             /** Endpoint */

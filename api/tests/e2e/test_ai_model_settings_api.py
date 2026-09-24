@@ -137,6 +137,40 @@ def test_ai_model_settings_crud_and_assignment(e2e_client, platform_admin):
     assert "model profiles" in delete_connection_in_use_resp.text
 
 
+def test_opencode_go_connection_and_profiles_round_trip(e2e_client, platform_admin):
+    connection_resp = e2e_client.post(
+        "/api/admin/ai/connections",
+        headers=platform_admin.headers,
+        json={
+            "name": "OpenCode Go E2E",
+            "provider": "opencode_go",
+            "api_key": "oc_sk-test",
+        },
+    )
+    assert connection_resp.status_code == 201, connection_resp.text
+    connection = connection_resp.json()
+    assert connection["provider"] == "opencode_go"
+    assert connection["endpoint"] == "https://opencode.ai/zen/go/v1"
+
+    for name, model in (
+        ("Go Chat E2E", "deepseek-v4.1-flash"),
+        ("Go Responses E2E", "gpt-6-luna"),
+        ("Go Messages E2E", "qwen3.8-flash"),
+    ):
+        profile_resp = e2e_client.post(
+            "/api/admin/ai/profiles",
+            headers=platform_admin.headers,
+            json={
+                "name": name,
+                "connection_id": connection["id"],
+                "model": model,
+                "enabled_for_chat": True,
+            },
+        )
+        assert profile_resp.status_code == 201, profile_resp.text
+        assert profile_resp.json()["connection"]["provider"] == "opencode_go"
+
+
 def test_ai_model_profiles_can_be_merged(e2e_client, platform_admin):
     connection_resp = e2e_client.post(
         "/api/admin/ai/connections",

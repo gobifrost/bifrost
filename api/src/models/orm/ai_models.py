@@ -48,7 +48,7 @@ class AIProviderConnection(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "provider IN ('openai', 'anthropic', 'google', 'openrouter', 'openai_compatible')",
+            "provider IN ('openai', 'anthropic', 'google', 'openrouter', 'openai_compatible', 'opencode_go')",
             name="ck_ai_provider_connections_provider",
         ),
         Index("uq_ai_provider_connections_name_ci", text("lower(name)"), unique=True),
