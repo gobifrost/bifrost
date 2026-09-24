@@ -338,10 +338,10 @@ class tables:
 
         client = get_client()
         url = f"/api/tables/{table}/documents/upsert{_scope_query(effective_scope)}"
-        response = await client.post(url, json=body)
+        response = await client.post(url, json=body, retry_transient=True)
         if response.status_code == 404 and not _has_solution_context():
             await _ensure_table_exists(table, effective_scope)
-            response = await client.post(url, json=body)
+            response = await client.post(url, json=body, retry_transient=True)
         raise_for_status_with_detail(response)
         return DocumentData.model_validate(response.json())
 
@@ -646,10 +646,11 @@ class tables:
         req_body: dict[str, Any] = {"documents": items, "upsert": upsert}
         client = get_client()
         url = f"/api/tables/{table}/documents/batch{_scope_query(effective_scope)}"
-        response = await client.post(url, json=req_body)
+        retry_transient = upsert and all(item["id"] for item in items)
+        response = await client.post(url, json=req_body, retry_transient=retry_transient)
         if response.status_code == 404 and not _has_solution_context():
             await _ensure_table_exists(table, effective_scope)
-            response = await client.post(url, json=req_body)
+            response = await client.post(url, json=req_body, retry_transient=retry_transient)
         raise_for_status_with_detail(response)
         body = response.json()
         return BatchResult(
@@ -763,6 +764,7 @@ class tables:
                 "skip_count": skip_count,
                 "document_ids": document_ids,
             },
+            retry_transient=True,
         )
         if response.status_code == 404:
             return DocumentList(documents=[], total=0, limit=limit, offset=offset)

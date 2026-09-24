@@ -98,7 +98,8 @@ class integrations:
             request_data["solution"] = str(solution_id)
         response = await client.post(
             "/api/sdk/integrations/get",
-            json=request_data
+            json=request_data,
+            retry_transient=True,
         )
 
         if response.status_code == 200:
@@ -161,6 +162,7 @@ class integrations:
         response = await client.post(
             "/api/sdk/integrations/list_mappings",
             json={"name": name, "scope": effective_scope},
+            retry_transient=True,
         )
 
         if response.status_code == 200:
@@ -214,7 +216,8 @@ class integrations:
         effective_scope = resolve_scope(scope)
         response = await client.post(
             "/api/sdk/integrations/get_mapping",
-            json={"name": name, "scope": effective_scope, "entity_id": entity_id}
+            json={"name": name, "scope": effective_scope, "entity_id": entity_id},
+            retry_transient=True,
         )
 
         if response.status_code == 200:

@@ -204,7 +204,8 @@ class knowledge:
                 "metadata_filter": metadata_filter,
                 "scope": effective_scope,
                 "fallback": fallback,
-            }
+            },
+            retry_transient=True,
         )
         raise_for_status_with_detail(response)
         return [
