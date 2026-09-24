@@ -173,17 +173,18 @@ jobs:
         run: npm test
 
   # =============================================================================
-  # Dev Artifact Candidate - build once for the exact merge candidate.
+  # Dev Artifact Candidates - build both images for the exact merge candidate.
   #
   # The SHA-addressed candidate tags are internal staging references, not the
-  # shared :dev channel. This job runs in parallel with the complete suite and
-  # is folded into the required aggregate below. Only after the identical SHA
-  # reaches main may build-dev promote these exact digests to :dev.
+  # shared :dev channel. API and client build in parallel with the complete
+  # suite; both are folded into the required aggregate below. Browser smoke
+  # can start as soon as its exact client image is ready. Only after the
+  # identical SHA reaches main may build-dev promote these digests to :dev.
   # =============================================================================
-  build-dev-candidate:
+  build-dev-api-candidate:
     if: github.event_name == 'merge_group'
     runs-on: ubuntu-latest
-    name: Build Dev Candidate
+    name: Build API Dev Candidate
     permissions:
       contents: read
       packages: write
@@ -247,6 +248,38 @@ jobs:
           subject-digest: ${{ steps.api.outputs.digest }}
           push-to-registry: true
 
+  build-dev-client-candidate:
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    name: Build Client Dev Candidate
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout exact merge candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Compute candidate version
+        id: version
+        run: echo "version=$(./scripts/compute-dev-version.sh)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
       - name: Build and push SHA-addressed client candidate
         id: client
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
@@ -286,7 +319,7 @@ jobs:
         github.event_name == 'workflow_dispatch' ||
         startsWith(github.ref, 'refs/tags/v')
       )
-    needs: [build-dev-candidate]
+    needs: [build-dev-client-candidate]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     name: Critical Browser Smoke
@@ -490,7 +523,7 @@ jobs:
         github.event_name == 'workflow_dispatch' ||
         startsWith(github.ref, 'refs/tags/v')
       )
-    needs: [test-e2e, test-client-unit, test-client-smoke, build-dev-candidate]
+    needs: [test-e2e, test-client-unit, test-client-smoke, build-dev-api-candidate, build-dev-client-candidate]
     runs-on: ubuntu-latest
     name: E2E Tests
     steps:
@@ -510,11 +543,13 @@ jobs:
              [ "${{ needs.test-client-unit.result }}" != "success" ] || \
              [ "${{ needs.test-client-smoke.result }}" != "success" ] || \
              { [ "${{ github.event_name }}" = "merge_group" ] && \
-               [ "${{ needs.build-dev-candidate.result }}" != "success" ]; }; then
+               { [ "${{ needs.build-dev-api-candidate.result }}" != "success" ] || \
+                 [ "${{ needs.build-dev-client-candidate.result }}" != "success" ]; }; }; then
             echo "E2E matrix result: ${{ needs.test-e2e.result }}"
             echo "Client unit result: ${{ needs.test-client-unit.result }}"
             echo "Critical browser smoke result: ${{ needs.test-client-smoke.result }}"
-            echo "Dev candidate result: ${{ needs.build-dev-candidate.result }}"
+            echo "API candidate result: ${{ needs.build-dev-api-candidate.result }}"
+            echo "Client candidate result: ${{ needs.build-dev-client-candidate.result }}"
             exit 1
           fi
           echo "All exact-candidate suites and required artifact builds passed."
@@ -824,7 +859,7 @@ jobs:
   # Build API Image - Only on version tags, after tests pass
   # =============================================================================
   build-api:
-    # test-e2e-gate intentionally depends on build-dev-candidate, which is
+    # test-e2e-gate intentionally depends on both candidate builds, which are
     # skipped for tag runs. GitHub propagates that skipped ancestor through the
     # dependency chain unless this job uses a status function, even though the
     # aggregate gate itself succeeds. Check every direct gate explicitly so a
