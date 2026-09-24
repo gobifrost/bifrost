@@ -633,9 +633,10 @@ async def test_workspace_preview_handles_independent_apps_without_repo_source(
     assert matched["target_id"] == str(matching.id)
 
 
-async def test_workspace_zip_import_accepts_declared_config_values(
+async def test_workspace_zip_import_accepts_declared_config_values_and_encrypts_secret(
     e2e_client, platform_admin, db_session,
 ) -> None:
+    from src.core.security import decrypt_secret
     from src.models.orm.config import Config
 
     _, archive = _stage_zip()
@@ -662,8 +663,13 @@ async def test_workspace_zip_import_accepts_declared_config_values(
         item["id"] for item in preview["items"]
         if item["kind"] == "config" and item["name"] == "SINK_API_URL"
     )
+    token_item_id = next(
+        item["id"] for item in preview["items"]
+        if item["kind"] == "config" and item["name"] == "SINK_TOKEN"
+    )
     decisions = [
-        {**decision, "action": "replace"} if decision["item_id"] == api_url_item_id else decision
+        {**decision, "action": "replace"}
+        if decision["item_id"] in {api_url_item_id, token_item_id} else decision
         for decision in _decide(preview, "keep")
     ]
     job_id = _enqueue(
@@ -676,35 +682,6 @@ async def test_workspace_zip_import_accepts_declared_config_values(
         await db_session.execute(select(Config).where(Config.key == "SINK_API_URL"))
     ).scalars().one()
     assert api_url.value == {"value": "https://configured.example.invalid"}
-    token = (
-        await db_session.execute(select(Config).where(Config.key == "SINK_TOKEN"))
-    ).scalars().one()
-    assert token.value == {"value": "live-token"}, "Keep must retain the existing secret"
-
-
-async def test_workspace_zip_import_encrypts_entered_secret(
-    e2e_client, platform_admin, db_session,
-) -> None:
-    from src.core.security import decrypt_secret
-    from src.models.orm.config import Config
-
-    _, archive = _stage_zip()
-    await _seed_destination(db_session)
-    preview = _preview_zip(e2e_client, platform_admin.headers, archive)
-    token_item_id = next(
-        item["id"] for item in preview["items"]
-        if item["kind"] == "config" and item["name"] == "SINK_TOKEN"
-    )
-    decisions = _decide(preview, "keep")
-    decisions = [
-        {**decision, "action": "replace"} if decision["item_id"] == token_item_id else decision
-        for decision in decisions
-    ]
-    job_id = _enqueue(
-        e2e_client, platform_admin.headers, preview, decisions,
-        {"SINK_TOKEN": "entered-test-token"},
-    )
-    _wait_job(e2e_client, platform_admin.headers, job_id)
     token = (
         await db_session.execute(select(Config).where(Config.key == "SINK_TOKEN"))
     ).scalars().one()

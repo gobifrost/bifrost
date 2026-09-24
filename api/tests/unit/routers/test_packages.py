@@ -1,12 +1,51 @@
 """Unit contracts for package-management router orchestration."""
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
 import pytest
 
 from src.models import InstallPackageRequest
-from src.routers.packages import install_package
+from src.routers.packages import check_package_updates, check_updates, install_package
+
+
+@pytest.mark.asyncio
+async def test_package_updates_parse_pip_result_without_network() -> None:
+    proc = MagicMock()
+    proc.communicate = AsyncMock(return_value=(
+        b'[{"name":"humanize","version":"4.12.0","latest_version":"4.13.0"}]',
+        b"",
+    ))
+    proc.returncode = 0
+    with patch(
+        "src.routers.packages.asyncio.create_subprocess_exec",
+        new=AsyncMock(return_value=proc),
+    ) as create:
+        updates = await check_package_updates()
+
+    create.assert_awaited_once_with(
+        "pip", "list", "--outdated", "--format=json",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    assert [(item.name, item.current_version, item.latest_version) for item in updates] == [
+        ("humanize", "4.12.0", "4.13.0")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_package_updates_response_reports_parsed_count() -> None:
+    with patch(
+        "src.routers.packages.check_package_updates",
+        new=AsyncMock(return_value=[
+            {"name": "humanize", "current_version": "4.12.0", "latest_version": "4.13.0"}
+        ]),
+    ):
+        response = await check_updates(MagicMock(), MagicMock())
+
+    assert response.total_count == 1
+    assert response.updates_available[0].name == "humanize"
 
 
 @pytest.mark.asyncio
