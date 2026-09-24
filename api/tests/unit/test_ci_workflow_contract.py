@@ -62,8 +62,12 @@ def test_full_suite_gates_exact_merge_candidate_before_dev_image() -> None:
         "test-e2e",
         "test-client-unit",
         "test-client-smoke",
-        "build-dev-candidate",
+        "build-dev-api-candidate",
+        "build-dev-client-candidate",
     }
+    gate_source = "\n".join(step.get("run", "") for step in jobs["test-e2e-gate"]["steps"])
+    assert "needs.build-dev-api-candidate.result" in gate_source
+    assert "needs.build-dev-client-candidate.result" in gate_source
     assert jobs["test-e2e-gate"]["name"] == "E2E Tests"
     assert [
         name for name, job in jobs.items() if job.get("name") == "E2E Tests"
@@ -98,7 +102,7 @@ def test_critical_browser_smoke_strengthens_only_exact_candidate_events() -> Non
     assert "github.event_name == 'workflow_dispatch'" in condition
     assert "startsWith(github.ref, 'refs/tags/v')" in condition
     assert "pull_request" not in condition
-    assert smoke["needs"] == ["build-dev-candidate"]
+    assert smoke["needs"] == ["build-dev-client-candidate"]
 
     run_steps = [step.get("run", "") for step in smoke["steps"]]
     assert any("./test.sh client smoke" in step for step in run_steps)
@@ -160,14 +164,20 @@ def test_fresh_ci_jobs_consume_clean_boot_state_once() -> None:
 
 def test_dev_artifact_is_built_on_merge_candidate_and_promoted_without_rebuild() -> None:
     jobs = _load_workflow(CI_WORKFLOW)["jobs"]
-    candidate = jobs["build-dev-candidate"]
+    api_candidate = jobs["build-dev-api-candidate"]
+    client_candidate = jobs["build-dev-client-candidate"]
     promotion = jobs["build-dev"]
 
-    assert _normalized(candidate["if"]) == "github.event_name == 'merge_group'"
-    assert candidate["name"] == "Build Dev Candidate"
-    assert candidate["permissions"]["packages"] == "write"
+    for candidate in (api_candidate, client_candidate):
+        assert _normalized(candidate["if"]) == "github.event_name == 'merge_group'"
+        assert candidate["permissions"]["packages"] == "write"
+        assert candidate["permissions"]["id-token"] == "write"
+        assert candidate["permissions"]["attestations"] == "write"
+        assert "needs" not in candidate
+    assert api_candidate["name"] == "Build API Dev Candidate"
+    assert client_candidate["name"] == "Build Client Dev Candidate"
 
-    candidate_steps = candidate["steps"]
+    candidate_steps = api_candidate["steps"] + client_candidate["steps"]
     candidate_builds = [
         step for step in candidate_steps
         if str(step.get("uses", "")).startswith("docker/build-push-action@")
@@ -186,6 +196,10 @@ def test_dev_artifact_is_built_on_merge_candidate_and_promoted_without_rebuild()
     assert "docker run --rm" in candidate_source
     assert "from src.main import app" in candidate_source
     assert "get_version() == os.environ['EXPECTED_VERSION']" in candidate_source
+    for candidate in (api_candidate, client_candidate):
+        candidate_steps = candidate["steps"]
+        assert any(step.get("name", "").startswith("Sign ") for step in candidate_steps)
+        assert any(step.get("name", "").startswith("Attest ") for step in candidate_steps)
 
     assert promotion["name"] == "Promote Dev Images"
     assert not any(
