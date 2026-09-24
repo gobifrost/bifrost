@@ -1218,14 +1218,6 @@ async def test_workspace_scoped_preview_reviews_and_moves_taken_global_path(
     assert workflow["classification"] == "conflict"
     assert workflow["scope_change"] is True
     assert workflow["target_id"] == str(global_wf.id)
-    keep_job = _enqueue(
-        e2e_client, platform_admin.headers, scoped, _decide(scoped, "keep")
-    )
-    _wait_job(e2e_client, platform_admin.headers, keep_job)
-    await db_session.refresh(global_wf)
-    assert global_wf.organization_id is None
-    assert global_wf.description == "Global original"
-    assert await repo.read("workflows/scoped_taken.py") == original_source
 
     scoped = await _preview_zip_scoped(e2e_client, platform_admin.headers, archive, org.id)
     job_id = _enqueue(

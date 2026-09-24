@@ -6,10 +6,9 @@ from uuid import UUID
 import pytest
 from sqlalchemy import select
 
+from shared.policies.probe import make_seed_admin_bypass
 from src.models.orm.applications import Application
 from src.models.orm.tables import Document, Table
-from src.services.solutions.deploy import solution_entity_id
-from tests.e2e.platform.conftest import wait_for_deploy
 
 pytestmark = pytest.mark.e2e
 
@@ -36,25 +35,23 @@ def _create_solution(
     return response.json()
 
 
-def _deploy_table(e2e_client, headers, solution_id: str, table_name: str) -> str:
-    manifest_id = str(uuid.uuid4())
-    response = e2e_client.post(
-        f"/api/solutions/{solution_id}/deploy",
-        headers=headers,
-        json={
-            "tables": [
-                {
-                    "id": manifest_id,
-                    "name": table_name,
-                    "schema": {"columns": [{"name": "label"}]},
-                    "policies": None,
-                }
-            ],
-        },
+async def _seed_solution_table(
+    db_session, solution_id: str, table_name: str, org_id: str
+) -> str:
+    """Set up table routing state; deploy-to-table is covered separately."""
+    table_id = uuid.uuid4()
+    db_session.add(
+        Table(
+            id=table_id,
+            name=table_name,
+            solution_id=UUID(solution_id),
+            organization_id=UUID(org_id),
+            schema={"columns": [{"name": "label"}]},
+            access=make_seed_admin_bypass(),
+        )
     )
-    deployed = wait_for_deploy(e2e_client, response, headers)
-    assert deployed.status_code in (200, 201), deployed.text
-    return str(solution_entity_id(UUID(solution_id), UUID(manifest_id)))
+    await db_session.commit()
+    return str(table_id)
 
 
 def _create_repo_table(
@@ -118,6 +115,7 @@ async def test_open_solution_reads_own_then_org_then_global_tables_by_name(
     e2e_client,
     platform_admin,
     org1,
+    db_session,
 ):
     headers = platform_admin.headers
     solution = _create_solution(
@@ -130,7 +128,9 @@ async def test_open_solution_reads_own_then_org_then_global_tables_by_name(
     solution_id = solution["id"]
 
     own_name = f"open_own_{uuid.uuid4().hex[:8]}"
-    own_table_id = _deploy_table(e2e_client, headers, solution_id, own_name)
+    own_table_id = await _seed_solution_table(
+        db_session, solution_id, own_name, org1["id"]
+    )
     org_shadow_id = _create_repo_table(
         e2e_client, headers, own_name, scope=org1["id"]
     )
@@ -167,10 +167,12 @@ async def test_open_solution_reads_own_then_org_then_global_tables_by_name(
     ) == ["global"]
 
 
-def test_sealed_solution_reads_only_own_table_by_name(
+@pytest.mark.asyncio
+async def test_sealed_solution_reads_only_own_table_by_name(
     e2e_client,
     platform_admin,
     org1,
+    db_session,
 ):
     headers = platform_admin.headers
     solution = _create_solution(
@@ -183,7 +185,9 @@ def test_sealed_solution_reads_only_own_table_by_name(
     solution_id = solution["id"]
 
     own_name = f"sealed_own_{uuid.uuid4().hex[:8]}"
-    own_table_id = _deploy_table(e2e_client, headers, solution_id, own_name)
+    own_table_id = await _seed_solution_table(
+        db_session, solution_id, own_name, org1["id"]
+    )
     _insert_row(e2e_client, headers, own_table_id, "row", "own")
     assert _query_labels(
         e2e_client, headers, own_name, solution_id=solution_id, scope=org1["id"]
@@ -315,10 +319,12 @@ async def test_sdk_table_create_route_rejects_app_header_solution_context(
     assert await _repo_table_by_name(db_session, table_name) is None
 
 
-def test_sdk_table_create_route_ignores_solution_table_name_collision(
+@pytest.mark.asyncio
+async def test_sdk_table_create_route_ignores_solution_table_name_collision(
     e2e_client,
     platform_admin,
     org1,
+    db_session,
 ):
     headers = platform_admin.headers
     solution = _create_solution(
@@ -329,7 +335,7 @@ def test_sdk_table_create_route_ignores_solution_table_name_collision(
     )
     solution_id = solution["id"]
     table_name = f"sdk_collision_{uuid.uuid4().hex[:8]}"
-    _deploy_table(e2e_client, headers, solution_id, table_name)
+    await _seed_solution_table(db_session, solution_id, table_name, org1["id"])
 
     response = e2e_client.post(
         "/api/sdk/tables/create",

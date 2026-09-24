@@ -361,7 +361,7 @@ class TestSolutionInactiveLifecycleCapstone:
         slug_b = f"capstone-leak-{uuid.uuid4().hex[:8]}"
         sol_b = _create_solution(e2e_client, headers, slug_b)
         sol_b_id = sol_b["id"]
-        _deploy_solution(e2e_client, headers, sol_b_id, file_locations=["solutions"])
+        await _declare_solution_file_location(db_session, sol_b_id, "solutions")
 
         leak_r = e2e_client.post(
             f"/api/files/read?solution={sol_b_id}",

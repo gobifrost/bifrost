@@ -21,8 +21,6 @@ from src.models.orm.solutions import Solution as SolutionORM
 from src.models.orm.solution_config_schema import SolutionConfigSchema
 from src.models.orm.tables import Table
 from src.models.orm.workflows import Workflow
-from src.services.solutions.deploy import solution_entity_id
-from tests.e2e.platform.conftest import wait_for_deploy
 
 pytestmark = pytest.mark.e2e
 
@@ -111,36 +109,24 @@ async def test_hard_delete_cascades_all_owned_rows(e2e_client, platform_admin, d
     slug = f"hdel-cas-{uuid.uuid4().hex[:8]}"
     sid = _create_solution(e2e_client, headers, slug)
 
-    # One deploy covers the table, workflow, and config-declaration cascades.
-    bundle_tid = str(uuid.uuid4())
-    wf_id = str(uuid.uuid4())
-    dep = e2e_client.post(f"/api/solutions/{sid}/deploy", headers=headers, json={
-        "python_files": {
-            "workflows/w.py": (
-                "from bifrost import workflow\n\n"
-                "@workflow\nasync def go():\n    return 1\n"
-            ),
-        },
-        "workflows": [{
-            "id": wf_id, "name": f"go_{slug}", "function_name": "go",
-            "path": "workflows/w.py", "type": "workflow",
-        }],
-        "tables": [{
-            "id": bundle_tid,
-            "name": f"rows_{slug}",
-            "description": "test",
-            "schema": {"columns": [{"name": "val"}]},
-            "policies": None,
-        }],
-        "config_schemas": [{
-            "id": str(uuid.uuid4()), "key": f"API_KEY_{slug}", "type": "secret",
-            "required": True, "description": "needed", "position": 0,
-        }],
-    })
-    dep = wait_for_deploy(e2e_client, dep, headers)
-    assert dep.status_code == 200, dep.text
-
-    real_tid = solution_entity_id(UUID(sid), UUID(bundle_tid))
+    # Cascade ownership is the contract here; deploy-to-entity paths have
+    # their own E2E coverage.
+    real_tid = uuid.uuid4()
+    db_session.add_all([
+        Table(
+            id=real_tid, name=f"rows_{slug}", solution_id=UUID(sid),
+            schema={"columns": [{"name": "val"}]},
+        ),
+        Workflow(
+            id=uuid.uuid4(), name=f"go_{slug}", function_name="go",
+            path="workflows/w.py", type="workflow", solution_id=UUID(sid),
+        ),
+        SolutionConfigSchema(
+            id=uuid.uuid4(), solution_id=UUID(sid), key=f"API_KEY_{slug}",
+            type="secret", required=True, description="needed", position=0,
+        ),
+    ])
+    await db_session.commit()
 
     ok = e2e_client.request("DELETE", f"/api/solutions/{sid}", headers=headers,
                              params={"confirm": slug})
