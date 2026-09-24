@@ -120,7 +120,7 @@ Agents can run autonomously without a chat session. The agent receives input dat
 #### SDK Invocation
 
 ```python
-from bifrost import workflow, agents
+from bifrost import workflow, agents, AgentRunPending
 
 @workflow
 async def process_ticket(ticket_id: str):
@@ -137,8 +137,19 @@ async def process_ticket(ticket_id: str):
         },
         timeout=300,
     )
+    if isinstance(result, AgentRunPending):
+        return {
+            "run_id": result.run_id,
+            "status": result.last_known_status,
+            "wait_ended": result.reason,
+        }
     return result
 ```
+
+`timeout` limits how long the workflow waits, not how long the agent runs.
+Without an explicit wait limit, `agents.run()` waits until the agent completes
+or the workflow approaches its own deadline. A pending result includes the run
+ID for a later `agents.get_run(run_id)` call.
 
 #### Event-Triggered Agent Runs
 

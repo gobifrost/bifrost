@@ -125,6 +125,16 @@ async def test_agents_wait_observes_cancelling_until_terminal(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_agents_wait_preserves_budget_exceeded_output(monkeypatch):
+    mod = _agents_module()
+    monkeypatch.setattr(mod.agents, "get_run", AsyncMock(return_value=MagicMock(
+        status="budget_exceeded", output={"text": "Partial answer"},
+    )))
+
+    assert await mod.agents.wait("run-4") == "Partial answer"
+
+
+@pytest.mark.asyncio
 async def test_knowledge_store_many_forwards_default_timeout(monkeypatch):
     """``knowledge.store_many`` must default ``timeout=300`` to httpx."""
     mod = _knowledge_module()

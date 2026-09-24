@@ -30,8 +30,7 @@ def _workflow_return_margin(timeout_seconds: int) -> float:
 class AgentPausedError(Exception):
     """Raised when an agent run is requested for a paused agent.
 
-    The execute endpoint returns HTTP 200 with a structured paused body so that
-    webhook senders can treat pause as a graceful state. The SDK helper, however,
+    The enqueue endpoint returns HTTP 200 with a structured paused body. The SDK
     surfaces it as a typed exception so workflow code does not silently receive
     ``None`` and continue as if the agent had completed.
     """
@@ -170,7 +169,7 @@ class agents:
                     run_id=run_id, last_known_status=last_status, reason=reason,
                 )
 
-            if run.status == "completed":
+            if run.status in {"completed", "budget_exceeded"}:
                 output = run.output
                 if not output_schema and isinstance(output, dict) and set(output) == {"text"}:
                     return output["text"]
