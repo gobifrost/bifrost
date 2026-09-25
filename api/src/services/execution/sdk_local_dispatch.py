@@ -28,7 +28,8 @@ bound); small payloads use a single frame.
 Allowlist: ``config.get/set/list/delete``, the full
 ``integrations`` facade (``get/list_mappings/get_mapping/upsert_mapping/
 delete_mapping/refresh_token``), the full tables facade, and artifact
-write/read/list/download URL, and all fixed file operations. Engine import fast path: ``modules.resolve``
+write/read/list/download URL, all fixed file operations, and the SDK
+agent ``enqueue``/``get_run`` operations. Engine import fast path: ``modules.resolve``
 and ``modules.fetch`` (served on the dedicated import channel through the
 shared ``sdk_modules`` service, scoped by the parent-derived principal).
 Unknown operations or wire versions get an error response — never silent
@@ -50,6 +51,8 @@ from uuid import UUID
 from bifrost._local_transport import (
     _CHUNK_RAW_BYTES,
     MAX_FRAME_BYTES,
+    OP_AGENTS_ENQUEUE,
+    OP_AGENTS_GET_RUN,
     OP_ARTIFACTS_WRITE,
     OP_ARTIFACTS_READ,
     OP_ARTIFACTS_LIST,
@@ -151,6 +154,8 @@ SDK_CHANNEL_ALLOWED_OPS = frozenset(
         OP_TABLES_DELETE,
         OP_TABLES_LIST,
         OP_TABLES_CREATE,
+        OP_AGENTS_ENQUEUE,
+        OP_AGENTS_GET_RUN,
     }
 )
 IMPORT_CHANNEL_ALLOWED_OPS = frozenset({OP_MODULES_RESOLVE, OP_MODULES_FETCH})
@@ -519,6 +524,10 @@ async def dispatch_frames(
         return await _dispatch_knowledge_list_namespaces(session_factory, principal, frame_id, frame)
     if op == OP_KNOWLEDGE_GET:
         return await _dispatch_knowledge_get(session_factory, principal, frame_id, frame)
+    if op == OP_AGENTS_ENQUEUE:
+        return await _dispatch_agents_enqueue(session_factory, principal, frame_id, frame)
+    if op == OP_AGENTS_GET_RUN:
+        return await _dispatch_agents_get_run(session_factory, principal, frame_id, frame)
     if op == OP_MODULES_RESOLVE:
         return await _dispatch_modules_resolve(session_factory, principal, frame_id, frame)
     if op == OP_MODULES_FETCH:
@@ -1344,6 +1353,133 @@ def _table_user_for_principal(principal: LocalDispatchPrincipal) -> Any:
         engine_execution_id=principal.execution_id,
         engine_solution_id=solution_id,
     )
+
+
+def _agent_user_for_principal(principal: LocalDispatchPrincipal) -> Any:
+    """Token-equivalent ``UserPrincipal`` for SDK agent run operations.
+
+    Reuses the table token-equivalent shape so enqueue attribution and
+    run visibility decide identically on both transports: workflows run
+    as the system-user superuser with no org (the ``mint_engine_token()``
+    shape — global scope, all runs visible), services run as the
+    system-user non-superuser confined to their service org (the
+    ``mint_service_token()`` shape). The actor is built only from the
+    parent-derived ``LocalDispatchPrincipal`` — never from child frame
+    fields.
+    """
+    return _table_user_for_principal(principal)
+
+
+async def _dispatch_agents_enqueue(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``agents.enqueue`` through the shared agent-run service.
+
+    Validates with the same ``AgentRunEnqueueRequest`` DTO as the HTTP
+    handler, builds the actor from the parent-derived principal, and
+    calls the same ``shared.sdk_agent_runs`` service the HTTP handler
+    calls — agent lookup, inactive-Solution 409, paused short-circuit,
+    and queue payload/attribution are identical by construction. The
+    queue service owns its durable transaction (row commit plus
+    failure marking); this dispatcher adds no commit. A local attempt
+    never retries over HTTP.
+    """
+    from shared.sdk_agent_runs import SdkAgentRunError, enqueue_sdk_agent_run
+    from src.models.contracts.agent_runs import AgentRunEnqueueRequest
+
+    request, invalid = _validate_request(
+        AgentRunEnqueueRequest,
+        {
+            "agent_name": frame.get("agent_name"),
+            "input": frame.get("input"),
+            "output_schema": frame.get("output_schema"),
+        },
+        frame_id,
+        OP_AGENTS_ENQUEUE,
+    )
+    if invalid is not None:
+        return [invalid]
+    assert request is not None
+    user = _agent_user_for_principal(principal)
+
+    async def _enqueue(session: Any) -> dict[str, Any]:
+        result = await enqueue_sdk_agent_run(
+            session,
+            user,
+            agent_name=request.agent_name,
+            input_data=request.input,
+            output_schema=request.output_schema,
+        )
+        return result.model_dump(mode="json")
+
+    result, error = await _run_short(
+        session_factory,
+        _enqueue,
+        op=OP_AGENTS_ENQUEUE,
+        log_key=request.agent_name,
+        status_errors=(SdkAgentRunError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_agents_get_run(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``agents.get_run`` through the shared agent-run service.
+
+    The run id validates as a UUID (422 on malformed, like the HTTP
+    path's path-param parsing). Visibility, usage, steps, and detail
+    construction are the shared service's — a hidden or missing run is
+    a 404 error frame the facade maps to ``ValueError``. Large details
+    ride bounded chunked frames via ``_ok_frames``.
+    """
+    from shared.sdk_agent_runs import SdkAgentRunError, get_sdk_agent_run
+
+    raw_id = frame.get("run_id")
+    if not isinstance(raw_id, str) or not raw_id.strip():
+        return [
+            _error(
+                frame_id,
+                422,
+                f"invalid {OP_AGENTS_GET_RUN} request: 'run_id' is required",
+            )
+        ]
+    try:
+        run_uuid = UUID(raw_id)
+    except ValueError:
+        return [
+            _error(
+                frame_id,
+                422,
+                f"invalid {OP_AGENTS_GET_RUN} request: 'run_id' must be a UUID",
+            )
+        ]
+    user = _agent_user_for_principal(principal)
+
+    async def _get(session: Any) -> dict[str, Any]:
+        detail = await get_sdk_agent_run(session, user, run_id=run_uuid)
+        return detail.model_dump(mode="json")
+
+    result, error = await _run_short(
+        session_factory,
+        _get,
+        op=OP_AGENTS_GET_RUN,
+        log_key=raw_id,
+        status_errors=(SdkAgentRunError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
 
 
 def _tables_target_solution_id(

@@ -46,7 +46,9 @@ plus artifact write/read/list/download URL and the full files facade):
   ``scope``; ``tables.delete_document`` sends ``table``/``doc_id``/
   ``scope``; ``tables.batch`` sends ``table``/``documents``/``upsert``/
   ``write_mode``/``return_documents``/``scope``; ``tables.batch_delete``
-  sends ``table``/``ids``/``scope``.
+  sends ``table``/``ids``/``scope``. ``agents.enqueue`` sends
+  ``agent_name``/``input``/``output_schema``; ``agents.get_run`` sends
+  ``run_id``.
   No request carries Solution identity beyond the per-call table target:
   the parent derives the caller's own install id from its own dispatch
   context, never from child frames.
@@ -74,7 +76,12 @@ plus artifact write/read/list/download URL and the full files facade):
   404 error frame the facade maps to ``False``). ``tables.batch``
   returns the ``DocumentBatchCreateResponse`` dict; ``tables.batch_delete``
   returns the ``DocumentBatchDeleteResponse`` dict (a missing table is a
-  404 error frame the facade maps to an empty result).
+  404 error frame the facade maps to an empty result). ``agents.enqueue``
+  returns the ``AgentRunEnqueueResponse`` dict, or the paused
+  ``{"status": "paused", ...}`` body the facade maps to
+  ``AgentPausedError``; ``agents.get_run`` returns the
+  ``AgentRunDetailResponse`` dict (a hidden or missing run is a 404
+  error frame the facade maps to ``ValueError``).
 - Large payloads in EITHER direction use bounded chunked transfer: a
   header frame ``{"ok": true, "chunked": true, "total": <bytes>,
   "parts": <n>}`` (requests: ``{"op": ..., "chunked": true, "total",
@@ -113,9 +120,9 @@ import uuid
 from typing import Any, NoReturn
 
 # Operation allowlist (stage 3b): the config facade, the full
-# integrations facade, and the full tables facade ride the local
-# transport. The parent enforces the same allowlist; anything else is a
-# 404 response.
+# integrations facade, the full tables facade, and the SDK agent
+# ``enqueue``/``get_run`` operations ride the local transport. The
+# parent enforces the same allowlist; anything else is a 404 response.
 OP_CONFIG_GET = "config.get"
 OP_CONFIG_SET = "config.set"
 OP_CONFIG_LIST = "config.list"
@@ -157,6 +164,8 @@ OP_FILES_EXISTS = "files.exists"
 OP_FILES_STAT = "files.stat"
 OP_FILES_SIGNED_URL = "files.signed_url"
 OP_FILES_SEARCH = "files.search"
+OP_AGENTS_ENQUEUE = "agents.enqueue"
+OP_AGENTS_GET_RUN = "agents.get_run"
 
 # Wire version. The parent rejects anything else instead of guessing.
 TRANSPORT_VERSION = 1
@@ -1731,6 +1740,62 @@ class ChildLocalTransport:
                 "include_pattern": include_pattern,
                 "max_results": max_results,
             },
+            timeout,
+        )
+        if not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+    async def call_agents_enqueue(
+        self,
+        agent_name: str,
+        input: dict[str, Any] | None,
+        output_schema: dict[str, Any] | None,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """Queue an agent run through the parent. No HTTP fallback.
+
+        Returns the ``AgentRunEnqueueResponse`` dict, or the paused
+        ``{"status": "paused", ...}`` body the facade maps to
+        ``AgentPausedError`` — identical to the HTTP path. A local
+        attempt never falls back to HTTP.
+        """
+        result = await self._call(
+            OP_AGENTS_ENQUEUE,
+            {
+                "agent_name": agent_name,
+                "input": input,
+                "output_schema": output_schema,
+            },
+            timeout,
+        )
+        if not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+    async def call_agents_get_run(
+        self,
+        run_id: str,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """Get an agent run's detail through the parent. No HTTP fallback.
+
+        Returns the ``AgentRunDetailResponse`` dict (the facade validates
+        it as the public ``AgentRun``). A hidden or missing run is a 404
+        error frame the facade maps to ``ValueError`` — never a null
+        result. Large details arrive as bounded chunked response frames.
+        """
+        result = await self._call(
+            OP_AGENTS_GET_RUN,
+            {"run_id": run_id},
             timeout,
         )
         if not isinstance(result, dict):

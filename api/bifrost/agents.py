@@ -51,6 +51,24 @@ class agents:
         output_schema: dict[str, Any] | None = None,
     ) -> AgentRunHandle:
         """Queue an agent and return as soon as the run is accepted."""
+        from ._local_transport import get as _get_local_transport
+
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent queues through the shared
+            # agent-run service over the dedicated channel. A local
+            # attempt never falls back to HTTP — failures raise loudly
+            # below (a queued run may already exist, so a retry over
+            # HTTP could double-enqueue).
+            data = await transport.call_agents_enqueue(
+                agent_name, input or {}, output_schema,
+            )
+            if isinstance(data, dict) and data.get("status") == "paused":
+                raise AgentPausedError(
+                    data.get("message") or f"Agent '{agent_name}' is paused.",
+                    agent_id=data.get("agent_id"),
+                )
+            return AgentRunHandle.model_validate(data)
         client = get_client()
         response = await client.post(
             "/api/agent-runs/enqueue",
@@ -74,6 +92,27 @@ class agents:
     @staticmethod
     async def get_run(run_id: str) -> AgentRun:
         """Get the current status and result for an agent run."""
+        from ._local_transport import get as _get_local_transport
+
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent reads through the shared
+            # agent-run service over the dedicated channel. Error mapping
+            # matches the HTTP path below; a local attempt never falls
+            # back to HTTP.
+            from .client import BifrostAPIError
+
+            try:
+                data = await transport.call_agents_get_run(run_id)
+            except BifrostAPIError as e:
+                if e.response.status_code == 404:
+                    raise ValueError(f"Agent run not found: {run_id}") from None
+                if e.response.status_code == 403:
+                    raise PermissionError(
+                        f"Access denied to agent run: {run_id}"
+                    ) from None
+                raise
+            return AgentRun.model_validate(data)
         client = get_client()
         response = await client.get(f"/api/agent-runs/{run_id}")
         if response.status_code == 404:
