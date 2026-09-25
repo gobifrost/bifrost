@@ -20,12 +20,11 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.auth import Context, CurrentActiveUser, CurrentSuperuser
 from src.core.principal import UserPrincipal
-from src.core.log_safety import log_safe
 from src.models.contracts.files import (
     FilePullRequest,
     FilePullResponse,
@@ -50,7 +49,6 @@ from src.models import (
     WorkflowIdConflict,
 )
 from src.services.editor.search import search_files_db
-from src.services.file_backend import get_backend
 from src.services.file_storage import FileStorageService
 from shared.role_cache import get_user_roles
 from shared.file_access import (
@@ -61,8 +59,8 @@ from shared.file_access import (
     deny_file_policy as _deny_file_policy,
     file_org_id as _file_org_id,
     filter_listed_paths as _filter_listed_paths,
-    get_file_stat as _get_file_stat,
     install_org_id as _install_org_id,
+    lock_file_mutation as _lock_file_mutation,
     require_declared_solution_file_location as _require_declared_solution_file_location,
     require_file_policy as _require_file_policy,
     resolve_effective_scope as _resolve_effective_scope,
@@ -321,7 +319,7 @@ _SOLUTION_POLICY_READONLY = (
 
 
 # `_authorize_file_policy`, `_deny_file_policy`, `_require_file_policy`,
-# `_require_declared_solution_file_location`, `_relative_list_path`,
+# `_require_declared_solution_file_location`, `_lock_file_mutation`,
 # `_tiers_for_backend_mode`, and `_filter_listed_paths` live in
 # `shared.file_access` (imported as module aliases above) so the HTTP router
 # and the shared SDK service share one implementation. They raise
@@ -661,114 +659,25 @@ async def _build_signed_url(
     ctx: Context,
     db: AsyncSession,
 ) -> SignedUrlResponse:
-    """Policy-check and generate a single presigned URL."""
-    from shared.file_paths import resolve_s3_key
+    """Thin adapter: DTO in, shared signed-URL service, DTO out."""
+    from shared.sdk_files import sdk_signed_url
 
-    solution_id = _ctx_solution_id(ctx, request.location)
-    if request.method == "GET":
-        from src.services.solution_scope import file_read_tiers
-
-        try:
-            if request.location != "workspace":
-                await _require_declared_solution_file_location(
-                    ctx,
-                    solution_id=solution_id,
-                    location=request.location,
-                )
-            tiers = await file_read_tiers(db, ctx, request.location, request.scope)
-            if len(tiers) == 1:
-                tier = tiers[0]
-                s3_path = resolve_s3_key(request.location, tier.scope, request.path)
-                await _require_file_policy(
-                    ctx,
-                    action="signed_get",
-                    location=request.location,
-                    scope=tier.scope,
-                    path=request.path,
-                    solution_id=tier.solution_id,
-                    organization_id=tier.organization_id,
-                )
-            else:
-                backend = get_backend("cloud", db)
-                allowed_path: str | None = None
-                for tier in tiers:
-                    s3_path = resolve_s3_key(request.location, tier.scope, request.path)
-                    if not await _authorize_file_policy(
-                        ctx,
-                        action="signed_get",
-                        location=request.location,
-                        scope=tier.scope,
-                        path=request.path,
-                        solution_id=tier.solution_id,
-                        organization_id=tier.organization_id,
-                    ):
-                        continue
-                    allowed_path = allowed_path or s3_path
-                    if await backend.exists(
-                        request.path,
-                        request.location,
-                        scope=tier.scope,
-                    ):
-                        allowed_path = s3_path
-                        break
-                if allowed_path is None:
-                    await _deny_file_policy(
-                        ctx,
-                        action="signed_get",
-                        location=request.location,
-                        path=request.path,
-                        scope=request.scope,
-                        solution_id=solution_id,
-                    )
-                s3_path = allowed_path
-        except FileServiceError as e:
-            raise HTTPException(status_code=e.status_code, detail=e.detail) from e
-        except HTTPException:
-            raise
-        except ValueError as e:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
-    else:
-        try:
-            effective_scope = _resolve_effective_scope(ctx, request.location, request.scope)
-            await _require_declared_solution_file_location(
-                ctx,
-                solution_id=solution_id,
-                location=request.location,
-            )
-            try:
-                s3_path = resolve_s3_key(request.location, effective_scope, request.path)
-            except ValueError as e:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
-            await _require_file_policy(
-                ctx,
-                action="signed_put",
-                location=request.location,
-                scope=effective_scope,
-                path=request.path,
-                content_type=request.content_type,
-                solution_id=solution_id,
-            )
-        except FileServiceError as e:
-            raise HTTPException(status_code=e.status_code, detail=e.detail) from e
-
-    file_storage = FileStorageService(db)
-
-    if request.method == "PUT":
-        url = await file_storage.generate_presigned_upload_url(
-            path=s3_path,
+    try:
+        result = await sdk_signed_url(
+            FileCaller.from_context(ctx),
+            path=request.path,
+            location=request.location,
+            scope=request.scope,
+            method=request.method,
             content_type=request.content_type,
             expires_in=request.expires_in,
         )
-    else:
-        url = await file_storage.generate_presigned_download_url(
-            path=s3_path,
-            expires_in=request.expires_in,
-        )
-
+    except FileServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from e
     return SignedUrlResponse(
-        url=url,
-        path=s3_path,
-        expires_in=request.expires_in,
+        url=result.url,
+        path=result.path,
+        expires_in=result.expires_in,
     )
 
 
@@ -872,128 +781,22 @@ async def write_file(
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Write a file to a managed or custom location."""
+    from shared.sdk_files import sdk_write_file
+
     try:
-        effective_scope = _resolve_effective_scope(ctx, request.location, request.scope)
-        solution_id = _ctx_solution_id(ctx, request.location)
-        await _require_declared_solution_file_location(
-            ctx,
-            solution_id=solution_id,
-            location=request.location,
-        )
-        await _require_file_policy(
-            ctx,
-            action="write",
-            location=request.location,
-            scope=effective_scope,
+        await sdk_write_file(
+            FileCaller.from_context(ctx),
             path=request.path,
-            solution_id=solution_id,
-        )
-        backend = get_backend(request.mode, db)
-
-        if request.create_only and request.expected_version is not None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="create_only and expected_version cannot be combined",
-            )
-        await _lock_file_mutation(
-            db,
+            content=request.content,
+            binary=request.binary,
             location=request.location,
-            scope=effective_scope,
-            path=request.path,
+            scope=request.scope,
+            mode=request.mode,
+            expected_version=request.expected_version,
+            create_only=request.create_only,
         )
-
-        current_stat = None
-        if request.create_only or request.expected_version is not None:
-            current_stat = await _get_file_stat(
-                db,
-                request.path,
-                request.location,
-                effective_scope,
-                request.mode,
-            )
-            if request.create_only and current_stat.exists:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail={
-                        "reason": "file_exists",
-                        "path": request.path,
-                        "message": "File already exists; read it before replacing it.",
-                        "current_version": current_stat.version,
-                        "current_last_modified": current_stat.last_modified,
-                        "current_updated_by": current_stat.updated_by,
-                    },
-                )
-            if request.expected_version is not None:
-                if not current_stat.exists:
-                    raise HTTPException(
-                        status_code=status.HTTP_409_CONFLICT,
-                        detail={
-                            "reason": "file_missing",
-                            "path": request.path,
-                            "expected_version": request.expected_version,
-                            "message": "File no longer exists.",
-                        },
-                    )
-                if current_stat.version != request.expected_version:
-                    raise HTTPException(
-                        status_code=status.HTTP_409_CONFLICT,
-                        detail={
-                            "reason": "version_conflict",
-                            "path": request.path,
-                            "expected_version": request.expected_version,
-                            "current_version": current_stat.version,
-                            "message": "File changed after it was read.",
-                            "current_last_modified": current_stat.last_modified,
-                            "current_updated_by": current_stat.updated_by,
-                        },
-                    )
-
-        if request.binary:
-            content = base64.b64decode(request.content)
-        else:
-            content = request.content.encode("utf-8")
-
-        updated_by = ctx.user.email if ctx.user else "system"
-        await backend.write(request.path, content, request.location, updated_by, scope=effective_scope)
-        if request.mode == "cloud":
-            from shared.file_paths import resolve_s3_key
-            from src.services.file_storage.s3_client import S3StorageClient
-            from src.core.pubsub import publish_file_change
-
-            s3_path = resolve_s3_key(request.location, effective_scope, request.path)
-            await FileStorageService(db).record_file_write_metadata(
-                location=request.location,
-                scope=effective_scope,
-                path=request.path,
-                s3_path=s3_path,
-                content_type=S3StorageClient.guess_content_type(request.path),
-                size_bytes=len(content),
-                sha256=hashlib.sha256(content).hexdigest(),
-                updated_by=updated_by,
-                user_id=str(ctx.user.user_id),
-                solution_id=solution_id,
-                org_id=await _install_org_id(ctx, solution_id),
-            )
-            # The yielded DB dependency commits after the response body is sent.
-            # Commit here so a successful write response and its notification
-            # never race ahead of durable metadata.
-            await db.commit()
-            await publish_file_change(
-                location=request.location,
-                scope=effective_scope,
-                path=request.path,
-                action="write",
-            )
-
-        logger.info(f"Wrote file: {log_safe(request.path)} ({len(content)} bytes, mode={log_safe(request.mode)}, location={log_safe(request.location)})")
-
     except FileServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail) from e
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
 
 
 @router.post("/delete", status_code=status.HTTP_204_NO_CONTENT)
@@ -1004,112 +807,19 @@ async def delete_file(
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Delete a file from a managed or custom location."""
+    from shared.sdk_files import sdk_delete_file
+
     try:
-        effective_scope = _resolve_effective_scope(ctx, request.location, request.scope)
-        solution_id = _ctx_solution_id(ctx, request.location)
-        await _require_declared_solution_file_location(
-            ctx,
-            solution_id=solution_id,
-            location=request.location,
-        )
-        await _require_file_policy(
-            ctx,
-            action="delete",
-            location=request.location,
-            scope=effective_scope,
+        await sdk_delete_file(
+            FileCaller.from_context(ctx),
             path=request.path,
-            solution_id=solution_id,
-        )
-        backend = get_backend(request.mode, db)
-
-        await _lock_file_mutation(
-            db,
             location=request.location,
-            scope=effective_scope,
-            path=request.path,
+            scope=request.scope,
+            mode=request.mode,
+            expected_version=request.expected_version,
         )
-
-        if request.expected_version is not None:
-            current_stat = await _get_file_stat(
-                db,
-                request.path,
-                request.location,
-                effective_scope,
-                request.mode,
-            )
-            if not current_stat.exists:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail={
-                        "reason": "file_missing",
-                        "path": request.path,
-                        "expected_version": request.expected_version,
-                        "message": "File no longer exists.",
-                    },
-                )
-            if current_stat.version != request.expected_version:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail={
-                        "reason": "version_conflict",
-                        "path": request.path,
-                        "expected_version": request.expected_version,
-                        "current_version": current_stat.version,
-                        "message": "File changed after it was read.",
-                        "current_last_modified": current_stat.last_modified,
-                        "current_updated_by": current_stat.updated_by,
-                    },
-                )
-        await backend.delete(request.path, request.location, scope=effective_scope)
-        if request.mode == "cloud":
-            from src.core.pubsub import publish_file_change
-            from src.services.file_policy_service import FilePolicyService
-
-            await FilePolicyService(db).delete_metadata(
-                organization_id=await _install_org_id(ctx, solution_id),
-                location=request.location,
-                path=request.path,
-                solution_id=solution_id,
-            )
-            # Do not acknowledge or publish the deletion while its metadata is
-            # still visible to another transaction.
-            await db.commit()
-            await publish_file_change(
-                location=request.location,
-                scope=effective_scope,
-                path=request.path,
-                action="delete",
-            )
-
-        logger.info(f"Deleted file: {log_safe(request.path)} (mode={log_safe(request.mode)}, location={log_safe(request.location)})")
-
     except FileServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail) from e
-    except FileNotFoundError:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"File not found: {request.path}",
-        )
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
-
-
-async def _lock_file_mutation(
-    db: AsyncSession,
-    *,
-    location: str,
-    scope: str | None,
-    path: str,
-) -> None:
-    """Serialize competing API mutations for one logical file path."""
-    lock_key = f"{location}:{scope or ''}:{path}"
-    await db.execute(
-        text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"),
-        {"lock_key": lock_key},
-    )
 
 
 @router.post("/list", response_model=FileListResponse)

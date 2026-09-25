@@ -1,22 +1,30 @@
 """
 Unit tests for POST /api/files/signed-url endpoint.
 
-Tests path validation, location/scope handling, and presigned URL generation.
-Path resolution is delegated to `shared.file_paths.resolve_s3_key`.
+Resolution and presigning live in ``shared.sdk_files``; the handler is a
+thin adapter. These tests drive the real handler with the service's seams
+mocked (policy gates, tier cascade, backend, presigning) and assert
+path resolution, S3 method dispatch, error mapping, and batch behavior.
+Path resolution itself is delegated to `shared.file_paths.resolve_s3_key`.
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 import pytest
 from pydantic import ValidationError
 
+from shared.file_access import FileServiceError
+from shared.sdk_files import SignedUrlResult
 from src.core.principal import UserPrincipal
 from src.routers.files import (
+    SignedUrlBatchRequest,
     SignedUrlRequest,
     SignedUrlResponse,
     get_signed_url,
+    get_signed_urls,
 )
+from src.services.solution_scope import FileTier
 
 # A concrete org UUID — scope resolution (`resolve_target_org`) validates that a
 # non-"global" scope is a real UUID, so these path-resolution tests use one.
@@ -32,6 +40,9 @@ def _ctx():
     ctx = MagicMock()
     ctx.org_id = None
     ctx.solution_id = None
+    ctx.caller_solution_id = None
+    ctx.app_id = None
+    ctx.db = MagicMock()
     ctx.scope = None
     ctx.user = UserPrincipal(
         user_id=UUID("11111111-1111-1111-1111-111111111111"),
@@ -43,12 +54,35 @@ def _ctx():
 
 
 @pytest.fixture(autouse=True)
-def _allow_policy():
+def _allow_policy(monkeypatch):
     """These tests exercise path resolution + S3 method dispatch, not the policy
     gate. Bypass the default-deny file-policy check so resolution is reached;
     policy enforcement has its own e2e coverage (test_file_policies_rest.py)."""
-    with patch("src.routers.files._require_file_policy", new=AsyncMock(return_value=None)):
-        yield
+    monkeypatch.setattr(
+        "shared.sdk_files.require_file_policy", AsyncMock(return_value=None)
+    )
+
+
+@pytest.fixture
+def _presign(monkeypatch):
+    mock_fss = MagicMock()
+    mock_fss.generate_presigned_upload_url = AsyncMock(
+        return_value="https://s3/url"
+    )
+    mock_fss.generate_presigned_download_url = AsyncMock(
+        return_value="https://s3/url"
+    )
+    monkeypatch.setattr(
+        "src.services.file_storage.FileStorageService", lambda db: mock_fss
+    )
+    return mock_fss
+
+
+def _single_tier(monkeypatch, scope: str):
+    monkeypatch.setattr(
+        "src.services.solution_scope.file_read_tiers",
+        AsyncMock(return_value=[FileTier("org", scope, ORG_A, None)]),
+    )
 
 
 class TestSignedUrlRequestModel:
@@ -98,58 +132,37 @@ class TestPathResolution:
     """Test that the handler delegates to shared.file_paths.resolve_s3_key."""
 
     @pytest.mark.asyncio
-    @patch("src.routers.files.FileStorageService")
-    async def test_uploads_scoped(self, mock_fss_class):
-        mock_fss = MagicMock()
-        mock_fss.generate_presigned_upload_url = AsyncMock(return_value="https://s3/url")
-        mock_fss_class.return_value = mock_fss
-
+    async def test_uploads_scoped(self, _presign):
         req = SignedUrlRequest(path="report.pdf", scope=str(ORG_A))
         result = await get_signed_url(req, _ctx(), MagicMock(), AsyncMock())
         assert result.path == f"uploads/{ORG_A}/report.pdf"
 
     @pytest.mark.asyncio
-    @patch("src.routers.files.FileStorageService")
-    async def test_uploads_no_scope_falls_back_to_global(self, mock_fss_class):
+    async def test_uploads_no_scope_falls_back_to_global(self, _presign):
         # A caller with no org (ctx.org_id=None) and no explicit scope resolves
         # to the 'global' scope (a real logged-in user would default to their
         # own org instead). Resolution succeeds; the policy gate governs access.
-        mock_fss = MagicMock()
-        mock_fss.generate_presigned_upload_url = AsyncMock(return_value="https://s3/url")
-        mock_fss_class.return_value = mock_fss
-
         req = SignedUrlRequest(path="report.pdf")  # default location=uploads, no scope
         result = await get_signed_url(req, _ctx(), MagicMock(), AsyncMock())
         assert result.path == "uploads/global/report.pdf"
 
     @pytest.mark.asyncio
-    @patch("src.routers.files.FileStorageService")
-    async def test_workspace_unscoped(self, mock_fss_class):
-        mock_fss = MagicMock()
-        mock_fss.generate_presigned_upload_url = AsyncMock(return_value="https://s3/url")
-        mock_fss_class.return_value = mock_fss
-
+    async def test_workspace_unscoped(self, _presign):
         req = SignedUrlRequest(path="report.pdf", location="workspace")
         result = await get_signed_url(req, _ctx(), MagicMock(), AsyncMock())
         assert result.path == "_repo/report.pdf"
 
     @pytest.mark.asyncio
-    @patch("src.routers.files.FileStorageService")
-    async def test_temp_scoped(self, mock_fss_class):
-        mock_fss = MagicMock()
-        mock_fss.generate_presigned_download_url = AsyncMock(return_value="https://s3/url")
-        mock_fss_class.return_value = mock_fss
+    async def test_temp_scoped(self, monkeypatch, _presign):
+        _single_tier(monkeypatch, str(ORG_A))
 
         req = SignedUrlRequest(path="x.bin", location="temp", scope=str(ORG_A), method="GET")
         result = await get_signed_url(req, _ctx(), MagicMock(), AsyncMock())
         assert result.path == f"_tmp/{ORG_A}/x.bin"
 
     @pytest.mark.asyncio
-    @patch("src.routers.files.FileStorageService")
-    async def test_freeform_scoped(self, mock_fss_class):
-        mock_fss = MagicMock()
-        mock_fss.generate_presigned_download_url = AsyncMock(return_value="https://s3/url")
-        mock_fss_class.return_value = mock_fss
+    async def test_freeform_scoped(self, monkeypatch, _presign):
+        _single_tier(monkeypatch, str(ORG_A))
 
         req = SignedUrlRequest(path="q1.pdf", location="reports", scope=str(ORG_A), method="GET")
         result = await get_signed_url(req, _ctx(), MagicMock(), AsyncMock())
@@ -198,14 +211,9 @@ class TestPathValidation:
         assert exc_info.value.status_code == 400
 
     @pytest.mark.asyncio
-    @patch("src.routers.files.FileStorageService")
-    async def test_temp_no_scope_falls_back_to_global(self, mock_fss_class):
+    async def test_temp_no_scope_falls_back_to_global(self, _presign):
         # Same global-fallback arm as uploads: a scopeless caller on a scoped
         # location resolves to 'global' rather than erroring.
-        mock_fss = MagicMock()
-        mock_fss.generate_presigned_upload_url = AsyncMock(return_value="https://s3/url")
-        mock_fss_class.return_value = mock_fss
-
         req = SignedUrlRequest(path="x.txt", location="temp", scope=None)
         result = await get_signed_url(req, _ctx(), MagicMock(), AsyncMock())
         assert result.path == "_tmp/global/x.txt"
@@ -215,28 +223,20 @@ class TestPresignedUrlGeneration:
     """Test that correct S3 method is called based on request method."""
 
     @pytest.mark.asyncio
-    @patch("src.routers.files.FileStorageService")
-    async def test_put_calls_upload(self, mock_fss_class):
-        mock_fss = MagicMock()
-        mock_fss.generate_presigned_upload_url = AsyncMock(return_value="https://s3/put-url")
-        mock_fss_class.return_value = mock_fss
-
+    async def test_put_calls_upload(self, _presign):
         req = SignedUrlRequest(path="file.pdf", method="PUT", content_type="application/pdf", scope=str(ORG_A))
         result = await get_signed_url(req, _ctx(), MagicMock(), AsyncMock())
-        assert result.url == "https://s3/put-url"
+        assert result.url == "https://s3/url"
         assert result.expires_in == 600
-        mock_fss.generate_presigned_upload_url.assert_awaited_once_with(
+        _presign.generate_presigned_upload_url.assert_awaited_once_with(
             path=f"uploads/{ORG_A}/file.pdf",
             content_type="application/pdf",
             expires_in=600,
         )
 
     @pytest.mark.asyncio
-    @patch("src.routers.files.FileStorageService")
-    async def test_get_calls_download(self, mock_fss_class):
-        mock_fss = MagicMock()
-        mock_fss.generate_presigned_download_url = AsyncMock(return_value="https://s3/get-url")
-        mock_fss_class.return_value = mock_fss
+    async def test_get_calls_download(self, monkeypatch, _presign):
+        _single_tier(monkeypatch, str(ORG_A))
 
         req = SignedUrlRequest(
             path="file.pdf",
@@ -245,9 +245,60 @@ class TestPresignedUrlGeneration:
             expires_in=604800,
         )
         result = await get_signed_url(req, _ctx(), MagicMock(), AsyncMock())
-        assert result.url == "https://s3/get-url"
+        assert result.url == "https://s3/url"
         assert result.expires_in == 604800
-        mock_fss.generate_presigned_download_url.assert_awaited_once_with(
+        _presign.generate_presigned_download_url.assert_awaited_once_with(
             path=f"uploads/{ORG_A}/file.pdf",
             expires_in=604800,
         )
+
+
+class TestSignedUrlAdapter:
+    """The handler maps service failures to HTTP status without reshaping."""
+
+    @pytest.mark.asyncio
+    async def test_service_deny_maps_to_403(self, monkeypatch):
+        from fastapi import HTTPException
+
+        async def _denied(*args, **kwargs):
+            raise FileServiceError(403, {"message": "File policy denied"})
+
+        monkeypatch.setattr("shared.sdk_files.sdk_signed_url", _denied)
+        with pytest.raises(HTTPException) as exc_info:
+            await get_signed_url(
+                SignedUrlRequest(path="x.txt", scope=str(ORG_A)),
+                _ctx(),
+                MagicMock(),
+                AsyncMock(),
+            )
+        assert exc_info.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_batch_reports_per_path_results(self, monkeypatch):
+        async def _service(caller, **kwargs):
+            if kwargs["path"] == "denied.txt":
+                raise FileServiceError(403, {"message": "File policy denied"})
+            return SignedUrlResult(
+                url="https://s3/ok", path="uploads/global/ok.txt", expires_in=600
+            )
+
+        monkeypatch.setattr("shared.sdk_files.sdk_signed_url", _service)
+        response = await get_signed_urls(
+            SignedUrlBatchRequest(
+                requests=[
+                    SignedUrlRequest(path="ok.txt"),
+                    SignedUrlRequest(path="denied.txt"),
+                ]
+            ),
+            _ctx(),
+            MagicMock(),
+            AsyncMock(),
+        )
+
+        assert len(response.results) == 2
+        assert response.results[0].status_code == 200
+        assert response.results[0].url == "https://s3/ok"
+        assert response.results[0].resolved_path == "uploads/global/ok.txt"
+        assert response.results[1].status_code == 403
+        assert response.results[1].error == "forbidden"
+        assert response.results[1].url is None

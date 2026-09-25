@@ -1,9 +1,10 @@
 """Transport-neutral file access helpers shared by HTTP and future callers.
 
 Single implementation of the policy/scope plumbing used by the cloud-mode
-SDK read paths (``files.read``/``read_bytes``, ``files.list`` without
-``include_metadata``, ``files.exists``, ``files.stat``). Both the HTTP
-router (``api/src/routers/files.py``) and the shared SDK service
+SDK file paths (``files.read``/``read_bytes``, ``files.list`` without
+``include_metadata``, ``files.exists``, ``files.stat``, ``files.write``,
+``files.delete``, and signed-URL presigning). Both the HTTP router
+(``api/src/routers/files.py``) and the shared SDK service
 (``api/shared/sdk_files.py``) import from here — no duplicated policy logic.
 
 Only transport-neutral failures are raised (:class:`FileServiceError` with
@@ -18,7 +19,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from src.services.audit import emit_file_policy_deny
 
@@ -299,6 +300,21 @@ def tiers_for_backend_mode(tiers: list[_T], mode: str) -> list[_T]:
     if mode == "local":
         return tiers[:1]
     return tiers
+
+
+async def lock_file_mutation(
+    db: AsyncSession,
+    *,
+    location: str,
+    scope: str | None,
+    path: str,
+) -> None:
+    """Serialize competing file mutations for one logical file path."""
+    lock_key = f"{location}:{scope or ''}:{path}"
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"),
+        {"lock_key": lock_key},
+    )
 
 
 async def filter_listed_paths(
