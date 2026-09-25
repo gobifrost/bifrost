@@ -292,6 +292,11 @@ ALLOWLIST = SDK_CHANNEL_ALLOWED_OPS | IMPORT_CHANNEL_ALLOWED_OPS
 # read). A stall fails that request loudly; the child has its own timeout
 # and treats a missing response as fatal (no HTTP fallback).
 DISPATCH_TIMEOUT_SECONDS = 25.0
+# Pipe transfers use an idle bound per frame. A chunked request or response
+# may therefore outlive this value while bounded frames keep crossing the
+# pipe, but a child that stops mid-transfer or stops reading a response
+# cannot pin a channel. The idle wait between separate SDK calls is unlimited.
+CHANNEL_FRAME_IDLE_TIMEOUT_SECONDS = 30.0
 OAUTH_REFRESH_DISPATCH_TIMEOUT_SECONDS = 30.0
 
 # Parent-side bounds for artifact generation. ``create_image`` runs a
@@ -935,7 +940,7 @@ async def _run_short(
     *,
     op: str,
     status_errors: tuple[type[Exception], ...] = (),
-    timeout_seconds: float = DISPATCH_TIMEOUT_SECONDS,
+    timeout_seconds: float | None = DISPATCH_TIMEOUT_SECONDS,
 ) -> tuple[Any, dict[str, Any] | None]:
     """Run one service coroutine on a short pooled session with a deadline.
 
@@ -3182,14 +3187,6 @@ async def _dispatch_events_emit(
 # =============================================================================
 
 
-# Default deadline for one ``ai.complete`` parent dispatch (matches the
-# SDK's HTTP timeout default). The child deadline adds a 5s margin (see
-# ``AI_COMPLETE_CHILD_MARGIN_SECONDS`` in ``bifrost._local_transport``)
-# so a parent timeout still returns an error frame instead of tripping
-# the child deadline first.
-AI_COMPLETE_DEFAULT_TIMEOUT_SECONDS = 30.0
-
-
 def _ai_user_for_principal(principal: LocalDispatchPrincipal) -> Any:
     """Token-equivalent ``UserPrincipal`` for SDK AI operations.
 
@@ -3209,15 +3206,14 @@ def _ai_complete_timeout_seconds(
 ) -> tuple[float | None, dict[str, Any] | None]:
     """Parent dispatch deadline from the frame's requested timeout.
 
-    The child sends the requested timeout (default 30s, like the SDK
-    HTTP default) as a ``timeout`` frame field used only for this
-    deadline — it is not part of ``CLIAICompleteRequest``. A missing
-    field means the default; a non-numeric or non-positive value is a
-    422, like malformed DTO input.
+    The child sends an optional timeout as a frame field used only for
+    this deadline; it is not part of ``CLIAICompleteRequest``. A missing
+    or null value imposes no SDK deadline, matching HTTP. A non-numeric
+    or non-positive value is a 422, like malformed DTO input.
     """
-    raw = frame.get("timeout", AI_COMPLETE_DEFAULT_TIMEOUT_SECONDS)
+    raw = frame.get("timeout")
     if raw is None:
-        return AI_COMPLETE_DEFAULT_TIMEOUT_SECONDS, None
+        return None, None
     if isinstance(raw, bool) or not isinstance(raw, (int, float)):
         return None, _error(
             frame_id, 422, f"invalid {OP_AI_COMPLETE} request: 'timeout' must be a number"
@@ -3286,7 +3282,6 @@ async def _dispatch_ai_complete(
     parent_timeout, invalid = _ai_complete_timeout_seconds(frame, frame_id)
     if invalid is not None:
         return [invalid]
-    assert parent_timeout is not None
     user = _ai_user_for_principal(principal)
     parent_execution_id = principal.execution_id
 
@@ -7170,27 +7165,33 @@ async def serve_channel(
     allocation), ``"malformed"`` (unparseable or id-less frame — channel
     closed rather than risk desync), ``"oversize-out"`` (a frame the parent
     built exceeded the bound — internal bug guard, channel closed), or
-    ``"child-gone"`` (response write failed). Cancellation propagates for
-    pool shutdown.
+    ``"child-gone"`` (response write failed), or ``"idle-timeout"`` (a
+    chunk-part read or response write made no progress). Cancellation
+    propagates for pool shutdown.
     """
     loop = asyncio.get_running_loop()
 
-    async def _recv() -> bytes:
+    async def _recv(timeout: float | None = None) -> bytes:
         if executor is not None:
-            raw = await loop.run_in_executor(
+            read = loop.run_in_executor(
                 executor, recv_conn.recv_bytes, MAX_FRAME_BYTES + 1
             )
         else:
-            raw = await asyncio.to_thread(recv_conn.recv_bytes, MAX_FRAME_BYTES + 1)
+            read = asyncio.to_thread(recv_conn.recv_bytes, MAX_FRAME_BYTES + 1)
+        if timeout is None:
+            raw = await read
+        else:
+            raw = await asyncio.wait_for(read, timeout)
         if len(raw) > MAX_FRAME_BYTES:
             raise _FrameOversized
         return raw
 
     async def _send(raw: bytes) -> None:
         if executor is not None:
-            await loop.run_in_executor(executor, send_conn.send_bytes, raw)
+            write = loop.run_in_executor(executor, send_conn.send_bytes, raw)
         else:
-            await asyncio.to_thread(send_conn.send_bytes, raw)
+            write = asyncio.to_thread(send_conn.send_bytes, raw)
+        await asyncio.wait_for(write, CHANNEL_FRAME_IDLE_TIMEOUT_SECONDS)
 
     async def _send_frame(frame: dict[str, Any]) -> str | None:
         """Validate one outgoing frame's size at send time, then send it."""
@@ -7203,6 +7204,9 @@ async def serve_channel(
             return "oversize-out"
         try:
             await _send(raw)
+        except asyncio.TimeoutError:
+            logger.warning("local SDK response write made no progress; closing channel")
+            return "idle-timeout"
         except (EOFError, OSError):
             return "child-gone"
         return None
@@ -7233,7 +7237,13 @@ async def serve_channel(
             ):
                 return "malformed"
             try:
-                frame = await _reassemble_request(frame, _recv)
+                frame = await _reassemble_request(
+                    frame,
+                    lambda: _recv(CHANNEL_FRAME_IDLE_TIMEOUT_SECONDS),
+                )
+            except asyncio.TimeoutError:
+                logger.warning("local SDK request chunk read made no progress; closing channel")
+                return "idle-timeout"
             except _RequestGone:
                 return "eof"
             except _RequestMalformed as e:

@@ -13,8 +13,8 @@ Covers ``ai.complete`` and ``ai.model_info`` without a forked child:
   and maps ``SdkAIError`` through its own status;
 - the SDK facade keeps knowledge composition, structured-output handling,
   and input-file encoding on the child, sends composed messages plus
-  encoded files, derives child/parent deadlines from the requested
-  timeout, maps local status errors to the public ``RuntimeError`` text,
+  encoded files, applies only an explicitly requested completion deadline,
+  maps local status errors to the public ``RuntimeError`` text,
   and never falls back to HTTP.
 """
 
@@ -32,7 +32,11 @@ import pytest_asyncio
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bifrost._local_transport import OP_AI_COMPLETE, OP_AI_MODEL_INFO
+from bifrost._local_transport import (
+    OP_AI_COMPLETE,
+    OP_AI_MODEL_INFO,
+    ChildLocalTransport,
+)
 
 
 @pytest_asyncio.fixture
@@ -245,6 +249,50 @@ async def test_complete_bad_timeout_is_422(db_session):
         )
         assert resp["ok"] is False, bad
         assert resp["status"] == 422, bad
+
+
+@pytest.mark.asyncio
+async def test_complete_omitted_timeout_has_no_local_deadline():
+    from src.services.execution.sdk_local_dispatch import _ai_complete_timeout_seconds
+
+    transport = ChildLocalTransport(None, None)
+    result = {"content": "ok"}
+    with patch.object(transport, "_call", new=AsyncMock(return_value=result)) as call:
+        assert await transport.call_ai_complete(
+            messages=[{"role": "user", "content": "Hi"}],
+            max_tokens=None,
+            org_id=None,
+            profile=None,
+            model=None,
+            execution_id=None,
+            input_files=[],
+        ) == result
+    frame = call.await_args.args[1]
+    assert frame["timeout"] is None
+    assert call.await_args.args[2] is None
+    assert _ai_complete_timeout_seconds(frame, "test") == (None, None)
+
+
+@pytest.mark.asyncio
+async def test_complete_explicit_timeout_bounds_parent_and_child():
+    from src.services.execution.sdk_local_dispatch import _ai_complete_timeout_seconds
+
+    transport = ChildLocalTransport(None, None)
+    with patch.object(transport, "_call", new=AsyncMock(return_value={})) as call:
+        await transport.call_ai_complete(
+            messages=[{"role": "user", "content": "Hi"}],
+            max_tokens=None,
+            org_id=None,
+            profile=None,
+            model=None,
+            execution_id=None,
+            input_files=[],
+            timeout=60.0,
+        )
+    frame = call.await_args.args[1]
+    assert frame["timeout"] == 60.0
+    assert call.await_args.args[2] == 65.0
+    assert _ai_complete_timeout_seconds(frame, "test") == (60.0, None)
 
 
 @pytest.mark.asyncio

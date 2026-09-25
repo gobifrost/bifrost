@@ -18,6 +18,8 @@ import json
 import multiprocessing
 import subprocess
 import sys
+import time
+from typing import Any
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
@@ -593,6 +595,74 @@ class TestChunkedTransfer:
         for conn in conns:
             with contextlib.suppress(Exception):
                 conn.close()
+
+    @pytest.mark.asyncio
+    async def test_chunked_round_trip_allows_regular_frame_progress_past_deadline(self):
+        """Chunked unary traffic gets a timeout per stalled frame, not per batch."""
+        from bifrost._local_transport import _CHUNK_RAW_BYTES
+        from src.services.execution.sdk_local_dispatch import (
+            LocalDispatchPrincipal,
+            _ok_frames,
+            serve_channel,
+        )
+
+        class _DelayedWriter:
+            def __init__(self, conn):
+                self._conn = conn
+
+            def send_bytes(self, payload):
+                # Each frame makes forward progress well inside the timeout.
+                # The whole 20+ frame request and response intentionally do not.
+                time.sleep(0.003)
+                return self._conn.send_bytes(payload)
+
+            def close(self):
+                return self._conn.close()
+
+        req_recv, req_send, resp_recv, resp_send = self._pair()
+        transport = ChildLocalTransport(_DelayedWriter(req_send), resp_recv)
+        received: dict[str, Any] = {}
+        documents = [
+            {"id": str(index), "data": {"payload": "x" * 4_000}}
+            for index in range(250)
+        ]
+        response = {"inserted": len(documents), "errors": [], "documents": documents}
+        assert len(json.dumps({"documents": documents}).encode()) > 20 * _CHUNK_RAW_BYTES
+        assert len(json.dumps(response).encode()) > 20 * _CHUNK_RAW_BYTES
+
+        async def _dispatch(_session_factory, _principal, frame):
+            received["frame"] = frame
+            return _ok_frames(frame["id"], response)
+
+        pump = asyncio.create_task(
+            serve_channel(
+                recv_conn=req_recv,
+                send_conn=_DelayedWriter(resp_send),
+                session_factory=None,
+                principal=LocalDispatchPrincipal(caller_org_id=None),
+            )
+        )
+        try:
+            with patch(
+                "src.services.execution.sdk_local_dispatch.dispatch_frames",
+                new=_dispatch,
+            ):
+                result = await transport.call_tables_batch(
+                    "events",
+                    documents,
+                    upsert=True,
+                    write_mode="replace",
+                    return_documents=True,
+                    scope=None,
+                    timeout=0.05,
+                )
+            assert result == response
+            assert received["frame"]["documents"] == documents
+        finally:
+            pump.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await pump
+            self._close_all((req_recv, req_send, resp_recv, resp_send))
 
     async def test_large_value_round_trip_over_pipe(self, db_session):
         """One contract: a >64KiB value resolves locally, byte-identical."""

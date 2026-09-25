@@ -216,12 +216,14 @@ call, and the fixed ``ai`` unary calls (``ai.complete``,
   receiver without unbounded allocation. This module never uses pickle.
 - The child serializes calls with an ``asyncio.Lock`` (one in-flight
   request), so concurrent ``asyncio.gather`` callers are safe by queuing.
-  The whole round trip — send plus single or chunked receive — runs under
-  one deadline. A timeout, EOF, or protocol violation breaks the channel
-  instead of risking a desynchronized stream — and it NEVER falls back to
-  HTTP: a local attempt that fails raises loudly. Cancellation also
-  desynchronizes (breaks) the channel but re-raises ``CancelledError`` to
-  the caller unchanged, so workflow/service cancellation keeps working.
+  A small unary call keeps one deadline for its request and first response.
+  Once either direction is confirmed chunked, each send/read has that same
+  deadline as an idle timeout: regular chunk progress may outlive one fixed
+  round-trip window, while a stalled peer still fails loudly. A timeout, EOF,
+  or protocol violation breaks the channel instead of risking a desynchronized
+  stream — and it NEVER falls back to HTTP. Cancellation also desynchronizes
+  (breaks) the channel but re-raises ``CancelledError`` to the caller
+  unchanged, so workflow/service cancellation keeps working.
 
 Selection is explicit: the engine child entrypoint
 (``template_process._run_forked_child``) installs the transport before user
@@ -344,17 +346,15 @@ TRANSPORT_VERSION = 1
 # maxlength so an oversized peer cannot force unbounded allocation.
 MAX_FRAME_BYTES = 64 * 1024
 
-# Bound on one local round trip (request plus single or chunked response).
-# Config resolution is a single indexed read; a stall means the parent is
-# gone or wedged, so fail loudly rather than hang the workflow.
+# Bound on a small local round trip and on each idle chunk transfer. Config
+# resolution is a single indexed read; a stall means the parent is gone or
+# wedged, so fail loudly rather than hang the workflow. Chunked uploads and
+# downloads reset this bound only after a full bounded frame crosses the pipe.
 DEFAULT_OP_TIMEOUT_SECONDS = 30.0
 
-# Default deadline for one ``ai.complete`` request (matches the SDK's
-# HTTP timeout default). The child deadline adds ``AI_COMPLETE_CHILD_MARGIN_SECONDS``
-# so a parent timeout still returns an error frame instead of tripping
-# the child deadline first; the parent deadline equals the requested
-# timeout so provider latency matches the HTTP path.
-AI_COMPLETE_DEFAULT_TIMEOUT_SECONDS = 30.0
+# An explicit ``ai.complete(timeout=...)`` bounds the parent provider call.
+# Omitting it leaves both transports without an SDK-imposed deadline; the
+# workflow or service lifetime still governs the enclosing execution.
 AI_COMPLETE_CHILD_MARGIN_SECONDS = 5.0
 
 # Child-side deadlines for artifact generation. ``create_image`` runs a
@@ -467,9 +467,12 @@ class ChildLocalTransport:
             raise broken
         raise error
 
-    async def _recv_frame(self) -> dict[str, Any]:
+    async def _recv_frame(self, timeout: float | None) -> dict[str, Any]:
         """Read one bounded frame. EOF/OSError propagate to the caller."""
-        raw = await asyncio.to_thread(self._recv.recv_bytes, MAX_FRAME_BYTES + 1)
+        raw = await asyncio.wait_for(
+            asyncio.to_thread(self._recv.recv_bytes, MAX_FRAME_BYTES + 1),
+            timeout,
+        )
         try:
             return decode_frame(raw)
         except LocalTransportError as e:
@@ -485,14 +488,15 @@ class ChildLocalTransport:
             )
 
     async def _reassemble(
-        self, request_id: str, header: dict[str, Any]
+        self, request_id: str, header: dict[str, Any], timeout: float | None
     ) -> dict[str, Any] | bool | None:
         """Read exactly the announced parts and rebuild the result object.
 
         The header's ``total``/``parts`` claim is checked for internal
         consistency before reading a single part; any deviation — wrong
         order, wrong id, bad encoding, length mismatch — breaks the
-        channel. A stalling parent is covered by the call-level deadline.
+        channel. Each frame has an idle deadline so a progressing large
+        response can complete without one total transfer budget.
         """
         total = header.get("total")
         parts = header.get("parts")
@@ -512,7 +516,7 @@ class ChildLocalTransport:
             )
         buf = bytearray()
         for i in range(parts):
-            frame = await self._recv_frame()
+            frame = await self._recv_frame(timeout)
             if frame.get("id") != request_id or frame.get("part") != i:
                 self._fail(
                     LocalTransportError(
@@ -589,7 +593,13 @@ class ChildLocalTransport:
             )
         return result
 
-    async def _send_request(self, request: dict[str, Any]) -> None:
+    async def _send_bytes(self, raw: bytes, timeout: float | None) -> None:
+        """Write one bounded frame, failing when pipe progress stalls."""
+        await asyncio.wait_for(
+            asyncio.to_thread(self._send.send_bytes, raw), timeout
+        )
+
+    async def _send_request(self, request: dict[str, Any], timeout: float | None) -> bool:
         """Send one request, chunked when it exceeds the frame bound.
 
         Large ``config.set`` JSON values ride bounded part frames sent
@@ -599,12 +609,11 @@ class ChildLocalTransport:
         """
         raw = json.dumps(request, separators=(",", ":")).encode("utf-8")
         if len(raw) <= MAX_FRAME_BYTES:
-            await asyncio.to_thread(self._send.send_bytes, raw)
-            return
+            await self._send_bytes(raw, timeout)
+            return False
         total = len(raw)
         parts = -(-total // _CHUNK_RAW_BYTES)
-        await asyncio.to_thread(
-            self._send.send_bytes,
+        await self._send_bytes(
             encode_frame(
                 {
                     "v": TRANSPORT_VERSION,
@@ -615,11 +624,11 @@ class ChildLocalTransport:
                     "parts": parts,
                 }
             ),
+            timeout,
         )
         for i in range(parts):
             chunk = raw[i * _CHUNK_RAW_BYTES : (i + 1) * _CHUNK_RAW_BYTES]
-            await asyncio.to_thread(
-                self._send.send_bytes,
+            await self._send_bytes(
                 encode_frame(
                     {
                         "v": TRANSPORT_VERSION,
@@ -628,27 +637,41 @@ class ChildLocalTransport:
                         "data": base64.b64encode(chunk).decode("ascii"),
                     }
                 ),
+                timeout,
             )
+        return True
 
     async def _roundtrip(
-        self, request: dict[str, Any]
+        self, request: dict[str, Any], timeout: float | None
     ) -> dict[str, Any] | bool | None:
         request_id = request["id"]
         op = request["op"]
-        await self._send_request(request)
-        first = await self._recv_frame()
+        started_at = asyncio.get_running_loop().time()
+        request_is_chunked = await self._send_request(request, timeout)
+        if timeout is None or request_is_chunked:
+            # The parent starts its independently bounded dispatch only after
+            # reassembling the upload. A large upload with regular pipe
+            # progress therefore gets a fresh wait for that first response.
+            first_timeout = timeout
+        else:
+            # Preserve the existing single wall-clock bound for routine unary
+            # calls until the response proves it is a chunked download.
+            first_timeout = timeout - (asyncio.get_running_loop().time() - started_at)
+            if first_timeout <= 0:
+                raise asyncio.TimeoutError
+        first = await self._recv_frame(first_timeout)
         self._check_id(first, request_id)
         if first.get("chunked"):
             if not first.get("ok", False):
                 return self._interpret(first, op)
-            return await self._reassemble(request_id, first)
+            return await self._reassemble(request_id, first, timeout)
         return self._interpret(first, op)
 
     async def _call(
         self,
         op: str,
         fields: dict[str, Any],
-        timeout: float,
+        timeout: float | None,
     ) -> dict[str, Any] | bool | None:
         """One local operation with no HTTP fallback (shared by all ops).
 
@@ -671,9 +694,7 @@ class ChildLocalTransport:
                 **fields,
             }
             try:
-                return await asyncio.wait_for(
-                    self._roundtrip(request), timeout
-                )
+                return await self._roundtrip(request, timeout)
             except asyncio.TimeoutError:
                 self._fail(
                     TimeoutError(
@@ -3024,16 +3045,13 @@ class ChildLocalTransport:
         come from the parent's dispatch principal, never from the
         frame's ``execution_id``. Returns the
         ``CLIAICompleteResponse`` dict, identical to the HTTP path.
-        The requested timeout (default 30s, like the SDK HTTP default)
-        bounds the parent provider call; the child deadline adds a 5s
-        margin so a parent timeout still returns an error frame.
+        An explicit timeout bounds the parent provider call and gives the
+        child a 5s margin to receive its error frame. Omitting it applies
+        no SDK deadline, as on the HTTP path.
         Parent error responses raise the same public exceptions as the
         HTTP path (the facade maps them to ``RuntimeError``); transport
         loss raises ``LocalTransportClosed`` or ``TimeoutError``.
         """
-        requested = (
-            AI_COMPLETE_DEFAULT_TIMEOUT_SECONDS if timeout is None else timeout
-        )
         result = await self._call(
             OP_AI_COMPLETE,
             {
@@ -3044,9 +3062,9 @@ class ChildLocalTransport:
                 "model": model,
                 "execution_id": execution_id,
                 "input_files": input_files,
-                "timeout": requested,
+                "timeout": timeout,
             },
-            requested + AI_COMPLETE_CHILD_MARGIN_SECONDS,
+            timeout + AI_COMPLETE_CHILD_MARGIN_SECONDS if timeout is not None else None,
         )
         if not isinstance(result, dict):
             self._fail(

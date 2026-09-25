@@ -253,6 +253,40 @@ class TestServeChannel:
         finally:
             self._close_all((req_recv, resp_send))
 
+    async def test_idle_between_calls_does_not_close_channel(self):
+        req_recv, req_send, resp_recv, resp_send = self._pair()
+        pump = asyncio.create_task(
+            serve_channel(
+                recv_conn=req_recv,
+                send_conn=resp_send,
+                session_factory=None,
+                principal=LocalDispatchPrincipal(caller_org_id=None),
+            )
+        )
+        try:
+            with patch(
+                "src.services.execution.sdk_local_dispatch.CHANNEL_FRAME_IDLE_TIMEOUT_SECONDS",
+                0.02,
+            ):
+                for request_id in ("first", "second"):
+                    request = {"v": 1, "id": request_id, "op": "unknown"}
+                    await asyncio.to_thread(
+                        req_send.send_bytes, json.dumps(request).encode()
+                    )
+                    response = json.loads(
+                        (await asyncio.to_thread(resp_recv.recv_bytes, 65537)).decode()
+                    )
+                    assert response["id"] == request_id
+                    assert response["ok"] is False
+                    if request_id == "first":
+                        await asyncio.sleep(0.06)
+                        assert not pump.done()
+        finally:
+            pump.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await pump
+            self._close_all((req_recv, req_send, resp_recv, resp_send))
+
     async def test_malformed_frame_closes_channel(self):
         req_recv, req_send, resp_recv, resp_send = self._pair()
         principal = LocalDispatchPrincipal(caller_org_id=None)
