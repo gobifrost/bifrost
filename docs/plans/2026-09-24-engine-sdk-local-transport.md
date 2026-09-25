@@ -54,6 +54,7 @@ credentials, dependencies, or unrelated files.
 | Artifacts | write/render/generate/read/list/download URL, video job status | Workspace, object storage, durable platform jobs |
 | AI | complete, stream, model info | Provider service, usage, streaming backpressure |
 | Engine Python imports | cold-cache module fetch and name resolution | Redis/S3 source lookup, signed Solution scope, synchronous import hook |
+| Client context metadata | `BifrostClient.context` and its `user`/`organization`/`default_parameters` views | Parent execution context, external `/api/sdk/context` response |
 
 `ai.create_image` and `ai.create_video` delegate to artifact methods. The
 hidden `OAuthCredentials.refresh()` call is included. `context`, decorators,
@@ -92,8 +93,13 @@ outside Solution context, `bulk_upsert` retries 409 conflicts, filtered
 knowledge first, and video generation polls a shared PlatformJob. The local
 transport must preserve those behaviors without recursive HTTP requests.
 `bifrost.api.get/post/put/patch/delete` and `BifrostClient` raw request
-methods remain HTTP escape hatches. `refs.py` is a CLI/reference utility,
-not an exported runtime facade. Local context and decorators make no request.
+methods remain HTTP escape hatches because their paths are arbitrary.
+`BifrostClient.context` is a fixed call even though it is not a root-exported
+facade; its engine view belongs in the local coverage. External credential
+refresh remains an HTTP authentication operation, while supervised engine
+service credentials are renewed through the existing parent/Redis handoff.
+`refs.py` is a CLI/reference utility, not an exported runtime facade.
+The root-exported `bifrost.context` and decorators are already local.
 The engine's internal synchronous import hook is a separate fixed path:
 `get_module_sync()` reads Redis first, but on a miss calls
 `GET /api/sdk/modules/{path}`; name resolution can call
@@ -121,7 +127,8 @@ dispatcher call the same function.
    file/artifact binary transport and operations, then knowledge. Preserve
    signed Solution access and avoid deadlocking the child event loop during
    synchronous Python imports.
-5. Workflow, execution, agent, event, and form operations.
+5. Workflow, execution, agent, event, form, and client context metadata
+   operations.
 6. Identity and role operations.
 7. AI info, completion, and streaming with provider/usage parity.
 8. Full coverage audit, removal of duplicate behavior, realistic concurrent
