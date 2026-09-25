@@ -143,11 +143,13 @@ export function ExecutionDetails({
 	);
 	const hasCachedExecution = !!queryClient.getQueryData(executionQueryKey);
 
-	// Check if we came from an execution trigger (has navigation state).
+	// Only the full page consumes execution-trigger state; embedded previews
+	// share the parent page's location state (including History restoration).
 	// location.state persists across browser refreshes (React Router uses history.state),
 	// so we clear it immediately after reading to prevent deferred-fetch on refresh.
 	const [hasNavigationState] = useState(
 		() =>
+			!embedded &&
 			location.state != null &&
 			historyOrigin === null &&
 			usageReturn === null,

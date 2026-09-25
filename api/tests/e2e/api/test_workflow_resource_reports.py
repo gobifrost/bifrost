@@ -77,7 +77,16 @@ class TestWorkflowResourceReports:
             peak_process_rss_bytes=None,
             peak_cpu_cores=None,
         )
-        db_session.add_all([cpu_heavy, no_ai, other_org, missing_telemetry])
+        unrelated = Execution(
+            workflow_name="another-workflow",
+            executed_by_name="Resource report test",
+            organization_id=UUID(org1["id"]),
+            status=ExecutionStatus.SUCCESS,
+            started_at=in_range,
+            duration_ms=100,
+            cpu_total_seconds=0.1,
+        )
+        db_session.add_all([cpu_heavy, no_ai, other_org, missing_telemetry, unrelated])
         await db_session.flush()
         db_session.add_all(
             [
@@ -107,6 +116,7 @@ class TestWorkflowResourceReports:
             "started_after": (now - timedelta(hours=1)).isoformat(),
             "started_before": (now + timedelta(hours=1)).isoformat(),
             "org_id": org1["id"],
+            "workflow": workflow_name,
             "view": "runs",
             "sort": "cpu",
             "page_size": 50,
