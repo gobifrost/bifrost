@@ -1447,27 +1447,18 @@ async def sdk_store_artifact(
     db: AsyncSession = Depends(get_db),
 ) -> ArtifactRef:
     """Validate and store workflow-produced bytes behind an opaque identity."""
-    from shared.artifact_generation import validate_artifact_content
-    from src.services.artifacts import ArtifactService, artifact_ref
+    from shared.sdk_artifacts import ArtifactCaller, sdk_store_artifact as _store
 
     filename = file.filename or "Artifact"
     content_type = file.content_type or "application/octet-stream"
     content = await file.read()
-    validate_artifact_content(
+    return await _store(
+        ArtifactCaller(user=current_user, db=db),
         filename=filename,
         content_type=content_type,
         content=content,
-    )
-    artifact = await ArtifactService(db).store(
-        filename=filename,
-        content_type=content_type,
-        content=content,
-        created_by_user_id=current_user.user_id,
-        organization_id=current_user.organization_id,
         workspace_id=workspace_id,
-        logical_path=filename,
     )
-    return artifact_ref(artifact)
 
 
 @router.get("/artifacts", response_model=list[ArtifactRef])
@@ -1477,15 +1468,12 @@ async def sdk_list_artifacts(
     db: AsyncSession = Depends(get_db),
 ) -> list[ArtifactRef]:
     """List the latest logical files in one authorized execution workspace."""
-    from src.services.artifacts import ArtifactService, artifact_ref
+    from shared.sdk_artifacts import ArtifactCaller, sdk_list_artifacts as _list
 
-    stored = await ArtifactService(db).list_workspace(
-        workspace_id,
-        user_id=current_user.user_id,
-        organization_id=current_user.organization_id,
-        is_platform_admin=current_user.is_platform_admin,
+    return await _list(
+        ArtifactCaller(user=current_user, db=db),
+        workspace_id=workspace_id,
     )
-    return [artifact_ref(item) for item in stored]
 
 
 @router.post("/artifacts/document")
@@ -1697,50 +1685,39 @@ async def sdk_read_artifact(
     preview: bool = False,
 ) -> Response:
     """Read an opaque artifact after enforcing caller scope."""
-    from src.services.artifacts import (
-        ArtifactAccessError,
-        ArtifactService,
-        is_browser_active_content_type,
+    from shared.sdk_artifacts import (
+        ArtifactCaller,
+        SdkArtifactError,
+        sdk_read_artifact as _read,
     )
 
-    service = ArtifactService(db)
     try:
-        artifact = await service.get_authorized(
-            artifact_id,
-            user_id=current_user.user_id,
-            organization_id=current_user.organization_id,
-            is_platform_admin=current_user.is_platform_admin,
+        result = await _read(
+            ArtifactCaller(user=current_user, db=db),
+            artifact_id=artifact_id,
+            preview=preview,
         )
-    except ArtifactAccessError as exc:
+    except SdkArtifactError as exc:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+            status_code=status.HTTP_404_NOT_FOUND, detail=exc.detail
         ) from exc
-    content = await service.read(artifact)
-    if preview:
-        from shared.artifact_preview import preview_office_artifact
-
-        preview_html = await asyncio.to_thread(
-            preview_office_artifact,
-            content,
-            artifact.content_type,
+    if result.preview_html is not None:
+        return Response(
+            content=result.preview_html,
+            media_type="text/html",
+            headers={
+                "Content-Security-Policy": (
+                    "default-src 'none'; style-src 'unsafe-inline'; img-src data:"
+                ),
+                "X-Content-Type-Options": "nosniff",
+            },
         )
-        if preview_html is not None:
-            return Response(
-                content=preview_html,
-                media_type="text/html",
-                headers={
-                    "Content-Security-Policy": (
-                        "default-src 'none'; style-src 'unsafe-inline'; img-src data:"
-                    ),
-                    "X-Content-Type-Options": "nosniff",
-                },
-            )
     headers = {"X-Content-Type-Options": "nosniff"}
-    if is_browser_active_content_type(artifact.content_type):
-        headers["Content-Disposition"] = "attachment"
+    if result.content_disposition is not None:
+        headers["Content-Disposition"] = result.content_disposition
     return Response(
-        content=content,
-        media_type=artifact.content_type,
+        content=result.content,
+        media_type=result.content_type,
         headers=headers,
     )
 
@@ -1752,22 +1729,21 @@ async def sdk_artifact_download_url(
     db: AsyncSession = Depends(get_db),
 ) -> ArtifactDownloadResponse:
     """Create a short-lived download URL for an opaque artifact."""
-    from src.services.artifacts import ArtifactAccessError, ArtifactService
+    from shared.sdk_artifacts import (
+        ArtifactCaller,
+        SdkArtifactError,
+        sdk_artifact_download_url as _download_url,
+    )
 
     try:
-        service = ArtifactService(db)
-        artifact = await service.get_authorized(
-            artifact_id,
-            user_id=current_user.user_id,
-            organization_id=current_user.organization_id,
-            is_platform_admin=current_user.is_platform_admin,
+        return await _download_url(
+            ArtifactCaller(user=current_user, db=db),
+            artifact_id=artifact_id,
         )
-    except ArtifactAccessError as exc:
+    except SdkArtifactError as exc:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+            status_code=status.HTTP_404_NOT_FOUND, detail=exc.detail
         ) from exc
-    url = await service.generate_download_url(artifact)
-    return ArtifactDownloadResponse(url=url)
 
 
 @router.post(
