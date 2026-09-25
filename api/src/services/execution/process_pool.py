@@ -860,9 +860,9 @@ class ProcessPoolManager:
         a stream is active. The principal is derived from parent-owned
         dispatch context before forking — never from child frames. The
         pump ends on child EOF/crash, protocol violation, or explicit
-        close. The production stream registry is empty until the AI
-        binding stage, so opens fail with a terminal error and the channel
-        stays usable.
+        close. The production stream registry serves ``ai.stream``
+        through the shared AI service; unknown opens fail with a
+        terminal error and the channel stays usable.
         """
         task: asyncio.Task[None] = asyncio.create_task(
             self._serve_stream_channel(handle, principal),

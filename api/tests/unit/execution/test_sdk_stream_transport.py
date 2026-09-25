@@ -3,8 +3,9 @@
 Exercises ``bifrost._stream_transport`` (child) against
 ``src.services.execution.sdk_stream_dispatch.serve_stream_channel``
 (parent) over real pipe pairs with a fake operation registry injected
-through the pump seam. Production ``STREAM_OPS`` stays empty (asserted
-here); no AI logic, HTTP route, or fallback is involved.
+through the pump seam. Production ``STREAM_OPS`` holds only the bound
+``ai.stream`` source (asserted here); no other AI logic, HTTP route, or
+fallback is involved.
 
 Covers the handoff contract: incremental per-credit delivery, wire
 bounds, out-of-order/malformed frames, EOF, idle timeout, child early
@@ -89,9 +90,11 @@ async def _drain(stream: Any) -> list[dict[str, Any]]:
 
 
 @pytest.mark.asyncio
-class TestProductionRegistryEmpty:
-    async def test_stream_ops_empty_until_ai_binding(self):
-        assert STREAM_OPS == {}
+class TestProductionRegistry:
+    async def test_stream_ops_holds_only_ai_stream(self):
+        from bifrost._stream_transport import OP_AI_STREAM
+
+        assert set(STREAM_OPS) == {OP_AI_STREAM}
 
     async def test_unknown_op_is_terminal_error_and_channel_reusable(self):
         child_send, child_recv, parent_recv, parent_send = _pipes()

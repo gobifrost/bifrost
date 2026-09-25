@@ -6,8 +6,9 @@ Single implementation used by both entry points:
   ``cli_ai_stream``, and ``cli_ai_info``) serving external SDK/CLI
   callers, and
 - the engine-local dispatcher
-  (``api/src/services/execution/sdk_local_dispatch.py``) serving workflow
-  and ``@service`` children through the parent-side local transport.
+  (``api/src/services/execution/sdk_stream_dispatch.py::ai_stream_source``)
+  serving workflow and ``@service`` children through the parent-side
+  local stream transport.
 
 All paths share completion input handling (DTO-shaped messages, base64
 input-file decoding, user-message requirement), model/max-token selection,
@@ -21,8 +22,8 @@ profile through the shared service.
 dicts (``{"content": ...}``, ``{"done": True, ...}``,
 ``{"error": ...}``); the HTTP handler serializes each payload to an SSE
 ``data:`` line (appending the terminal ``[DONE]`` after the done
-payload) and the future local dispatcher forwards the same payloads as
-frames.
+payload) and the local stream source forwards the same payloads as
+stream-channel events.
 
 Parent-side only: imports SQLAlchemy sessions, the LLM factory, and the
 usage service. A workflow child never imports this module (it stays
@@ -334,8 +335,8 @@ async def stream_sdk_ai(
 ) -> AsyncGenerator[dict[str, Any], None]:
     """Stream one AI completion as transport-neutral event payloads.
 
-    Shared by the HTTP SSE handler and the future engine-local
-    dispatcher: both consume the same payload dicts so deltas, the done
+    Shared by the HTTP SSE handler and the engine-local stream source:
+    both consume the same payload dicts so deltas, the done
     event, and error text are identical by construction. Payload shapes
     preserve the historical SSE contract:
 

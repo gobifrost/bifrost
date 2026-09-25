@@ -6,8 +6,9 @@ children must never import PostgreSQL drivers, the ORM, or the API server
 stack. (The HTTP-style error mapping imports ``httpx``/``bifrost.client``
 lazily, inside the raising function, long after the child runtime is loaded.)
 
-Protocol (generic named-operation streams; no production operation is
-registered yet — a later stage binds ``ai.stream`` to this channel):
+Protocol (generic named-operation streams; the production ``ai.stream``
+operation is registered on the parent — a later stage binds no further
+operation to this channel):
 
 - One stream at a time per child over a dedicated child<->parent channel
   pair, separate from the unary SDK pipes and the synchronous import pipes.
@@ -16,8 +17,8 @@ registered yet — a later stage binds ``ai.stream`` to this channel):
   ``{"v": 1, "id": <correlation>, "type": "open", "op": <name>,
   "params": {...}}``. ``op`` names an allowlisted operation the parent
   registry knows; the parent derives identity/scope from its own dispatch
-  context, never from child claims. The open frame is a single bounded
-  frame — stream requests carry no chunked upload.
+  context, never from child claims. Large opens (AI input files) ride
+  bounded ``open_chunked``/``open_chunk`` frames instead of one frame.
 - Flow control is explicit one-event credit: every ``__anext__`` sends
   ``{"v": 1, "id": ..., "type": "pull"}`` and the parent advances its
   source at most once per credit, answering with exactly one frame.
@@ -86,6 +87,14 @@ CANCEL_ACK_TIMEOUT_SECONDS = 5.0
 # to 65024 chars; with the part-frame envelope every emitted frame stays
 # under MAX_FRAME_BYTES (same part-size math as the other transports).
 _CHUNK_RAW_BYTES = 48768
+
+
+# Named stream operation for SDK AI streaming. The child opens it with the
+# already-composed ``CLIAICompleteRequest`` fields as params (large
+# ``input_files`` ride the bounded ``open_chunked``/``open_chunk`` frames);
+# the parent validates the same DTO as the HTTP handler and runs the shared
+# ``shared.sdk_ai.stream_sdk_ai`` generator for them.
+OP_AI_STREAM = "ai.stream"
 
 
 class StreamTransportError(RuntimeError):

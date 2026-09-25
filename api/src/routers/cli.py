@@ -1679,7 +1679,7 @@ async def cli_ai_stream(
 
     Thin HTTP adapter over the shared operation
     (``shared.sdk_ai.stream_sdk_ai``), which the engine-local
-    dispatcher will call for the same inputs. Scope is resolved here —
+    dispatcher calls for the same inputs. Scope is resolved here —
     before headers are sent — so authorization failures stay HTTP
     status errors; everything after the stream starts surfaces as SSE
     error events. Each shared payload dict is serialized to one

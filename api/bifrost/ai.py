@@ -485,6 +485,11 @@ class ai:
 
         Yields chunks as they arrive from the LLM.
 
+        Inside an engine child this streams through the parent over the
+        dedicated local stream channel (same shared service as the HTTP
+        endpoint); elsewhere it calls the SDK API endpoint with SSE. A
+        local attempt never falls back to HTTP.
+
         Args:
             prompt: Simple text prompt (becomes a user message)
             messages: List of message dicts with "role" and "content"
@@ -526,6 +531,60 @@ class ai:
         ctx = _execution_context.get()
         execution_id = str(ctx.execution_id) if ctx and ctx.execution_id else None
 
+        # Engine-local path: the parent runs the same shared AI service
+        # over the dedicated stream channel (knowledge context and
+        # input-file encoding already applied above, like ``complete``).
+        # Event-to-chunk mapping mirrors the HTTP SSE branch below, so a
+        # provider error event yields one empty non-done chunk, then EOF.
+        # A local attempt never falls back to HTTP.
+        from ._stream_transport import OP_AI_STREAM
+        from ._stream_transport import get as _get_stream_transport
+
+        stream_transport = _get_stream_transport()
+        if stream_transport is not None:
+            stream = await stream_transport.open_stream_async(
+                OP_AI_STREAM,
+                {
+                    "messages": msg_list,
+                    "max_tokens": max_tokens,
+                    "org_id": org_id,
+                    "model": model,
+                    "execution_id": execution_id,
+                    "input_files": await _encode_input_files(files),
+                },
+            )
+            try:
+                async for event in stream:
+                    if event.get("done"):
+                        # Consume the transport's terminal frame before exposing
+                        # the business done chunk. Callers commonly break at
+                        # done without closing the generator, and the next
+                        # stream must be able to use this channel immediately.
+                        try:
+                            await stream.__anext__()
+                        except StopAsyncIteration:
+                            pass
+                        else:
+                            raise RuntimeError("AI stream sent data after done")
+                        yield AIStreamChunk(
+                            content="",
+                            done=True,
+                            input_tokens=event.get("input_tokens"),
+                            output_tokens=event.get("output_tokens"),
+                        )
+                    else:
+                        yield AIStreamChunk(
+                            content=event.get("content") or "",
+                            done=False,
+                        )
+            finally:
+                # Early caller close must still tell the parent to stop
+                # its source (like the HTTP branch's response close), so
+                # the channel stays reusable for a later stream.
+                if not stream.closed:
+                    await stream.aclose()
+            return
+
         # Call API with SSE streaming
         client = get_client()
         async with client.stream(
@@ -540,6 +599,11 @@ class ai:
                 "input_files": await _encode_input_files(files),
             },
         ) as response:
+            if not response.is_success:
+                from .client import raise_for_status_with_detail
+
+                await response.aread()
+                raise_for_status_with_detail(response)
             async for line in response.aiter_lines():
                 if not line or not line.startswith("data: "):
                     continue

@@ -8,10 +8,13 @@ HTTP-style terminal error. A ``cancel`` control frame races even a blocked
 source read; the parent stops/closes its source and acknowledges with
 ``cancelled``, leaving the channel reusable for a later stream.
 
-The production operation registry (:data:`STREAM_OPS`) is intentionally
-empty: a later stage binds ``ai.stream`` to this channel. Tests inject a
-fake operation and async source through the ``registry`` pump seam —
-never as a shipped allowlisted operation.
+The production operation registry (:data:`STREAM_OPS`) holds the real
+``ai.stream`` source (:func:`ai_stream_source`), which runs the shared
+``shared.sdk_ai.stream_sdk_ai`` generator — the same operation the HTTP
+SSE handler consumes — for parent-derived principals. Tests inject a
+fake operation and async source through the ``registry`` pump seam for
+transport-only coverage; the AI binding itself is covered through the
+production registry.
 
 Gripes this pump obeys from the handoff:
 
@@ -51,6 +54,7 @@ from typing import Any
 from bifrost._stream_transport import (
     _CHUNK_RAW_BYTES,
     MAX_FRAME_BYTES,
+    OP_AI_STREAM,
     TRANSPORT_VERSION,
     decode_frame,
 )
@@ -94,10 +98,132 @@ StreamSourceFactory = Callable[
     [dict[str, Any], Any], AsyncGenerator[dict[str, Any], None]
 ]
 
-# Production stream operations. Empty until the AI binding stage registers
-# the real ``ai.stream`` source here. Tests pass their own registry to
-# :func:`serve_stream_channel` instead of touching this mapping.
+# Production stream operations. ``ai.stream`` is bound here: the source
+# runs the shared ``shared.sdk_ai.stream_sdk_ai`` generator for the
+# validated open params and the parent-derived principal. Tests pass
+# their own registry to :func:`serve_stream_channel` for transport-only
+# coverage instead of touching this mapping.
 STREAM_OPS: dict[str, StreamSourceFactory] = {}
+
+
+async def ai_stream_source(
+    params: dict[str, Any],
+    principal: Any,
+    *,
+    session_factory: Any = None,
+) -> AsyncGenerator[dict[str, Any], None]:
+    """Serve ``ai.stream`` through the shared AI service.
+
+    Validates the open params with the same ``CLIAICompleteRequest`` DTO
+    as the HTTP handler (422), then consumes the exact
+    ``shared.sdk_ai.stream_sdk_ai`` generator the handler consumes —
+    provider selection, chunk construction, error text, and usage
+    attribution are identical by construction. The child sends the
+    already-composed messages (knowledge context applied) and the
+    already-encoded input files (large payloads arrive via the chunked
+    open frames); the public ``ai.stream`` takes no profile, so
+    ``profile=None`` always, like the HTTP path.
+
+    The token-equivalent caller comes from the parent-derived principal
+    (never child claims), the usage ``execution_id`` is the parent's own
+    (any frame-supplied id is validated by the DTO but ignored), and the
+    requested ``org_id`` rides as an untrusted scope resolved here —
+    before the generator starts — so authorization failures stay
+    terminal stream errors (HTTP status), never stream events. Scope
+    failures raise :class:`StreamSourceError` with their own status
+    (403/422), never a generic 500.
+
+    The shared generator yields its business ``done`` payload before
+    resuming to record usage. Only that single payload is buffered: every
+    earlier delta is yielded incrementally, then the generator is
+    exhausted (recording usage), its transaction committed, and the
+    buffered ``done`` yielded last — so a caller that stops on ``done``
+    never loses usage attribution. Provider ``{"error": ...}`` events
+    stream through like any other event (the facade maps them to one
+    empty non-done chunk, then EOF). On early child close the shared
+    generator is closed and no partial usage is recorded or committed.
+    Usage commit itself is best-effort: a failed commit never fails the
+    already-delivered stream.
+    """
+    from pydantic import ValidationError
+
+    from shared.sdk_ai import stream_sdk_ai
+    from shared.sdk_config import ScopeResolutionError, resolve_sdk_scope
+    from src.models.contracts.cli import CLIAICompleteRequest
+
+    try:
+        request = CLIAICompleteRequest.model_validate(
+            {
+                "messages": params.get("messages"),
+                "max_tokens": params.get("max_tokens"),
+                "org_id": params.get("org_id"),
+                "model": params.get("model"),
+                "execution_id": params.get("execution_id"),
+                "input_files": params.get("input_files", []),
+            }
+        )
+    except ValidationError as e:
+        raise StreamSourceError(
+            422, f"invalid {OP_AI_STREAM} request: {e}"
+        ) from None
+
+    from src.services.execution.sdk_local_dispatch import _ai_user_for_principal
+
+    user = _ai_user_for_principal(principal)
+    parent_execution_id = getattr(principal, "execution_id", None)
+
+    if session_factory is None:
+        from src.core.database import get_session_factory
+
+        session_factory = get_session_factory()
+    async with session_factory() as session:
+        try:
+            resolved_org_id = await resolve_sdk_scope(
+                request.org_id,
+                caller_org_id=user.organization_id,
+                is_platform_admin=user.is_superuser,
+                session=session,
+            )
+        except ScopeResolutionError as e:
+            raise StreamSourceError(e.status_code, e.detail) from None
+
+        gen = stream_sdk_ai(
+            session,
+            user,
+            messages=[dict(m) for m in request.messages],
+            max_tokens=request.max_tokens,
+            model=request.model,
+            profile=None,
+            execution_id=parent_execution_id,
+            resolved_org_id=resolved_org_id,
+            input_files=list(request.input_files),
+        )
+        pending_done: dict[str, Any] | None = None
+        completed = False
+        try:
+            async for event in gen:
+                if isinstance(event, dict) and event.get("done") is True:
+                    pending_done = event
+                    continue
+                yield event
+            completed = True
+        finally:
+            with suppress(Exception):
+                await gen.aclose()
+        if completed:
+            try:
+                await session.commit()
+            except Exception as e:
+                from src.core.log_safety import log_safe
+
+                logger.warning(f"AI stream usage commit failed: {log_safe(e)}")
+                with suppress(Exception):
+                    await session.rollback()
+            if pending_done is not None:
+                yield pending_done
+
+
+STREAM_OPS[OP_AI_STREAM] = ai_stream_source
 
 
 class _FrameOversized(Exception):
