@@ -28,7 +28,9 @@ bound); small payloads use a single frame.
 Allowlist: ``config.get/set/list/delete``, the full
 ``integrations`` facade (``get/list_mappings/get_mapping/upsert_mapping/
 delete_mapping/refresh_token``), the full tables facade, and artifact
-write/read/list/download URL, all fixed file operations, and the SDK
+write/read/list/download URL plus artifact generation
+(``create_document``/``create_spreadsheet``/``create_text``/
+``create_image``), all fixed file operations, and the SDK
 agent ``enqueue``/``get_run`` operations. Engine import fast path: ``modules.resolve``
 and ``modules.fetch`` (served on the dedicated import channel through the
 shared ``sdk_modules`` service, scoped by the parent-derived principal).
@@ -53,6 +55,10 @@ from bifrost._local_transport import (
     MAX_FRAME_BYTES,
     OP_AGENTS_ENQUEUE,
     OP_AGENTS_GET_RUN,
+    OP_ARTIFACTS_CREATE_DOCUMENT,
+    OP_ARTIFACTS_CREATE_IMAGE,
+    OP_ARTIFACTS_CREATE_SPREADSHEET,
+    OP_ARTIFACTS_CREATE_TEXT,
     OP_ARTIFACTS_WRITE,
     OP_ARTIFACTS_READ,
     OP_ARTIFACTS_LIST,
@@ -137,6 +143,10 @@ SDK_CHANNEL_ALLOWED_OPS = frozenset(
         OP_ARTIFACTS_READ,
         OP_ARTIFACTS_LIST,
         OP_ARTIFACTS_GET_DOWNLOAD_URL,
+        OP_ARTIFACTS_CREATE_DOCUMENT,
+        OP_ARTIFACTS_CREATE_SPREADSHEET,
+        OP_ARTIFACTS_CREATE_TEXT,
+        OP_ARTIFACTS_CREATE_IMAGE,
         OP_FILES_READ,
         OP_FILES_WRITE,
         OP_FILES_LIST,
@@ -166,6 +176,18 @@ ALLOWLIST = SDK_CHANNEL_ALLOWED_OPS | IMPORT_CHANNEL_ALLOWED_OPS
 # and treats a missing response as fatal (no HTTP fallback).
 DISPATCH_TIMEOUT_SECONDS = 25.0
 OAUTH_REFRESH_DISPATCH_TIMEOUT_SECONDS = 30.0
+
+# Parent-side bounds for artifact generation. ``create_image`` runs a
+# provider HTTP call with a 180s httpx timeout (see
+# ``src.services.media_generation.generate_image_with_config``) on no DB
+# connection, then stores and records usage; the bound leaves room for
+# that call plus the store/commit. Render operations (document/
+# spreadsheet/text) are CPU-bound in a worker thread holding no DB
+# connection, then store once. Each sits ~10s under the matching child
+# deadline so a parent timeout still returns an error frame instead of
+# tripping the child deadline first.
+ARTIFACT_RENDER_DISPATCH_TIMEOUT_SECONDS = 60.0
+ARTIFACT_IMAGE_DISPATCH_TIMEOUT_SECONDS = 185.0
 
 # Type alias for a zero-argument factory returning short sessions on the
 # parent's pooled engine (e.g. ``src.core.database.get_session_factory``).
@@ -494,6 +516,14 @@ async def dispatch_frames(
         return await _dispatch_artifacts_list(session_factory, principal, frame_id, frame)
     if op == OP_ARTIFACTS_GET_DOWNLOAD_URL:
         return await _dispatch_artifacts_download_url(session_factory, principal, frame_id, frame)
+    if op == OP_ARTIFACTS_CREATE_DOCUMENT:
+        return await _dispatch_artifacts_create_document(session_factory, principal, frame_id, frame)
+    if op == OP_ARTIFACTS_CREATE_SPREADSHEET:
+        return await _dispatch_artifacts_create_spreadsheet(session_factory, principal, frame_id, frame)
+    if op == OP_ARTIFACTS_CREATE_TEXT:
+        return await _dispatch_artifacts_create_text(session_factory, principal, frame_id, frame)
+    if op == OP_ARTIFACTS_CREATE_IMAGE:
+        return await _dispatch_artifacts_create_image(session_factory, principal, frame_id, frame)
     if op == OP_FILES_READ:
         return await _dispatch_files_read(session_factory, principal, frame_id, frame)
     if op == OP_FILES_WRITE:
@@ -2650,6 +2680,281 @@ async def _dispatch_artifacts_download_url(
         op=OP_ARTIFACTS_GET_DOWNLOAD_URL,
         log_key=str(artifact_id),
         status_errors=(SdkArtifactError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_artifacts_create_document(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``artifacts.create_document`` through the shared service.
+
+    Validates with the same ``DocumentArtifactSpec`` DTO as the HTTP
+    handler, resolves the optional workspace id like the HTTP query
+    param, and calls the exact ``shared.sdk_artifact_generation``
+    service the HTTP handler calls — actor/org scope, workspace image
+    resolution, renderer/provider errors, and content storage agree by
+    construction. The child sends only data; actor, org, and execution
+    identity come from the parent-derived principal. Image reads run in
+    a short-lived session the shared service releases before CPU
+    rendering; the final store commits on the raw parent session so the
+    artifact survives for subsequent reads. ``SdkArtifactError`` rides
+    its status; ``ValueError`` (renderer, access, validation) maps to
+    422 like the global ``ValueError → 422`` handler. No commit on
+    errors, no HTTP retry after a failed local write.
+    """
+    from shared.sdk_artifacts import ArtifactCaller, SdkArtifactError
+    from src.models.contracts.artifacts import DocumentArtifactSpec
+
+    request, invalid = _validate_request(
+        DocumentArtifactSpec,
+        {
+            "filename": frame.get("filename"),
+            "format": frame.get("format"),
+            "title": frame.get("title"),
+            "subtitle": frame.get("subtitle"),
+            "sections": frame.get("sections"),
+            "page_size": frame.get("page_size", "letter"),
+        },
+        frame_id,
+        OP_ARTIFACTS_CREATE_DOCUMENT,
+    )
+    if invalid is not None:
+        return [invalid]
+    assert request is not None
+    workspace_id, invalid = _workspace_id_from_frame(
+        frame, frame_id, OP_ARTIFACTS_CREATE_DOCUMENT, required=False
+    )
+    if invalid is not None:
+        return [invalid]
+
+    async def _create(session: Any) -> dict[str, Any]:
+        from shared.sdk_artifact_generation import sdk_render_document_artifact
+
+        user = _artifact_user_for_principal(principal)
+        try:
+            ref = await sdk_render_document_artifact(
+                ArtifactCaller(user=user, db=session),
+                spec=request,
+                workspace_id=workspace_id,
+            )
+        except ValueError as exc:
+            raise SdkArtifactError(422, str(exc)) from exc
+        # The raw parent session factory does not auto-commit: persist
+        # the artifact before the child can read it in a later SDK call.
+        await session.commit()
+        return ref.model_dump(mode="json")
+
+    result, error = await _run_short(
+        session_factory,
+        _create,
+        op=OP_ARTIFACTS_CREATE_DOCUMENT,
+        log_key=request.filename,
+        status_errors=(SdkArtifactError,),
+        timeout_seconds=ARTIFACT_RENDER_DISPATCH_TIMEOUT_SECONDS,
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_artifacts_create_spreadsheet(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``artifacts.create_spreadsheet`` through the shared service.
+
+    Same ``SpreadsheetArtifactSpec`` DTO, parent-derived principal, and
+    commit-on-success contract as ``create_document``. Pure CPU render
+    in a worker thread holding no DB connection, then one store.
+    """
+    from shared.sdk_artifacts import ArtifactCaller, SdkArtifactError
+    from src.models.contracts.artifacts import SpreadsheetArtifactSpec
+
+    request, invalid = _validate_request(
+        SpreadsheetArtifactSpec,
+        {
+            "filename": frame.get("filename"),
+            "sheets": frame.get("sheets"),
+        },
+        frame_id,
+        OP_ARTIFACTS_CREATE_SPREADSHEET,
+    )
+    if invalid is not None:
+        return [invalid]
+    assert request is not None
+    workspace_id, invalid = _workspace_id_from_frame(
+        frame, frame_id, OP_ARTIFACTS_CREATE_SPREADSHEET, required=False
+    )
+    if invalid is not None:
+        return [invalid]
+
+    async def _create(session: Any) -> dict[str, Any]:
+        from shared.sdk_artifact_generation import sdk_render_spreadsheet_artifact
+
+        user = _artifact_user_for_principal(principal)
+        try:
+            ref = await sdk_render_spreadsheet_artifact(
+                ArtifactCaller(user=user, db=session),
+                spec=request,
+                workspace_id=workspace_id,
+            )
+        except ValueError as exc:
+            raise SdkArtifactError(422, str(exc)) from exc
+        await session.commit()
+        return ref.model_dump(mode="json")
+
+    result, error = await _run_short(
+        session_factory,
+        _create,
+        op=OP_ARTIFACTS_CREATE_SPREADSHEET,
+        log_key=request.filename,
+        status_errors=(SdkArtifactError,),
+        timeout_seconds=ARTIFACT_RENDER_DISPATCH_TIMEOUT_SECONDS,
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_artifacts_create_text(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``artifacts.create_text`` through the shared service.
+
+    Same ``TextArtifactSpec`` DTO, parent-derived principal, and
+    commit-on-success contract as ``create_document``. Pure CPU render
+    in a worker thread holding no DB connection, then one store.
+    """
+    from shared.sdk_artifacts import ArtifactCaller, SdkArtifactError
+    from src.models.contracts.artifacts import TextArtifactSpec
+
+    request, invalid = _validate_request(
+        TextArtifactSpec,
+        {
+            "filename": frame.get("filename"),
+            "format": frame.get("format"),
+            "content": frame.get("content"),
+        },
+        frame_id,
+        OP_ARTIFACTS_CREATE_TEXT,
+    )
+    if invalid is not None:
+        return [invalid]
+    assert request is not None
+    workspace_id, invalid = _workspace_id_from_frame(
+        frame, frame_id, OP_ARTIFACTS_CREATE_TEXT, required=False
+    )
+    if invalid is not None:
+        return [invalid]
+
+    async def _create(session: Any) -> dict[str, Any]:
+        from shared.sdk_artifact_generation import sdk_render_text_artifact
+
+        user = _artifact_user_for_principal(principal)
+        try:
+            ref = await sdk_render_text_artifact(
+                ArtifactCaller(user=user, db=session),
+                spec=request,
+                workspace_id=workspace_id,
+            )
+        except ValueError as exc:
+            raise SdkArtifactError(422, str(exc)) from exc
+        await session.commit()
+        return ref.model_dump(mode="json")
+
+    result, error = await _run_short(
+        session_factory,
+        _create,
+        op=OP_ARTIFACTS_CREATE_TEXT,
+        log_key=request.filename,
+        status_errors=(SdkArtifactError,),
+        timeout_seconds=ARTIFACT_RENDER_DISPATCH_TIMEOUT_SECONDS,
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_artifacts_create_image(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``artifacts.create_image`` through the shared service.
+
+    Same ``ImageArtifactSpec`` DTO, parent-derived principal, and
+    commit-on-success contract as the render operations. The shared
+    service resolves the provider config in a short-lived session,
+    releases it, runs the provider HTTP (up to 180s) with no session
+    held, then stores and records usage on the caller's session in one
+    transaction the dispatcher commits. Usage attribution uses the
+    execution id from the parent-derived dispatch principal, never a
+    forged child identity. The workspace id rides the frame as data. Provider
+    errors (``MediaGenerationError``) map to 422 like the global
+    ``ValueError → 422`` handler. Cancellation (child gone, parent
+    shutdown, or the dispatch deadline) propagates without committing.
+    """
+    from shared.sdk_artifacts import ArtifactCaller, SdkArtifactError
+    from src.models.contracts.artifacts import ImageArtifactSpec
+
+    request, invalid = _validate_request(
+        ImageArtifactSpec,
+        {
+            "filename": frame.get("filename"),
+            "prompt": frame.get("prompt"),
+        },
+        frame_id,
+        OP_ARTIFACTS_CREATE_IMAGE,
+    )
+    if invalid is not None:
+        return [invalid]
+    assert request is not None
+    workspace_id, invalid = _workspace_id_from_frame(
+        frame, frame_id, OP_ARTIFACTS_CREATE_IMAGE, required=False
+    )
+    if invalid is not None:
+        return [invalid]
+    execution_id = UUID(principal.execution_id) if principal.execution_id else None
+
+    async def _create(session: Any) -> dict[str, Any]:
+        from shared.sdk_artifact_generation import sdk_generate_image_artifact
+
+        user = _artifact_user_for_principal(principal)
+        try:
+            ref = await sdk_generate_image_artifact(
+                ArtifactCaller(user=user, db=session),
+                spec=request,
+                workspace_id=workspace_id,
+                execution_id=execution_id,
+            )
+        except ValueError as exc:
+            raise SdkArtifactError(422, str(exc)) from exc
+        await session.commit()
+        return ref.model_dump(mode="json")
+
+    result, error = await _run_short(
+        session_factory,
+        _create,
+        op=OP_ARTIFACTS_CREATE_IMAGE,
+        log_key=request.filename,
+        status_errors=(SdkArtifactError,),
+        timeout_seconds=ARTIFACT_IMAGE_DISPATCH_TIMEOUT_SECONDS,
     )
     if error is not None:
         error["id"] = frame_id

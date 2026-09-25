@@ -14,7 +14,11 @@ from typing import Any, Literal
 from ._context import _execution_context
 from .client import get_client, raise_for_status_with_detail
 from .models import ArtifactRef
-from ._local_transport import get as _get_local_transport
+from ._local_transport import (
+    ARTIFACT_IMAGE_LOCAL_TIMEOUT_SECONDS,
+    ARTIFACT_RENDER_LOCAL_TIMEOUT_SECONDS,
+    get as _get_local_transport,
+)
 
 
 def _workspace_params() -> dict[str, str]:
@@ -89,7 +93,27 @@ class artifacts:
         subtitle: str | None = None,
         page_size: Literal["letter", "a4"] = "letter",
     ) -> ArtifactRef:
-        """Create a flowing PDF or DOCX document and return its reference."""
+        """Create a flowing PDF or DOCX document and return its reference.
+
+        Inside an engine child this renders through the parent over the
+        dedicated local transport (same service as the HTTP endpoint);
+        elsewhere it calls the SDK API endpoint. A local attempt never
+        falls back to HTTP.
+        """
+        transport = _get_local_transport()
+        if transport is not None:
+            params = _workspace_params()
+            result = await transport.call_artifacts_create_document(
+                filename,
+                format,
+                title,
+                subtitle,
+                sections,
+                page_size,
+                params.get("workspace_id"),
+                timeout=ARTIFACT_RENDER_LOCAL_TIMEOUT_SECONDS,
+            )
+            return ArtifactRef.model_validate(result)
         return await artifacts._render(
             "/api/sdk/artifacts/document",
             {
@@ -108,7 +132,23 @@ class artifacts:
         *,
         sheets: list[dict[str, Any]],
     ) -> ArtifactRef:
-        """Create a styled XLSX workbook and return its reference."""
+        """Create a styled XLSX workbook and return its reference.
+
+        Inside an engine child this renders through the parent over the
+        dedicated local transport (same service as the HTTP endpoint);
+        elsewhere it calls the SDK API endpoint. A local attempt never
+        falls back to HTTP.
+        """
+        transport = _get_local_transport()
+        if transport is not None:
+            params = _workspace_params()
+            result = await transport.call_artifacts_create_spreadsheet(
+                filename,
+                sheets,
+                params.get("workspace_id"),
+                timeout=ARTIFACT_RENDER_LOCAL_TIMEOUT_SECONDS,
+            )
+            return ArtifactRef.model_validate(result)
         return await artifacts._render(
             "/api/sdk/artifacts/spreadsheet",
             {"filename": filename, "sheets": sheets},
@@ -121,7 +161,24 @@ class artifacts:
         format: Literal["csv", "html", "markdown", "text", "json"],
         content: str,
     ) -> ArtifactRef:
-        """Create a text-family artifact and return its reference."""
+        """Create a text-family artifact and return its reference.
+
+        Inside an engine child this renders through the parent over the
+        dedicated local transport (same service as the HTTP endpoint);
+        elsewhere it calls the SDK API endpoint. A local attempt never
+        falls back to HTTP.
+        """
+        transport = _get_local_transport()
+        if transport is not None:
+            params = _workspace_params()
+            result = await transport.call_artifacts_create_text(
+                filename,
+                format,
+                content,
+                params.get("workspace_id"),
+                timeout=ARTIFACT_RENDER_LOCAL_TIMEOUT_SECONDS,
+            )
+            return ArtifactRef.model_validate(result)
         return await artifacts._render(
             "/api/sdk/artifacts/text",
             {"filename": filename, "format": format, "content": content},
@@ -133,7 +190,23 @@ class artifacts:
         *,
         prompt: str,
     ) -> ArtifactRef:
-        """Generate an image with the configured image model."""
+        """Generate an image with the configured image model.
+
+        Inside an engine child this generates through the parent over
+        the dedicated local transport (same service as the HTTP
+        endpoint); elsewhere it calls the SDK API endpoint. A local
+        attempt never falls back to HTTP.
+        """
+        transport = _get_local_transport()
+        if transport is not None:
+            params = _workspace_params()
+            result = await transport.call_artifacts_create_image(
+                filename,
+                prompt,
+                params.get("workspace_id"),
+                timeout=ARTIFACT_IMAGE_LOCAL_TIMEOUT_SECONDS,
+            )
+            return ArtifactRef.model_validate(result)
         return await artifacts._render(
             "/api/sdk/artifacts/image",
             {"filename": filename, "prompt": prompt},

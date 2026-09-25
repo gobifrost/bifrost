@@ -123,6 +123,8 @@ from typing import Any, NoReturn
 # integrations facade, the full tables facade, and the SDK agent
 # ``enqueue``/``get_run`` operations ride the local transport. The
 # parent enforces the same allowlist; anything else is a 404 response.
+# Artifact generation (``create_document``/``create_spreadsheet``/
+# ``create_text``/``create_image``) rides the same channel.
 OP_CONFIG_GET = "config.get"
 OP_CONFIG_SET = "config.set"
 OP_CONFIG_LIST = "config.list"
@@ -156,6 +158,10 @@ OP_ARTIFACTS_WRITE = "artifacts.write"
 OP_ARTIFACTS_READ = "artifacts.read"
 OP_ARTIFACTS_LIST = "artifacts.list"
 OP_ARTIFACTS_GET_DOWNLOAD_URL = "artifacts.get_download_url"
+OP_ARTIFACTS_CREATE_DOCUMENT = "artifacts.create_document"
+OP_ARTIFACTS_CREATE_SPREADSHEET = "artifacts.create_spreadsheet"
+OP_ARTIFACTS_CREATE_TEXT = "artifacts.create_text"
+OP_ARTIFACTS_CREATE_IMAGE = "artifacts.create_image"
 OP_FILES_READ = "files.read"
 OP_FILES_WRITE = "files.write"
 OP_FILES_LIST = "files.list"
@@ -179,6 +185,18 @@ MAX_FRAME_BYTES = 64 * 1024
 # Config resolution is a single indexed read; a stall means the parent is
 # gone or wedged, so fail loudly rather than hang the workflow.
 DEFAULT_OP_TIMEOUT_SECONDS = 30.0
+
+# Child-side deadlines for artifact generation. ``create_image`` runs a
+# provider HTTP call with a 180s httpx timeout (see
+# ``src.services.media_generation.generate_image_with_config``), so its
+# local deadline leaves room for that call plus the parent's store/commit
+# and the error-frame return. Render operations (document/spreadsheet/
+# text) are CPU-bound in a worker thread with no external I/O; their
+# deadline bounds that work. Each leaves a ~10s margin over the matching
+# parent dispatch timeout so a parent timeout still returns an error
+# frame instead of tripping the child deadline first.
+ARTIFACT_RENDER_LOCAL_TIMEOUT_SECONDS = 70.0
+ARTIFACT_IMAGE_LOCAL_TIMEOUT_SECONDS = 195.0
 
 # Raw result bytes per chunk part. Base64 expands 4/3, so one part encodes
 # to 65024 chars; with the part-frame envelope every emitted frame stays
@@ -1452,6 +1470,146 @@ class ChildLocalTransport:
         result = await self._call(
             OP_ARTIFACTS_GET_DOWNLOAD_URL,
             {"artifact_id": artifact_id},
+            timeout,
+        )
+        if not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+    async def call_artifacts_create_document(
+        self,
+        filename: str,
+        format: str,
+        title: str,
+        subtitle: str | None,
+        sections: list[dict[str, Any]],
+        page_size: str,
+        workspace_id: str | None = None,
+        timeout: float = ARTIFACT_RENDER_LOCAL_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """Render and store a PDF/DOCX artifact through the parent.
+
+        No HTTP fallback. Sends only the document data; actor, org, and
+        execution identity come from the parent's dispatch principal.
+        Returns the ``ArtifactRef`` dict, identical to the HTTP path.
+        Large section payloads ride bounded chunked request frames. The
+        deadline bounds the parent's CPU render plus store/commit; a
+        timeout or transport loss raises without an HTTP retry (a render
+        may already have committed, so a retry could double-apply).
+        """
+        result = await self._call(
+            OP_ARTIFACTS_CREATE_DOCUMENT,
+            {
+                "filename": filename,
+                "format": format,
+                "title": title,
+                "subtitle": subtitle,
+                "sections": sections,
+                "page_size": page_size,
+                "workspace_id": workspace_id,
+            },
+            timeout,
+        )
+        if not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+    async def call_artifacts_create_spreadsheet(
+        self,
+        filename: str,
+        sheets: list[dict[str, Any]],
+        workspace_id: str | None = None,
+        timeout: float = ARTIFACT_RENDER_LOCAL_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """Render and store an XLSX artifact through the parent.
+
+        No HTTP fallback. Sends only the workbook data; actor, org, and
+        execution identity come from the parent's dispatch principal.
+        Returns the ``ArtifactRef`` dict, identical to the HTTP path.
+        Large sheet payloads ride bounded chunked request frames.
+        """
+        result = await self._call(
+            OP_ARTIFACTS_CREATE_SPREADSHEET,
+            {
+                "filename": filename,
+                "sheets": sheets,
+                "workspace_id": workspace_id,
+            },
+            timeout,
+        )
+        if not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+    async def call_artifacts_create_text(
+        self,
+        filename: str,
+        format: str,
+        content: str,
+        workspace_id: str | None = None,
+        timeout: float = ARTIFACT_RENDER_LOCAL_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """Render and store a text-family artifact through the parent.
+
+        No HTTP fallback. Sends only the text data; actor, org, and
+        execution identity come from the parent's dispatch principal.
+        Returns the ``ArtifactRef`` dict, identical to the HTTP path.
+        Large contents ride bounded chunked request frames.
+        """
+        result = await self._call(
+            OP_ARTIFACTS_CREATE_TEXT,
+            {
+                "filename": filename,
+                "format": format,
+                "content": content,
+                "workspace_id": workspace_id,
+            },
+            timeout,
+        )
+        if not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+    async def call_artifacts_create_image(
+        self,
+        filename: str,
+        prompt: str,
+        workspace_id: str | None = None,
+        timeout: float = ARTIFACT_IMAGE_LOCAL_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """Generate and store an image through the parent.
+
+        No HTTP fallback. Sends only the filename/prompt; actor, org,
+        and execution identity come from the parent's dispatch principal
+        (usage attribution uses the execution id from the caller's own
+        context, like the HTTP query param). Returns the ``ArtifactRef``
+        dict, identical to the HTTP path. The deadline leaves room for
+        the parent's 180s provider HTTP plus store/commit and the error
+        frame return.
+        """
+        result = await self._call(
+            OP_ARTIFACTS_CREATE_IMAGE,
+            {
+                "filename": filename,
+                "prompt": prompt,
+                "workspace_id": workspace_id,
+            },
             timeout,
         )
         if not isinstance(result, dict):
