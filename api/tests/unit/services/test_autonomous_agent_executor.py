@@ -21,6 +21,7 @@ from src.services.execution.autonomous_agent_executor import (
     DelegationOutcome,
     MAX_DELEGATION_DEPTH,
     ToolError,
+    _parse_structured_output,
 )
 from src.services.llm.base import LLMConfig, LLMResponse, ToolCallRequest, ToolDefinition
 
@@ -1017,6 +1018,27 @@ class TestAutonomousAgentExecutor:
 
         assert result["status"] == "completed"
         assert result["output"] == {"result": 42}
+
+    @pytest.mark.parametrize(
+        "content",
+        [
+            '{"result": 42}',
+            '```json\n{"result": 42}\n```',
+            '```\n{"result": 42}\n```',
+            '  ```json\n{"result": 42}\n```\n',
+        ],
+    )
+    def test_parse_structured_output_accepts_fenced_json(self, content):
+        """A ```json fence around the reply must not defeat the structured parse."""
+        assert _parse_structured_output(content) == {"result": 42}
+
+    @pytest.mark.parametrize(
+        "content",
+        ["Not JSON at all", "Here you go:\n```json\n{\"result\": 42}\n```"],
+    )
+    def test_parse_structured_output_returns_non_json_unchanged(self, content):
+        """Anything that is not a bare or fenced JSON document comes back as the raw string."""
+        assert _parse_structured_output(content) == content
 
     @pytest.mark.asyncio
     @patch("src.services.agent_runtime.model_factory.create_agent_model")
