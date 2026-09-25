@@ -1706,109 +1706,45 @@ async def cli_ai_stream(
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
-    """Generate a streaming AI completion using SSE."""
-    import base64
+    """Generate a streaming AI completion using SSE.
 
-    from src.services.llm import LLMInputFile, LLMMessage, get_llm_client
+    Thin HTTP adapter over the shared operation
+    (``shared.sdk_ai.stream_sdk_ai``), which the engine-local
+    dispatcher will call for the same inputs. Scope is resolved here —
+    before headers are sent — so authorization failures stay HTTP
+    status errors; everything after the stream starts surfaces as SSE
+    error events. Each shared payload dict is serialized to one
+    ``data:`` line, with the terminal ``[DONE]`` appended after the
+    done payload.
+    """
+    from shared.sdk_ai import stream_sdk_ai
 
-    # Capture context for usage recording. Resolve scope upfront against
-    # the authenticated user so the streaming closure doesn't have to
-    # re-derive bypass after CurrentUser falls out of scope.
-    user_id = current_user.user_id
+    # Resolve scope upfront against the authenticated user so the
+    # streaming body doesn't have to re-derive bypass after CurrentUser
+    # falls out of scope. 403/422 here stay HTTP errors (headers not
+    # yet sent); later failures are SSE error events.
     resolved_org_id = await _resolve_sdk_org_id(current_user, request.org_id, db)
-    execution_id_str = request.execution_id
 
-    async def generate():
-        try:
-            client = await get_llm_client(db)
-
-            # Convert to LLMMessage objects
-            llm_messages = [
-                LLMMessage(role=msg["role"], content=msg["content"])  # type: ignore[arg-type]
-                for msg in request.messages
-            ]
-            if request.input_files:
-                user_message = next(
-                    (
-                        message
-                        for message in reversed(llm_messages)
-                        if message.role == "user"
-                    ),
-                    None,
-                )
-                if user_message is None:
-                    raise ValueError("AI file inputs require a user message.")
-                user_message.input_files = [
-                    LLMInputFile(
-                        filename=item.filename,
-                        media_type=item.content_type,
-                        data=base64.b64decode(item.data_base64, validate=True),
-                    )
-                    for item in request.input_files
-                ]
-
-            async for chunk in client.stream(
-                messages=llm_messages,
-                max_tokens=request.max_tokens,
-                model=request.model,
-            ):
-                if chunk.type == "delta":
-                    yield f"data: {json.dumps({'content': chunk.content})}\n\n"
-                elif chunk.type == "done":
-                    yield f"data: {json.dumps({'done': True, 'input_tokens': chunk.input_tokens, 'output_tokens': chunk.output_tokens})}\n\n"
-                    yield "data: [DONE]\n\n"
-
-                    # Record AI usage after stream completes
-                    try:
-                        from src.services.ai_usage_service import record_ai_usage
-                        from src.core.cache import get_shared_redis
-
-                        redis_client = await get_shared_redis()
-                        await record_ai_usage(
-                            session=db,
-                            redis_client=redis_client,
-                            provider=client.provider_name,
-                            model=client.model_name,
-                            input_tokens=chunk.input_tokens or 0,
-                            output_tokens=chunk.output_tokens or 0,
-                            cache_read_tokens=chunk.cache_read_tokens,
-                            cache_write_tokens=chunk.cache_write_tokens,
-                            provider_cost=chunk.provider_cost,
-                            execution_id=UUID(execution_id_str)
-                            if execution_id_str
-                            else None,
-                            organization_id=UUID(resolved_org_id)
-                            if resolved_org_id
-                            else None,
-                            user_id=user_id,
-                        )
-                    except Exception as e:
-                        logger.warning(f"Failed to record AI usage: {log_safe(e)}")
-                elif chunk.type == "error":
-                    yield f"data: {json.dumps({'error': chunk.error})}\n\n"
-                    break
-        except ValueError as e:
-            logger.warning(f"CLI AI stream rejected: {e}")
-            yield f"data: {json.dumps({'error': 'AI stream is unavailable. See server logs for details.'})}\n\n"
-        except Exception as e:
-            # Check for authentication errors from LLM providers
-            error_type = type(e).__name__
-            error_module = type(e).__module__
-            if error_type == "AuthenticationError" and error_module in (
-                "anthropic",
-                "openai",
-            ):
-                provider = "Anthropic" if error_module == "anthropic" else "OpenAI"
-                logger.error(
-                    f"CLI AI stream failed: {provider} authentication error - invalid API key"
-                )
-                yield f"data: {json.dumps({'error': f'{provider} API key is invalid or expired. Please update the API key in System Settings > AI Configuration.'})}\n\n"
-            else:
-                logger.error(f"CLI AI stream failed: {log_safe(e)}")
-                yield f"data: {json.dumps({'error': 'AI stream failed. See server logs for details.'})}\n\n"
+    async def sse():
+        async for event in stream_sdk_ai(
+            db,
+            current_user,
+            messages=request.messages,
+            max_tokens=request.max_tokens,
+            model=request.model,
+            # The established HTTP stream endpoint always selected the
+            # platform default profile. Keep that SDK-visible behavior;
+            # parent-local callers may select a profile directly.
+            execution_id=request.execution_id,
+            resolved_org_id=resolved_org_id,
+            input_files=request.input_files,
+        ):
+            yield f"data: {json.dumps(event)}\n\n"
+            if event.get("done") is True:
+                yield "data: [DONE]\n\n"
 
     return StreamingResponse(
-        generate(),
+        sse(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
