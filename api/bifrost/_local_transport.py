@@ -1241,6 +1241,294 @@ class ChildLocalTransport:
             )
         return result
 
+    async def call_files_read(
+        self,
+        path: str,
+        location: str,
+        mode: str,
+        binary: bool,
+        scope: str | None,
+        solution: str | None = None,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """Read one file through the parent. No HTTP fallback.
+
+        Returns the ``{"content", "binary"}`` dict — text, or base64 when
+        binary — identical to the HTTP ``FileReadResponse``. Large payloads
+        arrive as bounded chunked response frames. The ``solution`` target
+        is parent-resolved inside the target org; the caller's own install
+        identity stays parent-owned.
+        """
+        result = await self._call(
+            OP_FILES_READ,
+            {
+                "path": path,
+                "location": location,
+                "mode": mode,
+                "binary": binary,
+                "scope": scope,
+                "solution": solution,
+            },
+            timeout,
+        )
+        if not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+    async def call_files_write(
+        self,
+        path: str,
+        content: str,
+        location: str,
+        mode: str,
+        binary: bool,
+        expected_version: str | None,
+        create_only: bool,
+        scope: str | None,
+        solution: str | None = None,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> None:
+        """Write one file through the parent. No HTTP fallback.
+
+        ``content`` is text, or base64 when binary — exactly like the HTTP
+        JSON body. Large payloads ride bounded chunked request frames.
+        Returns nothing (HTTP 204). A local attempt never falls back to
+        HTTP — failures raise loudly below (a write may already have
+        committed, so a retry over HTTP could double-apply).
+        """
+        result = await self._call(
+            OP_FILES_WRITE,
+            {
+                "path": path,
+                "content": content,
+                "location": location,
+                "mode": mode,
+                "binary": binary,
+                "expected_version": expected_version,
+                "create_only": create_only,
+                "scope": scope,
+                "solution": solution,
+            },
+            timeout,
+        )
+        if result is not None:
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+
+    async def call_files_list(
+        self,
+        directory: str,
+        location: str,
+        mode: str,
+        scope: str | None,
+        solution: str | None = None,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> list[str]:
+        """List one directory through the parent. No HTTP fallback.
+
+        Returns the file/dir names (unwrapped from the ``{"files"}``
+        envelope — the transport result contract does not carry bare
+        lists), identical to the HTTP path.
+        """
+        result = await self._call(
+            OP_FILES_LIST,
+            {
+                "directory": directory,
+                "location": location,
+                "mode": mode,
+                "scope": scope,
+                "solution": solution,
+            },
+            timeout,
+        )
+        if not isinstance(result, dict) or not isinstance(
+            result.get("files"), list
+        ):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result["files"]
+
+    async def call_files_delete(
+        self,
+        path: str,
+        location: str,
+        mode: str,
+        expected_version: str | None,
+        scope: str | None,
+        solution: str | None = None,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> None:
+        """Delete one file through the parent. No HTTP fallback.
+
+        Returns nothing (HTTP 204). A missing file is a 404 error frame,
+        like the HTTP path. A local attempt never falls back to HTTP.
+        """
+        result = await self._call(
+            OP_FILES_DELETE,
+            {
+                "path": path,
+                "location": location,
+                "mode": mode,
+                "expected_version": expected_version,
+                "scope": scope,
+                "solution": solution,
+            },
+            timeout,
+        )
+        if result is not None:
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+
+    async def call_files_exists(
+        self,
+        path: str,
+        location: str,
+        mode: str,
+        scope: str | None,
+        solution: str | None = None,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> bool:
+        """Probe one file's existence through the parent. No HTTP fallback.
+
+        Returns a bool (never 403/404 — just False), identical to the
+        HTTP path.
+        """
+        result = await self._call(
+            OP_FILES_EXISTS,
+            {
+                "path": path,
+                "location": location,
+                "mode": mode,
+                "scope": scope,
+                "solution": solution,
+            },
+            timeout,
+        )
+        if not isinstance(result, bool):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+    async def call_files_stat(
+        self,
+        path: str,
+        location: str,
+        mode: str,
+        scope: str | None,
+        solution: str | None = None,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """Fetch one file's metadata through the parent. No HTTP fallback.
+
+        Returns the ``FileStatResponse`` dict (``exists=False`` when
+        absent — never a 404), identical to the HTTP path.
+        """
+        result = await self._call(
+            OP_FILES_STAT,
+            {
+                "path": path,
+                "location": location,
+                "mode": mode,
+                "scope": scope,
+                "solution": solution,
+            },
+            timeout,
+        )
+        if not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+    async def call_files_signed_url(
+        self,
+        path: str,
+        method: str,
+        content_type: str,
+        location: str,
+        scope: str | None,
+        expires_in: int,
+        solution: str | None = None,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """Presign one direct-upload/download URL through the parent.
+
+        No HTTP fallback. Returns the ``{"url", "path", "expires_in"}``
+        dict, identical to the HTTP path.
+        """
+        result = await self._call(
+            OP_FILES_SIGNED_URL,
+            {
+                "path": path,
+                "method": method,
+                "content_type": content_type,
+                "location": location,
+                "scope": scope,
+                "expires_in": expires_in,
+                "solution": solution,
+            },
+            timeout,
+        )
+        if not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+    async def call_files_search(
+        self,
+        query: str,
+        case_sensitive: bool,
+        is_regex: bool,
+        include_pattern: str,
+        max_results: int,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """Search workspace file contents through the parent. No HTTP fallback.
+
+        Returns the ``SearchResponse`` dict. Like HTTP, there is no scope
+        parameter — the server scopes results by the caller's identity.
+        Large result sets arrive as bounded chunked response frames.
+        """
+        result = await self._call(
+            OP_FILES_SEARCH,
+            {
+                "query": query,
+                "case_sensitive": case_sensitive,
+                "is_regex": is_regex,
+                "include_pattern": include_pattern,
+                "max_results": max_results,
+            },
+            timeout,
+        )
+        if not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
 
 _installed: ChildLocalTransport | None = None
 _install_lock = threading.Lock()
