@@ -308,6 +308,14 @@ class ProcessHandle:
     imp_resp: Any = None
     # Pump task serving the import channel. None once finished/closed.
     imp_task: Any = None
+    # Parent ends of the dedicated local stream channel (child credits on
+    # one pipe, parent answers with ordered events on the other). Separate
+    # from the SDK and import pairs so incremental delivery never blocks
+    # behind fixed SDK calls or imports. None once closed.
+    stream_req: Any = None
+    stream_resp: Any = None
+    # Pump task serving the stream channel. None once finished/closed.
+    stream_task: Any = None
 
     @property
     def is_alive(self) -> bool:
@@ -676,7 +684,11 @@ class ProcessPoolManager:
         dedicated import channel for synchronous module resolution and
         source fetch (see :meth:`_start_import_pump`): an import may block
         the child's event loop while an async SDK request is awaiting a
-        response, so the two channels never share a lock.
+        response, so the two channels never share a lock. Every child
+        additionally gets a third dedicated stream channel for
+        long-running operation streams (see :meth:`_start_stream_pump`):
+        one active stream per child with explicit per-event credit, served
+        under the same principal on independent descriptors.
 
         Returns:
             ProcessHandle for the new forked worker. State starts at BUSY
@@ -704,11 +716,14 @@ class ProcessPoolManager:
             sdk_resp_send,
             imp_req_recv,
             imp_resp_send,
+            stream_req_recv,
+            stream_resp_send,
         ) = self._template.fork(
             worker_id=process_id,
             persistent=False,
             with_sdk=True,
             with_import=True,
+            with_stream=True,
         )
 
         handle = ProcessHandle(
@@ -725,6 +740,8 @@ class ProcessPoolManager:
             sdk_resp=sdk_resp_send,
             imp_req=imp_req_recv,
             imp_resp=imp_resp_send,
+            stream_req=stream_req_recv,
+            stream_resp=stream_resp_send,
         )
 
         self.processes[process_id] = handle
@@ -830,6 +847,77 @@ class ProcessPoolManager:
         finally:
             self._close_import_channel(handle)
 
+    def _start_stream_pump(
+        self,
+        handle: ProcessHandle,
+        principal: LocalDispatchPrincipal,
+    ) -> None:
+        """Serve one child's local stream channel for a validated principal.
+
+        Runs concurrently with the unary SDK and import pumps on
+        independent descriptors: incremental event delivery never blocks
+        behind fixed SDK calls, and synchronous imports stay usable while
+        a stream is active. The principal is derived from parent-owned
+        dispatch context before forking — never from child frames. The
+        pump ends on child EOF/crash, protocol violation, or explicit
+        close. The production stream registry is empty until the AI
+        binding stage, so opens fail with a terminal error and the channel
+        stays usable.
+        """
+        task: asyncio.Task[None] = asyncio.create_task(
+            self._serve_stream_channel(handle, principal),
+            name=f"pool-stream-{handle.id}",
+        )
+        handle.stream_task = task
+        self._sdk_tasks.add(task)
+        task.add_done_callback(self._sdk_task_done)
+
+    async def _serve_stream_channel(
+        self,
+        handle: ProcessHandle,
+        principal: LocalDispatchPrincipal,
+    ) -> None:
+        """Pump one child stream channel; close it when the pump ends."""
+        from src.services.execution.sdk_stream_dispatch import serve_stream_channel
+
+        stream_req, stream_resp = handle.stream_req, handle.stream_resp
+        if stream_req is None or stream_resp is None:
+            return
+        try:
+            reason = await serve_stream_channel(
+                recv_conn=stream_req,
+                send_conn=stream_resp,
+                principal=principal,
+                executor=self._sdk_executor,
+            )
+            logger.debug("Local-stream channel for %s ended: %s", handle.id, reason)
+        finally:
+            self._close_stream_channel(handle)
+
+    def _close_stream_channel(self, handle: ProcessHandle) -> None:
+        """Stop the stream pump and release one child's channel descriptors.
+
+        Idempotent: safe to call from result, crash, kill, and shutdown
+        paths. Never raises. Touches only the stream pair — the unary SDK
+        and import channels are independent and stay open.
+        """
+        task = handle.stream_task
+        handle.stream_task = None
+        if task is not None:
+            try:
+                if task is not asyncio.current_task():
+                    task.cancel()
+            except Exception as e:
+                logger.debug("Stream pump cancel ignored for %s: %s", handle.id, e)
+        for attr in ("stream_req", "stream_resp"):
+            conn = getattr(handle, attr)
+            setattr(handle, attr, None)
+            if conn is not None:
+                try:
+                    conn.close()
+                except (OSError, EOFError) as e:
+                    logger.debug("Stream channel close ignored for %s: %s", handle.id, e)
+
     def _close_sdk_channel(self, handle: ProcessHandle) -> None:
         """Stop the SDK pump and release one child's channel descriptors.
 
@@ -877,15 +965,16 @@ class ProcessPoolManager:
                     logger.debug("Import channel close ignored for %s: %s", handle.id, e)
 
     def _close_local_channels(self, handle: ProcessHandle) -> None:
-        """Stop both local pumps and release one child's channel pairs.
+        """Stop all local pumps and release one child's channel pairs.
 
         Idempotent: safe to call from result, crash, kill, and shutdown
-        paths. Never raises. Both pairs must always close together — a
-        half-closed child would keep importing or calling SDK operations
-        on a stale principal.
+        paths. Never raises. All pairs must always close together — a
+        half-closed child would keep importing, calling SDK operations,
+        or streaming on a stale principal.
         """
         self._close_sdk_channel(handle)
         self._close_import_channel(handle)
+        self._close_stream_channel(handle)
 
     async def start(self) -> None:
         """
@@ -910,10 +999,11 @@ class ProcessPoolManager:
         self._last_active_execution_refresh = time.monotonic()
 
         # Bounded thread pool for blocking local-channel pipe IO: at most one
-        # blocked reader per live child per channel plus headroom.
+        # blocked reader per live child per channel (unary SDK, import,
+        # stream) plus headroom.
         if self._sdk_executor is None:
             self._sdk_executor = ThreadPoolExecutor(
-                max_workers=2 * (self.max_workers + self.max_service_workers) + 4,
+                max_workers=3 * (self.max_workers + self.max_service_workers) + 4,
                 thread_name_prefix="sdk-local",
             )
 
@@ -1194,6 +1284,10 @@ class ProcessPoolManager:
         # entry-source loads and cold imports must not wait on (or block)
         # async SDK traffic.
         self._start_import_pump(handle, principal)
+        # Serve the stream channel concurrently under the same principal:
+        # long-running operation streams deliver incrementally while fixed
+        # SDK calls and imports stay usable.
+        self._start_stream_pump(handle, principal)
 
         try:
             await self._write_active_execution_lease(handle.current_execution)
@@ -1295,6 +1389,10 @@ class ProcessPoolManager:
             # principal: cold service-source loads must not wait on (or
             # block) async SDK traffic.
             self._start_import_pump(handle, principal)
+            # Serve the stream channel concurrently under the same
+            # principal: service operation streams deliver incrementally
+            # while fixed SDK calls and imports stay usable.
+            self._start_stream_pump(handle, principal)
 
             self._register_result_reader(handle)
 
