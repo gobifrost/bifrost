@@ -26,6 +26,12 @@ vi.mock("@/services/usage", () => ({
 	useUsageReport: (...args: unknown[]) => mockUseUsageReport(...args),
 }));
 
+vi.mock("./WorkflowResourcesReport", () => ({
+	WorkflowResourcesReport: () => (
+		<section aria-label="workflow resources report">Resource runs</section>
+	),
+}));
+
 vi.mock("@/components/layout/ListPageHeader", () => ({
 	ListPageHeader: ({
 		title,
@@ -219,6 +225,20 @@ beforeEach(() => {
 });
 
 describe("UsageReports", () => {
+	it("keeps AI usage as the default and opens workflow resources as a separate tab", async () => {
+		const { user } = await renderPage();
+		expect(screen.getByText("Total AI Cost")).toBeVisible();
+		await user.click(
+			screen.getByRole("tab", { name: "Workflow resources" }),
+		);
+		expect(
+			screen.getByRole("region", { name: "workflow resources report" }),
+		).toBeVisible();
+		expect(screen.queryByText("Total AI Cost")).not.toBeInTheDocument();
+		await user.click(screen.getByRole("tab", { name: "AI usage" }));
+		expect(screen.getByText("Total AI Cost")).toBeVisible();
+	});
+
 	it("shows retry instead of empty report claims when the first read fails", async () => {
 		const refetch = vi.fn();
 		mockUseUsageReport.mockReturnValue({

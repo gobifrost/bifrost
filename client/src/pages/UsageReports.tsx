@@ -21,6 +21,7 @@ import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
 import { UsageSummaryCards } from "@/components/reports/UsageSummaryCards";
 import { UsageCharts } from "@/components/reports/UsageCharts";
 import { generateUsageDemoData } from "./UsageReports.demo";
+import { WorkflowResourcesReport } from "./WorkflowResourcesReport";
 import {
 	WorkflowTable,
 	ConversationTable,
@@ -34,6 +35,27 @@ import {
 // ============================================================================
 
 export function UsageReports() {
+	const [report, setReport] = useState("ai");
+	return (
+		<div className="flex h-full min-h-0 flex-col">
+			<Tabs
+				value={report}
+				onValueChange={setReport}
+				className="mx-auto w-full max-w-[1440px] shrink-0 pt-4"
+			>
+				<TabsList aria-label="Usage report">
+					<TabsTrigger value="ai">AI usage</TabsTrigger>
+					<TabsTrigger value="resources">
+						Workflow resources
+					</TabsTrigger>
+				</TabsList>
+			</Tabs>
+			{report === "ai" ? <AIUsageReport /> : <WorkflowResourcesReport />}
+		</div>
+	);
+}
+
+function AIUsageReport() {
 	const { isPlatformAdmin } = useAuth();
 
 	// Organization filter state (platform admins only)
@@ -107,7 +129,7 @@ export function UsageReports() {
 	const showConversationTable = source === "chat" || source === "all";
 
 	return (
-		<PageWorkspace className="mx-auto w-full max-w-[1440px] min-w-0">
+		<PageWorkspace className="mx-auto w-full max-w-[1440px] min-w-0 lg:h-auto lg:flex-1">
 			<div className="shrink-0 space-y-4">
 				<ListPageHeader
 					title="Usage Reports"

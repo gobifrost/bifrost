@@ -9,6 +9,7 @@ move a peak column.
 from __future__ import annotations
 
 from datetime import date
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -26,9 +27,14 @@ def test_capture_failure_metrics_reports_pss_growth(
     monkeypatch.setattr(
         "src.services.execution.simple_worker._get_pss_bytes", lambda: 200 * 1024
     )
+    monkeypatch.setattr(
+        "src.services.execution.simple_worker.resource.getrusage",
+        lambda _: SimpleNamespace(ru_maxrss=321, ru_utime=1.0, ru_stime=0.5),
+    )
     metrics = _capture_failure_metrics(100 * 1024)
 
     assert metrics["peak_memory_bytes"] == 100 * 1024
+    assert metrics["peak_process_rss_bytes"] == 321 * 1024
     assert metrics["cpu_total_seconds"] >= 0.0
 
 

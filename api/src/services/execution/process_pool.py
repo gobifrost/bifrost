@@ -52,6 +52,7 @@ from src.config import get_settings
 from src.core.cache.keys import TTL_ACTIVE_EXECUTION, active_execution_key
 from src.core.redis_client import ActiveExecution
 from src.models.contracts.notifications import NotificationCategory, NotificationCreate, NotificationStatus
+from src.services.execution.cpu_sampler import CPUSampler, get_clock_ticks
 from src.services.execution.memory_monitor import get_cgroup_memory, has_sufficient_memory_cgroup
 from src.services.execution.requirements_setup_result import RequirementsInstallResult
 from src.services.notification_service import get_notification_service
@@ -286,6 +287,8 @@ class ProcessHandle:
     # Set for supervised service children (which live in service_processes).
     # None for one-shot workflow children.
     service: ServiceInfo | None = None
+    # CPU/RSS sampler for workflow children. None for service children.
+    cpu_sampler: CPUSampler | None = None
 
     @property
     def is_alive(self) -> bool:
@@ -947,6 +950,12 @@ class ProcessPoolManager:
             active_execution=active_execution,
         )
         handle.result_reported = False
+        if handle.pid is not None:
+            handle.cpu_sampler = CPUSampler(
+                pid=handle.pid,
+                clock_ticks=get_clock_ticks(),
+            )
+            handle.cpu_sampler.set_baseline(time.monotonic())
 
         try:
             await self._write_active_execution_lease(handle.current_execution)
@@ -1032,6 +1041,9 @@ class ProcessPoolManager:
                 lease_token=lease_token,
                 graceful_shutdown_seconds=graceful_shutdown_seconds,
             )
+            # Service children are not workflow executions; CPU sampling is
+            # scoped to workflow children only.
+            handle.cpu_sampler = None
             # Service children live under service-slot accounting, not the
             # workflow pool.
             del self.processes[handle.id]
@@ -1189,6 +1201,7 @@ class ProcessPoolManager:
 
                 await self._check_timeouts()
                 await self._check_process_health()
+                self._sample_resources()
 
                 # Periodic stale queue cleanup
                 now = _time.monotonic()
@@ -1205,6 +1218,32 @@ class ProcessPoolManager:
             await asyncio.sleep(1.0)
 
         logger.info("Monitor loop stopped")
+
+    def _sample_resources(self) -> None:
+        """Sample CPU and RSS for BUSY workflow children.
+
+        Runs synchronously inside the monitor loop. A /proc read per running
+        child per second is acceptable; missing or unreadable entries are
+        ignored so telemetry never blocks completion.
+        """
+        now = time.monotonic()
+        for handle in self.processes.values():
+            if handle.state != ProcessState.BUSY:
+                continue
+            if handle.service is not None:
+                continue
+            sampler = handle.cpu_sampler
+            if sampler is None:
+                if handle.pid is None:
+                    continue
+                sampler = CPUSampler(pid=handle.pid, clock_ticks=get_clock_ticks())
+                sampler.set_baseline(now)
+                handle.cpu_sampler = sampler
+                continue
+            try:
+                sampler.sample(now)
+            except Exception as e:
+                logger.debug(f"Resource sample failed for {handle.id}: {e}")
 
     async def _check_timeouts(self) -> None:
         """
@@ -1276,6 +1315,25 @@ class ProcessPoolManager:
                 pass
             handle.process.join(timeout=1)
 
+    def _attach_resource_peaks(self, handle: ProcessHandle, result: dict[str, Any]) -> None:
+        """Attach this execution's sampled CPU and process memory peaks."""
+        sampler = handle.cpu_sampler
+        if sampler is None:
+            return
+        # A final sample captures short runs that finish between monitor ticks.
+        sampler.sample(time.monotonic())
+        if sampler.peak_cpu_cores is None and sampler.peak_process_rss_bytes is None:
+            return
+        metrics = result.setdefault("metrics", {})
+        if isinstance(metrics, dict):
+            if sampler.peak_cpu_cores is not None:
+                metrics["peak_cpu_cores"] = sampler.peak_cpu_cores
+            if sampler.peak_process_rss_bytes is not None:
+                metrics["peak_process_rss_bytes"] = max(
+                    metrics.get("peak_process_rss_bytes") or 0,
+                    sampler.peak_process_rss_bytes,
+                )
+
     async def _report_timeout(self, handle: ProcessHandle) -> None:
         """
         Report a timeout to the result callback.
@@ -1290,15 +1348,17 @@ class ProcessPoolManager:
         if self.on_result is None or exec_info is None:
             return
         handle.result_reported = True
+        result = exec_info.attach_transport_metadata({
+            "type": "result",
+            "execution_id": exec_info.execution_id,
+            "success": False,
+            "error": f"Execution timed out after {exec_info.timeout_seconds}s",
+            "error_type": "TimeoutError",
+            "duration_ms": int(exec_info.elapsed_seconds * 1000),
+        })
+        self._attach_resource_peaks(handle, result)
         try:
-            await self.on_result(exec_info.attach_transport_metadata({
-                "type": "result",
-                "execution_id": exec_info.execution_id,
-                "success": False,
-                "error": f"Execution timed out after {exec_info.timeout_seconds}s",
-                "error_type": "TimeoutError",
-                "duration_ms": int(exec_info.elapsed_seconds * 1000),
-            }))
+            await self.on_result(result)
         except Exception as e:
             logger.exception(f"Error reporting timeout: {e}")
 
@@ -1518,15 +1578,17 @@ class ProcessPoolManager:
         if self.on_result is None or exec_info is None:
             return
         handle.result_reported = True
+        result = exec_info.attach_transport_metadata({
+            "type": "result",
+            "execution_id": exec_info.execution_id,
+            "success": False,
+            "error": "Execution was cancelled",
+            "error_type": "CancelledError",
+            "duration_ms": int(exec_info.elapsed_seconds * 1000),
+        })
+        self._attach_resource_peaks(handle, result)
         try:
-            await self.on_result(exec_info.attach_transport_metadata({
-                "type": "result",
-                "execution_id": exec_info.execution_id,
-                "success": False,
-                "error": "Execution was cancelled",
-                "error_type": "CancelledError",
-                "duration_ms": int(exec_info.elapsed_seconds * 1000),
-            }))
+            await self.on_result(result)
         except Exception as e:
             logger.exception(f"Error reporting cancellation: {e}")
 
@@ -1542,15 +1604,17 @@ class ProcessPoolManager:
         if self.on_result is None or exec_info is None:
             return
         handle.result_reported = True
+        result = exec_info.attach_transport_metadata({
+            "type": "result",
+            "execution_id": exec_info.execution_id,
+            "success": False,
+            "error": "Execution interrupted by worker shutdown",
+            "error_type": "WorkerShutdown",
+            "duration_ms": int(exec_info.elapsed_seconds * 1000),
+        })
+        self._attach_resource_peaks(handle, result)
         try:
-            await self.on_result(exec_info.attach_transport_metadata({
-                "type": "result",
-                "execution_id": exec_info.execution_id,
-                "success": False,
-                "error": "Execution interrupted by worker shutdown",
-                "error_type": "WorkerShutdown",
-                "duration_ms": int(exec_info.elapsed_seconds * 1000),
-            }))
+            await self.on_result(result)
         except Exception as e:
             logger.exception(f"Error reporting shutdown interruption: {e}")
 
@@ -1718,15 +1782,17 @@ class ProcessPoolManager:
         if self.on_result is None or exec_info is None:
             return
         handle.result_reported = True
+        result = exec_info.attach_transport_metadata({
+            "type": "result",
+            "execution_id": exec_info.execution_id,
+            "success": False,
+            "error": "Execution orphaned — process was killed but result was never reported",
+            "error_type": "OrphanedExecution",
+            "duration_ms": int(exec_info.elapsed_seconds * 1000),
+        })
+        self._attach_resource_peaks(handle, result)
         try:
-            await self.on_result(exec_info.attach_transport_metadata({
-                "type": "result",
-                "execution_id": exec_info.execution_id,
-                "success": False,
-                "error": "Execution orphaned — process was killed but result was never reported",
-                "error_type": "OrphanedExecution",
-                "duration_ms": int(exec_info.elapsed_seconds * 1000),
-            }))
+            await self.on_result(result)
         except Exception as e:
             logger.exception(f"Error reporting orphan: {e}")
 
@@ -1744,15 +1810,17 @@ class ProcessPoolManager:
         if self.on_result is None or exec_info is None:
             return
         handle.result_reported = True
+        result = exec_info.attach_transport_metadata({
+            "type": "result",
+            "execution_id": exec_info.execution_id,
+            "success": False,
+            "error": "Worker process crashed unexpectedly",
+            "error_type": "ProcessCrashError",
+            "duration_ms": int(exec_info.elapsed_seconds * 1000),
+        })
+        self._attach_resource_peaks(handle, result)
         try:
-            await self.on_result(exec_info.attach_transport_metadata({
-                "type": "result",
-                "execution_id": exec_info.execution_id,
-                "success": False,
-                "error": "Worker process crashed unexpectedly",
-                "error_type": "ProcessCrashError",
-                "duration_ms": int(exec_info.elapsed_seconds * 1000),
-            }))
+            await self.on_result(result)
         except Exception as e:
             logger.exception(f"Error reporting crash: {e}")
 
@@ -1840,6 +1908,7 @@ class ProcessPoolManager:
             logger.error("Result received without an active execution on %s", handle.id)
             return
         result = execution.attach_transport_metadata(result)
+        self._attach_resource_peaks(handle, result)
         callback_already_owned = handle.result_reported
 
         # Mark result as reported before clearing current_execution so the invariant

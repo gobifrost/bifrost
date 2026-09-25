@@ -59,6 +59,8 @@ class Execution(Base):
     cpu_user_seconds: Mapped[float | None] = mapped_column(Float, default=None)
     cpu_system_seconds: Mapped[float | None] = mapped_column(Float, default=None)
     cpu_total_seconds: Mapped[float | None] = mapped_column(Float, default=None)
+    peak_cpu_cores: Mapped[float | None] = mapped_column(Float, default=None)
+    peak_process_rss_bytes: Mapped[int | None] = mapped_column(BigInteger, default=None)
 
     # Economics - final values for this execution
     time_saved: Mapped[int] = mapped_column(Integer, default=0)  # Minutes saved

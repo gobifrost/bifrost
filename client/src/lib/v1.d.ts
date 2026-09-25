@@ -7455,6 +7455,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/reports/workflow-resources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get workflow resource report
+         * @description Get per-execution workflow resource usage for a time window. Platform admin only.
+         */
+        get: operations["get_workflow_resource_report_api_reports_workflow_resources_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/settings/ai/pricing": {
         parameters: {
             query?: never;
@@ -8486,8 +8506,8 @@ export interface paths {
          *     PATCH ``/{doc_id}`` for partial updates with merge semantics.
          *
          *     The candidate row is policy-checked for ``create``; if a row already
-         *     exists, it is also policy-checked for ``update`` against its pre-image.
-         *     Either denial returns 403; the row is not written.
+         *     exists, ``update`` is additionally required on BOTH its pre-image and
+         *     the replaced post-image. Any denial returns 403; the row is not written.
          *
          *     NOTE: This route is declared BEFORE ``GET /{table_id}/documents/{doc_id}``
          *     so the literal ``/upsert`` segment matches first. Reversing the order
@@ -8551,6 +8571,11 @@ export interface paths {
         /**
          * Update a document
          * @description Update a document (partial update, merges with existing).
+         *
+         *     The ``update`` policy must pass on BOTH the pre-image and the merged
+         *     post-image — mutating a row into a value the caller could not write
+         *     (e.g. retargeting ``organization_id``) is denied with 403 and the row
+         *     is left untouched.
          */
         patch: operations["update_document_api_tables__table_id__documents__doc_id__patch"];
         trace?: never;
@@ -28891,6 +28916,141 @@ export interface components {
             name: string;
         };
         /**
+         * WorkflowResourceReport
+         * @description Response for the workflow resource report endpoint.
+         */
+        WorkflowResourceReport: {
+            summary: components["schemas"]["WorkflowResourceSummary"];
+            /** Runs */
+            runs?: components["schemas"]["WorkflowResourceRun"][];
+            /** Workflows */
+            workflows?: components["schemas"]["WorkflowResourceWorkflow"][];
+            /**
+             * Total
+             * @default 0
+             */
+            total: number;
+            /**
+             * Page
+             * @default 1
+             */
+            page: number;
+            /**
+             * Page Size
+             * @default 25
+             */
+            page_size: number;
+        };
+        /**
+         * WorkflowResourceRun
+         * @description One execution row in the workflow resource report.
+         */
+        WorkflowResourceRun: {
+            /** Execution Id */
+            execution_id: string;
+            /** Workflow Id */
+            workflow_id?: string | null;
+            /** Workflow Name */
+            workflow_name: string;
+            /** Organization Name */
+            organization_name?: string | null;
+            /** Status */
+            status: string;
+            /** Started At */
+            started_at?: string | null;
+            /** Duration Ms */
+            duration_ms?: number | null;
+            /** Cpu Total Seconds */
+            cpu_total_seconds?: number | null;
+            /** Avg Cpu Cores */
+            avg_cpu_cores?: number | null;
+            /** Peak Cpu Cores */
+            peak_cpu_cores?: number | null;
+            /** Peak Process Rss Bytes */
+            peak_process_rss_bytes?: number | null;
+            /** Ai Cost */
+            ai_cost?: string;
+            /**
+             * Ai Calls
+             * @default 0
+             */
+            ai_calls: number;
+            /**
+             * Ai Tokens
+             * @default 0
+             */
+            ai_tokens: number;
+        };
+        /**
+         * WorkflowResourceSummary
+         * @description Summary totals for the workflow resource report.
+         */
+        WorkflowResourceSummary: {
+            /**
+             * Run Count
+             * @description Number of executions in the window
+             * @default 0
+             */
+            run_count: number;
+            /**
+             * Total Cpu Seconds
+             * @description Sum of CPU time in seconds
+             * @default 0
+             */
+            total_cpu_seconds: number;
+            /**
+             * Total Duration Ms
+             * @description Sum of execution durations in milliseconds
+             * @default 0
+             */
+            total_duration_ms: number;
+            /**
+             * Total Ai Cost
+             * @description Sum of AI cost in USD
+             */
+            total_ai_cost?: string;
+            /**
+             * Total Ai Calls
+             * @description Total number of AI calls
+             * @default 0
+             */
+            total_ai_calls: number;
+        };
+        /**
+         * WorkflowResourceWorkflow
+         * @description One workflow-aggregated row in the workflow resource report.
+         */
+        WorkflowResourceWorkflow: {
+            /** Workflow Id */
+            workflow_id?: string | null;
+            /** Workflow Name */
+            workflow_name: string;
+            /**
+             * Run Count
+             * @default 0
+             */
+            run_count: number;
+            /**
+             * Failed Count
+             * @default 0
+             */
+            failed_count: number;
+            /**
+             * Total Cpu Seconds
+             * @default 0
+             */
+            total_cpu_seconds: number;
+            /**
+             * Total Duration Ms
+             * @default 0
+             */
+            total_duration_ms: number;
+            /** Max Peak Process Rss Bytes */
+            max_peak_process_rss_bytes?: number | null;
+            /** Total Ai Cost */
+            total_ai_cost?: string;
+        };
+        /**
          * WorkflowRolesResponse
          * @description Response model for getting roles assigned to a workflow.
          */
@@ -42601,6 +42761,56 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UsageReportResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_workflow_resource_report_api_reports_workflow_resources_get: {
+        parameters: {
+            query: {
+                /** @description Start of window (timezone-aware ISO) */
+                started_after: string;
+                /** @description End of window (timezone-aware ISO) */
+                started_before: string;
+                /** @description Aggregate by run or workflow */
+                view?: "runs" | "workflows";
+                /** @description Sort runs by column */
+                sort?: "cpu" | "elapsed" | "memory" | "ai" | "started";
+                /** @description 1-based page number */
+                page?: number;
+                /** @description Items per page (max 100) */
+                page_size?: number;
+                /** @description Filter by organization ID */
+                org_id?: string | null;
+                /** @description Filter by workflow ID */
+                workflow_id?: string | null;
+                /** @description Partial workflow name filter */
+                workflow?: string | null;
+                /** @description Filter by execution status */
+                status?: components["schemas"]["ExecutionStatus"] | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowResourceReport"];
                 };
             };
             /** @description Validation Error */

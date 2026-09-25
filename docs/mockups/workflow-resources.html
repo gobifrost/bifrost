@@ -55,24 +55,27 @@
     .footer { padding: 16px 21px; display: flex; justify-content: space-between; color: #8190a4; font-size: 11px; }
     .note { color: #65768f; font-size: 11px; line-height: 1.5; margin-top: 15px; }
     .proposal { background: #eaf1ff; color: #4264a9; padding: 6px 9px; border-radius: 20px; font-size: 10px; font-weight: 700; }
+    .report-tabs { display: flex; gap: 25px; align-items: center; padding: 17px 34px 0; background: white; border-bottom: 1px solid #e5eaf1; }
+    .report-tabs span { padding-bottom: 14px; font-size: 13px; color: #7b89a0; font-weight: 650; }
+    .report-tabs .selected { color: #356be1; border-bottom: 2px solid #356be1; }
     @media (max-width: 900px) { aside { display: none; } .summary { grid-template-columns: repeat(2, 1fr); } .content { padding: 20px; } .panel { overflow-x: auto; } table { min-width: 1000px; } }
   </style>
 </head>
 <body>
 <div class="app">
-  <aside><div class="brand"><span class="mark">B</span>Bifrost</div><div class="nav">Overview</div><div class="nav">Workflows</div><div class="nav">Executions</div><div class="navhead">Reports</div><div class="nav">AI usage</div><div class="nav active">Workflow resources</div><div class="navhead">Operations</div><div class="nav">Diagnostics</div></aside>
-  <main><header><span>Reports / Workflow resources</span><span>Administrator <span class="avatar">JM</span></span></header>
+  <aside><div class="brand"><span class="mark">B</span>Bifrost</div><div class="nav">Overview</div><div class="nav">Workflows</div><div class="nav">Executions</div><div class="navhead">Reports</div><div class="nav active">Usage</div><div class="navhead">Operations</div><div class="nav">Diagnostics</div></aside>
+  <main><header><span>Reports / Usage</span><span>Administrator <span class="avatar">JM</span></span></header><div class="report-tabs"><span>AI usage</span><span class="selected">Workflow resources</span></div>
     <div class="content"><div class="eyebrow">Reports <span class="proposal">LAYOUT PROPOSAL</span></div><h1>Workflow resources</h1><p class="subtitle">Find expensive workflows, compare their runs, and open an execution to investigate.</p>
       <div class="summary"><div class="card"><div class="label">Runs</div><div class="value">344</div><div class="hint">Last 24 hours</div></div><div class="card"><div class="label">CPU time</div><div class="value">27.4 h</div><div class="hint">Across all runs</div></div><div class="card"><div class="label">Wall time</div><div class="value">31.2 h</div><div class="hint">Sum of elapsed durations</div></div><div class="card"><div class="label">AI spend</div><div class="value">$4.28</div><div class="hint">1,482 calls</div></div></div>
       <section class="panel"><div class="toolbar"><div class="toolbar-top"><strong>Usage by execution</strong><button>Last 24 hours ▾</button></div><div class="filters"><div class="control">All organizations ▾</div><div class="control search">⌕ &nbsp;Search workflows</div><div class="control">All statuses ▾</div></div><div class="tabs"><div class="tab selected">Runs</div><div class="tab">By workflow</div></div></div>
       <div class="tablehead"><strong>Individual runs <span>· one row per execution, including runs without AI calls</span></strong><button>Sort: CPU time ↓</button></div>
-      <table><thead><tr><th>STARTED</th><th>WORKFLOW</th><th>STATUS</th><th>ELAPSED</th><th>CPU TIME ⓘ</th><th>PEAK PROCESS MEMORY ⓘ</th><th>AI USAGE</th><th></th></tr></thead><tbody>
-      <tr><td class="mono">Today 22:20</td><td class="workflow">Build patch plan<small>Vulnerability remediation</small></td><td><span class="badge">Success</span></td><td class="mono">3m 00s</td><td class="cpu mono">2m 48s</td><td class="muted">—</td><td class="mono">$0 · 0 calls</td><td class="link">View ↗</td></tr>
-      <tr><td class="mono">Today 21:15</td><td class="workflow">Build patch plan<small>Vulnerability remediation</small></td><td><span class="badge">Success</span></td><td class="mono">6m 32s</td><td class="cpu mono">5m 12s</td><td class="muted">—</td><td class="mono">$0 · 0 calls</td><td class="link">View ↗</td></tr>
-      <tr><td class="mono">Today 20:16</td><td class="workflow">Scan backup health<small>Backup operations</small></td><td><span class="badge fail">Failed</span></td><td class="mono">1m 42s</td><td class="cpu mono">31s</td><td class="muted">—</td><td class="mono">$0 · 0 calls</td><td class="link">View ↗</td></tr>
-      <tr><td class="mono">Today 19:42</td><td class="workflow">Summarize ticket<small>Service desk</small></td><td><span class="badge">Success</span></td><td class="mono">24s</td><td class="cpu mono">3s</td><td class="muted">—</td><td class="mono">$0.08 · 2 calls</td><td class="link">View ↗</td></tr>
+      <table><thead><tr><th>STARTED</th><th>WORKFLOW</th><th>STATUS</th><th>ELAPSED</th><th>CPU TIME ⓘ</th><th>AVG CPU ⓘ</th><th>PEAK CPU ⓘ</th><th>PEAK MEMORY ⓘ</th><th>AI USAGE</th><th></th></tr></thead><tbody>
+      <tr><td class="mono">Today 22:20</td><td class="workflow">Build patch plan<small>Vulnerability remediation</small></td><td><span class="badge">Success</span></td><td class="mono">3m 00s</td><td class="cpu mono">2m 48s</td><td class="cpu mono">93%</td><td class="muted">—</td><td class="muted">—</td><td class="mono">$0 · 0 calls</td><td class="link">View ↗</td></tr>
+      <tr><td class="mono">Today 21:15</td><td class="workflow">Build patch plan<small>Vulnerability remediation</small></td><td><span class="badge">Success</span></td><td class="mono">6m 32s</td><td class="cpu mono">5m 12s</td><td class="cpu mono">80%</td><td class="muted">—</td><td class="muted">—</td><td class="mono">$0 · 0 calls</td><td class="link">View ↗</td></tr>
+      <tr><td class="mono">Today 20:16</td><td class="workflow">Scan backup health<small>Backup operations</small></td><td><span class="badge fail">Failed</span></td><td class="mono">1m 42s</td><td class="cpu mono">31s</td><td class="cpu mono">30%</td><td class="muted">—</td><td class="muted">—</td><td class="mono">$0 · 0 calls</td><td class="link">View ↗</td></tr>
+      <tr><td class="mono">Today 19:42</td><td class="workflow">Summarize ticket<small>Service desk</small></td><td><span class="badge">Success</span></td><td class="mono">24s</td><td class="cpu mono">3s</td><td class="cpu mono">13%</td><td class="muted">—</td><td class="muted">—</td><td class="mono">$0.08 · 2 calls</td><td class="link">View ↗</td></tr>
       </tbody></table><div class="footer"><span>Showing 1–50 of 344 runs</span><span>Previous &nbsp; 1 &nbsp; 2 &nbsp; 3 &nbsp; Next →</span></div></section>
-      <div class="note">Illustrative data. “CPU time” is cumulative work; divide by elapsed time for average cores. Peak process memory is shown only when a true peak was measured. Historical runs show —.</div>
+      <div class="note">Illustrative data. “CPU time” is cumulative work; divide by elapsed time for average cores. Peak process memory is the child’s high-water RSS; interrupted runs use the highest available sample. Historical runs show —.</div>
     </div>
   </main>
 </div>
