@@ -11,7 +11,7 @@ Protocol (``config.get/set/list/delete``, the full
 delete_mapping/refresh_token`` — and the full ``tables`` facade —
 ``create/list/delete`` metadata plus ``insert/upsert/get/update/
 delete_document/batch/batch_delete/query/count`` document operations,
-plus artifact write/read/list/download URL):
+plus artifact write/read/list/download URL and the full files facade):
 
 - One request frame (or a bounded chunked request), one-or-many response
   frames, JSON over ``multiprocessing.Connection.send_bytes`` /
@@ -142,6 +142,14 @@ OP_ARTIFACTS_WRITE = "artifacts.write"
 OP_ARTIFACTS_READ = "artifacts.read"
 OP_ARTIFACTS_LIST = "artifacts.list"
 OP_ARTIFACTS_GET_DOWNLOAD_URL = "artifacts.get_download_url"
+OP_FILES_READ = "files.read"
+OP_FILES_WRITE = "files.write"
+OP_FILES_LIST = "files.list"
+OP_FILES_DELETE = "files.delete"
+OP_FILES_EXISTS = "files.exists"
+OP_FILES_STAT = "files.stat"
+OP_FILES_SIGNED_URL = "files.signed_url"
+OP_FILES_SEARCH = "files.search"
 
 # Wire version. The parent rejects anything else instead of guessing.
 TRANSPORT_VERSION = 1

@@ -37,6 +37,7 @@ from urllib.parse import urlencode
 
 from .client import get_client, raise_for_status_with_detail
 from ._context import resolve_scope, get_caller_solution, get_effective_solution
+from ._local_transport import get as _get_local_transport
 
 Mode = Literal["local", "cloud"]
 # `location` is a free string. Special names: "workspace", "temp", "uploads".
@@ -69,6 +70,12 @@ class files:
     - local: Local filesystem (for CLI usage)
     - cloud: S3 storage (for platform execution, default)
 
+    Outside an engine child all operations go through HTTP API endpoints;
+    inside an engine child the fixed operations ride the dedicated local
+    transport to the parent (same shared services, same results) with no
+    HTTP requests and no database connection in the child. A local attempt
+    never falls back to HTTP.
+
     All operations are performed via HTTP API endpoints.
     """
 
@@ -97,8 +104,20 @@ class files:
             >>> content = await files.read("data/customers.csv")
             >>> uploaded = await files.read("form_id/uuid/file.txt", location="uploads")
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent reads through the shared file
+            # service over the dedicated channel — the same service the
+            # HTTP endpoint calls. The per-call ``solution`` target rides
+            # the frame; the caller's own install identity stays
+            # parent-owned. A local attempt never falls back to HTTP.
+            result = await transport.call_files_read(
+                path, location, mode, False, effective_scope,
+                get_effective_solution(solution),
+            )
+            return result["content"]
+        client = get_client()
         response = await client.post(
             f"/api/files/read{_solution_query(solution)}",
             json={"path": path, "location": location, "mode": mode, "binary": False, "scope": effective_scope}
@@ -122,8 +141,19 @@ class files:
             mode: Storage mode (local or cloud, default: cloud)
             scope: Org scope; provider-org override allowed.
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: same shared read service as HTTP, over
+            # the dedicated channel. Binary content arrives base64 in the
+            # result dict (chunked when large). Never falls back to HTTP.
+            result = await transport.call_files_read(
+                path, location, mode, True, effective_scope,
+                get_effective_solution(None),
+            )
+            import base64
+            return base64.b64decode(result["content"])
+        client = get_client()
         response = await client.post(
             f"/api/files/read{_solution_query()}",
             json={"path": path, "location": location, "mode": mode, "binary": True, "scope": effective_scope}
@@ -155,8 +185,20 @@ class files:
             create_only: Create a new file and fail if the path already exists.
             scope: Org scope; provider-org override allowed.
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent writes through the shared file
+            # service over the dedicated channel. Never falls back to HTTP
+            # — failures raise loudly (a write may already have committed,
+            # so a retry over HTTP could double-apply).
+            await transport.call_files_write(
+                path, content, location, mode, False,
+                expected_version, create_only, effective_scope,
+                get_effective_solution(None),
+            )
+            return
+        client = get_client()
         response = await client.post(
             f"/api/files/write{_solution_query()}",
             json={
@@ -195,10 +237,21 @@ class files:
             create_only: Create a new file and fail if the path already exists.
             scope: Org scope; provider-org override allowed.
         """
-        client = get_client()
         import base64
         encoded_content = base64.b64encode(content).decode('utf-8')
         effective_scope = resolve_scope(scope)
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: base64 content rides the frame (chunked
+            # when large), exactly like the HTTP JSON body. Never falls
+            # back to HTTP.
+            await transport.call_files_write(
+                path, encoded_content, location, mode, True,
+                expected_version, create_only, effective_scope,
+                get_effective_solution(None),
+            )
+            return
+        client = get_client()
         response = await client.post(
             f"/api/files/write{_solution_query()}",
             json={
@@ -241,8 +294,16 @@ class files:
             >>> for item in items:
             ...     print(item)
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent lists through the shared file
+            # service over the dedicated channel. Never falls back to HTTP.
+            return await transport.call_files_list(
+                directory, location, mode, effective_scope,
+                get_effective_solution(None),
+            )
+        client = get_client()
         response = await client.post(
             f"/api/files/list{_solution_query()}",
             json={"directory": directory, "location": location, "mode": mode, "scope": effective_scope}
@@ -273,8 +334,17 @@ class files:
             >>> from bifrost import files
             >>> await files.delete("temp/old_file.txt", location="temp")
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent deletes through the shared file
+            # service over the dedicated channel. Never falls back to HTTP.
+            await transport.call_files_delete(
+                path, location, mode, expected_version, effective_scope,
+                get_effective_solution(None),
+            )
+            return
+        client = get_client()
         response = await client.post(
             f"/api/files/delete{_solution_query()}",
             json={
@@ -300,8 +370,16 @@ class files:
         Returns:
             dict with keys: path, exists, version, size, last_modified, updated_by
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent stats through the shared file
+            # service over the dedicated channel. Never falls back to HTTP.
+            return await transport.call_files_stat(
+                path, location, mode, effective_scope,
+                get_effective_solution(None),
+            )
+        client = get_client()
         response = await client.post(
             f"/api/files/stat{_solution_query()}",
             json={"path": path, "location": location, "mode": mode, "scope": effective_scope},
@@ -325,8 +403,16 @@ class files:
             mode: Storage mode (local or cloud, default: cloud)
             scope: Org scope; provider-org override allowed.
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent probes through the shared file
+            # service over the dedicated channel. Never falls back to HTTP.
+            return await transport.call_files_exists(
+                path, location, mode, effective_scope,
+                get_effective_solution(None),
+            )
+        client = get_client()
         response = await client.post(
             f"/api/files/exists{_solution_query()}",
             json={"path": path, "location": location, "mode": mode, "scope": effective_scope}
@@ -367,8 +453,17 @@ class files:
             ...     content_type="application/pdf",
             ... )
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent presigns through the shared
+            # file service over the dedicated channel. Never falls back
+            # to HTTP.
+            return await transport.call_files_signed_url(
+                path, method, content_type, location, effective_scope,
+                expires_in, get_effective_solution(None),
+            )
+        client = get_client()
         response = await client.post(
             f"/api/files/signed-url{_solution_query()}",
             json={
@@ -420,6 +515,16 @@ class files:
             >>> for r in hits["results"]:
             ...     print(f"{r['file_path']}:{r['line']}: {r['match_text']}")
         """
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent searches through the shared
+            # search service over the dedicated channel — no scope
+            # parameter on either transport (the server scopes results by
+            # the caller's identity). Never falls back to HTTP.
+            return await transport.call_files_search(
+                query, case_sensitive, is_regex, include_pattern,
+                max_results,
+            )
         client = get_client()
         response = await client.post(
             "/api/files/search",

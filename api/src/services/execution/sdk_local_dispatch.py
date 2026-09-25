@@ -28,7 +28,7 @@ bound); small payloads use a single frame.
 Allowlist: ``config.get/set/list/delete``, the full
 ``integrations`` facade (``get/list_mappings/get_mapping/upsert_mapping/
 delete_mapping/refresh_token``), the full tables facade, and artifact
-write/read/list/download URL. Engine import fast path: ``modules.resolve``
+write/read/list/download URL, and all fixed file operations. Engine import fast path: ``modules.resolve``
 and ``modules.fetch`` (served on the dedicated import channel through the
 shared ``sdk_modules`` service, scoped by the parent-derived principal).
 Unknown operations or wire versions get an error response — never silent
@@ -54,6 +54,14 @@ from bifrost._local_transport import (
     OP_ARTIFACTS_READ,
     OP_ARTIFACTS_LIST,
     OP_ARTIFACTS_GET_DOWNLOAD_URL,
+    OP_FILES_DELETE,
+    OP_FILES_EXISTS,
+    OP_FILES_LIST,
+    OP_FILES_READ,
+    OP_FILES_SEARCH,
+    OP_FILES_SIGNED_URL,
+    OP_FILES_STAT,
+    OP_FILES_WRITE,
     OP_CONFIG_DELETE,
     OP_CONFIG_GET,
     OP_CONFIG_LIST,
@@ -112,6 +120,14 @@ SDK_CHANNEL_ALLOWED_OPS = frozenset(
         OP_ARTIFACTS_READ,
         OP_ARTIFACTS_LIST,
         OP_ARTIFACTS_GET_DOWNLOAD_URL,
+        OP_FILES_READ,
+        OP_FILES_WRITE,
+        OP_FILES_LIST,
+        OP_FILES_DELETE,
+        OP_FILES_EXISTS,
+        OP_FILES_STAT,
+        OP_FILES_SIGNED_URL,
+        OP_FILES_SEARCH,
         OP_TABLES_BATCH_DELETE,
         OP_TABLES_BATCH,
         OP_TABLES_DELETE_DOCUMENT,
@@ -459,6 +475,22 @@ async def dispatch_frames(
         return await _dispatch_artifacts_list(session_factory, principal, frame_id, frame)
     if op == OP_ARTIFACTS_GET_DOWNLOAD_URL:
         return await _dispatch_artifacts_download_url(session_factory, principal, frame_id, frame)
+    if op == OP_FILES_READ:
+        return await _dispatch_files_read(session_factory, principal, frame_id, frame)
+    if op == OP_FILES_WRITE:
+        return await _dispatch_files_write(session_factory, principal, frame_id, frame)
+    if op == OP_FILES_LIST:
+        return await _dispatch_files_list(session_factory, principal, frame_id, frame)
+    if op == OP_FILES_DELETE:
+        return await _dispatch_files_delete(session_factory, principal, frame_id, frame)
+    if op == OP_FILES_EXISTS:
+        return await _dispatch_files_exists(session_factory, principal, frame_id, frame)
+    if op == OP_FILES_STAT:
+        return await _dispatch_files_stat(session_factory, principal, frame_id, frame)
+    if op == OP_FILES_SIGNED_URL:
+        return await _dispatch_files_signed_url(session_factory, principal, frame_id, frame)
+    if op == OP_FILES_SEARCH:
+        return await _dispatch_files_search(session_factory, principal, frame_id, frame)
     if op == OP_MODULES_RESOLVE:
         return await _dispatch_modules_resolve(session_factory, principal, frame_id, frame)
     if op == OP_MODULES_FETCH:
@@ -2454,6 +2486,810 @@ async def _dispatch_artifacts_download_url(
         op=OP_ARTIFACTS_GET_DOWNLOAD_URL,
         log_key=str(artifact_id),
         status_errors=(SdkArtifactError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+def _files_target_solution_id(
+    frame_solution: Any, principal: LocalDispatchPrincipal
+) -> str | None:
+    """Per-call target install ref for one file frame.
+
+    The child-supplied ``solution`` is only ever a *target* (UUID or
+    slug/name, resolved inside the target org downstream). Unset or blank
+    inherits the parent-owned own install. The caller's install identity
+    itself always comes from the principal — never from the frame.
+    Callers must never send ``caller_solution``/``app_id``/``user`` claims;
+    they are never read here.
+    """
+    if isinstance(frame_solution, str) and frame_solution.strip():
+        return frame_solution
+    if principal.solution_id is not None:
+        return str(principal.solution_id)
+    return None
+
+
+def _file_caller_for_principal(
+    session: Any,
+    principal: LocalDispatchPrincipal,
+    solution_target: str | None,
+) -> Any:
+    """Parent-built ``FileCaller`` for one engine-local file operation.
+
+    The ``user`` is the token-equivalent principal (engine sentinel
+    superuser for workflows, org-scoped service identity for ``@service``
+    children — never the initiating user's admin flag); ``org_id`` is the
+    parent-owned caller org; ``solution_id`` is the per-call target
+    install ref; ``caller_solution_id``/``app_id`` stay parent-owned
+    (None for engine children — never child frame claims, which attest
+    their install through the signed engine claims on ``user`` instead).
+    """
+    from shared.file_access import FileCaller
+
+    return FileCaller(
+        user=_table_user_for_principal(principal),
+        db=session,
+        org_id=principal.caller_org_id,
+        solution_id=solution_target,
+        caller_solution_id=None,
+        app_id=None,
+    )
+
+
+def _files_422(
+    frame_id: str | None, op: str, msg: str
+) -> dict[str, Any]:
+    """One 422 error frame for a malformed file request field."""
+    return _error(frame_id, 422, f"invalid {op} request: {msg}")
+
+
+def _files_str(
+    frame: dict[str, Any],
+    field: str,
+    frame_id: str | None,
+    op: str,
+    *,
+    default: str | None = None,
+    required: bool = False,
+) -> tuple[str | None, dict[str, Any] | None]:
+    """One string frame field with the HTTP DTO's presence/type behavior.
+
+    Required fields must be present strings (empty allowed — the DTO sets
+    no min_length, so emptiness fails downstream exactly like HTTP);
+    optional fields fall back to ``default`` when absent (None) and must
+    be strings otherwise.
+    """
+    value = frame.get(field, default)
+    if value is None:
+        if required or default is not None:
+            return None, _files_422(frame_id, op, f"{field!r} is required")
+        return None, None
+    if not isinstance(value, str):
+        return None, _files_422(frame_id, op, f"{field!r} must be a string")
+    return value, None
+
+
+def _files_opt_str(
+    frame: dict[str, Any],
+    field: str,
+    frame_id: str | None,
+    op: str,
+) -> tuple[str | None, dict[str, Any] | None]:
+    """One ``str | None`` frame field (None when absent), else a 422."""
+    value = frame.get(field)
+    if value is None:
+        return None, None
+    if not isinstance(value, str):
+        return None, _files_422(frame_id, op, f"{field!r} must be a string")
+    return value, None
+
+
+def _files_bool(
+    frame: dict[str, Any],
+    field: str,
+    frame_id: str | None,
+    op: str,
+    *,
+    default: bool = False,
+) -> tuple[bool, dict[str, Any] | None]:
+    """One bool frame field with the HTTP DTO's default, else a 422."""
+    value = frame.get(field, default)
+    if not isinstance(value, bool):
+        return default, _files_422(frame_id, op, f"{field!r} must be a boolean")
+    return value, None
+
+
+def _files_mode(
+    frame: dict[str, Any],
+    frame_id: str | None,
+    op: str,
+) -> tuple[str, dict[str, Any] | None]:
+    """The ``mode`` field: ``"local"`` or ``"cloud"`` (default ``"cloud"``).
+
+    Mirrors the ``Mode = Literal["local", "cloud"]`` DTO — anything else
+    is a 422, exactly like the HTTP handler.
+    """
+    value = frame.get("mode", "cloud")
+    if value not in ("local", "cloud"):
+        return "cloud", _files_422(
+            frame_id, op, "'mode' must be 'local' or 'cloud'"
+        )
+    return value, None
+
+
+def _files_method(
+    frame: dict[str, Any],
+    frame_id: str | None,
+    op: str,
+) -> tuple[str, dict[str, Any] | None]:
+    """The signed-URL ``method`` field: ``"PUT"`` or ``"GET"`` (default ``"PUT"``)."""
+    value = frame.get("method", "PUT")
+    if value not in ("PUT", "GET"):
+        return "PUT", _files_422(
+            frame_id, op, "'method' must be 'PUT' or 'GET'"
+        )
+    return value, None
+
+
+def _files_expires(
+    frame: dict[str, Any],
+    frame_id: str | None,
+    op: str,
+) -> tuple[int, dict[str, Any] | None]:
+    """The ``expires_in`` field: int within 1..604800 (default 600).
+
+    Mirrors the ``SignedUrlRequest`` ``ge=1, le=604800`` bounds — out of
+    range is a 422, exactly like the HTTP handler.
+    """
+    value = frame.get("expires_in", 600)
+    if (
+        not isinstance(value, int)
+        or isinstance(value, bool)
+        or not 1 <= value <= 604800
+    ):
+        return 600, _files_422(
+            frame_id, op, "'expires_in' must be an int within 1..604800"
+        )
+    return value, None
+
+
+def _files_max_results(
+    frame: dict[str, Any],
+    frame_id: str | None,
+    op: str,
+) -> tuple[int, dict[str, Any] | None]:
+    """The search ``max_results`` field: int within 1..10000 (default 1000)."""
+    value = frame.get("max_results", 1000)
+    if (
+        not isinstance(value, int)
+        or isinstance(value, bool)
+        or not 1 <= value <= 10000
+    ):
+        return 1000, _files_422(
+            frame_id, op, "'max_results' must be an int within 1..10000"
+        )
+    return value, None
+
+
+async def _dispatch_files_read(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``files.read``/``read_bytes`` through the shared file service.
+
+    Validates with the same ``FileReadRequest`` DTO as the HTTP handler,
+    so path/location/mode/binary coercion and 422 behavior match. The
+    parent calls the exact ``shared.sdk_files.sdk_read_file`` the HTTP
+    route calls, with a parent-derived ``FileCaller`` — tier order,
+    Solution gates, policy probes, 404/403/400 semantics, and text/binary
+    encoding are identical by construction. ``mode="local"`` runs the
+    HTTP route's own filesystem backend in the parent (never the child's
+    CWD). Binary content returns base64 in the result dict (chunked when
+    large), exactly like the HTTP JSON body.
+    """
+    import base64
+
+    from shared.file_access import FileServiceError
+    from types import SimpleNamespace
+
+    # Same fields/defaults as the HTTP ``FileReadRequest`` DTO (see
+    # ``src/routers/files.py``) — presence/type behavior matches, so
+    # coercion and 422s agree on both transports.
+    path, invalid = _files_str(
+        frame, "path", frame_id, OP_FILES_READ, required=True
+    )
+    if invalid is not None:
+        return [invalid]
+    location, invalid = _files_str(
+        frame, "location", frame_id, OP_FILES_READ, default="workspace"
+    )
+    if invalid is not None:
+        return [invalid]
+    scope, invalid = _files_opt_str(frame, "scope", frame_id, OP_FILES_READ)
+    if invalid is not None:
+        return [invalid]
+    mode, invalid = _files_mode(frame, frame_id, OP_FILES_READ)
+    if invalid is not None:
+        return [invalid]
+    binary, invalid = _files_bool(frame, "binary", frame_id, OP_FILES_READ)
+    if invalid is not None:
+        return [invalid]
+    request = SimpleNamespace(
+        path=path, location=location, scope=scope, mode=mode,
+        binary=binary,
+    )
+    solution_target = _files_target_solution_id(
+        frame.get("solution"), principal
+    )
+
+    async def _read(session: Any) -> dict[str, Any]:
+        from shared.sdk_files import sdk_read_file
+
+        result = await sdk_read_file(
+            _file_caller_for_principal(session, principal, solution_target),
+            path=request.path,
+            location=request.location,
+            scope=request.scope,
+            mode=request.mode,
+            binary=request.binary,
+        )
+        if request.binary:
+            content = base64.b64encode(result.content).decode()
+        else:
+            content = result.content.decode("utf-8")
+        return {"content": content, "binary": request.binary}
+
+    result, error = await _run_short(
+        session_factory,
+        _read,
+        op=OP_FILES_READ,
+        log_key=request.path,
+        status_errors=(FileServiceError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_files_write(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``files.write``/``write_bytes`` through the shared file service.
+
+    Validates with the same ``FileWriteRequest`` DTO as the HTTP handler
+    (``expected_version``/``create_only`` conflict semantics included) and
+    calls the exact ``shared.sdk_files.sdk_write_file`` the HTTP route
+    calls: effective scope, declared-Solution gates, policy check with
+    denial audit, advisory lock, conflict checks, backend write, and —
+    cloud mode only — metadata commit before publish. Returns nothing
+    (HTTP 204). A local attempt never falls back to HTTP.
+    """
+    from shared.file_access import FileServiceError
+    from types import SimpleNamespace
+
+    # Same fields/defaults as the HTTP ``FileWriteRequest`` DTO.
+    path, invalid = _files_str(
+        frame, "path", frame_id, OP_FILES_WRITE, required=True
+    )
+    if invalid is not None:
+        return [invalid]
+    content, invalid = _files_str(
+        frame, "content", frame_id, OP_FILES_WRITE, required=True
+    )
+    if invalid is not None:
+        return [invalid]
+    location, invalid = _files_str(
+        frame, "location", frame_id, OP_FILES_WRITE, default="workspace"
+    )
+    if invalid is not None:
+        return [invalid]
+    scope, invalid = _files_opt_str(frame, "scope", frame_id, OP_FILES_WRITE)
+    if invalid is not None:
+        return [invalid]
+    mode, invalid = _files_mode(frame, frame_id, OP_FILES_WRITE)
+    if invalid is not None:
+        return [invalid]
+    binary, invalid = _files_bool(frame, "binary", frame_id, OP_FILES_WRITE)
+    if invalid is not None:
+        return [invalid]
+    expected_version, invalid = _files_opt_str(
+        frame, "expected_version", frame_id, OP_FILES_WRITE
+    )
+    if invalid is not None:
+        return [invalid]
+    create_only, invalid = _files_bool(
+        frame, "create_only", frame_id, OP_FILES_WRITE
+    )
+    if invalid is not None:
+        return [invalid]
+    request = SimpleNamespace(
+        path=path, content=content, location=location, scope=scope,
+        mode=mode, binary=binary, expected_version=expected_version,
+        create_only=create_only,
+    )
+    solution_target = _files_target_solution_id(
+        frame.get("solution"), principal
+    )
+
+    async def _write(session: Any) -> None:
+        from shared.sdk_files import sdk_write_file
+
+        await sdk_write_file(
+            _file_caller_for_principal(session, principal, solution_target),
+            path=request.path,
+            content=request.content,
+            binary=request.binary,
+            location=request.location,
+            scope=request.scope,
+            mode=request.mode,
+            expected_version=request.expected_version,
+            create_only=request.create_only,
+        )
+
+    _, error = await _run_short(
+        session_factory,
+        _write,
+        op=OP_FILES_WRITE,
+        log_key=request.path,
+        status_errors=(FileServiceError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _single_ok(frame_id, None)
+
+
+async def _dispatch_files_list(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``files.list`` through the shared file service.
+
+    Validates with the same ``FileListRequest`` DTO as the HTTP handler
+    and calls the exact ``shared.sdk_files.sdk_list_files`` the HTTP
+    route calls. The workspace ``include_metadata=True`` branch stays
+    router-only (the Python SDK never requests it) — a child asking for
+    it gets the same plain listing the shared service returns, never
+    metadata. The names ride a ``{"files"}`` envelope (the transport
+    result contract does not carry bare lists).
+    """
+    from shared.file_access import FileServiceError
+    from types import SimpleNamespace
+
+    # Same fields/defaults as the HTTP ``FileListRequest`` DTO. The
+    # workspace ``include_metadata=True`` branch stays router-only (the
+    # Python SDK never requests it) — the flag is accepted and ignored,
+    # exactly like the shared service path behind the HTTP route.
+    directory, invalid = _files_str(
+        frame, "directory", frame_id, OP_FILES_LIST, default=""
+    )
+    if invalid is not None:
+        return [invalid]
+    location, invalid = _files_str(
+        frame, "location", frame_id, OP_FILES_LIST, default="workspace"
+    )
+    if invalid is not None:
+        return [invalid]
+    scope, invalid = _files_opt_str(frame, "scope", frame_id, OP_FILES_LIST)
+    if invalid is not None:
+        return [invalid]
+    mode, invalid = _files_mode(frame, frame_id, OP_FILES_LIST)
+    if invalid is not None:
+        return [invalid]
+    _, invalid = _files_bool(
+        frame, "include_metadata", frame_id, OP_FILES_LIST
+    )
+    if invalid is not None:
+        return [invalid]
+    request = SimpleNamespace(
+        directory=directory, location=location, scope=scope, mode=mode,
+    )
+    solution_target = _files_target_solution_id(
+        frame.get("solution"), principal
+    )
+
+    async def _list(session: Any) -> dict[str, Any]:
+        from shared.sdk_files import sdk_list_files
+
+        names = await sdk_list_files(
+            _file_caller_for_principal(session, principal, solution_target),
+            directory=request.directory,
+            location=request.location,
+            scope=request.scope,
+            mode=request.mode,
+        )
+        return {"files": names}
+
+    result, error = await _run_short(
+        session_factory,
+        _list,
+        op=OP_FILES_LIST,
+        log_key=request.directory,
+        status_errors=(FileServiceError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_files_delete(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``files.delete`` through the shared file service.
+
+    Validates with the same ``FileDeleteRequest`` DTO as the HTTP handler
+    and calls the exact ``shared.sdk_files.sdk_delete_file`` the HTTP
+    route calls: effective scope, declared-Solution gates, policy check
+    with denial audit, advisory lock, ``expected_version`` conflict
+    checks, backend delete, and — cloud mode only — metadata delete with
+    commit before publish. A backend ``FileNotFoundError`` is 404.
+    Returns nothing (HTTP 204).
+    """
+    from shared.file_access import FileServiceError
+    from types import SimpleNamespace
+
+    # Same fields/defaults as the HTTP ``FileDeleteRequest`` DTO.
+    path, invalid = _files_str(
+        frame, "path", frame_id, OP_FILES_DELETE, required=True
+    )
+    if invalid is not None:
+        return [invalid]
+    location, invalid = _files_str(
+        frame, "location", frame_id, OP_FILES_DELETE, default="workspace"
+    )
+    if invalid is not None:
+        return [invalid]
+    scope, invalid = _files_opt_str(
+        frame, "scope", frame_id, OP_FILES_DELETE
+    )
+    if invalid is not None:
+        return [invalid]
+    mode, invalid = _files_mode(frame, frame_id, OP_FILES_DELETE)
+    if invalid is not None:
+        return [invalid]
+    expected_version, invalid = _files_opt_str(
+        frame, "expected_version", frame_id, OP_FILES_DELETE
+    )
+    if invalid is not None:
+        return [invalid]
+    request = SimpleNamespace(
+        path=path, location=location, scope=scope, mode=mode,
+        expected_version=expected_version,
+    )
+    solution_target = _files_target_solution_id(
+        frame.get("solution"), principal
+    )
+
+    async def _delete(session: Any) -> None:
+        from shared.sdk_files import sdk_delete_file
+
+        await sdk_delete_file(
+            _file_caller_for_principal(session, principal, solution_target),
+            path=request.path,
+            location=request.location,
+            scope=request.scope,
+            mode=request.mode,
+            expected_version=request.expected_version,
+        )
+
+    _, error = await _run_short(
+        session_factory,
+        _delete,
+        op=OP_FILES_DELETE,
+        log_key=request.path,
+        status_errors=(FileServiceError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _single_ok(frame_id, None)
+
+
+async def _dispatch_files_exists(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``files.exists`` through the shared file service.
+
+    Validates with the same ``FileExistsRequest`` DTO as the HTTP handler
+    and calls the exact ``shared.sdk_files.sdk_file_exists`` the HTTP
+    route calls. Existence probes never 403/404 — just False. Returns a
+    bare bool.
+    """
+    from shared.file_access import FileServiceError
+    from types import SimpleNamespace
+
+    # Same fields/defaults as the HTTP ``FileExistsRequest`` DTO.
+    path, invalid = _files_str(
+        frame, "path", frame_id, OP_FILES_EXISTS, required=True
+    )
+    if invalid is not None:
+        return [invalid]
+    location, invalid = _files_str(
+        frame, "location", frame_id, OP_FILES_EXISTS, default="workspace"
+    )
+    if invalid is not None:
+        return [invalid]
+    scope, invalid = _files_opt_str(
+        frame, "scope", frame_id, OP_FILES_EXISTS
+    )
+    if invalid is not None:
+        return [invalid]
+    mode, invalid = _files_mode(frame, frame_id, OP_FILES_EXISTS)
+    if invalid is not None:
+        return [invalid]
+    request = SimpleNamespace(
+        path=path, location=location, scope=scope, mode=mode,
+    )
+    solution_target = _files_target_solution_id(
+        frame.get("solution"), principal
+    )
+
+    async def _exists(session: Any) -> bool:
+        from shared.sdk_files import sdk_file_exists
+
+        return await sdk_file_exists(
+            _file_caller_for_principal(session, principal, solution_target),
+            path=request.path,
+            location=request.location,
+            scope=request.scope,
+            mode=request.mode,
+        )
+
+    result, error = await _run_short(
+        session_factory,
+        _exists,
+        op=OP_FILES_EXISTS,
+        log_key=request.path,
+        status_errors=(FileServiceError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    assert isinstance(result, bool)
+    return _single_ok(frame_id, result)
+
+
+async def _dispatch_files_stat(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``files.stat`` through the shared file service.
+
+    The HTTP route reuses ``FileReadRequest`` for stat — the local frame
+    validates with the same DTO (``binary`` is accepted and ignored,
+    exactly like HTTP). Calls the exact
+    ``shared.sdk_files.sdk_file_stat`` the HTTP route calls and returns
+    the ``FileStatResponse`` dict (``exists=False`` when absent — never
+    a 404).
+    """
+    from shared.file_access import FileServiceError
+    from types import SimpleNamespace
+
+    # The HTTP stat route reuses ``FileReadRequest`` — the local frame
+    # validates with the same fields (``binary`` accepted and ignored).
+    path, invalid = _files_str(
+        frame, "path", frame_id, OP_FILES_STAT, required=True
+    )
+    if invalid is not None:
+        return [invalid]
+    location, invalid = _files_str(
+        frame, "location", frame_id, OP_FILES_STAT, default="workspace"
+    )
+    if invalid is not None:
+        return [invalid]
+    scope, invalid = _files_opt_str(frame, "scope", frame_id, OP_FILES_STAT)
+    if invalid is not None:
+        return [invalid]
+    mode, invalid = _files_mode(frame, frame_id, OP_FILES_STAT)
+    if invalid is not None:
+        return [invalid]
+    _, invalid = _files_bool(frame, "binary", frame_id, OP_FILES_STAT)
+    if invalid is not None:
+        return [invalid]
+    request = SimpleNamespace(
+        path=path, location=location, scope=scope, mode=mode,
+    )
+    solution_target = _files_target_solution_id(
+        frame.get("solution"), principal
+    )
+
+    async def _stat(session: Any) -> dict[str, Any]:
+        from shared.sdk_files import sdk_file_stat
+
+        stat = await sdk_file_stat(
+            _file_caller_for_principal(session, principal, solution_target),
+            path=request.path,
+            location=request.location,
+            scope=request.scope,
+            mode=request.mode,
+        )
+        return stat.model_dump(mode="json")
+
+    result, error = await _run_short(
+        session_factory,
+        _stat,
+        op=OP_FILES_STAT,
+        log_key=request.path,
+        status_errors=(FileServiceError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_files_signed_url(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``files.get_signed_url`` through the shared file service.
+
+    Validates with the same ``SignedUrlRequest`` DTO as the HTTP handler
+    and calls the exact ``shared.sdk_files.sdk_signed_url`` the HTTP
+    route calls (signed GET tier cascade and signed PUT scope/policy
+    resolution included). A raw ``ValueError`` from PUT scope resolution
+    maps to 422 — the router historically let it reach the 422
+    middleware. Returns the ``{"url", "path", "expires_in"}`` dict.
+    """
+    from shared.file_access import FileServiceError
+    from types import SimpleNamespace
+
+    # Same fields/defaults/bounds as the HTTP ``SignedUrlRequest`` DTO.
+    path, invalid = _files_str(
+        frame, "path", frame_id, OP_FILES_SIGNED_URL, required=True
+    )
+    if invalid is not None:
+        return [invalid]
+    method, invalid = _files_method(frame, frame_id, OP_FILES_SIGNED_URL)
+    if invalid is not None:
+        return [invalid]
+    content_type, invalid = _files_str(
+        frame,
+        "content_type",
+        frame_id,
+        OP_FILES_SIGNED_URL,
+        default="application/octet-stream",
+    )
+    if invalid is not None:
+        return [invalid]
+    location, invalid = _files_str(
+        frame, "location", frame_id, OP_FILES_SIGNED_URL,
+        default="uploads",
+    )
+    if invalid is not None:
+        return [invalid]
+    scope, invalid = _files_opt_str(
+        frame, "scope", frame_id, OP_FILES_SIGNED_URL
+    )
+    if invalid is not None:
+        return [invalid]
+    expires_in, invalid = _files_expires(frame, frame_id, OP_FILES_SIGNED_URL)
+    if invalid is not None:
+        return [invalid]
+    request = SimpleNamespace(
+        path=path, method=method, content_type=content_type,
+        location=location, scope=scope, expires_in=expires_in,
+    )
+    solution_target = _files_target_solution_id(
+        frame.get("solution"), principal
+    )
+
+    async def _sign(session: Any) -> dict[str, Any]:
+        from shared.sdk_files import sdk_signed_url
+
+        try:
+            signed = await sdk_signed_url(
+                _file_caller_for_principal(
+                    session, principal, solution_target
+                ),
+                path=request.path,
+                location=request.location,
+                scope=request.scope,
+                method=request.method,
+                content_type=request.content_type,
+                expires_in=request.expires_in,
+            )
+        except ValueError as exc:
+            # PUT scope-resolution ValueErrors propagate raw out of the
+            # shared service (the HTTP router lets them reach the 422
+            # middleware); map them to 422 here.
+            raise FileServiceError(422, str(exc)) from exc
+        return {
+            "url": signed.url,
+            "path": signed.path,
+            "expires_in": signed.expires_in,
+        }
+
+    result, error = await _run_short(
+        session_factory,
+        _sign,
+        op=OP_FILES_SIGNED_URL,
+        log_key=request.path,
+        status_errors=(FileServiceError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_files_search(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``files.search`` through the shared search service.
+
+    Validates with the same ``SearchRequest`` DTO as the HTTP handler and
+    calls the exact ``src.services.editor.search.search_files_db`` the
+    HTTP route calls (``root_path=""``), so validation, glob filtering,
+    truncation, and timing are identical by construction. Like HTTP there
+    is no scope parameter — results are scoped by the caller's identity —
+    and the endpoint is superuser-only: service children (system-user
+    non-superuser, like their HTTP token) get a 403, exactly like their
+    HTTP POST would. Large result sets arrive chunked.
+    """
+    from src.models.contracts.editor import SearchRequest
+
+    # Same fields/defaults/bounds as the HTTP ``SearchRequest`` DTO. The
+    # full DTO still validates here (cheap, no router import) so
+    # coercion and 422 behavior match the HTTP handler exactly.
+    raw: dict[str, Any] = {
+        "query": frame.get("query"),
+        "case_sensitive": frame.get("case_sensitive", False),
+        "is_regex": frame.get("is_regex", False),
+        "include_pattern": frame.get("include_pattern", "**/*"),
+        "max_results": frame.get("max_results", 1000),
+    }
+    request, invalid = _validate_request(
+        SearchRequest, raw, frame_id, OP_FILES_SEARCH
+    )
+    if invalid is not None:
+        return [invalid]
+    assert request is not None
+    if principal.is_service:
+        return [_error(frame_id, 403, "Only platform admins can search files")]
+
+    from shared.file_access import FileServiceError
+
+    async def _search(session: Any) -> dict[str, Any]:
+        from src.services.editor.search import search_files_db
+
+        try:
+            response = await search_files_db(session, request, root_path="")
+        except ValueError as exc:
+            raise FileServiceError(400, str(exc)) from exc
+        return response.model_dump(mode="json")
+
+    result, error = await _run_short(
+        session_factory,
+        _search,
+        op=OP_FILES_SEARCH,
+        log_key=request.query,
+        status_errors=(FileServiceError,),
     )
     if error is not None:
         error["id"] = frame_id
