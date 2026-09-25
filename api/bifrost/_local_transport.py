@@ -16,8 +16,9 @@ plus artifact write/read/list/download URL, artifact generation
 ``create_image``), the durable video ``create_video`` enqueue plus its
 fixed ``video_status`` poll, the full files facade, the execution
 reads (``workflows.list``, ``executions.list``/``executions.get``),
-the workflow ``execute``/``cancel`` mutations, and the SDK form
-reads (``forms.list``, ``forms.get``)):
+the workflow ``execute``/``cancel`` mutations, the SDK form
+reads (``forms.list``, ``forms.get``), and the fixed ``events.emit``
+call):
 
 - One request frame (or a bounded chunked request), one-or-many response
   frames, JSON over ``multiprocessing.Connection.send_bytes`` /
@@ -95,6 +96,11 @@ reads (``forms.list``, ``forms.get``)):
   like roles and users: the parent gates every organizations
   operation on its own dispatch principal and never reads actor,
   org, or Solution claims from child frames.
+  ``events.emit`` sends ``topic``/``data``/``scope``/``solution``
+  (the caller's own install rides ``solution`` via the facade's
+  effective-solution helper, like the HTTP payload; the parent
+  replaces any child ``caller_solution`` claim with its own verified
+  install id and never reads child actor, app, or org claims).
    ``artifacts.create_video`` sends ``filename``/``prompt``/
    ``workspace_id`` (the caller's own workspace, like the HTTP query
    param; actor, org, and execution identity come from the parent's
@@ -235,7 +241,8 @@ from typing import Any, NoReturn
 # assign_forms``), the fixed ``users`` facade
 # (``list/create/get/update/delete``), the fixed ``organizations``
 # facade (``create/get/list/update/delete``), and the SDK workflow
-# ``execute``/``cancel`` mutations ride the local transport. The
+# ``execute``/``cancel`` mutations, and the fixed ``events.emit`` call
+# ride the local transport. The
 # parent enforces the same allowlist; anything else is a 404 response.
 # Artifact generation (``create_document``/``create_spreadsheet``/
 # ``create_text``/``create_image``) plus the durable video enqueue
@@ -316,6 +323,7 @@ OP_ORGANIZATIONS_GET = "organizations.get"
 OP_ORGANIZATIONS_LIST = "organizations.list"
 OP_ORGANIZATIONS_UPDATE = "organizations.update"
 OP_ORGANIZATIONS_DELETE = "organizations.delete"
+OP_EVENTS_EMIT = "events.emit"
 
 # Wire version. The parent rejects anything else instead of guessing.
 TRANSPORT_VERSION = 1
@@ -2932,6 +2940,43 @@ class ChildLocalTransport:
                     "malformed local SDK result; channel closed"
                 )
             )
+
+    async def call_events_emit(
+        self,
+        topic: str,
+        data: dict[str, Any],
+        scope: str | None,
+        solution: str | None = None,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """Emit one topic event through the parent. No HTTP fallback.
+
+        Sends ``topic``/``data``/``scope``/``solution`` (the same fields
+        the HTTP payload carries, minus ``caller_solution`` — the parent
+        replaces that claim with its own verified install id, and never
+        reads child actor, app, or org claims). Returns the
+        ``{"event_id", "subscribers_notified"}`` dict, identical to the
+        HTTP path. Parent error responses raise the same public
+        exceptions as the HTTP path; transport loss raises
+        ``LocalTransportClosed`` (synthetic 503) or ``TimeoutError``.
+        """
+        result = await self._call(
+            OP_EVENTS_EMIT,
+            {
+                "topic": topic,
+                "data": data,
+                "scope": scope,
+                "solution": solution,
+            },
+            timeout,
+        )
+        if not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
 
 
 _installed: ChildLocalTransport | None = None

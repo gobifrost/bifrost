@@ -18,7 +18,13 @@ the HTTP
 ``CurrentSuperuser`` token-equivalent principal (workflow engine tokens
 pass, supervised service tokens do not), and child frame actor, org,
 and Solution claims can never
-grant access. The synchronous client-context
+grant access. The fixed ``events.emit`` call rides the same channel
+through the shared ``event_emission`` service: the parent supplies a
+token-equivalent trusted principal (workflow engine superuser with
+verified execution/Solution claims, or supervised-service
+non-superuser confined to its organization), while ``scope`` and
+``solution`` ride as untrusted requested targets the service
+validates. The synchronous client-context
 read (``sdk.context``) rides the dedicated import channel instead, so
 the synchronous ``BifrostClient.context`` property never deadlocks a
 running child event loop.
@@ -58,6 +64,8 @@ superuser only), the fixed ``users`` facade
 (``list/create/get/update/delete``, token-equivalent superuser only),
 the fixed ``organizations`` facade
 (``create/get/list/update/delete``, token-equivalent superuser only),
+the fixed ``events.emit`` call (token-equivalent engine superuser or
+org-confined service principal, like its HTTP route),
 and the SDK workflow
 ``execute``/``cancel`` mutations. Engine import fast path: ``modules.resolve``
 and ``modules.fetch`` (served on the dedicated import channel through the
@@ -107,6 +115,7 @@ from bifrost._local_transport import (
     OP_ORGANIZATIONS_LIST,
     OP_ORGANIZATIONS_UPDATE,
     OP_ORGANIZATIONS_DELETE,
+    OP_EVENTS_EMIT,
     OP_ARTIFACTS_CREATE_DOCUMENT,
     OP_ARTIFACTS_CREATE_IMAGE,
     OP_ARTIFACTS_CREATE_SPREADSHEET,
@@ -256,6 +265,7 @@ SDK_CHANNEL_ALLOWED_OPS = frozenset(
         OP_ORGANIZATIONS_LIST,
         OP_ORGANIZATIONS_UPDATE,
         OP_ORGANIZATIONS_DELETE,
+        OP_EVENTS_EMIT,
         OP_WORKFLOWS_EXECUTE,
         OP_WORKFLOWS_CANCEL,
         OP_WORKFLOWS_LIST,
@@ -728,6 +738,8 @@ async def _dispatch_frames_impl(
         return await _dispatch_organizations_update(session_factory, principal, frame_id, frame)
     if op == OP_ORGANIZATIONS_DELETE:
         return await _dispatch_organizations_delete(session_factory, principal, frame_id, frame)
+    if op == OP_EVENTS_EMIT:
+        return await _dispatch_events_emit(session_factory, principal, frame_id, frame)
     if op == OP_WORKFLOWS_LIST:
         return await _dispatch_workflows_list(session_factory, principal, frame_id, frame)
     if op == OP_EXECUTIONS_LIST:
@@ -3073,6 +3085,113 @@ async def _dispatch_organizations_delete(
         error["id"] = frame_id
         return [error]
     return _single_ok(frame_id, None)
+
+
+# =============================================================================
+# Fixed events.emit call
+# =============================================================================
+
+
+def _events_user_for_principal(principal: LocalDispatchPrincipal) -> Any:
+    """Token-equivalent ``UserPrincipal`` for topic event emission.
+
+    Reuses the table token-equivalent shape so authorization,
+    service-org confinement, and the Solution inbound gate decide
+    identically on both transports: workflows run as the system-user
+    superuser with the signed engine execution/Solution claims (the
+    ``mint_engine_token()`` shape), services run as the system-user
+    non-superuser confined to their service org (the
+    ``mint_service_token()`` shape). Built only from the parent-derived
+    ``LocalDispatchPrincipal`` — never from child frame fields.
+    """
+    return _table_user_for_principal(principal)
+
+
+async def _dispatch_events_emit(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``events.emit`` through the shared event-emission service.
+
+    Validates with the same ``EmitEventRequest`` DTO as the HTTP handler
+    (422), then calls the same ``shared.event_emission.emit_topic_event``
+    the handler calls — authorization (403), topic validation (400),
+    scope parsing (400), service-org confinement (403), target Solution
+    resolution plus the inbound gate (404), the durable emit (own
+    session, commit, queue), the event actor, and the response DTO are
+    identical by construction. ``scope`` and ``solution`` ride as
+    untrusted requested targets the service re-validates; a child
+    ``caller_solution`` frame field is never read — the parent-verified
+    own Solution id (or None) replaces it, so the constrained
+    caller_solution case attests exactly like the HTTP engine-token
+    path. The same verified id is the default target when ``solution``
+    is omitted. Child actor, app id, and organization claims are never read:
+    the trusted principal comes only from the parent dispatch context.
+    The durable service owns its transaction and enqueues once; this
+    dispatcher adds no commit and no retry. A local attempt never falls
+    back to HTTP.
+    """
+    from shared.event_emission import (
+        EventEmissionCaller,
+        EventEmissionError,
+        emit_topic_event,
+    )
+    from src.models.contracts.events import EmitEventRequest
+
+    fields: dict[str, Any] = {
+        "topic": frame.get("topic"),
+        "scope": frame.get("scope"),
+        "solution": frame.get("solution"),
+    }
+    # A missing payload keeps the DTO default ({}); an explicit null
+    # 422s, exactly like the HTTP body.
+    if "data" in frame:
+        fields["data"] = frame.get("data")
+    request, invalid = _validate_request(
+        EmitEventRequest,
+        fields,
+        frame_id,
+        OP_EVENTS_EMIT,
+    )
+    if invalid is not None:
+        return [invalid]
+    assert request is not None
+    user = _events_user_for_principal(principal)
+    own_solution_id = (
+        str(principal.solution_id) if principal.solution_id is not None else None
+    )
+
+    async def _emit(session: Any) -> dict[str, Any]:
+        caller = EventEmissionCaller(
+            user=user,
+            db=session,
+            solution_id=own_solution_id,
+            caller_solution_id=None,
+            app_id=None,
+        )
+        service_request = EmitEventRequest(
+            topic=request.topic,
+            data=request.data,
+            scope=request.scope,
+            solution=request.solution,
+            caller_solution=own_solution_id,
+        )
+        response = await emit_topic_event(caller, service_request)
+        return response.model_dump(mode="json")
+
+    result, error = await _run_short(
+        session_factory,
+        _emit,
+        op=OP_EVENTS_EMIT,
+        log_key=request.topic,
+        status_errors=(EventEmissionError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
 
 
 # =============================================================================
