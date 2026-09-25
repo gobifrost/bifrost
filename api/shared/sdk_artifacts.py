@@ -15,8 +15,9 @@ Covers the four fixed operations only:
 - ``artifacts.read`` (opaque bytes, optional Office preview, inert headers)
 - ``artifacts.get_download_url`` (short-lived signed URL, inert headers)
 
-Generation routes (``document``, ``spreadsheet``, ``text``, ``image``,
-``video``) and AI routes are out of scope and stay in the router.
+Generation routes (``document``, ``spreadsheet``, ``text``, ``image``)
+live in ``shared.sdk_artifact_generation``; ``video`` and AI routes stay
+in the router.
 
 The caller passes an explicit trusted actor (the auth-verified
 ``UserPrincipal``) plus the DB session — never a FastAPI Request and
@@ -65,9 +66,10 @@ class SdkArtifactError(Exception):
 
     Raised by the shared service so the HTTP handler (``HTTPException``)
     and a future local dispatcher (``ok: false`` frames) can map the
-    same failure to their own transport. Currently only 404 (missing or
-    out-of-scope artifact), matching the historical handler responses
-    exactly. Validation failures are ``ValueError`` and propagate
+    same failure to their own transport. Currently 404 (missing or
+    out-of-scope artifact, matching the historical handler responses
+    exactly) and 422 (document image path resolving to a non-image,
+    matching the historical handler's explicit 422). Validation failures are ``ValueError`` and propagate
     unwrapped to preserve the global ``ValueError → 422`` shape.
     """
 

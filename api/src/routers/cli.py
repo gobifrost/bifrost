@@ -1484,47 +1484,21 @@ async def sdk_render_document_artifact(
     db: AsyncSession = Depends(get_db),
 ) -> ArtifactRef:
     """Render and store a trusted PDF or DOCX artifact."""
+    from shared.sdk_artifact_generation import (
+        sdk_render_document_artifact as _render_document,
+    )
+    from shared.sdk_artifacts import ArtifactCaller, SdkArtifactError
 
-    from shared.artifact_generation import (
-        generate_document,
-        generate_document_with_images,
-    )
-    from src.services.artifacts import ArtifactService, artifact_ref
-
-    service = ArtifactService(db)
-    image_content: dict[str, bytes] = {}
-    if workspace_id is not None:
-        for image in (
-            image for section in request.sections for image in section.images
-        ):
-            stored_image = await service.resolve_workspace_path(
-                workspace_id,
-                image.path,
-                user_id=current_user.user_id,
-                organization_id=current_user.organization_id,
-                is_platform_admin=current_user.is_platform_admin,
-            )
-            if not stored_image.content_type.startswith("image/"):
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=f"{image.path} is not an image artifact.",
-                )
-            image_content[image.path] = await service.read(stored_image)
-    generated = await asyncio.to_thread(
-        generate_document_with_images if image_content else generate_document,
-        request,
-        *([image_content] if image_content else []),
-    )
-    artifact = await service.store(
-        filename=generated.filename,
-        content_type=generated.content_type,
-        content=generated.content,
-        created_by_user_id=current_user.user_id,
-        organization_id=current_user.organization_id,
-        workspace_id=workspace_id,
-        logical_path=generated.filename,
-    )
-    return artifact_ref(artifact)
+    try:
+        return await _render_document(
+            ArtifactCaller(user=current_user, db=db),
+            spec=request,
+            workspace_id=workspace_id,
+        )
+    except SdkArtifactError as exc:
+        raise HTTPException(
+            status_code=exc.status_code, detail=exc.detail
+        ) from exc
 
 
 @router.post("/artifacts/spreadsheet")
@@ -1535,21 +1509,16 @@ async def sdk_render_spreadsheet_artifact(
     db: AsyncSession = Depends(get_db),
 ) -> ArtifactRef:
     """Render and store a trusted XLSX artifact."""
-
-    from shared.artifact_generation import generate_spreadsheet
-    from src.services.artifacts import ArtifactService, artifact_ref
-
-    generated = await asyncio.to_thread(generate_spreadsheet, request)
-    artifact = await ArtifactService(db).store(
-        filename=generated.filename,
-        content_type=generated.content_type,
-        content=generated.content,
-        created_by_user_id=current_user.user_id,
-        organization_id=current_user.organization_id,
-        workspace_id=workspace_id,
-        logical_path=generated.filename,
+    from shared.sdk_artifact_generation import (
+        sdk_render_spreadsheet_artifact as _render_spreadsheet,
     )
-    return artifact_ref(artifact)
+    from shared.sdk_artifacts import ArtifactCaller
+
+    return await _render_spreadsheet(
+        ArtifactCaller(user=current_user, db=db),
+        spec=request,
+        workspace_id=workspace_id,
+    )
 
 
 @router.post("/artifacts/text")
@@ -1560,21 +1529,16 @@ async def sdk_render_text_artifact(
     db: AsyncSession = Depends(get_db),
 ) -> ArtifactRef:
     """Render and store a trusted text-family artifact."""
-
-    from shared.artifact_generation import generate_text
-    from src.services.artifacts import ArtifactService, artifact_ref
-
-    generated = await asyncio.to_thread(generate_text, request)
-    artifact = await ArtifactService(db).store(
-        filename=generated.filename,
-        content_type=generated.content_type,
-        content=generated.content,
-        created_by_user_id=current_user.user_id,
-        organization_id=current_user.organization_id,
-        workspace_id=workspace_id,
-        logical_path=generated.filename,
+    from shared.sdk_artifact_generation import (
+        sdk_render_text_artifact as _render_text,
     )
-    return artifact_ref(artifact)
+    from shared.sdk_artifacts import ArtifactCaller
+
+    return await _render_text(
+        ArtifactCaller(user=current_user, db=db),
+        spec=request,
+        workspace_id=workspace_id,
+    )
 
 
 @router.post("/artifacts/image")
@@ -1586,32 +1550,17 @@ async def sdk_generate_image_artifact(
     db: AsyncSession = Depends(get_db),
 ) -> ArtifactRef:
     """Generate and store an image with the configured provider."""
-
-    from src.services.artifacts import ArtifactService, artifact_ref
-    from src.services.media_generation import generate_image, record_media_usage
-
-    generated = await generate_image(
-        db,
-        filename=request.filename,
-        prompt=request.prompt,
+    from shared.sdk_artifact_generation import (
+        sdk_generate_image_artifact as _generate_image,
     )
-    artifact = await ArtifactService(db).store(
-        filename=generated.filename,
-        content_type=generated.content_type,
-        content=generated.content,
-        created_by_user_id=current_user.user_id,
-        organization_id=current_user.organization_id,
+    from shared.sdk_artifacts import ArtifactCaller
+
+    return await _generate_image(
+        ArtifactCaller(user=current_user, db=db),
+        spec=request,
         workspace_id=workspace_id,
-        logical_path=generated.filename,
-    )
-    await record_media_usage(
-        db,
-        generated,
         execution_id=execution_id,
-        organization_id=current_user.organization_id,
-        user_id=current_user.user_id,
     )
-    return artifact_ref(artifact)
 
 
 @router.post(
