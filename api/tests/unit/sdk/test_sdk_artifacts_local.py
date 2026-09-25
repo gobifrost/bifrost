@@ -144,7 +144,12 @@ async def _seed_system_user(db_session):
 
 @contextlib.asynccontextmanager
 async def _db_factory(db_session):
-    yield db_session
+    # Unit cases share the fixture transaction so they can compare HTTP and
+    # local calls against the same rows. Keep the local write's commit from
+    # persisting fixture users into later E2E tests in this pytest process;
+    # the live-worker test verifies the real commit boundary.
+    with patch.object(db_session, "commit", new_callable=AsyncMock):
+        yield db_session
 
 
 def _user(
