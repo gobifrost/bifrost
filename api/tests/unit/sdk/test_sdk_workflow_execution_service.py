@@ -30,8 +30,10 @@ from unittest.mock import AsyncMock, patch
 from uuid import UUID, uuid4
 
 import pytest
+import pytest_asyncio
 from fastapi import HTTPException
 from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.sdk_workflow_execution import (
     SdkWorkflowExecutionError,
@@ -42,6 +44,23 @@ from shared.sdk_workflow_execution import (
 )
 from src.core.principal import UserPrincipal
 from src.models.enums import ExecutionStatus
+
+
+@pytest_asyncio.fixture
+async def db_session(async_engine):
+    """Keep service commits visible in each test without persisting fixtures."""
+    async with async_engine.connect() as connection:
+        transaction = await connection.begin()
+        async with AsyncSession(
+            bind=connection,
+            expire_on_commit=False,
+            join_transaction_mode="create_savepoint",
+        ) as session:
+            try:
+                yield session
+            finally:
+                await session.rollback()
+                await transaction.rollback()
 
 
 def _admin(org_id=None, **kwargs) -> UserPrincipal:
