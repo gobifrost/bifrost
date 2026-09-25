@@ -1051,7 +1051,7 @@ async def _apply_table_data(
     from sqlalchemy import delete as sa_delete
 
     from src.models.orm.tables import Document, Table
-    from src.routers.tables import DocumentRepository
+    from shared.table_documents import DocumentRepository
 
     org_pred = (
         Table.organization_id == solution.organization_id
