@@ -173,6 +173,15 @@ async def isolate_global_db_engine() -> AsyncGenerator[None, None]:
 
 
 @pytest_asyncio.fixture(autouse=True)
+async def isolate_global_redis_client() -> AsyncGenerator[None, None]:
+    """Close the process-global async Redis connection on its owning test loop."""
+    from src.core.redis_client import close_redis_client
+
+    yield
+    await close_redis_client()
+
+
+@pytest_asyncio.fixture(autouse=True)
 async def isolate_s3(request) -> AsyncGenerator[None, None]:
     """Wipe .bifrost/ from S3 before every async test that touches the repo.
 
