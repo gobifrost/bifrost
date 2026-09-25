@@ -4,7 +4,11 @@ Knowledge Store SDK for Bifrost - API-only implementation.
 Provides Python API for semantic search and RAG (Retrieval Augmented Generation).
 Uses pgvector for vector similarity search with org-scoped namespaces.
 
-All operations go through HTTP API endpoints.
+Outside an engine child all operations go through HTTP API endpoints;
+inside an engine child the fixed operations ride the dedicated local
+transport to the parent (same shared services, same results) with no
+HTTP requests and no database connection in the child. A local attempt
+never falls back to HTTP.
 All methods are async and must be awaited.
 
 Usage:
@@ -38,6 +42,7 @@ from typing import Any
 from .client import get_client, raise_for_status_with_detail
 from .models import KnowledgeDocument, NamespaceInfo
 from ._context import resolve_scope
+from ._local_transport import get as _get_local_transport
 
 
 class knowledge:
@@ -47,7 +52,11 @@ class knowledge:
     Provides semantic search and storage for RAG.
     Documents are scoped to organizations with global fallback.
 
-    All operations are performed via HTTP API endpoints.
+    Outside an engine child all operations go through HTTP API endpoints;
+    inside an engine child the fixed operations resolve through the parent
+    over the dedicated local transport (same shared services as the HTTP
+    endpoints) with no HTTP requests and no database connection in the
+    child. A local attempt never falls back to HTTP.
     """
 
     @staticmethod
@@ -86,8 +95,18 @@ class knowledge:
             ...     metadata={"source": "handbook"}
             ... )
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent validates the same
+            # ``CLIKnowledgeStoreRequest`` DTO and runs the shared
+            # knowledge service over the dedicated channel. A local
+            # attempt never falls back to HTTP.
+            result = await transport.call_knowledge_store(
+                content, namespace, key, metadata, effective_scope,
+            )
+            return result["id"]
+        client = get_client()
         response = await client.post(
             "/api/sdk/knowledge/store",
             json={
@@ -137,8 +156,21 @@ class knowledge:
             ...     {"content": "Doc 2", "key": "doc-2", "metadata": {"type": "faq"}},
             ... ], namespace="faq")
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent validates the same
+            # ``CLIKnowledgeStoreManyRequest`` DTO and runs the shared
+            # knowledge service over the dedicated channel (embedding
+            # happens off-connection in the parent, so the batch
+            # timeout rides the local call). A local attempt never
+            # falls back to HTTP.
+            result = await transport.call_knowledge_store_many(
+                documents, namespace, effective_scope,
+                timeout=timeout if timeout is not None else 300.0,
+            )
+            return result["ids"]
+        client = get_client()
         response = await client.post(
             "/api/sdk/knowledge/store-many",
             json={
@@ -192,8 +224,24 @@ class knowledge:
             >>> for doc in results:
             ...     print(f"{doc.score:.2f}: {doc.content[:100]}")
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent validates the same
+            # ``CLIKnowledgeSearchRequest`` DTO and runs the shared
+            # knowledge service over the dedicated channel. A local
+            # attempt never falls back to HTTP.
+            items = await transport.call_knowledge_search(
+                query,
+                namespace if isinstance(namespace, list) else [namespace],
+                limit,
+                min_score,
+                metadata_filter,
+                effective_scope,
+                fallback,
+            )
+            return [KnowledgeDocument.model_validate(doc) for doc in items]
+        client = get_client()
         response = await client.post(
             "/api/sdk/knowledge/search",
             json={
@@ -236,8 +284,18 @@ class knowledge:
         Example:
             >>> deleted = await knowledge.delete("ticket-123", namespace="tickets")
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent validates the same
+            # ``CLIKnowledgeDeleteRequest`` DTO and runs the shared
+            # knowledge service over the dedicated channel. A local
+            # attempt never falls back to HTTP.
+            result = await transport.call_knowledge_delete(
+                key, namespace, effective_scope,
+            )
+            return result["deleted"]
+        client = get_client()
         response = await client.post(
             "/api/sdk/knowledge/delete",
             json={
@@ -272,8 +330,17 @@ class knowledge:
             >>> count = await knowledge.delete_namespace("old-data")
             >>> print(f"Deleted {count} documents")
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent runs the shared knowledge
+            # service over the dedicated channel. A local attempt never
+            # falls back to HTTP.
+            result = await transport.call_knowledge_delete_namespace(
+                namespace, effective_scope,
+            )
+            return result["deleted_count"]
+        client = get_client()
         params = {}
         if effective_scope:
             params["scope"] = effective_scope
@@ -306,8 +373,17 @@ class knowledge:
             >>> for ns in namespaces:
             ...     print(f"{ns.namespace}: {ns.scopes['total']} docs")
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent runs the shared knowledge
+            # service over the dedicated channel. A local attempt never
+            # falls back to HTTP.
+            items = await transport.call_knowledge_list_namespaces(
+                effective_scope, include_global,
+            )
+            return [NamespaceInfo.model_validate(ns) for ns in items]
+        client = get_client()
         params: dict[str, Any] = {"include_global": include_global}
         if effective_scope:
             params["scope"] = effective_scope
@@ -347,8 +423,25 @@ class knowledge:
             >>> if doc:
             ...     print(doc.content)
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent runs the shared knowledge
+            # service over the dedicated channel (a miss is a 404 error
+            # frame mapped to None, like the HTTP path). A local
+            # attempt never falls back to HTTP.
+            from .client import BifrostAPIError
+
+            try:
+                result = await transport.call_knowledge_get(
+                    key, namespace, effective_scope,
+                )
+            except BifrostAPIError as e:
+                if e.response.status_code == 404:
+                    return None
+                raise
+            return KnowledgeDocument.model_validate(result)
+        client = get_client()
         params: dict[str, Any] = {
             "key": key,
             "namespace": namespace,

@@ -138,6 +138,13 @@ OP_TABLES_BATCH = "tables.batch"
 OP_TABLES_BATCH_DELETE = "tables.batch_delete"
 OP_TABLES_QUERY = "tables.query"
 OP_TABLES_COUNT = "tables.count"
+OP_KNOWLEDGE_STORE = "knowledge.store"
+OP_KNOWLEDGE_STORE_MANY = "knowledge.store_many"
+OP_KNOWLEDGE_SEARCH = "knowledge.search"
+OP_KNOWLEDGE_DELETE = "knowledge.delete"
+OP_KNOWLEDGE_DELETE_NAMESPACE = "knowledge.delete_namespace"
+OP_KNOWLEDGE_LIST_NAMESPACES = "knowledge.list_namespaces"
+OP_KNOWLEDGE_GET = "knowledge.get"
 OP_ARTIFACTS_WRITE = "artifacts.write"
 OP_ARTIFACTS_READ = "artifacts.read"
 OP_ARTIFACTS_LIST = "artifacts.list"
@@ -1122,6 +1129,211 @@ class ChildLocalTransport:
         result = await self._call(
             OP_TABLES_COUNT,
             {"table": table, "scope": scope, "solution": solution},
+            timeout,
+        )
+        if not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+
+    async def call_knowledge_store(
+        self,
+        content: str,
+        namespace: str,
+        key: str | None,
+        metadata: dict[str, Any] | None,
+        scope: str | None,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """Store one document through the parent. No HTTP fallback.
+
+        Returns the ``{"id": ...}`` envelope carrying the first chunk ID,
+        identical to the HTTP path. Large content rides bounded chunked
+        request frames.
+        """
+        result = await self._call(
+            OP_KNOWLEDGE_STORE,
+            {
+                "content": content,
+                "namespace": namespace,
+                "key": key,
+                "metadata": metadata,
+                "scope": scope,
+            },
+            timeout,
+        )
+        if not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+    async def call_knowledge_store_many(
+        self,
+        documents: list[dict[str, Any]],
+        namespace: str,
+        scope: str | None,
+        timeout: float = 300.0,
+    ) -> dict[str, Any]:
+        """Store many documents through the parent. No HTTP fallback.
+
+        Returns the ``{"ids": [...]}`` envelope with one first-chunk ID
+        per document, identical to the HTTP path. The 300-second deadline
+        matches the HTTP facade's batch timeout: embedding a large batch
+        happens off-connection in the parent and must not trip the
+        default 30-second op deadline. Large batches ride bounded
+        chunked request frames.
+        """
+        result = await self._call(
+            OP_KNOWLEDGE_STORE_MANY,
+            {"documents": documents, "namespace": namespace, "scope": scope},
+            timeout,
+        )
+        if not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+    async def call_knowledge_search(
+        self,
+        query: str,
+        namespace: list[str],
+        limit: int,
+        min_score: float | None,
+        metadata_filter: dict[str, Any] | None,
+        scope: str | None,
+        fallback: bool,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> list[dict[str, Any]]:
+        """Search documents through the parent. No HTTP fallback.
+
+        Returns the document dicts (unwrapped from the ``{"items"}``
+        envelope — the transport result contract does not carry bare
+        lists), identical to the HTTP path. Large result sets arrive as
+        bounded chunked response frames.
+        """
+        result = await self._call(
+            OP_KNOWLEDGE_SEARCH,
+            {
+                "query": query,
+                "namespace": namespace,
+                "limit": limit,
+                "min_score": min_score,
+                "metadata_filter": metadata_filter,
+                "scope": scope,
+                "fallback": fallback,
+            },
+            timeout,
+        )
+        if not isinstance(result, dict) or not isinstance(
+            result.get("items"), list
+        ):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result["items"]
+
+    async def call_knowledge_delete(
+        self,
+        key: str,
+        namespace: str,
+        scope: str | None,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """Delete one document by key through the parent. No HTTP fallback.
+
+        Returns the ``{"deleted": bool}`` envelope, identical to the
+        HTTP path (False for a missing key).
+        """
+        result = await self._call(
+            OP_KNOWLEDGE_DELETE,
+            {"key": key, "namespace": namespace, "scope": scope},
+            timeout,
+        )
+        if not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+    async def call_knowledge_delete_namespace(
+        self,
+        namespace: str,
+        scope: str | None,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """Delete a namespace through the parent. No HTTP fallback.
+
+        Returns the ``{"deleted_count": int}`` envelope, identical to
+        the HTTP path.
+        """
+        result = await self._call(
+            OP_KNOWLEDGE_DELETE_NAMESPACE,
+            {"namespace": namespace, "scope": scope},
+            timeout,
+        )
+        if not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+    async def call_knowledge_list_namespaces(
+        self,
+        scope: str | None,
+        include_global: bool,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> list[dict[str, Any]]:
+        """List namespaces through the parent. No HTTP fallback.
+
+        Returns the namespace-info dicts (unwrapped from the
+        ``{"items"}`` envelope), identical to the HTTP path.
+        """
+        result = await self._call(
+            OP_KNOWLEDGE_LIST_NAMESPACES,
+            {"scope": scope, "include_global": include_global},
+            timeout,
+        )
+        if not isinstance(result, dict) or not isinstance(
+            result.get("items"), list
+        ):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result["items"]
+
+    async def call_knowledge_get(
+        self,
+        key: str,
+        namespace: str,
+        scope: str | None,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """Get one document by key through the parent. No HTTP fallback.
+
+        Returns the document dict. A miss is a 404 error frame (the
+        facade maps it to ``None``) — never a null result.
+        """
+        result = await self._call(
+            OP_KNOWLEDGE_GET,
+            {"key": key, "namespace": namespace, "scope": scope},
             timeout,
         )
         if not isinstance(result, dict):

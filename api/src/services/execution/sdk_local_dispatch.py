@@ -72,6 +72,13 @@ from bifrost._local_transport import (
     OP_INTEGRATIONS_LIST_MAPPINGS,
     OP_INTEGRATIONS_REFRESH_TOKEN,
     OP_INTEGRATIONS_UPSERT_MAPPING,
+    OP_KNOWLEDGE_DELETE,
+    OP_KNOWLEDGE_DELETE_NAMESPACE,
+    OP_KNOWLEDGE_GET,
+    OP_KNOWLEDGE_LIST_NAMESPACES,
+    OP_KNOWLEDGE_SEARCH,
+    OP_KNOWLEDGE_STORE,
+    OP_KNOWLEDGE_STORE_MANY,
     OP_TABLES_COUNT,
     OP_TABLES_BATCH_DELETE,
     OP_TABLES_BATCH,
@@ -116,6 +123,13 @@ SDK_CHANNEL_ALLOWED_OPS = frozenset(
         OP_TABLES_GET,
         OP_TABLES_QUERY,
         OP_TABLES_COUNT,
+        OP_KNOWLEDGE_STORE,
+        OP_KNOWLEDGE_STORE_MANY,
+        OP_KNOWLEDGE_SEARCH,
+        OP_KNOWLEDGE_DELETE,
+        OP_KNOWLEDGE_DELETE_NAMESPACE,
+        OP_KNOWLEDGE_LIST_NAMESPACES,
+        OP_KNOWLEDGE_GET,
         OP_ARTIFACTS_WRITE,
         OP_ARTIFACTS_READ,
         OP_ARTIFACTS_LIST,
@@ -491,6 +505,20 @@ async def dispatch_frames(
         return await _dispatch_files_signed_url(session_factory, principal, frame_id, frame)
     if op == OP_FILES_SEARCH:
         return await _dispatch_files_search(session_factory, principal, frame_id, frame)
+    if op == OP_KNOWLEDGE_STORE:
+        return await _dispatch_knowledge_store(session_factory, principal, frame_id, frame)
+    if op == OP_KNOWLEDGE_STORE_MANY:
+        return await _dispatch_knowledge_store_many(session_factory, principal, frame_id, frame)
+    if op == OP_KNOWLEDGE_SEARCH:
+        return await _dispatch_knowledge_search(session_factory, principal, frame_id, frame)
+    if op == OP_KNOWLEDGE_DELETE:
+        return await _dispatch_knowledge_delete(session_factory, principal, frame_id, frame)
+    if op == OP_KNOWLEDGE_DELETE_NAMESPACE:
+        return await _dispatch_knowledge_delete_namespace(session_factory, principal, frame_id, frame)
+    if op == OP_KNOWLEDGE_LIST_NAMESPACES:
+        return await _dispatch_knowledge_list_namespaces(session_factory, principal, frame_id, frame)
+    if op == OP_KNOWLEDGE_GET:
+        return await _dispatch_knowledge_get(session_factory, principal, frame_id, frame)
     if op == OP_MODULES_RESOLVE:
         return await _dispatch_modules_resolve(session_factory, principal, frame_id, frame)
     if op == OP_MODULES_FETCH:
@@ -3290,6 +3318,576 @@ async def _dispatch_files_search(
         op=OP_FILES_SEARCH,
         log_key=request.query,
         status_errors=(FileServiceError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+def _knowledge_actor_id() -> Any:
+    """Parent-derived ``created_by`` for knowledge writes (never a child claim).
+
+    Both HTTP workflow and service calls authenticate as the engine
+    sentinel ``sub`` (``mint_engine_token``/``mint_service_token``), so
+    the local dispatcher attributes to the same ``SYSTEM_USER_UUID`` —
+    matching the HTTP ``current_user.user_id`` on both paths.
+    """
+    from src.core.constants import SYSTEM_USER_UUID
+
+    return SYSTEM_USER_UUID
+
+
+async def _knowledge_embedder(
+    session_factory: SessionFactory,
+    frame_id: str | None,
+    op: str,
+    fail_prefix: str,
+) -> tuple[Any | None, dict[str, Any] | None]:
+    """Phase 1: load the embedding client on one short session.
+
+    Holds a pooled parent connection only for the config read; the
+    caller closes it before the network embedding work. ``ValueError``
+    (unconfigured embeddings) keeps its 503 detail and any other
+    load failure keeps the historical generic 500 detail, so the
+    error frame matches the single-session HTTP path exactly.
+    """
+    from shared.sdk_knowledge import SDKKnowledgeError, load_knowledge_embedder
+
+    async def _load(session: Any) -> Any:
+        try:
+            return await load_knowledge_embedder(session)
+        except ValueError as e:
+            raise SDKKnowledgeError(503, str(e)) from None
+        except SDKKnowledgeError:
+            raise
+        except Exception as e:
+            raise SDKKnowledgeError(500, f"{fail_prefix}: {str(e)}") from None
+
+    embedder, error = await _run_short(
+        session_factory, _load, op=op, log_key="",
+        status_errors=(SDKKnowledgeError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return None, error
+    return embedder, None
+
+
+async def _dispatch_knowledge_store(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``knowledge.store`` through the shared knowledge service.
+
+    Validates with the same ``CLIKnowledgeStoreRequest`` DTO as the HTTP
+    handler, resolves the untrusted scope string against the
+    parent-derived principal (workflows keep the engine-token snapshot,
+    services re-check provider membership live), and calls the same
+    shared service. ``created_by`` is the parent-derived engine
+    sentinel UUID — never a child claim.
+
+    Split-phase transaction (explicit): the embedding-config read runs
+    on one short session, chunking/embedding runs off-connection with
+    no pooled session held, and the vector/DB write runs on a second
+    short session with one commit. A pre-commit embedding failure
+    leaves no rows (the single-session path rolled back the flushed
+    rows instead) — same observable outcome, no needlessly held
+    connection. ``ValueError`` in either phase keeps its 503 detail;
+    anything else is the historical generic 500.
+    """
+    from shared.sdk_knowledge import (
+        SDKKnowledgeError,
+        embed_content_chunks,
+        store_knowledge_preembedded,
+    )
+    from src.models.contracts.cli import CLIKnowledgeStoreRequest
+
+    request, invalid = _validate_request(
+        CLIKnowledgeStoreRequest,
+        {
+            "content": frame.get("content"),
+            "namespace": frame.get("namespace", "default"),
+            "key": frame.get("key"),
+            "metadata": frame.get("metadata"),
+            "scope": frame.get("scope"),
+        },
+        frame_id,
+        OP_KNOWLEDGE_STORE,
+    )
+    if invalid is not None:
+        return [invalid]
+    assert request is not None
+    resolved_org_id, scope_error = await _resolve_frame_scope(
+        principal, frame_id, {"scope": request.scope}, session_factory
+    )
+    if scope_error is not None:
+        return [scope_error]
+
+    embedder, error = await _knowledge_embedder(
+        session_factory, frame_id, OP_KNOWLEDGE_STORE, "Knowledge store failed"
+    )
+    if error is not None:
+        return [error]
+    assert embedder is not None
+    try:
+        chunks, embeddings = await embed_content_chunks(embedder, request.content)
+    except ValueError as e:
+        return [_error(frame_id, 503, str(e))]
+    except Exception as e:
+        return [_error(frame_id, 500, f"Knowledge store failed: {str(e)}")]
+
+    async def _store(session: Any) -> dict[str, Any]:
+        return await store_knowledge_preembedded(
+            session,
+            chunks=chunks,
+            embeddings=embeddings,
+            namespace=request.namespace,
+            key=request.key,
+            metadata=request.metadata,
+            org_id=resolved_org_id,
+            created_by=_knowledge_actor_id(),
+        )
+
+    result, error = await _run_short(
+        session_factory,
+        _store,
+        op=OP_KNOWLEDGE_STORE,
+        log_key=request.namespace,
+        status_errors=(SDKKnowledgeError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _single_ok(frame_id, result)
+
+
+async def _dispatch_knowledge_store_many(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``knowledge.store_many`` through the shared knowledge service.
+
+    Same DTO, scope, actor, and split-phase transaction as
+    :func:`_dispatch_knowledge_store`: one embedder loads on a short
+    session, every document embeds sequentially off-connection (a doc
+    missing ``content`` fails with the historical generic 500 before
+    any write transaction opens — the single-session path flushed the
+    prior docs then rolled back instead), and one repository persists
+    all documents with one commit on a second short session.
+    """
+    from shared.sdk_knowledge import (
+        SDKKnowledgeError,
+        embed_content_chunks,
+        store_many_preembedded,
+    )
+    from src.models.contracts.cli import CLIKnowledgeStoreManyRequest
+
+    request, invalid = _validate_request(
+        CLIKnowledgeStoreManyRequest,
+        {
+            "documents": frame.get("documents"),
+            "namespace": frame.get("namespace", "default"),
+            "scope": frame.get("scope"),
+        },
+        frame_id,
+        OP_KNOWLEDGE_STORE_MANY,
+    )
+    if invalid is not None:
+        return [invalid]
+    assert request is not None
+    resolved_org_id, scope_error = await _resolve_frame_scope(
+        principal, frame_id, {"scope": request.scope}, session_factory
+    )
+    if scope_error is not None:
+        return [scope_error]
+
+    embedder, error = await _knowledge_embedder(
+        session_factory, frame_id, OP_KNOWLEDGE_STORE_MANY,
+        "Knowledge store failed",
+    )
+    if error is not None:
+        return [error]
+    assert embedder is not None
+    try:
+        items: list[dict[str, Any]] = []
+        for doc in request.documents:
+            chunks, embeddings = await embed_content_chunks(
+                embedder, doc["content"]
+            )
+            items.append(
+                {
+                    "chunks": chunks,
+                    "embeddings": embeddings,
+                    "key": doc.get("key"),
+                    "metadata": doc.get("metadata"),
+                }
+            )
+    except ValueError as e:
+        return [_error(frame_id, 503, str(e))]
+    except Exception as e:
+        return [_error(frame_id, 500, f"Knowledge store failed: {str(e)}")]
+
+    async def _store(session: Any) -> dict[str, Any]:
+        return await store_many_preembedded(
+            session,
+            items=items,
+            namespace=request.namespace,
+            org_id=resolved_org_id,
+            created_by=_knowledge_actor_id(),
+        )
+
+    result, error = await _run_short(
+        session_factory,
+        _store,
+        op=OP_KNOWLEDGE_STORE_MANY,
+        log_key=request.namespace,
+        status_errors=(SDKKnowledgeError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _single_ok(frame_id, result)
+
+
+async def _dispatch_knowledge_search(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``knowledge.search`` through the shared knowledge service.
+
+    Same ``CLIKnowledgeSearchRequest`` DTO, scope resolution, single
+    query-embedding, fused lexical/vector ranking, and result shape as
+    the HTTP handler. The query embeds off-connection (no pooled
+    session held across the provider call); the vector query runs on a
+    short session with no commit. Large result sets ride bounded
+    chunked frames via ``_ok_frames`` inside a ``{"items"}`` envelope
+    (the transport result contract does not carry bare lists).
+    """
+    from shared.sdk_knowledge import (
+        SDKKnowledgeError,
+        embed_query_text,
+        search_knowledge_with_embedding,
+    )
+    from src.models.contracts.cli import CLIKnowledgeSearchRequest
+
+    request, invalid = _validate_request(
+        CLIKnowledgeSearchRequest,
+        {
+            "query": frame.get("query"),
+            "namespace": frame.get("namespace", ["default"]),
+            "limit": frame.get("limit", 5),
+            "min_score": frame.get("min_score"),
+            "metadata_filter": frame.get("metadata_filter"),
+            "scope": frame.get("scope"),
+            "fallback": frame.get("fallback", True),
+        },
+        frame_id,
+        OP_KNOWLEDGE_SEARCH,
+    )
+    if invalid is not None:
+        return [invalid]
+    assert request is not None
+    resolved_org_id, scope_error = await _resolve_frame_scope(
+        principal, frame_id, {"scope": request.scope}, session_factory
+    )
+    if scope_error is not None:
+        return [scope_error]
+
+    embedder, error = await _knowledge_embedder(
+        session_factory, frame_id, OP_KNOWLEDGE_SEARCH,
+        "Knowledge search failed",
+    )
+    if error is not None:
+        return [error]
+    assert embedder is not None
+    try:
+        query_embedding = await embed_query_text(embedder, request.query)
+    except ValueError as e:
+        return [_error(frame_id, 503, str(e))]
+    except Exception as e:
+        return [_error(frame_id, 500, f"Knowledge search failed: {str(e)}")]
+
+    async def _search(session: Any) -> dict[str, Any]:
+        items = await search_knowledge_with_embedding(
+            session,
+            query_embedding=query_embedding,
+            query_text=request.query,
+            namespace=request.namespace,
+            limit=request.limit,
+            min_score=request.min_score,
+            metadata_filter=request.metadata_filter,
+            fallback=request.fallback,
+            org_id=resolved_org_id,
+        )
+        return {"items": items}
+
+    result, error = await _run_short(
+        session_factory,
+        _search,
+        op=OP_KNOWLEDGE_SEARCH,
+        log_key=request.query[:50],
+        status_errors=(SDKKnowledgeError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_knowledge_delete(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``knowledge.delete`` through the shared knowledge service.
+
+    Same ``CLIKnowledgeDeleteRequest`` DTO, exact-scope delete, commit
+    ordering, and ``{"deleted": bool}`` shape as the HTTP handler.
+    """
+    from shared.sdk_knowledge import SDKKnowledgeError, delete_knowledge_document
+    from src.models.contracts.cli import CLIKnowledgeDeleteRequest
+
+    request, invalid = _validate_request(
+        CLIKnowledgeDeleteRequest,
+        {
+            "key": frame.get("key"),
+            "namespace": frame.get("namespace", "default"),
+            "scope": frame.get("scope"),
+        },
+        frame_id,
+        OP_KNOWLEDGE_DELETE,
+    )
+    if invalid is not None:
+        return [invalid]
+    assert request is not None
+    resolved_org_id, scope_error = await _resolve_frame_scope(
+        principal, frame_id, {"scope": request.scope}, session_factory
+    )
+    if scope_error is not None:
+        return [scope_error]
+
+    async def _delete(session: Any) -> dict[str, Any]:
+        return await delete_knowledge_document(
+            session,
+            key=request.key,
+            namespace=request.namespace,
+            org_id=resolved_org_id,
+        )
+
+    result, error = await _run_short(
+        session_factory,
+        _delete,
+        op=OP_KNOWLEDGE_DELETE,
+        log_key=request.key,
+        status_errors=(SDKKnowledgeError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _single_ok(frame_id, result)
+
+
+async def _dispatch_knowledge_delete_namespace(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``knowledge.delete_namespace`` through the shared service.
+
+    The HTTP route takes ``namespace`` from the path and ``scope`` from
+    the query string (no body DTO), so the frame validates the same two
+    fields directly: a missing/blank namespace and a non-string scope
+    are 422, matching the tables string-field helpers. Same
+    exact-scope delete, commit ordering, and ``{"deleted_count": int}``
+    shape as the HTTP handler.
+    """
+    from shared.sdk_knowledge import SDKKnowledgeError, delete_knowledge_namespace
+
+    namespace = frame.get("namespace")
+    if not isinstance(namespace, str) or not namespace:
+        return [
+            _error(
+                frame_id,
+                422,
+                f"invalid {OP_KNOWLEDGE_DELETE_NAMESPACE} request: "
+                "'namespace' is required",
+            )
+        ]
+    scope = frame.get("scope")
+    if scope is not None and not isinstance(scope, str):
+        return [
+            _error(
+                frame_id,
+                422,
+                f"invalid {OP_KNOWLEDGE_DELETE_NAMESPACE} request: "
+                "'scope' must be a string",
+            )
+        ]
+    resolved_org_id, scope_error = await _resolve_frame_scope(
+        principal, frame_id, {"scope": scope}, session_factory
+    )
+    if scope_error is not None:
+        return [scope_error]
+
+    async def _delete(session: Any) -> dict[str, Any]:
+        return await delete_knowledge_namespace(
+            session,
+            namespace=namespace,
+            org_id=resolved_org_id,
+        )
+
+    result, error = await _run_short(
+        session_factory,
+        _delete,
+        op=OP_KNOWLEDGE_DELETE_NAMESPACE,
+        log_key=namespace,
+        status_errors=(SDKKnowledgeError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _single_ok(frame_id, result)
+
+
+async def _dispatch_knowledge_list_namespaces(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``knowledge.list_namespaces`` through the shared service.
+
+    The HTTP route takes ``scope``/``include_global`` from the query
+    string (no body DTO): a non-string scope and a non-bool
+    ``include_global`` are 422 (the HTTP layer coerces query strings
+    through its own parsing; the frame carries typed values, so only
+    the type check applies). Same include-global behavior and
+    namespace/count shape as the HTTP handler, inside an ``{"items"}``
+    envelope with no commit. Large listings ride chunked frames.
+    """
+    from shared.sdk_knowledge import SDKKnowledgeError, list_knowledge_namespaces
+
+    scope = frame.get("scope")
+    if scope is not None and not isinstance(scope, str):
+        return [
+            _error(
+                frame_id,
+                422,
+                f"invalid {OP_KNOWLEDGE_LIST_NAMESPACES} request: "
+                "'scope' must be a string",
+            )
+        ]
+    include_global = frame.get("include_global", True)
+    if not isinstance(include_global, bool):
+        return [
+            _error(
+                frame_id,
+                422,
+                f"invalid {OP_KNOWLEDGE_LIST_NAMESPACES} request: "
+                "'include_global' must be a bool",
+            )
+        ]
+    resolved_org_id, scope_error = await _resolve_frame_scope(
+        principal, frame_id, {"scope": scope}, session_factory
+    )
+    if scope_error is not None:
+        return [scope_error]
+
+    async def _list(session: Any) -> dict[str, Any]:
+        items = await list_knowledge_namespaces(
+            session,
+            org_id=resolved_org_id,
+            include_global=include_global,
+        )
+        return {"items": items}
+
+    result, error = await _run_short(
+        session_factory,
+        _list,
+        op=OP_KNOWLEDGE_LIST_NAMESPACES,
+        log_key="",
+        status_errors=(SDKKnowledgeError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_knowledge_get(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``knowledge.get`` through the shared knowledge service.
+
+    The HTTP route takes ``key``/``namespace``/``scope`` from the query
+    string (no body DTO): a missing/blank key is 422 and a non-string
+    namespace/scope is 422. Same exact-scope read, full-content
+    reassembly, and document shape as the HTTP handler, with the
+    repository miss mapped to a 404 error frame (the facade maps it to
+    ``None``). Large reassembled content rides chunked frames.
+    """
+    from shared.sdk_knowledge import SDKKnowledgeError, get_knowledge_document
+
+    key = frame.get("key")
+    if not isinstance(key, str) or not key:
+        return [
+            _error(
+                frame_id,
+                422,
+                f"invalid {OP_KNOWLEDGE_GET} request: 'key' is required",
+            )
+        ]
+    namespace = frame.get("namespace", "default")
+    if not isinstance(namespace, str):
+        return [
+            _error(
+                frame_id,
+                422,
+                f"invalid {OP_KNOWLEDGE_GET} request: "
+                "'namespace' must be a string",
+            )
+        ]
+    scope = frame.get("scope")
+    if scope is not None and not isinstance(scope, str):
+        return [
+            _error(
+                frame_id,
+                422,
+                f"invalid {OP_KNOWLEDGE_GET} request: 'scope' must be a string",
+            )
+        ]
+    resolved_org_id, scope_error = await _resolve_frame_scope(
+        principal, frame_id, {"scope": scope}, session_factory
+    )
+    if scope_error is not None:
+        return [scope_error]
+
+    async def _get(session: Any) -> dict[str, Any]:
+        return await get_knowledge_document(
+            session,
+            key=key,
+            namespace=namespace,
+            org_id=resolved_org_id,
+        )
+
+    result, error = await _run_short(
+        session_factory,
+        _get,
+        op=OP_KNOWLEDGE_GET,
+        log_key=key,
+        status_errors=(SDKKnowledgeError,),
     )
     if error is not None:
         error["id"] = frame_id
