@@ -24,9 +24,10 @@ by construction. Large payloads in either direction travel as bounded
 chunked frames (header plus ordered parts, every frame within the wire
 bound); small payloads use a single frame.
 
-Allowlist (stage 2c): ``config.get/set/list/delete`` plus the full
+Allowlist (stage 3a): ``config.get/set/list/delete``, the full
 ``integrations`` facade (``get/list_mappings/get_mapping/upsert_mapping/
-delete_mapping/refresh_token``). Unknown operations
+delete_mapping/refresh_token``), and the table document reads
+(``tables.get/query/count``). Unknown operations
 or wire versions get an error response — never silent acceptance, never
 arbitrary route forwarding. The existing engine token path is untouched
 for every operation not yet migrated.
@@ -56,6 +57,9 @@ from bifrost._local_transport import (
     OP_INTEGRATIONS_LIST_MAPPINGS,
     OP_INTEGRATIONS_REFRESH_TOKEN,
     OP_INTEGRATIONS_UPSERT_MAPPING,
+    OP_TABLES_COUNT,
+    OP_TABLES_GET,
+    OP_TABLES_QUERY,
     TRANSPORT_VERSION,
     decode_frame,
 )
@@ -63,8 +67,9 @@ from shared.sdk_config import ScopeResolutionError, resolve_sdk_scope
 
 logger = logging.getLogger(__name__)
 
-# Operations this dispatcher will serve. Stage 2c: the config facade plus
-# the full integrations facade (reads, mapping mutations, token refresh).
+# Operations this dispatcher will serve. Stage 3a: the config facade, the
+# full integrations facade (reads, mapping mutations, token refresh), and
+# the table document reads (get/query/unfiltered count).
 ALLOWLIST = frozenset(
     {
         OP_CONFIG_GET,
@@ -77,6 +82,9 @@ ALLOWLIST = frozenset(
         OP_INTEGRATIONS_UPSERT_MAPPING,
         OP_INTEGRATIONS_DELETE_MAPPING,
         OP_INTEGRATIONS_REFRESH_TOKEN,
+        OP_TABLES_GET,
+        OP_TABLES_QUERY,
+        OP_TABLES_COUNT,
     }
 )
 
@@ -129,6 +137,23 @@ class LocalDispatchPrincipal:
     # (see ``principal_from_context``) rather than silently downgrading to
     # the loose (silent-None) behavior.
     solution_id: UUID | None = None
+    # Workflow execution id (``context_data["execution_id"]``) or, for
+    # services, the attempt id. Carried onto the token-equivalent table
+    # principal as the signed ``engine_execution_id`` claim so
+    # ``resolve_trustworthy_caller`` attests the caller's own install
+    # exactly like the HTTP engine-token path. None degrades safely to
+    # "outside any install" (inbound gate denies) rather than forging.
+    execution_id: str | None = None
+    # Service definition id for supervised ``@service`` children, from the
+    # parent-owned ``service`` block. Carried onto the token-equivalent
+    # table principal as the ``service_id`` claim (with
+    # ``service_attempt_id`` below) so service table access matches the
+    # ``mint_service_token`` HTTP path: system-user non-superuser, org
+    # confinement, no initiator-admin bypass.
+    service_id: str | None = None
+    # Service attempt id for supervised ``@service`` children, from the
+    # parent-owned ``service`` block. See ``service_id``.
+    service_attempt_id: str | None = None
 
 
 class LocalPrincipalError(ValueError):
@@ -168,6 +193,20 @@ def _solution_id_from_context(context_data: Mapping[str, Any]) -> UUID | None:
     )
 
 
+def _execution_id_from_context(context_data: Mapping[str, Any]) -> str | None:
+    """Execution/attempt id for the token-equivalent table principal.
+
+    A non-empty string rides onto the ``engine_execution_id`` claim so
+    ``resolve_trustworthy_caller`` attests the caller's own install exactly
+    like the HTTP engine-token path. Anything else degrades to None
+    (outside any install — the inbound gate then denies rather than forges).
+    """
+    raw = context_data.get("execution_id")
+    if isinstance(raw, str) and raw:
+        return raw
+    return None
+
+
 def principal_from_context(context_data: Mapping[str, Any]) -> LocalDispatchPrincipal:
     """Derive the dispatch principal from parent-owned execution context.
 
@@ -185,7 +224,10 @@ def principal_from_context(context_data: Mapping[str, Any]) -> LocalDispatchPrin
     writes to a forged or blank value. A missing or empty ``solution_id``
     means a plain (non-solution) execution; a malformed non-empty value
     fails closed rather than silently downgrading declared-connection
-    behavior to silent-None.
+    behavior to silent-None. ``execution_id`` and the service
+    ``service_id``/``attempt_id`` ride along for the token-equivalent table
+    principal (signed engine/service claims) — non-string values degrade to
+    None (outside any install) rather than failing the whole dispatch.
     """
     from src.core.security import ENGINE_SDK_ACTOR_EMAIL, service_sdk_actor_email
 
@@ -219,6 +261,7 @@ def principal_from_context(context_data: Mapping[str, Any]) -> LocalDispatchPrin
             actor_email=ENGINE_SDK_ACTOR_EMAIL,
             is_service=False,
             solution_id=_solution_id_from_context(context_data),
+            execution_id=_execution_id_from_context(context_data),
         )
     if not isinstance(service_raw, Mapping):
         raise LocalPrincipalError(
@@ -233,6 +276,12 @@ def principal_from_context(context_data: Mapping[str, Any]) -> LocalDispatchPrin
             f"local dispatch: malformed service identity ({e}); refusing "
             "to serve local SDK calls"
         ) from None
+    raw_attempt_id = service_raw.get("attempt_id")
+    service_attempt_id = (
+        raw_attempt_id
+        if isinstance(raw_attempt_id, str) and raw_attempt_id
+        else None
+    )
     return LocalDispatchPrincipal(
         caller_org_id=caller_org_id,
         # Service tokens are never superuser by construction — force False
@@ -243,6 +292,9 @@ def principal_from_context(context_data: Mapping[str, Any]) -> LocalDispatchPrin
         actor_email=actor_email,
         is_service=True,
         solution_id=_solution_id_from_context(context_data),
+        execution_id=_execution_id_from_context(context_data),
+        service_id=raw_service_id if isinstance(raw_service_id, str) else None,
+        service_attempt_id=service_attempt_id,
     )
 
 
@@ -301,6 +353,12 @@ async def dispatch_frames(
         return await _dispatch_integrations_delete_mapping(session_factory, principal, frame_id, frame)
     if op == OP_INTEGRATIONS_REFRESH_TOKEN:
         return await _dispatch_integrations_refresh_token(session_factory, principal, frame_id, frame)
+    if op == OP_TABLES_GET:
+        return await _dispatch_tables_get(session_factory, principal, frame_id, frame)
+    if op == OP_TABLES_QUERY:
+        return await _dispatch_tables_query(session_factory, principal, frame_id, frame)
+    if op == OP_TABLES_COUNT:
+        return await _dispatch_tables_count(session_factory, principal, frame_id, frame)
     return [_error(frame_id, 404, f"local SDK operation not allowed: {op!r}")]
 
 
@@ -1074,6 +1132,281 @@ async def _dispatch_integrations_refresh_token(
         error["id"] = frame_id
         return [error]
     return _single_ok(frame_id, result)
+
+
+def _table_user_for_principal(principal: LocalDispatchPrincipal) -> Any:
+    """Token-equivalent ``UserPrincipal`` for table resolution and policy checks.
+
+    Mirrors the minted engine/service tokens the HTTP table path
+    authenticates, so org gates, install resolution, and row policies decide
+    identically on both transports:
+
+    - workflows: system-user superuser with the parent execution and Solution
+      ids as the signed ``engine_execution_id``/``engine_solution_id``
+      claims (the ``mint_engine_token()`` shape);
+    - services: system-user non-superuser with the parent service, attempt,
+      and Solution ids (the ``mint_service_token()`` shape), org-confined.
+
+    The config-oriented ``principal.is_platform_admin`` tracks the
+    *initiating* user and must NOT stand in here: a platform-admin
+    initiator's service child is still a non-superuser service caller, and a
+    non-admin initiator's workflow child is still the superuser engine.
+    """
+    from src.core.constants import SYSTEM_USER_UUID
+    from src.core.principal import UserPrincipal
+    from src.core.security import ENGINE_SDK_ACTOR_EMAIL
+
+    solution_id = (
+        str(principal.solution_id) if principal.solution_id is not None else None
+    )
+    if principal.is_service:
+        return UserPrincipal(
+            user_id=SYSTEM_USER_UUID,
+            email=principal.actor_email or ENGINE_SDK_ACTOR_EMAIL,
+            organization_id=principal.caller_org_id,
+            is_superuser=False,
+            engine_execution_id=principal.service_attempt_id
+            or principal.execution_id,
+            engine_solution_id=solution_id,
+            service_id=principal.service_id,
+            service_attempt_id=principal.service_attempt_id
+            or principal.execution_id,
+        )
+    return UserPrincipal(
+        user_id=SYSTEM_USER_UUID,
+        email=ENGINE_SDK_ACTOR_EMAIL,
+        organization_id=None,
+        is_superuser=True,
+        engine_execution_id=principal.execution_id,
+        engine_solution_id=solution_id,
+    )
+
+
+def _tables_target_solution_id(
+    frame_solution: Any, principal: LocalDispatchPrincipal
+) -> str | None:
+    """Per-call target install ref for one table frame.
+
+    The child-supplied ``solution`` is only ever a *target* (UUID or
+    slug/name, resolved inside the target org downstream). Unset or blank
+    inherits the parent-owned own install. The caller's install identity
+    itself always comes from the principal — never from the frame.
+    """
+    if isinstance(frame_solution, str) and frame_solution.strip():
+        return frame_solution
+    if principal.solution_id is not None:
+        return str(principal.solution_id)
+    return None
+
+
+def _required_tables_field(
+    frame: dict[str, Any], field: str, frame_id: str | None, op: str
+) -> tuple[str | None, dict[str, Any] | None]:
+    """One required non-empty string frame field, else a 422 error frame."""
+    value = frame.get(field)
+    if isinstance(value, str) and value.strip():
+        return value, None
+    return None, _error(frame_id, 422, f"invalid {op} request: {field!r} is required")
+
+
+def _optional_tables_field(
+    frame: dict[str, Any], field: str, frame_id: str | None, op: str
+) -> tuple[str | None, dict[str, Any] | None]:
+    """One optional string frame field (None when absent), else a 422."""
+    value = frame.get(field)
+    if value is None:
+        return None, None
+    if isinstance(value, str):
+        return value, None
+    return None, _error(frame_id, 422, f"invalid {op} request: {field!r} must be a string")
+
+
+async def _dispatch_tables_get(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``tables.get`` through the shared resolution + read services.
+
+    The parent resolves the table and enforces the read policy with the
+    token-equivalent principal on one short session — the same
+    ``shared.table_resolution`` + ``shared.table_documents`` calls the HTTP
+    handlers make. The service's actual 404/403 rides the error frame; the
+    SDK facade maps a 404 to ``None``.
+    """
+    from fastapi import HTTPException
+
+    table_ref, invalid = _required_tables_field(frame, "table", frame_id, OP_TABLES_GET)
+    if invalid is not None:
+        return [invalid]
+    doc_id, invalid = _required_tables_field(frame, "doc_id", frame_id, OP_TABLES_GET)
+    if invalid is not None:
+        return [invalid]
+    scope, invalid = _optional_tables_field(frame, "scope", frame_id, OP_TABLES_GET)
+    if invalid is not None:
+        return [invalid]
+    solution, invalid = _optional_tables_field(
+        frame, "solution", frame_id, OP_TABLES_GET
+    )
+    if invalid is not None:
+        return [invalid]
+    assert table_ref is not None and doc_id is not None
+
+    async def _get(session: Any) -> dict[str, Any]:
+        from shared.table_documents import get_table_document
+        from shared.table_resolution import LocalTableContext, get_table_or_404
+
+        user = _table_user_for_principal(principal)
+        ctx = LocalTableContext(
+            db=session,
+            user=user,
+            org_id=principal.caller_org_id,
+            solution_id=_tables_target_solution_id(solution, principal),
+        )
+        table = await get_table_or_404(ctx, table_ref, scope=scope)
+        doc = await get_table_document(session, table, doc_id, user)
+        return doc.model_dump(mode="json")
+
+    result, error = await _run_short(
+        session_factory,
+        _get,
+        op=OP_TABLES_GET,
+        log_key=table_ref,
+        status_errors=(HTTPException,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_tables_query(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``tables.query`` through the shared resolution + read services.
+
+    The query payload validates with the same ``DocumentQuery`` DTO as the
+    HTTP handler, so coercion, defaults, and pagination limits match. The
+    service's actual 404/403 rides the error frame; the SDK facade maps a
+    404 to an empty ``DocumentList``.
+    """
+    from fastapi import HTTPException
+
+    from src.models.contracts.tables import DocumentQuery
+
+    table_ref, invalid = _required_tables_field(
+        frame, "table", frame_id, OP_TABLES_QUERY
+    )
+    if invalid is not None:
+        return [invalid]
+    scope, invalid = _optional_tables_field(frame, "scope", frame_id, OP_TABLES_QUERY)
+    if invalid is not None:
+        return [invalid]
+    solution, invalid = _optional_tables_field(
+        frame, "solution", frame_id, OP_TABLES_QUERY
+    )
+    if invalid is not None:
+        return [invalid]
+    raw_query = frame.get("query")
+    if raw_query is None:
+        raw_query = {}
+    if not isinstance(raw_query, dict):
+        return [_error(frame_id, 422, f"invalid {OP_TABLES_QUERY} request: 'query' must be an object")]
+    request, invalid = _validate_request(
+        DocumentQuery, raw_query, frame_id, OP_TABLES_QUERY
+    )
+    if invalid is not None:
+        return [invalid]
+    assert table_ref is not None and request is not None
+
+    async def _query(session: Any) -> dict[str, Any]:
+        from shared.table_documents import query_table_documents
+        from shared.table_resolution import LocalTableContext, get_table_or_404
+
+        user = _table_user_for_principal(principal)
+        ctx = LocalTableContext(
+            db=session,
+            user=user,
+            org_id=principal.caller_org_id,
+            solution_id=_tables_target_solution_id(solution, principal),
+        )
+        table = await get_table_or_404(ctx, table_ref, scope=scope)
+        response = await query_table_documents(session, table, request, user)
+        return response.model_dump(mode="json")
+
+    result, error = await _run_short(
+        session_factory,
+        _query,
+        op=OP_TABLES_QUERY,
+        log_key=table_ref,
+        status_errors=(HTTPException,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_tables_count(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve the unfiltered ``tables.count`` through the shared services.
+
+    Only the unfiltered count rides this operation (returned as
+    ``{"count": n}`` — the transport result contract does not carry bare
+    integers). A filtered count stays composed through the public
+    ``tables.query(limit=1)`` in the SDK facade, exactly like the HTTP path.
+    """
+    from fastapi import HTTPException
+
+    table_ref, invalid = _required_tables_field(
+        frame, "table", frame_id, OP_TABLES_COUNT
+    )
+    if invalid is not None:
+        return [invalid]
+    scope, invalid = _optional_tables_field(frame, "scope", frame_id, OP_TABLES_COUNT)
+    if invalid is not None:
+        return [invalid]
+    solution, invalid = _optional_tables_field(
+        frame, "solution", frame_id, OP_TABLES_COUNT
+    )
+    if invalid is not None:
+        return [invalid]
+    assert table_ref is not None
+
+    async def _count(session: Any) -> dict[str, Any]:
+        from shared.table_documents import count_table_documents
+        from shared.table_resolution import LocalTableContext, get_table_or_404
+
+        user = _table_user_for_principal(principal)
+        ctx = LocalTableContext(
+            db=session,
+            user=user,
+            org_id=principal.caller_org_id,
+            solution_id=_tables_target_solution_id(solution, principal),
+        )
+        table = await get_table_or_404(ctx, table_ref, scope=scope)
+        response = await count_table_documents(session, table, user)
+        return response.model_dump(mode="json")
+
+    result, error = await _run_short(
+        session_factory,
+        _count,
+        op=OP_TABLES_COUNT,
+        log_key=table_ref,
+        status_errors=(HTTPException,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
 
 
 def _chunked_frames(

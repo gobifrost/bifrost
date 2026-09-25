@@ -21,6 +21,7 @@ from .models import (
     BulkUpsertResult,
 )
 from ._context import resolve_scope, _execution_context, get_effective_solution
+from ._local_transport import get as _get_local_transport
 
 
 def _current_context():
@@ -355,6 +356,10 @@ class tables:
         """
         Get a document by ID.
 
+        Inside an engine child this resolves through the parent over the
+        dedicated local transport (same resolution + read service as the
+        HTTP endpoint); elsewhere it calls the REST endpoint.
+
         Args:
             table: Table name or UUID.
             doc_id: Document ID.
@@ -366,8 +371,27 @@ class tables:
         Example:
             >>> doc = await tables.get("customers", "acme-001")
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent resolves the table and enforces
+            # the read policy over the dedicated channel — the same shared
+            # service the HTTP endpoint calls. The per-call ``solution``
+            # target rides the frame; the caller's own install identity
+            # stays parent-owned. A local attempt never falls back to HTTP.
+            from .client import BifrostAPIError
+
+            try:
+                result = await transport.call_tables_get(
+                    table, doc_id, effective_scope,
+                    get_effective_solution(solution),
+                )
+            except BifrostAPIError as e:
+                if e.response.status_code == 404:
+                    return None
+                raise
+            return DocumentData.model_validate(result)
+        client = get_client()
         response = await client.get(
             f"/api/tables/{table}/documents/{doc_id}{_scope_query(effective_scope, solution)}",
         )
@@ -748,8 +772,40 @@ class tables:
         Example:
             >>> results = await tables.query("customers", where={"status": "active"})
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent validates the same
+            # ``DocumentQuery`` DTO and runs the shared read service over
+            # the dedicated channel. A local attempt never falls back to
+            # HTTP.
+            from .client import BifrostAPIError
+
+            try:
+                result = await transport.call_tables_query(
+                    table,
+                    {
+                        "where": where,
+                        "order_by": order_by,
+                        "order_dir": order_dir,
+                        "limit": limit,
+                        "offset": offset,
+                        "after_document_id": after_document_id,
+                        "document_id_prefix": document_id_prefix,
+                        "skip_count": skip_count,
+                        "document_ids": document_ids,
+                    },
+                    effective_scope,
+                    get_effective_solution(solution),
+                )
+            except BifrostAPIError as e:
+                if e.response.status_code == 404:
+                    return DocumentList(
+                        documents=[], total=0, limit=limit, offset=offset
+                    )
+                raise
+            return DocumentList.model_validate(result)
+        client = get_client()
         response = await client.post(
             f"/api/tables/{table}/documents/query{_scope_query(effective_scope, solution)}",
             json={
@@ -792,8 +848,27 @@ class tables:
             >>> active = await tables.count("customers", where={"status": "active"})
         """
         effective_scope = resolve_scope(scope)
-        client = get_client()
+        transport = _get_local_transport()
+        if transport is not None and where is None:
+            # Engine-local path for the unfiltered count: the parent runs
+            # the shared count service over the dedicated channel. A local
+            # attempt never falls back to HTTP. Filtered counts compose
+            # through the public ``tables.query(limit=1)`` below (which
+            # itself rides the local transport), exactly like the HTTP path.
+            from .client import BifrostAPIError
+
+            try:
+                result = await transport.call_tables_count(
+                    table, effective_scope,
+                    get_effective_solution(None),
+                )
+            except BifrostAPIError as e:
+                if e.response.status_code == 404:
+                    return 0
+                raise
+            return int(result["count"])
         if where is None:
+            client = get_client()
             # Unfiltered count: hit GET /count which avoids row scanning.
             response = await client.get(
                 f"/api/tables/{table}/documents/count{_scope_query(effective_scope)}",

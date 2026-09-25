@@ -6,9 +6,10 @@ children must never import PostgreSQL drivers, the ORM, or the API server
 stack. (The synthetic HTTP error mapping imports ``httpx``/``bifrost.client``
 lazily, inside the raising function, long after the child runtime is loaded.)
 
-Protocol (stage 2c: ``config.get/set/list/delete`` plus the full
+Protocol (stage 3a: ``config.get/set/list/delete``, the full
 ``integrations`` facade — ``get/list_mappings/get_mapping/upsert_mapping/
-delete_mapping/refresh_token``):
+delete_mapping/refresh_token`` — and the table document reads
+``tables.get/query/count``):
 
 - One request frame (or a bounded chunked request), one-or-many response
   frames, JSON over ``multiprocessing.Connection.send_bytes`` /
@@ -27,8 +28,12 @@ delete_mapping/refresh_token``):
   ``integrations.refresh_token`` sends ``connection_name``/``scope``
   (the SDK ``refresh()`` call passes no scope, so the parent resolves
   the caller's own scope).
-  No request carries Solution identity: the parent derives the Solution
-  install id from its own dispatch context, never from child frames.
+  ``tables.get`` sends ``table``/``doc_id``/``scope``/``solution``;
+  ``tables.query`` sends ``table``/``query``/``scope``/``solution``;
+  ``tables.count`` sends ``table``/``scope``/``solution``.
+  No request carries Solution identity beyond the per-call table target:
+  the parent derives the caller's own install id from its own dispatch
+  context, never from child frames.
   Small responses carry the same ``id`` with either
   ``{"ok": true, "result": ...}`` or
   ``{"ok": false, "status": <http-status>, "detail": <str>}``. ``set``
@@ -38,7 +43,12 @@ delete_mapping/refresh_token``):
   dict envelope (``{"items": [...]}``); ``upsert_mapping`` returns a
   mapping dict; ``delete_mapping`` returns a ``{"deleted": bool}``
   envelope; ``refresh_token`` returns an
-  ``{"access_token", "expires_at"}`` dict.
+  ``{"access_token", "expires_at"}`` dict. ``tables.get`` returns a
+  document dict (missing rows and tables are 404 error frames, never
+  null results); ``tables.query`` returns a ``DocumentListResponse``
+  dict (a missing table is a 404 error frame); ``tables.count`` returns
+  a ``{"count": n}`` envelope (the transport result contract does not
+  carry bare integers).
 - Large payloads in EITHER direction use bounded chunked transfer: a
   header frame ``{"ok": true, "chunked": true, "total": <bytes>,
   "parts": <n>}`` (requests: ``{"op": ..., "chunked": true, "total",
@@ -76,9 +86,10 @@ import threading
 import uuid
 from typing import Any, NoReturn
 
-# Operation allowlist (stage 2c): the config facade and the full
-# integrations facade ride the local transport. The parent enforces the
-# same allowlist; anything else is a 404 response.
+# Operation allowlist (stage 3a): the config facade, the full
+# integrations facade, and the table document reads ride the local
+# transport. The parent enforces the same allowlist; anything else is a
+# 404 response.
 OP_CONFIG_GET = "config.get"
 OP_CONFIG_SET = "config.set"
 OP_CONFIG_LIST = "config.list"
@@ -89,6 +100,9 @@ OP_INTEGRATIONS_GET_MAPPING = "integrations.get_mapping"
 OP_INTEGRATIONS_UPSERT_MAPPING = "integrations.upsert_mapping"
 OP_INTEGRATIONS_DELETE_MAPPING = "integrations.delete_mapping"
 OP_INTEGRATIONS_REFRESH_TOKEN = "integrations.refresh_token"
+OP_TABLES_GET = "tables.get"
+OP_TABLES_QUERY = "tables.query"
+OP_TABLES_COUNT = "tables.count"
 
 # Wire version. The parent rejects anything else instead of guessing.
 TRANSPORT_VERSION = 1
@@ -691,6 +705,96 @@ class ChildLocalTransport:
         result = await self._call(
             OP_INTEGRATIONS_REFRESH_TOKEN,
             {"connection_name": connection_name, "scope": scope},
+            timeout,
+        )
+        if not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+    async def call_tables_get(
+        self,
+        table: str,
+        doc_id: str,
+        scope: str | None,
+        solution: str | None = None,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """Fetch one document through the parent. No HTTP fallback.
+
+        Returns the ``DocumentPublic`` dict. A missing table or row is a
+        404 error frame (the facade maps it to ``None``) — never a null
+        result. The ``solution`` target is parent-resolved inside the
+        target org; the caller's own install identity stays parent-owned.
+        Parent error responses raise the same public exceptions as the
+        HTTP path; transport loss raises ``LocalTransportClosed``
+        (synthetic 503) or ``TimeoutError``.
+        """
+        result = await self._call(
+            OP_TABLES_GET,
+            {"table": table, "doc_id": doc_id, "scope": scope,
+             "solution": solution},
+            timeout,
+        )
+        if not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+    async def call_tables_query(
+        self,
+        table: str,
+        query: dict[str, Any],
+        scope: str | None,
+        solution: str | None = None,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """Query documents through the parent. No HTTP fallback.
+
+        ``query`` is the ``DocumentQuery`` payload (same DTO as the HTTP
+        handler). Returns the ``DocumentListResponse`` dict. A missing
+        table is a 404 error frame (the facade maps it to an empty
+        ``DocumentList``). Large results arrive as bounded chunked
+        response frames.
+        """
+        result = await self._call(
+            OP_TABLES_QUERY,
+            {"table": table, "query": query, "scope": scope,
+             "solution": solution},
+            timeout,
+        )
+        if not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+    async def call_tables_count(
+        self,
+        table: str,
+        scope: str | None,
+        solution: str | None = None,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """Count documents through the parent (unfiltered). No HTTP fallback.
+
+        Returns the ``{"count": n}`` envelope — the transport result
+        contract does not carry bare integers. A missing table is a 404
+        error frame (the facade maps it to zero). Filtered counts are not
+        a local operation: the facade composes them through the public
+        ``tables.query(limit=1)``, exactly like the HTTP path.
+        """
+        result = await self._call(
+            OP_TABLES_COUNT,
+            {"table": table, "scope": scope, "solution": solution},
             timeout,
         )
         if not isinstance(result, dict):

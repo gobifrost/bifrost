@@ -97,7 +97,7 @@ class TestDispatchValidation:
     async def test_unknown_operation_rejected(self, db_session):
         principal = LocalDispatchPrincipal(caller_org_id=None)
         response = await self._dispatch(
-            db_session, _frame(op="tables.query"), principal
+            db_session, _frame(op="tables.drop"), principal
         )
         assert response["ok"] is False
         assert response["status"] == 404

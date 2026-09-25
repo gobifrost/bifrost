@@ -4,9 +4,9 @@ HTTP handlers in ``src.routers.tables`` and the future engine SDK local
 dispatcher call the same functions here so read status, DTO, policy, and
 pagination behavior stay identical across transports.
 
-Table resolution (``get_table_or_404``) and Solution/app security gates stay
-router-owned — callers resolve the :class:`Table` first, then call into this
-module.
+Table resolution (``shared.table_resolution.get_table_or_404``) and Solution/app
+security gates stay outside this module — callers resolve the :class:`Table`
+first, then call into this module.
 """
 
 from __future__ import annotations
