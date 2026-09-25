@@ -707,96 +707,35 @@ async def sdk_integrations_upsert_mapping(
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> SDKIntegrationsMappingItem:
-    """Create or update an integration mapping for an organization via SDK."""
-    from src.repositories.integrations import IntegrationsRepository
-    from src.models.contracts.integrations import (
-        IntegrationMappingCreate,
-        IntegrationMappingUpdate,
+    """Create or update an integration mapping for an organization via SDK.
+
+    Mutation rules live in the shared integrations service
+    (``shared.sdk_integrations``), which the engine-local dispatcher calls
+    for the same inputs.
+    """
+    from shared.sdk_config import ScopeResolutionError
+    from shared.sdk_integrations import (
+        IntegrationServiceError,
+        upsert_sdk_integration_mapping,
     )
 
     try:
-        repo = IntegrationsRepository(db)
-        integration = await repo.get_integration_by_name(request.name)
-
-        if not integration:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Integration '{request.name}' not found",
-            )
-
-        # Apply the C2 gate before touching another org's mapping row.
-        resolved_org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
-        if resolved_org_id is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="upsert_mapping requires an org scope; global is not a valid mapping target",
-            )
-        org_uuid = UUID(resolved_org_id)
-
-        # Check if mapping already exists
-        existing_mapping = await repo.get_mapping_by_org(integration.id, org_uuid)
-
-        if existing_mapping:
-            # Update existing mapping
-            update_data = IntegrationMappingUpdate(
-                entity_id=request.entity_id,
-                entity_name=request.entity_name,
-                config=request.config,
-            )
-            mapping = await repo.update_mapping(
-                existing_mapping.id,
-                update_data,
-                updated_by=current_user.email,
-            )
-            if not mapping:
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Failed to update mapping",
-                )
-            logger.info(
-                f"SDK updated mapping for integration '{log_safe(request.name)}', org '{log_safe(request.scope)}' by {current_user.email}"
-            )
-        else:
-            # Create new mapping
-            create_data = IntegrationMappingCreate(
-                organization_id=org_uuid,
-                entity_id=request.entity_id,
-                entity_name=request.entity_name,
-                config=request.config,
-            )
-            mapping = await repo.create_mapping(
-                integration.id,
-                create_data,
-                updated_by=current_user.email,
-            )
-            logger.info(
-                f"SDK created mapping for integration '{log_safe(request.name)}', org '{log_safe(request.scope)}' by {current_user.email}"
-            )
-
-        await db.commit()
-
-        # Get merged config for the post-write echo. External callers drop the
-        # global tier (NEW-G).
-        config = await repo.get_config_for_mapping(
-            integration.id,
-            mapping.organization_id,
+        result = await upsert_sdk_integration_mapping(
+            db,
+            name=request.name,
+            scope=request.scope,
+            caller_org_id=current_user.organization_id,
+            is_platform_admin=current_user.is_superuser,
             external=current_user.is_external,
+            entity_id=request.entity_id,
+            entity_name=request.entity_name,
+            config=request.config,
+            actor_email=current_user.email,
         )
-
-        return SDKIntegrationsMappingItem(
-            id=str(mapping.id),
-            integration_id=str(mapping.integration_id),
-            organization_id=str(mapping.organization_id),
-            entity_id=mapping.entity_id,
-            entity_name=mapping.entity_name,
-            oauth_token_id=str(mapping.oauth_token_id)
-            if mapping.oauth_token_id
-            else None,
-            config=config,
-            created_at=mapping.created_at.isoformat(),
-            updated_at=mapping.updated_at.isoformat(),
-        )
-
+    except ScopeResolutionError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
+    except IntegrationServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
     except HTTPException:
         raise
     except Exception as e:
@@ -805,6 +744,8 @@ async def sdk_integrations_upsert_mapping(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to upsert mapping: {str(e)}",
         )
+
+    return SDKIntegrationsMappingItem(**result)
 
 
 @router.post(
@@ -816,46 +757,28 @@ async def sdk_integrations_delete_mapping(
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Delete an integration mapping for an organization via SDK."""
-    from src.repositories.integrations import IntegrationsRepository
+    """Delete an integration mapping for an organization via SDK.
+
+    Mutation rules live in the shared integrations service
+    (``shared.sdk_integrations``), which the engine-local dispatcher calls
+    for the same inputs.
+    """
+    from shared.sdk_config import ScopeResolutionError
+    from shared.sdk_integrations import delete_sdk_integration_mapping
 
     try:
-        repo = IntegrationsRepository(db)
-        integration = await repo.get_integration_by_name(request.name)
-
-        if not integration:
-            logger.warning(
-                f"SDK integrations.delete_mapping: integration '{log_safe(request.name)}' not found"
-            )
-            return {"deleted": False}
-
-        # Apply the C2 gate before touching another org's mapping row.
-        resolved_org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
-        if resolved_org_id is None:
-            return {"deleted": False}
-        org_uuid = UUID(resolved_org_id)
-
-        # Find the mapping
-        mapping = await repo.get_mapping_by_org(integration.id, org_uuid)
-
-        if not mapping:
-            logger.warning(
-                f"SDK integrations.delete_mapping: mapping not found for org '{log_safe(request.scope)}'"
-            )
-            return {"deleted": False}
-
-        # Delete the mapping
-        deleted = await repo.delete_mapping(mapping.id)
-        await db.commit()
-
-        logger.info(
-            f"SDK deleted mapping for integration '{log_safe(request.name)}', org '{log_safe(request.scope)}' by {current_user.email}"
+        return await delete_sdk_integration_mapping(
+            db,
+            name=request.name,
+            scope=request.scope,
+            caller_org_id=current_user.organization_id,
+            is_platform_admin=current_user.is_superuser,
         )
-
-        return {"deleted": deleted}
-
+    except ScopeResolutionError as e:
+        # Auth/scope failures must surface.
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
     except HTTPException:
-        # Auth/scope failures (e.g. 403 from _resolve_sdk_org_id) must surface.
+        # Auth/scope failures (e.g. 403 from the scope gate) must surface.
         raise
     except Exception as e:
         logger.error(f"SDK integrations.delete_mapping failed: {log_safe(e)}")
@@ -880,147 +803,31 @@ async def sdk_integrations_refresh_token(
     The new token is persisted to the database so subsequent integrations.get() calls
     also benefit from the refreshed token.
 
-    The HTTP refresh itself is delegated to the shared primitive
-    :func:`src.services.oauth_provider.refresh_oauth_token_http`; this handler
-    only owns the provider lookup, context build, and persistence.
+    The refresh rules live in the shared integrations service
+    (``shared.sdk_integrations``), which the engine-local dispatcher calls
+    for the same inputs. The HTTP refresh itself is delegated to the shared
+    primitive :func:`src.services.oauth_provider.refresh_oauth_token_http`
+    via that service; this handler only maps transport errors.
     """
-    from src.models.orm.oauth import OAuthToken
-    from src.repositories.oauth import (
-        OAuthProviderRepository,
-        OAuthTokenRepository,
+    from shared.sdk_config import ScopeResolutionError
+    from shared.sdk_integrations import (
+        IntegrationServiceError,
+        refresh_sdk_oauth_token,
     )
-    from src.services.oauth_provider import (
-        build_token_refresh_context,
-        refresh_oauth_token_http,
-    )
-
-    org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
-    org_uuid = UUID(org_id) if org_id else None
 
     try:
-        # Cascade: prefer org-scoped provider, fall back to global.
-        # See api/src/repositories/README.md for the pattern.
-        # EXTERNAL callers (OPEN-E) get org-only on BOTH the provider lookup
-        # and the token lookup: a portal user must never refresh / receive a
-        # global third-party OAuth token. An external with no org provider
-        # 404s (the by-name cascade drops the global tier for externals).
-        provider_repo = OAuthProviderRepository(
+        result = await refresh_sdk_oauth_token(
             db,
-            org_id=org_uuid,
-            is_superuser=not current_user.is_external,
-            is_external=current_user.is_external,
+            connection_name=request.connection_name,
+            scope=request.scope,
+            caller_org_id=current_user.organization_id,
+            is_platform_admin=current_user.is_superuser,
+            external=current_user.is_external,
         )
-        provider = await provider_repo.get(provider_name=request.connection_name)
-
-        if not provider:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"OAuth provider '{request.connection_name}' not found",
-            )
-
-        # For authorization_code flow we need the stored token up front so
-        # build_token_refresh_context can carry the encrypted refresh token.
-        token_repo = OAuthTokenRepository(
-            db,
-            org_id=org_uuid,
-            is_superuser=not current_user.is_external,
-            is_external=current_user.is_external,
-        )
-        stored_token = None
-        if provider.oauth_flow_type == "authorization_code":
-            # Providers may rotate refresh tokens. Hold a row lock through
-            # refresh + persistence so concurrent workflow 401 retries cannot
-            # both submit the same one-time refresh token.
-            stored_token = await token_repo.get_org_level_for_provider(
-                provider.id,
-                for_update=True,
-            )
-            if not stored_token or not stored_token.encrypted_refresh_token:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Cannot refresh: no refresh_token stored for this connection",
-                )
-
-        # Build the context dict and delegate to the shared primitive.
-        # build_token_refresh_context handles the {entity_id} fallback chain
-        # (org mapping → integration.default_entity_id → integration.entity_id)
-        # in one place so the SDK endpoint, scheduler, and connections router
-        # cannot drift.
-        td = await build_token_refresh_context(
-            db=db,
-            provider=provider,
-            token=stored_token,
-            org_id=org_uuid,
-        )
-        outcome = await refresh_oauth_token_http(td)
-
-        if not outcome["success"]:
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=outcome.get("error", "Token refresh failed"),
-            )
-
-        access_token = outcome.get("access_token")
-        if not access_token:
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="Token refresh returned no access_token",
-            )
-
-        expires_at_dt = outcome.get("expires_at")
-        expires_at = None
-        if expires_at_dt:
-            expires_at = (
-                expires_at_dt.isoformat()
-                if hasattr(expires_at_dt, "isoformat")
-                else str(expires_at_dt)
-            )
-
-        # Persist the new token. The SDK endpoint creates a new user_id=NULL
-        # token row if one doesn't already exist — this is distinct from the
-        # connections router (which requires an existing row) and so persistence
-        # remains per-caller.
-        token_obj = stored_token
-        if token_obj is None:
-            # client_credentials path — fetch (or later create) the user_id=NULL row.
-            # Cascade: prefer org-scoped token, fall back to global.
-            token_obj = await token_repo.get_org_level_for_provider(provider.id)
-
-        if token_obj:
-            token_obj.encrypted_access_token = outcome["encrypted_access_token"]
-            if outcome.get("encrypted_refresh_token"):
-                token_obj.encrypted_refresh_token = outcome["encrypted_refresh_token"]
-            if expires_at_dt and hasattr(expires_at_dt, "isoformat"):
-                token_obj.expires_at = expires_at_dt
-        else:
-            new_token = OAuthToken(
-                organization_id=provider.organization_id,
-                provider_id=provider.id,
-                encrypted_access_token=outcome["encrypted_access_token"],
-                encrypted_refresh_token=outcome.get("encrypted_refresh_token"),
-                expires_at=expires_at_dt
-                if expires_at_dt and hasattr(expires_at_dt, "isoformat")
-                else None,
-                scopes=provider.scopes or [],
-            )
-            db.add(new_token)
-
-        provider.status = "completed"
-        provider.status_message = None
-        provider.last_token_refresh = datetime.now(timezone.utc)
-
-        await db.commit()
-
-        logger.info(
-            f"SDK refreshed OAuth token for '{log_safe(request.connection_name)}' "
-            f"by {current_user.email}"
-        )
-
-        return SDKIntegrationsRefreshTokenResponse(
-            access_token=access_token,
-            expires_at=expires_at,
-        )
-
+    except ScopeResolutionError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
+    except IntegrationServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
     except HTTPException:
         raise
     except Exception as e:
@@ -1029,6 +836,13 @@ async def sdk_integrations_refresh_token(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Token refresh failed: {str(e)}",
         )
+
+    logger.info(
+        f"SDK refreshed OAuth token for '{log_safe(request.connection_name)}' "
+        f"by {current_user.email}"
+    )
+
+    return SDKIntegrationsRefreshTokenResponse(**result)
 
 
 # =============================================================================

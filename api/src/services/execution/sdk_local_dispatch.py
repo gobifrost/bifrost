@@ -2,8 +2,9 @@
 Parent-side dispatcher for the engine-local SDK operation transport.
 
 The worker parent (``ProcessPoolManager``) serves ``config`` requests
-(get, set, list, delete) and ``integrations`` reads (get, list_mappings,
-get_mapping) arriving on each child's dedicated SDK channel.
+(get, set, list, delete) and ``integrations`` requests (get,
+list_mappings, get_mapping, upsert_mapping, delete_mapping,
+refresh_token) arriving on each child's dedicated SDK channel.
 Identity, scope, and Solution install id come exclusively from the parent's
 own dispatch context (:func:`principal_from_context`) — child-supplied
 scope strings are treated as untrusted requests and re-validated through
@@ -23,8 +24,9 @@ by construction. Large payloads in either direction travel as bounded
 chunked frames (header plus ordered parts, every frame within the wire
 bound); small payloads use a single frame.
 
-Allowlist (stage 2b): ``config.get/set/list/delete`` plus
-``integrations.get/list_mappings/get_mapping``. Unknown operations
+Allowlist (stage 2c): ``config.get/set/list/delete`` plus the full
+``integrations`` facade (``get/list_mappings/get_mapping/upsert_mapping/
+delete_mapping/refresh_token``). Unknown operations
 or wire versions get an error response — never silent acceptance, never
 arbitrary route forwarding. The existing engine token path is untouched
 for every operation not yet migrated.
@@ -48,9 +50,12 @@ from bifrost._local_transport import (
     OP_CONFIG_GET,
     OP_CONFIG_LIST,
     OP_CONFIG_SET,
+    OP_INTEGRATIONS_DELETE_MAPPING,
     OP_INTEGRATIONS_GET,
     OP_INTEGRATIONS_GET_MAPPING,
     OP_INTEGRATIONS_LIST_MAPPINGS,
+    OP_INTEGRATIONS_REFRESH_TOKEN,
+    OP_INTEGRATIONS_UPSERT_MAPPING,
     TRANSPORT_VERSION,
     decode_frame,
 )
@@ -58,8 +63,8 @@ from shared.sdk_config import ScopeResolutionError, resolve_sdk_scope
 
 logger = logging.getLogger(__name__)
 
-# Operations this dispatcher will serve. Stage 2b: the config facade plus
-# the integrations read facade.
+# Operations this dispatcher will serve. Stage 2c: the config facade plus
+# the full integrations facade (reads, mapping mutations, token refresh).
 ALLOWLIST = frozenset(
     {
         OP_CONFIG_GET,
@@ -69,6 +74,9 @@ ALLOWLIST = frozenset(
         OP_INTEGRATIONS_GET,
         OP_INTEGRATIONS_LIST_MAPPINGS,
         OP_INTEGRATIONS_GET_MAPPING,
+        OP_INTEGRATIONS_UPSERT_MAPPING,
+        OP_INTEGRATIONS_DELETE_MAPPING,
+        OP_INTEGRATIONS_REFRESH_TOKEN,
     }
 )
 
@@ -76,6 +84,7 @@ ALLOWLIST = frozenset(
 # read). A stall fails that request loudly; the child has its own timeout
 # and treats a missing response as fatal (no HTTP fallback).
 DISPATCH_TIMEOUT_SECONDS = 25.0
+OAUTH_REFRESH_DISPATCH_TIMEOUT_SECONDS = 30.0
 
 # Type alias for a zero-argument factory returning short sessions on the
 # parent's pooled engine (e.g. ``src.core.database.get_session_factory``).
@@ -286,6 +295,12 @@ async def dispatch_frames(
         return await _dispatch_integrations_list_mappings(session_factory, principal, frame_id, frame)
     if op == OP_INTEGRATIONS_GET_MAPPING:
         return await _dispatch_integrations_get_mapping(session_factory, principal, frame_id, frame)
+    if op == OP_INTEGRATIONS_UPSERT_MAPPING:
+        return await _dispatch_integrations_upsert_mapping(session_factory, principal, frame_id, frame)
+    if op == OP_INTEGRATIONS_DELETE_MAPPING:
+        return await _dispatch_integrations_delete_mapping(session_factory, principal, frame_id, frame)
+    if op == OP_INTEGRATIONS_REFRESH_TOKEN:
+        return await _dispatch_integrations_refresh_token(session_factory, principal, frame_id, frame)
     return [_error(frame_id, 404, f"local SDK operation not allowed: {op!r}")]
 
 
@@ -452,6 +467,7 @@ async def _run_short(
     op: str,
     log_key: str,
     status_errors: tuple[type[Exception], ...] = (),
+    timeout_seconds: float = DISPATCH_TIMEOUT_SECONDS,
 ) -> tuple[Any, dict[str, Any] | None]:
     """Run one service coroutine on a short pooled session with a deadline.
 
@@ -466,7 +482,7 @@ async def _run_short(
             async with session_factory() as session:
                 return await coro_factory(session)
 
-        result = await asyncio.wait_for(_run(), DISPATCH_TIMEOUT_SECONDS)
+        result = await asyncio.wait_for(_run(), timeout_seconds)
     except asyncio.TimeoutError:
         logger.warning("local %s dispatch timed out for key=%r", op, log_key)
         return None, _error(None, 503, f"local {op} dispatch timed out")
@@ -884,6 +900,180 @@ async def _dispatch_integrations_get_mapping(
         error["id"] = frame_id
         return [error]
     return _ok_frames(frame_id, result)
+
+
+async def _dispatch_integrations_upsert_mapping(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``integrations.upsert_mapping`` through the shared service.
+
+    Validates with the same HTTP DTO, requires the parent-derived actor
+    email (writes cannot be audited off a child claim), and calls the
+    same service the HTTP handler calls: missing integration 404s before
+    scope validation, global scope is a 400, the existing row keeps its
+    OAuth link, and the echo carries the merged config.
+    """
+    from shared.sdk_integrations import (
+        IntegrationServiceError,
+        upsert_sdk_integration_mapping,
+    )
+    from src.models.contracts.cli import SDKIntegrationsUpsertMappingRequest
+
+    request, invalid = _validate_request(
+        SDKIntegrationsUpsertMappingRequest,
+        {
+            "name": frame.get("name"),
+            "scope": frame.get("scope"),
+            "entity_id": frame.get("entity_id"),
+            "entity_name": frame.get("entity_name"),
+            "config": frame.get("config"),
+        },
+        frame_id,
+        OP_INTEGRATIONS_UPSERT_MAPPING,
+    )
+    if invalid is not None:
+        return [invalid]
+    actor_error = _require_actor(principal, frame_id, OP_INTEGRATIONS_UPSERT_MAPPING)
+    if actor_error is not None:
+        return [actor_error]
+    assert principal.actor_email is not None
+
+    async def _upsert(session: Any) -> dict[str, Any]:
+        return await upsert_sdk_integration_mapping(
+            session,
+            name=request.name,
+            scope=request.scope,
+            caller_org_id=principal.caller_org_id,
+            is_platform_admin=principal.is_platform_admin,
+            is_provider_org=None if principal.is_service else principal.is_provider_org,
+            external=principal.is_external,
+            entity_id=request.entity_id,
+            entity_name=request.entity_name,
+            config=request.config,
+            actor_email=principal.actor_email,
+        )
+
+    result, error = await _run_short(
+        session_factory,
+        _upsert,
+        op=OP_INTEGRATIONS_UPSERT_MAPPING,
+        log_key=request.name,
+        status_errors=(IntegrationServiceError, ScopeResolutionError),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_integrations_delete_mapping(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``integrations.delete_mapping`` through the shared service.
+
+    A missing integration, a global scope, or a missing mapping returns
+    ``{"deleted": False}`` (like HTTP); scope denials still 403.
+    """
+    from shared.sdk_integrations import delete_sdk_integration_mapping
+    from src.models.contracts.cli import SDKIntegrationsDeleteMappingRequest
+
+    request, invalid = _validate_request(
+        SDKIntegrationsDeleteMappingRequest,
+        {"name": frame.get("name"), "scope": frame.get("scope")},
+        frame_id,
+        OP_INTEGRATIONS_DELETE_MAPPING,
+    )
+    if invalid is not None:
+        return [invalid]
+    actor_error = _require_actor(principal, frame_id, OP_INTEGRATIONS_DELETE_MAPPING)
+    if actor_error is not None:
+        return [actor_error]
+
+    async def _delete(session: Any) -> dict[str, bool]:
+        return await delete_sdk_integration_mapping(
+            session,
+            name=request.name,
+            scope=request.scope,
+            caller_org_id=principal.caller_org_id,
+            is_platform_admin=principal.is_platform_admin,
+            is_provider_org=None if principal.is_service else principal.is_provider_org,
+        )
+
+    result, error = await _run_short(
+        session_factory,
+        _delete,
+        op=OP_INTEGRATIONS_DELETE_MAPPING,
+        log_key=request.name,
+        status_errors=(ScopeResolutionError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _single_ok(frame_id, result)
+
+
+async def _dispatch_integrations_refresh_token(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``integrations.refresh_token`` through the shared service.
+
+    The SDK ``refresh()`` call passes no scope, so a missing scope
+    resolves to the caller's own org — exactly like the HTTP handler.
+    The locked token lookup, refresh context, rotation, persistence,
+    and external-caller restrictions are the shared service's, so both
+    paths commit the same state. The child registers the fresh token
+    with its own secret scrubber (like the HTTP SDK facade does).
+    """
+    from shared.sdk_integrations import (
+        IntegrationServiceError,
+        refresh_sdk_oauth_token,
+    )
+    from src.models.contracts.cli import SDKIntegrationsRefreshTokenRequest
+
+    request, invalid = _validate_request(
+        SDKIntegrationsRefreshTokenRequest,
+        {
+            "connection_name": frame.get("connection_name"),
+            "scope": frame.get("scope"),
+        },
+        frame_id,
+        OP_INTEGRATIONS_REFRESH_TOKEN,
+    )
+    if invalid is not None:
+        return [invalid]
+
+    async def _refresh(session: Any) -> dict[str, Any]:
+        return await refresh_sdk_oauth_token(
+            session,
+            connection_name=request.connection_name,
+            scope=request.scope,
+            caller_org_id=principal.caller_org_id,
+            is_platform_admin=principal.is_platform_admin,
+            is_provider_org=None if principal.is_service else principal.is_provider_org,
+            external=principal.is_external,
+        )
+
+    result, error = await _run_short(
+        session_factory,
+        _refresh,
+        op=OP_INTEGRATIONS_REFRESH_TOKEN,
+        log_key=request.connection_name,
+        status_errors=(IntegrationServiceError, ScopeResolutionError),
+        timeout_seconds=OAUTH_REFRESH_DISPATCH_TIMEOUT_SECONDS,
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _single_ok(frame_id, result)
 
 
 def _chunked_frames(

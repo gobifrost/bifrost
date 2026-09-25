@@ -6,8 +6,9 @@ children must never import PostgreSQL drivers, the ORM, or the API server
 stack. (The synthetic HTTP error mapping imports ``httpx``/``bifrost.client``
 lazily, inside the raising function, long after the child runtime is loaded.)
 
-Protocol (stage 2b: ``config.get/set/list/delete`` plus
-``integrations.get/list_mappings/get_mapping``):
+Protocol (stage 2c: ``config.get/set/list/delete`` plus the full
+``integrations`` facade — ``get/list_mappings/get_mapping/upsert_mapping/
+delete_mapping/refresh_token``):
 
 - One request frame (or a bounded chunked request), one-or-many response
   frames, JSON over ``multiprocessing.Connection.send_bytes`` /
@@ -19,7 +20,13 @@ Protocol (stage 2b: ``config.get/set/list/delete`` plus
   ``scope``; ``config.delete`` sends ``key``/``scope``.
   ``integrations.get`` sends ``name``/``scope``/``oauth_scope``;
   ``integrations.list_mappings`` sends ``name``/``scope``;
-  ``integrations.get_mapping`` sends ``name``/``scope``/``entity_id``.
+  ``integrations.get_mapping`` sends ``name``/``scope``/``entity_id``;
+  ``integrations.upsert_mapping`` sends
+  ``name``/``scope``/``entity_id``/``entity_name``/``config``;
+  ``integrations.delete_mapping`` sends ``name``/``scope``;
+  ``integrations.refresh_token`` sends ``connection_name``/``scope``
+  (the SDK ``refresh()`` call passes no scope, so the parent resolves
+  the caller's own scope).
   No request carries Solution identity: the parent derives the Solution
   install id from its own dispatch context, never from child frames.
   Small responses carry the same ``id`` with either
@@ -28,7 +35,10 @@ Protocol (stage 2b: ``config.get/set/list/delete`` plus
   returns no body (``result`` null, like HTTP 204); ``list`` returns a
   dict; ``delete`` returns a bool. ``integrations.get``/``get_mapping``
   return a response dict or null (missing); ``list_mappings`` returns a
-  dict envelope (``{"items": [...]}``).
+  dict envelope (``{"items": [...]}``); ``upsert_mapping`` returns a
+  mapping dict; ``delete_mapping`` returns a ``{"deleted": bool}``
+  envelope; ``refresh_token`` returns an
+  ``{"access_token", "expires_at"}`` dict.
 - Large payloads in EITHER direction use bounded chunked transfer: a
   header frame ``{"ok": true, "chunked": true, "total": <bytes>,
   "parts": <n>}`` (requests: ``{"op": ..., "chunked": true, "total",
@@ -66,9 +76,9 @@ import threading
 import uuid
 from typing import Any, NoReturn
 
-# Operation allowlist (stage 2b): the config facade and the integrations
-# read facade ride the local transport. The parent enforces the same
-# allowlist; anything else is a 404 response.
+# Operation allowlist (stage 2c): the config facade and the full
+# integrations facade ride the local transport. The parent enforces the
+# same allowlist; anything else is a 404 response.
 OP_CONFIG_GET = "config.get"
 OP_CONFIG_SET = "config.set"
 OP_CONFIG_LIST = "config.list"
@@ -76,6 +86,9 @@ OP_CONFIG_DELETE = "config.delete"
 OP_INTEGRATIONS_GET = "integrations.get"
 OP_INTEGRATIONS_LIST_MAPPINGS = "integrations.list_mappings"
 OP_INTEGRATIONS_GET_MAPPING = "integrations.get_mapping"
+OP_INTEGRATIONS_UPSERT_MAPPING = "integrations.upsert_mapping"
+OP_INTEGRATIONS_DELETE_MAPPING = "integrations.delete_mapping"
+OP_INTEGRATIONS_REFRESH_TOKEN = "integrations.refresh_token"
 
 # Wire version. The parent rejects anything else instead of guessing.
 TRANSPORT_VERSION = 1
@@ -589,6 +602,98 @@ class ChildLocalTransport:
             timeout,
         )
         if result is not None and not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+    async def call_integrations_upsert_mapping(
+        self,
+        name: str,
+        scope: str | None,
+        entity_id: str,
+        entity_name: str | None = None,
+        config: dict[str, Any] | None = None,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """Create or update an integration mapping through the parent.
+
+        No HTTP fallback. Returns the mapping dict, identical to the
+        HTTP path. Parent error responses raise the same public
+        exceptions as the HTTP path (the facade maps them to the
+        ``RuntimeError`` the HTTP upsert raises); transport loss raises
+        ``LocalTransportClosed`` (synthetic 503) or ``TimeoutError``.
+        """
+        result = await self._call(
+            OP_INTEGRATIONS_UPSERT_MAPPING,
+            {
+                "name": name,
+                "scope": scope,
+                "entity_id": entity_id,
+                "entity_name": entity_name,
+                "config": config,
+            },
+            timeout,
+        )
+        if not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+    async def call_integrations_delete_mapping(
+        self,
+        name: str,
+        scope: str | None,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """Delete an integration mapping through the parent. No HTTP fallback.
+
+        Returns the ``{"deleted": bool}`` envelope, identical to the
+        HTTP path (False for a missing integration/scope/mapping).
+        Parent error responses raise the same public exceptions as the
+        HTTP path; transport loss raises ``LocalTransportClosed``
+        (synthetic 503) or ``TimeoutError``.
+        """
+        result = await self._call(
+            OP_INTEGRATIONS_DELETE_MAPPING, {"name": name, "scope": scope}, timeout
+        )
+        if not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+    async def call_integrations_refresh_token(
+        self,
+        connection_name: str,
+        scope: str | None = None,
+        timeout: float = 35.0,
+    ) -> dict[str, Any]:
+        """Refresh an OAuth token through the parent. No HTTP fallback.
+
+        Returns the ``{"access_token", "expires_at"}`` dict, identical
+        to the HTTP path. The parent resolves a missing scope to the
+        caller's own org (the SDK ``refresh()`` call passes no scope).
+        The caller registers the fresh token with the SDK secret
+        scrubber, like the HTTP SDK facade does. Parent error responses
+        raise the same public exceptions as the HTTP path (the facade
+        maps them to the ``RuntimeError`` the HTTP refresh raises).
+        The 35-second child deadline leaves room for the parent's
+        30-second OAuth provider/commit deadline to return an error frame.
+        """
+        result = await self._call(
+            OP_INTEGRATIONS_REFRESH_TOKEN,
+            {"connection_name": connection_name, "scope": scope},
+            timeout,
+        )
+        if not isinstance(result, dict):
             self._fail(
                 LocalTransportError(
                     "malformed local SDK result; channel closed"

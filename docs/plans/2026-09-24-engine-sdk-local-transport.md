@@ -230,3 +230,61 @@ passed 40 tests; `./test.sh tests/e2e/platform/test_sdk_integrations_local.py -v
 passed one live test after that correction; `./test.sh quality api` passed
 with zero Pyright errors and Ruff clean. The broader backend and browser
 suites have not been run. Stage 2b is accepted for continuation.
+
+## Stage 2c handoff state
+
+Implemented and self-verified in the same isolated worktree, with no
+commit, push, or merge. `integrations.upsert_mapping`,
+`integrations.delete_mapping`, and hidden `OAuthCredentials.refresh()`
+now use the parent-local channel in engine children, with HTTP and
+local dispatch calling the same new shared services in
+`api/shared/sdk_integrations.py` (`upsert_sdk_integration_mapping`,
+`delete_sdk_integration_mapping`, `refresh_sdk_oauth_token`). The
+child selects local transport only when installed; external callers
+keep HTTP. A failed local request never retries over HTTP.
+
+Behavior preserved from the HTTP endpoints: missing-integration 404
+before scope validation on upsert (delete returns
+`{"deleted": False}`), global-scope 400 on upsert (`{"deleted":
+False}` on delete), cross-org 403s via the mutation scope gate,
+OAuth-link preservation on update, config-write/merged-echo semantics
+with the external global-tier exclusion, locked token lookup
+(`get_org_level_for_provider(..., for_update=True)`), refresh
+context/rotation/persistence, and external org-only restrictions. The
+child registers the fresh access token with its own secret scrubber,
+and local upsert/refresh failures raise the same `RuntimeError`
+shapes as their HTTP facades. The old
+`test_mutations_and_refresh_stay_http_only` 404 assertion was replaced
+with allowlist/guard coverage.
+
+Focused verification reported (all green): 23 new unit tests
+(`tests/unit/sdk/test_sdk_integration_mutations_local.py` — both
+transports, refresh lock/rotation/persistence, external isolation,
+org-scope mutations, child round trips with zero HTTP); 141 tests
+across the integrations dispatch, integrations/config local, and
+local-dispatch suites; 66 contract tripwire tests
+(`test_contract_version.py`, `test_dto_flags.py` — no DTO changed);
+`./test.sh quality api` (0 Pyright errors, Ruff clean); one new live
+worker E2E (mutations with fixed-operation HTTP disabled, committed
+state re-checked over external HTTP) plus the stage-2b live E2E; and
+70 regression tests across `test_cli_integrations_external.py`,
+`test_integrations.py`, and `test_org_scoping_scenarios.py`.
+After reviewer corrections, the 23 new unit tests plus 22 dispatcher
+tests passed, the tightened external/live E2E set passed 14 tests, and
+13 OAuth router/scope tests passed after their stale scope-helper mocks
+were updated to the shared service boundary.
+
+Coverage limits: refresh success persistence is proven only in unit
+tests (mocked provider HTTP — no real OAuth provider exists in the
+test stack); the live workflow asserts the loud 404-shaped
+`RuntimeError` for a missing provider with HTTP disabled. Broader
+backend and browser suites were not run.
+
+Reviewer correction: an external caller could resolve a global OAuth
+provider through the generic name cascade and potentially mint a token
+with global client credentials. The shared refresh service now uses an
+org-only provider lookup for external callers. Unit tests cover both
+OAuth flow types and require 404 before contacting the provider; the
+external E2E now requires 404 as well. OAuth refresh uses a 30-second
+parent deadline and a 35-second child deadline, allowing the provider
+request and a returned error frame without an earlier local cutoff.

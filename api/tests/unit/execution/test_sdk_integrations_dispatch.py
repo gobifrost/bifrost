@@ -142,20 +142,56 @@ class TestIntegrationsDispatchValidation:
         assert list_resp["result"] == {"items": []}
         assert gm_resp == {"v": 1, "id": "m-1", "ok": True, "result": None}
 
-    async def test_mutations_and_refresh_stay_http_only(self, db_session):
+    async def test_mutation_and_refresh_ops_are_allowlisted(self, db_session):
+        from shared import sdk_integrations as shared_service
+
         principal = _principal(is_platform_admin=True)
-        for op in (
-            "integrations.upsert_mapping",
-            "integrations.delete_mapping",
-            "integrations.refresh_token",
+        org_id = principal.caller_org_id
+        with (
+            patch.object(
+                shared_service,
+                "upsert_sdk_integration_mapping",
+                new=AsyncMock(return_value={"id": "mid"}),
+            ),
+            patch.object(
+                shared_service,
+                "delete_sdk_integration_mapping",
+                new=AsyncMock(return_value={"deleted": True}),
+            ),
+            patch.object(
+                shared_service,
+                "refresh_sdk_oauth_token",
+                new=AsyncMock(
+                    return_value={"access_token": "tok", "expires_at": None}
+                ),
+            ),
         ):
-            response = await self._dispatch(
+            upsert_resp = await self._dispatch(
                 db_session,
-                {"v": 1, "id": "x-1", "op": op, "name": "P", "scope": "global"},
+                {"v": 1, "id": "u-1", "op": "integrations.upsert_mapping",
+                 "name": "P", "scope": str(org_id) if org_id else "global",
+                 "entity_id": "ent-1", "entity_name": None, "config": None},
                 principal,
             )
-            assert response["ok"] is False
-            assert response["status"] == 404
+            delete_resp = await self._dispatch(
+                db_session,
+                {"v": 1, "id": "d-1", "op": "integrations.delete_mapping",
+                 "name": "P", "scope": str(org_id) if org_id else "global"},
+                principal,
+            )
+            refresh_resp = await self._dispatch(
+                db_session,
+                {"v": 1, "id": "r-1", "op": "integrations.refresh_token",
+                 "connection_name": "P", "scope": None},
+                principal,
+            )
+        assert upsert_resp == {"v": 1, "id": "u-1", "ok": True,
+                               "result": {"id": "mid"}}
+        assert delete_resp == {"v": 1, "id": "d-1", "ok": True,
+                               "result": {"deleted": True}}
+        assert refresh_resp == {"v": 1, "id": "r-1", "ok": True,
+                                "result": {"access_token": "tok",
+                                           "expires_at": None}}
 
     async def test_malformed_fields_are_422(self, db_session):
         principal = _principal(is_platform_admin=True)
@@ -328,3 +364,130 @@ class TestIntegrationsDispatchValidation:
                 assert response["ok"] is True, frame
         assert opened == 3
         assert closed == 3
+
+
+@pytest.mark.asyncio
+class TestMutationDispatchGuards:
+    async def _dispatch(self, db_session, frame, principal):
+        return await dispatch_frame(
+            lambda: _factory(db_session), principal, frame
+        )
+
+    async def test_malformed_mutation_fields_are_422(self, db_session):
+        from src.models.orm.integrations import Integration
+
+        # Seed the integration so the malformed-scope frame reaches scope
+        # validation (missing names 404 first, exactly like HTTP).
+        db_session.add(Integration(name="P"))
+        await db_session.flush()
+        principal = _principal(is_platform_admin=True)
+        bad_frames = [
+            {"v": 1, "id": "m-1", "op": "integrations.upsert_mapping",
+             "name": "P", "scope": "global",
+             "entity_id": {"nested": 1}},
+            {"v": 1, "id": "m-2", "op": "integrations.upsert_mapping",
+             "scope": "global", "entity_id": "ent-1"},
+            {"v": 1, "id": "m-3", "op": "integrations.delete_mapping",
+             "name": 42, "scope": "global"},
+            {"v": 1, "id": "m-4", "op": "integrations.refresh_token",
+             "connection_name": {"nested": 1}, "scope": None},
+            {"v": 1, "id": "m-5", "op": "integrations.upsert_mapping",
+             "name": "P", "scope": "not-a-uuid", "entity_id": "ent-1"},
+        ]
+        for frame in bad_frames:
+            response = await self._dispatch(db_session, frame, principal)
+            assert response["ok"] is False, frame
+            assert response["status"] == 422, frame
+
+    async def test_mutations_require_parent_actor(self, db_session):
+        principal = _principal(is_platform_admin=True, actor_email=None)
+        for frame in (
+            {"v": 1, "id": "a-1", "op": "integrations.upsert_mapping",
+             "name": "P", "scope": "global",
+             "entity_id": "ent-1", "entity_name": None, "config": None},
+            {"v": 1, "id": "a-2", "op": "integrations.delete_mapping",
+             "name": "P", "scope": "global"},
+        ):
+            response = await self._dispatch(db_session, frame, principal)
+            assert response["ok"] is False
+            assert response["status"] == 500
+            assert "caller email" in response["detail"]
+
+    async def test_mutation_cross_org_denied_without_bypass(self, db_session):
+        from src.models.orm.integrations import Integration
+
+        db_session.add(Integration(name="P"))
+        await db_session.flush()
+        principal = _principal(org_id=uuid4())
+        for frame in (
+            {"v": 1, "id": "x-1", "op": "integrations.upsert_mapping",
+             "name": "P", "scope": str(uuid4()),
+             "entity_id": "ent-1", "entity_name": None, "config": None},
+            {"v": 1, "id": "x-2", "op": "integrations.delete_mapping",
+             "name": "P", "scope": str(uuid4())},
+            {"v": 1, "id": "x-3", "op": "integrations.refresh_token",
+             "connection_name": "P", "scope": str(uuid4())},
+        ):
+            response = await self._dispatch(db_session, frame, principal)
+            assert response["ok"] is False, frame
+            assert response["status"] == 403, frame
+
+    async def test_missing_integration_before_scope_check(self, db_session):
+        # The upsert 404 fires before the scope gate, exactly like HTTP:
+        # even a cross-org scope gets 404 when the integration is missing.
+        principal = _principal(org_id=uuid4())
+        response = await self._dispatch(
+            db_session,
+            {"v": 1, "id": "o-1", "op": "integrations.upsert_mapping",
+             "name": "missing", "scope": str(uuid4()),
+             "entity_id": "ent-1", "entity_name": None, "config": None},
+            principal,
+        )
+        assert response["ok"] is False
+        assert response["status"] == 404
+
+    async def test_delete_missing_is_false_not_error(self, db_session):
+        principal = _principal(org_id=uuid4())
+        for frame in (
+            {"v": 1, "id": "f-1", "op": "integrations.delete_mapping",
+             "name": "missing", "scope": str(uuid4())},
+        ):
+            response = await self._dispatch(db_session, frame, principal)
+            assert response["ok"] is True
+            assert response["result"] == {"deleted": False}
+
+    async def test_dispatcher_passes_actor_not_child_claims(self, db_session):
+        from shared import sdk_integrations as shared_service
+
+        principal = _principal(is_platform_admin=True)
+        seen = {}
+
+        async def _spy(session, **kwargs):
+            seen.update(kwargs)
+            return {"id": "mid"}
+
+        with patch.object(
+            shared_service, "upsert_sdk_integration_mapping", new=_spy
+        ):
+            response = await dispatch_frame(
+                lambda: _factory(db_session),
+                principal,
+                {"v": 1, "id": "c-1", "op": "integrations.upsert_mapping",
+                 "name": "P", "scope": "global",
+                 "entity_id": "ent-1", "entity_name": None, "config": None,
+                 "actor_email": "forged@evil.local",
+                 "updated_by": "forged@evil.local"},
+            )
+        assert response["ok"] is True
+        assert seen["actor_email"] == "dispatch-actor@test.local"
+
+    async def test_refresh_missing_provider_is_404(self, db_session):
+        principal = _principal(is_platform_admin=True)
+        response = await self._dispatch(
+            db_session,
+            {"v": 1, "id": "p-1", "op": "integrations.refresh_token",
+             "connection_name": "no-such-provider", "scope": "global"},
+            principal,
+        )
+        assert response["ok"] is False
+        assert response["status"] == 404

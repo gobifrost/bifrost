@@ -293,6 +293,10 @@ class integrations:
         """
         Create or update a mapping for an organization.
 
+        Inside an engine child this writes through the parent over the
+        dedicated local transport (same service as the HTTP endpoint);
+        elsewhere it calls the SDK API endpoint.
+
         If a mapping already exists for the org, updates it.
         Otherwise creates a new mapping.
 
@@ -319,12 +323,35 @@ class integrations:
             ...     config={"api_url": "https://customer-a.halopsa.com"}
             ... )
         """
-        client = get_client()
         # Resolve SDK-side: the workflow engine authenticates the API as
         # the sentinel superuser, so the API-side C2 gate ALWAYS passes.
         # The SDK-side ``resolve_scope`` is what enforces "this workflow's
         # actual caller is allowed to mutate that org's mapping."
         effective_scope = resolve_scope(scope)
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent applies the same mutation
+            # service over the dedicated channel. A local attempt never
+            # falls back to HTTP — failures raise loudly below (a write
+            # may already have committed, so a retry over HTTP could
+            # double-apply). Error mapping matches the HTTP path below.
+            from .client import BifrostAPIError
+
+            try:
+                result = await transport.call_integrations_upsert_mapping(
+                    name, effective_scope, entity_id, entity_name, config
+                )
+            except BifrostAPIError as e:
+                status = e.response.status_code
+                try:
+                    detail = e.response.text
+                except Exception:
+                    detail = str(e)
+                raise RuntimeError(
+                    f"Failed to upsert mapping: {status} - {detail}"
+                ) from None
+            return IntegrationMappingResponse.model_validate(result)
+        client = get_client()
         response = await client.post(
             "/api/sdk/integrations/upsert_mapping",
             json={
@@ -347,6 +374,10 @@ class integrations:
         """
         Delete a mapping for an organization.
 
+        Inside an engine child this deletes through the parent over the
+        dedicated local transport (same service as the HTTP endpoint);
+        elsewhere it calls the SDK API endpoint.
+
         Args:
             name: Integration name
             scope: Organization ID (the org whose mapping to delete)
@@ -358,10 +389,17 @@ class integrations:
             >>> from bifrost import integrations
             >>> deleted = await integrations.delete_mapping("HaloPSA", scope="org-123")
         """
-        client = get_client()
         # See upsert_mapping above for why the SDK-side resolve is the
         # real security boundary under engine-sentinel auth.
         effective_scope = resolve_scope(scope)
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: never falls back to HTTP.
+            result = await transport.call_integrations_delete_mapping(
+                name, effective_scope
+            )
+            return bool(result.get("deleted", False))
+        client = get_client()
         response = await client.post(
             "/api/sdk/integrations/delete_mapping",
             json={"name": name, "scope": effective_scope},
