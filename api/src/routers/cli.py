@@ -442,58 +442,30 @@ async def cli_get_config(
     db: AsyncSession = Depends(get_db),
 ) -> CLIConfigValue | None:
     """Get a config value via CLI API."""
-    from src.repositories.config import ConfigRepository
+    from shared.sdk_config import (
+        ScopeResolutionError,
+        get_sdk_config_value,
+        resolve_sdk_scope,
+    )
 
-    org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
-    org_uuid = UUID(org_id) if org_id else None
-
-    # Canonical SDK config load: cascade (global + org-specific) merged.
-    # An EXTERNAL portal caller gets org-only — no global tier — so a global
-    # secret value is never returned (and never decrypted below). EXT-1 NEW-1.
-    repo = ConfigRepository(db, org_id=org_uuid, is_superuser=True)
-    all_config = await repo.merged_for_sdk(external=current_user.is_external)
-
-    if request.key not in all_config:
-        return None
-
-    entry = all_config[request.key]
-    raw_value = entry.get("value")
-    config_type = entry.get("type", "string")
-
-    if config_type == "secret" and raw_value:
-        from src.core.security import decrypt_secret
-
-        try:
-            raw_value = decrypt_secret(raw_value)
-        except Exception:
-            raw_value = None
-    elif config_type == "json" and isinstance(raw_value, str):
-        try:
-            raw_value = json.loads(raw_value)
-        except json.JSONDecodeError as e:
-            # Stored value is not valid JSON — return raw string as fallback
-            logger.debug(
-                f"config {log_safe(request.key)} stored as json but failed to parse, returning raw: {log_safe(e)}"
-            )
-    elif config_type == "bool":
-        raw_value = (
-            str(raw_value).lower() == "true"
-            if isinstance(raw_value, str)
-            else bool(raw_value)
+    try:
+        org_uuid = await resolve_sdk_scope(
+            request.scope,
+            caller_org_id=current_user.organization_id,
+            is_platform_admin=current_user.is_superuser,
+            session=db,
         )
-    elif config_type == "int":
-        try:
-            raw_value = int(raw_value)
-        except (ValueError, TypeError) as e:
-            # Stored value isn't coercible to int — return raw value
-            logger.debug(
-                f"config {log_safe(request.key)} stored as int but failed to coerce, returning raw: {log_safe(e)}"
-            )
+    except ScopeResolutionError as e:
+        raise HTTPException(
+            status_code=e.status_code,
+            detail=e.detail,
+        ) from None
 
-    return CLIConfigValue(
+    return await get_sdk_config_value(
+        db,
         key=request.key,
-        value=raw_value,
-        config_type=config_type,
+        org_id=org_uuid,
+        external=current_user.is_external,
     )
 
 
@@ -508,69 +480,33 @@ async def cli_set_config(
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Set a config value via CLI API."""
-    from src.models import Config as ConfigModel
-    from src.models.enums import ConfigType as ConfigTypeEnum
-
-    org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
-    org_uuid = UUID(org_id) if org_id else None
-    now = datetime.now(timezone.utc)
-
-    if request.is_secret:
-        from src.core.security import encrypt_secret
-
-        config_type = ConfigTypeEnum.SECRET
-        stored_value = await asyncio.to_thread(encrypt_secret, str(request.value))
-    elif isinstance(request.value, dict) or isinstance(request.value, list):
-        config_type = ConfigTypeEnum.JSON
-        stored_value = request.value
-    elif isinstance(request.value, bool):
-        config_type = ConfigTypeEnum.BOOL
-        stored_value = request.value
-    elif isinstance(request.value, int):
-        config_type = ConfigTypeEnum.INT
-        stored_value = request.value
-    else:
-        config_type = ConfigTypeEnum.STRING
-        stored_value = request.value
-
-    config_value = {"value": stored_value}
-
-    stmt = select(ConfigModel).where(
-        ConfigModel.key == request.key,
-        ConfigModel.organization_id == org_uuid,
+    from shared.sdk_config import (
+        ScopeResolutionError,
+        resolve_sdk_scope,
+        set_sdk_config_value,
     )
-    result = await db.execute(stmt)
-    existing = result.scalar_one_or_none()
-
-    if existing:
-        existing.value = config_value
-        existing.config_type = config_type
-        existing.updated_at = now
-        existing.updated_by = current_user.email
-    else:
-        config = ConfigModel(
-            key=request.key,
-            value=config_value,
-            config_type=config_type,
-            organization_id=org_uuid,
-            created_at=now,
-            updated_at=now,
-            updated_by=current_user.email,
-        )
-        db.add(config)
-
-    await db.commit()
 
     try:
-        from src.core.cache import upsert_config
+        org_uuid = await resolve_sdk_scope(
+            request.scope,
+            caller_org_id=current_user.organization_id,
+            is_platform_admin=current_user.is_superuser,
+            session=db,
+        )
+    except ScopeResolutionError as e:
+        raise HTTPException(
+            status_code=e.status_code,
+            detail=e.detail,
+        ) from None
 
-        config_type_str = config_type.value
-        await upsert_config(org_id, request.key, stored_value, config_type_str)
-    except ImportError as e:
-        # cache module is optional in some deploys; DB write already committed
-        logger.debug(f"cache module unavailable, skipping config cache upsert: {e}")
-
-    logger.info(f"CLI set config {log_safe(request.key)} for user {current_user.email}")
+    await set_sdk_config_value(
+        db,
+        key=request.key,
+        value=request.value,
+        is_secret=request.is_secret,
+        org_id=org_uuid,
+        actor_email=current_user.email,
+    )
 
 
 @router.post(
@@ -583,45 +519,31 @@ async def cli_list_config(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     """List all config values via CLI API."""
-    from src.repositories.config import ConfigRepository
+    from shared.sdk_config import (
+        ScopeResolutionError,
+        list_sdk_config_values,
+        resolve_sdk_scope,
+    )
 
-    org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
-    org_uuid = UUID(org_id) if org_id else None
+    try:
+        org_uuid = await resolve_sdk_scope(
+            request.scope,
+            caller_org_id=current_user.organization_id,
+            is_platform_admin=current_user.is_superuser,
+            session=db,
+        )
+    except ScopeResolutionError as e:
+        raise HTTPException(
+            status_code=e.status_code,
+            detail=e.detail,
+        ) from None
 
     # External callers get org-only (no global tier) — EXT-1 NEW-1.
-    repo = ConfigRepository(db, org_id=org_uuid, is_superuser=True)
-    all_config = await repo.merged_for_sdk(external=current_user.is_external)
-
-    if not all_config:
-        return {}
-
-    config_dict: dict[str, Any] = {}
-    for config_key, entry in all_config.items():
-        raw_value = entry.get("value")
-        config_type = entry.get("type", "string")
-
-        if config_type == "secret":
-            config_dict[config_key] = "[SECRET]"
-        elif config_type == "json" and isinstance(raw_value, str):
-            try:
-                config_dict[config_key] = json.loads(raw_value)
-            except json.JSONDecodeError:
-                config_dict[config_key] = raw_value
-        elif config_type == "bool":
-            config_dict[config_key] = (
-                str(raw_value).lower() == "true"
-                if isinstance(raw_value, str)
-                else bool(raw_value)
-            )
-        elif config_type == "int":
-            try:
-                config_dict[config_key] = int(raw_value)
-            except (ValueError, TypeError):
-                config_dict[config_key] = raw_value
-        else:
-            config_dict[config_key] = raw_value
-
-    return config_dict
+    return await list_sdk_config_values(
+        db,
+        org_id=org_uuid,
+        external=current_user.is_external,
+    )
 
 
 @router.post(
@@ -634,36 +556,31 @@ async def cli_delete_config(
     db: AsyncSession = Depends(get_db),
 ) -> bool:
     """Delete a config value via CLI API."""
-    from src.models import Config as ConfigModel
-
-    org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
-    org_uuid = UUID(org_id) if org_id else None
-
-    stmt = select(ConfigModel).where(
-        ConfigModel.key == request.key,
-        ConfigModel.organization_id == org_uuid,
+    from shared.sdk_config import (
+        ScopeResolutionError,
+        delete_sdk_config_value,
+        resolve_sdk_scope,
     )
-    result = await db.execute(stmt)
-    config = result.scalar_one_or_none()
-
-    if not config:
-        return False
-
-    await db.delete(config)
-    await db.commit()
 
     try:
-        from src.core.cache import invalidate_config
+        org_uuid = await resolve_sdk_scope(
+            request.scope,
+            caller_org_id=current_user.organization_id,
+            is_platform_admin=current_user.is_superuser,
+            session=db,
+        )
+    except ScopeResolutionError as e:
+        raise HTTPException(
+            status_code=e.status_code,
+            detail=e.detail,
+        ) from None
 
-        await invalidate_config(org_id, request.key)
-    except ImportError as e:
-        # cache module is optional; DB delete already committed
-        logger.debug(f"cache module unavailable, skipping config cache invalidate: {e}")
-
-    logger.info(
-        f"CLI deleted config {log_safe(request.key)} for user {current_user.email}"
+    return await delete_sdk_config_value(
+        db,
+        key=request.key,
+        org_id=org_uuid,
+        actor_email=current_user.email,
     )
-    return True
 
 
 # =============================================================================

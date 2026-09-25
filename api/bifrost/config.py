@@ -13,6 +13,7 @@ from typing import Any
 from .client import get_client, raise_for_status_with_detail
 from .models import ConfigData
 from ._context import resolve_scope
+from ._local_transport import get as _get_local_transport
 
 
 class config:
@@ -34,7 +35,9 @@ class config:
         """
         Get configuration value with automatic secret decryption.
 
-        Calls SDK API endpoint to retrieve configuration.
+        Inside an engine child this resolves through the parent over the
+        dedicated local transport (same service as the HTTP endpoint);
+        elsewhere it calls the SDK API endpoint.
 
         Args:
             key: Configuration key
@@ -60,8 +63,23 @@ class config:
             >>> timeout = await config.get("timeout", default=30)
             >>> org_setting = await config.get("key", scope="org-uuid-here")
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent resolves this through the shared
+            # config service over the dedicated channel. Checked before the
+            # client is used, so the local path never needs credentials and
+            # a local attempt never falls back to HTTP — failures raise
+            # loudly below.
+            result = await transport.call_config_get(key, effective_scope)
+            if result is None:
+                return default
+            value = result.get("value", default)
+            if result.get("config_type") == "secret" and isinstance(value, str):
+                from ._context import register_secret
+                register_secret(value)
+            return value
+        client = get_client()
         response = await client.post(
             "/api/sdk/config/get",
             json={"key": key, "scope": effective_scope}
@@ -90,7 +108,10 @@ class config:
         """
         Set configuration value.
 
-        Calls SDK API endpoint to store configuration (writes directly to database).
+        Inside an engine child this stores through the parent over the
+        dedicated local transport (same service as the HTTP endpoint);
+        elsewhere it calls the SDK API endpoint to store configuration
+        (writes directly to database).
 
         Args:
             key: Configuration key
@@ -110,8 +131,15 @@ class config:
             >>> await config.set("api_key", "secret123", is_secret=True)
             >>> await config.set("org_setting", "value", scope="org-uuid-here")
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: never falls back to HTTP — failures raise
+            # loudly below (a write may already have committed, so a retry
+            # over HTTP could double-apply).
+            await transport.call_config_set(key, value, is_secret, effective_scope)
+            return
+        client = get_client()
         response = await client.post(
             "/api/sdk/config/set",
             json={
@@ -128,7 +156,11 @@ class config:
         """
         List configuration key-value pairs.
 
-        Note: Secret values are shown as the decrypted value (or "[SECRET]" on error).
+        Inside an engine child this lists through the parent over the
+        dedicated local transport (same service as the HTTP endpoint);
+        elsewhere it calls the SDK API endpoint.
+
+        Note: Secret values are redacted as "[SECRET]".
 
         Args:
             scope: Organization scope override. Omit to use the execution
@@ -154,8 +186,13 @@ class config:
             >>> timeout = cfg.timeout or 30
             >>> org_cfg = await config.list(scope="org-uuid-here")
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: never falls back to HTTP.
+            result = await transport.call_config_list(effective_scope)
+            return ConfigData.model_validate({"data": result})
+        client = get_client()
         response = await client.post(
             "/api/sdk/config/list",
             json={"scope": effective_scope}
@@ -168,7 +205,10 @@ class config:
         """
         Delete configuration value.
 
-        Calls SDK API endpoint to delete configuration (deletes directly from database).
+        Inside an engine child this deletes through the parent over the
+        dedicated local transport (same service as the HTTP endpoint);
+        elsewhere it calls the SDK API endpoint to delete configuration
+        (deletes directly from database).
 
         Args:
             key: Configuration key
@@ -188,8 +228,13 @@ class config:
             >>> await config.delete("old_api_url")
             >>> await config.delete("old_api_url")
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: never falls back to HTTP — failures raise
+            # loudly below.
+            return await transport.call_config_delete(key, effective_scope)
+        client = get_client()
         response = await client.post(
             "/api/sdk/config/delete",
             json={"key": key, "scope": effective_scope}

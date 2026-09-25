@@ -38,6 +38,7 @@ import subprocess
 import sys
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -54,6 +55,11 @@ from src.core.redis_client import ActiveExecution
 from src.models.contracts.notifications import NotificationCategory, NotificationCreate, NotificationStatus
 from src.services.execution.memory_monitor import get_cgroup_memory, has_sufficient_memory_cgroup
 from src.services.execution.requirements_setup_result import RequirementsInstallResult
+from src.services.execution.sdk_local_dispatch import (
+    LocalDispatchPrincipal,
+    principal_from_context,
+    serve_channel,
+)
 from src.services.notification_service import get_notification_service
 from src.services.execution.template_process import TemplateProcess
 
@@ -286,6 +292,12 @@ class ProcessHandle:
     # Set for supervised service children (which live in service_processes).
     # None for one-shot workflow children.
     service: ServiceInfo | None = None
+    # Parent ends of the dedicated local-SDK channel (child requests on one
+    # pipe, parent answers on the other). None once closed.
+    sdk_req: Any = None
+    sdk_resp: Any = None
+    # Pump task serving the SDK channel. None once finished/closed.
+    sdk_task: Any = None
 
     @property
     def is_alive(self) -> bool:
@@ -442,6 +454,9 @@ class ProcessPoolManager:
         self._heartbeat_task: asyncio.Task[None] | None = None
         self._cancel_task: asyncio.Task[None] | None = None
         self._command_task: asyncio.Task[None] | None = None
+        # Local-SDK channel pumps (one per live child, plus bounded threads).
+        self._sdk_tasks: set[asyncio.Task[None]] = set()
+        self._sdk_executor: ThreadPoolExecutor | None = None
 
         # Redis connection
         self._redis: redis.Redis | None = None  # type: ignore[type-arg]
@@ -642,6 +657,12 @@ class ProcessPoolManager:
         ensure the pool has been started (and therefore _start_template
         has completed) before invoking this method.
 
+        Every child also gets a dedicated local-SDK channel: the child
+        installs the engine-local transport on its ends before user code
+        runs, and the pool serves ``config.get`` on the parent ends (see
+        :meth:`_start_sdk_pump`). The pump starts once the caller supplies
+        the dispatch context.
+
         Returns:
             ProcessHandle for the new forked worker. State starts at BUSY
             because every fork is claimed by the routing caller.
@@ -660,9 +681,10 @@ class ProcessPoolManager:
 
         # Fork from template (COW memory sharing). persistent=False is
         # the only mode: child runs one execution then exits.
-        child_pid, work_queue, result_queue = self._template.fork(
+        child_pid, work_queue, result_queue, sdk_req_recv, sdk_resp_send = self._template.fork(
             worker_id=process_id,
             persistent=False,
+            with_sdk=True,
         )
 
         handle = ProcessHandle(
@@ -675,11 +697,88 @@ class ProcessPoolManager:
             started_at=datetime.now(timezone.utc),
             current_execution=None,
             executions_completed=0,
+            sdk_req=sdk_req_recv,
+            sdk_resp=sdk_resp_send,
         )
 
         self.processes[process_id] = handle
         logger.info(f"Created worker {process_id} (PID={handle.pid})")
         return handle
+
+    def _start_sdk_pump(
+        self,
+        handle: ProcessHandle,
+        principal: LocalDispatchPrincipal,
+    ) -> None:
+        """Serve one child's local-SDK channel for a validated principal.
+
+        The principal is derived from parent-owned dispatch context before
+        forking — never from child frames. The pump ends on child
+        EOF/crash, protocol violation, or explicit close.
+        """
+        task: asyncio.Task[None] = asyncio.create_task(
+            self._serve_sdk_channel(handle, principal),
+            name=f"pool-sdk-{handle.id}",
+        )
+        handle.sdk_task = task
+        self._sdk_tasks.add(task)
+        task.add_done_callback(self._sdk_task_done)
+
+    def _sdk_task_done(self, task: asyncio.Task[None]) -> None:
+        """Drop finished pumps and surface unexpected failures."""
+        self._sdk_tasks.discard(task)
+        try:
+            exc = task.exception()
+        except asyncio.CancelledError:
+            return
+        if exc is not None:
+            logger.warning("Local-SDK pump failed: %s", exc)
+
+    async def _serve_sdk_channel(
+        self,
+        handle: ProcessHandle,
+        principal: LocalDispatchPrincipal,
+    ) -> None:
+        """Pump one child SDK channel; close it when the pump ends."""
+        from src.core.database import get_session_factory
+
+        sdk_req, sdk_resp = handle.sdk_req, handle.sdk_resp
+        if sdk_req is None or sdk_resp is None:
+            return
+        try:
+            reason = await serve_channel(
+                recv_conn=sdk_req,
+                send_conn=sdk_resp,
+                session_factory=get_session_factory(),
+                principal=principal,
+                executor=self._sdk_executor,
+            )
+            logger.debug("Local-SDK channel for %s ended: %s", handle.id, reason)
+        finally:
+            self._close_sdk_channel(handle)
+
+    def _close_sdk_channel(self, handle: ProcessHandle) -> None:
+        """Stop the SDK pump and release one child's channel descriptors.
+
+        Idempotent: safe to call from result, crash, kill, and shutdown
+        paths. Never raises.
+        """
+        task = handle.sdk_task
+        handle.sdk_task = None
+        if task is not None:
+            try:
+                if task is not asyncio.current_task():
+                    task.cancel()
+            except Exception as e:
+                logger.debug("SDK pump cancel ignored for %s: %s", handle.id, e)
+        for attr in ("sdk_req", "sdk_resp"):
+            conn = getattr(handle, attr)
+            setattr(handle, attr, None)
+            if conn is not None:
+                try:
+                    conn.close()
+                except (OSError, EOFError) as e:
+                    logger.debug("SDK channel close ignored for %s: %s", handle.id, e)
 
     async def start(self) -> None:
         """
@@ -702,6 +801,14 @@ class ProcessPoolManager:
         self._shutdown = False
         self._started_at = datetime.now(timezone.utc)
         self._last_active_execution_refresh = time.monotonic()
+
+        # Bounded thread pool for blocking local-SDK pipe IO: at most one
+        # blocked reader per live child plus headroom.
+        if self._sdk_executor is None:
+            self._sdk_executor = ThreadPoolExecutor(
+                max_workers=self.max_workers + self.max_service_workers + 4,
+                thread_name_prefix="sdk-local",
+            )
 
         # Install requirements once in a short-lived helper so the supervisor
         # never imports requirements cache/S3 clients before forking templates.
@@ -774,6 +881,21 @@ class ProcessPoolManager:
             await self._terminate_process(handle)
         for handle in list(self.service_processes.values()):
             await self._terminate_process(handle)
+
+        # Stop every local-SDK pump and release channel descriptors, then
+        # retire the bounded IO pool. Children are already dead, so blocked
+        # pipe reads resolve via EOF promptly.
+        for handle in list(self.processes.values()) + list(self.service_processes.values()):
+            self._close_sdk_channel(handle)
+        for task in list(self._sdk_tasks):
+            if not task.done():
+                task.cancel()
+        if self._sdk_tasks:
+            await asyncio.gather(*self._sdk_tasks, return_exceptions=True)
+        self._sdk_tasks.clear()
+        if self._sdk_executor is not None:
+            self._sdk_executor.shutdown(wait=False, cancel_futures=True)
+            self._sdk_executor = None
 
         # Shutdown template process
         if self._template is not None:
@@ -891,11 +1013,19 @@ class ProcessPoolManager:
         diagnostics, then sent with the execution ID to the forked child over
         its private work pipe.
 
+        The local-SDK principal is derived from the parent-owned context
+        before any side effect: a corrupt identity fails the dispatch
+        loudly instead of serving SDK calls under a downgraded scope.
+
         Args:
             execution_id: Unique identifier for the execution
             context: Execution context sent to the child and retained in Redis
             active_execution: Compact completion metadata retained by the parent
         """
+        # Fail closed before the Redis write, fork, or pump: no local pump
+        # ever starts for an unusable identity.
+        principal = principal_from_context(context)
+
         # Write context to Redis
         await self._write_context_to_redis(execution_id, context)
 
@@ -918,7 +1048,7 @@ class ProcessPoolManager:
         # a restart could otherwise begin during the Redis write above and
         # retire the child just before this route sends it work.
         async with self._restart_lock:
-            await self._dispatch_to_child(execution_id, context, timeout, active_execution)
+            await self._dispatch_to_child(execution_id, context, timeout, active_execution, principal)
 
     async def _dispatch_to_child(
         self,
@@ -926,6 +1056,7 @@ class ProcessPoolManager:
         context: dict[str, Any],
         timeout: int,
         active_execution: ActiveExecution,
+        principal: LocalDispatchPrincipal,
     ) -> None:
         """Claim or fork one child and send its sole execution."""
         # Wait until a result frees a slot when every child is busy.
@@ -948,6 +1079,10 @@ class ProcessPoolManager:
         )
         handle.result_reported = False
 
+        # Serve this child's local-SDK channel from the validated
+        # dispatch principal the child will execute under.
+        self._start_sdk_pump(handle, principal)
+
         try:
             await self._write_active_execution_lease(handle.current_execution)
         except Exception as exc:  # noqa: BLE001 - execution must still be dispatched
@@ -967,6 +1102,7 @@ class ProcessPoolManager:
             handle.work_queue.put_nowait((execution_id, context))
         except Exception:
             self._unregister_result_reader(handle)
+            self._close_sdk_channel(handle)
             self.processes.pop(handle.id, None)
             await self._notify_slot_free()
             try:
@@ -1012,6 +1148,9 @@ class ProcessPoolManager:
                 on its next tick).
             MemoryError: Memory pressure rejects the fork.
         """
+        # Fail closed before forking or starting a pump, as with executions.
+        principal = principal_from_context(context)
+
         settings = get_settings()
         if not has_sufficient_memory_cgroup(threshold=settings.memory_pressure_threshold):
             raise MemoryError(
@@ -1037,12 +1176,17 @@ class ProcessPoolManager:
             del self.processes[handle.id]
             self.service_processes[handle.id] = handle
 
+            # Serve this service child's local-SDK channel for the life of
+            # the attempt, under the validated dispatch principal.
+            self._start_sdk_pump(handle, principal)
+
             self._register_result_reader(handle)
 
             try:
                 handle.work_queue.put_nowait((attempt_id, context))
             except Exception:
                 self._unregister_result_reader(handle)
+                self._close_sdk_channel(handle)
                 self.service_processes.pop(handle.id, None)
                 await self._notify_service_slot_free()
                 raise
@@ -1244,10 +1388,15 @@ class ProcessPoolManager:
         """
         Kill a process (SIGTERM -> wait -> SIGKILL).
 
+        The child's SDK channel is closed up front so in-flight local calls
+        in the dying child fail fast instead of hanging through the grace
+        sleep.
+
         Args:
             handle: ProcessHandle to kill
         """
         self._unregister_result_reader(handle)
+        self._close_sdk_channel(handle)
 
         # Mark as KILLED immediately to prevent route_execution from sending
         # work to this process during the graceful_shutdown_seconds sleep.
@@ -1668,11 +1817,13 @@ class ProcessPoolManager:
                 handle = self.processes.get(process_id)
                 if handle is not None:
                     self._unregister_result_reader(handle)
+                    self._close_sdk_channel(handle)
                 if self.processes.pop(process_id, None) is not None:
                     removed_any = True
                 handle = self.service_processes.get(process_id)
                 if handle is not None:
                     self._unregister_result_reader(handle)
+                    self._close_sdk_channel(handle)
                 if self.service_processes.pop(process_id, None) is not None:
                     removed_service_any = True
             if removed_any:
@@ -1830,6 +1981,9 @@ class ProcessPoolManager:
         and free a service slot instead.
         """
         self._unregister_result_reader(handle)
+        # Terminal outcome received: the child is done, so its SDK channel
+        # is closed (the pump would otherwise linger until EOF).
+        self._close_sdk_channel(handle)
 
         if handle.service is not None:
             await self._handle_service_result(handle, result)
@@ -1893,6 +2047,10 @@ class ProcessPoolManager:
         result: dict[str, Any],
     ) -> None:
         """Forward a service attempt outcome and free its service slot."""
+        self._unregister_result_reader(handle)
+        # Terminal attempt outcome received: the service child is done, so
+        # its SDK channel is closed.
+        self._close_sdk_channel(handle)
         callback_already_owned = handle.result_reported
         handle.result_reported = True
         handle.current_execution = None

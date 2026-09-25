@@ -417,6 +417,42 @@ it to the child over Redis (see docs/plans/2026-09-20-services-credential-design
 Short enough to bound a fenced child's residual API access; long enough that
 a missed heartbeat never strands a healthy child."""
 
+ENGINE_SDK_ACTOR_EMAIL = "engine@bifrost.internal"
+"""Effective SDK actor for workflow executions.
+
+HTTP workflow SDK requests authenticate with ``mint_engine_token()`` (this
+address); the engine-local dispatcher must attribute ``Config.updated_by``
+to the same value — never to the initiating user's ``caller.email``.
+"""
+
+
+def service_sdk_actor_email(service_id: str) -> str:
+    """Effective SDK actor email for one supervised service.
+
+    Single helper shared by security token minting (``mint_service_token``,
+    the ``service_claim`` dispatch context) and the engine-local dispatcher
+    (``principal_from_context``), so HTTP and local ``Config.updated_by``
+    attribution agree by construction. ``service_id`` must be a UUID;
+    anything else raises ``ValueError`` so the caller fails closed instead
+    of attributing a write to a forged or blank value.
+    """
+    from uuid import UUID as _UUID
+
+    if not isinstance(service_id, str) or not service_id.strip():
+        raise ValueError(
+            f"service identity {service_id!r} is not a valid service id; "
+            "refusing to derive a service actor email"
+        )
+    try:
+        _UUID(service_id)
+    except ValueError:
+        raise ValueError(
+            f"service identity {service_id!r} is not a valid UUID; "
+            "refusing to derive a service actor email"
+        ) from None
+    short_id = service_id.replace("-", "")[:12]
+    return f"service-{short_id}@bifrost.internal"
+
 
 def mint_service_token(
     *,
@@ -456,7 +492,7 @@ def mint_service_token(
     short_id = service_id.replace("-", "")[:12]
     token_data = {
         "sub": SYSTEM_USER_ID,
-        "email": f"service-{short_id}@bifrost.internal",
+        "email": service_sdk_actor_email(service_id),
         "name": f"service-{short_id}",
         "is_superuser": False,
         "org_id": organization_id,
@@ -503,7 +539,7 @@ def mint_engine_token(
 
     token_data = {
         "sub": ENGINE_USER_ID,
-        "email": "engine@bifrost.internal",
+        "email": ENGINE_SDK_ACTOR_EMAIL,
         "name": "Bifrost Engine",
         "is_superuser": True,
         "engine_execution_id": execution_id,
@@ -549,7 +585,7 @@ def authenticate_engine() -> None:
     # is_superuser=True with no org_id = system account with global access
     token_data = {
         "sub": ENGINE_USER_ID,
-        "email": "engine@bifrost.internal",
+        "email": ENGINE_SDK_ACTOR_EMAIL,
         "name": "Bifrost Engine",
         "is_superuser": True,
     }

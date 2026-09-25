@@ -600,6 +600,8 @@ class ServiceClaimLoop:
             if org
             else None
         )
+        from src.core.security import service_sdk_actor_email
+
         short_id = str(definition.id).replace("-", "")[:12]
         token, expires_at = mint_service_token(
             service_id=str(definition.id),
@@ -623,7 +625,7 @@ class ServiceClaimLoop:
             "content_hash": definition.current_revision,
             "caller": {
                 "user_id": "00000000-0000-0000-0000-000000000001",
-                "email": f"service-{short_id}@bifrost.internal",
+                "email": service_sdk_actor_email(str(definition.id)),
                 "name": f"service-{short_id}",
             },
             "organization": org_data,

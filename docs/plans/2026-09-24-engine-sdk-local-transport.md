@@ -1,0 +1,181 @@
+# Engine SDK local transport
+
+## Goal and ownership
+
+Owner/reviewer: Codex. Executor: OpenCode, one bounded stage at a time, using the
+locally discovered `opencode-go/muse-spark-1.3-contributor` model. Worktree:
+`/home/jack/GitHub/bifrost/.claude/worktrees/sdk-engine-local`; branch:
+`codex/sdk-engine-local`; baseline: `origin/main` at `74b8dd5ab`.
+
+The Python SDK must keep one public behavior for external callers and engine
+children. Fixed SDK operations should execute in the worker parent through a
+local transport, sharing the operation service with their HTTP handlers. The
+child must not own PostgreSQL connections. Neither the current main checkout's
+`opencode.json` edit nor its untracked backup belongs to this work.
+
+No stage is merged to main until the complete fixed-operation coverage and
+focused verification are accepted. The owner reviews each stage before the
+next. OpenCode makes no commit or push and does not modify configuration,
+credentials, dependencies, or unrelated files.
+
+## Transport contract
+
+- Engine startup injects the transport. No user-controlled `engine` flag.
+- Use dedicated child-parent channels, not terminal result or work frames.
+- Parent dispatches an explicit allowlist of named, versioned SDK operations.
+- Parent reconstructs principal, execution, organization, Solution and app
+  scope from its own dispatch context. It does not trust caller-supplied scope
+  claims or actor identity in the request payload.
+- Child-origin frames have bounded, non-pickle serialization. Include request
+  IDs, method, payload size limits, deadlines, cancellation, and concurrent
+  request support. Binary payloads need bounded chunking/backpressure.
+- Parent uses its pooled database engine, with one short session per operation
+  and bounded concurrent requests. Never share a connection across processes.
+- The HTTP handler and local dispatcher call the same business service. SDK
+  response parsing and public exceptions remain identical.
+- A failed local request does not automatically retry over HTTP: a write may
+  already have committed. Preserve existing idempotency semantics explicitly.
+- Child exit, parent shutdown, template recycle, timeout and long-lived
+  `@service` stop must cancel requests and close descriptors cleanly.
+
+## SDK coverage
+
+| Domain | Fixed SDK methods | Local service boundary |
+| --- | --- | --- |
+| Config | get, set, list, delete | Config resolution, secret handling, cache updates |
+| Integrations | get, mappings CRUD/list, OAuth refresh | Mapping, declared connection, token rotation |
+| Tables | definition create/list/delete, document CRUD, batch, query, count | Scope, policies, attribution, transaction, broadcasts |
+| Files | read/write text and bytes, list/delete/stat/exists/search/signed URL | File policy, versioning, storage, events |
+| Knowledge | store, store_many, search, delete, namespace/list/get | Embedding, org scope, vector queries |
+| Workflows/executions | list/execute/cancel/get, execution list/get | Scheduling/queue and history services |
+| Agents | enqueue/get_run/run/wait | Agent queue/status, deadlines, paused outcome |
+| Events/forms | emit, form list/get | Event transaction/delivery, form access |
+| Identity | organization/user/role CRUD and role assignments | Auth, invites, audit, cache invalidation |
+| Artifacts | write/render/generate/read/list/download URL, video job status | Workspace, object storage, durable platform jobs |
+| AI | complete, stream, model info | Provider service, usage, streaming backpressure |
+
+`ai.create_image` and `ai.create_video` delegate to artifact methods. The
+hidden `OAuthCredentials.refresh()` call is included. `context`, decorators,
+service controls, and current execution logs are already local or direct Redis.
+The raw `bifrost.api.*` escape hatch remains HTTP because its target is
+arbitrary. Direct signed storage URLs remain storage calls. CLI-only reference
+resolution and the browser SDK remain HTTP.
+
+### Exhaustive public-method checklist
+
+Each name below needs an explicit local disposition and HTTP/local parity
+check. Names joined with a slash share a server operation but remain distinct
+SDK entry points.
+
+| Facade | Methods |
+| --- | --- |
+| `config` | `get`, `set`, `list`, `delete` |
+| `integrations` | `get`, `list_mappings`, `get_mapping`, `upsert_mapping`, `delete_mapping`; `OAuthCredentials.refresh()` |
+| `tables` | `create`, `list`, `delete`, `insert`, `upsert`, `get`, `update`, `delete_document`, `insert_batch`, `upsert_batch`, `bulk_upsert`, `delete_batch`, `query`, `count` |
+| `files` | `read`, `read_bytes`, `write`, `write_bytes`, `list`, `delete`, `stat`, `exists`, `search`, `get_signed_url` |
+| `knowledge` | `store`, `store_many`, `search`, `delete`, `get`, `delete_namespace`, `list_namespaces` |
+| `workflows` | `list`, `execute`, `cancel`, `get` (delegates to `executions.get`) |
+| `executions` | `list`, `get`; `get_current_logs` is already a direct Redis read |
+| `agents` | `enqueue`, `get_run`, `run` |
+| `events` | `emit` |
+| `forms` | `list`, `get` |
+| `organizations` | `create`, `get`, `list`, `update`, `delete` |
+| `roles` | `create`, `get`, `list`, `update`, `delete`, `list_users`, `list_forms`, `assign_users`, `assign_forms` |
+| `users` | `list`, `create`, `get`, `update`, `delete` |
+| `artifacts` | `write`, `create_document`, `create_spreadsheet`, `create_text`, `create_image`, `create_video`, `read`, `list`, `get_download_url` |
+| `ai` | `complete`, `stream`, `get_model_info`; `create_image` and `create_video` delegate to artifacts |
+
+Preserve existing composite semantics: table writes may create a missing table
+outside Solution context, `bulk_upsert` retries 409 conflicts, filtered
+`tables.count` delegates to `query`, `ai.complete(knowledge=...)` searches
+knowledge first, and video generation polls a shared PlatformJob. The local
+transport must preserve those behaviors without recursive HTTP requests.
+`bifrost.api.get/post/put/patch/delete` and `BifrostClient` raw request
+methods remain HTTP escape hatches. `refs.py` is a CLI/reference utility,
+not an exported runtime facade. Local context and decorators make no request.
+
+### Existing server seams
+
+`ArtifactService`, artifact generation, event emission, workflow execution,
+agent runtime, and repository-backed reads already supply useful shared
+services. Config set/delete and table create still embed mutation rules in
+SDK handlers; integrations and knowledge have repository primitives but need
+an application service; file and identity routers contain the business
+orchestration for their operations. Extract those rules into shared services
+as each operation is migrated, and have both the HTTP handler and local
+dispatcher call the same function.
+
+## Delivery stages
+
+1. Transport and `config.get`: dedicated channel, explicit injection, parent
+   dispatcher, shared config-get service, HTTP/local parity and crash tests.
+2. Remaining config and integration operations.
+3. Table definitions and all document methods, including batch semantics.
+4. File and artifact binary transport and operations, then knowledge.
+5. Workflow, execution, agent, event, and form operations.
+6. Identity and role operations.
+7. AI info, completion, and streaming with provider/usage parity.
+8. Full coverage audit, removal of duplicate behavior, realistic concurrent
+   workflow and supervised-service E2E, targeted quality checks, final review.
+
+No traffic benchmark is a prerequisite. Each stage should record API request
+counts by operation in its end-to-end test: a local call must make zero API
+requests for that fixed operation while external SDK calls still use HTTP.
+
+## Stage acceptance and verification
+
+For every migrated operation, test the same inputs via HTTP and local service:
+result, status/error, committed state, authorization, and side effects. Include
+negative tests for cross-org/Solution scope, malformed payloads, child crash,
+parent shutdown, deadlines, concurrent calls, and payload limits. Run focused
+unit and E2E tests through `./test.sh`, relevant contract tripwires, API
+quality, and a live workflow and supervised-service path when their boundary
+changes. Do not use retries or skips to mask failing tests. The owner runs
+independent focused verification and reports broader suites not run. The
+merge queue remains the complete-suite gate.
+
+## Stage 1 handoff state
+
+Implemented in the isolated worktree, with no commit, push, or merge. The
+dedicated child-parent channel uses bounded JSON frames and lazy chunked
+responses; the parent uses short sessions from its pooled engine. `config.get`
+has one shared scope resolver and value service for HTTP and local calls.
+Forked workflows and supervised `@service` processes install the local
+transport; external SDK use remains HTTP. A failed local request never retries
+over HTTP.
+
+OpenCode session: `ses_f2a877120ffesNavhMgne4IKYW`, followed by a fresh
+bounded reviewer-correction run. Focused verification reported: 45 config and
+transport unit tests, the scope-resolver tripwire, five real-fork tests
+(including large response, crash, and supervised service), two live E2E tests,
+and API pyright/ruff all passed. A preceding full unit run had 6,770 passing
+tests and one source-inspection tripwire failure; that tripwire now recognizes
+the shared resolver and passes in a focused rerun. Do not infer a post-fix
+full-suite result from the focused rerun. Reviewer verification:
+`./test.sh tests/unit/sdk/test_sdk_config_local.py tests/unit/execution/test_sdk_local_dispatch.py tests/unit/execution/test_sdk_local_fork.py tests/unit/execution/test_process_pool.py tests/unit/test_org_scoping_enforcement.py -v`
+passed 118 tests. Reviewer disposition: stage 1 accepted for continuation;
+final product acceptance and main merge remain pending all fixed operations.
+
+## Stage 2a handoff state
+
+Implemented and reviewed in the same isolated worktree. `config.set`,
+`config.list`, and `config.delete` now use the parent-local channel in engine
+children, with HTTP and local dispatch calling the same shared config
+services. The transport handles large request values and list results as
+bounded, sequential frames. Workflow and supervised-service audit identities
+match their existing HTTP tokens; service cross-org bypass checks provider
+membership live in the parent. Config requests use the HTTP DTOs for field
+validation. No partial stage has been merged or pushed.
+
+Reviewer verification:
+
+- `./test.sh tests/e2e/platform/test_sdk_config_local.py::TestSdkConfigMutationLiveE2E -v`: 1 passed (queued worker, local operations with HTTP disabled, external HTTP state check).
+- `./test.sh tests/unit/sdk/test_sdk_config_local.py tests/unit/execution/test_sdk_local_dispatch.py tests/unit/execution/test_sdk_local_fork.py tests/unit/execution/test_process_pool.py tests/unit/test_org_scoping_enforcement.py tests/unit/test_contract_version.py tests/unit/test_dto_flags.py -v`: 226 passed after the cache-aware fork fixture fix.
+- `./test.sh tests/unit/execution/test_sdk_local_dispatch.py tests/unit/sdk/test_sdk_config_local.py -v`: 86 passed in the exposing order after the list helper was made chunk-aware.
+- `./test.sh quality api`: 0 Pyright errors and Ruff passed after final cleanup.
+
+The broader full backend and browser suites were not run after stage 2a.
+Earlier failures in the new live test import, the test stack reset, the
+fork fixture's Redis cache setup, and the single-frame list assertion were
+diagnosed and corrected. Stage 2a is accepted for continuation; the complete
+SDK product remains unfinished.

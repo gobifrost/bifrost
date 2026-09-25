@@ -73,7 +73,9 @@ ALLOW_LIST_INLINE_ORG: set[tuple[str, str, str]] = {
     ('routers/claims.py', 'Table.organization_id == org_id, Table.access.is_not(None)', 'claims inline lookups; phase 6 migrates via CustomClaimRepository'),
     ('routers/claims.py', 'stmt = stmt.where(ClaimORM.organization_id == filter_org)', 'claims inline lookups; phase 6 migrates via CustomClaimRepository'),
     ('routers/tables.py', 'stmt = select(CustomClaimORM.name).where(CustomClaimORM.organization_id == organization_id)', 'tables custom claim cross-ref; phase 6 migrates'),
-    ('routers/cli.py', 'ConfigModel.organization_id == org_uuid,', 'cli config inline; phase 5 migrates'),
+    # The cli.py `ConfigModel.organization_id == org_uuid` entry was removed
+    # in the SDK engine-local stage 2a: cli_set/list/delete_config now share
+    # shared/sdk_config.py with the local dispatcher (no inline router copy).
     ('routers/cli.py', 'Table.organization_id == org_uuid,', 'cli_create_table exact-scope uniqueness check (NOT cascade)'),
     # cli_list_tables migrated to TableRepository.list() in phase 6.
     ('routers/executions.py', 'query = query.where(ExecutionModel.organization_id == org_id)', 'Execution identity-entity filter (permanent)'),
@@ -447,8 +449,14 @@ EXEMPT_SDK_HANDLERS: dict[str, str] = {
 
 
 # Names that count as "calling the resolver" — direct call to
-# resolve_effective_scope, or call to the thin _resolve_sdk_org_id wrapper.
-RESOLVER_CALL_NAMES = {"resolve_effective_scope", "_resolve_sdk_org_id"}
+# resolve_effective_scope, call to the thin _resolve_sdk_org_id wrapper,
+# or call to the shared resolve_sdk_scope service both the HTTP handler
+# (cli_get_config) and the local dispatcher use.
+RESOLVER_CALL_NAMES = {
+    "resolve_effective_scope",
+    "_resolve_sdk_org_id",
+    "resolve_sdk_scope",
+}
 
 
 def _handler_names_taking_scope(tree: ast.AST) -> dict[str, ast.AsyncFunctionDef | ast.FunctionDef]:
@@ -619,8 +627,9 @@ class TestSDKEndpointsUseResolver:
         @router-decorated handler that accepts a scope (direct parameter,
         ``request.scope`` body access, OR a Pydantic body annotation whose
         model declares a ``scope`` field). If it does, the handler body
-        must call ``_resolve_sdk_org_id`` or ``resolve_effective_scope``
-        unless it's on the exempt list.
+        must call ``_resolve_sdk_org_id``, ``resolve_effective_scope``, or
+        the shared ``resolve_sdk_scope`` service unless it's on the exempt
+        list.
 
         The Pydantic-annotation tripwire (added post-Codex 2026-05-26) is
         the strongest of the three — a future endpoint can ship a
@@ -646,7 +655,8 @@ class TestSDKEndpointsUseResolver:
                 if not _handler_calls_resolver(node):
                     violations.append(
                         f"{path.name}::{name} accepts `scope` but does not call "
-                        f"_resolve_sdk_org_id or resolve_effective_scope; "
+                        f"_resolve_sdk_org_id, resolve_effective_scope, or "
+                        f"resolve_sdk_scope; "
                         f"add it to EXEMPT_SDK_HANDLERS with a one-line reason "
                         f"if exemption is justified."
                     )
