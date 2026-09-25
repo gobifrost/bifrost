@@ -2103,51 +2103,27 @@ async def cli_knowledge_store(
 ) -> dict:
     """Store a document with its embedding in the knowledge store."""
     _deny_external_knowledge(current_user)
-    from src.repositories.knowledge import KnowledgeRepository
-    from src.services.embeddings import get_embedding_client
+    from shared.sdk_knowledge import SDKKnowledgeError, store_knowledge_document
 
     try:
         org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
-        org_uuid = UUID(org_id) if org_id else None
+    except HTTPException:
+        # Auth/scope failures (e.g. 403 from _resolve_sdk_org_id) must surface.
+        raise
+    org_uuid = UUID(org_id) if org_id else None
 
-        embedding_client = await get_embedding_client(db)
-
-        # Store document
-        # Externals were 403'd at the top of this endpoint
-        # (_deny_external_knowledge); every caller past the gate gets the
-        # SDK trust this surface has always extended.
-        repo = KnowledgeRepository(db, org_id=org_uuid)
-        doc_ids = await repo.store_chunked(
+    try:
+        return await store_knowledge_document(
+            db,
             content=request.content,
             namespace=request.namespace,
             key=request.key,
             metadata=request.metadata,
+            org_id=org_uuid,
             created_by=current_user.user_id,
-            embedder=embedding_client,
         )
-        doc_id = doc_ids[0]
-
-        await db.commit()
-
-        logger.info(
-            f"CLI knowledge store: namespace={log_safe(request.namespace)}, key={log_safe(request.key)}, doc_id={doc_id}"
-        )
-
-        return {"id": doc_id}
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(e),
-        )
-    except HTTPException:
-        # Auth/scope failures (e.g. 403 from _resolve_sdk_org_id) must surface.
-        raise
-    except Exception as e:
-        logger.error(f"CLI knowledge store failed: {log_safe(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Knowledge store failed: {str(e)}",
-        )
+    except SDKKnowledgeError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
 
 
 @router.post(
@@ -2161,54 +2137,28 @@ async def cli_knowledge_store_many(
 ) -> dict:
     """Store multiple documents with batch embedding."""
     _deny_external_knowledge(current_user)
-    from src.repositories.knowledge import KnowledgeRepository
-    from src.services.embeddings import get_embedding_client
+    from shared.sdk_knowledge import (
+        SDKKnowledgeError,
+        store_many_knowledge_documents,
+    )
 
     try:
         org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
-        org_uuid = UUID(org_id) if org_id else None
-
-        embedding_client = await get_embedding_client(db)
-
-        # Store each document
-        # Externals were 403'd at the top of this endpoint
-        # (_deny_external_knowledge); every caller past the gate gets the
-        # SDK trust this surface has always extended.
-        repo = KnowledgeRepository(db, org_id=org_uuid)
-        doc_ids = []
-        for doc in request.documents:
-            inserted_ids = await repo.store_chunked(
-                content=doc["content"],
-                namespace=request.namespace,
-                key=doc.get("key"),
-                metadata=doc.get("metadata"),
-                created_by=current_user.user_id,
-                embedder=embedding_client,
-            )
-            doc_id = inserted_ids[0]
-            doc_ids.append(doc_id)
-
-        await db.commit()
-
-        logger.info(
-            f"CLI knowledge store-many: namespace={log_safe(request.namespace)}, count={len(doc_ids)}"
-        )
-
-        return {"ids": doc_ids}
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(e),
-        )
     except HTTPException:
         # Auth/scope failures (e.g. 403 from _resolve_sdk_org_id) must surface.
         raise
-    except Exception as e:
-        logger.error(f"CLI knowledge store-many failed: {log_safe(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Knowledge store failed: {str(e)}",
+    org_uuid = UUID(org_id) if org_id else None
+
+    try:
+        return await store_many_knowledge_documents(
+            db,
+            documents=request.documents,
+            namespace=request.namespace,
+            org_id=org_uuid,
+            created_by=current_user.user_id,
         )
+    except SDKKnowledgeError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
 
 
 @router.post(
@@ -2222,64 +2172,30 @@ async def cli_knowledge_search(
 ) -> list[CLIKnowledgeDocumentResponse]:
     """Search knowledge using fused lexical and vector rankings."""
     _deny_external_knowledge(current_user)
-    from src.models.contracts.cli import CLIKnowledgeDocumentResponse
-    from src.repositories.knowledge import KnowledgeRepository
-    from src.services.embeddings import get_embedding_client
+    from shared.sdk_knowledge import SDKKnowledgeError, search_knowledge_documents
 
     try:
         org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
-        org_uuid = UUID(org_id) if org_id else None
+    except HTTPException:
+        # Auth/scope failures (e.g. 403 from _resolve_sdk_org_id) must surface.
+        raise
+    org_uuid = UUID(org_id) if org_id else None
 
-        # Generate query embedding
-        embedding_client = await get_embedding_client(db)
-        query_embedding = await embedding_client.embed_single(request.query)
-
-        # Search
-        # Externals were 403'd at the top of this endpoint
-        # (_deny_external_knowledge); every caller past the gate gets the
-        # SDK trust this surface has always extended.
-        repo = KnowledgeRepository(db, org_id=org_uuid)
-        results = await repo.search(
-            query_embedding=query_embedding,
+    try:
+        items = await search_knowledge_documents(
+            db,
+            query=request.query,
             namespace=request.namespace,
-            query_text=request.query,
             limit=request.limit,
             min_score=request.min_score,
             metadata_filter=request.metadata_filter,
             fallback=request.fallback,
+            org_id=org_uuid,
         )
+    except SDKKnowledgeError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
 
-        logger.info(
-            f"CLI knowledge search: query={log_safe(request.query[:50])}..., results={len(results)}"
-        )
-
-        return [
-            CLIKnowledgeDocumentResponse(
-                id=doc.id,
-                namespace=doc.namespace,
-                content=doc.content,
-                metadata=doc.metadata,
-                score=doc.score,
-                organization_id=doc.organization_id,
-                key=doc.key,
-                created_at=doc.created_at.isoformat() if doc.created_at else None,
-            )
-            for doc in results
-        ]
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(e),
-        )
-    except HTTPException:
-        # Auth/scope failures (e.g. 403 from _resolve_sdk_org_id) must surface.
-        raise
-    except Exception as e:
-        logger.error(f"CLI knowledge search failed: {log_safe(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Knowledge search failed: {str(e)}",
-        )
+    return [CLIKnowledgeDocumentResponse(**item) for item in items]
 
 
 @router.post(
@@ -2293,37 +2209,24 @@ async def cli_knowledge_delete(
 ) -> dict:
     """Delete a document by key from the knowledge store."""
     _deny_external_knowledge(current_user)
-    from src.repositories.knowledge import KnowledgeRepository
+    from shared.sdk_knowledge import SDKKnowledgeError, delete_knowledge_document
 
     try:
         org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
-        org_uuid = UUID(org_id) if org_id else None
-
-        # Externals were 403'd at the top of this endpoint
-        # (_deny_external_knowledge); every caller past the gate gets the
-        # SDK trust this surface has always extended.
-        repo = KnowledgeRepository(db, org_id=org_uuid)
-        deleted = await repo.delete_by_key(
-            key=request.key,
-            namespace=request.namespace,
-        )
-
-        await db.commit()
-
-        logger.info(
-            f"CLI knowledge delete: namespace={log_safe(request.namespace)}, key={log_safe(request.key)}, deleted={deleted}"
-        )
-
-        return {"deleted": deleted}
     except HTTPException:
         # Auth/scope failures (e.g. 403 from _resolve_sdk_org_id) must surface.
         raise
-    except Exception as e:
-        logger.error(f"CLI knowledge delete failed: {log_safe(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Knowledge delete failed: {str(e)}",
+    org_uuid = UUID(org_id) if org_id else None
+
+    try:
+        return await delete_knowledge_document(
+            db,
+            key=request.key,
+            namespace=request.namespace,
+            org_id=org_uuid,
         )
+    except SDKKnowledgeError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
 
 
 @router.delete(
@@ -2338,36 +2241,23 @@ async def cli_knowledge_delete_namespace(
 ) -> dict:
     """Delete all documents in a namespace."""
     _deny_external_knowledge(current_user)
-    from src.repositories.knowledge import KnowledgeRepository
+    from shared.sdk_knowledge import SDKKnowledgeError, delete_knowledge_namespace
 
     try:
         org_id = await _resolve_sdk_org_id(current_user, scope, db)
-        org_uuid = UUID(org_id) if org_id else None
-
-        # Externals were 403'd at the top of this endpoint
-        # (_deny_external_knowledge); every caller past the gate gets the
-        # SDK trust this surface has always extended.
-        repo = KnowledgeRepository(db, org_id=org_uuid)
-        deleted_count = await repo.delete_namespace(
-            namespace=namespace,
-        )
-
-        await db.commit()
-
-        logger.info(
-            f"CLI knowledge delete namespace: namespace={log_safe(namespace)}, deleted_count={deleted_count}"
-        )
-
-        return {"deleted_count": deleted_count}
     except HTTPException:
         # Auth/scope failures (e.g. 403 from _resolve_sdk_org_id) must surface.
         raise
-    except Exception as e:
-        logger.error(f"CLI knowledge delete namespace failed: {log_safe(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Knowledge delete namespace failed: {str(e)}",
+    org_uuid = UUID(org_id) if org_id else None
+
+    try:
+        return await delete_knowledge_namespace(
+            db,
+            namespace=namespace,
+            org_id=org_uuid,
         )
+    except SDKKnowledgeError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
 
 
 @router.get(
@@ -2382,37 +2272,25 @@ async def cli_knowledge_list_namespaces(
 ) -> list[CLIKnowledgeNamespaceInfo]:
     """List all namespaces with document counts per scope."""
     _deny_external_knowledge(current_user)
-    from src.models.contracts.cli import CLIKnowledgeNamespaceInfo
-    from src.repositories.knowledge import KnowledgeRepository
+    from shared.sdk_knowledge import SDKKnowledgeError, list_knowledge_namespaces
 
     try:
         org_id = await _resolve_sdk_org_id(current_user, scope, db)
-        org_uuid = UUID(org_id) if org_id else None
-
-        # Externals were 403'd at the top of this endpoint
-        # (_deny_external_knowledge); every caller past the gate gets the
-        # SDK trust this surface has always extended.
-        repo = KnowledgeRepository(db, org_id=org_uuid)
-        results = await repo.list_namespaces(
-            include_global=include_global,
-        )
-
-        return [
-            CLIKnowledgeNamespaceInfo(
-                namespace=ns.namespace,
-                scopes=ns.scopes,
-            )
-            for ns in results
-        ]
     except HTTPException:
         # Auth/scope failures (e.g. 403 from _resolve_sdk_org_id) must surface.
         raise
-    except Exception as e:
-        logger.error(f"CLI knowledge list namespaces failed: {log_safe(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Knowledge list namespaces failed: {str(e)}",
+    org_uuid = UUID(org_id) if org_id else None
+
+    try:
+        items = await list_knowledge_namespaces(
+            db,
+            org_id=org_uuid,
+            include_global=include_global,
         )
+    except SDKKnowledgeError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
+
+    return [CLIKnowledgeNamespaceInfo(**item) for item in items]
 
 
 @router.get(
@@ -2428,45 +2306,25 @@ async def cli_knowledge_get(
 ) -> CLIKnowledgeDocumentResponse | None:
     """Get a document by key from the knowledge store."""
     _deny_external_knowledge(current_user)
-    from src.models.contracts.cli import CLIKnowledgeDocumentResponse
-    from src.repositories.knowledge import KnowledgeRepository
+    from shared.sdk_knowledge import SDKKnowledgeError, get_knowledge_document
 
     try:
         org_id = await _resolve_sdk_org_id(current_user, scope, db)
-        org_uuid = UUID(org_id) if org_id else None
-
-        # Externals were 403'd at the top of this endpoint
-        # (_deny_external_knowledge); every caller past the gate gets the
-        # SDK trust this surface has always extended.
-        repo = KnowledgeRepository(db, org_id=org_uuid)
-        result = await repo.get_by_key(
-            key=key,
-            namespace=namespace,
-        )
-
-        if not result:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Document not found",
-            )
-
-        return CLIKnowledgeDocumentResponse(
-            id=result.id,
-            namespace=result.namespace,
-            content=result.content,
-            metadata=result.metadata,
-            organization_id=result.organization_id,
-            key=result.key,
-            created_at=result.created_at.isoformat() if result.created_at else None,
-        )
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"CLI knowledge get failed: {log_safe(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Knowledge get failed: {str(e)}",
+    org_uuid = UUID(org_id) if org_id else None
+
+    try:
+        item = await get_knowledge_document(
+            db,
+            key=key,
+            namespace=namespace,
+            org_id=org_uuid,
         )
+    except SDKKnowledgeError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
+
+    return CLIKnowledgeDocumentResponse(**item)
 
 
 # =============================================================================
