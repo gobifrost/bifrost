@@ -86,6 +86,14 @@ reads (``forms.list``, ``forms.get``)):
   ``users.update`` sends ``user_id``/``updates``. Users are
   platform-admin only like roles: the parent gates every users
   operation on its own dispatch principal and never reads actor,
+  org, or Solution claims from child frames. ``organizations.create``
+  sends ``name``/``domain``/``is_active``; ``organizations.get``/
+  ``organizations.delete`` send ``org_id``; ``organizations.list``
+  sends no fields (the parent applies the route defaults, like the
+  unfiltered HTTP call); ``organizations.update`` sends
+  ``org_id``/``updates``. Organizations are platform-admin only
+  like roles and users: the parent gates every organizations
+  operation on its own dispatch principal and never reads actor,
   org, or Solution claims from child frames.
    ``artifacts.create_video`` sends ``filename``/``prompt``/
    ``workspace_id`` (the caller's own workspace, like the HTTP query
@@ -161,7 +169,17 @@ reads (``forms.list``, ``forms.get``)):
   and the system user a 403); ``users.delete`` returns no body
   (``result`` null, like HTTP 204). A non-platform-admin caller is a
   403 error frame on every users operation, like the HTTP
-  ``CurrentSuperuser`` gate. ``workflows.execute``
+  ``CurrentSuperuser`` gate. ``organizations.create``/
+  ``organizations.get``/``organizations.update`` return the
+  ``OrganizationPublic`` dict (a missing organization is a 404 error
+  frame the facade maps to ``ValueError`` like HTTP; disabling or
+  deleting the provider organization is a 403); ``organizations.list``
+  returns an ``{"items": [...]}`` envelope of ``OrganizationPublic``
+  dicts (the result contract does not carry bare lists);
+  ``organizations.delete`` returns no body (``result`` null, like HTTP
+  204, the facade maps it to ``True``). A non-platform-admin caller
+  is a 403 error frame on every organizations operation, like the
+  HTTP ``CurrentSuperuser`` gate. ``workflows.execute``
   returns the ``WorkflowExecutionResponse`` dict (the facade returns its
   ``execution_id`` — fire-and-forget, like HTTP); ``workflows.cancel``
   returns the ``{"execution_id", "status"}`` dict (the facade returns
@@ -215,7 +233,8 @@ from typing import Any, NoReturn
 # reads (``forms.list``, ``forms.get``), the fixed ``roles`` facade
 # (``create/get/list/update/delete/list_users/list_forms/assign_users/
 # assign_forms``), the fixed ``users`` facade
-# (``list/create/get/update/delete``), and the SDK workflow
+# (``list/create/get/update/delete``), the fixed ``organizations``
+# facade (``create/get/list/update/delete``), and the SDK workflow
 # ``execute``/``cancel`` mutations ride the local transport. The
 # parent enforces the same allowlist; anything else is a 404 response.
 # Artifact generation (``create_document``/``create_spreadsheet``/
@@ -292,6 +311,11 @@ OP_USERS_CREATE = "users.create"
 OP_USERS_GET = "users.get"
 OP_USERS_UPDATE = "users.update"
 OP_USERS_DELETE = "users.delete"
+OP_ORGANIZATIONS_CREATE = "organizations.create"
+OP_ORGANIZATIONS_GET = "organizations.get"
+OP_ORGANIZATIONS_LIST = "organizations.list"
+OP_ORGANIZATIONS_UPDATE = "organizations.update"
+OP_ORGANIZATIONS_DELETE = "organizations.delete"
 
 # Wire version. The parent rejects anything else instead of guessing.
 TRANSPORT_VERSION = 1
@@ -2764,6 +2788,143 @@ class ChildLocalTransport:
         """
         result = await self._call(
             OP_USERS_DELETE, {"user_id": user_id}, timeout
+        )
+        if result is not None:
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+
+    async def call_organizations_create(
+        self,
+        name: str,
+        domain: str | None,
+        is_active: bool,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """Create one organization through the parent. No HTTP fallback.
+
+        Validates with the same ``OrganizationCreate`` DTO the HTTP
+        handler uses (422). Returns the ``OrganizationPublic`` dict.
+        A non-platform-admin caller is a 403 error frame, like the
+        HTTP ``CurrentSuperuser`` gate. The parent commits before
+        returning, like the HTTP dependency.
+        """
+        result = await self._call(
+            OP_ORGANIZATIONS_CREATE,
+            {
+                "name": name,
+                "domain": domain,
+                "is_active": is_active,
+            },
+            timeout,
+        )
+        if not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+    async def call_organizations_get(
+        self,
+        org_id: str,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """Get one organization through the parent. No HTTP fallback.
+
+        Returns the ``OrganizationPublic`` dict. A missing organization
+        is a 404 error frame the facade maps to ``ValueError`` (like
+        HTTP); a malformed id is a 422; a non-platform-admin caller is
+        a 403.
+        """
+        result = await self._call(
+            OP_ORGANIZATIONS_GET,
+            {"org_id": org_id},
+            timeout,
+        )
+        if not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+    async def call_organizations_list(
+        self,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> list[dict[str, Any]]:
+        """List organizations through the parent. No HTTP fallback.
+
+        Sends no fields (the SDK exposes no filter — the parent applies
+        the route defaults, active only, like the unfiltered HTTP call).
+        Returns the ``OrganizationPublic`` dicts (unwrapped from the
+        ``{"items"}`` envelope — the transport result contract does not
+        carry bare lists), identical to the HTTP path.
+        """
+        result = await self._call(
+            OP_ORGANIZATIONS_LIST,
+            {},
+            timeout,
+        )
+        if not isinstance(result, dict) or not isinstance(
+            result.get("items"), list
+        ):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result["items"]
+
+    async def call_organizations_update(
+        self,
+        org_id: str,
+        updates: dict[str, Any],
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """Update one organization through the parent. No HTTP fallback.
+
+        ``updates`` carries the facade's ``**updates`` mapping; the
+        parent validates it with the same ``OrganizationUpdate`` DTO the
+        HTTP handler uses (unknown fields ignored, same 422s). Only
+        non-None fields are applied, like HTTP. Returns the
+        ``OrganizationPublic`` dict. A missing organization is a 404
+        error frame the facade maps to ``ValueError``; disabling the
+        provider organization is a 403 — both like HTTP. The parent
+        commits before returning, like the HTTP dependency.
+        """
+        result = await self._call(
+            OP_ORGANIZATIONS_UPDATE,
+            {"org_id": org_id, "updates": updates},
+            timeout,
+        )
+        if not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+    async def call_organizations_delete(
+        self,
+        org_id: str,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> None:
+        """Soft-disable one organization through the parent. No HTTP fallback.
+
+        Returns no body (``result`` null, like HTTP 204 — the facade
+        maps it to ``True``). A missing organization is a 404 error
+        frame the facade maps to ``ValueError``; the provider
+        organization is a 403 — both like HTTP. The parent commits
+        before returning, like the HTTP dependency.
+        """
+        result = await self._call(
+            OP_ORGANIZATIONS_DELETE, {"org_id": org_id}, timeout
         )
         if result is not None:
             self._fail(

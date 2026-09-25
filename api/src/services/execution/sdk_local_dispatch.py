@@ -10,9 +10,11 @@ SDK form reads (``forms.list``, ``forms.get``) arriving
 on each child's dedicated SDK channel. The fixed ``roles`` facade
 (``create/get/list/update/delete/list_users/list_forms/assign_users/
 assign_forms``) and the fixed ``users`` facade
-(``list/create/get/update/delete``) ride the same channel through the
-shared ``sdk_roles``/``sdk_users`` services; every roles and users
-operation requires the HTTP
+(``list/create/get/update/delete``) and the fixed ``organizations``
+facade (``create/get/list/update/delete``) ride the same channel
+through the shared ``sdk_roles``/``sdk_users``/``sdk_organizations``
+services; every roles, users, and organizations operation requires
+the HTTP
 ``CurrentSuperuser`` token-equivalent principal (workflow engine tokens
 pass, supervised service tokens do not), and child frame actor, org,
 and Solution claims can never
@@ -54,6 +56,8 @@ the fixed ``roles`` facade (``create/get/list/update/delete/
 list_users/list_forms/assign_users/assign_forms``, token-equivalent
 superuser only), the fixed ``users`` facade
 (``list/create/get/update/delete``, token-equivalent superuser only),
+the fixed ``organizations`` facade
+(``create/get/list/update/delete``, token-equivalent superuser only),
 and the SDK workflow
 ``execute``/``cancel`` mutations. Engine import fast path: ``modules.resolve``
 and ``modules.fetch`` (served on the dedicated import channel through the
@@ -98,6 +102,11 @@ from bifrost._local_transport import (
     OP_USERS_GET,
     OP_USERS_UPDATE,
     OP_USERS_DELETE,
+    OP_ORGANIZATIONS_CREATE,
+    OP_ORGANIZATIONS_GET,
+    OP_ORGANIZATIONS_LIST,
+    OP_ORGANIZATIONS_UPDATE,
+    OP_ORGANIZATIONS_DELETE,
     OP_ARTIFACTS_CREATE_DOCUMENT,
     OP_ARTIFACTS_CREATE_IMAGE,
     OP_ARTIFACTS_CREATE_SPREADSHEET,
@@ -242,6 +251,11 @@ SDK_CHANNEL_ALLOWED_OPS = frozenset(
         OP_USERS_GET,
         OP_USERS_UPDATE,
         OP_USERS_DELETE,
+        OP_ORGANIZATIONS_CREATE,
+        OP_ORGANIZATIONS_GET,
+        OP_ORGANIZATIONS_LIST,
+        OP_ORGANIZATIONS_UPDATE,
+        OP_ORGANIZATIONS_DELETE,
         OP_WORKFLOWS_EXECUTE,
         OP_WORKFLOWS_CANCEL,
         OP_WORKFLOWS_LIST,
@@ -704,6 +718,16 @@ async def _dispatch_frames_impl(
         return await _dispatch_users_update(session_factory, principal, frame_id, frame)
     if op == OP_USERS_DELETE:
         return await _dispatch_users_delete(session_factory, principal, frame_id, frame)
+    if op == OP_ORGANIZATIONS_CREATE:
+        return await _dispatch_organizations_create(session_factory, principal, frame_id, frame)
+    if op == OP_ORGANIZATIONS_GET:
+        return await _dispatch_organizations_get(session_factory, principal, frame_id, frame)
+    if op == OP_ORGANIZATIONS_LIST:
+        return await _dispatch_organizations_list(session_factory, principal, frame_id, frame)
+    if op == OP_ORGANIZATIONS_UPDATE:
+        return await _dispatch_organizations_update(session_factory, principal, frame_id, frame)
+    if op == OP_ORGANIZATIONS_DELETE:
+        return await _dispatch_organizations_delete(session_factory, principal, frame_id, frame)
     if op == OP_WORKFLOWS_LIST:
         return await _dispatch_workflows_list(session_factory, principal, frame_id, frame)
     if op == OP_EXECUTIONS_LIST:
@@ -2728,6 +2752,322 @@ async def _dispatch_users_delete(
         op=OP_USERS_DELETE,
         log_key=user_id,
         status_errors=(UserServiceError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _single_ok(frame_id, None)
+
+
+# =============================================================================
+# SDK organizations facade
+# (create/get/list/update/delete)
+# =============================================================================
+
+
+def _parse_organizations_org_id(
+    frame: dict[str, Any], frame_id: str | None, op: str
+) -> tuple[UUID | None, dict[str, Any] | None]:
+    """One organization-id frame field (UUID), else an HTTP-style 422.
+
+    Mirrors the route's FastAPI path parsing: a missing or malformed id
+    is a 422, never a 404.
+    """
+    raw_id = frame.get("org_id")
+    org_uuid: UUID | None = None
+    if isinstance(raw_id, str) and raw_id.strip():
+        try:
+            org_uuid = UUID(raw_id)
+        except ValueError:
+            org_uuid = None
+    if org_uuid is None:
+        return None, _error(
+            frame_id,
+            422,
+            f"invalid {op} request: 'org_id' must be a UUID",
+        )
+    return org_uuid, None
+
+
+async def _dispatch_organizations_create(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``organizations.create`` through the shared organizations service.
+
+    Platform-admin gate first (403, like the HTTP dependency), then
+    the same ``OrganizationCreate`` DTO the HTTP handler uses (422),
+    then the same ``shared.sdk_organizations.create_organization`` the
+    handler calls, so response fields, actor attribution, audit, and
+    cache updates are identical by construction. The actor email comes
+    only from the parent-derived principal — never from child frames.
+    The dispatcher commits explicitly (the shared service only flushes;
+    HTTP commits via ``get_db``). A local attempt never retries over
+    HTTP.
+    """
+    from shared.sdk_organizations import (
+        OrganizationServiceError,
+        create_organization,
+    )
+    from src.models import OrganizationCreate
+
+    denied = _require_platform_admin(principal, frame_id)
+    if denied is not None:
+        return [denied]
+    request, invalid = _validate_request(
+        OrganizationCreate,
+        {
+            "name": frame.get("name"),
+            "domain": frame.get("domain"),
+            "is_active": frame.get("is_active", True),
+        },
+        frame_id,
+        OP_ORGANIZATIONS_CREATE,
+    )
+    if invalid is not None:
+        return [invalid]
+    actor_error = _require_actor(principal, frame_id, OP_ORGANIZATIONS_CREATE)
+    if actor_error is not None:
+        return [actor_error]
+    assert principal.actor_email is not None
+
+    async def _create(session: Any) -> dict[str, Any]:
+        org = await create_organization(
+            session,
+            name=request.name,
+            domain=request.domain,
+            is_active=request.is_active,
+            settings=request.settings,
+            actor_email=principal.actor_email,
+        )
+        # The HTTP dependency commits after the handler returns; the
+        # local session never commits itself.
+        await session.commit()
+        return org.model_dump(mode="json")
+
+    result, error = await _run_short(
+        session_factory,
+        _create,
+        op=OP_ORGANIZATIONS_CREATE,
+        log_key=request.name,
+        status_errors=(OrganizationServiceError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_organizations_get(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``organizations.get`` through the shared organizations service.
+
+    Platform-admin gate first (403, like the HTTP dependency), then
+    org-id UUID parsing (422, like the route's FastAPI parsing), then
+    the same ``shared.sdk_organizations.get_organization`` the handler
+    calls — the missing-organization 404 the facade maps to
+    ``ValueError`` is identical by construction. A local attempt never
+    retries over HTTP.
+    """
+    from shared.sdk_organizations import OrganizationServiceError, get_organization
+
+    denied = _require_platform_admin(principal, frame_id)
+    if denied is not None:
+        return [denied]
+    org_uuid, invalid = _parse_organizations_org_id(
+        frame, frame_id, OP_ORGANIZATIONS_GET
+    )
+    if invalid is not None:
+        return [invalid]
+    assert org_uuid is not None
+
+    async def _get(session: Any) -> dict[str, Any]:
+        org = await get_organization(session, org_id=org_uuid)
+        return org.model_dump(mode="json")
+
+    result, error = await _run_short(
+        session_factory,
+        _get,
+        op=OP_ORGANIZATIONS_GET,
+        log_key=str(org_uuid),
+        status_errors=(OrganizationServiceError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_organizations_list(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``organizations.list`` through the shared organizations service.
+
+    The frame carries no fields (the SDK exposes no filter) — the parent
+    applies the route defaults (active only, provider first then active
+    then alphabetical), like the unfiltered HTTP call. Platform-admin
+    gate first (403), then the same
+    ``shared.sdk_organizations.list_organizations`` the handler calls.
+    Returns the ``{"items"}`` envelope (the transport result contract
+    does not carry bare lists). Large listings ride bounded chunked
+    frames via ``_ok_frames``. A local attempt never retries over HTTP.
+    """
+    from shared.sdk_organizations import (
+        OrganizationServiceError,
+        list_organizations,
+    )
+
+    denied = _require_platform_admin(principal, frame_id)
+    if denied is not None:
+        return [denied]
+
+    async def _list(session: Any) -> dict[str, Any]:
+        items = await list_organizations(session)
+        return {"items": [item.model_dump(mode="json") for item in items]}
+
+    result, error = await _run_short(
+        session_factory,
+        _list,
+        op=OP_ORGANIZATIONS_LIST,
+        log_key="organizations",
+        status_errors=(OrganizationServiceError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_organizations_update(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``organizations.update`` through the shared organizations service.
+
+    Platform-admin gate first (403, like the HTTP dependency), then
+    org-id UUID parsing (422) and the same ``OrganizationUpdate`` DTO
+    the HTTP handler uses (422 — unknown fields ignored, only non-None
+    fields applied), then the same
+    ``shared.sdk_organizations.update_organization`` the handler calls.
+    The missing-organization 404 the facade maps to ``ValueError``
+    and the provider-disable 403 are identical by construction. The
+    dispatcher commits explicitly (the shared service only flushes;
+    HTTP commits via ``get_db``). A local attempt never retries over
+    HTTP.
+    """
+    from shared.sdk_organizations import (
+        OrganizationServiceError,
+        update_organization,
+    )
+    from src.models import OrganizationUpdate
+
+    denied = _require_platform_admin(principal, frame_id)
+    if denied is not None:
+        return [denied]
+    org_uuid, invalid_id = _parse_organizations_org_id(
+        frame, frame_id, OP_ORGANIZATIONS_UPDATE
+    )
+    if invalid_id is not None:
+        return [invalid_id]
+    assert org_uuid is not None
+    raw_updates = frame.get("updates")
+    if not isinstance(raw_updates, dict):
+        return [
+            _error(
+                frame_id,
+                422,
+                f"invalid {OP_ORGANIZATIONS_UPDATE} request: 'updates' must be an object",
+            )
+        ]
+    request, invalid = _validate_request(
+        OrganizationUpdate, raw_updates, frame_id, OP_ORGANIZATIONS_UPDATE
+    )
+    if invalid is not None:
+        return [invalid]
+    assert request is not None
+
+    async def _update(session: Any) -> dict[str, Any]:
+        org = await update_organization(
+            session,
+            org_id=org_uuid,
+            name=request.name,
+            domain=request.domain,
+            is_active=request.is_active,
+            settings=request.settings,
+        )
+        # The HTTP dependency commits after the handler returns; the
+        # local session never commits itself.
+        await session.commit()
+        return org.model_dump(mode="json")
+
+    result, error = await _run_short(
+        session_factory,
+        _update,
+        op=OP_ORGANIZATIONS_UPDATE,
+        log_key=str(org_uuid),
+        status_errors=(OrganizationServiceError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_organizations_delete(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``organizations.delete`` through the shared organizations service.
+
+    Platform-admin gate first (403), then org-id UUID parsing (422),
+    then the same ``shared.sdk_organizations.delete_organization`` the
+    handler calls — the missing-organization 404 the facade maps to
+    ``ValueError`` and the provider-organization 403 are identical by
+    construction. Returns no body (null result, like HTTP 204 — the
+    facade maps it to ``True``). The dispatcher commits explicitly (the
+    shared service only flushes; HTTP commits via ``get_db``). A local
+    attempt never retries over HTTP.
+    """
+    from shared.sdk_organizations import (
+        OrganizationServiceError,
+        delete_organization,
+    )
+
+    denied = _require_platform_admin(principal, frame_id)
+    if denied is not None:
+        return [denied]
+    org_uuid, invalid = _parse_organizations_org_id(
+        frame, frame_id, OP_ORGANIZATIONS_DELETE
+    )
+    if invalid is not None:
+        return [invalid]
+    assert org_uuid is not None
+
+    async def _delete(session: Any) -> None:
+        await delete_organization(session, org_id=org_uuid)
+        # The HTTP dependency commits after the handler returns; the
+        # local session never commits itself.
+        await session.commit()
+
+    _, error = await _run_short(
+        session_factory,
+        _delete,
+        op=OP_ORGANIZATIONS_DELETE,
+        log_key=str(org_uuid),
+        status_errors=(OrganizationServiceError,),
     )
     if error is not None:
         error["id"] = frame_id
