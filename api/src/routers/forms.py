@@ -1350,11 +1350,11 @@ async def submit_form(
         scheduled_at = datetime.now(timezone.utc) + timedelta(seconds=request.delay_seconds)
 
     if scheduled_at is not None:
-        from src.routers.workflows import _insert_scheduled_execution
+        from shared.sdk_workflow_execution import insert_scheduled_execution
 
         workflow = _resolved_wf
 
-        exec_id = await _insert_scheduled_execution(
+        exec_id = await insert_scheduled_execution(
             db=db,
             workflow_id=workflow.id,
             workflow_name=workflow.name,
