@@ -27,6 +27,14 @@ def _workflow_return_margin(timeout_seconds: int) -> float:
     return min(30.0, max(5.0, timeout_seconds * 0.15))
 
 
+def _observe_finished_status(task: asyncio.Task[AgentRun]) -> None:
+    """Retrieve the result of a status read that outlived its caller's wait."""
+    if not task.cancelled():
+        error = task.exception()
+        if error is not None:
+            logger.debug("Agent status read finished after wait ended: %s", type(error).__name__)
+
+
 class AgentPausedError(Exception):
     """Raised when an agent run is requested for a paused agent.
 
@@ -179,6 +187,9 @@ class agents:
         if workflow_deadline is not None and workflow_deadline.tzinfo is None:
             raise ValueError("workflow_deadline must include a timezone")
 
+        from ._local_transport import get as _get_local_transport
+
+        local_transport = _get_local_transport()
         last_status: Literal["queued", "running", "cancelling"] | None = None
         while True:
             remaining: float | None = None
@@ -201,6 +212,22 @@ class agents:
             try:
                 if remaining is None:
                     run = await agents.get_run(run_id)
+                elif local_transport is not None:
+                    # A wait deadline is not a transport failure. Let the
+                    # in-flight read finish so its response cannot poison the
+                    # next local SDK call; only the caller stops waiting.
+                    status_task = asyncio.create_task(agents.get_run(run_id))
+                    try:
+                        done, _ = await asyncio.wait({status_task}, timeout=remaining)
+                    except asyncio.CancelledError:
+                        status_task.cancel()
+                        raise
+                    if not done:
+                        status_task.add_done_callback(_observe_finished_status)
+                        return AgentRunPending(
+                            run_id=run_id, last_known_status=last_status, reason=reason,
+                        )
+                    run = status_task.result()
                 else:
                     run = await asyncio.wait_for(agents.get_run(run_id), timeout=remaining)
             except asyncio.TimeoutError:

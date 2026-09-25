@@ -18,6 +18,7 @@ Covers the acceptance surface that does not need a forked child:
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -665,6 +666,62 @@ class TestFacadeLocalMapping:
         assert pending.run_id == run_id
         assert pending.reason == "wait_timeout"
         assert pending.last_known_status is None
+
+    async def test_wait_deadline_does_not_cancel_local_status_read(self):
+        import importlib as _importlib
+
+        agents_mod = _importlib.import_module("bifrost.agents")
+        from bifrost.models import AgentRunPending
+
+        run_id = str(uuid4())
+        release = asyncio.Event()
+
+        class _FakeTransport:
+            def __init__(self):
+                self.calls = 0
+                self.broken = False
+                self.first_task = None
+
+            async def call_agents_get_run(self, rid):
+                assert rid == run_id
+                assert not self.broken, "later SDK calls must keep working"
+                self.calls += 1
+                if self.calls == 1:
+                    self.first_task = asyncio.current_task()
+                    try:
+                        await release.wait()
+                    except asyncio.CancelledError:
+                        self.broken = True
+                        raise
+                return {
+                    "id": run_id,
+                    "agent_id": str(uuid4()),
+                    "trigger_type": "api",
+                    "status": "running",
+                    "iterations_used": 0,
+                    "tokens_used": 0,
+                    "metadata": {},
+                    "created_at": "2026-09-01T12:00:00+00:00",
+                }
+
+        transport = _FakeTransport()
+        with (
+            patch("bifrost._local_transport.get", return_value=transport),
+            patch.object(
+                agents_mod,
+                "get_client",
+                side_effect=AssertionError("HTTP must not be used in the engine path"),
+            ),
+        ):
+            pending = await agents_mod.agents.wait(run_id, timeout=0.05)
+            assert isinstance(pending, AgentRunPending)
+            assert pending.reason == "wait_timeout"
+            assert transport.first_task is not None
+            release.set()
+            await asyncio.wait_for(transport.first_task, timeout=1.0)
+            assert (await agents_mod.agents.get_run(run_id)).status == "running"
+        assert transport.calls == 2
+        assert not transport.broken
 
     async def test_external_http_path_unchanged(self):
         import importlib as _importlib
