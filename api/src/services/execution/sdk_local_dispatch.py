@@ -25,9 +25,10 @@ by construction. Large payloads in either direction travel as bounded
 chunked frames (header plus ordered parts, every frame within the wire
 bound); small payloads use a single frame.
 
-Allowlist (stage 3a): ``config.get/set/list/delete``, the full
+Allowlist: ``config.get/set/list/delete``, the full
 ``integrations`` facade (``get/list_mappings/get_mapping/upsert_mapping/
-delete_mapping/refresh_token``), and the full tables facade. Engine import fast path: ``modules.resolve``
+delete_mapping/refresh_token``), the full tables facade, and artifact
+write/read/list/download URL. Engine import fast path: ``modules.resolve``
 and ``modules.fetch`` (served on the dedicated import channel through the
 shared ``sdk_modules`` service, scoped by the parent-derived principal).
 Unknown operations or wire versions get an error response — never silent
@@ -49,6 +50,10 @@ from uuid import UUID
 from bifrost._local_transport import (
     _CHUNK_RAW_BYTES,
     MAX_FRAME_BYTES,
+    OP_ARTIFACTS_WRITE,
+    OP_ARTIFACTS_READ,
+    OP_ARTIFACTS_LIST,
+    OP_ARTIFACTS_GET_DOWNLOAD_URL,
     OP_CONFIG_DELETE,
     OP_CONFIG_GET,
     OP_CONFIG_LIST,
@@ -103,6 +108,10 @@ SDK_CHANNEL_ALLOWED_OPS = frozenset(
         OP_TABLES_GET,
         OP_TABLES_QUERY,
         OP_TABLES_COUNT,
+        OP_ARTIFACTS_WRITE,
+        OP_ARTIFACTS_READ,
+        OP_ARTIFACTS_LIST,
+        OP_ARTIFACTS_GET_DOWNLOAD_URL,
         OP_TABLES_BATCH_DELETE,
         OP_TABLES_BATCH,
         OP_TABLES_DELETE_DOCUMENT,
@@ -442,6 +451,14 @@ async def dispatch_frames(
         return await _dispatch_tables_query(session_factory, principal, frame_id, frame)
     if op == OP_TABLES_COUNT:
         return await _dispatch_tables_count(session_factory, principal, frame_id, frame)
+    if op == OP_ARTIFACTS_WRITE:
+        return await _dispatch_artifacts_write(session_factory, principal, frame_id, frame)
+    if op == OP_ARTIFACTS_READ:
+        return await _dispatch_artifacts_read(session_factory, principal, frame_id, frame)
+    if op == OP_ARTIFACTS_LIST:
+        return await _dispatch_artifacts_list(session_factory, principal, frame_id, frame)
+    if op == OP_ARTIFACTS_GET_DOWNLOAD_URL:
+        return await _dispatch_artifacts_download_url(session_factory, principal, frame_id, frame)
     if op == OP_MODULES_RESOLVE:
         return await _dispatch_modules_resolve(session_factory, principal, frame_id, frame)
     if op == OP_MODULES_FETCH:
@@ -2183,6 +2200,260 @@ async def _dispatch_tables_batch_delete(
         op=OP_TABLES_BATCH_DELETE,
         log_key=table_ref,
         status_errors=(HTTPException, TableWriteError),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+def _artifact_user_for_principal(principal: LocalDispatchPrincipal) -> Any:
+    """Token-equivalent ``UserPrincipal`` for artifact scope checks.
+
+    Reuses the table token-equivalent shape so org gates decide
+    identically on both transports: workflows run as the system-user
+    superuser with no org (the ``mint_engine_token()`` shape — global
+    scope), services run as the system-user non-superuser confined to
+    their service org (the ``mint_service_token()`` shape). The
+    ``shared.sdk_artifacts`` service applies the platform-admin bypass
+    internally from ``is_superuser``, so the engine sees global scope
+    while a service token stays org-scoped — exactly like HTTP.
+    """
+    return _table_user_for_principal(principal)
+
+
+def _artifact_id_from_frame(
+    frame: dict[str, Any], frame_id: str | None, op: str
+) -> tuple[Any, dict[str, Any] | None]:
+    """One required UUID frame field (artifact id), else a 422 error frame."""
+    raw = frame.get("artifact_id")
+    if not isinstance(raw, str) or not raw:
+        return None, _error(frame_id, 422, f"invalid {op} request: 'artifact_id' is required")
+    try:
+        return UUID(raw), None
+    except ValueError:
+        return None, _error(frame_id, 422, f"invalid {op} request: 'artifact_id' is not a UUID")
+
+
+def _workspace_id_from_frame(
+    frame: dict[str, Any], frame_id: str | None, op: str, *, required: bool
+) -> tuple[Any, dict[str, Any] | None]:
+    """One optional (write) or required (list) UUID workspace field.
+
+    Mirrors the HTTP query-param validation (FastAPI UUID → 422 on
+    malformed). A missing workspace on write means unscoped storage
+    (like the HTTP default); a missing workspace on list is a 422.
+    """
+    raw = frame.get("workspace_id")
+    if raw is None:
+        if required:
+            return None, _error(frame_id, 422, f"invalid {op} request: 'workspace_id' is required")
+        return None, None
+    if not isinstance(raw, str) or not raw:
+        return None, _error(frame_id, 422, f"invalid {op} request: 'workspace_id' is required" if required else f"invalid {op} request: 'workspace_id' must be a UUID string")
+    try:
+        return UUID(raw), None
+    except ValueError:
+        return None, _error(frame_id, 422, f"invalid {op} request: 'workspace_id' is not a UUID")
+
+
+async def _dispatch_artifacts_write(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``artifacts.write`` through the shared artifact service.
+
+    Validates the frame (filename/content_type required, content base64,
+    workspace optional UUID — 422 on malformed, like the HTTP query and
+    multipart parsing), then calls the exact ``shared.sdk_artifacts``
+    service the HTTP handler calls. Content validation failures
+    (``ValueError``) map to 422 like the global ``ValueError → 422``
+    handler; authorization misses map to their 404. Large contents ride
+    bounded chunked response frames via ``_ok_frames``; large requests
+    arrive reassembled by ``serve_channel`` (no total cap, like HTTP).
+    """
+    import base64 as _b64
+
+    from shared.sdk_artifacts import ArtifactCaller, SdkArtifactError
+
+    filename, invalid = _required_str_field(frame, "filename", frame_id, OP_ARTIFACTS_WRITE)
+    if invalid is not None:
+        return [invalid]
+    content_type, invalid = _required_str_field(frame, "content_type", frame_id, OP_ARTIFACTS_WRITE)
+    if invalid is not None:
+        return [invalid]
+    raw_content = frame.get("content")
+    if not isinstance(raw_content, str) or not raw_content:
+        return [_error(frame_id, 422, f"invalid {OP_ARTIFACTS_WRITE} request: 'content' is required")]
+    try:
+        content = _b64.b64decode(raw_content.encode("ascii"), validate=True)
+    except Exception:
+        return [_error(frame_id, 422, f"invalid {OP_ARTIFACTS_WRITE} request: 'content' is not valid base64")]
+    workspace_id, invalid = _workspace_id_from_frame(frame, frame_id, OP_ARTIFACTS_WRITE, required=False)
+    if invalid is not None:
+        return [invalid]
+    assert filename is not None and content_type is not None
+
+    async def _store(session: Any) -> dict[str, Any]:
+        from shared.sdk_artifacts import sdk_store_artifact
+
+        user = _artifact_user_for_principal(principal)
+        try:
+            ref = await sdk_store_artifact(
+                ArtifactCaller(user=user, db=session),
+                filename=filename,
+                content_type=content_type,
+                content=content,
+                workspace_id=workspace_id,
+            )
+        except ValueError as exc:
+            raise SdkArtifactError(422, str(exc)) from exc
+        # The HTTP dependency commits after the handler returns. The local
+        # session factory only closes its session, so persist the artifact
+        # before the child can read it in a subsequent SDK call.
+        await session.commit()
+        return ref.model_dump(mode="json")
+
+    result, error = await _run_short(
+        session_factory,
+        _store,
+        op=OP_ARTIFACTS_WRITE,
+        log_key=filename,
+        status_errors=(SdkArtifactError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_artifacts_read(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``artifacts.read`` through the shared artifact service.
+
+    The SDK surfaces bytes only (like the HTTP body); the envelope
+    carries base64 ``content`` plus ``content_type`` so the wire stays
+    JSON. A missing or out-of-scope id is a 404 error frame — never a
+    null result. Large contents ride bounded chunked frames.
+    """
+    import base64 as _b64
+
+    from shared.sdk_artifacts import ArtifactCaller, SdkArtifactError
+
+    artifact_id, invalid = _artifact_id_from_frame(frame, frame_id, OP_ARTIFACTS_READ)
+    if invalid is not None:
+        return [invalid]
+    assert artifact_id is not None
+
+    async def _read(session: Any) -> dict[str, Any]:
+        from shared.sdk_artifacts import sdk_read_artifact
+
+        user = _artifact_user_for_principal(principal)
+        result = await sdk_read_artifact(
+            ArtifactCaller(user=user, db=session),
+            artifact_id=artifact_id,
+        )
+        return {
+            "content": _b64.b64encode(result.content).decode("ascii"),
+            "content_type": result.content_type,
+        }
+
+    result, error = await _run_short(
+        session_factory,
+        _read,
+        op=OP_ARTIFACTS_READ,
+        log_key=str(artifact_id),
+        status_errors=(SdkArtifactError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_artifacts_list(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``artifacts.list`` through the shared artifact service.
+
+    Returns the ``{"items": [...]}`` envelope of ``ArtifactRef`` dicts
+    (the transport result contract does not carry bare lists). Scope
+    filtering (owner-or-org, admin bypass) is the shared service's, so
+    both paths agree by construction.
+    """
+    from shared.sdk_artifacts import ArtifactCaller
+
+    workspace_id, invalid = _workspace_id_from_frame(frame, frame_id, OP_ARTIFACTS_LIST, required=True)
+    if invalid is not None:
+        return [invalid]
+    assert workspace_id is not None
+
+    async def _list(session: Any) -> dict[str, Any]:
+        from shared.sdk_artifacts import sdk_list_artifacts
+
+        user = _artifact_user_for_principal(principal)
+        refs = await sdk_list_artifacts(
+            ArtifactCaller(user=user, db=session),
+            workspace_id=workspace_id,
+        )
+        return {"items": [ref.model_dump(mode="json") for ref in refs]}
+
+    result, error = await _run_short(
+        session_factory,
+        _list,
+        op=OP_ARTIFACTS_LIST,
+        log_key=str(workspace_id),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_artifacts_download_url(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``artifacts.get_download_url`` through the shared service.
+
+    Returns the ``{"url": ...}`` envelope, identical to the HTTP path
+    (inert headers owned by the signed-URL path). A missing or
+    out-of-scope id is a 404 error frame.
+    """
+    from shared.sdk_artifacts import ArtifactCaller, SdkArtifactError
+
+    artifact_id, invalid = _artifact_id_from_frame(frame, frame_id, OP_ARTIFACTS_GET_DOWNLOAD_URL)
+    if invalid is not None:
+        return [invalid]
+    assert artifact_id is not None
+
+    async def _url(session: Any) -> dict[str, Any]:
+        from shared.sdk_artifacts import sdk_artifact_download_url
+
+        user = _artifact_user_for_principal(principal)
+        response = await sdk_artifact_download_url(
+            ArtifactCaller(user=user, db=session),
+            artifact_id=artifact_id,
+        )
+        return {"url": response.url}
+
+    result, error = await _run_short(
+        session_factory,
+        _url,
+        op=OP_ARTIFACTS_GET_DOWNLOAD_URL,
+        log_key=str(artifact_id),
+        status_errors=(SdkArtifactError,),
     )
     if error is not None:
         error["id"] = frame_id

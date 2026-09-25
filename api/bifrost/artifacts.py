@@ -14,6 +14,7 @@ from typing import Any, Literal
 from ._context import _execution_context
 from .client import get_client, raise_for_status_with_detail
 from .models import ArtifactRef
+from ._local_transport import get as _get_local_transport
 
 
 def _workspace_params() -> dict[str, str]:
@@ -48,7 +49,28 @@ class artifacts:
         *,
         content_type: str,
     ) -> ArtifactRef:
-        """Store validated workflow-produced bytes behind an opaque reference."""
+        """Store validated workflow-produced bytes behind an opaque reference.
+
+        Inside an engine child this stores through the parent over the
+        dedicated local transport (same service as the HTTP endpoint);
+        elsewhere it calls the SDK API endpoint.
+        """
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent validates and stores through
+            # the shared artifact service over the dedicated channel. The
+            # workspace id is the caller's own (like the HTTP query
+            # param); user, organization, and capability come from the
+            # parent's dispatch context, never from child frames. A local
+            # attempt never falls back to HTTP.
+            params = _workspace_params()
+            result = await transport.call_artifacts_write(
+                filename,
+                content_type,
+                content,
+                params.get("workspace_id"),
+            )
+            return ArtifactRef.model_validate(result)
         response = await get_client().post(
             "/api/sdk/artifacts",
             files={"file": (filename, content, content_type)},
@@ -177,28 +199,66 @@ class artifacts:
 
     @staticmethod
     async def read(ref: ArtifactRef | dict[str, Any]) -> bytes:
-        """Read an ArtifactRef received as workflow or MCP tool input."""
+        """Read an ArtifactRef received as workflow or MCP tool input.
+
+        Inside an engine child this reads through the parent over the
+        dedicated local transport (same service as the HTTP endpoint);
+        elsewhere it calls the SDK API endpoint.
+        """
         artifact = ref if isinstance(ref, ArtifactRef) else ArtifactRef.model_validate(ref)
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent enforces caller scope through
+            # the shared artifact service over the dedicated channel. A
+            # local attempt never falls back to HTTP.
+            import base64
+
+            result = await transport.call_artifacts_read(artifact.id)
+            return base64.b64decode(result["content"].encode("ascii"))
         response = await get_client().get(f"/api/sdk/artifacts/{artifact.id}/content")
         raise_for_status_with_detail(response)
         return response.content
 
     @staticmethod
     async def list() -> list[ArtifactRef]:
-        """List the latest files available in the active run workspace."""
+        """List the latest files available in the active run workspace.
+
+        Inside an engine child this lists through the parent over the
+        dedicated local transport (same service as the HTTP endpoint);
+        elsewhere it calls the SDK API endpoint.
+        """
         params = _workspace_params()
         if not params:
             raise RuntimeError(
                 "artifacts.list() requires an active workflow or agent execution."
             )
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent lists through the shared
+            # artifact service over the dedicated channel. A local attempt
+            # never falls back to HTTP.
+            result = await transport.call_artifacts_list(params["workspace_id"])
+            return [ArtifactRef.model_validate(item) for item in result.get("items", [])]
         response = await get_client().get("/api/sdk/artifacts", params=params)
         raise_for_status_with_detail(response)
         return [ArtifactRef.model_validate(item) for item in response.json()]
 
     @staticmethod
     async def get_download_url(ref: ArtifactRef | dict[str, Any]) -> str:
-        """Create a short-lived download URL for an authorized ArtifactRef."""
+        """Create a short-lived download URL for an authorized ArtifactRef.
+
+        Inside an engine child this mints through the parent over the
+        dedicated local transport (same service as the HTTP endpoint);
+        elsewhere it calls the SDK API endpoint.
+        """
         artifact = ref if isinstance(ref, ArtifactRef) else ArtifactRef.model_validate(ref)
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent mints through the shared
+            # artifact service over the dedicated channel. A local attempt
+            # never falls back to HTTP.
+            result = await transport.call_artifacts_get_download_url(artifact.id)
+            return str(result["url"])
         response = await get_client().get(
             f"/api/sdk/artifacts/{artifact.id}/download-url"
         )

@@ -6,11 +6,12 @@ children must never import PostgreSQL drivers, the ORM, or the API server
 stack. (The synthetic HTTP error mapping imports ``httpx``/``bifrost.client``
 lazily, inside the raising function, long after the child runtime is loaded.)
 
-Protocol (stage 3b: ``config.get/set/list/delete``, the full
+Protocol (``config.get/set/list/delete``, the full
 ``integrations`` facade — ``get/list_mappings/get_mapping/upsert_mapping/
 delete_mapping/refresh_token`` — and the full ``tables`` facade —
 ``create/list/delete`` metadata plus ``insert/upsert/get/update/
-delete_document/batch/batch_delete/query/count`` document operations):
+delete_document/batch/batch_delete/query/count`` document operations,
+plus artifact write/read/list/download URL):
 
 - One request frame (or a bounded chunked request), one-or-many response
   frames, JSON over ``multiprocessing.Connection.send_bytes`` /
@@ -137,6 +138,10 @@ OP_TABLES_BATCH = "tables.batch"
 OP_TABLES_BATCH_DELETE = "tables.batch_delete"
 OP_TABLES_QUERY = "tables.query"
 OP_TABLES_COUNT = "tables.count"
+OP_ARTIFACTS_WRITE = "artifacts.write"
+OP_ARTIFACTS_READ = "artifacts.read"
+OP_ARTIFACTS_LIST = "artifacts.list"
+OP_ARTIFACTS_GET_DOWNLOAD_URL = "artifacts.get_download_url"
 
 # Wire version. The parent rejects anything else instead of guessing.
 TRANSPORT_VERSION = 1
@@ -1109,6 +1114,115 @@ class ChildLocalTransport:
         result = await self._call(
             OP_TABLES_COUNT,
             {"table": table, "scope": scope, "solution": solution},
+            timeout,
+        )
+        if not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+
+    async def call_artifacts_write(
+        self,
+        filename: str,
+        content_type: str,
+        content: bytes,
+        workspace_id: str | None = None,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """Store workflow-produced bytes through the parent. No HTTP fallback.
+
+        ``content`` rides base64 in the request frame (chunked when it
+        exceeds the frame bound, like large ``config.set`` values — no
+        total cap, matching HTTP). Returns the ``ArtifactRef`` dict,
+        identical to the HTTP path. Parent error responses raise the same
+        public exceptions as the HTTP path (validation failures are 422);
+        transport loss raises ``LocalTransportClosed`` or ``TimeoutError``.
+        """
+        result = await self._call(
+            OP_ARTIFACTS_WRITE,
+            {
+                "filename": filename,
+                "content_type": content_type,
+                "content": base64.b64encode(content).decode("ascii"),
+                "workspace_id": workspace_id,
+            },
+            timeout,
+        )
+        if not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+    async def call_artifacts_read(
+        self,
+        artifact_id: str,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """Read an artifact's bytes through the parent. No HTTP fallback.
+
+        Returns the ``{"content", "content_type"}`` envelope with base64
+        content (the facade surfaces bytes only, like the HTTP body). A
+        missing or out-of-scope id is a 404 error frame — never a null
+        result. Large contents arrive as bounded chunked response frames.
+        """
+        result = await self._call(
+            OP_ARTIFACTS_READ,
+            {"artifact_id": artifact_id},
+            timeout,
+        )
+        if not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+    async def call_artifacts_list(
+        self,
+        workspace_id: str,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """List a workspace's latest files through the parent. No HTTP fallback.
+
+        Returns the ``{"items": [...]}`` envelope of ``ArtifactRef``
+        dicts (the transport result contract does not carry bare lists).
+        Large listings arrive as bounded chunked response frames.
+        """
+        result = await self._call(
+            OP_ARTIFACTS_LIST,
+            {"workspace_id": workspace_id},
+            timeout,
+        )
+        if not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+    async def call_artifacts_get_download_url(
+        self,
+        artifact_id: str,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """Create a short-lived download URL through the parent.
+
+        No HTTP fallback. Returns the ``{"url": ...}`` envelope,
+        identical to the HTTP path (inert headers owned by the signed-URL
+        path). A missing or out-of-scope id is a 404 error frame.
+        """
+        result = await self._call(
+            OP_ARTIFACTS_GET_DOWNLOAD_URL,
+            {"artifact_id": artifact_id},
             timeout,
         )
         if not isinstance(result, dict):
