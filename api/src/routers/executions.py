@@ -4,18 +4,15 @@ Executions Router
 Provides access to workflow execution history with filtering capabilities.
 """
 
-import base64
-import json
 import logging
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
-from sqlalchemy import select, and_, desc, func, or_
+from sqlalchemy import select, and_, desc
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import defer, selectinload
+from sqlalchemy.orm import selectinload
 
 # Import existing Pydantic models for API compatibility
 from src.models import (
@@ -27,20 +24,15 @@ from src.models import (
     ExecutionLogPublic,
 )
 from src.models.contracts.executions import (
-    AIUsagePublicSimple,
-    AIUsageTotalsSimple,
-    ExecutionSummary,
     LogsListResponse,
     LogListEntry,
 )
-from src.models.orm.ai_usage import AIUsage
 
 from bifrost._logging import read_logs_from_stream
-from shared.pending_execution import get_pending_execution_fallback
+from shared.sdk_execution_reads import decode_history_cursor
 from src.core.auth import Context, RequirePlatformAdmin
 from src.core.principal import UserPrincipal
 from src.core.log_safety import log_safe
-from src.core.org_filter import resolve_org_filter, OrgFilterType
 from src.core.pubsub import publish_execution_update, publish_history_update
 from src.core.redis_client import get_redis_client
 from src.models import Execution as ExecutionModel
@@ -75,43 +67,6 @@ _EXECUTION_QUERY_PARAM_NAMES = {
     "continuationToken",
     *{alias for aliases in _EXECUTION_QUERY_PARAM_ALIASES.values() for alias in aliases},
 }
-
-
-# =============================================================================
-# History pagination cursor
-# =============================================================================
-#
-# History pagination is keyset-based: the continuation token names the last
-# row the client saw — (timeline_at, id) — and the next page is "rows strictly
-# older than that". An offset token ("give me rows 26–50") re-serves the
-# previous page's tail whenever new executions land between page loads, which
-# on a busy instance is every pagination: users stepping into the past see
-# today's rows (and a "Today" day header) at the top of every page.
-
-
-def _encode_history_cursor(timeline_at: datetime | None, row_id: UUID) -> str:
-    """Encode the last-served row's position as an opaque token."""
-    payload = {
-        "v": 1,
-        "s": timeline_at.isoformat() if timeline_at else None,
-        "i": str(row_id),
-    }
-    return base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
-
-
-def _decode_history_cursor(token: str) -> tuple[datetime | None, UUID] | None:
-    """Decode a keyset cursor; None for legacy offsets or malformed tokens."""
-    try:
-        payload = json.loads(base64.urlsafe_b64decode(token.encode()))
-        if not isinstance(payload, dict) or payload.get("v") != 1:
-            return None
-        raw_started = payload.get("s")
-        started_at = datetime.fromisoformat(raw_started) if raw_started else None
-        return started_at, UUID(payload["i"])
-    except (ValueError, KeyError, TypeError, json.JSONDecodeError):
-        # Not a keyset cursor (legacy numeric offset, or garbage) — the caller
-        # falls back to legacy offset parsing / first page.
-        return None
 
 
 def _query_param(request: Request, name: str) -> str | None:
@@ -154,323 +109,6 @@ class ExecutionRepository:
 
     def __init__(self, db: AsyncSession):
         self.db = db
-
-    async def list_executions(
-        self,
-        user: UserPrincipal,
-        org_id: UUID | None,
-        workflow_name: str | None = None,
-        workflow_id: UUID | None = None,
-        status_filter: str | None = None,
-        start_date: str | None = None,
-        end_date: str | None = None,
-        exclude_local: bool = True,
-        limit: int = 25,
-        offset: int = 0,
-        cursor: tuple[datetime | None, UUID] | None = None,
-    ) -> tuple[list[ExecutionSummary], str | None]:
-        """List executions with filtering.
-
-        `cursor` is the keyset position (last row's timeline timestamp + id); `offset`
-        is only honored for legacy numeric tokens still in flight from before
-        the keyset change. New continuation tokens are always keyset.
-        """
-        query = select(ExecutionModel).options(
-            selectinload(ExecutionModel.organization),
-            selectinload(ExecutionModel.executed_by_user),
-            defer(ExecutionModel.parameters, raiseload=True),
-            defer(ExecutionModel.result, raiseload=True),
-            defer(ExecutionModel.variables, raiseload=True),
-            defer(ExecutionModel.execution_context, raiseload=True),
-        )
-
-        # Organization scoping
-        if org_id:
-            query = query.where(ExecutionModel.organization_id == org_id)
-
-        # Non-superusers can only see their own executions
-        if not user.is_superuser:
-            query = query.where(ExecutionModel.executed_by == user.user_id)
-
-        # Filters
-        if workflow_id:
-            query = query.where(ExecutionModel.workflow_id == workflow_id)
-        elif workflow_name:
-            query = query.where(ExecutionModel.workflow_name == workflow_name)
-
-        if status_filter:
-            # Comma-separated values match any of the listed statuses, so the
-            # UI's Failed tab can ask for the whole failure group
-            # (Failed,Timeout,Stuck,CompletedWithErrors) in one server-side
-            # filter. A single value behaves exactly as before.
-            statuses = [s.strip() for s in status_filter.split(",") if s.strip()]
-            query = query.where(ExecutionModel.status.in_(statuses))
-
-        if start_date:
-            try:
-                start_dt = datetime.fromisoformat(start_date.replace("Z", "+00:00"))
-                # Strip timezone for naive datetime comparison (DB stores UTC without tz)
-                if start_dt.tzinfo is not None:
-                    start_dt = start_dt.replace(tzinfo=None)
-                query = query.where(ExecutionModel.started_at >= start_dt)
-            except ValueError as e:
-                # Caller passed an invalid ISO date — silently ignore the filter
-                logger.debug(f"invalid start_date {log_safe(start_date)!r}, ignoring filter: {log_safe(e)}")
-
-        if end_date:
-            try:
-                end_dt = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
-                # Strip timezone for naive datetime comparison (DB stores UTC without tz)
-                if end_dt.tzinfo is not None:
-                    end_dt = end_dt.replace(tzinfo=None)
-                query = query.where(ExecutionModel.started_at <= end_dt)
-            except ValueError as e:
-                # Caller passed an invalid ISO date — silently ignore the filter
-                logger.debug(f"invalid end_date {log_safe(end_date)!r}, ignoring filter: {log_safe(e)}")
-
-        # Exclude local runner executions by default
-        if exclude_local:
-            query = query.where(ExecutionModel.is_local_execution == False)  # noqa: E712
-
-        # Use the same timeline anchor as the History UI. This keeps old
-        # cancelled Scheduled rows from jumping onto page one merely because
-        # they never received a started_at timestamp. created_at is non-null
-        # and anchors Pending rows that have not started or been scheduled.
-        timeline_at = func.coalesce(
-            ExecutionModel.started_at,
-            ExecutionModel.scheduled_at,
-            ExecutionModel.completed_at,
-            ExecutionModel.created_at,
-        )
-        query = query.order_by(
-            desc(timeline_at),
-            desc(ExecutionModel.id),
-        )
-
-        # Pagination: keyset when the caller has a cursor, legacy offset
-        # otherwise (first page, or an old numeric token still in flight).
-        if cursor is not None:
-            cursor_timeline, cursor_id = cursor
-            if cursor_timeline is None:
-                # Defensive support for an old cursor minted from a row with
-                # NULL started_at. New cursors always carry a timeline value
-                # because created_at is non-null.
-                query = query.where(
-                    and_(timeline_at.is_(None), ExecutionModel.id < cursor_id)
-                )
-            else:
-                # Strictly older than the cursor row. Excludes the NULL block
-                # and prevents new rows from injecting themselves into the
-                # middle of an in-progress pagination.
-                query = query.where(
-                    or_(
-                        timeline_at < cursor_timeline,
-                        and_(
-                            timeline_at == cursor_timeline,
-                            ExecutionModel.id < cursor_id,
-                        ),
-                    )
-                )
-        elif offset:
-            query = query.offset(offset)
-
-        query = query.limit(limit + 1)  # +1 to check for more
-
-        result = await self.db.execute(query)
-        executions = list(result.scalars().all())
-
-        # Check if there are more results
-        has_more = len(executions) > limit
-        if has_more:
-            executions = executions[:limit]
-
-        # Continuation token: keyset position of the last row served.
-        next_token = None
-        if has_more and executions:
-            last = executions[-1]
-            last_timeline = (
-                last.started_at
-                or last.scheduled_at
-                or last.completed_at
-                or last.created_at
-            )
-            next_token = _encode_history_cursor(last_timeline, last.id)
-
-        return [ExecutionRepository._to_summary(e) for e in executions], next_token
-
-    async def get_execution(
-        self,
-        execution_id: UUID,
-        user: UserPrincipal,
-    ) -> tuple[WorkflowExecution | None, str | None]:
-        """
-        Get execution by ID with authorization.
-
-        Returns all execution details including logs (with DEBUG filtered for non-admins),
-        and admin-only fields (variables, resource metrics).
-
-        Returns:
-            Tuple of (execution, error_code) where error_code is None on success
-        """
-        # 1. Fetch base execution with organization for effective scope display
-        result = await self.db.execute(
-            select(ExecutionModel)
-            .options(selectinload(ExecutionModel.organization), selectinload(ExecutionModel.executed_by_user))
-            .where(ExecutionModel.id == execution_id)
-        )
-        execution = result.scalar_one_or_none()
-
-        if not execution:
-            return None, "NotFound"
-
-        # Check authorization - non-superusers can only see their own
-        if not user.is_superuser and execution.executed_by != user.user_id:
-            return None, "Forbidden"
-
-        # 2. Fetch logs — dual-read: Redis Stream when in-progress, DB when complete
-        is_in_progress = execution.status in (
-            ExecutionStatus.PENDING, ExecutionStatus.RUNNING, ExecutionStatus.CANCELLING,
-        )
-        logs: list[ExecutionLogPublic] = []
-
-        if is_in_progress:
-            # Read from Redis Stream (logs haven't been flushed to DB yet)
-            try:
-                stream_logs = await read_logs_from_stream(str(execution_id), count=10000)
-                hidden_levels = set() if user.is_superuser else {"DEBUG", "TRACEBACK"}
-                for seq, slog in enumerate(stream_logs):
-                    level = (slog.level or "INFO").upper()
-                    if level in hidden_levels:
-                        continue
-                    logs.append(ExecutionLogPublic(
-                        id=seq,
-                        timestamp=slog.timestamp or "",
-                        level=level.lower(),
-                        message=slog.message or "",
-                        data=slog.metadata if isinstance(slog.metadata, dict) else None,
-                        sequence=seq,
-                    ))
-            except Exception:
-                logger.warning(f"Failed to read logs from Redis for execution {log_safe(execution_id)}, falling back to DB")
-                is_in_progress = False  # Fall through to DB read below
-
-        if not is_in_progress:
-            # Completed — read from Postgres
-            logs_query = (
-                select(ExecutionLogORM)
-                .where(ExecutionLogORM.execution_id == execution_id)
-                .order_by(ExecutionLogORM.sequence)
-            )
-            if not user.is_superuser:
-                logs_query = logs_query.where(
-                    ExecutionLogORM.level.notin_(["DEBUG", "TRACEBACK"])
-                )
-            logs_result = await self.db.execute(logs_query)
-            log_entries = logs_result.scalars().all()
-
-            logs = [
-                ExecutionLogPublic(
-                    id=log.id,
-                    timestamp=log.timestamp.isoformat() if log.timestamp else "",
-                    level=log.level or "info",
-                    message=log.message or "",
-                    data=log.log_metadata,
-                    sequence=log.sequence,
-                )
-                for log in log_entries
-            ]
-
-        # 3. Fetch AI usage data
-        ai_usage_query = (
-            select(AIUsage)
-            .where(AIUsage.execution_id == execution_id)
-            .order_by(AIUsage.sequence)
-        )
-        ai_usage_result = await self.db.execute(ai_usage_query)
-        ai_usage_entries = ai_usage_result.scalars().all()
-
-        ai_usage_list = [
-            AIUsagePublicSimple(
-                provider=entry.provider,
-                model=entry.model,
-                input_tokens=entry.input_tokens,
-                output_tokens=entry.output_tokens,
-                cache_read_tokens=entry.cache_read_tokens,
-                cache_write_tokens=entry.cache_write_tokens,
-                provider_cost=(str(entry.provider_cost) if entry.provider_cost is not None else None),
-                cost=str(entry.cost) if entry.cost else None,
-                duration_ms=entry.duration_ms,
-                timestamp=entry.timestamp.isoformat() if entry.timestamp else "",
-                sequence=entry.sequence,
-            )
-            for entry in ai_usage_entries
-        ]
-
-        # 4. Calculate AI usage totals
-        ai_totals = None
-        if ai_usage_entries:
-            totals_query = select(
-                func.coalesce(func.sum(AIUsage.input_tokens), 0).label("total_input"),
-                func.coalesce(func.sum(AIUsage.output_tokens), 0).label("total_output"),
-                func.coalesce(func.sum(AIUsage.cache_read_tokens), 0).label("total_cache_read"),
-                func.coalesce(func.sum(AIUsage.cache_write_tokens), 0).label("total_cache_write"),
-                func.coalesce(func.sum(AIUsage.provider_cost), Decimal("0")).label("total_provider_cost"),
-                func.coalesce(func.sum(AIUsage.cost), Decimal("0")).label("total_cost"),
-                func.coalesce(func.sum(AIUsage.duration_ms), 0).label("total_duration"),
-                func.count(AIUsage.id).label("call_count"),
-            ).where(AIUsage.execution_id == execution_id)
-
-            totals_result = await self.db.execute(totals_query)
-            totals_row = totals_result.one()
-
-            ai_totals = AIUsageTotalsSimple(
-                total_input_tokens=int(totals_row.total_input or 0),
-                total_output_tokens=int(totals_row.total_output or 0),
-                total_cache_read_tokens=int(totals_row.total_cache_read or 0),
-                total_cache_write_tokens=int(totals_row.total_cache_write or 0),
-                total_provider_cost=str(totals_row.total_provider_cost or Decimal("0")),
-                total_cost=str(totals_row.total_cost or Decimal("0")),
-                total_duration_ms=int(totals_row.total_duration or 0),
-                call_count=int(totals_row.call_count or 0),
-            )
-
-        # 5. Build response with conditional admin-only fields
-        # Determine org_name for effective scope display
-        if execution.organization_id:
-            org_name = execution.organization.name if execution.organization else None
-        else:
-            org_name = "Global"
-
-        return WorkflowExecution(
-            execution_id=str(execution.id),
-            workflow_name=execution.workflow_name,
-            workflow_id=str(execution.workflow_id) if execution.workflow_id else None,
-            org_id=str(execution.organization_id) if execution.organization_id else None,
-            org_name=org_name,
-            form_id=str(execution.form_id) if execution.form_id else None,
-            executed_by=str(execution.executed_by),
-            executed_by_name=execution.executed_by_name or str(execution.executed_by),
-            executed_by_email=execution.executed_by_user.email if execution.executed_by_user else None,
-            status=ExecutionStatus(execution.status),
-            input_data=execution.parameters or {},
-            result=execution.result,
-            result_type=execution.result_type,
-            error_message=execution.error_message,
-            duration_ms=execution.duration_ms,
-            started_at=execution.started_at,
-            completed_at=execution.completed_at,
-            scheduled_at=execution.scheduled_at,
-            logs=[log.model_dump() for log in logs],
-            # Admin-only fields (null for non-admins)
-            variables=execution.variables if user.is_superuser else None,
-            execution_context=execution.execution_context if user.is_superuser else None,
-            peak_memory_bytes=execution.peak_memory_bytes if user.is_superuser else None,
-            process_rss_bytes=execution.process_rss_bytes if user.is_superuser else None,
-            cpu_total_seconds=execution.cpu_total_seconds if user.is_superuser else None,
-            # AI usage tracking (available to all users)
-            ai_usage=ai_usage_list if ai_usage_list else None,
-            ai_totals=ai_totals,
-        ), None
 
     async def get_execution_result(
         self,
@@ -653,35 +291,6 @@ class ExecutionRepository:
             return None  # Will be populated by caller if needed
         return "Global"  # No org_id means global scope
 
-    @staticmethod
-    def _to_summary(execution: ExecutionModel) -> ExecutionSummary:
-        """Convert SQLAlchemy model to the payload-free list model.
-
-        Must only touch columns the list query loads — the payload columns
-        (parameters/result/variables/execution_context) are deferred with
-        raiseload=True so History never selects or serializes them.
-        """
-        return ExecutionSummary(
-            execution_id=str(execution.id),
-            workflow_name=execution.workflow_name,
-            workflow_id=str(execution.workflow_id) if execution.workflow_id else None,
-            org_id=str(execution.organization_id) if execution.organization_id else None,
-            org_name=ExecutionRepository._org_name(execution),
-            form_id=str(execution.form_id) if execution.form_id else None,
-            executed_by=str(execution.executed_by),
-            executed_by_name=execution.executed_by_name or str(execution.executed_by),
-            executed_by_email=execution.executed_by_user.email if hasattr(execution, 'executed_by_user') and execution.executed_by_user else None,
-            status=ExecutionStatus(execution.status),
-            result_type=execution.result_type,
-            error_message=execution.error_message,
-            duration_ms=execution.duration_ms,
-            started_at=execution.started_at,
-            completed_at=execution.completed_at,
-            scheduled_at=execution.scheduled_at,
-            created_at=execution.created_at,
-            session_id=str(execution.session_id) if execution.session_id else None,
-        )
-
     def _to_pydantic(
         self, execution: ExecutionModel, user: UserPrincipal | None = None
     ) -> WorkflowExecution:
@@ -757,27 +366,9 @@ async def list_executions(
     Superusers can filter by scope or see all executions.
     Org users see only their organization's executions.
     """
+    from shared.sdk_execution_reads import SdkExecutionReadError, list_sdk_executions
+
     _reject_unknown_query_params(request)
-
-    # Resolve organization filter based on user permissions
-    try:
-        filter_type, filter_org = resolve_org_filter(ctx.user, scope)
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(e),
-        )
-
-    # For executions, we only use filter_org (global executions don't really make sense)
-    # If filter_type is ALL, filter_org will be None (show all)
-    # If filter_type is GLOBAL_ONLY, we still use None (executions always have an org)
-    # If filter_type is ORG_ONLY or ORG_PLUS_GLOBAL, we filter to that org
-    if filter_type in (OrgFilterType.ORG_ONLY, OrgFilterType.ORG_PLUS_GLOBAL):
-        org_filter = filter_org
-    else:
-        org_filter = None  # Show all (no org filter)
-
-    repo = ExecutionRepository(ctx.db)
 
     # Parse continuation token: keyset cursor, with legacy numeric-offset
     # fallback for tokens minted before the keyset change.
@@ -785,7 +376,7 @@ async def list_executions(
     cursor = None
     continuation_token = _query_param(request, "continuationToken") or continuationToken
     if continuation_token:
-        cursor = _decode_history_cursor(continuation_token)
+        cursor = decode_history_cursor(continuation_token)
         if cursor is None:
             try:
                 offset = int(continuation_token)
@@ -832,19 +423,26 @@ async def list_executions(
             detail="excludeLocal must be a boolean",
         )
 
-    executions, next_token = await repo.list_executions(
-        user=ctx.user,
-        org_id=org_filter,
-        workflow_name=workflow_name_value,
-        workflow_id=parsed_workflow_id,
-        status_filter=status_filter,
-        start_date=start_date_value,
-        end_date=end_date_value,
-        exclude_local=parsed_exclude_local,
-        limit=limit,
-        offset=offset,
-        cursor=cursor,
-    )
+    try:
+        executions, next_token = await list_sdk_executions(
+            ctx.db,
+            ctx.user,
+            scope=scope,
+            workflow_name=workflow_name_value,
+            workflow_id=parsed_workflow_id,
+            status_filter=status_filter,
+            start_date=start_date_value,
+            end_date=end_date_value,
+            exclude_local=parsed_exclude_local,
+            limit=limit,
+            offset=offset,
+            cursor=cursor,
+        )
+    except SdkExecutionReadError as e:
+        raise HTTPException(
+            status_code=e.status_code,
+            detail=e.detail,
+        )
 
     return ExecutionsListResponse(
         executions=executions,
@@ -939,28 +537,22 @@ async def get_execution(
     ctx: Context,
 ) -> WorkflowExecution:
     """Get execution details."""
-    repo = ExecutionRepository(ctx.db)
-    execution, error = await repo.get_execution(execution_id, ctx.user)
+    from shared.sdk_execution_reads import SdkExecutionReadError, get_sdk_execution
 
-    if error == "NotFound":
-        execution, error = await get_pending_execution_fallback(
-            execution_id,
-            ctx.user,
-            ctx.db,
-        )
-
-    if error == "Forbidden":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You do not have permission to view this execution",
-        )
-
-    if execution is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Execution {execution_id} not found",
-        )
-    return execution
+    try:
+        return await get_sdk_execution(ctx.db, ctx.user, execution_id)
+    except SdkExecutionReadError as e:
+        if e.status_code == 403:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have permission to view this execution",
+            )
+        if e.status_code == 404:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Execution {execution_id} not found",
+            )
+        raise
 
 
 @router.get(

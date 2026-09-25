@@ -10,7 +10,7 @@ from src.core.principal import UserPrincipal
 from src.models.enums import ExecutionStatus
 from src.models.orm.executions import Execution
 from src.models.orm.users import User
-from src.routers.executions import ExecutionRepository, _decode_history_cursor
+from shared.sdk_execution_reads import decode_history_cursor, list_sdk_executions
 
 pytestmark = pytest.mark.e2e
 
@@ -86,17 +86,21 @@ async def test_history_pages_use_the_display_timeline_without_gaps(db_session):
     db_session.add_all(rows)
     await db_session.flush()
 
+    # Superuser: scope resolves to ALL (no org filter) and the owner
+    # filter is off, so the full 33-row universe is visible — the same rows
+    # the pre-extraction repository returned for org_id=None. An org-user
+    # principal would now resolve scope to its own org (the HTTP rule),
+    # which would exclude these global rows; owner-only visibility is
+    # pinned by the shared-service unit tests instead.
     principal = UserPrincipal(
         user_id=user_id,
         email="history-admin@example.com",
         organization_id=PROVIDER_ORG_ID,
-        is_superuser=False,
+        is_superuser=True,
     )
-    repository = ExecutionRepository(db_session)
-
-    first_page, token = await repository.list_executions(
-        user=principal,
-        org_id=None,
+    first_page, token = await list_sdk_executions(
+        db_session,
+        principal,
         limit=25,
     )
     assert token is not None
@@ -104,11 +108,11 @@ async def test_history_pages_use_the_display_timeline_without_gaps(db_session):
     assert first_page[0].execution_id == str(future_scheduled.id)
     assert first_page[-1].execution_id != str(stale_cancelled.id)
 
-    second_page, final_token = await repository.list_executions(
-        user=principal,
-        org_id=None,
+    second_page, final_token = await list_sdk_executions(
+        db_session,
+        principal,
         limit=25,
-        cursor=_decode_history_cursor(token),
+        cursor=decode_history_cursor(token),
     )
 
     all_ids = [row.execution_id for row in [*first_page, *second_page]]

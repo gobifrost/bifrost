@@ -21,7 +21,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import JSONResponse
-from sqlalchemy import delete, distinct, func, or_, select, union_all, update
+from sqlalchemy import delete, distinct, func, select, update
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -47,7 +47,6 @@ from src.models import (
     WorkflowExecutionRequest,
     WorkflowExecutionResponse,
     WorkflowMetadata,
-    WorkflowParameter,
     WorkflowReference,
     WorkflowRolesResponse,
     WorkflowUpdateRequest,
@@ -61,7 +60,6 @@ from src.models.orm.forms import Form, FormField
 from src.models.orm.applications import Application
 from src.models.orm.agents import Agent, AgentTool
 from src.models.orm.users import Role
-from src.services.workflow_validation import _extract_relative_path
 from src.services.solution_scope import (
     derive_execution_solution_scope,
     solution_allows_global,
@@ -105,57 +103,15 @@ def _convert_workflow_orm_to_schema(
     used_by_count: int = 0,
     role_ids: list[UUID] | None = None,
 ) -> WorkflowMetadata:
-    """Convert ORM model to Pydantic schema for API response."""
-    from typing import Literal
-    from src.models.contracts.workflows import ExecutableType
+    """Convert ORM model to Pydantic schema for API response.
 
-    # Convert parameters from JSONB to WorkflowParameter objects
-    parameters = []
-    for param in workflow.parameters_schema or []:
-        if isinstance(param, dict):
-            parameters.append(WorkflowParameter(**param))
+    Thin alias over the shared service implementation so non-extracted
+    endpoints (e.g. update) share the single conversion.
+    """
+    from shared.sdk_execution_reads import convert_workflow_orm_to_schema
 
-    # Validate execution_mode - default to "sync" if invalid
-    raw_mode = workflow.execution_mode or "sync"
-    execution_mode: Literal["sync", "async"] = "async" if raw_mode == "async" else "sync"
-
-    # Convert string type to ExecutableType enum
-    workflow_type = ExecutableType(workflow.type or "workflow")
-
-    return WorkflowMetadata(
-        id=str(workflow.id),
-        name=workflow.name,
-        function_name=workflow.function_name,
-        display_name=workflow.display_name,
-        description=workflow.description if workflow.description else None,
-        category=workflow.category or "General",
-        tags=workflow.tags or [],
-        type=workflow_type,
-        organization_id=str(workflow.organization_id) if workflow.organization_id else None,
-        is_solution_managed=workflow.solution_id is not None,
-        solution_id=workflow.solution_id,
-        access_level=workflow.access_level or "role_based",
-        role_ids=[str(role_id) for role_id in (role_ids or [])],
-        parameters=parameters,
-        execution_mode=execution_mode,
-        timeout_seconds=workflow.timeout_seconds if workflow.timeout_seconds is not None else 1800,
-        retry_policy=None,
-        endpoint_enabled=workflow.endpoint_enabled or False,
-        allowed_methods=workflow.allowed_methods or ["POST"],
-        disable_global_key=workflow.disable_global_key or False,
-        public_endpoint=workflow.public_endpoint or False,
-        is_tool=workflow.type == "tool",  # Derive from type field
-        tool_description=workflow.tool_description,
-        # NOT `or 300` — 0 means "never cache" and `or` would clobber it.
-        cache_ttl_seconds=(
-            workflow.cache_ttl_seconds if workflow.cache_ttl_seconds is not None else 300
-        ),
-        time_saved=workflow.time_saved or 0,
-        value=float(workflow.value or 0.0),
-        used_by_count=used_by_count,
-        source_file_path=workflow.path,
-        relative_file_path=_extract_relative_path(workflow.path),
-        created_at=workflow.created_at,
+    return convert_workflow_orm_to_schema(
+        workflow, used_by_count=used_by_count, role_ids=role_ids
     )
 
 
@@ -195,18 +151,9 @@ def _extract_workflows_from_props(obj: Any, workflow_ids: set[str]) -> None:
 
 async def _get_workflow_role_ids(db: DbSession, workflow_ids: list[UUID]) -> dict[UUID, list[UUID]]:
     """Return assigned role IDs keyed by workflow ID for a workflow batch."""
-    if not workflow_ids:
-        return {}
+    from shared.sdk_execution_reads import get_workflow_role_ids
 
-    result = await db.execute(
-        select(WorkflowRole.workflow_id, WorkflowRole.role_id)
-        .where(WorkflowRole.workflow_id.in_(workflow_ids))
-        .order_by(WorkflowRole.workflow_id, WorkflowRole.role_id)
-    )
-    role_ids_by_workflow: dict[UUID, list[UUID]] = {}
-    for workflow_id, role_id in result.all():
-        role_ids_by_workflow.setdefault(workflow_id, []).append(role_id)
-    return role_ids_by_workflow
+    return await get_workflow_role_ids(db, workflow_ids)
 
 
 async def _get_form_workflow_ids(db: DbSession, form_id: UUID) -> set[UUID]:
@@ -218,42 +165,9 @@ async def _get_form_workflow_ids(db: DbSession, form_id: UUID) -> set[UUID]:
     - form.launch_workflow_id (startup/pre-execution workflow)
     - form_fields.data_provider_id (dynamic field data providers)
     """
-    from sqlalchemy.orm import selectinload
+    from shared.sdk_execution_reads import get_form_workflow_ids
 
-    result = await db.execute(
-        select(Form)
-        .options(selectinload(Form.fields))
-        .where(Form.id == form_id)
-    )
-    form = result.scalar_one_or_none()
-
-    if not form:
-        return set()
-
-    workflow_ids: set[UUID] = set()
-
-    # Main workflow
-    if form.workflow_id:
-        try:
-            workflow_ids.add(UUID(form.workflow_id))
-        except ValueError as e:
-            # Non-UUID portable ref (e.g. "path::func") — not a real workflow ID
-            logger.debug(f"form.workflow_id not a UUID, skipping: {e}")
-
-    # Launch workflow
-    if form.launch_workflow_id:
-        try:
-            workflow_ids.add(UUID(form.launch_workflow_id))
-        except ValueError as e:
-            # Non-UUID portable ref — not a real workflow ID
-            logger.debug(f"form.launch_workflow_id not a UUID, skipping: {e}")
-
-    # Data providers from fields
-    for field in form.fields:
-        if field.data_provider_id:
-            workflow_ids.add(field.data_provider_id)
-
-    return workflow_ids
+    return await get_form_workflow_ids(db, form_id)
 
 
 async def _get_app_workflow_ids(db: DbSession, app_id: UUID) -> set[UUID]:
@@ -262,51 +176,9 @@ async def _get_app_workflow_ids(db: DbSession, app_id: UUID) -> set[UUID]:
 
     Scans file_index for app source files and parses for workflow references.
     """
-    from src.models.orm.file_index import FileIndex
-    from src.models.orm.applications import Application
-    from src.models.orm.workflows import Workflow as WfORM
-    from src.services.app_dependencies import parse_dependencies
+    from shared.sdk_execution_reads import get_app_workflow_ids
 
-    # Get app
-    app_result = await db.execute(
-        select(Application).where(Application.id == app_id)
-    )
-    app = app_result.scalar_one_or_none()
-    if not app:
-        return set()
-
-    # Independently deployed V2 Apps have no server-side source tree. Their
-    # workflow references are resolved dynamically by the live SDK at runtime.
-    if app.repo_path is None:
-        return set()
-
-    # Scan file_index for source code
-    prefix = app.repo_prefix
-    fi_result = await db.execute(
-        select(FileIndex.content).where(
-            FileIndex.path.startswith(prefix),
-        )
-    )
-
-    # Collect all refs from all files
-    all_refs: set[str] = set()
-    for (content,) in fi_result.all():
-        if content:
-            all_refs.update(parse_dependencies(content))
-
-    if not all_refs:
-        return set()
-
-    # Resolve refs to workflow UUIDs
-    wf_result = await db.execute(
-        select(WfORM.id, WfORM.name).where(WfORM.is_active.is_(True))
-    )
-    matched: set[UUID] = set()
-    for wf_id, wf_name in wf_result.all():
-        if str(wf_id) in all_refs or wf_name in all_refs:
-            matched.add(wf_id)
-
-    return matched
+    return await get_app_workflow_ids(db, app_id)
 
 
 async def _compute_used_by_counts(db: DbSession, workflow_ids: list[UUID]) -> dict[UUID, int]:
@@ -321,51 +193,9 @@ async def _compute_used_by_counts(db: DbSession, workflow_ids: list[UUID]) -> di
 
     Returns a dict mapping workflow UUID -> count of referencing entities.
     """
-    # Build individual reference queries. Form.workflow_id/launch_workflow_id
-    # are String(255) while others are proper UUID columns, so cast form
-    # columns to UUID for a consistent union.
-    from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+    from shared.sdk_execution_reads import compute_used_by_counts
 
-    refs_form_wf = (
-        select(Form.workflow_id.cast(PG_UUID(as_uuid=True)).label("wf_id"))
-        .where(
-            Form.is_active == True,  # noqa: E712
-            Form.workflow_id.isnot(None),
-            func.length(Form.workflow_id) == 36,  # filter non-UUID strings (e.g. portable refs)
-        )
-    )
-    refs_form_launch = (
-        select(Form.launch_workflow_id.cast(PG_UUID(as_uuid=True)).label("wf_id"))
-        .where(
-            Form.is_active == True,  # noqa: E712
-            Form.launch_workflow_id.isnot(None),
-            func.length(Form.launch_workflow_id) == 36,  # filter non-UUID strings
-        )
-    )
-    refs_form_dp = (
-        select(FormField.data_provider_id.label("wf_id"))
-        .where(FormField.data_provider_id.isnot(None))
-    )
-    refs_agent = (
-        select(AgentTool.workflow_id.label("wf_id"))
-    )
-
-    # Union all reference sources and count per workflow
-    all_refs = union_all(
-        refs_form_wf, refs_form_launch, refs_form_dp, refs_agent
-    ).subquery("all_refs")
-
-    count_query = (
-        select(
-            all_refs.c.wf_id,
-            func.count().label("cnt"),
-        )
-        .where(all_refs.c.wf_id.in_(workflow_ids))
-        .group_by(all_refs.c.wf_id)
-    )
-
-    result = await db.execute(count_query)
-    return {row.wf_id: row.cnt for row in result.all()}
+    return await compute_used_by_counts(db, workflow_ids)
 
 
 # =============================================================================
@@ -425,104 +255,24 @@ async def list_workflows(
         filter_by_app: App UUID to filter workflows by.
         filter_by_agent: Agent UUID to filter workflows by.
     """
-    from src.core.org_filter import resolve_org_filter, OrgFilterType
+    from shared.sdk_execution_reads import SdkExecutionReadError, list_sdk_workflows
 
     try:
-        # Resolve organization filter using shared helper (consistent with forms)
-        try:
-            filter_type, filter_org = resolve_org_filter(user, scope)
-        except ValueError as e:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=str(e),
-            )
-
-        # Query active workflows from database
-        query = select(WorkflowORM).where(WorkflowORM.is_active.is_(True))
-
-        # Apply organization scope filter
-        if filter_type == OrgFilterType.ALL:
-            # Platform admin sees all - no org filter
-            pass
-        elif filter_type == OrgFilterType.GLOBAL_ONLY:
-            # Only global workflows (no organization)
-            query = query.where(WorkflowORM.organization_id.is_(None))
-        elif filter_type == OrgFilterType.ORG_ONLY:
-            # Only that org's workflows (platform admin filtering)
-            query = query.where(WorkflowORM.organization_id == filter_org)
-        elif filter_type == OrgFilterType.ORG_PLUS_GLOBAL:
-            # User's org + global (org users)
-            query = query.where(
-                or_(
-                    WorkflowORM.organization_id == filter_org,
-                    WorkflowORM.organization_id.is_(None),
-                )
-            )
-
-        # Filter by type
-        if type is not None:
-            query = query.where(WorkflowORM.type == type)
-        # Legacy support: is_tool=True maps to type="tool"
-        elif is_tool is not None:
-            if is_tool:
-                query = query.where(WorkflowORM.type == "tool")
-            else:
-                query = query.where(WorkflowORM.type != "tool")
-
-        # Apply entity filters by querying entities directly
-        if filter_by_form:
-            # Get workflow IDs used by this form (direct query)
-            workflow_ids = await _get_form_workflow_ids(db, filter_by_form)
-            if workflow_ids:
-                query = query.where(WorkflowORM.id.in_(workflow_ids))
-            else:
-                # No workflows found, return empty result
-                return []
-        elif filter_by_app:
-            # Get workflow IDs used by this app (query pages/components)
-            workflow_ids = await _get_app_workflow_ids(db, filter_by_app)
-            if workflow_ids:
-                query = query.where(WorkflowORM.id.in_(workflow_ids))
-            else:
-                # No workflows found, return empty result
-                return []
-        elif filter_by_agent:
-            # Get workflow IDs used by this agent (via agent_tools)
-            workflow_ids_subquery = select(AgentTool.workflow_id).where(
-                AgentTool.agent_id == filter_by_agent,
-            )
-            query = query.where(WorkflowORM.id.in_(workflow_ids_subquery))
-
-        result = await db.execute(query)
-        workflows = result.scalars().all()
-
-        # Batch-compute used_by_count for all workflows in a single query.
-        # Counts references from: forms (workflow_id, launch_workflow_id),
-        # form_fields (data_provider_id), and agent_tools.
-        workflow_ids = [w.id for w in workflows]
-        used_by_counts: dict[UUID, int] = {}
-        role_ids_by_workflow: dict[UUID, list[UUID]] = {}
-        if workflow_ids:
-            used_by_counts = await _compute_used_by_counts(db, workflow_ids)
-            role_ids_by_workflow = await _get_workflow_role_ids(db, workflow_ids)
-
-        # Convert ORM models to Pydantic schemas
-        workflow_list = []
-        for w in workflows:
-            try:
-                workflow_list.append(
-                    _convert_workflow_orm_to_schema(
-                        w,
-                        used_by_count=used_by_counts.get(w.id, 0),
-                        role_ids=role_ids_by_workflow.get(w.id, []),
-                    )
-                )
-            except Exception as e:
-                logger.error(f"Failed to convert workflow '{w.name}': {e}")
-
-        logger.info(f"Returning {len(workflow_list)} workflows (scope={log_safe(scope) or 'default'})")
-        return workflow_list
-
+        return await list_sdk_workflows(
+            db,
+            user,
+            type=type,
+            is_tool=is_tool,
+            scope=scope,
+            filter_by_form=filter_by_form,
+            filter_by_app=filter_by_app,
+            filter_by_agent=filter_by_agent,
+        )
+    except SdkExecutionReadError as e:
+        raise HTTPException(
+            status_code=e.status_code,
+            detail=e.detail,
+        )
     except HTTPException:
         raise
     except Exception as e:

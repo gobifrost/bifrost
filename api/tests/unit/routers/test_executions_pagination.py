@@ -11,45 +11,45 @@ from uuid import uuid4
 
 
 def test_cursor_round_trips_timeline_timestamp() -> None:
-    from src.routers.executions import (
-        _decode_history_cursor,
-        _encode_history_cursor,
+    from shared.sdk_execution_reads import (
+        decode_history_cursor,
+        encode_history_cursor,
     )
 
     timeline_at = datetime(2026, 7, 10, 12, 30, 45, 123456, tzinfo=timezone.utc)
     row_id = uuid4()
 
-    token = _encode_history_cursor(timeline_at, row_id)
-    decoded = _decode_history_cursor(token)
+    token = encode_history_cursor(timeline_at, row_id)
+    decoded = decode_history_cursor(token)
 
     assert decoded == (timeline_at, row_id)
 
 
 def test_cursor_round_trips_legacy_null_timestamp() -> None:
     """Cursors minted before timeline anchors may still carry a null value."""
-    from src.routers.executions import (
-        _decode_history_cursor,
-        _encode_history_cursor,
+    from shared.sdk_execution_reads import (
+        decode_history_cursor,
+        encode_history_cursor,
     )
 
     row_id = uuid4()
-    token = _encode_history_cursor(None, row_id)
+    token = encode_history_cursor(None, row_id)
 
-    assert _decode_history_cursor(token) == (None, row_id)
+    assert decode_history_cursor(token) == (None, row_id)
 
 
 def test_cursor_is_opaque_not_a_bare_offset() -> None:
     """A numeric token is the legacy offset format, not a keyset cursor."""
-    from src.routers.executions import _encode_history_cursor
+    from shared.sdk_execution_reads import encode_history_cursor
 
-    token = _encode_history_cursor(None, uuid4())
+    token = encode_history_cursor(None, uuid4())
     assert not token.isdigit()
 
 
 def test_decode_rejects_garbage_and_legacy_offsets() -> None:
     """Legacy numeric offsets and junk must decode to None (caller falls back)."""
-    from src.routers.executions import _decode_history_cursor
+    from shared.sdk_execution_reads import decode_history_cursor
 
-    assert _decode_history_cursor("25") is None
-    assert _decode_history_cursor("not-a-token") is None
-    assert _decode_history_cursor("") is None
+    assert decode_history_cursor("25") is None
+    assert decode_history_cursor("not-a-token") is None
+    assert decode_history_cursor("") is None
