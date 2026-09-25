@@ -99,6 +99,12 @@ class WorkflowExecutionConsumer(BaseConsumer):
         # Only now begin accepting messages from RabbitMQ.
         await super().start()
 
+    async def _drain_admitted_work(self, deadline: float) -> None:
+        # Broker handlers return after routing, before child execution and its
+        # durable result callback finish. Keep the pool alive for both.
+        if self._pool_started:
+            await self._pool.drain(deadline=deadline)
+
     async def stop(self) -> None:
         """Stop the consumer and process pool."""
         # Stop process pool

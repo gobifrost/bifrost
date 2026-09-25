@@ -218,6 +218,8 @@ class _AbstractConsumer(ABC):
         if self._draining:
             return  # idempotent
         self._draining = True
+        expires_at = asyncio.get_running_loop().time() + deadline
+        pending: set[asyncio.Task] = set()
 
         try:
             # Cancel the consumer: stops new deliveries, keeps channel open.
@@ -231,26 +233,48 @@ class _AbstractConsumer(ABC):
             # Snapshot is intentional: any message that races past the _draining
             # flag gets nacked + requeued in _on_message and never enters _inflight.
             if self._inflight:
-                pending = list(self._inflight)
+                pending = set(self._inflight)
                 logger.info(
                     f"Draining {len(pending)} in-flight on {self.queue_name} "
                     f"(deadline={deadline}s)"
                 )
-                try:
-                    await asyncio.wait_for(
-                        asyncio.gather(*pending, return_exceptions=True),
-                        timeout=deadline,
-                    )
+                for task in pending:
+                    # Observe eventual cleanup failures even when teardown must
+                    # proceed before a cancelled handler finishes broker I/O.
+                    task.add_done_callback(self._observe_drained_handler)
+                _, pending = await asyncio.wait(
+                    pending,
+                    timeout=max(0.0, expires_at - asyncio.get_running_loop().time()),
+                )
+                if not pending:
                     logger.info(f"Drain complete for {self.queue_name}")
-                except asyncio.TimeoutError:
-                    still_running = [t for t in pending if not t.done()]
+                else:
                     logger.warning(
                         f"Drain deadline exceeded on {self.queue_name}: "
-                        f"{len(still_running)} task(s) still running"
+                        f"{len(pending)} task(s) still running"
                     )
+                    for task in pending:
+                        task.cancel()
+            await self._drain_admitted_work(
+                max(0.0, expires_at - asyncio.get_running_loop().time())
+            )
         finally:
+            # asyncio.wait does not cancel handlers if drain itself is cancelled.
+            # Do not await their cancellation cleanup: retry publication can hang
+            # until channel closure. stop() still owns durable pool surrender.
+            for task in pending:
+                if not task.done() and not task.cancelling():
+                    task.cancel()
             # Always close channel + connection, even if cancelled mid-drain.
             await self.stop()
+
+    @staticmethod
+    def _observe_drained_handler(task: asyncio.Task) -> None:
+        if not task.cancelled():
+            task.exception()
+
+    async def _drain_admitted_work(self, deadline: float) -> None:
+        """Wait for work handed off beyond the broker handler before teardown."""
 
     async def _on_message(self, message: IncomingMessage) -> None:
         """
