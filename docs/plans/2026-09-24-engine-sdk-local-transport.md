@@ -151,6 +151,14 @@ This is one workstation test-stack result, not a production load or API CPU
 measurement; rerun on deployment-like hardware before using the latency
 ratios for capacity planning.
 
+On the final branch merged with `origin/main` (2026-09-25), the same 60 calls
+per operation and path measured p50 latency in milliseconds of set 13.698
+HTTP / 5.535 local, get 13.294 / 5.565, list 10.307 / 3.066, and delete
+15.057 / 4.952. The measured fixed-operation HTTP request count was again
+240 / 0. The benchmark passed its result-parity assertions. These timings
+reflect this test stack only; the request-count result is the transport
+property relevant to API load.
+
 ## Stage acceptance and verification
 
 For every migrated operation, test the same inputs via HTTP and local service:
@@ -288,3 +296,23 @@ OAuth flow types and require 404 before contacting the provider; the
 external E2E now requires 404 as well. OAuth refresh uses a 30-second
 parent deadline and a 35-second child deadline, allowing the provider
 request and a returned error frame without an earlier local cutoff.
+
+## Final fixed-operation delivery
+
+Every method in the exhaustive checklist above now selects the parent-local
+transport in an engine child. The synchronous Python import misses and client
+context metadata are local too. Shared business services serve both the HTTP
+handlers and local dispatchers. Streaming AI uses a separate credit-based
+channel, closes on cancellation, and records usage before the terminal SDK
+chunk. The child has no PostgreSQL connection. Arbitrary `bifrost.api.*`
+requests and signed storage URLs retain their existing transports.
+
+The final candidate was merged with `origin/main` before verification. The
+combined SDK-focused run passed 697 unit, fork, and CLI/DTO contract tests.
+Two queued-worker E2E tests passed (config mutations and AI completion), as
+did API Pyright/Ruff, client TypeScript/lint, and the config transport
+benchmark above. The initial combined run exposed a knowledge test fixture
+that leaked a committed synthetic user into later user-list tests; its
+transaction isolation was corrected, and the exposing order and complete
+697-test selection passed afterward. The merge queue remains the gate for
+the full backend E2E and browser suites.

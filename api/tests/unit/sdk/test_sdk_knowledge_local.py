@@ -32,8 +32,26 @@ import pytest
 from sqlalchemy import func, select
 
 import pytest_asyncio
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.orm.knowledge import KnowledgeStore
+
+
+@pytest_asyncio.fixture
+async def db_session(async_engine):
+    """Keep service commits inside a rollback-only test transaction."""
+    async with async_engine.connect() as connection:
+        transaction = await connection.begin()
+        async with AsyncSession(
+            bind=connection,
+            expire_on_commit=False,
+            join_transaction_mode="create_savepoint",
+        ) as session:
+            try:
+                yield session
+            finally:
+                await session.rollback()
+                await transaction.rollback()
 
 
 class _FakeEmbedder:
