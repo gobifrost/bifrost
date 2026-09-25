@@ -14,8 +14,9 @@ delete_document/batch/batch_delete/query/count`` document operations,
 plus artifact write/read/list/download URL, artifact generation
 (``create_document``/``create_spreadsheet``/``create_text``/
 ``create_image``), the durable video ``create_video`` enqueue plus its
-fixed ``video_status`` poll, the full files facade, and
-the workflow ``execute``/``cancel`` mutations):
+fixed ``video_status`` poll, the full files facade, the execution
+reads (``workflows.list``, ``executions.list``/``executions.get``),
+and the workflow ``execute``/``cancel`` mutations):
 
 - One request frame (or a bounded chunked request), one-or-many response
   frames, JSON over ``multiprocessing.Connection.send_bytes`` /
@@ -52,7 +53,14 @@ the workflow ``execute``/``cancel`` mutations):
   ``write_mode``/``return_documents``/``scope``; ``tables.batch_delete``
   sends ``table``/``ids``/``scope``. ``agents.enqueue`` sends
   ``agent_name``/``input``/``output_schema``; ``agents.get_run`` sends
-  ``run_id``. ``workflows.execute`` sends ``workflow``/``input_data``/
+  ``run_id``. ``workflows.list`` sends the optional ``type``/``is_tool``/
+  ``scope``/``filter_by_form``/``filter_by_app``/``filter_by_agent``
+  filters (the SDK facade sends none — the parent applies the route
+  defaults, like the unfiltered HTTP call); ``executions.list`` sends
+  ``scope``/``workflow_name``/``workflow_id``/``status``/``start_date``/
+  ``end_date``/``exclude_local``/``limit``/``continuation_token`` (the
+  same values the HTTP query string carries);
+  ``executions.get`` sends ``execution_id``. ``workflows.execute`` sends ``workflow``/``input_data``/
   ``org_id``/``run_as``/``solution``/``scheduled_at``/
   ``delay_seconds`` (the same fields the HTTP payload carries; ``sync``
   is fixed to false — the SDK surface is fire-and-forget);
@@ -93,7 +101,15 @@ the workflow ``execute``/``cancel`` mutations):
   ``{"status": "paused", ...}`` body the facade maps to
   ``AgentPausedError``; ``agents.get_run`` returns the
   ``AgentRunDetailResponse`` dict (a hidden or missing run is a 404
-  error frame the facade maps to ``ValueError``). ``workflows.execute``
+  error frame the facade maps to ``ValueError``). ``workflows.list``
+  returns an ``{"items": [...]}`` envelope of workflow-metadata dicts
+  (the result contract does not carry bare lists);
+  ``executions.list`` returns the ``{"executions": [...],
+  "continuation_token": ...}`` dict (summaries only, like the HTTP
+  list body); ``executions.get`` returns the ``WorkflowExecution``
+  dict (a missing row is a 404 error frame the facade maps to
+  ``ValueError``; a foreign row is a 403 the facade maps to
+  ``PermissionError``). ``workflows.execute``
   returns the ``WorkflowExecutionResponse`` dict (the facade returns its
   ``execution_id`` — fire-and-forget, like HTTP); ``workflows.cancel``
   returns the ``{"execution_id", "status"}`` dict (the facade returns
@@ -141,7 +157,9 @@ from typing import Any, NoReturn
 
 # Operation allowlist (stage 3b): the config facade, the full
 # integrations facade, the full tables facade, the SDK agent
-# ``enqueue``/``get_run`` operations, and the SDK workflow
+# ``enqueue``/``get_run`` operations, the SDK workflow and execution
+# reads (``workflows.list``, ``executions.list``/``executions.get`` —
+# ``workflows.get`` delegates to ``executions.get``), and the SDK workflow
 # ``execute``/``cancel`` mutations ride the local transport. The
 # parent enforces the same allowlist; anything else is a 404 response.
 # Artifact generation (``create_document``/``create_spreadsheet``/
@@ -197,6 +215,9 @@ OP_FILES_SIGNED_URL = "files.signed_url"
 OP_FILES_SEARCH = "files.search"
 OP_AGENTS_ENQUEUE = "agents.enqueue"
 OP_AGENTS_GET_RUN = "agents.get_run"
+OP_WORKFLOWS_LIST = "workflows.list"
+OP_EXECUTIONS_LIST = "executions.list"
+OP_EXECUTIONS_GET = "executions.get"
 OP_WORKFLOWS_EXECUTE = "workflows.execute"
 OP_WORKFLOWS_CANCEL = "workflows.cancel"
 
@@ -2045,6 +2066,119 @@ class ChildLocalTransport:
         result = await self._call(
             OP_AGENTS_GET_RUN,
             {"run_id": run_id},
+            timeout,
+        )
+        if not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+    async def call_workflows_list(
+        self,
+        type: str | None = None,
+        is_tool: bool | None = None,
+        scope: str | None = None,
+        filter_by_form: str | None = None,
+        filter_by_app: str | None = None,
+        filter_by_agent: str | None = None,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> list[dict[str, Any]]:
+        """List workflows through the parent. No HTTP fallback.
+
+        Sends the same filter values the HTTP query string carries (the
+        SDK facade sends none — the parent applies the route defaults,
+        like the unfiltered HTTP call). Returns the workflow-metadata
+        dicts (unwrapped from the ``{"items"}`` envelope — the transport
+        result contract does not carry bare lists), identical to the
+        HTTP path. Large listings arrive as bounded chunked response
+        frames.
+        """
+        result = await self._call(
+            OP_WORKFLOWS_LIST,
+            {
+                "type": type,
+                "is_tool": is_tool,
+                "scope": scope,
+                "filter_by_form": filter_by_form,
+                "filter_by_app": filter_by_app,
+                "filter_by_agent": filter_by_agent,
+            },
+            timeout,
+        )
+        if not isinstance(result, dict) or not isinstance(
+            result.get("items"), list
+        ):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result["items"]
+
+    async def call_executions_list(
+        self,
+        scope: str | None = None,
+        workflow_name: str | None = None,
+        workflow_id: str | None = None,
+        status: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        exclude_local: bool | None = None,
+        limit: int = 50,
+        continuation_token: str | None = None,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """List executions through the parent. No HTTP fallback.
+
+        Sends the same values the HTTP query string carries (an absent
+        ``exclude_local`` defaults to true in the parent, like the HTTP
+        route default). Returns the ``{"executions": [...],
+        "continuation_token": ...}`` dict of summary dicts — payloads
+        stay behind ``executions.get``, exactly like the HTTP list body.
+        Large listings arrive as bounded chunked response frames.
+        """
+        result = await self._call(
+            OP_EXECUTIONS_LIST,
+            {
+                "scope": scope,
+                "workflow_name": workflow_name,
+                "workflow_id": workflow_id,
+                "status": status,
+                "start_date": start_date,
+                "end_date": end_date,
+                "exclude_local": exclude_local,
+                "limit": limit,
+                "continuation_token": continuation_token,
+            },
+            timeout,
+        )
+        if not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+    async def call_executions_get(
+        self,
+        execution_id: str,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """Get an execution's detail through the parent. No HTTP fallback.
+
+        Returns the ``WorkflowExecution`` dict (the facade validates it
+        as the public model). A missing row is a 404 error frame the
+        facade maps to ``ValueError``; a foreign row is a 403 the facade
+        maps to ``PermissionError`` — never null results. Large details
+        arrive as bounded chunked response frames.
+        """
+        result = await self._call(
+            OP_EXECUTIONS_GET,
+            {"execution_id": execution_id},
             timeout,
         )
         if not isinstance(result, dict):

@@ -36,7 +36,7 @@ class workflows:
                 - description: str | None - Human-readable description
                 - category: str - Category for organization
                 - tags: list[str] - Tags for categorization
-                - parameters: dict - Workflow parameters
+                - parameters: list[dict] - Workflow parameters
                 - execution_mode: str - Execution mode
                 - timeout_seconds: int - Max execution time
                 - retry_policy: dict | None - Retry configuration
@@ -59,6 +59,16 @@ class workflows:
             >>> for wf in wf_list:
             ...     print(f"{wf.name}: {wf.description}")
         """
+        from ._local_transport import get as _get_local_transport
+
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent lists through the shared
+            # execution-reads service over the dedicated channel. A
+            # local attempt never falls back to HTTP — failures raise
+            # loudly below.
+            items = await transport.call_workflows_list()
+            return [WorkflowMetadata.model_validate(wf) for wf in items]
         client = get_client()
         response = await client.get("/api/workflows")
         raise_for_status_with_detail(response)

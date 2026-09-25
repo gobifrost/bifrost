@@ -80,7 +80,7 @@ class WorkflowMetadata(BaseModel):
     description: str | None
     category: str | None
     tags: list[str]
-    parameters: dict
+    parameters: list[dict[str, Any]]
     execution_mode: str
     timeout_seconds: int | None
     retry_policy: dict | None

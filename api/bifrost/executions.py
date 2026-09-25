@@ -92,6 +92,42 @@ class executions:
             ...     print(f"{execution.workflow_name}: {execution.status}")
             >>> failed = await executions.list(status="Failed")
         """
+        from ._local_transport import get as _get_local_transport
+
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent lists through the shared
+            # execution-reads service over the dedicated channel. The
+            # frame carries the same values the HTTP query string
+            # carries (``workflow_id`` wins over ``workflow_name``,
+            # like the HTTP path); an absent ``exclude_local``
+            # defaults to true in the parent, like the route default.
+            # A local attempt never falls back to HTTP — failures
+            # raise loudly below.
+            if workflow_id:
+                local_workflow_id = workflow_id
+                local_workflow_name = None
+            else:
+                local_workflow_id = None
+                local_workflow_name = workflow_name
+            data = await transport.call_executions_list(
+                workflow_name=local_workflow_name,
+                workflow_id=local_workflow_id,
+                status=status,
+                start_date=start_date,
+                end_date=end_date,
+                exclude_local=exclude_local,
+                limit=min(limit, 1000),
+                continuation_token=continuation_token,
+            )
+            executions_data = data.get("executions", [])
+            return ExecutionList(
+                [
+                    WorkflowExecution.model_validate(exec_data)
+                    for exec_data in executions_data
+                ],
+                continuation_token=data.get("continuation_token"),
+            )
         client = get_client()
 
         # Build query parameters
@@ -150,6 +186,27 @@ class executions:
             >>> print(exec_details.status)
             >>> print(exec_details.result)
         """
+        from ._local_transport import get as _get_local_transport
+
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent reads through the shared
+            # execution-reads service over the dedicated channel. Error
+            # mapping matches the HTTP path below; a local attempt never
+            # falls back to HTTP.
+            from .client import BifrostAPIError
+
+            try:
+                data = await transport.call_executions_get(execution_id)
+            except BifrostAPIError as e:
+                if e.response.status_code == 404:
+                    raise ValueError(f"Execution not found: {execution_id}") from None
+                if e.response.status_code == 403:
+                    raise PermissionError(
+                        f"Access denied to execution: {execution_id}"
+                    ) from None
+                raise
+            return WorkflowExecution.model_validate(data)
         client = get_client()
         response = await client.get(f"/api/executions/{execution_id}")
         if response.status_code == 404:

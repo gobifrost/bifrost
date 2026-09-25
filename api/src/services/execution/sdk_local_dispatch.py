@@ -2,9 +2,11 @@
 Parent-side dispatcher for the engine-local SDK operation transport.
 
 The worker parent (``ProcessPoolManager``) serves ``config`` requests
-(get, set, list, delete) and ``integrations`` requests (get,
+(get, set, list, delete), ``integrations`` requests (get,
 list_mappings, get_mapping, upsert_mapping, delete_mapping,
-refresh_token) arriving on each child's dedicated SDK channel.
+refresh_token), and the SDK workflow/execution reads
+(``workflows.list``, ``executions.list``/``executions.get``) arriving
+on each child's dedicated SDK channel.
 Identity, scope, and Solution install id come exclusively from the parent's
 own dispatch context (:func:`principal_from_context`) — child-supplied
 scope strings are treated as untrusted requests and re-validated through
@@ -32,7 +34,9 @@ write/read/list/download URL plus artifact generation
 (``create_document``/``create_spreadsheet``/``create_text``/
 ``create_image``), the durable video ``create_video`` enqueue plus its
 fixed ``video_status`` poll, all fixed file operations, the SDK agent
-``enqueue``/``get_run`` operations, and the SDK workflow
+``enqueue``/``get_run`` operations, the SDK workflow and execution
+reads (``workflows.list``, ``executions.list``/``executions.get``),
+and the SDK workflow
 ``execute``/``cancel`` mutations. Engine import fast path: ``modules.resolve``
 and ``modules.fetch`` (served on the dedicated import channel through the
 shared ``sdk_modules`` service, scoped by the parent-derived principal).
@@ -63,8 +67,11 @@ from bifrost._local_transport import (
     OP_ARTIFACTS_CREATE_TEXT,
     OP_ARTIFACTS_CREATE_VIDEO,
     OP_ARTIFACTS_VIDEO_STATUS,
+    OP_EXECUTIONS_GET,
+    OP_EXECUTIONS_LIST,
     OP_WORKFLOWS_EXECUTE,
     OP_WORKFLOWS_CANCEL,
+    OP_WORKFLOWS_LIST,
     OP_ARTIFACTS_WRITE,
     OP_ARTIFACTS_READ,
     OP_ARTIFACTS_LIST,
@@ -119,7 +126,10 @@ logger = logging.getLogger(__name__)
 
 # Operations this dispatcher can dispatch. Stage 3a: the config facade, the
 # full integrations facade (reads, mapping mutations, token refresh), and
-# the table document reads (get/query/unfiltered count). Engine import
+# the table document reads (get/query/unfiltered count). The SDK workflow
+# and execution reads (``workflows.list``, ``executions.list``/
+# ``executions.get``) ride the same channel through the shared
+# ``sdk_execution_reads`` service. Engine import
 # fast path: cold module-name resolution and candidate source fetch
 # (served on the dedicated import channel through the shared sdk_modules
 # service).
@@ -176,6 +186,9 @@ SDK_CHANNEL_ALLOWED_OPS = frozenset(
         OP_AGENTS_GET_RUN,
         OP_WORKFLOWS_EXECUTE,
         OP_WORKFLOWS_CANCEL,
+        OP_WORKFLOWS_LIST,
+        OP_EXECUTIONS_LIST,
+        OP_EXECUTIONS_GET,
     }
 )
 IMPORT_CHANNEL_ALLOWED_OPS = frozenset({OP_MODULES_RESOLVE, OP_MODULES_FETCH})
@@ -572,6 +585,12 @@ async def dispatch_frames(
         return await _dispatch_agents_enqueue(session_factory, principal, frame_id, frame)
     if op == OP_AGENTS_GET_RUN:
         return await _dispatch_agents_get_run(session_factory, principal, frame_id, frame)
+    if op == OP_WORKFLOWS_LIST:
+        return await _dispatch_workflows_list(session_factory, principal, frame_id, frame)
+    if op == OP_EXECUTIONS_LIST:
+        return await _dispatch_executions_list(session_factory, principal, frame_id, frame)
+    if op == OP_EXECUTIONS_GET:
+        return await _dispatch_executions_get(session_factory, principal, frame_id, frame)
     if op == OP_WORKFLOWS_EXECUTE:
         return await _dispatch_workflows_execute(session_factory, principal, frame_id, frame)
     if op == OP_WORKFLOWS_CANCEL:
@@ -1523,6 +1542,424 @@ async def _dispatch_agents_get_run(
         op=OP_AGENTS_GET_RUN,
         log_key=raw_id,
         status_errors=(SdkAgentRunError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+# =============================================================================
+# SDK workflow/execution reads
+# (workflows.list, executions.list, executions.get)
+# =============================================================================
+
+
+def _optional_reads_str(
+    frame: dict[str, Any], field: str, frame_id: str | None, op: str
+) -> tuple[str | None, dict[str, Any] | None]:
+    """One optional string frame field (None when absent or null), else a 422."""
+    value = frame.get(field)
+    if value is None:
+        return None, None
+    if isinstance(value, str):
+        return value, None
+    return (
+        None,
+        _error(frame_id, 422, f"invalid {op} request: {field!r} must be a string"),
+    )
+
+
+def _optional_reads_uuid(
+    frame: dict[str, Any],
+    field: str,
+    frame_id: str | None,
+    op: str,
+    detail: str,
+) -> tuple[UUID | None, dict[str, Any] | None]:
+    """One optional UUID frame field (None when absent or null), else a 422.
+
+    ``detail`` carries the route's message so local validation matches
+    HTTP: the executions route rejects a malformed ``workflowId`` with
+    ``"workflowId must be a UUID"``; the workflows route's FastAPI
+    parsing rejects malformed entity filters the same way.
+    """
+    value = frame.get(field)
+    if value is None:
+        return None, None
+    parsed: UUID | None = None
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = UUID(value)
+        except ValueError:
+            parsed = None
+    if parsed is None:
+        return None, _error(frame_id, 422, detail)
+    return parsed, None
+
+
+_READ_BOOL_TRUE = frozenset({"1", "true", "yes", "on"})
+_READ_BOOL_FALSE = frozenset({"0", "false", "no", "off"})
+
+
+def _optional_reads_bool(
+    frame: dict[str, Any],
+    field: str,
+    frame_id: str | None,
+    op: str,
+    detail: str,
+) -> tuple[bool | None, dict[str, Any] | None]:
+    """One optional boolean frame field, else a 422 like the HTTP route.
+
+    Accepts native booleans plus the same ``1/true/yes/on`` and
+    ``0/false/no/off`` spellings (case-insensitive) the executions
+    route's ``excludeLocal`` parsing accepts.
+    """
+    value = frame.get(field)
+    if value is None:
+        return None, None
+    if isinstance(value, bool):
+        return value, None
+    if isinstance(value, str):
+        lowered = value.casefold()
+        if lowered in _READ_BOOL_TRUE:
+            return True, None
+        if lowered in _READ_BOOL_FALSE:
+            return False, None
+    return None, _error(frame_id, 422, detail)
+
+
+def _optional_reads_iso_date(
+    frame: dict[str, Any],
+    field: str,
+    frame_id: str | None,
+    http_name: str,
+) -> tuple[str | None, dict[str, Any] | None]:
+    """One optional ISO-8601 date frame field, else a 422 like the HTTP route.
+
+    Uses the route's ``datetime.fromisoformat`` check (after the same
+    ``Z``-suffix normalization) and its ``"<name> must be an ISO 8601
+    date-time"`` message. The validated string passes through to the
+    shared service, which applies the same range filter as HTTP.
+    """
+    from datetime import datetime
+
+    value = frame.get(field)
+    if value is None:
+        return None, None
+    if isinstance(value, str):
+        try:
+            datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return value, None
+        except ValueError:
+            pass
+    return (
+        None,
+        _error(frame_id, 422, f"{http_name} must be an ISO 8601 date-time"),
+    )
+
+
+async def _dispatch_workflows_list(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``workflows.list`` through the shared execution-reads service.
+
+    Filter fields mirror the ``GET /api/workflows`` query string
+    (``type``/``is_tool``/``scope``/``filter_by_form``/``filter_by_app``/
+    ``filter_by_agent``); the SDK facade sends none, so the parent
+    applies the route defaults like the unfiltered HTTP call. Entity
+    filters validate as UUIDs (422, like the route's FastAPI parsing);
+    ``is_tool`` accepts native booleans plus the HTTP boolean
+    spellings. Scope, authorization (superuser-only), used-by counts,
+    and metadata serialization are the shared service's — identical to
+    HTTP by construction. Actor, org, and Solution scope come only
+    from the parent-derived principal: the request runs under the
+    token-equivalent engine/service user. Large listings ride bounded
+    chunked frames via ``_ok_frames``. A local attempt never retries
+    over HTTP.
+    """
+    from shared.sdk_execution_reads import SdkExecutionReadError, list_sdk_workflows
+
+    workflow_type, invalid = _optional_reads_str(
+        frame, "type", frame_id, OP_WORKFLOWS_LIST
+    )
+    if invalid is not None:
+        return [invalid]
+    is_tool, invalid = _optional_reads_bool(
+        frame,
+        "is_tool",
+        frame_id,
+        OP_WORKFLOWS_LIST,
+        f"invalid {OP_WORKFLOWS_LIST} request: 'is_tool' must be a boolean",
+    )
+    if invalid is not None:
+        return [invalid]
+    scope, invalid = _optional_reads_str(frame, "scope", frame_id, OP_WORKFLOWS_LIST)
+    if invalid is not None:
+        return [invalid]
+    filter_by_form, invalid = _optional_reads_uuid(
+        frame,
+        "filter_by_form",
+        frame_id,
+        OP_WORKFLOWS_LIST,
+        f"invalid {OP_WORKFLOWS_LIST} request: 'filter_by_form' must be a UUID",
+    )
+    if invalid is not None:
+        return [invalid]
+    filter_by_app, invalid = _optional_reads_uuid(
+        frame,
+        "filter_by_app",
+        frame_id,
+        OP_WORKFLOWS_LIST,
+        f"invalid {OP_WORKFLOWS_LIST} request: 'filter_by_app' must be a UUID",
+    )
+    if invalid is not None:
+        return [invalid]
+    filter_by_agent, invalid = _optional_reads_uuid(
+        frame,
+        "filter_by_agent",
+        frame_id,
+        OP_WORKFLOWS_LIST,
+        f"invalid {OP_WORKFLOWS_LIST} request: 'filter_by_agent' must be a UUID",
+    )
+    if invalid is not None:
+        return [invalid]
+    user = _workflow_user_for_principal(principal)
+
+    async def _list(session: Any) -> dict[str, Any]:
+        workflows = await list_sdk_workflows(
+            session,
+            user,
+            type=workflow_type,
+            is_tool=is_tool,
+            scope=scope,
+            filter_by_form=filter_by_form,
+            filter_by_app=filter_by_app,
+            filter_by_agent=filter_by_agent,
+        )
+        return {
+            "items": [w.model_dump(mode="json") for w in workflows],
+        }
+
+    result, error = await _run_short(
+        session_factory,
+        _list,
+        op=OP_WORKFLOWS_LIST,
+        log_key="workflows",
+        status_errors=(SdkExecutionReadError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_executions_list(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``executions.list`` through the shared execution-reads service.
+
+    Frame fields mirror the ``GET /api/executions`` query string, and
+    validation mirrors the route: malformed ``workflow_id``,
+    ``start_date``/``end_date``, ``exclude_local``, ``limit``, and
+    ``continuation_token`` values are 422s with the route's messages;
+    an absent ``exclude_local`` defaults to true and an absent
+    ``limit`` to 25, like the route defaults. The continuation token
+    decodes with the shared keyset cursor (legacy numeric-offset
+    fallback, like the route). Scope, ownership, status mapping, and
+    summary serialization are the shared service's — identical to HTTP
+    by construction. Actor, org, and Solution scope come only from the
+    parent-derived principal: the request runs under the
+    token-equivalent engine/service user, never from child claims.
+    Large listings ride bounded chunked frames via ``_ok_frames``. A
+    local attempt never retries over HTTP.
+    """
+    from shared.sdk_execution_reads import (
+        SdkExecutionReadError,
+        decode_history_cursor,
+        list_sdk_executions,
+    )
+
+    scope, invalid = _optional_reads_str(
+        frame, "scope", frame_id, OP_EXECUTIONS_LIST
+    )
+    if invalid is not None:
+        return [invalid]
+    workflow_name, invalid = _optional_reads_str(
+        frame, "workflow_name", frame_id, OP_EXECUTIONS_LIST
+    )
+    if invalid is not None:
+        return [invalid]
+    workflow_id, invalid = _optional_reads_uuid(
+        frame,
+        "workflow_id",
+        frame_id,
+        OP_EXECUTIONS_LIST,
+        "workflowId must be a UUID",
+    )
+    if invalid is not None:
+        return [invalid]
+    status_filter, invalid = _optional_reads_str(
+        frame, "status", frame_id, OP_EXECUTIONS_LIST
+    )
+    if invalid is not None:
+        return [invalid]
+    start_date, invalid = _optional_reads_iso_date(
+        frame, "start_date", frame_id, "startDate"
+    )
+    if invalid is not None:
+        return [invalid]
+    end_date, invalid = _optional_reads_iso_date(
+        frame, "end_date", frame_id, "endDate"
+    )
+    if invalid is not None:
+        return [invalid]
+    exclude_local, invalid = _optional_reads_bool(
+        frame,
+        "exclude_local",
+        frame_id,
+        OP_EXECUTIONS_LIST,
+        "excludeLocal must be a boolean",
+    )
+    if invalid is not None:
+        return [invalid]
+    if exclude_local is None:
+        exclude_local = True
+
+    raw_limit = frame.get("limit")
+    if raw_limit is None:
+        limit = 25
+    elif (
+        isinstance(raw_limit, bool)
+        or not isinstance(raw_limit, int)
+        or not 1 <= raw_limit <= 1000
+    ):
+        return [
+            _error(
+                frame_id,
+                422,
+                f"invalid {OP_EXECUTIONS_LIST} request: "
+                "'limit' must be an integer between 1 and 1000",
+            )
+        ]
+    else:
+        limit = raw_limit
+
+    raw_token = frame.get("continuation_token")
+    if raw_token is None or raw_token == "":
+        cursor, offset = None, 0
+    elif not isinstance(raw_token, str):
+        return [
+            _error(frame_id, 422, "continuationToken is invalid"),
+        ]
+    else:
+        cursor = decode_history_cursor(raw_token)
+        offset = 0
+        if cursor is None:
+            try:
+                offset = int(raw_token)
+            except ValueError:
+                return [
+                    _error(frame_id, 422, "continuationToken is invalid"),
+                ]
+            if offset < 0:
+                return [
+                    _error(frame_id, 422, "continuationToken is invalid"),
+                ]
+
+    user = _workflow_user_for_principal(principal)
+
+    async def _list(session: Any) -> dict[str, Any]:
+        summaries, next_token = await list_sdk_executions(
+            session,
+            user,
+            scope=scope,
+            workflow_name=workflow_name,
+            workflow_id=workflow_id,
+            status_filter=status_filter,
+            start_date=start_date,
+            end_date=end_date,
+            exclude_local=exclude_local,
+            limit=limit,
+            offset=offset,
+            cursor=cursor,
+        )
+        return {
+            "executions": [s.model_dump(mode="json") for s in summaries],
+            "continuation_token": next_token,
+        }
+
+    result, error = await _run_short(
+        session_factory,
+        _list,
+        op=OP_EXECUTIONS_LIST,
+        log_key=workflow_name or "",
+        status_errors=(SdkExecutionReadError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_executions_get(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``executions.get`` through the shared execution-reads service.
+
+    Also serves ``workflows.get``, which delegates to ``executions.get``
+    in the SDK. The execution id validates as a UUID (422 on
+    missing/malformed, like the HTTP path-param parsing). Ownership,
+    the Redis-pending fallback, log/AI-usage enrichment, and detail
+    serialization are the shared service's — a missing row is a 404
+    error frame the facade maps to ``ValueError``, a foreign row a 403
+    the facade maps to ``PermissionError``. The request runs under the
+    token-equivalent engine/service user built only from the
+    parent-derived principal. Large details ride bounded chunked frames
+    via ``_ok_frames``. A local attempt never retries over HTTP.
+    """
+    from shared.sdk_execution_reads import SdkExecutionReadError, get_sdk_execution
+
+    raw_id = frame.get("execution_id")
+    if not isinstance(raw_id, str) or not raw_id.strip():
+        return [
+            _error(
+                frame_id,
+                422,
+                f"invalid {OP_EXECUTIONS_GET} request: 'execution_id' is required",
+            )
+        ]
+    try:
+        execution_uuid = UUID(raw_id)
+    except ValueError:
+        return [
+            _error(
+                frame_id,
+                422,
+                f"invalid {OP_EXECUTIONS_GET} request: 'execution_id' must be a UUID",
+            )
+        ]
+    user = _workflow_user_for_principal(principal)
+
+    async def _get(session: Any) -> dict[str, Any]:
+        detail = await get_sdk_execution(session, user, execution_uuid)
+        return detail.model_dump(mode="json")
+
+    result, error = await _run_short(
+        session_factory,
+        _get,
+        op=OP_EXECUTIONS_GET,
+        log_key=raw_id,
+        status_errors=(SdkExecutionReadError,),
     )
     if error is not None:
         error["id"] = frame_id
