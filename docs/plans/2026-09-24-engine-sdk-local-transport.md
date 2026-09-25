@@ -53,6 +53,7 @@ credentials, dependencies, or unrelated files.
 | Identity | organization/user/role CRUD and role assignments | Auth, invites, audit, cache invalidation |
 | Artifacts | write/render/generate/read/list/download URL, video job status | Workspace, object storage, durable platform jobs |
 | AI | complete, stream, model info | Provider service, usage, streaming backpressure |
+| Engine Python imports | cold-cache module fetch and name resolution | Redis/S3 source lookup, signed Solution scope, synchronous import hook |
 
 `ai.create_image` and `ai.create_video` delegate to artifact methods. The
 hidden `OAuthCredentials.refresh()` call is included. `context`, decorators,
@@ -93,6 +94,11 @@ transport must preserve those behaviors without recursive HTTP requests.
 `bifrost.api.get/post/put/patch/delete` and `BifrostClient` raw request
 methods remain HTTP escape hatches. `refs.py` is a CLI/reference utility,
 not an exported runtime facade. Local context and decorators make no request.
+The engine's internal synchronous import hook is a separate fixed path:
+`get_module_sync()` reads Redis first, but on a miss calls
+`GET /api/sdk/modules/{path}`; name resolution can call
+`GET /api/sdk/modules-resolve`. Those cold-cache calls belong in the local
+coverage, even though they are not exported from `bifrost.__init__`.
 
 ### Existing server seams
 
@@ -111,7 +117,10 @@ dispatcher call the same function.
    dispatcher, shared config-get service, HTTP/local parity and crash tests.
 2. Remaining config and integration operations.
 3. Table definitions and all document methods, including batch semantics.
-4. File and artifact binary transport and operations, then knowledge.
+4. Synchronous import-hook misses (module fetch and name resolution), then
+   file/artifact binary transport and operations, then knowledge. Preserve
+   signed Solution access and avoid deadlocking the child event loop during
+   synchronous Python imports.
 5. Workflow, execution, agent, event, and form operations.
 6. Identity and role operations.
 7. AI info, completion, and streaming with provider/usage parity.
@@ -179,3 +188,8 @@ Earlier failures in the new live test import, the test stack reset, the
 fork fixture's Redis cache setup, and the single-frame list assertion were
 diagnosed and corrected. Stage 2a is accepted for continuation; the complete
 SDK product remains unfinished.
+
+The config E2E proves zero API requests for the fixed config methods by
+disabling their HTTP client in the child. It still makes an internal module
+fetch request on a cold Redis cache. Stage 4 must eliminate that engine
+API hop before claiming the full SDK fast path is complete.
