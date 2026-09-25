@@ -94,6 +94,39 @@ def resolve_target_org_safe(
         )
 
 
+async def assert_solution_write_targets_owned_table(
+    ctx: TableResolutionContext, table: Table
+) -> None:
+    target_org = table.organization_id
+    solution_id = await resolve_effective_solution_id(ctx.db, ctx, target_org)
+    if solution_id is None or table.solution_id == solution_id:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=f"Table '{table.name}' not found",
+    )
+
+
+async def assert_explicit_scope_targets_table(
+    ctx: TableResolutionContext, table: Table, scope: str | None
+) -> None:
+    if scope is None:
+        return
+    target_org_id = resolve_target_org_safe(ctx, scope)
+    exact_table = await TableRepository(
+        ctx.db,
+        target_org_id,
+        is_superuser=ctx.user.is_superuser,
+        is_external=ctx.user.is_external,
+    ).get(id=table.id, organization_id=target_org_id)
+    if exact_table is not None:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=f"Table '{table.name}' not found",
+    )
+
+
 async def get_table_or_404(
     ctx: TableResolutionContext,
     name_or_id: str,

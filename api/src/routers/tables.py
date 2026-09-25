@@ -34,6 +34,8 @@ from shared.table_documents import (
     query_table_documents,
 )
 from shared.table_resolution import (
+    assert_explicit_scope_targets_table as _assert_explicit_scope_targets_table,
+    assert_solution_write_targets_owned_table as _assert_solution_write_targets_owned_table,
     get_table_or_404,
     resolve_target_org_safe as _resolve_target_org_safe,
 )
@@ -65,7 +67,6 @@ from src.models.contracts.tables import (
 from src.models.orm.custom_claims import CustomClaim as CustomClaimORM
 from src.models.orm.tables import Table
 from src.services.solutions.guard import assert_entity_id_not_solution_managed
-from src.services.solution_scope import resolve_effective_solution_id
 from src.repositories.tables import TableRepository
 from src.core.pubsub import (
     publish_policy_changed,
@@ -135,41 +136,6 @@ async def _validate_table_policy_claim_refs(
         if isinstance(policy, PolicyRuleRef):
             continue
         _validate_policy_claim_refs(policy.when, known)
-
-
-async def _assert_solution_write_targets_owned_table(ctx: Context, table: Table) -> None:
-    # SPIKE: resolve slug ?solution= against the table's org so writes through
-    # a per-call solution slug stay gated to the install's own table.
-    target_org = table.organization_id
-    solution_id = await resolve_effective_solution_id(ctx.db, ctx, target_org)
-    if solution_id is None or table.solution_id == solution_id:
-        return
-    raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail=f"Table '{table.name}' not found",
-    )
-
-
-async def _assert_explicit_scope_targets_table(
-    ctx: Context,
-    table: Table,
-    scope: str | None,
-) -> None:
-    if scope is None:
-        return
-    target_org_id = _resolve_target_org_safe(ctx, scope)
-    exact_table = await TableRepository(
-        ctx.db,
-        target_org_id,
-        is_superuser=ctx.user.is_superuser,
-        is_external=ctx.user.is_external,
-    ).get(id=table.id, organization_id=target_org_id)
-    if exact_table is not None:
-        return
-    raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail=f"Table '{table.name}' not found",
-    )
 
 
 # =============================================================================

@@ -8,8 +8,9 @@ refresh_token) arriving on each child's dedicated SDK channel.
 Identity, scope, and Solution install id come exclusively from the parent's
 own dispatch context (:func:`principal_from_context`) — child-supplied
 scope strings are treated as untrusted requests and re-validated through
-the same ``resolve_effective_scope`` rule table the HTTP path uses, a
-child-supplied Solution id is never read, and the actor
+the same ``resolve_effective_scope`` rule table the HTTP path uses. A
+per-call Solution target is checked against the parent-owned caller scope,
+and the actor
 email for mutation audit is the effective SDK actor (engine sentinel for
 workflows, service identity for ``@service`` children), never the
 initiating user's ``caller.email`` and never child frames.
@@ -26,8 +27,7 @@ bound); small payloads use a single frame.
 
 Allowlist (stage 3a): ``config.get/set/list/delete``, the full
 ``integrations`` facade (``get/list_mappings/get_mapping/upsert_mapping/
-delete_mapping/refresh_token``), and the table document reads
-(``tables.get/query/count``). Engine import fast path: ``modules.resolve``
+delete_mapping/refresh_token``), and the full tables facade. Engine import fast path: ``modules.resolve``
 and ``modules.fetch`` (served on the dedicated import channel through the
 shared ``sdk_modules`` service, scoped by the parent-derived principal).
 Unknown operations or wire versions get an error response — never silent
@@ -1705,7 +1705,12 @@ async def _resolve_tables_write_target(
     Returns ``(table, user, ctx)``. Resolution and gate failures raise
     ``HTTPException`` for the caller to map to error frames.
     """
-    from shared.table_resolution import LocalTableContext, get_table_or_404
+    from shared.table_resolution import (
+        LocalTableContext,
+        assert_explicit_scope_targets_table,
+        assert_solution_write_targets_owned_table,
+        get_table_or_404,
+    )
 
     user = _table_user_for_principal(principal)
     ctx = LocalTableContext(
@@ -1715,14 +1720,9 @@ async def _resolve_tables_write_target(
         solution_id=_tables_target_solution_id(solution, principal),
     )
     table = await get_table_or_404(ctx, table_ref, scope=scope)
-    from src.routers.tables import (
-        _assert_explicit_scope_targets_table,
-        _assert_solution_write_targets_owned_table,
-    )
-
-    await _assert_solution_write_targets_owned_table(ctx, table)
+    await assert_solution_write_targets_owned_table(ctx, table)
     if require_explicit_scope_gate:
-        await _assert_explicit_scope_targets_table(ctx, table, scope)
+        await assert_explicit_scope_targets_table(ctx, table, scope)
     return table, user, ctx
 
 
