@@ -4,8 +4,7 @@ import pytest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, AsyncMock, patch
 
-# Note: should_auto_refresh_token is imported inside each test to ensure
-# proper import from the cli module after all fixtures are loaded
+from shared.sdk_integrations import build_oauth_data, should_auto_refresh_token
 
 
 class TestAutoRefreshTokenForTemplatedUrl:
@@ -14,8 +13,6 @@ class TestAutoRefreshTokenForTemplatedUrl:
     @pytest.mark.asyncio
     async def test_fetches_fresh_token_when_url_has_entity_id_placeholder(self):
         """When token_url contains {entity_id}, should fetch fresh client_credentials token."""
-        from src.routers.cli import should_auto_refresh_token
-
         # Mock provider with templated URL
         provider = MagicMock()
         provider.token_url = "https://login.microsoftonline.com/{entity_id}/oauth2/v2.0/token"
@@ -30,8 +27,6 @@ class TestAutoRefreshTokenForTemplatedUrl:
     @pytest.mark.asyncio
     async def test_no_auto_refresh_when_url_has_no_placeholder(self):
         """When token_url has no {entity_id}, should use stored token."""
-        from src.routers.cli import should_auto_refresh_token
-
         provider = MagicMock()
         provider.token_url = "https://oauth.example.com/token"
         provider.oauth_flow_type = "client_credentials"
@@ -43,8 +38,6 @@ class TestAutoRefreshTokenForTemplatedUrl:
     @pytest.mark.asyncio
     async def test_no_auto_refresh_for_authorization_code_flow(self):
         """Authorization code flow should never auto-refresh (uses stored refresh token)."""
-        from src.routers.cli import should_auto_refresh_token
-
         provider = MagicMock()
         provider.token_url = "https://login.microsoftonline.com/{entity_id}/oauth2/v2.0/token"
         provider.oauth_flow_type = "authorization_code"
@@ -56,8 +49,6 @@ class TestAutoRefreshTokenForTemplatedUrl:
     @pytest.mark.asyncio
     async def test_no_auto_refresh_when_no_entity_id_and_no_oauth_scope(self):
         """Should not auto-refresh when neither entity_id nor oauth_scope is provided."""
-        from src.routers.cli import should_auto_refresh_token
-
         provider = MagicMock()
         provider.token_url = "https://login.microsoftonline.com/{entity_id}/oauth2/v2.0/token"
         provider.oauth_flow_type = "client_credentials"
@@ -69,8 +60,6 @@ class TestAutoRefreshTokenForTemplatedUrl:
     @pytest.mark.asyncio
     async def test_auto_refresh_when_oauth_scope_provided(self):
         """Should auto-refresh when oauth_scope is provided, even without entity_id."""
-        from src.routers.cli import should_auto_refresh_token
-
         provider = MagicMock()
         provider.token_url = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
         provider.oauth_flow_type = "client_credentials"
@@ -83,8 +72,6 @@ class TestAutoRefreshTokenForTemplatedUrl:
     @pytest.mark.asyncio
     async def test_auto_refresh_when_oauth_scope_and_entity_id_provided(self):
         """Should auto-refresh when both oauth_scope and entity_id are provided."""
-        from src.routers.cli import should_auto_refresh_token
-
         provider = MagicMock()
         provider.token_url = "https://login.microsoftonline.com/{entity_id}/oauth2/v2.0/token"
         provider.oauth_flow_type = "client_credentials"
@@ -96,8 +83,6 @@ class TestAutoRefreshTokenForTemplatedUrl:
     @pytest.mark.asyncio
     async def test_no_auto_refresh_with_oauth_scope_for_authorization_code_flow(self):
         """oauth_scope should not trigger auto-refresh for authorization_code flow."""
-        from src.routers.cli import should_auto_refresh_token
-
         provider = MagicMock()
         provider.token_url = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
         provider.oauth_flow_type = "authorization_code"
@@ -109,8 +94,6 @@ class TestAutoRefreshTokenForTemplatedUrl:
     @pytest.mark.asyncio
     async def test_no_auto_refresh_when_no_provider(self):
         """Should not auto-refresh when provider is None."""
-        from src.routers.cli import should_auto_refresh_token
-
         result = should_auto_refresh_token(None, "some-entity")
 
         assert result is False
@@ -118,8 +101,6 @@ class TestAutoRefreshTokenForTemplatedUrl:
     @pytest.mark.asyncio
     async def test_no_auto_refresh_when_no_token_url(self):
         """Should not auto-refresh when token_url is None."""
-        from src.routers.cli import should_auto_refresh_token
-
         provider = MagicMock()
         provider.token_url = None
         provider.oauth_flow_type = "client_credentials"
@@ -130,13 +111,11 @@ class TestAutoRefreshTokenForTemplatedUrl:
 
 
 class TestBuildOAuthDataAutoRefresh:
-    """Test _build_oauth_data auto-refresh integration."""
+    """Test shared OAuth data construction."""
 
     @pytest.mark.asyncio
     async def test_build_oauth_data_calls_get_client_credentials_when_templated(self):
-        """_build_oauth_data should call OAuthProviderClient when token URL is templated."""
-        from src.routers.cli import _build_oauth_data
-
+        """build_oauth_data should call OAuthProviderClient when token URL is templated."""
         # Mock provider with templated URL
         provider = MagicMock()
         provider.provider_name = "Microsoft CSP"
@@ -172,7 +151,7 @@ class TestBuildOAuthDataAutoRefresh:
             )
             mock_client_class.return_value = mock_instance
 
-            result = await _build_oauth_data(
+            result = await build_oauth_data(
                 provider, token, entity_id, resolve_url_template, decrypt_secret
             )
 
@@ -186,14 +165,12 @@ class TestBuildOAuthDataAutoRefresh:
             )
 
             # Verify the result contains the fresh token
-            assert result.access_token == "fresh-access-token"
-            assert result.expires_at is not None
+            assert result["access_token"] == "fresh-access-token"
+            assert result["expires_at"] is not None
 
     @pytest.mark.asyncio
     async def test_build_oauth_data_uses_stored_token_when_not_templated(self):
-        """_build_oauth_data should use stored token when URL is not templated."""
-        from src.routers.cli import _build_oauth_data
-
+        """build_oauth_data should use stored token when URL is not templated."""
         # Mock provider with NON-templated URL
         provider = MagicMock()
         provider.provider_name = "Generic OAuth"
@@ -222,7 +199,7 @@ class TestBuildOAuthDataAutoRefresh:
             return "decrypted-client-secret"
 
         with patch("src.services.oauth_provider.OAuthProviderClient") as mock_client_class:
-            result = await _build_oauth_data(
+            result = await build_oauth_data(
                 provider, token, entity_id, resolve_url_template, decrypt_secret
             )
 
@@ -230,13 +207,11 @@ class TestBuildOAuthDataAutoRefresh:
             mock_client_class.assert_not_called()
 
             # Verify the result contains the stored token
-            assert result.access_token == "stored-access-token"
+            assert result["access_token"] == "stored-access-token"
 
     @pytest.mark.asyncio
     async def test_build_oauth_data_handles_auto_refresh_failure(self):
-        """_build_oauth_data should handle OAuth failure gracefully."""
-        from src.routers.cli import _build_oauth_data
-
+        """build_oauth_data should handle OAuth failure gracefully."""
         # Mock provider with templated URL
         provider = MagicMock()
         provider.provider_name = "Microsoft CSP"
@@ -270,21 +245,19 @@ class TestBuildOAuthDataAutoRefresh:
             )
             mock_client_class.return_value = mock_instance
 
-            result = await _build_oauth_data(
+            result = await build_oauth_data(
                 provider, token, entity_id, resolve_url_template, decrypt_secret
             )
 
             # Verify the result has no access token (failure case)
-            assert result.access_token is None
+            assert result["access_token"] is None
             # But other data should still be populated
-            assert result.client_id == "test-client-id"
-            assert result.client_secret == "decrypted-client-secret"
+            assert result["client_id"] == "test-client-id"
+            assert result["client_secret"] == "decrypted-client-secret"
 
     @pytest.mark.asyncio
     async def test_build_oauth_data_uses_oauth_scope_override(self):
-        """_build_oauth_data should use oauth_scope instead of provider.scopes when provided."""
-        from src.routers.cli import _build_oauth_data
-
+        """build_oauth_data should use oauth_scope instead of provider.scopes when provided."""
         # Mock provider with default Graph scopes
         provider = MagicMock()
         provider.provider_name = "Microsoft"
@@ -319,7 +292,7 @@ class TestBuildOAuthDataAutoRefresh:
             mock_client_class.return_value = mock_instance
 
             # Call with oauth_scope override for Exchange
-            result = await _build_oauth_data(
+            result = await build_oauth_data(
                 provider, token, entity_id, resolve_url_template, decrypt_secret,
                 oauth_scope="https://outlook.office365.com/.default"
             )
@@ -333,13 +306,11 @@ class TestBuildOAuthDataAutoRefresh:
                 audience=None,
             )
 
-            assert result.access_token == "exchange-access-token"
+            assert result["access_token"] == "exchange-access-token"
 
     @pytest.mark.asyncio
     async def test_build_oauth_data_with_oauth_scope_and_entity_id(self):
-        """_build_oauth_data should use oauth_scope and resolve entity_id in token URL."""
-        from src.routers.cli import _build_oauth_data
-
+        """build_oauth_data should use oauth_scope and resolve entity_id in token URL."""
         # Mock provider with templated URL
         provider = MagicMock()
         provider.provider_name = "Microsoft"
@@ -374,7 +345,7 @@ class TestBuildOAuthDataAutoRefresh:
             mock_client_class.return_value = mock_instance
 
             # Call with both entity_id and oauth_scope override
-            result = await _build_oauth_data(
+            result = await build_oauth_data(
                 provider, token, entity_id, resolve_url_template, decrypt_secret,
                 oauth_scope="https://outlook.office365.com/.default"
             )
@@ -388,4 +359,4 @@ class TestBuildOAuthDataAutoRefresh:
                 audience=None,
             )
 
-            assert result.access_token == "exchange-customer-token"
+            assert result["access_token"] == "exchange-customer-token"

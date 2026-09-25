@@ -11,10 +11,33 @@ from __future__ import annotations
 from .client import get_client, raise_for_status_with_detail
 from .models import IntegrationData, IntegrationMappingResponse
 from ._context import resolve_scope, _execution_context
+from ._local_transport import get as _get_local_transport
+
 
 def _current_context():
     """Return the active ExecutionContext, or None if not in a workflow execution."""
     return _execution_context.get()
+
+
+def _parse_integration_data(result: dict) -> IntegrationData:
+    """Validate one integration payload and register its secrets.
+
+    Shared by the HTTP and engine-local paths so decrypted OAuth tokens
+    and secret config values are scrubbed from outputs identically.
+    """
+    from ._context import register_secret
+
+    data = IntegrationData.model_validate(result)
+    if data.oauth is not None:
+        for secret_field in (data.oauth.access_token, data.oauth.refresh_token, data.oauth.client_secret):
+            if secret_field:
+                register_secret(secret_field)
+    if data.config_secret_keys:
+        for key in data.config_secret_keys:
+            val = data.config.get(key)
+            if val:
+                register_secret(str(val))
+    return data
 
 
 class integrations:
@@ -32,6 +55,10 @@ class integrations:
     ) -> IntegrationData | None:
         """
         Get integration configuration for an organization.
+
+        Inside an engine child this resolves through the parent over the
+        dedicated local transport (same service as the HTTP endpoint);
+        elsewhere it calls the SDK API endpoint.
 
         Returns the integration data including entity ID, configuration,
         and full OAuth details with decrypted credentials.
@@ -84,8 +111,22 @@ class integrations:
             ...     oauth_scope="https://outlook.office365.com/.default"
             ... )
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent resolves this through the shared
+            # integrations service over the dedicated channel — the same
+            # service the HTTP endpoint calls. The Solution install id is
+            # NOT sent: the parent derives it from its own dispatch context,
+            # so a child can never forge another install's declared
+            # connection. A local attempt never falls back to HTTP.
+            result = await transport.call_integrations_get(
+                name, effective_scope, oauth_scope
+            )
+            if result is None:
+                return None
+            return _parse_integration_data(result)
+        client = get_client()
         request_data = {"name": name, "scope": effective_scope}
         if oauth_scope:
             request_data["oauth_scope"] = oauth_scope
@@ -105,18 +146,7 @@ class integrations:
             result = response.json()
             if result is None:
                 return None
-            data = IntegrationData.model_validate(result)
-            from ._context import register_secret
-            if data.oauth is not None:
-                for secret_field in (data.oauth.access_token, data.oauth.refresh_token, data.oauth.client_secret):
-                    if secret_field:
-                        register_secret(secret_field)
-            if data.config_secret_keys:
-                for key in data.config_secret_keys:
-                    val = data.config.get(key)
-                    if val:
-                        register_secret(str(val))
-            return data
+            return _parse_integration_data(result)
         raise_for_status_with_detail(response)
         raise AssertionError("unreachable")
 
@@ -127,6 +157,10 @@ class integrations:
     ) -> list[IntegrationMappingResponse] | None:
         """
         List mappings for an integration in the resolved scope.
+
+        Inside an engine child this lists through the parent over the
+        dedicated local transport (same service as the HTTP endpoint);
+        elsewhere it calls the SDK API endpoint.
 
         Under the workflow execution model the API authenticates the engine
         sentinel (``is_superuser=True``), so the API-side C2 gate never
@@ -156,8 +190,18 @@ class integrations:
             ...         org_id = mapping.organization_id
             ...         tenant_id = mapping.entity_id
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: never falls back to HTTP.
+            json_result = await transport.call_integrations_list_mappings(
+                name, effective_scope
+            )
+            if json_result is None:
+                return None
+            items = json_result.get("items", [])
+            return [IntegrationMappingResponse.model_validate(item) for item in items]
+        client = get_client()
         response = await client.post(
             "/api/sdk/integrations/list_mappings",
             json={"name": name, "scope": effective_scope},
@@ -182,6 +226,10 @@ class integrations:
     ) -> IntegrationMappingResponse | None:
         """
         Get a specific mapping by organization scope or entity ID.
+
+        Inside an engine child this resolves through the parent over the
+        dedicated local transport (same service as the HTTP endpoint);
+        elsewhere it calls the SDK API endpoint.
 
         Args:
             name: Integration name
@@ -210,8 +258,17 @@ class integrations:
             >>> # Get by entity_id
             >>> mapping = await integrations.get_mapping("HaloPSA", entity_id="tenant-456")
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: never falls back to HTTP.
+            result = await transport.call_integrations_get_mapping(
+                name, effective_scope, entity_id
+            )
+            if result is None:
+                return None
+            return IntegrationMappingResponse.model_validate(result)
+        client = get_client()
         response = await client.post(
             "/api/sdk/integrations/get_mapping",
             json={"name": name, "scope": effective_scope, "entity_id": entity_id}

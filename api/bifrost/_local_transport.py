@@ -6,7 +6,8 @@ children must never import PostgreSQL drivers, the ORM, or the API server
 stack. (The synthetic HTTP error mapping imports ``httpx``/``bifrost.client``
 lazily, inside the raising function, long after the child runtime is loaded.)
 
-Protocol (stage 2a: ``config.get/set/list/delete``):
+Protocol (stage 2b: ``config.get/set/list/delete`` plus
+``integrations.get/list_mappings/get_mapping``):
 
 - One request frame (or a bounded chunked request), one-or-many response
   frames, JSON over ``multiprocessing.Connection.send_bytes`` /
@@ -15,11 +16,19 @@ Protocol (stage 2a: ``config.get/set/list/delete``):
 - Small requests carry ``{"v": 1, "id": <uuid>, "op": <name>, ...}``.
   ``config.get`` sends ``key``/``scope``; ``config.set`` sends
   ``key``/``value``/``is_secret``/``scope``; ``config.list`` sends
-  ``scope``; ``config.delete`` sends ``key``/``scope``. Small responses
-  carry the same ``id`` with either ``{"ok": true, "result": ...}`` or
+  ``scope``; ``config.delete`` sends ``key``/``scope``.
+  ``integrations.get`` sends ``name``/``scope``/``oauth_scope``;
+  ``integrations.list_mappings`` sends ``name``/``scope``;
+  ``integrations.get_mapping`` sends ``name``/``scope``/``entity_id``.
+  No request carries Solution identity: the parent derives the Solution
+  install id from its own dispatch context, never from child frames.
+  Small responses carry the same ``id`` with either
+  ``{"ok": true, "result": ...}`` or
   ``{"ok": false, "status": <http-status>, "detail": <str>}``. ``set``
   returns no body (``result`` null, like HTTP 204); ``list`` returns a
-  dict; ``delete`` returns a bool.
+  dict; ``delete`` returns a bool. ``integrations.get``/``get_mapping``
+  return a response dict or null (missing); ``list_mappings`` returns a
+  dict envelope (``{"items": [...]}``).
 - Large payloads in EITHER direction use bounded chunked transfer: a
   header frame ``{"ok": true, "chunked": true, "total": <bytes>,
   "parts": <n>}`` (requests: ``{"op": ..., "chunked": true, "total",
@@ -57,12 +66,16 @@ import threading
 import uuid
 from typing import Any, NoReturn
 
-# Operation allowlist (stage 2a): the config facade rides the local transport.
-# The parent enforces the same allowlist; anything else is a 404 response.
+# Operation allowlist (stage 2b): the config facade and the integrations
+# read facade ride the local transport. The parent enforces the same
+# allowlist; anything else is a 404 response.
 OP_CONFIG_GET = "config.get"
 OP_CONFIG_SET = "config.set"
 OP_CONFIG_LIST = "config.list"
 OP_CONFIG_DELETE = "config.delete"
+OP_INTEGRATIONS_GET = "integrations.get"
+OP_INTEGRATIONS_LIST_MAPPINGS = "integrations.list_mappings"
+OP_INTEGRATIONS_GET_MAPPING = "integrations.get_mapping"
 
 # Wire version. The parent rejects anything else instead of guessing.
 TRANSPORT_VERSION = 1
@@ -498,6 +511,84 @@ class ChildLocalTransport:
             OP_CONFIG_DELETE, {"key": key, "scope": scope}, timeout
         )
         if not isinstance(result, bool):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+    async def call_integrations_get(
+        self,
+        name: str,
+        scope: str | None,
+        oauth_scope: str | None = None,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> dict[str, Any] | None:
+        """Resolve one integration through the parent. No HTTP fallback.
+
+        Returns the ``SDKIntegrationsGetResponse`` dict, or None when the
+        integration is not set up. The Solution install id is NOT sent:
+        the parent derives it from its own dispatch context, so a child
+        can never forge another install's declared-connection 424.
+        Parent error responses raise the same public exceptions as the
+        HTTP path; transport loss raises ``LocalTransportClosed``
+        (synthetic 503) or ``TimeoutError``.
+        """
+        result = await self._call(
+            OP_INTEGRATIONS_GET,
+            {"name": name, "scope": scope, "oauth_scope": oauth_scope},
+            timeout,
+        )
+        if result is not None and not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+    async def call_integrations_list_mappings(
+        self,
+        name: str,
+        scope: str | None,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> dict[str, Any] | None:
+        """List integration mappings through the parent. No HTTP fallback.
+
+        Returns the ``{"items": [...]}`` envelope, or None when the
+        integration is not found — identical to the HTTP path. Large
+        listings arrive as bounded chunked response frames.
+        """
+        result = await self._call(
+            OP_INTEGRATIONS_LIST_MAPPINGS, {"name": name, "scope": scope}, timeout
+        )
+        if result is not None and not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+    async def call_integrations_get_mapping(
+        self,
+        name: str,
+        scope: str | None,
+        entity_id: str | None = None,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> dict[str, Any] | None:
+        """Resolve one integration mapping through the parent. No HTTP fallback.
+
+        Returns the mapping dict, or None when the mapping is not found —
+        identical to the HTTP path.
+        """
+        result = await self._call(
+            OP_INTEGRATIONS_GET_MAPPING,
+            {"name": name, "scope": scope, "entity_id": entity_id},
+            timeout,
+        )
+        if result is not None and not isinstance(result, dict):
             self._fail(
                 LocalTransportError(
                     "malformed local SDK result; channel closed"

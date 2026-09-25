@@ -2,25 +2,29 @@
 Parent-side dispatcher for the engine-local SDK operation transport.
 
 The worker parent (``ProcessPoolManager``) serves ``config`` requests
-(get, set, list, delete) arriving on each child's dedicated SDK channel.
-Identity and scope come exclusively from the parent's own dispatch
-context (:func:`principal_from_context`) — child-supplied scope strings
-are treated as untrusted requests and re-validated through the same
-``resolve_effective_scope`` rule table the HTTP path uses, and the actor
+(get, set, list, delete) and ``integrations`` reads (get, list_mappings,
+get_mapping) arriving on each child's dedicated SDK channel.
+Identity, scope, and Solution install id come exclusively from the parent's
+own dispatch context (:func:`principal_from_context`) — child-supplied
+scope strings are treated as untrusted requests and re-validated through
+the same ``resolve_effective_scope`` rule table the HTTP path uses, a
+child-supplied Solution id is never read, and the actor
 email for mutation audit is the effective SDK actor (engine sentinel for
 workflows, service identity for ``@service`` children), never the
 initiating user's ``caller.email`` and never child frames.
 
 Each operation runs on the parent's pooled database engine with one short
 session, and calls the exact shared business service
-(``shared.sdk_config``) the HTTP handler calls, so cascade,
+(``shared.sdk_config``, ``shared.sdk_integrations``) the HTTP handler calls, so cascade,
 external-user behavior, secret handling, type coercion, audit
-attribution, commit/cache ordering, and missing-key mapping are identical
+attribution, commit/cache ordering, declared-Solution behavior, OAuth
+token cascade, and missing-key mapping are identical
 by construction. Large payloads in either direction travel as bounded
 chunked frames (header plus ordered parts, every frame within the wire
 bound); small payloads use a single frame.
 
-Allowlist (stage 2a): ``config.get/set/list/delete``. Unknown operations
+Allowlist (stage 2b): ``config.get/set/list/delete`` plus
+``integrations.get/list_mappings/get_mapping``. Unknown operations
 or wire versions get an error response — never silent acceptance, never
 arbitrary route forwarding. The existing engine token path is untouched
 for every operation not yet migrated.
@@ -44,6 +48,9 @@ from bifrost._local_transport import (
     OP_CONFIG_GET,
     OP_CONFIG_LIST,
     OP_CONFIG_SET,
+    OP_INTEGRATIONS_GET,
+    OP_INTEGRATIONS_GET_MAPPING,
+    OP_INTEGRATIONS_LIST_MAPPINGS,
     TRANSPORT_VERSION,
     decode_frame,
 )
@@ -51,8 +58,19 @@ from shared.sdk_config import ScopeResolutionError, resolve_sdk_scope
 
 logger = logging.getLogger(__name__)
 
-# Operations this dispatcher will serve. Stage 2a: the config facade.
-ALLOWLIST = frozenset({OP_CONFIG_GET, OP_CONFIG_SET, OP_CONFIG_LIST, OP_CONFIG_DELETE})
+# Operations this dispatcher will serve. Stage 2b: the config facade plus
+# the integrations read facade.
+ALLOWLIST = frozenset(
+    {
+        OP_CONFIG_GET,
+        OP_CONFIG_SET,
+        OP_CONFIG_LIST,
+        OP_CONFIG_DELETE,
+        OP_INTEGRATIONS_GET,
+        OP_INTEGRATIONS_LIST_MAPPINGS,
+        OP_INTEGRATIONS_GET_MAPPING,
+    }
+)
 
 # Wall-clock bound for one parent-side operation (short session + indexed
 # read). A stall fails that request loudly; the child has its own timeout
@@ -95,6 +113,13 @@ class LocalDispatchPrincipal:
     # Services resolve provider bypass live (see ``_resolve_frame_scope``);
     # workflows keep engine-token semantics.
     is_service: bool = False
+    # Solution install id this execution belongs to (None for plain _repo/
+    # executions). Derived from the parent-owned dispatch context — never
+    # from child frames — so a child cannot forge another install's
+    # declared-connection 424. A malformed value fails dispatch closed
+    # (see ``principal_from_context``) rather than silently downgrading to
+    # the loose (silent-None) behavior.
+    solution_id: UUID | None = None
 
 
 class LocalPrincipalError(ValueError):
@@ -106,21 +131,52 @@ class LocalPrincipalError(ValueError):
     """
 
 
+def _solution_id_from_context(context_data: Mapping[str, Any]) -> UUID | None:
+    """Derive the Solution install id from parent-owned dispatch context.
+
+    Missing or empty means a plain (non-solution) execution. A malformed
+    non-empty value fails closed — declared-connection behavior must not
+    silently downgrade to the loose silent-None path.
+    """
+    raw = context_data.get("solution_id")
+    if raw is None or raw == "":
+        return None
+    if isinstance(raw, UUID):
+        return raw
+    if isinstance(raw, str):
+        try:
+            return UUID(raw)
+        except ValueError:
+            raise LocalPrincipalError(
+                f"local dispatch: solution id {raw!r} is not a "
+                "valid UUID; refusing to serve local SDK calls (no silent "
+                "declared-connection downgrade)"
+            ) from None
+    raise LocalPrincipalError(
+        f"local dispatch: solution id {raw!r} is not a "
+        "string; refusing to serve local SDK calls (no silent "
+        "declared-connection downgrade)"
+    )
+
+
 def principal_from_context(context_data: Mapping[str, Any]) -> LocalDispatchPrincipal:
     """Derive the dispatch principal from parent-owned execution context.
 
     Reads only ``organization`` (id/is_provider), ``is_platform_admin``,
-    and the parent-owned ``service`` block assembled by the parent consumer.
-    Never reads child frames, and never reads ``caller.email``: the
-    effective SDK actor is the engine sentinel for workflows
-    (``engine@bifrost.internal``, the ``mint_engine_token()`` address HTTP
+    ``solution_id``, and the parent-owned ``service`` block assembled by the
+    parent consumer. Never reads child frames, and never reads
+    ``caller.email``: the effective SDK actor is the engine sentinel for
+    workflows (``engine@bifrost.internal``, the ``mint_engine_token()`` address HTTP
     workflow calls authenticate as) and the shared
     ``service_sdk_actor_email`` derivation for services (the
     ``mint_service_token()`` address). A missing or empty org id means a
     genuinely global execution; a malformed non-empty id fails closed. A
     present-but-malformed ``service`` block (non-mapping, missing or
     non-UUID ``service_id``) fails closed rather than attributing service
-    writes to a forged or blank value.
+    writes to a forged or blank value. A missing or empty ``solution_id``
+    means a plain (non-solution) execution; a malformed non-empty value
+    fails closed rather than silently downgrading declared-connection
+    behavior to silent-None.
     """
     from src.core.security import ENGINE_SDK_ACTOR_EMAIL, service_sdk_actor_email
 
@@ -153,6 +209,7 @@ def principal_from_context(context_data: Mapping[str, Any]) -> LocalDispatchPrin
             is_external=False,
             actor_email=ENGINE_SDK_ACTOR_EMAIL,
             is_service=False,
+            solution_id=_solution_id_from_context(context_data),
         )
     if not isinstance(service_raw, Mapping):
         raise LocalPrincipalError(
@@ -176,6 +233,7 @@ def principal_from_context(context_data: Mapping[str, Any]) -> LocalDispatchPrin
         is_external=False,
         actor_email=actor_email,
         is_service=True,
+        solution_id=_solution_id_from_context(context_data),
     )
 
 
@@ -222,6 +280,12 @@ async def dispatch_frames(
         return await _dispatch_config_list(session_factory, principal, frame_id, frame)
     if op == OP_CONFIG_DELETE:
         return await _dispatch_config_delete(session_factory, principal, frame_id, frame)
+    if op == OP_INTEGRATIONS_GET:
+        return await _dispatch_integrations_get(session_factory, principal, frame_id, frame)
+    if op == OP_INTEGRATIONS_LIST_MAPPINGS:
+        return await _dispatch_integrations_list_mappings(session_factory, principal, frame_id, frame)
+    if op == OP_INTEGRATIONS_GET_MAPPING:
+        return await _dispatch_integrations_get_mapping(session_factory, principal, frame_id, frame)
     return [_error(frame_id, 404, f"local SDK operation not allowed: {op!r}")]
 
 
@@ -387,11 +451,15 @@ async def _run_short(
     *,
     op: str,
     log_key: str,
+    status_errors: tuple[type[Exception], ...] = (),
 ) -> tuple[Any, dict[str, Any] | None]:
     """Run one service coroutine on a short pooled session with a deadline.
 
     Returns ``(result, None)`` on success, or ``(None, error_frame)`` for
     the timeout/service failures the child maps to transport errors.
+    Exceptions listed in ``status_errors`` carry their own HTTP-style
+    status (e.g. the integrations service 424) instead of the generic
+    500; everything else unexpected stays a 500.
     """
     try:
         async def _run() -> Any:
@@ -402,6 +470,16 @@ async def _run_short(
     except asyncio.TimeoutError:
         logger.warning("local %s dispatch timed out for key=%r", op, log_key)
         return None, _error(None, 503, f"local {op} dispatch timed out")
+    except status_errors as e:
+        status = getattr(e, "status_code", 500)
+        detail = getattr(e, "detail", str(e))
+        try:
+            status = int(status)
+        except (TypeError, ValueError):
+            status = 500
+        if not isinstance(detail, str):
+            detail = str(detail)
+        return None, _error(None, status, detail)
     except Exception as e:  # noqa: BLE001 - transport must return errors, not raise
         logger.exception("local %s dispatch failed for key=%r", op, log_key)
         return None, _error(None, 500, f"local {op} failed: {type(e).__name__}")
@@ -640,6 +718,167 @@ async def _dispatch_config_frames(
 
     result, error = await _run_short(
         session_factory, _get, op=OP_CONFIG_GET, log_key=request.key
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_integrations_get(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``integrations.get`` through the shared integrations service.
+
+    Validates with the same HTTP DTO, resolves the untrusted scope string
+    against the parent-derived principal, and calls the same service the
+    HTTP handler calls. The Solution install id comes ONLY from the
+    principal: a child ``"solution"`` frame field is never read, so a
+    child cannot forge another install's declared-connection 424.
+    """
+    from shared.sdk_integrations import (
+        IntegrationServiceError,
+        get_sdk_integration_dict,
+    )
+    from src.models.contracts.cli import SDKIntegrationsGetRequest
+
+    request, invalid = _validate_request(
+        SDKIntegrationsGetRequest,
+        {
+            "name": frame.get("name"),
+            "scope": frame.get("scope"),
+            "oauth_scope": frame.get("oauth_scope"),
+        },
+        frame_id,
+        OP_INTEGRATIONS_GET,
+    )
+    if invalid is not None:
+        return [invalid]
+    resolved_org_id, scope_error = await _resolve_frame_scope(
+        principal, frame_id, {"scope": request.scope}, session_factory
+    )
+    if scope_error is not None:
+        return [scope_error]
+
+    async def _get(session: Any) -> dict[str, Any] | None:
+        return await get_sdk_integration_dict(
+            session,
+            name=request.name,
+            org_id=resolved_org_id,
+            oauth_scope=request.oauth_scope,
+            solution_id=principal.solution_id,
+            external=principal.is_external,
+        )
+
+    result, error = await _run_short(
+        session_factory,
+        _get,
+        op=OP_INTEGRATIONS_GET,
+        log_key=request.name,
+        status_errors=(IntegrationServiceError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_integrations_list_mappings(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``integrations.list_mappings`` through the shared service.
+
+    A missing integration returns null (like HTTP); otherwise the
+    ``{"items": [...]}`` envelope rides single or chunked frames.
+    """
+    from shared.sdk_integrations import list_sdk_integration_mappings
+    from src.models.contracts.cli import SDKIntegrationsListMappingsRequest
+
+    request, invalid = _validate_request(
+        SDKIntegrationsListMappingsRequest,
+        {"name": frame.get("name"), "scope": frame.get("scope")},
+        frame_id,
+        OP_INTEGRATIONS_LIST_MAPPINGS,
+    )
+    if invalid is not None:
+        return [invalid]
+    async def _list(session: Any) -> dict[str, Any] | None:
+        items = await list_sdk_integration_mappings(
+            session,
+            name=request.name,
+            scope=request.scope,
+            caller_org_id=principal.caller_org_id,
+            is_platform_admin=principal.is_platform_admin,
+            is_provider_org=None if principal.is_service else principal.is_provider_org,
+            external=principal.is_external,
+        )
+        if items is None:
+            return None
+        return {"items": items}
+
+    result, error = await _run_short(
+        session_factory,
+        _list,
+        op=OP_INTEGRATIONS_LIST_MAPPINGS,
+        log_key=request.name,
+        status_errors=(ScopeResolutionError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_integrations_get_mapping(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``integrations.get_mapping`` through the shared service.
+
+    Entity-ID fallback lookups stay scoped by the resolved org exactly
+    like the HTTP path, so non-bypass callers cannot probe other orgs.
+    """
+    from shared.sdk_integrations import get_sdk_integration_mapping_dict
+    from src.models.contracts.cli import SDKIntegrationsGetMappingRequest
+
+    request, invalid = _validate_request(
+        SDKIntegrationsGetMappingRequest,
+        {
+            "name": frame.get("name"),
+            "scope": frame.get("scope"),
+            "entity_id": frame.get("entity_id"),
+        },
+        frame_id,
+        OP_INTEGRATIONS_GET_MAPPING,
+    )
+    if invalid is not None:
+        return [invalid]
+    async def _get_mapping(session: Any) -> dict[str, Any] | None:
+        return await get_sdk_integration_mapping_dict(
+            session,
+            name=request.name,
+            scope=request.scope,
+            caller_org_id=principal.caller_org_id,
+            is_platform_admin=principal.is_platform_admin,
+            is_provider_org=None if principal.is_service else principal.is_provider_org,
+            entity_id=request.entity_id,
+            external=principal.is_external,
+        )
+
+    result, error = await _run_short(
+        session_factory,
+        _get_mapping,
+        op=OP_INTEGRATIONS_GET_MAPPING,
+        log_key=request.name,
+        status_errors=(ScopeResolutionError,),
     )
     if error is not None:
         error["id"] = frame_id

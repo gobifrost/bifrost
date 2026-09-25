@@ -93,7 +93,6 @@ from src.models.contracts.cli import (
     CLISessionResultRequest,
     SDKIntegrationsGetRequest,
     SDKIntegrationsGetResponse,
-    SDKIntegrationsOAuthData,
     SDKIntegrationsListMappingsRequest,
     SDKIntegrationsListMappingsResponse,
     SDKIntegrationsGetMappingRequest,
@@ -138,48 +137,6 @@ install_router = APIRouter(prefix="/api/cli", tags=["CLI Install"])
 
 CLI_DOWNLOAD_ALIAS = "bifrost-cli.tar.gz"
 CLI_ARTIFACT_DIR = Path(os.environ.get("BIFROST_CLI_ARTIFACT_DIR", "/app/artifacts"))
-
-
-# =============================================================================
-# Helper Functions
-# =============================================================================
-
-
-def should_auto_refresh_token(
-    provider: Any, entity_id: str | None, oauth_scope: str | None = None
-) -> bool:
-    """
-    Determine if we should auto-fetch a fresh token instead of using stored token.
-
-    Auto-refresh when:
-    1. OAuth flow is client_credentials (not authorization_code)
-    2. AND one of:
-       a. Token URL contains {entity_id} placeholder AND entity_id is provided
-       b. oauth_scope override is provided (different resource audience)
-
-    This enables:
-    - Multi-tenant client credentials where each tenant requires a different token endpoint
-    - Same credentials used for different resources (Graph vs Exchange vs SharePoint)
-    """
-    if not provider:
-        return False
-
-    if not provider.token_url:
-        return False
-
-    # Only auto-refresh for client_credentials flow
-    if provider.oauth_flow_type != "client_credentials":
-        return False
-
-    # Trigger auto-refresh if oauth_scope override is provided
-    if oauth_scope:
-        return True
-
-    # Trigger auto-refresh if URL has {entity_id} placeholder and entity_id is provided
-    if entity_id and "{entity_id}" in provider.token_url:
-        return True
-
-    return False
 
 
 # =============================================================================
@@ -588,28 +545,6 @@ async def cli_delete_config(
 # =============================================================================
 
 
-async def _connection_is_declared(
-    db: AsyncSession, solution_id: str, name: str
-) -> bool:
-    """True if ``solution_id`` declares an integration named ``name`` via a
-    SolutionConnectionSchema row. Drives the RequiredConnectionUnset 424."""
-    from src.models.orm.solution_connection_schema import SolutionConnectionSchema
-
-    try:
-        sid = UUID(str(solution_id))
-    except (ValueError, TypeError):
-        return False
-    row = (
-        await db.execute(
-            select(SolutionConnectionSchema.id).where(
-                SolutionConnectionSchema.solution_id == sid,
-                SolutionConnectionSchema.integration_name == name,
-            )
-        )
-    ).first()
-    return row is not None
-
-
 @router.post(
     "/integrations/get",
     response_model=SDKIntegrationsGetResponse | None,
@@ -627,287 +562,54 @@ async def sdk_integrations_get(
     2. Org-specific mapping: Returns mapping entity_id, config, and OAuth data
     3. Fallback to integration defaults: When no org mapping exists, returns
        integration.default_entity_id, integration-level config, and OAuth data
-    """
-    from src.repositories.integrations import IntegrationsRepository
-    from src.repositories.oauth import OAuthTokenRepository
-    from src.services.oauth_provider import resolve_url_template
-    from src.core.security import decrypt_secret
 
-    org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
-    org_uuid = UUID(org_id) if org_id else None
+    Scope resolution and response construction live in the shared
+    integrations service (``shared.sdk_integrations``), which the
+    engine-local dispatcher calls for the same inputs.
+    """
+    from shared.sdk_config import ScopeResolutionError, resolve_sdk_scope
+    from shared.sdk_integrations import (
+        IntegrationServiceError,
+        get_sdk_integration_dict,
+    )
 
     try:
-        repo = IntegrationsRepository(db)
-
-        # Try to get org-specific mapping first
-        mapping = None
-        if org_uuid:
-            mapping = await repo.get_integration_for_org(request.name, org_uuid)
-
-        if mapping:
-            # Org-specific mapping found. EXTERNAL callers (OPEN-E) drop the
-            # global tier on both the config merge and the OAuth-token cascade.
-            config = await repo.get_config_for_mapping(
-                mapping.integration_id, org_uuid, external=current_user.is_external
-            )
-            integration = mapping.integration
-            entity_id = mapping.entity_id or (
-                integration.default_entity_id if integration else None
-            )
-
-            secret_keys = (
-                [s.key for s in integration.config_schema if s.type == "secret"]
-                if integration
-                else []
-            )
-            response_data: dict[str, Any] = {
-                "integration_id": str(mapping.integration_id),
-                "entity_id": entity_id,
-                "entity_name": mapping.entity_name,
-                "config": config or {},
-                "oauth": None,
-                "config_secret_keys": secret_keys,
-            }
-
-            # Build OAuth data if provider exists
-            if integration and integration.oauth_provider:
-                token = mapping.oauth_token
-                if not token:
-                    # Cascade: prefer org-scoped token, fall back to global.
-                    # See api/src/repositories/README.md for the pattern.
-                    # External callers get org-only (no global token — OPEN-E).
-                    oauth_token_repo = OAuthTokenRepository(
-                        db,
-                        org_id=org_uuid,
-                        is_superuser=not current_user.is_external,
-                        is_external=current_user.is_external,
-                    )
-                    token = await oauth_token_repo.get_org_level_for_provider(
-                        integration.oauth_provider.id
-                    )
-                response_data["oauth"] = await _build_oauth_data(
-                    integration.oauth_provider,
-                    token,
-                    entity_id,
-                    resolve_url_template,
-                    decrypt_secret,
-                    oauth_scope=request.oauth_scope,
-                    external=current_user.is_external,
-                )
-
-            logger.info(
-                f"SDK retrieved integration '{log_safe(request.name)}' (org mapping) for user {current_user.email}"
-            )
-            return SDKIntegrationsGetResponse(**response_data)
-
-        # Fall back to integration defaults
-        integration = await repo.get_integration_by_name(request.name)
-        if not integration:
-            # RequiredConnectionUnset: if the missing integration was DECLARED by
-            # the calling solution, escalate to a loud 424 (mirrors
-            # RequiredConfigUnset) instead of a silent None. Loose (non-solution
-            # or non-declared) calls keep the silent-None behavior.
-            if request.solution and await _connection_is_declared(
-                db, request.solution, request.name
-            ):
-                raise HTTPException(
-                    status_code=424,
-                    detail=(
-                        f"Required integration '{request.name}' is not set up. "
-                        f"Set it up in the Integrations settings, or in the "
-                        f"solution's Setup tab."
-                    ),
-                )
-            logger.debug(
-                f"SDK integrations.get('{log_safe(request.name)}'): integration not found"
-            )
-            return None
-
-        entity_id = integration.default_entity_id or integration.entity_id
-        # Integration DEFAULTS are the global (org_id=NULL) tier — an EXTERNAL
-        # caller (OPEN-E) reading them would receive decrypted global secrets,
-        # so external=True returns no defaults at all.
-        config = await repo.get_integration_defaults(
-            integration.id, external=current_user.is_external
+        org_uuid = await resolve_sdk_scope(
+            request.scope,
+            caller_org_id=current_user.organization_id,
+            is_platform_admin=current_user.is_superuser,
+            session=db,
         )
+    except ScopeResolutionError as e:
+        raise HTTPException(
+            status_code=e.status_code,
+            detail=e.detail,
+        ) from None
 
-        secret_keys = [s.key for s in integration.config_schema if s.type == "secret"]
-        response_data = {
-            "integration_id": str(integration.id),
-            "entity_id": entity_id,
-            "entity_name": None,  # No mapping = no entity name
-            "config": config or {},
-            "oauth": None,
-            "config_secret_keys": secret_keys,
-        }
-
-        # Build OAuth data if provider exists. This is the DEFAULTS path: the
-        # only provider here is the INTEGRATION-LEVEL (global) one, and
-        # _build_oauth_data decrypts its client_secret. An EXTERNAL caller
-        # (OPEN-E) must get NO OAuth block at all — there is no org-tier
-        # provider on this branch to fall back to.
-        if integration.oauth_provider and not current_user.is_external:
-            # Cascade: prefer org-scoped token, fall back to global.
-            # See api/src/repositories/README.md for the pattern.
-            oauth_token_repo = OAuthTokenRepository(
-                db, org_id=org_uuid, is_superuser=True
-            )
-            token = await oauth_token_repo.get_org_level_for_provider(
-                integration.oauth_provider.id
-            )
-            response_data["oauth"] = await _build_oauth_data(
-                integration.oauth_provider,
-                token,
-                entity_id,
-                resolve_url_template,
-                decrypt_secret,
-                oauth_scope=request.oauth_scope,
-            )
-
-        logger.info(
-            f"SDK retrieved integration '{log_safe(request.name)}' (defaults) for user {current_user.email}"
+    try:
+        result = await get_sdk_integration_dict(
+            db,
+            name=request.name,
+            org_id=org_uuid,
+            oauth_scope=request.oauth_scope,
+            solution_id=request.solution,
+            external=current_user.is_external,
         )
-        return SDKIntegrationsGetResponse(**response_data)
-
+    except IntegrationServiceError as e:
+        raise HTTPException(
+            status_code=e.status_code,
+            detail=e.detail,
+        ) from None
     except HTTPException:
-        # Auth/scope failures (e.g. 403 from _resolve_sdk_org_id) must surface.
+        # Auth/scope failures must surface.
         raise
     except Exception as e:
         logger.error(f"SDK integrations.get failed: {log_safe(e)}")
         return None
 
-
-async def _build_oauth_data(
-    provider: Any,
-    token: Any,
-    entity_id: str | None,
-    resolve_url_template: Any,
-    decrypt_secret: Any,
-    oauth_scope: str | None = None,
-    external: bool = False,
-) -> SDKIntegrationsOAuthData:
-    """Build OAuth data dict from provider and token for CLI response.
-
-    Args:
-        provider: OAuth provider configuration
-        token: Stored OAuth token (may be None)
-        entity_id: External entity ID for URL templating
-        resolve_url_template: Function to resolve {entity_id} in URLs
-        decrypt_secret: Function to decrypt encrypted values
-        oauth_scope: Override scope for token request (triggers fresh token fetch)
-        external: When True (EXT-1 OPEN-E), an EXTERNAL portal caller — the
-            provider's ``client_secret`` is a GLOBAL third-party credential, so
-            it is never decrypted/returned and the client-credentials
-            auto-refresh (which needs it) is suppressed. Only a stored,
-            org-bound ``access_token`` (already scoped by the caller's repo)
-            is returned. Engine/sentinel/normal callers leave this False.
-    """
-    # Decrypt client secret (needed for both stored tokens and auto-refresh).
-    # An external never receives it (global third-party credential — OPEN-E).
-    client_secret = None
-    if provider.encrypted_client_secret and not external:
-        try:
-            raw = provider.encrypted_client_secret
-            client_secret = await asyncio.to_thread(
-                decrypt_secret, raw.decode() if isinstance(raw, bytes) else raw
-            )
-        except Exception:
-            logger.warning("Failed to decrypt client_secret")
-
-    # Resolve token_url with entity_id if provided
-    resolved_token_url = provider.token_url
-    if provider.token_url and entity_id:
-        resolved_token_url = resolve_url_template(
-            url=provider.token_url,
-            entity_id=entity_id,
-            defaults=provider.token_url_defaults,
-        )
-
-    access_token = None
-    refresh_token = None
-    expires_at = None
-
-    # Check if we should auto-fetch a fresh token
-    if should_auto_refresh_token(provider, entity_id, oauth_scope):
-        scope_info = (
-            f"oauth_scope={log_safe(oauth_scope)}"
-            if oauth_scope
-            else f"entity_id={entity_id}"
-        )
-        logger.info(f"Auto-refreshing token ({scope_info})")
-
-        if client_secret and resolved_token_url:
-            from src.services.oauth_provider import OAuthProviderClient
-
-            oauth_client = OAuthProviderClient()
-            # Use oauth_scope override if provided, otherwise use provider's default
-            scopes = (
-                oauth_scope
-                if oauth_scope
-                else (" ".join(provider.scopes) if provider.scopes else "")
-            )
-
-            success, result = await oauth_client.get_client_credentials_token(
-                token_url=resolved_token_url,
-                client_id=provider.client_id,
-                client_secret=client_secret,
-                scopes=scopes,
-                audience=provider.audience,
-            )
-
-            if success:
-                access_token = result.get("access_token")
-                expires_at_dt = result.get("expires_at")
-                if expires_at_dt:
-                    expires_at = (
-                        expires_at_dt.isoformat()
-                        if hasattr(expires_at_dt, "isoformat")
-                        else str(expires_at_dt)
-                    )
-                logger.info("Auto-refresh token successful")
-            else:
-                error_msg = result.get(
-                    "error_description", result.get("error", "Unknown error")
-                )
-                logger.error(f"Auto-refresh token failed: {log_safe(error_msg)}")
-        else:
-            logger.warning(
-                "Cannot auto-refresh: missing client_secret or resolved_token_url"
-            )
-    elif token:
-        # Use stored token (existing behavior)
-        if token.encrypted_access_token:
-            try:
-                raw = token.encrypted_access_token
-                access_token = await asyncio.to_thread(
-                    decrypt_secret, raw.decode() if isinstance(raw, bytes) else raw
-                )
-            except Exception:
-                logger.warning("Failed to decrypt access_token")
-
-        if token.encrypted_refresh_token:
-            try:
-                raw = token.encrypted_refresh_token
-                refresh_token = await asyncio.to_thread(
-                    decrypt_secret, raw.decode() if isinstance(raw, bytes) else raw
-                )
-            except Exception:
-                logger.warning("Failed to decrypt refresh_token")
-
-        if token.expires_at:
-            expires_at = token.expires_at.isoformat()
-
-    return SDKIntegrationsOAuthData(
-        connection_name=provider.provider_name,
-        client_id=provider.client_id,
-        client_secret=client_secret,
-        authorization_url=provider.authorization_url,
-        token_url=resolved_token_url,
-        scopes=provider.scopes or [],
-        access_token=access_token,
-        refresh_token=refresh_token,
-        expires_at=expires_at,
-    )
+    if result is None:
+        return None
+    return SDKIntegrationsGetResponse(**result)
 
 
 @router.post(
@@ -920,86 +622,36 @@ async def sdk_integrations_list_mappings(
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> SDKIntegrationsListMappingsResponse | None:
-    """List all mappings for an integration via SDK."""
-    from src.repositories.integrations import IntegrationsRepository
+    """List all mappings for an integration via SDK.
+
+    Scope resolution and response construction live in the shared
+    integrations service (``shared.sdk_integrations``), which the
+    engine-local dispatcher calls for the same inputs.
+    """
+    from shared.sdk_config import ScopeResolutionError
+    from shared.sdk_integrations import list_sdk_integration_mappings
 
     try:
-        repo = IntegrationsRepository(db)
-        integration = await repo.get_integration_by_name(request.name)
-
-        if not integration:
-            logger.warning(
-                f"SDK integrations.list_mappings: integration '{log_safe(request.name)}' not found"
-            )
-            return None
-
-        # Apply the C2 gate: explicit ``scope`` (UUID or "global") requires
-        # platform-admin or provider-org bypass. UNSET (None / "") falls
-        # back to the caller's own org. ``scope="global"`` returns None
-        # from the resolver — list all mappings (bypass already enforced).
-        # A resolved provider org is also an enumerate-all scope for mapping
-        # listing: providers need to see every customer mapping by default.
-        resolved_org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
-        if resolved_org_id is None and request.scope in (None, ""):
-            # Caller has no org — system account on UNSET. Return empty.
-            mappings = []
-        elif resolved_org_id is None:
-            # Bypass verified by the resolver — request was "global".
-            mappings = await repo.list_mappings(integration.id)
-        else:
-            resolved_org_uuid = UUID(resolved_org_id)
-            org_row = await db.execute(
-                select(Organization.is_provider).where(
-                    Organization.id == resolved_org_uuid
-                )
-            )
-            if bool(org_row.scalar_one_or_none()):
-                mappings = await repo.list_mappings(integration.id)
-            else:
-                mappings = await repo.list_mappings(
-                    integration.id, organization_id=resolved_org_uuid
-                )
-
-        logger.info(
-            f"SDK listed {len(mappings)} mappings for integration '{log_safe(request.name)}' for user {current_user.email}"
+        items = await list_sdk_integration_mappings(
+            db,
+            name=request.name,
+            scope=request.scope,
+            caller_org_id=current_user.organization_id,
+            is_platform_admin=current_user.is_superuser,
+            external=current_user.is_external,
         )
-
-        items = []
-        for mapping in mappings:
-            # Get merged config (integration defaults + org overrides).
-            # External callers drop the global tier (NEW-G).
-            config = await repo.get_config_for_mapping(
-                integration.id,
-                mapping.organization_id,
-                external=current_user.is_external,
-            )
-            items.append(
-                {
-                    "id": str(mapping.id),
-                    "integration_id": str(mapping.integration_id),
-                    "organization_id": str(mapping.organization_id),
-                    "entity_id": mapping.entity_id,
-                    "entity_name": mapping.entity_name,
-                    "oauth_token_id": str(mapping.oauth_token_id)
-                    if mapping.oauth_token_id
-                    else None,
-                    "config": config,
-                    "created_at": mapping.created_at.isoformat(),
-                    "updated_at": mapping.updated_at.isoformat(),
-                }
-            )
-
-        return SDKIntegrationsListMappingsResponse(items=items)
-
+    except ScopeResolutionError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
     except HTTPException:
-        # Authorization failures (e.g. 403 from _resolve_sdk_org_id) must
-        # surface to the client. The blanket ``except Exception`` below
-        # would otherwise downgrade a 403 to a 200/null response and
-        # make unauthorized requests indistinguishable from misses.
+        # Authorization failures must surface to the client.
         raise
     except Exception as e:
         logger.error(f"SDK integrations.list_mappings failed: {log_safe(e)}")
         return None
+
+    if items is None:
+        return None
+    return SDKIntegrationsListMappingsResponse(items=items)
 
 
 @router.post(
@@ -1012,79 +664,37 @@ async def sdk_integrations_get_mapping(
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> SDKIntegrationsMappingItem | None:
-    """Get a specific integration mapping by org_id or entity_id via SDK."""
-    from src.repositories.integrations import IntegrationsRepository
+    """Get a specific integration mapping by org_id or entity_id via SDK.
+
+    Scope resolution and response construction live in the shared
+    integrations service (``shared.sdk_integrations``), which the
+    engine-local dispatcher calls for the same inputs.
+    """
+    from shared.sdk_config import ScopeResolutionError
+    from shared.sdk_integrations import get_sdk_integration_mapping_dict
 
     try:
-        repo = IntegrationsRepository(db)
-        integration = await repo.get_integration_by_name(request.name)
-
-        if not integration:
-            logger.warning(
-                f"SDK integrations.get_mapping: integration '{log_safe(request.name)}' not found"
-            )
-            return None
-
-        # Apply the C2 gate. Non-bypass callers can only target their own
-        # org; cross-org or "global" requires platform-admin / provider-org.
-        resolved_org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
-        mapping = None
-
-        # Direct lookup by org_id.
-        if resolved_org_id is not None:
-            mapping = await repo.get_mapping_by_org(
-                integration.id, UUID(resolved_org_id)
-            )
-
-        # entity_id fallback search, scoped by the resolved org. For a
-        # global-scoped caller (bypass), search across all mappings;
-        # otherwise restrict to the caller's resolved org so non-bypass
-        # callers can't probe other orgs' entity_ids.
-        if not mapping and request.entity_id:
-            candidates = await repo.list_mappings(
-                integration.id,
-                organization_id=UUID(resolved_org_id) if resolved_org_id else None,
-            )
-            for m in candidates:
-                if m.entity_id == request.entity_id:
-                    mapping = m
-                    break
-
-        if not mapping:
-            return None
-
-        # Get merged config for the mapping. External callers drop the global
-        # tier (NEW-G).
-        config = await repo.get_config_for_mapping(
-            integration.id,
-            mapping.organization_id,
+        result = await get_sdk_integration_mapping_dict(
+            db,
+            name=request.name,
+            scope=request.scope,
+            caller_org_id=current_user.organization_id,
+            is_platform_admin=current_user.is_superuser,
+            entity_id=request.entity_id,
             external=current_user.is_external,
         )
-
-        logger.info(
-            f"SDK retrieved mapping for integration '{log_safe(request.name)}' for user {current_user.email}"
-        )
-
-        return SDKIntegrationsMappingItem(
-            id=str(mapping.id),
-            integration_id=str(mapping.integration_id),
-            organization_id=str(mapping.organization_id),
-            entity_id=mapping.entity_id,
-            entity_name=mapping.entity_name,
-            oauth_token_id=str(mapping.oauth_token_id)
-            if mapping.oauth_token_id
-            else None,
-            config=config,
-            created_at=mapping.created_at.isoformat(),
-            updated_at=mapping.updated_at.isoformat(),
-        )
-
+    except ScopeResolutionError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
     except HTTPException:
-        # Auth/scope failures (e.g. 403 from _resolve_sdk_org_id) must surface.
+        # Auth/scope failures must surface.
         raise
     except Exception as e:
         logger.error(f"SDK integrations.get_mapping failed: {log_safe(e)}")
         return None
+
+    if result is None:
+        return None
+    return SDKIntegrationsMappingItem(**result)
 
 
 @router.post(

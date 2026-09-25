@@ -213,3 +213,20 @@ The config E2E proves zero API requests for the fixed config methods by
 disabling their HTTP client in the child. It still makes an internal module
 fetch request on a cold Redis cache. Stage 4 must eliminate that engine
 API hop before claiming the full SDK fast path is complete.
+
+## Stage 2b handoff state
+
+The three integration reads (`get`, `list_mappings`, `get_mapping`) now use a
+shared service from HTTP and the engine parent. The child receives its
+Solution identity from parent execution context, and the service preserves
+the HTTP rule that a missing integration returns null before scope checking.
+The live worker test disables the fixed-operation HTTP client and compares
+results with external HTTP calls. Mapping writes and OAuth refresh remain in
+the next stage.
+
+Reviewer verification after the final scope-order correction:
+`./test.sh tests/unit/execution/test_sdk_integrations_dispatch.py tests/unit/sdk/test_sdk_integrations_local.py -q`
+passed 40 tests; `./test.sh tests/e2e/platform/test_sdk_integrations_local.py -v`
+passed one live test after that correction; `./test.sh quality api` passed
+with zero Pyright errors and Ruff clean. The broader backend and browser
+suites have not been run. Stage 2b is accepted for continuation.
