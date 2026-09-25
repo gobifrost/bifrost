@@ -16,7 +16,8 @@ plus artifact write/read/list/download URL, artifact generation
 ``create_image``), the durable video ``create_video`` enqueue plus its
 fixed ``video_status`` poll, the full files facade, the execution
 reads (``workflows.list``, ``executions.list``/``executions.get``),
-and the workflow ``execute``/``cancel`` mutations):
+the workflow ``execute``/``cancel`` mutations, and the SDK form
+reads (``forms.list``, ``forms.get``)):
 
 - One request frame (or a bounded chunked request), one-or-many response
   frames, JSON over ``multiprocessing.Connection.send_bytes`` /
@@ -64,7 +65,10 @@ and the workflow ``execute``/``cancel`` mutations):
   ``org_id``/``run_as``/``solution``/``scheduled_at``/
   ``delay_seconds`` (the same fields the HTTP payload carries; ``sync``
   is fixed to false — the SDK surface is fire-and-forget);
-  ``workflows.cancel`` sends ``execution_id``.
+  ``workflows.cancel`` sends ``execution_id``. ``forms.list``
+  sends no fields (the SDK exposes no scope filter — the parent
+  applies the route defaults, like the unfiltered HTTP call);
+  ``forms.get`` sends ``form_id``.
    ``artifacts.create_video`` sends ``filename``/``prompt``/
    ``workspace_id`` (the caller's own workspace, like the HTTP query
    param; actor, org, and execution identity come from the parent's
@@ -109,7 +113,13 @@ and the workflow ``execute``/``cancel`` mutations):
   list body); ``executions.get`` returns the ``WorkflowExecution``
   dict (a missing row is a 404 error frame the facade maps to
   ``ValueError``; a foreign row is a 403 the facade maps to
-  ``PermissionError``). ``workflows.execute``
+  ``PermissionError``). ``forms.list`` returns an ``{"items": [...]}``
+  envelope of ``FormPublic`` dicts (the result contract does not carry
+  bare lists — the dicts keep the full server shape, logo fields
+  included, like the HTTP JSON body); ``forms.get`` returns the
+  ``FormPublic`` dict (a missing/inactive/hidden form is a 404 error
+  frame the facade maps to ``ValueError``; a denied form is a 403 the
+  facade maps to ``PermissionError``). ``workflows.execute``
   returns the ``WorkflowExecutionResponse`` dict (the facade returns its
   ``execution_id`` — fire-and-forget, like HTTP); ``workflows.cancel``
   returns the ``{"execution_id", "status"}`` dict (the facade returns
@@ -159,7 +169,8 @@ from typing import Any, NoReturn
 # integrations facade, the full tables facade, the SDK agent
 # ``enqueue``/``get_run`` operations, the SDK workflow and execution
 # reads (``workflows.list``, ``executions.list``/``executions.get`` —
-# ``workflows.get`` delegates to ``executions.get``), and the SDK workflow
+# ``workflows.get`` delegates to ``executions.get``), the SDK form
+# reads (``forms.list``, ``forms.get``), and the SDK workflow
 # ``execute``/``cancel`` mutations ride the local transport. The
 # parent enforces the same allowlist; anything else is a 404 response.
 # Artifact generation (``create_document``/``create_spreadsheet``/
@@ -220,6 +231,8 @@ OP_EXECUTIONS_LIST = "executions.list"
 OP_EXECUTIONS_GET = "executions.get"
 OP_WORKFLOWS_EXECUTE = "workflows.execute"
 OP_WORKFLOWS_CANCEL = "workflows.cancel"
+OP_FORMS_LIST = "forms.list"
+OP_FORMS_GET = "forms.get"
 
 # Wire version. The parent rejects anything else instead of guessing.
 TRANSPORT_VERSION = 1
@@ -2243,6 +2256,61 @@ class ChildLocalTransport:
         result = await self._call(
             OP_WORKFLOWS_CANCEL,
             {"execution_id": execution_id},
+            timeout,
+        )
+        if not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+    async def call_forms_list(
+        self,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> list[dict[str, Any]]:
+        """List forms through the parent. No HTTP fallback.
+
+        Sends no fields (the SDK exposes no scope filter — the parent
+        applies the route defaults, like the unfiltered HTTP call).
+        Returns the ``FormPublic`` dicts (unwrapped from the
+        ``{"items"}`` envelope — the transport result contract does not
+        carry bare lists), identical to the HTTP path including the
+        logo fields. Large listings arrive as bounded chunked response
+        frames.
+        """
+        result = await self._call(
+            OP_FORMS_LIST,
+            {},
+            timeout,
+        )
+        if not isinstance(result, dict) or not isinstance(
+            result.get("items"), list
+        ):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result["items"]
+
+    async def call_forms_get(
+        self,
+        form_id: str,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """Get a form's definition through the parent. No HTTP fallback.
+
+        Returns the ``FormPublic`` dict with the full server shape
+        (logo fields included), identical to the HTTP path. A
+        missing/inactive/hidden form is a 404 error frame the facade
+        maps to ``ValueError``; a denied form is a 403 the facade maps
+        to ``PermissionError`` — never null results.
+        """
+        result = await self._call(
+            OP_FORMS_GET,
+            {"form_id": form_id},
             timeout,
         )
         if not isinstance(result, dict):

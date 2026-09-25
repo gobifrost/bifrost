@@ -5,17 +5,24 @@ This module is intentionally stdlib-only at import time: forked execution
 children must never import PostgreSQL drivers, the ORM, or the API server
 stack in order to resolve a cold import.
 
-Protocol (engine SDK fast path: ``modules.resolve`` / ``modules.fetch``):
+Protocol (engine SDK fast path: ``modules.resolve`` / ``modules.fetch``,
+plus the synchronous client-context read ``sdk.context``):
 
 - One request frame, one-or-many response frames, JSON over
   ``multiprocessing.Connection.send_bytes`` / ``recv_bytes`` on a dedicated
   child<->parent channel pair. This pair is separate from the async SDK
   operation channel: an import may block the child's event loop while an
   async SDK request is awaiting a response, so sharing that channel's lock
-  could deadlock. The parent serves both channels concurrently.
+  could deadlock. The parent serves both channels concurrently. The
+  synchronous ``BifrostClient.context`` property rides this same pair for
+  the same reason: a normal async SDK channel call from a sync property
+  could deadlock a running child event loop.
 - Small requests carry ``{"v": 1, "id": <uuid>, "op": <name>, ...}``.
   ``modules.resolve`` sends only the logical ``name``;
-  ``modules.fetch`` sends only the candidate storage ``path``. No request
+  ``modules.fetch`` sends only the candidate storage ``path``.
+  ``sdk.context`` sends no fields (the SDK never passes the HTTP
+  ``?org_id=`` override — identity and org scope come only from the
+  parent's dispatch principal). No request
   carries Solution identity, actor, or caller identity: the parent derives
   the source scope exclusively from its own dispatch context.
 - Small responses carry the same ``id`` with either
@@ -56,10 +63,12 @@ import uuid
 from typing import Any, NoReturn
 
 # Operation allowlist: cold module-name resolution and candidate source
-# fetch. The parent enforces the same allowlist; anything else is a 404
+# fetch, plus the synchronous client-context read. The parent enforces
+# the same allowlist; anything else is a 404
 # response.
 OP_MODULES_RESOLVE = "modules.resolve"
 OP_MODULES_FETCH = "modules.fetch"
+OP_SDK_CONTEXT = "sdk.context"
 
 # Wire version. The parent rejects anything else instead of guessing.
 TRANSPORT_VERSION = 1
@@ -100,6 +109,41 @@ class ImportTransportTimeout(ImportTransportError, TimeoutError):
 
 class ImportServiceError(RuntimeError):
     """The parent returned a valid HTTP-style service error response."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        detail: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.detail = detail if detail is not None else message
+
+
+def raise_for_import_status(status: int, detail: str, op: str = OP_SDK_CONTEXT) -> None:
+    """Raise the same public exception the HTTP path raises for a status.
+
+    Builds a synthetic ``httpx.Response`` and reuses the SDK's
+    ``raise_for_status_with_detail`` mapping, so a local 403 is
+    ``BifrostAuthorizationError`` etc. — identical to the HTTP behavior.
+    No HTTP request is made; the URL is a ``local://`` marker.
+
+    Only meaningful for 4xx/5xx statuses; callers must not invoke it
+    otherwise (a ``2xx`` response returns normally, like its HTTP twin).
+    """
+    import httpx
+
+    from .client import raise_for_status_with_detail
+
+    request = httpx.Request("POST", f"local://sdk/{op.replace('.', '/')}")
+    response = httpx.Response(
+        status,
+        json={"detail": detail},
+        request=request,
+    )
+    raise_for_status_with_detail(response)
 
 
 class ImportNotFound(ImportServiceError):
@@ -288,8 +332,16 @@ class ChildSyncImportTransport:
             ):
                 raise ImportTransportProtocolError("invalid local import service error")
             if status == 404:
-                raise ImportNotFound(f"local {op} missed: {detail}")
-            raise ImportServiceError(f"local {op} failed ({status}): {detail}")
+                raise ImportNotFound(
+                    f"local {op} missed: {detail}",
+                    status_code=status,
+                    detail=detail,
+                )
+            raise ImportServiceError(
+                f"local {op} failed ({status}): {detail}",
+                status_code=status,
+                detail=detail,
+            )
         if "result" not in response:
             raise ImportTransportProtocolError("local import response has no result")
         return response["result"]
@@ -383,6 +435,32 @@ class ChildSyncImportTransport:
         channel. Any other failure raises loudly with no HTTP/S3 fallback.
         """
         result = self._call(OP_MODULES_FETCH, {"path": path}, timeout)
+        if not isinstance(result, dict):
+            self._fail(
+                ImportTransportProtocolError(
+                    "malformed local import result"
+                )
+            )
+        return result
+
+    def call_sdk_context(
+        self,
+        timeout: float = DEFAULT_IMPORT_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """Read the client context through the parent. No HTTP fallback.
+
+        Sends no fields — identity and org scope come only from the
+        parent's dispatch principal (the token-equivalent engine/service
+        user, never child claims), exactly like the authenticated
+        ``GET /api/sdk/context`` call without an ``?org_id=`` override.
+        Returns the ``DeveloperContextResponse`` dict (``user``,
+        ``organization``, ``default_parameters``, ``track_executions``),
+        identical to the HTTP path. Parent error responses raise
+        ``ImportServiceError`` (``ImportNotFound`` for 404) carrying the
+        HTTP-style status; transport loss raises
+        ``ImportTransportError``.
+        """
+        result = self._call(OP_SDK_CONTEXT, {}, timeout)
         if not isinstance(result, dict):
             self._fail(
                 ImportTransportProtocolError(

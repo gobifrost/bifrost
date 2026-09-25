@@ -4,9 +4,13 @@ Parent-side dispatcher for the engine-local SDK operation transport.
 The worker parent (``ProcessPoolManager``) serves ``config`` requests
 (get, set, list, delete), ``integrations`` requests (get,
 list_mappings, get_mapping, upsert_mapping, delete_mapping,
-refresh_token), and the SDK workflow/execution reads
-(``workflows.list``, ``executions.list``/``executions.get``) arriving
-on each child's dedicated SDK channel.
+refresh_token), the SDK workflow/execution reads
+(``workflows.list``, ``executions.list``/``executions.get``), and the
+SDK form reads (``forms.list``, ``forms.get``) arriving
+on each child's dedicated SDK channel. The synchronous client-context
+read (``sdk.context``) rides the dedicated import channel instead, so
+the synchronous ``BifrostClient.context`` property never deadlocks a
+running child event loop.
 Identity, scope, and Solution install id come exclusively from the parent's
 own dispatch context (:func:`principal_from_context`) — child-supplied
 scope strings are treated as untrusted requests and re-validated through
@@ -36,10 +40,14 @@ write/read/list/download URL plus artifact generation
 fixed ``video_status`` poll, all fixed file operations, the SDK agent
 ``enqueue``/``get_run`` operations, the SDK workflow and execution
 reads (``workflows.list``, ``executions.list``/``executions.get``),
+the SDK form reads (``forms.list``, ``forms.get``),
 and the SDK workflow
 ``execute``/``cancel`` mutations. Engine import fast path: ``modules.resolve``
 and ``modules.fetch`` (served on the dedicated import channel through the
-shared ``sdk_modules`` service, scoped by the parent-derived principal).
+shared ``sdk_modules`` service, scoped by the parent-derived principal),
+plus the synchronous ``sdk.context`` read (served on the same import
+channel through the shared ``sdk_context`` service, so the sync client
+property never touches the async channel's lock).
 Unknown operations or wire versions get an error response — never silent
 acceptance, never arbitrary route forwarding. The existing engine token
 path is untouched for every operation not yet migrated.
@@ -61,6 +69,8 @@ from bifrost._local_transport import (
     MAX_FRAME_BYTES,
     OP_AGENTS_ENQUEUE,
     OP_AGENTS_GET_RUN,
+    OP_FORMS_GET,
+    OP_FORMS_LIST,
     OP_ARTIFACTS_CREATE_DOCUMENT,
     OP_ARTIFACTS_CREATE_IMAGE,
     OP_ARTIFACTS_CREATE_SPREADSHEET,
@@ -119,6 +129,7 @@ from bifrost._local_transport import (
 from bifrost._import_transport import (
     OP_MODULES_FETCH,
     OP_MODULES_RESOLVE,
+    OP_SDK_CONTEXT,
 )
 from shared.sdk_config import ScopeResolutionError, resolve_sdk_scope
 
@@ -129,10 +140,14 @@ logger = logging.getLogger(__name__)
 # the table document reads (get/query/unfiltered count). The SDK workflow
 # and execution reads (``workflows.list``, ``executions.list``/
 # ``executions.get``) ride the same channel through the shared
-# ``sdk_execution_reads`` service. Engine import
+# ``sdk_execution_reads`` service. The SDK form reads (``forms.list``,
+# ``forms.get``) ride the same channel through the shared ``sdk_forms``
+# service. Engine import
 # fast path: cold module-name resolution and candidate source fetch
 # (served on the dedicated import channel through the shared sdk_modules
-# service).
+# service) plus the synchronous client-context read (served on the same
+# import channel through the shared ``sdk_context`` service, so the sync
+# ``BifrostClient.context`` property never touches the async channel).
 SDK_CHANNEL_ALLOWED_OPS = frozenset(
     {
         OP_CONFIG_GET,
@@ -184,6 +199,8 @@ SDK_CHANNEL_ALLOWED_OPS = frozenset(
         OP_TABLES_CREATE,
         OP_AGENTS_ENQUEUE,
         OP_AGENTS_GET_RUN,
+        OP_FORMS_LIST,
+        OP_FORMS_GET,
         OP_WORKFLOWS_EXECUTE,
         OP_WORKFLOWS_CANCEL,
         OP_WORKFLOWS_LIST,
@@ -191,7 +208,9 @@ SDK_CHANNEL_ALLOWED_OPS = frozenset(
         OP_EXECUTIONS_GET,
     }
 )
-IMPORT_CHANNEL_ALLOWED_OPS = frozenset({OP_MODULES_RESOLVE, OP_MODULES_FETCH})
+IMPORT_CHANNEL_ALLOWED_OPS = frozenset(
+    {OP_MODULES_RESOLVE, OP_MODULES_FETCH, OP_SDK_CONTEXT}
+)
 ALLOWLIST = SDK_CHANNEL_ALLOWED_OPS | IMPORT_CHANNEL_ALLOWED_OPS
 
 # Wall-clock bound for one parent-side operation (short session + indexed
@@ -585,6 +604,10 @@ async def dispatch_frames(
         return await _dispatch_agents_enqueue(session_factory, principal, frame_id, frame)
     if op == OP_AGENTS_GET_RUN:
         return await _dispatch_agents_get_run(session_factory, principal, frame_id, frame)
+    if op == OP_FORMS_LIST:
+        return await _dispatch_forms_list(session_factory, principal, frame_id, frame)
+    if op == OP_FORMS_GET:
+        return await _dispatch_forms_get(session_factory, principal, frame_id, frame)
     if op == OP_WORKFLOWS_LIST:
         return await _dispatch_workflows_list(session_factory, principal, frame_id, frame)
     if op == OP_EXECUTIONS_LIST:
@@ -599,6 +622,8 @@ async def dispatch_frames(
         return await _dispatch_modules_resolve(session_factory, principal, frame_id, frame)
     if op == OP_MODULES_FETCH:
         return await _dispatch_modules_fetch(session_factory, principal, frame_id, frame)
+    if op == OP_SDK_CONTEXT:
+        return await _dispatch_sdk_context(session_factory, principal, frame_id, frame)
     return [_error(frame_id, 404, f"local SDK operation not allowed: {op!r}")]
 
 
@@ -1542,6 +1567,120 @@ async def _dispatch_agents_get_run(
         op=OP_AGENTS_GET_RUN,
         log_key=raw_id,
         status_errors=(SdkAgentRunError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+# =============================================================================
+# SDK form reads (forms.list, forms.get)
+# =============================================================================
+
+
+def _forms_user_for_principal(principal: LocalDispatchPrincipal) -> Any:
+    """Token-equivalent ``UserPrincipal`` for SDK form list/get operations.
+
+    Reuses the table token-equivalent shape so visibility decides
+    identically on both transports: workflows run as the system-user
+    superuser with no org (the ``mint_engine_token()`` shape — the full
+    listing, inactive forms included), services run as the system-user
+    non-superuser confined to their service org (the
+    ``mint_service_token()`` shape — org plus global forms, active
+    only). The actor is built only from the parent-derived
+    ``LocalDispatchPrincipal`` — never from child frame fields. Engine
+    children never present embed claims, so the embed binding gate in
+    the shared service only ever denies locally, exactly like an
+    engine-token HTTP call.
+    """
+    return _table_user_for_principal(principal)
+
+
+async def _dispatch_forms_list(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``forms.list`` through the shared form service.
+
+    The frame carries no fields (the SDK exposes no scope filter) — the
+    parent applies the route defaults like the unfiltered HTTP call, and
+    scope resolution, the superuser/org-user query split, logo
+    enrichment, and dependency counts are the shared ``sdk_forms``
+    service's, identical to HTTP by construction. The request runs
+    under the token-equivalent engine/service user built only from the
+    parent-derived principal, never from child claims. Large listings
+    ride bounded chunked frames via ``_ok_frames``. A local attempt
+    never retries over HTTP.
+    """
+    from shared.sdk_forms import list_sdk_forms
+
+    user = _forms_user_for_principal(principal)
+
+    async def _list(session: Any) -> dict[str, Any]:
+        forms = await list_sdk_forms(session, user, scope=None)
+        return {"items": [f.model_dump(mode="json") for f in forms]}
+
+    result, error = await _run_short(
+        session_factory,
+        _list,
+        op=OP_FORMS_LIST,
+        log_key="forms",
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_forms_get(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``forms.get`` through the shared form service.
+
+    Validates ``form_id`` as a UUID (422, like the route's FastAPI
+    parsing) and calls the same ``shared.sdk_forms.get_sdk_form`` the
+    HTTP handler calls — 404-before-403 error precedence, the embed
+    binding gate, inactive-form hiding, logo enrichment with the inline
+    logo, and role ids are identical by construction. The request runs
+    under the token-equivalent engine/service user built only from the
+    parent-derived principal, never from child claims. A local attempt
+    never retries over HTTP.
+    """
+    from shared.sdk_forms import SdkFormError, get_sdk_form
+
+    raw_id = frame.get("form_id")
+    form_uuid: UUID | None = None
+    if isinstance(raw_id, str) and raw_id.strip():
+        try:
+            form_uuid = UUID(raw_id)
+        except ValueError:
+            form_uuid = None
+    if form_uuid is None:
+        return [
+            _error(
+                frame_id,
+                422,
+                f"invalid {OP_FORMS_GET} request: 'form_id' must be a UUID",
+            )
+        ]
+    user = _forms_user_for_principal(principal)
+
+    async def _get(session: Any) -> dict[str, Any]:
+        form = await get_sdk_form(session, user, form_uuid)
+        return form.model_dump(mode="json")
+
+    result, error = await _run_short(
+        session_factory,
+        _get,
+        op=OP_FORMS_GET,
+        log_key=str(form_uuid),
+        status_errors=(SdkFormError,),
     )
     if error is not None:
         error["id"] = frame_id
@@ -5200,6 +5339,62 @@ async def _dispatch_modules_fetch(
         op=OP_MODULES_FETCH,
         log_key=path,
         status_errors=(ModuleSourceError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+def _context_user_for_principal(principal: LocalDispatchPrincipal) -> Any:
+    """Token-equivalent ``UserPrincipal`` for the SDK context operation.
+
+    Reuses the table token-equivalent shape so the context payload
+    matches the authenticated ``GET /api/sdk/context`` call the child's
+    engine/service token would make: workflows read as the system-user
+    superuser with no org (engine sentinel user, null organization),
+    services read as the system-user non-superuser confined to their
+    service org (service actor user, own organization). Built only from
+    the parent-derived ``LocalDispatchPrincipal`` — the child sends no
+    identity fields, and the HTTP ``?org_id=`` override is never
+    honored locally (the SDK never sends it).
+    """
+    return _table_user_for_principal(principal)
+
+
+async def _dispatch_sdk_context(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``sdk.context`` through the shared context service.
+
+    The frame carries no fields — identity and org scope come only from
+    the parent-derived principal (the token-equivalent engine/service
+    user), never from child claims, exactly like the ``GET
+    /api/sdk/context`` call without an ``?org_id=`` override. Calls the
+    same ``shared.sdk_context.get_sdk_context`` the HTTP handler calls,
+    so the ``user``/``organization``/``default_parameters``/
+    ``track_executions`` payload is identical by construction. Served on
+    the synchronous import channel (not the async SDK channel) so the
+    synchronous ``BifrostClient.context`` property can call it without
+    deadlocking a running child event loop. A local attempt never
+    retries over HTTP.
+    """
+    from shared.sdk_context import SdkContextError, get_sdk_context
+
+    user = _context_user_for_principal(principal)
+
+    async def _context(session: Any) -> dict[str, Any]:
+        return await get_sdk_context(session, user, org_id=None)
+
+    result, error = await _run_short(
+        session_factory,
+        _context,
+        op=OP_SDK_CONTEXT,
+        log_key="context",
+        status_errors=(SdkContextError,),
     )
     if error is not None:
         error["id"] = frame_id

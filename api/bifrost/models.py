@@ -57,7 +57,7 @@ class FormPublic(BaseModel):
 
     id: str
     name: str
-    description: str | None
+    description: str | None = None
     confirmation_markdown: str
     workflow_id: str | None
     launch_workflow_id: str | None
@@ -67,7 +67,7 @@ class FormPublic(BaseModel):
     access_level: str
     organization_id: str | None
     is_active: bool
-    file_path: str | None
+    file_path: str | None = None
     created_at: datetime | None
     updated_at: datetime | None
 
