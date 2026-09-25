@@ -460,6 +460,17 @@ RESOLVER_CALL_NAMES = {
     "resolve_sdk_scope",
 }
 
+# These SDK handlers delegate scope-taking requests to one shared service
+# operation. Keep checking the delegate's body as well as the handler call:
+# accepting the delegate name alone would let a later refactor drop the gate.
+DELEGATED_SCOPE_SERVICES = {
+    "list_sdk_integration_mappings",
+    "get_sdk_integration_mapping_dict",
+    "upsert_sdk_integration_mapping",
+    "delete_sdk_integration_mapping",
+    "refresh_sdk_oauth_token",
+}
+
 
 def _handler_names_taking_scope(tree: ast.AST) -> dict[str, ast.AsyncFunctionDef | ast.FunctionDef]:
     """Find every router-decorated async handler that takes a ``scope`` arg
@@ -582,9 +593,10 @@ def _handler_calls_resolver(node: ast.AsyncFunctionDef | ast.FunctionDef) -> boo
     for sub in ast.walk(node):
         if isinstance(sub, ast.Call):
             func = sub.func
-            if isinstance(func, ast.Name) and func.id in RESOLVER_CALL_NAMES:
+            accepted_calls = RESOLVER_CALL_NAMES | DELEGATED_SCOPE_SERVICES
+            if isinstance(func, ast.Name) and func.id in accepted_calls:
                 return True
-            if isinstance(func, ast.Attribute) and func.attr in RESOLVER_CALL_NAMES:
+            if isinstance(func, ast.Attribute) and func.attr in accepted_calls:
                 return True
     return False
 
@@ -612,6 +624,26 @@ class TestSDKEndpointsUseResolver:
         from shared.scope_resolver import resolve_effective_scope
 
         assert callable(resolve_effective_scope)
+
+    def test_delegated_integration_services_call_resolver(self) -> None:
+        service = ast.parse(
+            (API_ROOT.parent / "shared" / "sdk_integrations.py").read_text()
+        )
+        functions = {
+            node.name: node
+            for node in service.body
+            if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef))
+        }
+        for name in DELEGATED_SCOPE_SERVICES:
+            assert name in functions, f"delegated SDK scope service missing: {name}"
+            assert any(
+                isinstance(call, ast.Call)
+                and (
+                    (isinstance(call.func, ast.Name) and call.func.id == "resolve_sdk_scope")
+                    or (isinstance(call.func, ast.Attribute) and call.func.attr == "resolve_sdk_scope")
+                )
+                for call in ast.walk(functions[name])
+            ), f"delegated SDK scope service no longer resolves scope: {name}"
 
     def test_exempt_list_well_formed(self) -> None:
         for name, reason in EXEMPT_SDK_HANDLERS.items():
