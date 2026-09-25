@@ -65,7 +65,6 @@ from src.core.auth import Context, CurrentUser
 from src.core.principal import UserPrincipal
 from src.core.database import get_db
 from src.core.log_safety import log_safe
-from src.models import Organization
 from src.models.contracts.cli import (
     CLIAICompleteRequest,
     CLIAICompleteResponse,
@@ -268,12 +267,12 @@ async def _resolve_sdk_org_id(
 ) -> str | None:
     """Resolve the effective organization scope for an SDK call.
 
-    The C2 gate: platform admins (``is_superuser``) AND provider-org members
-    can bypass scope restrictions. The caller's "own org" is sourced from
-    the auth-verified ``current_user.organization_id`` — never from a
-    mutable per-user default. Provider-org membership is checked by a
-    single ``SELECT is_provider`` against the caller's org, only when the
-    requested scope is not UNSET / not the caller's own org.
+    Thin HTTP adapter over the shared scope rule
+    (``shared.sdk_config.resolve_sdk_scope``), which the engine-local
+    dispatcher calls for the same inputs. Grammar, UNSET/global/UUID
+    parsing, provider-org bypass, and 403/422 precedence live in the
+    shared service; this helper only maps its transport-neutral error
+    to ``HTTPException``.
 
     Args:
         current_user: The auth-verified user principal.
@@ -293,55 +292,21 @@ async def _resolve_sdk_org_id(
         HTTPException 403: If the caller is not authorized to use the
             requested scope.
     """
-    from fastapi import HTTPException, status
-    from shared.scope_resolver import (
-        UNSET,
-        ScopeNotAllowed,
-        resolve_effective_scope,
-    )
+    from fastapi import HTTPException
 
-    # Parse the requested scope into the resolver's input domain.
-    requested: object
-    if scope is None or scope == "":
-        # Empty string preserved as "unset" for backwards compat with
-        # CLI clients that pass `--scope ''` to mean "use my default."
-        requested = UNSET
-    elif scope == "global":
-        requested = None
-    else:
-        try:
-            requested = UUID(scope)
-        except ValueError:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"scope must be 'global', a UUID, or null; got {scope!r}",
-            ) from None
-
-    caller_org_id: UUID | None = current_user.organization_id
-    is_platform_admin = current_user.is_superuser
-
-    # Provider-org membership is only needed if the caller is requesting
-    # something other than UNSET / their own org. UNSET resolves to
-    # caller_org_id without any bypass check.
-    is_provider_org = False
-    needs_bypass_check = requested is not UNSET and requested != caller_org_id
-    if needs_bypass_check and not is_platform_admin and caller_org_id is not None:
-        org_row = await db.execute(
-            select(Organization.is_provider).where(Organization.id == caller_org_id)
-        )
-        is_provider_org = bool(org_row.scalar_one_or_none())
+    from shared.sdk_config import ScopeResolutionError, resolve_sdk_scope
 
     try:
-        resolved = resolve_effective_scope(
-            caller_org_id=caller_org_id,
-            is_platform_admin=is_platform_admin,
-            is_provider_org=is_provider_org,
-            requested_scope=requested,  # type: ignore[arg-type]
+        resolved = await resolve_sdk_scope(
+            scope,
+            caller_org_id=current_user.organization_id,
+            is_platform_admin=current_user.is_superuser,
+            session=db,
         )
-    except ScopeNotAllowed as e:
+    except ScopeResolutionError as e:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=str(e),
+            status_code=e.status_code,
+            detail=e.detail,
         ) from None
 
     return str(resolved) if resolved is not None else None
@@ -1704,108 +1669,32 @@ async def cli_ai_complete(
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> "CLIAICompleteResponse":
-    """Generate an AI completion using platform-configured LLM."""
-    from src.models.contracts.cli import CLIAICompleteResponse
-    import base64
+    """Generate an AI completion using platform-configured LLM.
 
-    from src.services.llm import LLMInputFile, LLMMessage, get_llm_client
+    Thin HTTP adapter over the shared operation
+    (``shared.sdk_ai.complete_sdk_ai``), which the engine-local
+    dispatcher calls for the same inputs.
+    """
+    from src.models.contracts.cli import CLIAICompleteResponse
+
+    from shared.sdk_ai import SdkAIError, complete_sdk_ai
 
     try:
-        client = await get_llm_client(db, profile_name=request.profile)
-
-        # Convert to LLMMessage objects
-        llm_messages = [
-            LLMMessage(role=msg["role"], content=msg["content"])  # type: ignore[arg-type]
-            for msg in request.messages
-        ]
-        if request.input_files:
-            user_message = next(
-                (
-                    message
-                    for message in reversed(llm_messages)
-                    if message.role == "user"
-                ),
-                None,
-            )
-            if user_message is None:
-                raise ValueError("AI file inputs require a user message.")
-            user_message.input_files = [
-                LLMInputFile(
-                    filename=item.filename,
-                    media_type=item.content_type,
-                    data=base64.b64decode(item.data_base64, validate=True),
-                )
-                for item in request.input_files
-            ]
-
-        response = await client.complete(
-            messages=llm_messages,
+        result = await complete_sdk_ai(
+            db,
+            current_user,
+            messages=request.messages,
             max_tokens=request.max_tokens,
             model=request.model,
+            profile=request.profile,
+            execution_id=request.execution_id,
+            scope=request.org_id,
+            input_files=request.input_files,
         )
+    except SdkAIError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
 
-        logger.info(
-            f"CLI AI complete: model={log_safe(response.model)}, tokens={response.input_tokens}/{response.output_tokens}"
-        )
-
-        # Record AI usage
-        try:
-            from src.services.ai_usage_service import record_ai_usage
-            from src.core.cache import get_shared_redis
-
-            redis_client = await get_shared_redis()
-            org_id = await _resolve_sdk_org_id(current_user, request.org_id, db)
-            await record_ai_usage(
-                session=db,
-                redis_client=redis_client,
-                provider=client.provider_name,
-                model=response.model or client.model_name,
-                input_tokens=response.input_tokens or 0,
-                output_tokens=response.output_tokens or 0,
-                cache_read_tokens=response.cache_read_tokens,
-                cache_write_tokens=response.cache_write_tokens,
-                provider_cost=response.provider_cost,
-                execution_id=UUID(request.execution_id)
-                if request.execution_id
-                else None,
-                organization_id=UUID(org_id) if org_id else None,
-                user_id=current_user.user_id,
-            )
-        except Exception as e:
-            logger.warning(f"Failed to record AI usage: {log_safe(e)}")
-
-        return CLIAICompleteResponse(
-            content=response.content,
-            input_tokens=response.input_tokens,
-            output_tokens=response.output_tokens,
-            model=response.model,
-        )
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(e),
-        )
-    except Exception as e:
-        # Check for authentication errors from LLM providers
-        error_type = type(e).__name__
-        error_module = type(e).__module__
-        if error_type == "AuthenticationError" and error_module in (
-            "anthropic",
-            "openai",
-        ):
-            provider = "Anthropic" if error_module == "anthropic" else "OpenAI"
-            logger.error(
-                f"CLI AI complete failed: {provider} authentication error - invalid API key"
-            )
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=f"{provider} API key is invalid or expired. Please update the API key in System Settings > AI Configuration.",
-            )
-        logger.error(f"CLI AI complete failed: {log_safe(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="AI completion failed. See server logs for details.",
-        )
+    return CLIAICompleteResponse(**result)
 
 
 @router.post(
@@ -1937,22 +1826,22 @@ async def cli_ai_info(
     current_user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> "CLIAIInfoResponse":
-    """Get information about the configured LLM."""
+    """Get information about the configured LLM.
+
+    Thin HTTP adapter over the shared operation
+    (``shared.sdk_ai.get_sdk_model_info``), which the engine-local
+    dispatcher calls for the same inputs.
+    """
     from src.models.contracts.cli import CLIAIInfoResponse
-    from src.services.llm.factory import get_llm_config
+
+    from shared.sdk_ai import SdkAIError, get_sdk_model_info
 
     try:
-        config = await get_llm_config(db)
+        result = await get_sdk_model_info(db, current_user)
+    except SdkAIError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
 
-        return CLIAIInfoResponse(
-            provider=config.provider,
-            model=config.model,
-        )
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e),
-        )
+    return CLIAIInfoResponse(**result)
 
 
 # =============================================================================
