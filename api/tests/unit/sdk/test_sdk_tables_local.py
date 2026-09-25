@@ -1076,7 +1076,6 @@ class TestChildTransport:
             self._close_all((req_recv, req_send, resp_recv, resp_send))
 
 
-@pytest.mark.asyncio
 class TestPrincipalContextPlumbing:
     def test_execution_id_flows_from_parent_context(self):
         from src.services.execution.sdk_local_dispatch import principal_from_context
