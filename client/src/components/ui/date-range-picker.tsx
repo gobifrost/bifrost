@@ -16,12 +16,14 @@ interface DateRangePickerProps {
 	dateRange: DateRange | undefined;
 	onDateRangeChange: (range: DateRange | undefined) => void;
 	className?: string;
+	maxDays?: number;
 }
 
 export function DateRangePicker({
 	dateRange,
 	onDateRangeChange,
 	className,
+	maxDays,
 }: DateRangePickerProps) {
 	const wideCalendar = useMediaQuery("(min-width: 640px)");
 	const handleClear = (e: React.MouseEvent) => {
@@ -66,6 +68,7 @@ export function DateRangePicker({
 						})}
 						selected={dateRange}
 						onSelect={onDateRangeChange}
+						max={maxDays}
 						numberOfMonths={wideCalendar ? 2 : 1}
 					/>
 				</PopoverContent>

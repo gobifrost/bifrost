@@ -34,28 +34,36 @@ test("an administrator finds a workflow in resource runs and its ranking", async
 			.execution_id;
 
 		await page.goto("/reports/usage");
-		await page.getByRole("tab", { name: "Workflow resources" }).click();
+		await page.getByRole("radio", { name: "Workflow Resources" }).click();
 		await expect(
-			page.getByRole("heading", { name: "Workflow resources" }),
+			page.getByRole("heading", { name: "Usage" }),
 		).toBeVisible();
 		await page
 			.getByRole("textbox", { name: "Search workflows" })
 			.fill(name);
-		await page.getByRole("button", { name: "Search", exact: true }).click();
 		await expect(
-			page.getByRole("link", { name: "View run" }),
-		).toHaveAttribute("href", `/history/${executionId}`);
+			page.getByRole("columnheader", { name: "Peak CPU %" }),
+		).toBeVisible();
 		const runRow = page.getByRole("row").filter({
 			has: page.getByText(name, { exact: true }),
 		});
+		await expect(runRow.getByRole("link", { name })).toHaveAttribute(
+			"href",
+			`/history/${executionId}`,
+		);
 		await expect(runRow.getByText(/^\d+ MiB$/)).toBeVisible();
-		await page.getByRole("tab", { name: "By workflow" }).click();
+		await page.getByRole("tab", { name: "By Workflow" }).click();
+		await expect(
+			page.getByRole("columnheader", { name: "Peak CPU %" }),
+		).toBeVisible();
 		await expect(page.getByRole("button", { name })).toBeVisible();
 		await page.getByRole("button", { name }).click();
 		await expect(page.getByRole("tab", { name: "Runs" })).toHaveAttribute(
 			"data-state",
 			"active",
 		);
+		await runRow.click();
+		await expect(page).toHaveURL(new RegExp(`/history/${executionId}$`));
 	} finally {
 		if (workflowId) {
 			const remove = await api.delete(`/api/workflows/${workflowId}`);

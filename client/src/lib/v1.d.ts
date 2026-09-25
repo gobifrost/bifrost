@@ -29045,6 +29045,8 @@ export interface components {
              * @default 0
              */
             total_duration_ms: number;
+            /** Max Peak Cpu Cores */
+            max_peak_cpu_cores?: number | null;
             /** Max Peak Process Rss Bytes */
             max_peak_process_rss_bytes?: number | null;
             /** Total Ai Cost */

@@ -415,6 +415,7 @@
 | GET | `/api/reports/roi/summary` |
 | GET | `/api/reports/roi/trends` |
 | GET | `/api/reports/usage` |
+| GET | `/api/reports/workflow-resources` |
 | GET | `/api/required-instructions` |
 | GET | `/api/roles` |
 | POST | `/api/roles` |

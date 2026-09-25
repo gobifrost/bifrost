@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen } from "@/test-utils";
 import { WorkflowResourcesReport } from "./WorkflowResourcesReport";
 
@@ -53,6 +53,7 @@ beforeEach(() => {
 						failed_count: 1,
 						total_cpu_seconds: 2.25,
 						total_duration_ms: 3000,
+						max_peak_cpu_cores: 0.98,
 						max_peak_process_rss_bytes: 125829120,
 						total_ai_cost: "0.30",
 					},
@@ -62,21 +63,42 @@ beforeEach(() => {
 	);
 });
 
+afterEach(() => vi.useRealTimers());
+
 describe("WorkflowResourcesReport", () => {
-	it("shows average and sampled peak CPU and opens a run", () => {
-		renderWithProviders(<WorkflowResourcesReport />);
-		expect(screen.getByText("75% of one core")).toBeVisible();
-		expect(screen.getByText("98% of one core")).toBeVisible();
-		expect(screen.getByText("120 MiB")).toBeVisible();
-		expect(screen.getByRole("link", { name: "View run" })).toHaveAttribute(
-			"href",
-			"/history/run-1",
+	it("keeps its date window stable while the report rerenders", () => {
+		vi.useFakeTimers({ toFake: ["Date"] });
+		vi.setSystemTime(new Date("2026-09-24T20:00:00Z"));
+		const { rerender } = renderWithProviders(
+			<WorkflowResourcesReport reportSwitch={null} />,
+		);
+		const firstWindow = mockUseWorkflowResourceReport.mock.lastCall?.[0];
+		vi.setSystemTime(new Date("2026-09-24T20:01:00Z"));
+		rerender(<WorkflowResourcesReport reportSwitch={null} />);
+		expect(mockUseWorkflowResourceReport.mock.lastCall?.[0]).toEqual(
+			firstWindow,
 		);
 	});
 
-	it("drills from a workflow ranking into its runs", async () => {
-		const { user } = renderWithProviders(<WorkflowResourcesReport />);
-		await user.click(screen.getByRole("tab", { name: "By workflow" }));
+	it("shows CPU percentages and a run link in the shared data table", () => {
+		renderWithProviders(<WorkflowResourcesReport reportSwitch={null} />);
+		expect(screen.getByText("75%")).toBeVisible();
+		expect(screen.getByText("98%")).toBeVisible();
+		expect(screen.getByText("120 MiB")).toBeVisible();
+		expect(
+			screen.getByRole("link", { name: "Build patch plan" }),
+		).toHaveAttribute("href", "/history/run-1");
+	});
+
+	it("shows peak CPU by workflow and drills into its runs", async () => {
+		const { user } = renderWithProviders(
+			<WorkflowResourcesReport reportSwitch={null} />,
+		);
+		await user.click(screen.getByRole("tab", { name: "By Workflow" }));
+		expect(
+			screen.getByRole("columnheader", { name: "Peak CPU %" }),
+		).toBeVisible();
+		expect(screen.getByText("98%")).toBeVisible();
 		await user.click(
 			screen.getByRole("button", { name: "Build patch plan" }),
 		);

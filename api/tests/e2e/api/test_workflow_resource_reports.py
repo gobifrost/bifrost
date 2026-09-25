@@ -41,6 +41,7 @@ class TestWorkflowResourceReports:
             completed_at=in_range + timedelta(seconds=2),
             duration_ms=2000,
             cpu_total_seconds=1.5,
+            peak_cpu_cores=0.75,
             peak_process_rss_bytes=123_000_000,
         )
         no_ai = Execution(
@@ -52,6 +53,7 @@ class TestWorkflowResourceReports:
             completed_at=in_range + timedelta(seconds=2),
             duration_ms=1000,
             cpu_total_seconds=0.25,
+            peak_cpu_cores=1.25,
             peak_process_rss_bytes=91_000_000,
         )
         other_org = Execution(
@@ -170,6 +172,7 @@ class TestWorkflowResourceReports:
                 "failed_count": 1,
                 "total_cpu_seconds": 2.25,
                 "total_duration_ms": 4500,
+                "max_peak_cpu_cores": 1.25,
                 "max_peak_process_rss_bytes": 123_000_000,
                 "total_ai_cost": "0.30000000",
             }

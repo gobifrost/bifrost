@@ -368,6 +368,7 @@ class WorkflowResourceWorkflow(BaseModel):
     failed_count: int = 0
     total_cpu_seconds: float = 0.0
     total_duration_ms: int = 0
+    max_peak_cpu_cores: float | None = None
     max_peak_process_rss_bytes: int | None = None
     total_ai_cost: Decimal = Decimal("0")
 

@@ -4,16 +4,17 @@ import {
 } from "@/components/layout/PageWorkspace";
 import { Button } from "@/components/ui/button";
 import { ListPageHeader } from "@/components/layout/ListPageHeader";
-import { useState, useMemo } from "react";
+import { useState, useMemo, type ReactNode } from "react";
 import { format, subDays } from "date-fns";
 import type { DateRange } from "react-day-picker";
-import { AlertCircle, Sparkles } from "lucide-react";
+import { AlertCircle, Sparkles, Workflow as WorkflowIcon } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { DateRangePicker } from "@/components/ui/date-range-picker";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useUsageReport, type UsageSource } from "@/services/usage";
 import { useAuth } from "@/contexts/AuthContext";
 import { useOrganizations } from "@/hooks/useOrganizations";
@@ -36,26 +37,33 @@ import {
 
 export function UsageReports() {
 	const [report, setReport] = useState("ai");
-	return (
-		<div className="flex h-full min-h-0 flex-col">
-			<Tabs
-				value={report}
-				onValueChange={setReport}
-				className="mx-auto w-full max-w-[1440px] shrink-0 pt-4"
-			>
-				<TabsList aria-label="Usage report">
-					<TabsTrigger value="ai">AI usage</TabsTrigger>
-					<TabsTrigger value="resources">
-						Workflow resources
-					</TabsTrigger>
-				</TabsList>
-			</Tabs>
-			{report === "ai" ? <AIUsageReport /> : <WorkflowResourcesReport />}
-		</div>
+	const reportSwitch = (
+		<ToggleGroup
+			type="single"
+			value={report}
+			onValueChange={(value) => value && setReport(value)}
+			aria-label="Usage report type"
+			size="lg"
+			className="grid w-full grid-cols-2 justify-start sm:flex sm:w-auto"
+		>
+			<ToggleGroupItem value="ai" className="gap-1.5">
+				<Sparkles className="h-3.5 w-3.5" />
+				AI Usage
+			</ToggleGroupItem>
+			<ToggleGroupItem value="resources" className="gap-1.5">
+				<WorkflowIcon className="h-3.5 w-3.5" />
+				Workflow Resources
+			</ToggleGroupItem>
+		</ToggleGroup>
+	);
+	return report === "ai" ? (
+		<AIUsageReport reportSwitch={reportSwitch} />
+	) : (
+		<WorkflowResourcesReport reportSwitch={reportSwitch} />
 	);
 }
 
-function AIUsageReport() {
+function AIUsageReport({ reportSwitch }: { reportSwitch: ReactNode }) {
 	const { isPlatformAdmin } = useAuth();
 
 	// Organization filter state (platform admins only)
@@ -132,8 +140,9 @@ function AIUsageReport() {
 		<PageWorkspace className="mx-auto w-full max-w-[1440px] min-w-0 lg:h-auto lg:flex-1">
 			<div className="shrink-0 space-y-4">
 				<ListPageHeader
-					title="Usage Reports"
-					description="AI usage and resource consumption analytics"
+					title="Usage"
+					titleAccessory={reportSwitch}
+					description="Review AI spend, tokens, and storage across the platform."
 					actions={
 						isPlatformAdmin && (
 							<div className="flex min-h-11 flex-wrap items-center gap-3">
@@ -172,13 +181,6 @@ function AIUsageReport() {
 					aria-label="Report filters"
 					className="flex min-w-0 flex-wrap items-center gap-3 border-b pb-4"
 				>
-					<div className="w-full sm:w-auto sm:max-w-sm">
-						<DateRangePicker
-							dateRange={dateRange}
-							onDateRangeChange={setDateRange}
-						/>
-					</div>
-
 					<div className="flex min-w-0 flex-1 flex-wrap items-center gap-3">
 						<Label className="text-sm font-medium">Source:</Label>
 						<Tabs
@@ -205,6 +207,12 @@ function AIUsageReport() {
 								/>
 							</div>
 						)}
+					</div>
+					<div className="w-full sm:w-auto sm:max-w-sm">
+						<DateRangePicker
+							dateRange={dateRange}
+							onDateRangeChange={setDateRange}
+						/>
 					</div>
 				</section>
 			</div>

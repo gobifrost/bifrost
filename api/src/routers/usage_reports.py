@@ -527,6 +527,7 @@ async def get_workflow_resource_report(
                 func.sum(case((Execution.status == ExecutionStatus.FAILED, 1), else_=0)).label("failed_count"),
                 func.coalesce(func.sum(Execution.cpu_total_seconds), 0.0).label("total_cpu_seconds"),
                 func.coalesce(func.sum(Execution.duration_ms), 0).label("total_duration_ms"),
+                func.max(Execution.peak_cpu_cores).label("max_peak_cpu_cores"),
                 func.max(Execution.peak_process_rss_bytes).label("max_peak_process_rss_bytes"),
                 func.coalesce(func.sum(ai_agg.c.ai_cost), Decimal("0")).label("total_ai_cost"),
             )
@@ -557,6 +558,7 @@ async def get_workflow_resource_report(
                 failed_count=int(row.failed_count or 0),
                 total_cpu_seconds=float(row.total_cpu_seconds or 0),
                 total_duration_ms=int(row.total_duration_ms or 0),
+                max_peak_cpu_cores=row.max_peak_cpu_cores,
                 max_peak_process_rss_bytes=row.max_peak_process_rss_bytes,
                 total_ai_cost=Decimal(str(row.total_ai_cost or 0)),
             )

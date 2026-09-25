@@ -1,18 +1,32 @@
-import { useState } from "react";
-import { Link } from "react-router-dom";
-import { format, subDays } from "date-fns";
+import { useState, type ReactNode } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { endOfDay, startOfDay, subDays } from "date-fns";
+import type { DateRange } from "react-day-picker";
 import { AlertCircle } from "lucide-react";
 import {
 	PageWorkspace,
 	PageScrollArea,
 } from "@/components/layout/PageWorkspace";
 import { ListPageHeader } from "@/components/layout/ListPageHeader";
+import { ListToolbar } from "@/components/layout/ListToolbar";
+import { PaginationFooter } from "@/components/pagination/PaginationFooter";
+import { SearchBox } from "@/components/search/SearchBox";
+import { DateRangePicker } from "@/components/ui/date-range-picker";
+import { RunStatusBadge } from "@/components/execution";
+import { formatRunTime } from "./ExecutionHistory/components/historyView";
+import { formatDate } from "@/lib/utils";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
 import {
 	DataTable,
 	DataTableBody,
@@ -49,6 +63,11 @@ function bytes(value: number | null | undefined) {
 	return `${(value / 1024 / 1024).toFixed(0)} MiB`;
 }
 
+function percentage(cores: number | null | undefined) {
+	if (cores == null) return "—";
+	return `${(cores * 100).toFixed(0)}%`;
+}
+
 function money(value: string | number | null | undefined) {
 	const amount = Number(value ?? 0);
 	if (amount > 0 && amount < 0.000001) return "<$0.000001";
@@ -58,87 +77,102 @@ function money(value: string | number | null | undefined) {
 	return `$${amount.toFixed(2)}`;
 }
 
-function cpuAverage(run: WorkflowResourceRun) {
-	if (run.avg_cpu_cores == null) return "—";
-	return `${(run.avg_cpu_cores * 100).toFixed(0)}% of one core`;
-}
-
 function RunTable({ runs }: { runs: WorkflowResourceRun[] }) {
+	const navigate = useNavigate();
 	return (
-		<div className="overflow-x-auto">
-			<DataTable className="min-w-[1040px]">
-				<DataTableHeader>
-					<DataTableRow>
-						<DataTableHead>Started</DataTableHead>
-						<DataTableHead>Workflow</DataTableHead>
-						<DataTableHead>Status</DataTableHead>
-						<DataTableHead>Elapsed</DataTableHead>
-						<DataTableHead>CPU time</DataTableHead>
-						<DataTableHead>Average CPU</DataTableHead>
-						<DataTableHead>Peak sampled CPU</DataTableHead>
-						<DataTableHead>Peak process memory</DataTableHead>
-						<DataTableHead>AI usage</DataTableHead>
-						<DataTableHead>
-							<span className="sr-only">Execution</span>
-						</DataTableHead>
+		<DataTable className="min-w-0" aria-label="Workflow resource runs">
+			<DataTableHeader>
+				<DataTableRow>
+					<DataTableHead className="w-full min-w-52">
+						Workflow
+					</DataTableHead>
+					<DataTableHead className="w-px">Status</DataTableHead>
+					<DataTableHead className="w-px whitespace-nowrap">
+						Started
+					</DataTableHead>
+					<DataTableHead className="w-px text-right">
+						Duration
+					</DataTableHead>
+					<DataTableHead className="w-px text-right">
+						CPU Time
+					</DataTableHead>
+					<DataTableHead className="w-px text-right">
+						Average CPU %
+					</DataTableHead>
+					<DataTableHead className="w-px text-right">
+						Peak CPU %
+					</DataTableHead>
+					<DataTableHead className="w-px text-right">
+						Peak Memory
+					</DataTableHead>
+					<DataTableHead className="w-px text-right">
+						AI Usage
+					</DataTableHead>
+				</DataTableRow>
+			</DataTableHeader>
+			<DataTableBody>
+				{runs.map((run) => (
+					<DataTableRow
+						key={run.execution_id}
+						clickable
+						href={`/history/${run.execution_id}`}
+						onClick={() => navigate(`/history/${run.execution_id}`)}
+					>
+						<DataTableCell className="max-w-0">
+							<Link
+								to={`/history/${run.execution_id}`}
+								className="block truncate rounded-[var(--bf-radius-control)] font-mono font-medium hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+							>
+								{run.workflow_name}
+							</Link>
+							<div className="truncate text-xs text-muted-foreground">
+								{run.organization_name ?? "Global"}
+							</div>
+						</DataTableCell>
+						<DataTableCell className="whitespace-nowrap">
+							<RunStatusBadge status={run.status} />
+						</DataTableCell>
+						<DataTableCell
+							className="whitespace-nowrap text-sm tabular-nums text-muted-foreground"
+							title={
+								run.started_at
+									? formatDate(new Date(run.started_at))
+									: undefined
+							}
+						>
+							{run.started_at
+								? formatRunTime(run.started_at)
+								: "—"}
+						</DataTableCell>
+						<DataTableCell className="whitespace-nowrap text-right tabular-nums">
+							{duration(
+								run.duration_ms == null
+									? null
+									: run.duration_ms / 1000,
+							)}
+						</DataTableCell>
+						<DataTableCell className="whitespace-nowrap text-right tabular-nums">
+							{duration(run.cpu_total_seconds)}
+						</DataTableCell>
+						<DataTableCell className="whitespace-nowrap text-right tabular-nums">
+							{percentage(run.avg_cpu_cores)}
+						</DataTableCell>
+						<DataTableCell className="whitespace-nowrap text-right tabular-nums">
+							{percentage(run.peak_cpu_cores)}
+						</DataTableCell>
+						<DataTableCell className="whitespace-nowrap text-right tabular-nums">
+							{bytes(run.peak_process_rss_bytes)}
+						</DataTableCell>
+						<DataTableCell className="whitespace-nowrap text-right tabular-nums">
+							<div>{money(run.ai_cost)}</div>
+							<div className="text-xs text-muted-foreground">
+								{run.ai_calls} calls · {run.ai_tokens} tokens
+							</div>
+						</DataTableCell>
 					</DataTableRow>
-				</DataTableHeader>
-				<DataTableBody>
-					{runs.map((run) => (
-						<DataTableRow key={run.execution_id}>
-							<DataTableCell className="whitespace-nowrap">
-								{run.started_at
-									? format(
-											new Date(run.started_at),
-											"MMM d, HH:mm",
-										)
-									: "—"}
-							</DataTableCell>
-							<DataTableCell>
-								<div className="font-medium">
-									{run.workflow_name}
-								</div>
-								<div className="text-xs text-muted-foreground">
-									{run.organization_name ?? "Global"}
-								</div>
-							</DataTableCell>
-							<DataTableCell>{run.status}</DataTableCell>
-							<DataTableCell>
-								{duration(
-									run.duration_ms == null
-										? null
-										: run.duration_ms / 1000,
-								)}
-							</DataTableCell>
-							<DataTableCell>
-								{duration(run.cpu_total_seconds)}
-							</DataTableCell>
-							<DataTableCell>{cpuAverage(run)}</DataTableCell>
-							<DataTableCell>
-								{run.peak_cpu_cores == null
-									? "—"
-									: `${(run.peak_cpu_cores * 100).toFixed(0)}% of one core`}
-							</DataTableCell>
-							<DataTableCell>
-								{bytes(run.peak_process_rss_bytes)}
-							</DataTableCell>
-							<DataTableCell>
-								{money(run.ai_cost)} · {run.ai_calls} calls ·{" "}
-								{run.ai_tokens} tokens
-							</DataTableCell>
-							<DataTableCell>
-								<Link
-									className="text-primary hover:underline"
-									to={`/history/${run.execution_id}`}
-								>
-									View run
-								</Link>
-							</DataTableCell>
-						</DataTableRow>
-					))}
-				</DataTableBody>
-			</DataTable>
-		</div>
+				))}
+			</DataTableBody>
+		</DataTable>
 	);
 }
 
@@ -150,103 +184,223 @@ function WorkflowTable({
 	onSelect: (workflow: WorkflowResourceWorkflow) => void;
 }) {
 	return (
-		<div className="overflow-x-auto">
-			<DataTable className="min-w-[850px]">
-				<DataTableHeader>
-					<DataTableRow>
-						<DataTableHead>Workflow</DataTableHead>
-						<DataTableHead>Runs</DataTableHead>
-						<DataTableHead>Failed</DataTableHead>
-						<DataTableHead>Total CPU</DataTableHead>
-						<DataTableHead>Total elapsed</DataTableHead>
-						<DataTableHead>Highest peak memory</DataTableHead>
-						<DataTableHead>AI spend</DataTableHead>
+		<DataTable className="min-w-0" aria-label="Workflow resource ranking">
+			<DataTableHeader>
+				<DataTableRow>
+					<DataTableHead className="w-full min-w-52">
+						Workflow
+					</DataTableHead>
+					<DataTableHead className="w-px text-right">
+						Runs
+					</DataTableHead>
+					<DataTableHead className="w-px text-right">
+						Failed
+					</DataTableHead>
+					<DataTableHead className="w-px text-right">
+						CPU Time
+					</DataTableHead>
+					<DataTableHead className="w-px text-right">
+						Elapsed Time
+					</DataTableHead>
+					<DataTableHead className="w-px text-right">
+						Peak CPU %
+					</DataTableHead>
+					<DataTableHead className="w-px text-right">
+						Peak Memory
+					</DataTableHead>
+					<DataTableHead className="w-px text-right">
+						AI Spend
+					</DataTableHead>
+				</DataTableRow>
+			</DataTableHeader>
+			<DataTableBody>
+				{workflows.map((workflow) => (
+					<DataTableRow
+						key={`${workflow.workflow_id ?? "legacy"}:${workflow.workflow_name}`}
+						clickable
+						onClick={() => onSelect(workflow)}
+					>
+						<DataTableCell className="max-w-0">
+							<Button
+								variant="link"
+								className="h-auto max-w-full justify-start truncate p-0 font-mono font-medium"
+								onClick={() => onSelect(workflow)}
+							>
+								{workflow.workflow_name}
+							</Button>
+							{workflow.workflow_id && (
+								<div className="text-xs text-muted-foreground">
+									ID {workflow.workflow_id.slice(0, 8)}
+								</div>
+							)}
+						</DataTableCell>
+						<DataTableCell className="text-right tabular-nums">
+							{workflow.run_count}
+						</DataTableCell>
+						<DataTableCell className="text-right tabular-nums">
+							{workflow.failed_count}
+						</DataTableCell>
+						<DataTableCell className="whitespace-nowrap text-right tabular-nums">
+							{duration(workflow.total_cpu_seconds)}
+						</DataTableCell>
+						<DataTableCell className="whitespace-nowrap text-right tabular-nums">
+							{duration(workflow.total_duration_ms / 1000)}
+						</DataTableCell>
+						<DataTableCell className="whitespace-nowrap text-right tabular-nums">
+							{percentage(workflow.max_peak_cpu_cores)}
+						</DataTableCell>
+						<DataTableCell className="whitespace-nowrap text-right tabular-nums">
+							{bytes(workflow.max_peak_process_rss_bytes)}
+						</DataTableCell>
+						<DataTableCell className="whitespace-nowrap text-right tabular-nums">
+							{money(workflow.total_ai_cost)}
+						</DataTableCell>
 					</DataTableRow>
-				</DataTableHeader>
-				<DataTableBody>
-					{workflows.map((workflow) => (
-						<DataTableRow
-							key={`${workflow.workflow_id ?? "legacy"}:${workflow.workflow_name}`}
-						>
-							<DataTableCell>
-								<Button
-									variant="link"
-									className="h-auto p-0"
-									onClick={() => onSelect(workflow)}
-								>
-									{workflow.workflow_name}
-								</Button>
-								{workflow.workflow_id && (
-									<div className="text-xs text-muted-foreground">
-										ID {workflow.workflow_id.slice(0, 8)}
-									</div>
-								)}
-							</DataTableCell>
-							<DataTableCell>{workflow.run_count}</DataTableCell>
-							<DataTableCell>
-								{workflow.failed_count}
-							</DataTableCell>
-							<DataTableCell>
-								{duration(workflow.total_cpu_seconds)}
-							</DataTableCell>
-							<DataTableCell>
-								{duration(workflow.total_duration_ms / 1000)}
-							</DataTableCell>
-							<DataTableCell>
-								{bytes(workflow.max_peak_process_rss_bytes)}
-							</DataTableCell>
-							<DataTableCell>
-								{money(workflow.total_ai_cost)}
-							</DataTableCell>
-						</DataTableRow>
-					))}
-				</DataTableBody>
-			</DataTable>
-		</div>
+				))}
+			</DataTableBody>
+		</DataTable>
 	);
 }
 
-export function WorkflowResourcesReport() {
+interface WorkflowResourcesReportProps {
+	reportSwitch: ReactNode;
+}
+
+export function WorkflowResourcesReport({
+	reportSwitch,
+}: WorkflowResourcesReportProps) {
 	const [view, setView] = useState<View>("runs");
-	const [range, setRange] = useState(1);
-	const [rangeEnd] = useState(() => new Date());
+	const [dateRange, setDateRange] = useState<DateRange>(() => ({
+		from: subDays(new Date(), 7),
+		to: new Date(),
+	}));
 	const [orgId, setOrgId] = useState<string | null | undefined>();
-	const [workflow, setWorkflow] = useState("");
+	const [workflowSearch, setWorkflowSearch] = useState("");
 	const [workflowId, setWorkflowId] = useState<string>();
-	const [draftWorkflow, setDraftWorkflow] = useState("");
 	const [status, setStatus] = useState<WorkflowResourceStatus | "">("");
-	const [sort, setSort] = useState<Sort>("cpu");
+	const [sort, setSort] = useState<Sort>("started");
 	const [page, setPage] = useState(1);
+	const start = startOfDay(dateRange.from ?? subDays(new Date(), 7));
+	const selectedEnd = dateRange.to ?? dateRange.from ?? new Date();
+	const end = endOfDay(selectedEnd);
 	const { data, isLoading, error, refetch, isFetching } =
 		useWorkflowResourceReport({
-			startedAfter: subDays(rangeEnd, range).toISOString(),
-			startedBefore: rangeEnd.toISOString(),
+			startedAfter: start.toISOString(),
+			startedBefore: end.toISOString(),
 			view,
 			sort,
 			page,
 			pageSize: 50,
 			orgId: typeof orgId === "string" ? orgId : undefined,
 			workflowId,
-			workflow: workflow.trim() || undefined,
+			workflow: workflowId
+				? undefined
+				: workflowSearch.trim() || undefined,
 			status: status || undefined,
 		});
 	const summary = data?.summary;
+	const changeFilter = () => setPage(1);
 	const selectWorkflow = (selected: WorkflowResourceWorkflow) => {
 		setWorkflowId(selected.workflow_id ?? undefined);
-		setWorkflow(selected.workflow_id ? "" : selected.workflow_name);
-		setDraftWorkflow(selected.workflow_name);
+		setWorkflowSearch(selected.workflow_name);
 		setView("runs");
+		setSort("started");
 		setPage(1);
 	};
-	const changeFilter = () => setPage(1);
 
 	return (
 		<PageWorkspace className="mx-auto w-full max-w-[1440px] min-w-0 lg:h-auto lg:flex-1">
 			<ListPageHeader
-				title="Workflow resources"
-				description="Find expensive workflows and inspect individual runs."
+				title="Usage"
+				titleAccessory={reportSwitch}
+				description="Find workflows putting the most pressure on workers and inspect their runs."
 			/>
 			<PageScrollArea className="space-y-5">
+				<ListToolbar className="items-stretch">
+					<div className="flex w-full min-w-0 flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center">
+						<SearchBox
+							value={workflowSearch}
+							onChange={(value) => {
+								setWorkflowSearch(value);
+								setWorkflowId(undefined);
+								changeFilter();
+							}}
+							placeholder="Search workflows…"
+							aria-label="Search workflows"
+							className="w-full min-w-0 lg:min-w-52 lg:flex-1"
+						/>
+						<div className="w-full min-w-0 lg:w-44">
+							<OrganizationSelect
+								value={orgId}
+								onChange={(value) => {
+									setOrgId(value);
+									changeFilter();
+								}}
+								showAll
+								placeholder="All organizations"
+							/>
+						</div>
+						<Select
+							value={status || "all"}
+							onValueChange={(value) => {
+								setStatus(
+									value === "all"
+										? ""
+										: (value as WorkflowResourceStatus),
+								);
+								changeFilter();
+							}}
+						>
+							<SelectTrigger
+								aria-label="Status"
+								className="w-full lg:w-44"
+							>
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								<SelectItem value="all">
+									All statuses
+								</SelectItem>
+								<SelectItem value="Scheduled">
+									Scheduled
+								</SelectItem>
+								<SelectItem value="Pending">Pending</SelectItem>
+								<SelectItem value="Running">Running</SelectItem>
+								<SelectItem value="Success">
+									Completed
+								</SelectItem>
+								<SelectItem value="CompletedWithErrors">
+									Completed with errors
+								</SelectItem>
+								<SelectItem value="Failed">Failed</SelectItem>
+								<SelectItem value="Timeout">
+									Timed out
+								</SelectItem>
+								<SelectItem value="Stuck">Stuck</SelectItem>
+								<SelectItem value="Cancelling">
+									Cancelling
+								</SelectItem>
+								<SelectItem value="Cancelled">
+									Cancelled
+								</SelectItem>
+							</SelectContent>
+						</Select>
+						<DateRangePicker
+							dateRange={dateRange}
+							onDateRangeChange={(value) => {
+								setDateRange(
+									value ?? {
+										from: subDays(new Date(), 7),
+										to: new Date(),
+									},
+								);
+								changeFilter();
+							}}
+							maxDays={29}
+							className="w-full min-w-0 sm:w-auto lg:w-56"
+						/>
+					</div>
+				</ListToolbar>
 				{error && (
 					<Alert variant="destructive">
 						<AlertCircle className="h-4 w-4" />
@@ -270,9 +424,9 @@ export function WorkflowResourcesReport() {
 				>
 					{[
 						["Runs", summary?.run_count ?? "—"],
-						["CPU time", duration(summary?.total_cpu_seconds)],
+						["CPU Time", duration(summary?.total_cpu_seconds)],
 						[
-							"Wall time",
+							"Elapsed Time",
 							duration(
 								summary?.total_duration_ms == null
 									? null
@@ -280,7 +434,7 @@ export function WorkflowResourcesReport() {
 							),
 						],
 						[
-							"AI spend",
+							"AI Spend",
 							summary ? money(summary.total_ai_cost) : "—",
 						],
 					].map(([label, value]) => (
@@ -296,181 +450,84 @@ export function WorkflowResourcesReport() {
 						</Card>
 					))}
 				</div>
-				<Card className="overflow-hidden">
-					<CardContent className="space-y-4 pt-5">
-						<div className="flex flex-wrap items-center gap-3">
-							<label className="text-sm">
-								Period{" "}
-								<select
-									className="ml-2 rounded-md border bg-background px-3 py-2"
-									value={range}
-									onChange={(event) => {
-										setRange(Number(event.target.value));
-										changeFilter();
-									}}
-								>
-									<option value={1}>Last 24 hours</option>
-									<option value={7}>Last 7 days</option>
-									<option value={30}>Last 30 days</option>
-								</select>
-							</label>
-							<div className="min-w-48">
-								<OrganizationSelect
-									value={orgId}
-									onChange={(value) => {
-										setOrgId(value);
-										changeFilter();
-									}}
-									showAll
-									placeholder="All organizations"
-								/>
-							</div>
-							<form
-								className="flex gap-2"
-								onSubmit={(event) => {
-									event.preventDefault();
-									setWorkflowId(undefined);
-									setWorkflow(draftWorkflow);
-									changeFilter();
-								}}
-							>
-								<Input
-									aria-label="Search workflows"
-									placeholder="Search workflows"
-									className="w-56"
-									value={draftWorkflow}
-									onChange={(event) =>
-										setDraftWorkflow(event.target.value)
-									}
-								/>
-								<Button type="submit" variant="outline">
-									Search
-								</Button>
-							</form>
-							<label className="text-sm">
-								Status{" "}
-								<select
-									className="ml-2 rounded-md border bg-background px-3 py-2"
-									value={status}
-									onChange={(event) => {
-										setStatus(
-											event.target.value as
-												WorkflowResourceStatus | "",
-										);
-										changeFilter();
-									}}
-								>
-									<option value="">All</option>
-									<option value="Scheduled">Scheduled</option>
-									<option value="Pending">Pending</option>
-									<option value="Running">Running</option>
-									<option value="Success">Success</option>
-									<option value="CompletedWithErrors">
-										Completed with errors
-									</option>
-									<option value="Failed">Failed</option>
-									<option value="Timeout">Timed out</option>
-									<option value="Stuck">Stuck</option>
-									<option value="Cancelling">
-										Cancelling
-									</option>
-									<option value="Cancelled">Cancelled</option>
-								</select>
-							</label>
-						</div>
-						<div className="flex flex-wrap items-center justify-between gap-3">
-							<Tabs
-								value={view}
-								onValueChange={(value) => {
-									if (value === "workflows" && workflowId) {
-										setWorkflowId(undefined);
-										setWorkflow("");
-										setDraftWorkflow("");
-									}
-									setView(value as View);
-									setPage(1);
-								}}
-							>
-								<TabsList>
-									<TabsTrigger value="runs">Runs</TabsTrigger>
-									<TabsTrigger value="workflows">
-										By workflow
-									</TabsTrigger>
-								</TabsList>
-							</Tabs>
-							<label className="text-sm">
-								Sort{" "}
-								<select
-									className="ml-2 rounded-md border bg-background px-3 py-2"
-									value={sort}
-									onChange={(event) => {
-										setSort(event.target.value as Sort);
-										setPage(1);
-									}}
-								>
-									<option value="cpu">CPU time</option>
-									<option value="elapsed">
-										Elapsed time
-									</option>
-									<option value="memory">Memory</option>
-									<option value="ai">AI spend</option>
-									<option value="started">Most recent</option>
-								</select>
-							</label>
-						</div>
-						<p className="text-xs text-muted-foreground">
-							Average CPU is CPU time divided by elapsed time.
-							Peak CPU is the busiest sample, checked about once a
-							second and at completion; shorter spikes can be
-							missed. 100% means one core fully occupied; a run
-							can exceed 100% when it uses multiple cores. Peak
-							process memory is the child's highest RSS for
-							completed runs; interrupted runs use the highest
-							available sample. Historical runs have no value.
+				<div className="flex flex-wrap items-center justify-between gap-3">
+					<Tabs
+						value={view}
+						onValueChange={(value) => {
+							if (value === "workflows" && workflowId) {
+								setWorkflowId(undefined);
+								setWorkflowSearch("");
+							}
+							setView(value as View);
+							setSort(value === "workflows" ? "cpu" : "started");
+							setPage(1);
+						}}
+					>
+						<TabsList aria-label="Workflow resource view">
+							<TabsTrigger value="runs">Runs</TabsTrigger>
+							<TabsTrigger value="workflows">
+								By Workflow
+							</TabsTrigger>
+						</TabsList>
+					</Tabs>
+					<Select
+						value={sort}
+						onValueChange={(value) => {
+							setSort(value as Sort);
+							setPage(1);
+						}}
+					>
+						<SelectTrigger aria-label="Sort by" className="w-44">
+							<SelectValue />
+						</SelectTrigger>
+						<SelectContent>
+							<SelectItem value="started">Most Recent</SelectItem>
+							<SelectItem value="cpu">CPU Time</SelectItem>
+							<SelectItem value="elapsed">
+								Elapsed Time
+							</SelectItem>
+							<SelectItem value="memory">Peak Memory</SelectItem>
+							<SelectItem value="ai">AI Spend</SelectItem>
+						</SelectContent>
+					</Select>
+				</div>
+				{isLoading ? (
+					<p role="status">Loading workflow resources…</p>
+				) : view === "runs" ? (
+					<RunTable runs={data?.runs ?? []} />
+				) : (
+					<WorkflowTable
+						workflows={data?.workflows ?? []}
+						onSelect={selectWorkflow}
+					/>
+				)}
+				{!isLoading &&
+					(!error || data) &&
+					(view === "runs"
+						? !data?.runs?.length
+						: !data?.workflows?.length) && (
+						<p className="py-4 text-center text-sm text-muted-foreground">
+							No workflow runs match these filters.
 						</p>
-						{isLoading ? (
-							<p role="status">Loading workflow resources…</p>
-						) : view === "runs" ? (
-							<RunTable runs={data?.runs ?? []} />
-						) : (
-							<WorkflowTable
-								workflows={data?.workflows ?? []}
-								onSelect={selectWorkflow}
-							/>
-						)}
-						{!isLoading &&
-							(!error || data) &&
-							(view === "runs"
-								? !data?.runs?.length
-								: !data?.workflows?.length) && (
-								<p className="py-4 text-center text-sm text-muted-foreground">
-									No workflow runs match these filters.
-								</p>
-							)}
-						<div className="flex items-center justify-between text-sm text-muted-foreground">
-							<span>
-								Page {page} · {data?.total ?? 0}{" "}
-								{view === "runs" ? "runs" : "workflows"}
-							</span>
-							<div className="flex gap-2">
-								<Button
-									variant="outline"
-									disabled={page === 1}
-									onClick={() => setPage(page - 1)}
-								>
-									Previous
-								</Button>
-								<Button
-									variant="outline"
-									disabled={!data || page * 50 >= data.total}
-									onClick={() => setPage(page + 1)}
-								>
-									Next
-								</Button>
-							</div>
-						</div>
-					</CardContent>
-				</Card>
+					)}
+				<PaginationFooter
+					aria-label="Workflow resource pages"
+					summary={`${data?.total ?? 0} ${view === "runs" ? "runs" : "workflows"} · Page ${page}`}
+					pending={isFetching}
+					previousDisabled={page === 1 || isFetching}
+					nextDisabled={
+						!data || page * 50 >= data.total || isFetching
+					}
+					onPrevious={() => setPage(page - 1)}
+					onNext={() => setPage(page + 1)}
+				/>
+				<p className="text-xs text-muted-foreground">
+					Average CPU is CPU time divided by elapsed time. Peak CPU is
+					the busiest sample, checked about once a second; short
+					spikes can be missed. 100% means one core fully occupied.
+					Peak Memory is the workflow process high-water mark for
+					completed runs. Historical runs have no peak values.
+				</p>
 			</PageScrollArea>
 		</PageWorkspace>
 	);

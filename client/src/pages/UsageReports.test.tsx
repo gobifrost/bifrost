@@ -27,23 +27,33 @@ vi.mock("@/services/usage", () => ({
 }));
 
 vi.mock("./WorkflowResourcesReport", () => ({
-	WorkflowResourcesReport: () => (
-		<section aria-label="workflow resources report">Resource runs</section>
+	WorkflowResourcesReport: ({
+		reportSwitch,
+	}: {
+		reportSwitch: ReactNode;
+	}) => (
+		<section aria-label="workflow resources report">
+			{reportSwitch}
+			Resource runs
+		</section>
 	),
 }));
 
 vi.mock("@/components/layout/ListPageHeader", () => ({
 	ListPageHeader: ({
 		title,
+		titleAccessory,
 		description,
 		actions,
 	}: {
 		title: string;
+		titleAccessory?: ReactNode;
 		description?: string;
 		actions?: ReactNode;
 	}) => (
 		<header>
 			<h1>{title}</h1>
+			{titleAccessory}
 			{description && <p>{description}</p>}
 			{actions}
 		</header>
@@ -225,17 +235,18 @@ beforeEach(() => {
 });
 
 describe("UsageReports", () => {
-	it("keeps AI usage as the default and opens workflow resources as a separate tab", async () => {
+	it("keeps AI Usage as the default and switches to Workflow Resources beside the title", async () => {
 		const { user } = await renderPage();
+		expect(screen.getByRole("heading", { name: "Usage" })).toBeVisible();
 		expect(screen.getByText("Total AI Cost")).toBeVisible();
 		await user.click(
-			screen.getByRole("tab", { name: "Workflow resources" }),
+			screen.getByRole("radio", { name: "Workflow Resources" }),
 		);
 		expect(
 			screen.getByRole("region", { name: "workflow resources report" }),
 		).toBeVisible();
 		expect(screen.queryByText("Total AI Cost")).not.toBeInTheDocument();
-		await user.click(screen.getByRole("tab", { name: "AI usage" }));
+		await user.click(screen.getByRole("radio", { name: "AI Usage" }));
 		expect(screen.getByText("Total AI Cost")).toBeVisible();
 	});
 
