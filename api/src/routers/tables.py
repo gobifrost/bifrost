@@ -9,7 +9,6 @@ Tables follow the same scoping pattern as configs:
 - organization_id = UUID: Organization-scoped table
 """
 
-from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
@@ -18,21 +17,18 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.claims.preresolve import preresolve_for_policies
 from shared.claims.registry import referenced_claim_names
-from shared.policies.probe import evaluate_action
-from shared.table_batch_writes import (
-    BatchPolicyDenied,
-    BatchWriteRow,
-    ConcurrentBatchWrite,
-    DuplicateBatchIds,
-    _row_from_doc,
-    _update_post_image_row,
-    write_table_batch,
+from shared.table_document_writes import (
+    BatchDocumentInput,
+    TableWriteError,
+    batch_delete_table_documents,
+    batch_write_table_documents,
+    delete_table_document,
+    insert_table_document,
+    update_table_document,
+    upsert_table_document,
 )
 from shared.table_documents import (
-    DocumentRepository,
-    check_table_action_or_403 as _check_action_or_403,
     count_table_documents,
     get_table_document,
     query_table_documents,
@@ -42,8 +38,6 @@ from shared.table_resolution import (
     resolve_target_org_safe as _resolve_target_org_safe,
 )
 from src.core.auth import Context, CurrentSuperuser
-from src.core.principal import UserPrincipal
-from src.core.constants import SYSTEM_USER_UUID
 from src.core.org_filter import resolve_org_filter
 from src.models.contracts.policies import (
     PolicyRuleRef,
@@ -69,106 +63,21 @@ from src.models.contracts.tables import (
     TableUpdate,
 )
 from src.models.orm.custom_claims import CustomClaim as CustomClaimORM
-from src.models.orm.tables import Document, Table
+from src.models.orm.tables import Table
 from src.services.solutions.guard import assert_entity_id_not_solution_managed
 from src.services.solution_scope import resolve_effective_solution_id
-from src.services.table_policy_loader import load_resolved_table_policies
 from src.repositories.tables import TableRepository
 from src.core.pubsub import (
-    publish_document_change,
     publish_policy_changed,
-    publish_table_invalidated,
 )
-from src.services.audit import emit_table_policy_deny
 
 router = APIRouter(prefix="/api/tables", tags=["Tables"])
 
 
 
-def _resolve_attribution(
-    user: UserPrincipal,
-    body_created_by: str | None,
-    body_updated_by: str | None,
-) -> tuple[str, str]:
-    """Decide attribution (created_by, updated_by) for a document write.
-
-    If the body carries either field, the caller must be the engine
-    (SYSTEM_USER_UUID) or a platform admin (is_superuser); otherwise we 403
-    so a regular user can't forge attribution.
-
-    Defaulting:
-    - both omitted → both default to the caller's id.
-    - only created_by provided → updated_by mirrors it (same actor on first write).
-    - only updated_by provided → created_by defaults to the caller (only meaningful
-      on insert; ignored on the update path).
-    """
-    has_override = body_created_by is not None or body_updated_by is not None
-    if has_override:
-        is_engine = user.user_id == SYSTEM_USER_UUID
-        if not (is_engine or user.is_superuser):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="created_by/updated_by override requires engine or platform-admin caller",
-            )
-    caller = str(user.user_id)
-    created_by = body_created_by or caller
-    updated_by = body_updated_by or body_created_by or caller
-    return (created_by, updated_by)
-
-
-async def _check_update_or_403(
-    table: Table,
-    old_row: dict[str, Any],
-    new_row: dict[str, Any],
-    user: UserPrincipal,
-    *,
-    db: AsyncSession,
-) -> None:
-    """Require the ``update`` policy on BOTH pre-image and post-image.
-
-    The pre-image check alone authorizes the caller against the row as it
-    exists; the post-image check authorizes the value they are writing. Both
-    must pass — otherwise a user who can write a row because its org field
-    matches their own org could retarget the row to another org's id in the
-    same write.
-
-    Same audit/commit contract as :func:`shared.table_documents.check_table_action_or_403`: a single
-    ``policy.deny`` audit row on either failure, generic 403 detail, and no
-    uncommitted caller mutations allowed at call time.
-    """
-    policies = await load_resolved_table_policies(table, db)
-    await preresolve_for_policies(
-        user,
-        policies,
-        db,
-        table.organization_id,
-        table.solution_id,
-    )
-    if evaluate_action("update", policies, old_row, user) and evaluate_action(
-        "update", policies, new_row, user
-    ):
-        return
-
-    raw_id = old_row.get("id")
-    resource_id: UUID | None = None
-    if raw_id is not None:
-        try:
-            resource_id = raw_id if isinstance(raw_id, UUID) else UUID(str(raw_id))
-        except (ValueError, TypeError):
-            resource_id = None
-
-    await emit_table_policy_deny(
-        db,
-        policy_action="update",
-        table_id=table.id,
-        table_name=table.name,
-        resource_id=resource_id,
-    )
-    await db.commit()
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail="Access denied",
-    )
+def _table_write_http_error(exc: TableWriteError) -> HTTPException:
+    """Map a transport-neutral service error to its HTTP equivalent."""
+    return HTTPException(status_code=exc.status_code, detail=exc.detail)
 
 
 # =============================================================================
@@ -657,55 +566,19 @@ async def insert_document(
     """Insert a new document into the table."""
     table = await get_table_or_404(ctx, table_id, scope=scope)
     await _assert_solution_write_targets_owned_table(ctx, table)
-    repo = DocumentRepository(ctx.db, table)
-    created_by, updated_by = _resolve_attribution(
-        ctx.user, body.created_by, body.updated_by
-    )
-
-    if body.upsert and body.id:
-        # Upsert: update if exists, otherwise insert. Check `update` against
-        # BOTH the existing row and the merged post-image, `create` against
-        # the candidate row.
-        existing = await repo.get(body.id)
-        if existing is not None:
-            old_row = _row_from_doc(existing)
-            new_row = _update_post_image_row(
-                old_row,
-                body.data,
-                updated_by=updated_by,
-                now=datetime.now(timezone.utc),
-                replace=False,
-            )
-            await _check_update_or_403(table, old_row, new_row, ctx.user, db=ctx.db)
-            doc = await repo.update(body.id, body.data, updated_by=updated_by)
-            if doc is None:
-                raise HTTPException(status_code=404, detail="Document not found")
-            await ctx.db.commit()
-            await publish_document_change(
-                table_id=str(table.id),
-                action="update",
-                old_row=old_row,
-                new_row=_row_from_doc(doc),
-            )
-            return DocumentPublic.model_validate(doc)
-
-    candidate_row: dict[str, Any] = {
-        **body.data,
-        "id": body.id,
-        "created_by": created_by,
-        "updated_by": updated_by,
-    }
-    await _check_action_or_403("create", table, candidate_row, ctx.user, db=ctx.db)
-    doc = await repo.insert(
-        body.data, created_by=created_by, doc_id=body.id, updated_by=updated_by
-    )
-    await ctx.db.commit()
-    await publish_document_change(
-        table_id=str(table.id),
-        action="insert",
-        old_row=None,
-        new_row=_row_from_doc(doc),
-    )
+    try:
+        doc = await insert_table_document(
+            ctx.db,
+            table,
+            ctx.user,
+            doc_id=body.id,
+            data=body.data,
+            created_by=body.created_by,
+            updated_by=body.updated_by,
+            upsert=body.upsert,
+        )
+    except TableWriteError as exc:
+        raise _table_write_http_error(exc) from exc
     return DocumentPublic.model_validate(doc)
 
 
@@ -738,41 +611,18 @@ async def upsert_document(
     """
     table = await get_table_or_404(ctx, table_id, scope=scope)
     await _assert_solution_write_targets_owned_table(ctx, table)
-    repo = DocumentRepository(ctx.db, table)
-    created_by, updated_by = _resolve_attribution(
-        ctx.user, body.created_by, body.updated_by
-    )
-
-    existing = await repo.get(body.id)
-    old_row: dict[str, Any] | None = None
-    if existing is not None:
-        old_row = _row_from_doc(existing)
-        new_row = _update_post_image_row(
-            old_row,
-            body.data,
-            updated_by=updated_by,
-            now=datetime.now(timezone.utc),
-            replace=True,
+    try:
+        doc = await upsert_table_document(
+            ctx.db,
+            table,
+            ctx.user,
+            doc_id=body.id,
+            data=body.data,
+            created_by=body.created_by,
+            updated_by=body.updated_by,
         )
-        await _check_update_or_403(table, old_row, new_row, ctx.user, db=ctx.db)
-    candidate_row: dict[str, Any] = {
-        **body.data,
-        "id": body.id,
-        "created_by": created_by,
-        "updated_by": updated_by,
-    }
-    await _check_action_or_403("create", table, candidate_row, ctx.user, db=ctx.db)
-
-    doc, inserted = await repo.upsert(
-        body.id, body.data, created_by=created_by, updated_by=updated_by
-    )
-    await ctx.db.commit()
-    await publish_document_change(
-        table_id=str(table.id),
-        action="insert" if inserted else "update",
-        old_row=None if inserted else old_row,
-        new_row=_row_from_doc(doc),
-    )
+    except TableWriteError as exc:
+        raise _table_write_http_error(exc) from exc
     return DocumentPublic.model_validate(doc)
 
 
@@ -845,31 +695,17 @@ async def update_document(
     """
     table = await get_table_or_404(ctx, table_id, scope=scope)
     await _assert_solution_write_targets_owned_table(ctx, table)
-    repo = DocumentRepository(ctx.db, table)
-    _, updated_by = _resolve_attribution(ctx.user, None, body.updated_by)
-    existing = await repo.get(doc_id)
-    if existing is None:
-        raise HTTPException(status_code=404, detail="Document not found")
-    old_row = _row_from_doc(existing)
-    new_row = _update_post_image_row(
-        old_row,
-        body.data,
-        updated_by=updated_by,
-        now=datetime.now(timezone.utc),
-        replace=False,
-    )
-    await _check_update_or_403(table, old_row, new_row, ctx.user, db=ctx.db)
-    doc = await repo.update(doc_id, body.data, updated_by=updated_by)
-    if doc is None:
-        # Lost a race with a concurrent delete after we fetched + access-checked.
-        raise HTTPException(status_code=404, detail="Document not found")
-    await ctx.db.commit()
-    await publish_document_change(
-        table_id=str(table.id),
-        action="update",
-        old_row=old_row,
-        new_row=_row_from_doc(doc),
-    )
+    try:
+        doc = await update_table_document(
+            ctx.db,
+            table,
+            ctx.user,
+            doc_id=doc_id,
+            data=body.data,
+            updated_by=body.updated_by,
+        )
+    except TableWriteError as exc:
+        raise _table_write_http_error(exc) from exc
     return DocumentPublic.model_validate(doc)
 
 
@@ -890,21 +726,10 @@ async def delete_document(
     """Delete a document."""
     table = await get_table_or_404(ctx, table_id, scope=scope)
     await _assert_solution_write_targets_owned_table(ctx, table)
-    repo = DocumentRepository(ctx.db, table)
-    existing = await repo.get(doc_id)
-    if existing is None:
-        raise HTTPException(status_code=404, detail="Document not found")
-    old_row = _row_from_doc(existing)
-    await _check_action_or_403("delete", table, old_row, ctx.user, db=ctx.db)
-    deleted = await repo.delete(doc_id)
-    await ctx.db.commit()
-    if deleted:
-        await publish_document_change(
-            table_id=str(table.id),
-            action="delete",
-            old_row=old_row,
-            new_row=None,
-        )
+    try:
+        await delete_table_document(ctx.db, table, ctx.user, doc_id=doc_id)
+    except TableWriteError as exc:
+        raise _table_write_http_error(exc) from exc
 
 
 @router.post(
@@ -947,73 +772,33 @@ async def batch_documents(
     table = await get_table_or_404(ctx, table_id, scope=scope)
     await _assert_explicit_scope_targets_table(ctx, table, scope)
     await _assert_solution_write_targets_owned_table(ctx, table)
-    policies = await load_resolved_table_policies(table, ctx.db)
-    await preresolve_for_policies(
-        ctx.user,
-        policies,
-        ctx.db,
-        table.organization_id,
-        table.solution_id,
-    )
-
-    rows: list[BatchWriteRow] = []
-    for index, item in enumerate(body.documents):
-        created_by, updated_by = _resolve_attribution(
-            ctx.user, item.created_by, item.updated_by
-        )
-        rows.append(
-            BatchWriteRow(
-                submission_index=index,
-                id=item.id,
-                data=item.data,
-                created_by=created_by,
-                updated_by=updated_by,
-            )
-        )
-
     try:
-        result = await write_table_batch(
+        outcome = await batch_write_table_documents(
             ctx.db,
             table,
-            rows,
+            ctx.user,
+            items=[
+                BatchDocumentInput(
+                    id=item.id,
+                    data=item.data,
+                    created_by=item.created_by,
+                    updated_by=item.updated_by,
+                )
+                for item in body.documents
+            ],
             mode=body.effective_write_mode,
-            policies=policies,
-            user=ctx.user,
         )
-    except DuplicateBatchIds as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={"duplicate_ids": exc.ids},
-        ) from exc
-    except BatchPolicyDenied as exc:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"denied_row_indices": exc.indices},
-        ) from exc
-    except ConcurrentBatchWrite as exc:
-        await ctx.db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Batch write conflicted with a concurrent insert; retry the request",
-        ) from exc
+    except TableWriteError as exc:
+        raise _table_write_http_error(exc) from exc
 
-    ordered_documents = [
-        result.documents_by_index[row.submission_index]
-        for row in rows
-        if row.submission_index in result.documents_by_index
-    ]
-
-    await ctx.db.commit()
-    if ordered_documents:
-        await publish_table_invalidated(str(table.id))
     return DocumentBatchCreateResponse(
-        inserted=len(ordered_documents),
+        inserted=outcome.inserted,
         errors=[
             {"id": conflict.id, "error": "Document already exists"}
-            for conflict in result.insert_conflicts
+            for conflict in outcome.insert_conflicts
         ],
         documents=(
-            [DocumentPublic.model_validate(doc) for doc in ordered_documents]
+            [DocumentPublic.model_validate(doc) for doc in outcome.ordered_documents]
             if body.return_documents
             else []
         ),
@@ -1041,49 +826,12 @@ async def batch_delete_documents(
     """
     table = await get_table_or_404(ctx, table_id, scope=scope)
     await _assert_solution_write_targets_owned_table(ctx, table)
-    repo = DocumentRepository(ctx.db, table)
-    policies = await load_resolved_table_policies(table, ctx.db)
-    await preresolve_for_policies(
-        ctx.user,
-        policies,
-        ctx.db,
-        table.organization_id,
-        table.solution_id,
-    )
-
-    # Pre-flight: load each existing row and check `delete` against policy.
-    denied: list[int] = []
-    existing_by_index: dict[int, Document] = {}
-    for i, doc_id in enumerate(body.ids):
-        existing = await repo.get(doc_id)
-        if existing is None:
-            # Skipping non-existent rows is the documented behavior; not a
-            # denial, just a no-op.
-            continue
-        existing_by_index[i] = existing
-        if not evaluate_action(
-            "delete", policies, _row_from_doc(existing), ctx.user
-        ):
-            denied.append(i)
-
-    if denied:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"denied_row_indices": denied},
+    try:
+        outcome = await batch_delete_table_documents(
+            ctx.db, table, ctx.user, ids=list(body.ids)
         )
-
-    deleted = 0
-    deleted_ids: list[str] = []
-    for i, doc_id in enumerate(body.ids):
-        existing = existing_by_index.get(i)
-        if existing is None:
-            continue
-        ok = await repo.delete(doc_id)
-        if ok:
-            deleted += 1
-            deleted_ids.append(doc_id)
-
-    await ctx.db.commit()
-    if deleted > 0:
-        await publish_table_invalidated(str(table.id))
-    return DocumentBatchDeleteResponse(deleted=deleted, deleted_ids=deleted_ids)
+    except TableWriteError as exc:
+        raise _table_write_http_error(exc) from exc
+    return DocumentBatchDeleteResponse(
+        deleted=outcome.deleted, deleted_ids=outcome.deleted_ids
+    )
