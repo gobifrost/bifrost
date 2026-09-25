@@ -81,7 +81,7 @@ DELEGATION_TIMEOUT_SECONDS = 600  # 10 minutes per delegation
 _JSON_FENCE_RE = re.compile(r"^```[a-zA-Z]*\s*\n(.*)\n\s*```$", re.DOTALL)
 
 
-def _parse_structured_output(content: str) -> str | dict | list:
+def _parse_structured_output(content: str) -> Any:
     """Parse a structured-output reply, tolerating one outer markdown code fence.
 
     Models asked for JSON sometimes wrap it in a ```json fence. Returns the
