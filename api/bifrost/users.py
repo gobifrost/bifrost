@@ -1,8 +1,8 @@
 """
-bifrost/users.py - User management SDK (API-only)
+bifrost/users.py - User management SDK
 
 Provides Python API for user operations from workflows.
-All operations go through HTTP API endpoints.
+Engine children use the parent-local users service; external callers use HTTP.
 """
 
 from __future__ import annotations
@@ -48,10 +48,27 @@ class users:
             >>> org_users = await users.list(org_id="org-123")
             >>> all_including_disabled = await users.list(include_inactive=True)
         """
+        from ._local_transport import get as _get_local_transport
+
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent lists through the shared
+            # users service over the dedicated channel (route defaults
+            # for the filters the SDK does not expose, like the
+            # unfiltered HTTP call). The ``org_id`` rides as the
+            # ``scope`` filter, like the HTTP query string. A local
+            # attempt never falls back to HTTP.
+            envelope = await transport.call_users_list(
+                org_id, include_inactive
+            )
+            return [
+                UserPublic.model_validate(user)
+                for user in envelope["items"]
+            ]
         client = get_client()
         params: dict[str, str] = {}
         if org_id:
-            params["org_id"] = org_id
+            params["scope"] = org_id
         if include_inactive:
             params["include_inactive"] = "true"
 
@@ -80,6 +97,23 @@ class users:
             >>> if user:
             ...     print(user.email)
         """
+        from ._local_transport import get as _get_local_transport
+
+        from .client import BifrostAPIError
+
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent reads through the shared
+            # users service over the dedicated channel. Error mapping
+            # matches the HTTP path below; a local attempt never falls
+            # back to HTTP.
+            try:
+                data = await transport.call_users_get(user_id)
+            except BifrostAPIError as e:
+                if e.response.status_code == 404:
+                    return None
+                raise
+            return UserPublic.model_validate(data)
         client = get_client()
         response = await client.get(f"/api/users/{user_id}")
         if response.status_code == 404:
@@ -123,6 +157,18 @@ class users:
             ...     org_id="org-123"
             ... )
         """
+        from ._local_transport import get as _get_local_transport
+
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent creates through the shared
+            # users service over the dedicated channel. Error mapping
+            # matches the HTTP path below; a local attempt never falls
+            # back to HTTP.
+            data = await transport.call_users_create(
+                email, name, is_superuser, org_id, is_active
+            )
+            return UserPublic.model_validate(data)
         client = get_client()
         payload = {
             "email": email,
@@ -160,6 +206,25 @@ class users:
             >>> from bifrost import users
             >>> user = await users.update("user-123", name="New Name", is_active=False)
         """
+        from ._local_transport import get as _get_local_transport
+
+        from .client import BifrostAPIError
+
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent updates through the shared
+            # users service over the dedicated channel. Error mapping
+            # matches the HTTP path below; a local attempt never falls
+            # back to HTTP.
+            try:
+                data = await transport.call_users_update(
+                    user_id, dict(updates)
+                )
+            except BifrostAPIError as e:
+                if e.response.status_code == 404:
+                    raise ValueError(f"User not found: {user_id}") from None
+                raise
+            return UserPublic.model_validate(data)
         client = get_client()
         response = await client.patch(f"/api/users/{user_id}", json=updates)
         if response.status_code == 404:
@@ -189,6 +254,23 @@ class users:
             >>> from bifrost import users
             >>> deleted = await users.delete("user-123")
         """
+        from ._local_transport import get as _get_local_transport
+
+        from .client import BifrostAPIError
+
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent deletes through the shared
+            # users service over the dedicated channel. Error mapping
+            # matches the HTTP path below; a local attempt never falls
+            # back to HTTP.
+            try:
+                await transport.call_users_delete(user_id)
+            except BifrostAPIError as e:
+                if e.response.status_code == 404:
+                    raise ValueError(f"User not found: {user_id}") from None
+                raise
+            return True
         client = get_client()
         response = await client.delete(f"/api/users/{user_id}")
         if response.status_code == 404:

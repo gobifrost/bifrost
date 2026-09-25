@@ -9,8 +9,10 @@ refresh_token), the SDK workflow/execution reads
 SDK form reads (``forms.list``, ``forms.get``) arriving
 on each child's dedicated SDK channel. The fixed ``roles`` facade
 (``create/get/list/update/delete/list_users/list_forms/assign_users/
-assign_forms``) rides the same channel through the shared
-``sdk_roles`` service; every roles operation requires the HTTP
+assign_forms``) and the fixed ``users`` facade
+(``list/create/get/update/delete``) ride the same channel through the
+shared ``sdk_roles``/``sdk_users`` services; every roles and users
+operation requires the HTTP
 ``CurrentSuperuser`` token-equivalent principal (workflow engine tokens
 pass, supervised service tokens do not), and child frame actor, org,
 and Solution claims can never
@@ -50,7 +52,8 @@ reads (``workflows.list``, ``executions.list``/``executions.get``),
 the SDK form reads (``forms.list``, ``forms.get``),
 the fixed ``roles`` facade (``create/get/list/update/delete/
 list_users/list_forms/assign_users/assign_forms``, token-equivalent
-superuser only),
+superuser only), the fixed ``users`` facade
+(``list/create/get/update/delete``, token-equivalent superuser only),
 and the SDK workflow
 ``execute``/``cancel`` mutations. Engine import fast path: ``modules.resolve``
 and ``modules.fetch`` (served on the dedicated import channel through the
@@ -90,6 +93,11 @@ from bifrost._local_transport import (
     OP_ROLES_LIST_FORMS,
     OP_ROLES_ASSIGN_USERS,
     OP_ROLES_ASSIGN_FORMS,
+    OP_USERS_LIST,
+    OP_USERS_CREATE,
+    OP_USERS_GET,
+    OP_USERS_UPDATE,
+    OP_USERS_DELETE,
     OP_ARTIFACTS_CREATE_DOCUMENT,
     OP_ARTIFACTS_CREATE_IMAGE,
     OP_ARTIFACTS_CREATE_SPREADSHEET,
@@ -229,6 +237,11 @@ SDK_CHANNEL_ALLOWED_OPS = frozenset(
         OP_ROLES_LIST_FORMS,
         OP_ROLES_ASSIGN_USERS,
         OP_ROLES_ASSIGN_FORMS,
+        OP_USERS_LIST,
+        OP_USERS_CREATE,
+        OP_USERS_GET,
+        OP_USERS_UPDATE,
+        OP_USERS_DELETE,
         OP_WORKFLOWS_EXECUTE,
         OP_WORKFLOWS_CANCEL,
         OP_WORKFLOWS_LIST,
@@ -514,6 +527,33 @@ async def dispatch_frames(
     principal: LocalDispatchPrincipal,
     frame: dict[str, Any],
 ) -> Iterable[dict[str, Any]]:
+    """Serve one frame with the same audit actor as its HTTP SDK token."""
+    from src.core.constants import SYSTEM_USER_UUID
+    from src.services.audit_context import ActorContext, clear_actor, set_actor
+
+    actor_token = set_actor(
+        ActorContext(
+            user_id=SYSTEM_USER_UUID,
+            organization_id=principal.caller_org_id if principal.is_service else None,
+            email=principal.actor_email,
+            name=(
+                f"service-{principal.service_id.replace('-', '')[:12]}"
+                if principal.is_service and principal.service_id
+                else "Bifrost Engine"
+            ),
+        )
+    )
+    try:
+        return await _dispatch_frames_impl(session_factory, principal, frame)
+    finally:
+        clear_actor(actor_token)
+
+
+async def _dispatch_frames_impl(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
     """Serve one validated request frame; always returns response frames.
 
     Never raises except on cancellation: every validation, scope, and
@@ -654,6 +694,16 @@ async def dispatch_frames(
         return await _dispatch_roles_assign_users(session_factory, principal, frame_id, frame)
     if op == OP_ROLES_ASSIGN_FORMS:
         return await _dispatch_roles_assign_forms(session_factory, principal, frame_id, frame)
+    if op == OP_USERS_LIST:
+        return await _dispatch_users_list(session_factory, principal, frame_id, frame)
+    if op == OP_USERS_CREATE:
+        return await _dispatch_users_create(session_factory, principal, frame_id, frame)
+    if op == OP_USERS_GET:
+        return await _dispatch_users_get(session_factory, principal, frame_id, frame)
+    if op == OP_USERS_UPDATE:
+        return await _dispatch_users_update(session_factory, principal, frame_id, frame)
+    if op == OP_USERS_DELETE:
+        return await _dispatch_users_delete(session_factory, principal, frame_id, frame)
     if op == OP_WORKFLOWS_LIST:
         return await _dispatch_workflows_list(session_factory, principal, frame_id, frame)
     if op == OP_EXECUTIONS_LIST:
@@ -2295,6 +2345,389 @@ async def _dispatch_roles_assign_forms(
         op=OP_ROLES_ASSIGN_FORMS,
         log_key=str(role_uuid),
         status_errors=(RoleServiceError, HTTPException),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _single_ok(frame_id, None)
+
+
+# =============================================================================
+# SDK users facade
+# (list/create/get/update/delete)
+# =============================================================================
+
+
+def _users_user_for_principal(principal: LocalDispatchPrincipal) -> Any:
+    """Token-equivalent ``UserPrincipal`` for SDK user list operations.
+
+    Reuses the table token-equivalent shape so scope resolution decides
+    identically on both transports: workflows run as the system-user
+    superuser with no org (the ``mint_engine_token()`` shape — the scope
+    filter selects all, global-only, or one org, like the HTTP
+    ``CurrentSuperuser`` path), services run as the system-user
+    non-superuser confined to their service org (the
+    ``mint_service_token()`` shape). Services never reach the shared
+    service — the platform-admin gate denies them first, like the HTTP
+    auth dependency. The principal is built only from the
+    parent-derived ``LocalDispatchPrincipal`` — never from child frame
+    fields.
+    """
+    return _table_user_for_principal(principal)
+
+
+def _users_actor_user_id(principal: LocalDispatchPrincipal) -> Any:
+    """Parent-derived actor id for user create/delete attribution.
+
+    The HTTP engine path authenticates as the system-user sentinel
+    (``mint_engine_token()`` ``sub``), so the local actor is the same
+    ``SYSTEM_USER_UUID`` — never a child frame claim and never the
+    initiating user's id. Called only after the platform-admin gate,
+    so service principals never reach it.
+    """
+    from src.core.constants import SYSTEM_USER_UUID
+
+    return SYSTEM_USER_UUID
+
+
+def _require_users_field(
+    frame: dict[str, Any], field: str, frame_id: str | None, op: str
+) -> tuple[str | None, dict[str, Any] | None]:
+    """One required non-empty string frame field, else a 422 error frame."""
+    value = frame.get(field)
+    if isinstance(value, str) and value.strip():
+        return value, None
+    return None, _error(frame_id, 422, f"invalid {op} request: {field!r} is required")
+
+
+async def _dispatch_users_list(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``users.list`` through the shared users service.
+
+    Platform-admin gate first (403, like the HTTP dependency), then
+    the frame's ``scope``/``include_inactive`` fields. The facade's
+    ``org_id`` rides as ``scope``, like the HTTP query string; the
+    parent applies the route defaults for the filters the SDK does not
+    expose (unfiltered, legacy email order, unbounded), like the
+    unfiltered HTTP call. Calls the same
+    ``shared.sdk_users.list_users`` the handler calls, so scope
+    resolution, the 422 on a malformed scope, invite statuses, and
+    pagination totals are identical by construction. Returns the
+    ``{"items", "total"}`` envelope (the transport result contract
+    does not carry bare lists; ``total`` mirrors the HTTP
+    ``X-Total-Count`` header the facade ignores). Large listings ride
+    bounded chunked frames via ``_ok_frames``. A local attempt never
+    retries over HTTP.
+    """
+    from shared.sdk_users import UserServiceError, list_users
+
+    denied = _require_platform_admin(principal, frame_id)
+    if denied is not None:
+        return [denied]
+    scope = frame.get("scope")
+    if scope is not None and not isinstance(scope, str):
+        return [
+            _error(
+                frame_id,
+                422,
+                f"invalid {OP_USERS_LIST} request: 'scope' must be a string",
+            )
+        ]
+    include_inactive = frame.get("include_inactive", False)
+    if not isinstance(include_inactive, bool):
+        return [
+            _error(
+                frame_id,
+                422,
+                f"invalid {OP_USERS_LIST} request: 'include_inactive' must be a boolean",
+            )
+        ]
+    user = _users_user_for_principal(principal)
+
+    async def _list(session: Any) -> dict[str, Any]:
+        items, total = await list_users(
+            session,
+            user,
+            scope=scope,
+            include_inactive=include_inactive,
+        )
+        return {
+            "items": [item.model_dump(mode="json") for item in items],
+            "total": total,
+        }
+
+    result, error = await _run_short(
+        session_factory,
+        _list,
+        op=OP_USERS_LIST,
+        log_key="users",
+        status_errors=(UserServiceError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_users_create(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``users.create`` through the shared users service.
+
+    Platform-admin gate first (403, like the HTTP dependency), then
+    the same ``UserCreate`` DTO the HTTP handler uses (422 — malformed
+    emails and organization ids match), then the same
+    ``shared.sdk_users.create_user`` the handler calls, so the
+    verified-but-unregistered row, the pending invite with its
+    one-time registration URL, and audit attribution are identical by
+    construction. The actor id comes only from the parent-derived
+    principal (the engine sentinel, like the HTTP engine token
+    ``sub``) — never from child frames. The dispatcher commits
+    explicitly (the shared service only flushes; HTTP commits via
+    ``get_db``). A local attempt never retries over HTTP.
+    """
+    from shared.sdk_users import UserServiceError, create_user
+    from src.models.contracts.users import UserCreate
+
+    denied = _require_platform_admin(principal, frame_id)
+    if denied is not None:
+        return [denied]
+    request, invalid = _validate_request(
+        UserCreate,
+        {
+            "email": frame.get("email"),
+            "name": frame.get("name"),
+            "is_active": frame.get("is_active", True),
+            "is_superuser": frame.get("is_superuser", False),
+            "organization_id": frame.get("organization_id"),
+        },
+        frame_id,
+        OP_USERS_CREATE,
+    )
+    if invalid is not None:
+        return [invalid]
+    actor_error = _require_actor(principal, frame_id, OP_USERS_CREATE)
+    if actor_error is not None:
+        return [actor_error]
+    assert principal.actor_email is not None and request is not None
+    actor_user_id = _users_actor_user_id(principal)
+
+    async def _create(session: Any) -> dict[str, Any]:
+        created = await create_user(
+            session,
+            email=str(request.email),
+            name=request.name,
+            is_active=request.is_active,
+            is_superuser=request.is_superuser,
+            is_external=request.is_external,
+            organization_id=request.organization_id,
+            actor_user_id=actor_user_id,
+        )
+        # The HTTP dependency commits after the handler returns; the
+        # local session never commits itself.
+        await session.commit()
+        return created.model_dump(mode="json")
+
+    result, error = await _run_short(
+        session_factory,
+        _create,
+        op=OP_USERS_CREATE,
+        log_key=str(request.email),
+        status_errors=(UserServiceError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_users_get(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``users.get`` through the shared users service.
+
+    Platform-admin gate first (403, like the HTTP dependency), then
+    the ``user_id`` field (UUID with email fallback, like the route —
+    only a missing id is a 422), then the same
+    ``shared.sdk_users.get_user`` the handler calls — the missing-user
+    404 the facade maps to ``None`` is identical by construction. A
+    local attempt never retries over HTTP.
+    """
+    from shared.sdk_users import UserServiceError, get_user
+
+    denied = _require_platform_admin(principal, frame_id)
+    if denied is not None:
+        return [denied]
+    user_id, invalid = _require_users_field(
+        frame, "user_id", frame_id, OP_USERS_GET
+    )
+    if invalid is not None:
+        return [invalid]
+    assert user_id is not None
+
+    async def _get(session: Any) -> dict[str, Any]:
+        fetched = await get_user(session, user_id=user_id)
+        return fetched.model_dump(mode="json")
+
+    result, error = await _run_short(
+        session_factory,
+        _get,
+        op=OP_USERS_GET,
+        log_key=user_id,
+        status_errors=(UserServiceError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_users_update(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``users.update`` through the shared users service.
+
+    Platform-admin gate first (403, like the HTTP dependency), then
+    the ``user_id`` field and the same ``UserUpdate`` DTO the HTTP
+    handler uses (422 — unknown fields ignored, only non-None fields
+    applied, ``organization_id=None`` meaning "no change"), then the
+    same ``shared.sdk_users.update_user`` the handler calls — the
+    missing-user 404 the facade maps to ``ValueError``, the system
+    user 403, role-transition promotion, and audit parity (``password``
+    accepted but never applied) are identical by construction. The
+    dispatcher commits explicitly (the shared service only flushes;
+    HTTP commits via ``get_db``). A local attempt never retries over
+    HTTP.
+    """
+    from shared.sdk_users import UserServiceError, update_user
+    from src.models.contracts.users import UserUpdate
+
+    denied = _require_platform_admin(principal, frame_id)
+    if denied is not None:
+        return [denied]
+    user_id, invalid_id = _require_users_field(
+        frame, "user_id", frame_id, OP_USERS_UPDATE
+    )
+    if invalid_id is not None:
+        return [invalid_id]
+    assert user_id is not None
+    raw_updates = frame.get("updates")
+    if not isinstance(raw_updates, dict):
+        return [
+            _error(
+                frame_id,
+                422,
+                f"invalid {OP_USERS_UPDATE} request: 'updates' must be an object",
+            )
+        ]
+    request, invalid = _validate_request(
+        UserUpdate, raw_updates, frame_id, OP_USERS_UPDATE
+    )
+    if invalid is not None:
+        return [invalid]
+    assert request is not None
+
+    async def _update(session: Any) -> dict[str, Any]:
+        updated = await update_user(
+            session,
+            user_id=user_id,
+            email=str(request.email) if request.email is not None else None,
+            name=request.name,
+            password=request.password,
+            is_active=request.is_active,
+            is_superuser=request.is_superuser,
+            is_verified=request.is_verified,
+            is_external=request.is_external,
+            mfa_enabled=request.mfa_enabled,
+            organization_id=request.organization_id,
+        )
+        # The HTTP dependency commits after the handler returns; the
+        # local session never commits itself.
+        await session.commit()
+        return updated.model_dump(mode="json")
+
+    result, error = await _run_short(
+        session_factory,
+        _update,
+        op=OP_USERS_UPDATE,
+        log_key=user_id,
+        status_errors=(UserServiceError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_users_delete(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``users.delete`` through the shared users service.
+
+    Platform-admin gate first (403, like the HTTP dependency), then
+    the ``user_id`` field, then the same
+    ``shared.sdk_users.delete_user`` the handler calls — the
+    self-delete 400 (checked before existence, like the service), the
+    missing-user 404 the facade maps to ``ValueError``, and the system
+    user 403 are identical by construction. Actor identity comes only
+    from the parent-derived principal (the engine sentinel id and
+    email, like the HTTP engine token) — never from child frames, so
+    self-deletion protection decides exactly like the engine-token
+    HTTP path. Returns no body (null result, like HTTP 204). The
+    dispatcher commits explicitly (the shared service only flushes;
+    HTTP commits via ``get_db``). A local attempt never retries over
+    HTTP.
+    """
+    from shared.sdk_users import UserServiceError, delete_user
+
+    denied = _require_platform_admin(principal, frame_id)
+    if denied is not None:
+        return [denied]
+    user_id, invalid = _require_users_field(
+        frame, "user_id", frame_id, OP_USERS_DELETE
+    )
+    if invalid is not None:
+        return [invalid]
+    assert user_id is not None
+    actor_error = _require_actor(principal, frame_id, OP_USERS_DELETE)
+    if actor_error is not None:
+        return [actor_error]
+    assert principal.actor_email is not None
+    actor_user_id = _users_actor_user_id(principal)
+
+    async def _delete(session: Any) -> None:
+        await delete_user(
+            session,
+            user_id=user_id,
+            actor_user_id=actor_user_id,
+            actor_email=principal.actor_email,
+        )
+        # The HTTP dependency commits after the handler returns; the
+        # local session never commits itself.
+        await session.commit()
+
+    _, error = await _run_short(
+        session_factory,
+        _delete,
+        op=OP_USERS_DELETE,
+        log_key=user_id,
+        status_errors=(UserServiceError,),
     )
     if error is not None:
         error["id"] = frame_id

@@ -78,7 +78,15 @@ reads (``forms.list``, ``forms.get``)):
   ``role_id``/``form_ids``. Roles are global and platform-admin
   only: the parent gates every roles operation on its own dispatch
   principal and never reads actor, org, or Solution claims from
-  child frames.
+  child frames. ``users.list`` sends ``scope``/``include_inactive``
+  (the facade's ``org_id`` rides as the ``scope`` filter, like the
+  HTTP query string); ``users.create`` sends
+  ``email``/``name``/``is_superuser``/``organization_id``/
+  ``is_active``; ``users.get``/``users.delete`` send ``user_id``;
+  ``users.update`` sends ``user_id``/``updates``. Users are
+  platform-admin only like roles: the parent gates every users
+  operation on its own dispatch principal and never reads actor,
+  org, or Solution claims from child frames.
    ``artifacts.create_video`` sends ``filename``/``prompt``/
    ``workspace_id`` (the caller's own workspace, like the HTTP query
    param; actor, org, and execution identity come from the parent's
@@ -143,6 +151,16 @@ reads (``forms.list``, ``forms.get``)):
   returns the exact ``RoleFormsResponse`` envelope (``{"form_ids"}``
   — likewise empty, never 404). A non-platform-admin caller is a 403
   error frame on every roles operation, like the HTTP
+  ``CurrentSuperuser`` gate. ``users.list`` returns an
+  ``{"items": [...], "total": n}`` envelope of ``UserPublic`` dicts
+  (the result contract does not carry bare lists; ``total`` mirrors
+  the HTTP ``X-Total-Count`` header the facade ignores);
+  ``users.create``/``users.get``/``users.update`` return the
+  ``UserPublic`` dict (a missing user is a 404 error frame the facade
+  maps to ``None``/``ValueError`` like HTTP; a self-delete is a 400
+  and the system user a 403); ``users.delete`` returns no body
+  (``result`` null, like HTTP 204). A non-platform-admin caller is a
+  403 error frame on every users operation, like the HTTP
   ``CurrentSuperuser`` gate. ``workflows.execute``
   returns the ``WorkflowExecutionResponse`` dict (the facade returns its
   ``execution_id`` — fire-and-forget, like HTTP); ``workflows.cancel``
@@ -196,7 +214,8 @@ from typing import Any, NoReturn
 # ``workflows.get`` delegates to ``executions.get``), the SDK form
 # reads (``forms.list``, ``forms.get``), the fixed ``roles`` facade
 # (``create/get/list/update/delete/list_users/list_forms/assign_users/
-# assign_forms``), and the SDK workflow
+# assign_forms``), the fixed ``users`` facade
+# (``list/create/get/update/delete``), and the SDK workflow
 # ``execute``/``cancel`` mutations ride the local transport. The
 # parent enforces the same allowlist; anything else is a 404 response.
 # Artifact generation (``create_document``/``create_spreadsheet``/
@@ -268,6 +287,11 @@ OP_ROLES_LIST_USERS = "roles.list_users"
 OP_ROLES_LIST_FORMS = "roles.list_forms"
 OP_ROLES_ASSIGN_USERS = "roles.assign_users"
 OP_ROLES_ASSIGN_FORMS = "roles.assign_forms"
+OP_USERS_LIST = "users.list"
+OP_USERS_CREATE = "users.create"
+OP_USERS_GET = "users.get"
+OP_USERS_UPDATE = "users.update"
+OP_USERS_DELETE = "users.delete"
 
 # Wire version. The parent rejects anything else instead of guessing.
 TRANSPORT_VERSION = 1
@@ -2590,6 +2614,156 @@ class ChildLocalTransport:
             OP_ROLES_ASSIGN_FORMS,
             {"role_id": role_id, "form_ids": form_ids},
             timeout,
+        )
+        if result is not None:
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+
+    async def call_users_list(
+        self,
+        scope: str | None,
+        include_inactive: bool = False,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """List users through the parent. No HTTP fallback.
+
+        Sends ``scope`` (the facade's ``org_id`` rides as the scope
+        filter, like the HTTP query string) and ``include_inactive``.
+        The parent applies the route defaults for the filters the SDK
+        does not expose, like the unfiltered HTTP call. Returns the
+        ``{"items", "total"}`` envelope of ``UserPublic`` dicts (the
+        result contract does not carry bare lists; ``total`` mirrors
+        the HTTP ``X-Total-Count`` header the facade ignores). A
+        malformed scope is a 422 error frame; a non-platform-admin
+        caller is a 403 — both like HTTP.
+        """
+        result = await self._call(
+            OP_USERS_LIST,
+            {"scope": scope, "include_inactive": include_inactive},
+            timeout,
+        )
+        if not isinstance(result, dict) or not isinstance(
+            result.get("items"), list
+        ):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+    async def call_users_create(
+        self,
+        email: str,
+        name: str | None,
+        is_superuser: bool,
+        organization_id: str | None,
+        is_active: bool,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """Create one user through the parent. No HTTP fallback.
+
+        Validates with the same ``UserCreate`` DTO the HTTP handler
+        uses (422), so malformed emails and organization ids match.
+        Returns the ``UserPublic`` dict with its pending invite status
+        and one-time registration URL, like HTTP. A
+        non-platform-admin caller is a 403 error frame, like the HTTP
+        ``CurrentSuperuser`` gate. The parent commits before
+        returning, like the HTTP dependency.
+        """
+        result = await self._call(
+            OP_USERS_CREATE,
+            {
+                "email": email,
+                "name": name,
+                "is_superuser": is_superuser,
+                "organization_id": organization_id,
+                "is_active": is_active,
+            },
+            timeout,
+        )
+        if not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+    async def call_users_get(
+        self,
+        user_id: str,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """Get one user through the parent. No HTTP fallback.
+
+        ``user_id`` is a UUID with email fallback, like the HTTP route.
+        Returns the ``UserPublic`` dict. A missing user is a 404 error
+        frame the facade maps to ``None`` (like HTTP); a
+        non-platform-admin caller is a 403.
+        """
+        result = await self._call(
+            OP_USERS_GET,
+            {"user_id": user_id},
+            timeout,
+        )
+        if not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+    async def call_users_update(
+        self,
+        user_id: str,
+        updates: dict[str, Any],
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """Update one user through the parent. No HTTP fallback.
+
+        ``updates`` carries the facade's ``**updates`` mapping; the
+        parent validates it with the same ``UserUpdate`` DTO the HTTP
+        handler uses (unknown fields ignored, same 422s). Only
+        non-None fields are applied, like HTTP. Returns the
+        ``UserPublic`` dict. A missing user is a 404 error frame the
+        facade maps to ``ValueError``; the system user is a 403 — both
+        like HTTP. The parent commits before returning, like the HTTP
+        dependency.
+        """
+        result = await self._call(
+            OP_USERS_UPDATE,
+            {"user_id": user_id, "updates": updates},
+            timeout,
+        )
+        if not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+    async def call_users_delete(
+        self,
+        user_id: str,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> None:
+        """Delete one user through the parent. No HTTP fallback.
+
+        Returns no body (``result`` null, like HTTP 204). A missing
+        user is a 404 error frame the facade maps to ``ValueError``; a
+        self-delete is a 400 and the system user a 403 — all like HTTP
+        (self-delete is checked before existence, like the shared
+        service). The parent commits before returning, like the HTTP
+        dependency.
+        """
+        result = await self._call(
+            OP_USERS_DELETE, {"user_id": user_id}, timeout
         )
         if result is not None:
             self._fail(

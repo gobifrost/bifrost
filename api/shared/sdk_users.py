@@ -4,15 +4,18 @@ Single implementation used by both entry points:
 
 - the HTTP handlers (``api/src/routers/users.py``) serving SDK/CLI
   callers, and
-- a future engine-local dispatcher serving workflow children through
-  the parent-side local transport.
+- the engine-local dispatcher
+  (``api/src/services/execution/sdk_local_dispatch.py``) serving
+  workflow children through the parent-side local transport.
 
 Both paths share DTOs, query parameters, status/error precedence,
 pagination, invite creation, audit, role transitions, self/system
 protection, and transaction behavior. Each caller must enforce
 platform-admin authority before invoking these operations (HTTP keeps
-``CurrentSuperuser``; the future local dispatcher enforces
-token-equivalent superuser authority).
+``CurrentSuperuser``; the local dispatcher enforces the
+token-equivalent superuser authority: ordinary workflow engine tokens
+pass even when the initiating user is not a platform admin, while
+supervised service tokens do not).
 
 Scope is the five SDK methods: ``list``, ``create``, ``get``,
 ``update``, ``delete``. Invite-only endpoints, bulk operations, roles,
@@ -26,14 +29,11 @@ never a ``Request``, JWT, or child claims. HTTP authentication,
 ``HTTPException`` mapping, and the ``X-Total-Count`` header stay in the
 router.
 
-SDK/HTTP list mismatch (preserved, not fixed here): the Python SDK
-``users.list`` sends ``org_id`` (see ``api/bifrost/users.py``) but the
-HTTP handler accepts ``scope`` (omit / ``'global'`` / org UUID) and
-ignores unknown ``org_id`` query params — so an SDK ``org_id`` filter is
-currently a no-op and the call returns the unfiltered (superuser) list.
-This extraction preserves current HTTP behavior exactly; a joint
-HTTP/local correction stage should align the SDK ``org_id`` with the
-``scope`` filter in both transports.
+SDK/HTTP list scope: the Python SDK ``users.list`` sends its
+``org_id`` argument as the ``scope`` query parameter (omit / org UUID)
+and the HTTP handler filters on ``scope`` — an SDK ``org_id`` filter
+selects exactly that organization on both the HTTP and the local
+transport.
 """
 
 from __future__ import annotations

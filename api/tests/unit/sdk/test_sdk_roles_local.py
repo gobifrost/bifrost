@@ -23,11 +23,12 @@ from __future__ import annotations
 
 import contextlib
 from unittest.mock import AsyncMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
 import pytest_asyncio
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bifrost._local_transport import (
@@ -305,6 +306,19 @@ async def test_create_get_round_trip_with_actor_attribution(db_session):
     # Actor comes from the parent dispatch context, never child frames.
     assert body["created_by"] == "engine@bifrost.internal"
     assert commits == 1
+
+    from src.core.constants import SYSTEM_USER_UUID
+    from src.models.orm.audit import AuditLog
+
+    audit = await db_session.scalar(
+        select(AuditLog).where(
+            AuditLog.action == "role.create",
+            AuditLog.resource_id == UUID(body["id"]),
+        )
+    )
+    assert audit is not None
+    assert audit.user_id == SYSTEM_USER_UUID
+    assert audit.source == "http"
 
     fetched, read_commits = await _dispatch_counting_commits(
         db_session,

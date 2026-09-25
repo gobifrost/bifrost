@@ -41,7 +41,7 @@ class UserPublic(BaseModel):
 
     id: str
     email: str
-    name: str
+    name: str | None
     is_active: bool
     is_superuser: bool
     is_verified: bool
@@ -50,6 +50,8 @@ class UserPublic(BaseModel):
     mfa_enabled: bool
     created_at: datetime | None
     updated_at: datetime | None
+    invite_status: str = "active"
+    registration_url: str | None = None
 
 
 class FormPublic(BaseModel):
