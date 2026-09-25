@@ -260,6 +260,10 @@ async def complete_sdk_ai(
             )
     except Exception as e:
         logger.warning(f"Failed to record AI usage: {log_safe(e)}")
+        # A failed DB flush leaves the session in pending-rollback state.
+        # Both the HTTP dependency and the local dispatcher commit after this
+        # service returns, so reset the failed usage transaction here.
+        await session.rollback()
 
     return {
         "content": response.content,
@@ -313,6 +317,7 @@ async def _record_stream_usage(
         )
     except Exception as e:
         logger.warning(f"Failed to record AI usage: {log_safe(e)}")
+        await session.rollback()
 
 
 async def stream_sdk_ai(

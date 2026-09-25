@@ -24,7 +24,11 @@ token-equivalent trusted principal (workflow engine superuser with
 verified execution/Solution claims, or supervised-service
 non-superuser confined to its organization), while ``scope`` and
 ``solution`` ride as untrusted requested targets the service
-validates. The synchronous client-context
+validates. The fixed ``ai`` unary calls (``ai.complete``,
+``ai.model_info``) ride the same channel through the shared
+``sdk_ai`` service: the parent supplies the token-equivalent caller
+and its own execution id for usage attribution, while the requested
+``org_id`` rides as an untrusted scope the service best-efforts. The synchronous client-context
 read (``sdk.context``) rides the dedicated import channel instead, so
 the synchronous ``BifrostClient.context`` property never deadlocks a
 running child event loop.
@@ -66,6 +70,8 @@ the fixed ``organizations`` facade
 (``create/get/list/update/delete``, token-equivalent superuser only),
 the fixed ``events.emit`` call (token-equivalent engine superuser or
 org-confined service principal, like its HTTP route),
+the fixed ``ai`` unary calls (``ai.complete``/``ai.model_info``
+through the shared ``sdk_ai`` service),
 and the SDK workflow
 ``execute``/``cancel`` mutations. Engine import fast path: ``modules.resolve``
 and ``modules.fetch`` (served on the dedicated import channel through the
@@ -116,6 +122,8 @@ from bifrost._local_transport import (
     OP_ORGANIZATIONS_UPDATE,
     OP_ORGANIZATIONS_DELETE,
     OP_EVENTS_EMIT,
+    OP_AI_COMPLETE,
+    OP_AI_MODEL_INFO,
     OP_ARTIFACTS_CREATE_DOCUMENT,
     OP_ARTIFACTS_CREATE_IMAGE,
     OP_ARTIFACTS_CREATE_SPREADSHEET,
@@ -266,6 +274,8 @@ SDK_CHANNEL_ALLOWED_OPS = frozenset(
         OP_ORGANIZATIONS_UPDATE,
         OP_ORGANIZATIONS_DELETE,
         OP_EVENTS_EMIT,
+        OP_AI_COMPLETE,
+        OP_AI_MODEL_INFO,
         OP_WORKFLOWS_EXECUTE,
         OP_WORKFLOWS_CANCEL,
         OP_WORKFLOWS_LIST,
@@ -740,6 +750,10 @@ async def _dispatch_frames_impl(
         return await _dispatch_organizations_delete(session_factory, principal, frame_id, frame)
     if op == OP_EVENTS_EMIT:
         return await _dispatch_events_emit(session_factory, principal, frame_id, frame)
+    if op == OP_AI_COMPLETE:
+        return await _dispatch_ai_complete(session_factory, principal, frame_id, frame)
+    if op == OP_AI_MODEL_INFO:
+        return await _dispatch_ai_model_info(session_factory, principal, frame_id, frame)
     if op == OP_WORKFLOWS_LIST:
         return await _dispatch_workflows_list(session_factory, principal, frame_id, frame)
     if op == OP_EXECUTIONS_LIST:
@@ -3187,6 +3201,186 @@ async def _dispatch_events_emit(
         op=OP_EVENTS_EMIT,
         log_key=request.topic,
         status_errors=(EventEmissionError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+# =============================================================================
+# Fixed ai unary calls (ai.complete, ai.model_info)
+# =============================================================================
+
+
+# Default deadline for one ``ai.complete`` parent dispatch (matches the
+# SDK's HTTP timeout default). The child deadline adds a 5s margin (see
+# ``AI_COMPLETE_CHILD_MARGIN_SECONDS`` in ``bifrost._local_transport``)
+# so a parent timeout still returns an error frame instead of tripping
+# the child deadline first.
+AI_COMPLETE_DEFAULT_TIMEOUT_SECONDS = 30.0
+
+
+def _ai_user_for_principal(principal: LocalDispatchPrincipal) -> Any:
+    """Token-equivalent ``UserPrincipal`` for SDK AI operations.
+
+    Reuses the table token-equivalent shape so usage attribution
+    (``user_id``) decides identically on both transports: workflows run
+    as the system-user superuser with no org (the ``mint_engine_token()``
+    shape), services run as the system-user non-superuser confined to
+    their service org (the ``mint_service_token()`` shape). Built only
+    from the parent-derived ``LocalDispatchPrincipal`` — never from
+    child frame fields.
+    """
+    return _table_user_for_principal(principal)
+
+
+def _ai_complete_timeout_seconds(
+    frame: dict[str, Any], frame_id: str | None
+) -> tuple[float | None, dict[str, Any] | None]:
+    """Parent dispatch deadline from the frame's requested timeout.
+
+    The child sends the requested timeout (default 30s, like the SDK
+    HTTP default) as a ``timeout`` frame field used only for this
+    deadline — it is not part of ``CLIAICompleteRequest``. A missing
+    field means the default; a non-numeric or non-positive value is a
+    422, like malformed DTO input.
+    """
+    raw = frame.get("timeout", AI_COMPLETE_DEFAULT_TIMEOUT_SECONDS)
+    if raw is None:
+        return AI_COMPLETE_DEFAULT_TIMEOUT_SECONDS, None
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return None, _error(
+            frame_id, 422, f"invalid {OP_AI_COMPLETE} request: 'timeout' must be a number"
+        )
+    value = float(raw)
+    if not value > 0:
+        return None, _error(
+            frame_id, 422, f"invalid {OP_AI_COMPLETE} request: 'timeout' must be positive"
+        )
+    return value, None
+
+
+async def _dispatch_ai_complete(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``ai.complete`` through the shared AI service.
+
+    Validates with the same ``CLIAICompleteRequest`` DTO as the HTTP
+    handler (422), then calls the exact ``shared.sdk_ai.complete_sdk_ai``
+    the handler calls — message/input-file handling, profile/model/
+    max-token selection, the provider fallback chain, response shaping,
+    error mapping, and best-effort usage attribution are identical by
+    construction. The shared service releases its DB connection during
+    the provider call and reacquires briefly for usage; this dispatcher
+    preserves that by running the service inside ``_run_short`` on one
+    short parent session.
+
+    The requested ``org_id`` rides as an untrusted scope the shared
+    service best-efforts (invalid or denied scopes skip usage but still
+    return the provider response — never resolved here beforehand).
+    Actor and usage ``execution_id`` come only from the parent-derived
+    principal: the frame's ``execution_id`` is validated by the DTO but
+    never used, so a child cannot forge another execution's usage. The
+    shared service only flushes usage; the dispatcher commits explicitly
+    because the HTTP ``get_db`` dependency commits after the handler
+    returns while ``_run_short`` never commits. ``SdkAIError`` rides its
+    own status (401/404/503/sanitized 500), never a generic 500. The
+    parent deadline equals the requested timeout so provider latency
+    matches the HTTP path; the child deadline adds a margin so a parent
+    timeout still returns an error frame. A local attempt never retries
+    over HTTP.
+    """
+    from shared.sdk_ai import SdkAIError, complete_sdk_ai
+    from src.models.contracts.cli import CLIAICompleteRequest
+
+    request, invalid = _validate_request(
+        CLIAICompleteRequest,
+        {
+            "messages": frame.get("messages"),
+            "max_tokens": frame.get("max_tokens"),
+            "org_id": frame.get("org_id"),
+            "profile": frame.get("profile"),
+            "model": frame.get("model"),
+            "execution_id": frame.get("execution_id"),
+            "input_files": frame.get("input_files", []),
+        },
+        frame_id,
+        OP_AI_COMPLETE,
+    )
+    if invalid is not None:
+        return [invalid]
+    assert request is not None
+    parent_timeout, invalid = _ai_complete_timeout_seconds(frame, frame_id)
+    if invalid is not None:
+        return [invalid]
+    assert parent_timeout is not None
+    user = _ai_user_for_principal(principal)
+    parent_execution_id = principal.execution_id
+
+    async def _complete(session: Any) -> dict[str, Any]:
+        result = await complete_sdk_ai(
+            session,
+            user,
+            messages=[dict(m) for m in request.messages],
+            max_tokens=request.max_tokens,
+            model=request.model,
+            profile=request.profile,
+            execution_id=parent_execution_id,
+            scope=request.org_id,
+            input_files=list(request.input_files),
+        )
+        # The HTTP dependency commits after the handler returns; the
+        # local session never commits itself, so persist usage before
+        # the child can observe a missing row.
+        await session.commit()
+        return result
+
+    result, error = await _run_short(
+        session_factory,
+        _complete,
+        op=OP_AI_COMPLETE,
+        log_key="ai.complete",
+        status_errors=(SdkAIError,),
+        timeout_seconds=parent_timeout,
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_ai_model_info(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``ai.model_info`` through the shared AI service.
+
+    Sends no fields (no profile override — like the HTTP
+    ``GET /api/sdk/ai/info``) and calls the exact
+    ``shared.sdk_ai.get_sdk_model_info`` the handler calls, under the
+    token-equivalent caller built only from the parent-derived
+    principal. The missing-config 404 rides its status, never a generic
+    500. Read-only: no commit. A local attempt never retries over HTTP.
+    """
+    from shared.sdk_ai import SdkAIError, get_sdk_model_info
+
+    user = _ai_user_for_principal(principal)
+
+    async def _info(session: Any) -> dict[str, Any]:
+        return await get_sdk_model_info(session, user)
+
+    result, error = await _run_short(
+        session_factory,
+        _info,
+        op=OP_AI_MODEL_INFO,
+        log_key="ai.model_info",
+        status_errors=(SdkAIError,),
     )
     if error is not None:
         error["id"] = frame_id

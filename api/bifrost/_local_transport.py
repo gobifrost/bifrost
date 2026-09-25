@@ -17,8 +17,9 @@ plus artifact write/read/list/download URL, artifact generation
 fixed ``video_status`` poll, the full files facade, the execution
 reads (``workflows.list``, ``executions.list``/``executions.get``),
 the workflow ``execute``/``cancel`` mutations, the SDK form
-reads (``forms.list``, ``forms.get``), and the fixed ``events.emit``
-call):
+reads (``forms.list``, ``forms.get``), the fixed ``events.emit``
+call, and the fixed ``ai`` unary calls (``ai.complete``,
+``ai.model_info``)):
 
 - One request frame (or a bounded chunked request), one-or-many response
   frames, JSON over ``multiprocessing.Connection.send_bytes`` /
@@ -101,6 +102,13 @@ call):
   effective-solution helper, like the HTTP payload; the parent
   replaces any child ``caller_solution`` claim with its own verified
   install id and never reads child actor, app, or org claims).
+  ``ai.complete`` sends the composed ``messages``/``max_tokens``/
+  ``org_id``/``profile``/``model``/``execution_id``/``input_files``
+  (the same fields the HTTP ``CLIAICompleteRequest`` body carries,
+  already composed on the child plus a ``timeout`` float the parent
+  uses only for its dispatch deadline; actor and usage
+  ``execution_id`` come from the parent principal, never child claims);
+  ``ai.model_info`` sends no fields.
    ``artifacts.create_video`` sends ``filename``/``prompt``/
    ``workspace_id`` (the caller's own workspace, like the HTTP query
    param; actor, org, and execution identity come from the parent's
@@ -241,7 +249,8 @@ from typing import Any, NoReturn
 # assign_forms``), the fixed ``users`` facade
 # (``list/create/get/update/delete``), the fixed ``organizations``
 # facade (``create/get/list/update/delete``), and the SDK workflow
-# ``execute``/``cancel`` mutations, and the fixed ``events.emit`` call
+# ``execute``/``cancel`` mutations, the fixed ``events.emit`` call,
+# and the fixed ``ai`` unary calls (``ai.complete``, ``ai.model_info``)
 # ride the local transport. The
 # parent enforces the same allowlist; anything else is a 404 response.
 # Artifact generation (``create_document``/``create_spreadsheet``/
@@ -324,6 +333,8 @@ OP_ORGANIZATIONS_LIST = "organizations.list"
 OP_ORGANIZATIONS_UPDATE = "organizations.update"
 OP_ORGANIZATIONS_DELETE = "organizations.delete"
 OP_EVENTS_EMIT = "events.emit"
+OP_AI_COMPLETE = "ai.complete"
+OP_AI_MODEL_INFO = "ai.model_info"
 
 # Wire version. The parent rejects anything else instead of guessing.
 TRANSPORT_VERSION = 1
@@ -337,6 +348,14 @@ MAX_FRAME_BYTES = 64 * 1024
 # Config resolution is a single indexed read; a stall means the parent is
 # gone or wedged, so fail loudly rather than hang the workflow.
 DEFAULT_OP_TIMEOUT_SECONDS = 30.0
+
+# Default deadline for one ``ai.complete`` request (matches the SDK's
+# HTTP timeout default). The child deadline adds ``AI_COMPLETE_CHILD_MARGIN_SECONDS``
+# so a parent timeout still returns an error frame instead of tripping
+# the child deadline first; the parent deadline equals the requested
+# timeout so provider latency matches the HTTP path.
+AI_COMPLETE_DEFAULT_TIMEOUT_SECONDS = 30.0
+AI_COMPLETE_CHILD_MARGIN_SECONDS = 5.0
 
 # Child-side deadlines for artifact generation. ``create_image`` runs a
 # provider HTTP call with a 180s httpx timeout (see
@@ -2968,6 +2987,87 @@ class ChildLocalTransport:
                 "scope": scope,
                 "solution": solution,
             },
+            timeout,
+        )
+        if not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+    async def call_ai_complete(
+        self,
+        messages: list[dict[str, str]],
+        max_tokens: int | None,
+        org_id: str | None,
+        profile: str | None,
+        model: str | None,
+        execution_id: str | None,
+        input_files: list[dict[str, str]],
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Run one AI completion through the parent. No HTTP fallback.
+
+        Sends the already-composed ``messages`` (knowledge context and
+        structured-output instructions applied on the child) plus the
+        already-encoded ``input_files`` (base64 dicts, like the HTTP
+        ``CLIAICompleteRequest`` body — large payloads ride bounded
+        chunked request frames with no total cap, matching HTTP).
+        ``org_id`` rides as an untrusted requested usage scope the
+        shared service best-efforts; actor and usage ``execution_id``
+        come from the parent's dispatch principal, never from the
+        frame's ``execution_id``. Returns the
+        ``CLIAICompleteResponse`` dict, identical to the HTTP path.
+        The requested timeout (default 30s, like the SDK HTTP default)
+        bounds the parent provider call; the child deadline adds a 5s
+        margin so a parent timeout still returns an error frame.
+        Parent error responses raise the same public exceptions as the
+        HTTP path (the facade maps them to ``RuntimeError``); transport
+        loss raises ``LocalTransportClosed`` or ``TimeoutError``.
+        """
+        requested = (
+            AI_COMPLETE_DEFAULT_TIMEOUT_SECONDS if timeout is None else timeout
+        )
+        result = await self._call(
+            OP_AI_COMPLETE,
+            {
+                "messages": messages,
+                "max_tokens": max_tokens,
+                "org_id": org_id,
+                "profile": profile,
+                "model": model,
+                "execution_id": execution_id,
+                "input_files": input_files,
+                "timeout": requested,
+            },
+            requested + AI_COMPLETE_CHILD_MARGIN_SECONDS,
+        )
+        if not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+    async def call_ai_model_info(
+        self,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """Read the configured AI model through the parent. No HTTP fallback.
+
+        Sends no fields (no profile override — like the HTTP
+        ``GET /api/sdk/ai/info``). Returns the ``CLIAIInfoResponse``
+        dict (``provider``/``model``), identical to the HTTP path.
+        Parent error responses raise the same public exceptions as the
+        HTTP path (the facade maps them to ``RuntimeError``); transport
+        loss raises ``LocalTransportClosed`` or ``TimeoutError``.
+        """
+        result = await self._call(
+            OP_AI_MODEL_INFO,
+            {},
             timeout,
         )
         if not isinstance(result, dict):
