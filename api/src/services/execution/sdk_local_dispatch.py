@@ -60,6 +60,15 @@ from bifrost._local_transport import (
     OP_INTEGRATIONS_REFRESH_TOKEN,
     OP_INTEGRATIONS_UPSERT_MAPPING,
     OP_TABLES_COUNT,
+    OP_TABLES_BATCH_DELETE,
+    OP_TABLES_BATCH,
+    OP_TABLES_DELETE_DOCUMENT,
+    OP_TABLES_UPDATE,
+    OP_TABLES_UPSERT,
+    OP_TABLES_INSERT,
+    OP_TABLES_DELETE,
+    OP_TABLES_LIST,
+    OP_TABLES_CREATE,
     OP_TABLES_GET,
     OP_TABLES_QUERY,
     TRANSPORT_VERSION,
@@ -94,6 +103,15 @@ SDK_CHANNEL_ALLOWED_OPS = frozenset(
         OP_TABLES_GET,
         OP_TABLES_QUERY,
         OP_TABLES_COUNT,
+        OP_TABLES_BATCH_DELETE,
+        OP_TABLES_BATCH,
+        OP_TABLES_DELETE_DOCUMENT,
+        OP_TABLES_UPDATE,
+        OP_TABLES_UPSERT,
+        OP_TABLES_INSERT,
+        OP_TABLES_DELETE,
+        OP_TABLES_LIST,
+        OP_TABLES_CREATE,
     }
 )
 IMPORT_CHANNEL_ALLOWED_OPS = frozenset({OP_MODULES_RESOLVE, OP_MODULES_FETCH})
@@ -400,6 +418,24 @@ async def dispatch_frames(
         return await _dispatch_integrations_delete_mapping(session_factory, principal, frame_id, frame)
     if op == OP_INTEGRATIONS_REFRESH_TOKEN:
         return await _dispatch_integrations_refresh_token(session_factory, principal, frame_id, frame)
+    if op == OP_TABLES_CREATE:
+        return await _dispatch_tables_create(session_factory, principal, frame_id, frame)
+    if op == OP_TABLES_LIST:
+        return await _dispatch_tables_list(session_factory, principal, frame_id, frame)
+    if op == OP_TABLES_DELETE:
+        return await _dispatch_tables_delete(session_factory, principal, frame_id, frame)
+    if op == OP_TABLES_INSERT:
+        return await _dispatch_tables_insert(session_factory, principal, frame_id, frame)
+    if op == OP_TABLES_UPSERT:
+        return await _dispatch_tables_upsert(session_factory, principal, frame_id, frame)
+    if op == OP_TABLES_UPDATE:
+        return await _dispatch_tables_update(session_factory, principal, frame_id, frame)
+    if op == OP_TABLES_DELETE_DOCUMENT:
+        return await _dispatch_tables_delete_document(session_factory, principal, frame_id, frame)
+    if op == OP_TABLES_BATCH:
+        return await _dispatch_tables_batch(session_factory, principal, frame_id, frame)
+    if op == OP_TABLES_BATCH_DELETE:
+        return await _dispatch_tables_batch_delete(session_factory, principal, frame_id, frame)
     if op == OP_TABLES_GET:
         return await _dispatch_tables_get(session_factory, principal, frame_id, frame)
     if op == OP_TABLES_QUERY:
@@ -1453,6 +1489,700 @@ async def _dispatch_tables_count(
         op=OP_TABLES_COUNT,
         log_key=table_ref,
         status_errors=(HTTPException,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_tables_create(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``tables.create`` through the shared metadata service.
+
+    Validates with the same ``SDKTableCreateRequest`` DTO as the HTTP
+    handler, keeps the Solution-restriction-before-scope ordering, and
+    calls the same ``create_sdk_table`` service. ``solution_present``
+    comes only from the principal — a Solution execution cannot conjure
+    tables ad hoc on either transport. The facade's per-call ``app``
+    argument is not read: the HTTP DTO has no such field, so the server
+    ignores it there too.
+    """
+    from shared.sdk_table_metadata import (
+        SDKTableMetadataError,
+        create_sdk_table,
+        ensure_sdk_table_create_allowed,
+    )
+    from src.models.contracts.cli import SDKTableCreateRequest, SDKTableInfo
+
+    request, invalid = _validate_request(
+        SDKTableCreateRequest,
+        {
+            "name": frame.get("name"),
+            "table_schema": frame.get("table_schema"),
+            "description": frame.get("description"),
+            "scope": frame.get("scope"),
+        },
+        frame_id,
+        OP_TABLES_CREATE,
+    )
+    if invalid is not None:
+        return [invalid]
+    actor_error = _require_actor(principal, frame_id, OP_TABLES_CREATE)
+    if actor_error is not None:
+        return [actor_error]
+    assert principal.actor_email is not None and request is not None
+    solution_present = principal.solution_id is not None
+    try:
+        ensure_sdk_table_create_allowed(solution_present)
+    except SDKTableMetadataError as e:
+        return [_error(frame_id, e.status_code, e.detail)]
+    resolved_org_id, scope_error = await _resolve_frame_scope(
+        principal, frame_id, {"scope": request.scope}, session_factory
+    )
+    if scope_error is not None:
+        return [scope_error]
+
+    async def _create(session: Any) -> dict[str, Any]:
+        result = await create_sdk_table(
+            session,
+            name=request.name,
+            table_schema=request.table_schema,
+            description=request.description,
+            org_id=resolved_org_id,
+            actor_email=principal.actor_email,
+            solution_present=solution_present,
+        )
+        return SDKTableInfo(**result).model_dump(mode="json")
+
+    result, error = await _run_short(
+        session_factory,
+        _create,
+        op=OP_TABLES_CREATE,
+        log_key=request.name,
+        status_errors=(SDKTableMetadataError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_tables_list(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``tables.list`` through the shared metadata service.
+
+    Same DTO, same scope resolution, same external-sentinel handling as
+    the HTTP handler. The items ride an ``{"items"}`` envelope — the
+    transport result contract does not carry bare lists.
+    """
+    from shared.sdk_table_metadata import list_sdk_tables
+    from src.models.contracts.cli import SDKTableInfo, SDKTableListRequest
+
+    request, invalid = _validate_request(
+        SDKTableListRequest,
+        {"scope": frame.get("scope")},
+        frame_id,
+        OP_TABLES_LIST,
+    )
+    if invalid is not None:
+        return [invalid]
+    assert request is not None
+    resolved_org_id, scope_error = await _resolve_frame_scope(
+        principal, frame_id, {"scope": request.scope}, session_factory
+    )
+    if scope_error is not None:
+        return [scope_error]
+
+    async def _list(session: Any) -> dict[str, Any]:
+        items = await list_sdk_tables(
+            session,
+            org_id=resolved_org_id,
+            external=principal.is_external,
+        )
+        return {
+            "items": [
+                SDKTableInfo(**item).model_dump(mode="json") for item in items
+            ]
+        }
+
+    result, error = await _run_short(
+        session_factory, _list, op=OP_TABLES_LIST, log_key=""
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_tables_delete(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``tables.delete`` through the shared metadata service.
+
+    The HTTP route requires a platform-admin principal; the local
+    equivalent is the workflow engine identity — supervised service
+    children (system-user non-superuser) get a 403, exactly like their
+    HTTP DELETE would. A missing table is a 404 error frame (the facade
+    raises); a Solution-managed table is a 409.
+    """
+    from shared.sdk_table_metadata import SDKTableMetadataError, delete_sdk_table
+
+    raw_id = frame.get("table_id")
+    if not isinstance(raw_id, str) or not raw_id.strip():
+        return [
+            _error(
+                frame_id,
+                422,
+                f"invalid {OP_TABLES_DELETE} request: 'table_id' is required",
+            )
+        ]
+    try:
+        table_uuid = UUID(raw_id)
+    except ValueError:
+        return [
+            _error(
+                frame_id,
+                422,
+                f"invalid {OP_TABLES_DELETE} request: 'table_id' must be a UUID",
+            )
+        ]
+    if principal.is_service:
+        return [_error(frame_id, 403, "Only platform admins can delete tables")]
+    actor_error = _require_actor(principal, frame_id, OP_TABLES_DELETE)
+    if actor_error is not None:
+        return [actor_error]
+
+    async def _delete(session: Any) -> bool:
+        return await delete_sdk_table(
+            session, table_id=table_uuid, org_id=principal.caller_org_id
+        )
+
+    result, error = await _run_short(
+        session_factory,
+        _delete,
+        op=OP_TABLES_DELETE,
+        log_key=raw_id,
+        status_errors=(SDKTableMetadataError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    if not result:
+        return [_error(frame_id, 404, f"Table '{table_uuid}' not found")]
+    return _single_ok(frame_id, True)
+
+
+async def _resolve_tables_write_target(
+    session: Any,
+    principal: LocalDispatchPrincipal,
+    table_ref: str,
+    *,
+    scope: str | None,
+    solution: str | None,
+    require_explicit_scope_gate: bool = False,
+) -> tuple[Any, Any, Any]:
+    """Resolve and gate one write's target table on an open session.
+
+    Builds the parent-owned ``LocalTableContext`` (token-equivalent
+    user, caller org, per-call target install) and resolves through the
+    shared ``get_table_or_404`` — org gating, Solution install fallback,
+    and the inbound gate stay identical to the HTTP path. Then applies
+    the same Solution write-target gate (and, for batch writes, the
+    explicit-scope exact-table gate) the HTTP handlers apply.
+
+    Returns ``(table, user, ctx)``. Resolution and gate failures raise
+    ``HTTPException`` for the caller to map to error frames.
+    """
+    from shared.table_resolution import LocalTableContext, get_table_or_404
+
+    user = _table_user_for_principal(principal)
+    ctx = LocalTableContext(
+        db=session,
+        user=user,
+        org_id=principal.caller_org_id,
+        solution_id=_tables_target_solution_id(solution, principal),
+    )
+    table = await get_table_or_404(ctx, table_ref, scope=scope)
+    from src.routers.tables import (
+        _assert_explicit_scope_targets_table,
+        _assert_solution_write_targets_owned_table,
+    )
+
+    await _assert_solution_write_targets_owned_table(ctx, table)
+    if require_explicit_scope_gate:
+        await _assert_explicit_scope_targets_table(ctx, table, scope)
+    return table, user, ctx
+
+
+async def _dispatch_tables_insert(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``tables.insert`` through the shared write service.
+
+    The body validates with the same ``DocumentCreate`` DTO as the HTTP
+    handler (plain insert — no upsert branch). A missing table is a 404
+    error frame; the facade auto-creates outside a Solution and retries
+    once, exactly like the HTTP path.
+    """
+    from fastapi import HTTPException
+
+    from shared.table_document_writes import TableWriteError
+    from src.models.contracts.tables import DocumentCreate, DocumentPublic
+
+    table_ref, invalid = _required_tables_field(
+        frame, "table", frame_id, OP_TABLES_INSERT
+    )
+    if invalid is not None:
+        return [invalid]
+    scope, invalid = _optional_tables_field(frame, "scope", frame_id, OP_TABLES_INSERT)
+    if invalid is not None:
+        return [invalid]
+    solution, invalid = _optional_tables_field(
+        frame, "solution", frame_id, OP_TABLES_INSERT
+    )
+    if invalid is not None:
+        return [invalid]
+    doc_id = frame.get("doc_id")
+    if doc_id is not None and not isinstance(doc_id, str):
+        return [
+            _error(
+                frame_id,
+                422,
+                f"invalid {OP_TABLES_INSERT} request: 'doc_id' must be a string",
+            )
+        ]
+    request, invalid = _validate_request(
+        DocumentCreate,
+        {
+            "id": doc_id,
+            "data": frame.get("data"),
+            "created_by": frame.get("created_by"),
+            "updated_by": frame.get("updated_by"),
+        },
+        frame_id,
+        OP_TABLES_INSERT,
+    )
+    if invalid is not None:
+        return [invalid]
+    assert table_ref is not None and request is not None
+    actor_error = _require_actor(principal, frame_id, OP_TABLES_INSERT)
+    if actor_error is not None:
+        return [actor_error]
+
+    async def _insert(session: Any) -> dict[str, Any]:
+        from shared.table_document_writes import insert_table_document
+
+        table, user, _ctx = await _resolve_tables_write_target(
+            session, principal, table_ref, scope=scope, solution=solution
+        )
+        doc = await insert_table_document(
+            session,
+            table,
+            user,
+            doc_id=request.id,
+            data=request.data,
+            created_by=request.created_by,
+            updated_by=request.updated_by,
+            upsert=False,
+        )
+        return DocumentPublic.model_validate(doc).model_dump(mode="json")
+
+    result, error = await _run_short(
+        session_factory,
+        _insert,
+        op=OP_TABLES_INSERT,
+        log_key=table_ref,
+        status_errors=(HTTPException, TableWriteError),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_tables_upsert(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``tables.upsert`` through the shared write service.
+
+    Atomic replace-upsert by id (the JSONB ``data`` column is replaced,
+    not merged), validated with the same ``DocumentUpsert`` DTO as the
+    HTTP handler. A missing table is a 404 error frame for the facade's
+    auto-create retry.
+    """
+    from fastapi import HTTPException
+
+    from shared.table_document_writes import TableWriteError
+    from src.models.contracts.tables import DocumentPublic, DocumentUpsert
+
+    table_ref, invalid = _required_tables_field(
+        frame, "table", frame_id, OP_TABLES_UPSERT
+    )
+    if invalid is not None:
+        return [invalid]
+    scope, invalid = _optional_tables_field(frame, "scope", frame_id, OP_TABLES_UPSERT)
+    if invalid is not None:
+        return [invalid]
+    doc_id, invalid = _required_tables_field(
+        frame, "doc_id", frame_id, OP_TABLES_UPSERT
+    )
+    if invalid is not None:
+        return [invalid]
+    request, invalid = _validate_request(
+        DocumentUpsert,
+        {
+            "id": doc_id,
+            "data": frame.get("data"),
+            "created_by": frame.get("created_by"),
+            "updated_by": frame.get("updated_by"),
+        },
+        frame_id,
+        OP_TABLES_UPSERT,
+    )
+    if invalid is not None:
+        return [invalid]
+    assert table_ref is not None and doc_id is not None and request is not None
+    actor_error = _require_actor(principal, frame_id, OP_TABLES_UPSERT)
+    if actor_error is not None:
+        return [actor_error]
+
+    async def _upsert(session: Any) -> dict[str, Any]:
+        from shared.table_document_writes import upsert_table_document
+
+        table, user, _ctx = await _resolve_tables_write_target(
+            session, principal, table_ref, scope=scope, solution=None
+        )
+        doc = await upsert_table_document(
+            session,
+            table,
+            user,
+            doc_id=request.id,
+            data=request.data,
+            created_by=request.created_by,
+            updated_by=request.updated_by,
+        )
+        return DocumentPublic.model_validate(doc).model_dump(mode="json")
+
+    result, error = await _run_short(
+        session_factory,
+        _upsert,
+        op=OP_TABLES_UPSERT,
+        log_key=table_ref,
+        status_errors=(HTTPException, TableWriteError),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_tables_update(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``tables.update`` through the shared write service.
+
+    Partial merge-update validated with the same ``DocumentUpdate`` DTO
+    as the HTTP handler. A missing table or row is a 404 error frame
+    (the facade maps it to ``None``).
+    """
+    from fastapi import HTTPException
+
+    from shared.table_document_writes import TableWriteError
+    from src.models.contracts.tables import DocumentPublic, DocumentUpdate
+
+    table_ref, invalid = _required_tables_field(
+        frame, "table", frame_id, OP_TABLES_UPDATE
+    )
+    if invalid is not None:
+        return [invalid]
+    doc_id, invalid = _required_tables_field(
+        frame, "doc_id", frame_id, OP_TABLES_UPDATE
+    )
+    if invalid is not None:
+        return [invalid]
+    scope, invalid = _optional_tables_field(frame, "scope", frame_id, OP_TABLES_UPDATE)
+    if invalid is not None:
+        return [invalid]
+    request, invalid = _validate_request(
+        DocumentUpdate,
+        {"data": frame.get("data"), "updated_by": frame.get("updated_by")},
+        frame_id,
+        OP_TABLES_UPDATE,
+    )
+    if invalid is not None:
+        return [invalid]
+    assert table_ref is not None and doc_id is not None and request is not None
+    actor_error = _require_actor(principal, frame_id, OP_TABLES_UPDATE)
+    if actor_error is not None:
+        return [actor_error]
+
+    async def _update(session: Any) -> dict[str, Any]:
+        from shared.table_document_writes import update_table_document
+
+        table, user, _ctx = await _resolve_tables_write_target(
+            session, principal, table_ref, scope=scope, solution=None
+        )
+        doc = await update_table_document(
+            session,
+            table,
+            user,
+            doc_id=doc_id,
+            data=request.data,
+            updated_by=request.updated_by,
+        )
+        return DocumentPublic.model_validate(doc).model_dump(mode="json")
+
+    result, error = await _run_short(
+        session_factory,
+        _update,
+        op=OP_TABLES_UPDATE,
+        log_key=table_ref,
+        status_errors=(HTTPException, TableWriteError),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_tables_delete_document(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``tables.delete_document`` through the shared write service.
+
+    A missing table or row is a 404 error frame (the facade maps it to
+    ``False``).
+    """
+    from fastapi import HTTPException
+
+    from shared.table_document_writes import TableWriteError
+
+    table_ref, invalid = _required_tables_field(
+        frame, "table", frame_id, OP_TABLES_DELETE_DOCUMENT
+    )
+    if invalid is not None:
+        return [invalid]
+    doc_id, invalid = _required_tables_field(
+        frame, "doc_id", frame_id, OP_TABLES_DELETE_DOCUMENT
+    )
+    if invalid is not None:
+        return [invalid]
+    scope, invalid = _optional_tables_field(
+        frame, "scope", frame_id, OP_TABLES_DELETE_DOCUMENT
+    )
+    if invalid is not None:
+        return [invalid]
+    assert table_ref is not None and doc_id is not None
+    actor_error = _require_actor(principal, frame_id, OP_TABLES_DELETE_DOCUMENT)
+    if actor_error is not None:
+        return [actor_error]
+
+    async def _delete(session: Any) -> bool:
+        from shared.table_document_writes import delete_table_document
+
+        table, user, _ctx = await _resolve_tables_write_target(
+            session, principal, table_ref, scope=scope, solution=None
+        )
+        return await delete_table_document(session, table, user, doc_id=doc_id)
+
+    result, error = await _run_short(
+        session_factory,
+        _delete,
+        op=OP_TABLES_DELETE_DOCUMENT,
+        log_key=table_ref,
+        status_errors=(HTTPException, TableWriteError),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    assert result is True
+    return _single_ok(frame_id, True)
+
+
+async def _dispatch_tables_batch(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``tables.batch`` through the shared batch write service.
+
+    One operation covers the facade's ``insert_batch`` (plain insert),
+    ``upsert_batch`` (legacy merge upsert), and ``bulk_upsert``
+    (privileged replace upsert): the body validates with the same
+    ``DocumentBatchCreate`` DTO as the HTTP handler, so the 1000-row
+    limit, explicit-id requirements, and write-mode compatibility match.
+    The response carries the same ``DocumentBatchCreateResponse`` shape
+    (insert conflicts listed, documents only when requested). A missing
+    table is a 404 error frame for the facade's auto-create retry; a
+    concurrent-write conflict is a 409 the facade retries boundedly.
+    """
+    from fastapi import HTTPException
+
+    from shared.table_document_writes import TableWriteError
+    from src.models.contracts.tables import DocumentBatchCreate, DocumentPublic
+
+    table_ref, invalid = _required_tables_field(
+        frame, "table", frame_id, OP_TABLES_BATCH
+    )
+    if invalid is not None:
+        return [invalid]
+    scope, invalid = _optional_tables_field(frame, "scope", frame_id, OP_TABLES_BATCH)
+    if invalid is not None:
+        return [invalid]
+    raw_body: dict[str, Any] = {"documents": frame.get("documents")}
+    for key in ("upsert", "write_mode", "return_documents"):
+        if frame.get(key) is not None:
+            raw_body[key] = frame[key]
+    request, invalid = _validate_request(
+        DocumentBatchCreate, raw_body, frame_id, OP_TABLES_BATCH
+    )
+    if invalid is not None:
+        return [invalid]
+    assert table_ref is not None and request is not None
+    actor_error = _require_actor(principal, frame_id, OP_TABLES_BATCH)
+    if actor_error is not None:
+        return [actor_error]
+
+    async def _batch(session: Any) -> dict[str, Any]:
+        from shared.table_document_writes import (
+            BatchDocumentInput,
+            batch_write_table_documents,
+        )
+
+        table, user, _ctx = await _resolve_tables_write_target(
+            session,
+            principal,
+            table_ref,
+            scope=scope,
+            solution=None,
+            require_explicit_scope_gate=True,
+        )
+        outcome = await batch_write_table_documents(
+            session,
+            table,
+            user,
+            items=[
+                BatchDocumentInput(
+                    id=item.id,
+                    data=item.data,
+                    created_by=item.created_by,
+                    updated_by=item.updated_by,
+                )
+                for item in request.documents
+            ],
+            mode=request.effective_write_mode,
+        )
+        return {
+            "inserted": outcome.inserted,
+            "errors": [
+                {"id": conflict.id, "error": "Document already exists"}
+                for conflict in outcome.insert_conflicts
+            ],
+            "documents": (
+                [
+                    DocumentPublic.model_validate(doc).model_dump(mode="json")
+                    for doc in outcome.ordered_documents
+                ]
+                if request.return_documents
+                else []
+            ),
+        }
+
+    result, error = await _run_short(
+        session_factory,
+        _batch,
+        op=OP_TABLES_BATCH,
+        log_key=table_ref,
+        status_errors=(HTTPException, TableWriteError),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_tables_batch_delete(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``tables.batch_delete`` through the shared write service.
+
+    Same ``DocumentBatchDeleteRequest`` DTO and all-or-nothing policy
+    behavior as the HTTP handler. A missing table is a 404 error frame
+    (the facade maps it to an empty result).
+    """
+    from fastapi import HTTPException
+
+    from shared.table_document_writes import TableWriteError
+    from src.models.contracts.tables import DocumentBatchDeleteRequest
+
+    table_ref, invalid = _required_tables_field(
+        frame, "table", frame_id, OP_TABLES_BATCH_DELETE
+    )
+    if invalid is not None:
+        return [invalid]
+    scope, invalid = _optional_tables_field(
+        frame, "scope", frame_id, OP_TABLES_BATCH_DELETE
+    )
+    if invalid is not None:
+        return [invalid]
+    request, invalid = _validate_request(
+        DocumentBatchDeleteRequest,
+        {"ids": frame.get("ids")},
+        frame_id,
+        OP_TABLES_BATCH_DELETE,
+    )
+    if invalid is not None:
+        return [invalid]
+    assert table_ref is not None and request is not None
+    actor_error = _require_actor(principal, frame_id, OP_TABLES_BATCH_DELETE)
+    if actor_error is not None:
+        return [actor_error]
+
+    async def _batch_delete(session: Any) -> dict[str, Any]:
+        from shared.table_document_writes import batch_delete_table_documents
+
+        table, user, _ctx = await _resolve_tables_write_target(
+            session, principal, table_ref, scope=scope, solution=None
+        )
+        outcome = await batch_delete_table_documents(
+            session, table, user, ids=list(request.ids)
+        )
+        return {"deleted": outcome.deleted, "deleted_ids": outcome.deleted_ids}
+
+    result, error = await _run_short(
+        session_factory,
+        _batch_delete,
+        op=OP_TABLES_BATCH_DELETE,
+        log_key=table_ref,
+        status_errors=(HTTPException, TableWriteError),
     )
     if error is not None:
         error["id"] = frame_id

@@ -1,8 +1,12 @@
 """
-Tables SDK for Bifrost - API-only implementation.
+Tables SDK for Bifrost.
 
 Provides Python API for table and document management (CRUD operations).
-All operations go through HTTP API endpoints.
+Outside an engine child all operations go through HTTP API endpoints;
+inside an engine child the fixed operations ride the dedicated local
+transport to the parent (same shared services, same results) with no
+HTTP requests and no database connection in the child. A local attempt
+never falls back to HTTP.
 All methods are async and must be awaited.
 """
 
@@ -91,12 +95,36 @@ async def _ensure_table_exists(table: str, scope: str | None) -> None:
     raise_for_status_with_detail(response)
 
 
+async def _ensure_table_exists_local(table: str, scope: str | None) -> None:
+    """Local equivalent of :func:`_ensure_table_exists` for engine children.
+
+    Creates the table through the parent over the dedicated channel.
+    Idempotent: a 409 from a concurrent creator is treated as success,
+    exactly like the HTTP path. A failed local write never retries via
+    HTTP — this raises loudly instead.
+    """
+    from .client import BifrostAPIError
+
+    transport = _get_local_transport()
+    assert transport is not None
+    try:
+        await transport.call_tables_create(table, None, None, scope)
+    except BifrostAPIError as e:
+        if e.response.status_code == 409:
+            return
+        raise
+
+
 class tables:
     """
     Table and document management operations.
 
     Allows workflows to create tables and store/query documents.
-    All operations are performed via HTTP API endpoints.
+    Outside an engine child all operations go through HTTP API endpoints;
+    inside an engine child the fixed operations resolve through the parent
+    over the dedicated local transport (same resolution + shared services
+    as the HTTP endpoints) with no HTTP requests and no database
+    connection in the child. A local attempt never falls back to HTTP.
 
     All methods are async - await is required.
 
@@ -159,8 +187,18 @@ class tables:
             raise RuntimeError(
                 "Solution executions cannot create tables at runtime; declare tables in the solution manifest"
             )
-        client = get_client()
         effective_scope = resolve_scope(scope)
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent validates the same
+            # ``SDKTableCreateRequest`` DTO and runs the shared metadata
+            # service over the dedicated channel. A local attempt never
+            # falls back to HTTP.
+            result = await transport.call_tables_create(
+                name, description, table_schema, effective_scope,
+            )
+            return TableInfo.model_validate(result)
+        client = get_client()
         response = await client.post(
             "/api/sdk/tables/create",
             json={
@@ -200,8 +238,17 @@ class tables:
             >>> all_tables = await tables.list()
             >>> app_tables = await tables.list(app="app-uuid")
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent runs the shared metadata
+            # service over the dedicated channel. A local attempt never
+            # falls back to HTTP.
+            return [
+                TableInfo.model_validate(t)
+                for t in await transport.call_tables_list(effective_scope)
+            ]
+        client = get_client()
         response = await client.post(
             "/api/sdk/tables/list",
             json={
@@ -233,6 +280,14 @@ class tables:
             >>> from bifrost import tables
             >>> await tables.delete("table-uuid-here")
         """
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent runs the shared metadata
+            # service over the dedicated channel (a missing table raises,
+            # like the HTTP path). A local attempt never falls back to
+            # HTTP.
+            await transport.call_tables_delete(table_id)
+            return True
         client = get_client()
         response = await client.delete(
             f"/api/tables/{table_id}",
@@ -284,6 +339,30 @@ class tables:
         if created_by is not None:
             body["created_by"] = created_by
 
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent resolves the table and runs
+            # the shared write service over the dedicated channel, with
+            # the same auto-create-once retry outside a Solution. A
+            # local attempt never falls back to HTTP.
+            from .client import BifrostAPIError
+
+            target_solution = get_effective_solution(solution)
+            try:
+                result = await transport.call_tables_insert(
+                    table, id, data, created_by, None,
+                    effective_scope, target_solution,
+                )
+            except BifrostAPIError as e:
+                if e.response.status_code == 404 and _auto_create_allowed(solution):
+                    await _ensure_table_exists_local(table, effective_scope)
+                    result = await transport.call_tables_insert(
+                        table, id, data, created_by, None,
+                        effective_scope, target_solution,
+                    )
+                else:
+                    raise
+            return DocumentData.model_validate(result)
         client = get_client()
         url = f"/api/tables/{table}/documents{_scope_query(effective_scope, solution)}"
         response = await client.post(url, json=body)
@@ -337,6 +416,29 @@ class tables:
         if updated_by is not None:
             body["updated_by"] = updated_by
 
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent runs the shared replace-upsert
+            # service over the dedicated channel, with the same
+            # auto-create-once retry outside a Solution. A local attempt
+            # never falls back to HTTP.
+            from .client import BifrostAPIError
+
+            try:
+                result = await transport.call_tables_upsert(
+                    table, id, data, created_by, updated_by,
+                    effective_scope,
+                )
+            except BifrostAPIError as e:
+                if e.response.status_code == 404 and not _has_solution_context():
+                    await _ensure_table_exists_local(table, effective_scope)
+                    result = await transport.call_tables_upsert(
+                        table, id, data, created_by, updated_by,
+                        effective_scope,
+                    )
+                else:
+                    raise
+            return DocumentData.model_validate(result)
         client = get_client()
         url = f"/api/tables/{table}/documents/upsert{_scope_query(effective_scope)}"
         response = await client.post(url, json=body)
@@ -431,11 +533,28 @@ class tables:
             ctx = _current_context()
             if ctx is not None and getattr(ctx, "user_id", None) is not None:
                 updated_by = str(ctx.user_id)
-        client = get_client()
         effective_scope = resolve_scope(scope)
         body: dict[str, Any] = {"data": data}
         if updated_by is not None:
             body["updated_by"] = updated_by
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent runs the shared merge-update
+            # service over the dedicated channel (a missing table or row
+            # maps to None, like the HTTP path). A local attempt never
+            # falls back to HTTP.
+            from .client import BifrostAPIError
+
+            try:
+                result = await transport.call_tables_update(
+                    table, doc_id, data, updated_by, effective_scope,
+                )
+            except BifrostAPIError as e:
+                if e.response.status_code == 404:
+                    return None
+                raise
+            return DocumentData.model_validate(result)
+        client = get_client()
         response = await client.patch(
             f"/api/tables/{table}/documents/{doc_id}{_scope_query(effective_scope)}",
             json=body,
@@ -468,8 +587,25 @@ class tables:
         Example:
             >>> deleted = await tables.delete_document("customers", "acme-001")
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent runs the shared delete service
+            # over the dedicated channel (a missing table or row maps to
+            # False, like the HTTP path). A local attempt never falls back
+            # to HTTP.
+            from .client import BifrostAPIError
+
+            try:
+                await transport.call_tables_delete_document(
+                    table, doc_id, effective_scope,
+                )
+            except BifrostAPIError as e:
+                if e.response.status_code == 404:
+                    return False
+                raise
+            return True
+        client = get_client()
         response = await client.delete(
             f"/api/tables/{table}/documents/{doc_id}{_scope_query(effective_scope)}",
         )
@@ -609,6 +745,48 @@ class tables:
                 item["updated_by"] = updated_by
             items.append(item)
 
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: each attempt rides the dedicated channel
+            # with the same bounded 409-retry and auto-create-once
+            # behavior as the HTTP loop below. A local attempt never
+            # falls back to HTTP.
+            from .client import BifrostAPIError
+
+            async def _post_once() -> dict[str, Any]:
+                return await transport.call_tables_batch(
+                    table, items, False, "replace_upsert", False,
+                    effective_scope,
+                )
+
+            attempts = max(0, conflict_retries) + 1
+            ensured_table = False
+            local_body: dict[str, Any] | None = None
+            for attempt in range(attempts):
+                try:
+                    local_body = await _post_once()
+                except BifrostAPIError as e:
+                    status = e.response.status_code
+                    if (
+                        status == 404
+                        and not _has_solution_context()
+                        and not ensured_table
+                    ):
+                        await _ensure_table_exists_local(table, effective_scope)
+                        ensured_table = True
+                        try:
+                            local_body = await _post_once()
+                        except BifrostAPIError as e2:
+                            if e2.response.status_code == 409 and attempt < attempts - 1:
+                                continue
+                            raise
+                    elif status == 409 and attempt < attempts - 1:
+                        continue
+                    else:
+                        raise
+                break
+            assert local_body is not None
+            return BulkUpsertResult(count=local_body["inserted"])
         client = get_client()
         url = f"/api/tables/{table}/documents/batch{_scope_query(effective_scope)}"
         body = {
@@ -667,6 +845,30 @@ class tables:
                 item["updated_by"] = updated_by
             items.append(item)
 
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent runs the shared batch service
+            # over the dedicated channel, with the same auto-create-once
+            # retry outside a Solution. A local attempt never falls back
+            # to HTTP.
+            from .client import BifrostAPIError
+
+            try:
+                local_body = await transport.call_tables_batch(
+                    table, items, upsert, None, True, effective_scope,
+                )
+            except BifrostAPIError as e:
+                if e.response.status_code == 404 and not _has_solution_context():
+                    await _ensure_table_exists_local(table, effective_scope)
+                    local_body = await transport.call_tables_batch(
+                        table, items, upsert, None, True, effective_scope,
+                    )
+                else:
+                    raise
+            return BatchResult(
+                documents=[DocumentData.model_validate(d) for d in local_body.get("documents", [])],
+                count=local_body["inserted"],
+            )
         req_body: dict[str, Any] = {"documents": items, "upsert": upsert}
         client = get_client()
         url = f"/api/tables/{table}/documents/batch{_scope_query(effective_scope)}"
@@ -704,8 +906,28 @@ class tables:
         Example:
             >>> result = await tables.delete_batch("customers", ["acme-001", "beta-001"])
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent runs the shared batch-delete
+            # service over the dedicated channel (a missing table maps to
+            # an empty result, like the HTTP path). A local attempt never
+            # falls back to HTTP.
+            from .client import BifrostAPIError
+
+            try:
+                local_body = await transport.call_tables_batch_delete(
+                    table, doc_ids, effective_scope,
+                )
+            except BifrostAPIError as e:
+                if e.response.status_code == 404:
+                    return BatchDeleteResult(deleted_ids=[], count=0)
+                raise
+            return BatchDeleteResult(
+                deleted_ids=local_body.get("deleted_ids", []),
+                count=local_body["deleted"],
+            )
+        client = get_client()
         response = await client.post(
             f"/api/tables/{table}/documents/batch-delete{_scope_query(effective_scope)}",
             json={"ids": doc_ids},
