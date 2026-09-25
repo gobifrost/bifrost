@@ -2,7 +2,7 @@
 
 Single implementation used by the HTTP handler
 (``api/src/routers/cli.py::sdk_generate_video_artifact``) serving
-external SDK callers. A future engine parent-side dispatcher will call
+external SDK callers. The engine parent-side dispatcher calls
 the same service with a parent-derived principal so HTTP and local
 results are identical by construction.
 
@@ -56,7 +56,7 @@ class SdkVideoJobError(Exception):
     """SDK video job failure with an HTTP-style status.
 
     Raised by the shared service so the HTTP handler (``HTTPException``)
-    and the future local dispatcher (``ok: false`` frames) can map the
+    and the local dispatcher (``ok: false`` frames) can map the
     same failure to their own transport. Currently 404 only (missing or
     not visible job, or a non-video job on the fixed local status call),
     matching the historical status handler exactly.
@@ -83,7 +83,7 @@ async def enqueue_sdk_video_job(
     ``"artifact"`` keyed on the requested filename, title
     ``"Generating {filename}"``, and no action URL.
 
-    Flushes the row; the caller (HTTP adapter or future local
+    Flushes the row; the caller (HTTP adapter or local
     dispatcher) owns the commit via :func:`finalize_sdk_video_job`.
     """
     from src.jobs.platform.video_generation import (

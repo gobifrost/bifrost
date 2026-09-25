@@ -30,7 +30,8 @@ Allowlist: ``config.get/set/list/delete``, the full
 delete_mapping/refresh_token``), the full tables facade, and artifact
 write/read/list/download URL plus artifact generation
 (``create_document``/``create_spreadsheet``/``create_text``/
-``create_image``), all fixed file operations, the SDK agent
+``create_image``), the durable video ``create_video`` enqueue plus its
+fixed ``video_status`` poll, all fixed file operations, the SDK agent
 ``enqueue``/``get_run`` operations, and the SDK workflow
 ``execute``/``cancel`` mutations. Engine import fast path: ``modules.resolve``
 and ``modules.fetch`` (served on the dedicated import channel through the
@@ -60,6 +61,8 @@ from bifrost._local_transport import (
     OP_ARTIFACTS_CREATE_IMAGE,
     OP_ARTIFACTS_CREATE_SPREADSHEET,
     OP_ARTIFACTS_CREATE_TEXT,
+    OP_ARTIFACTS_CREATE_VIDEO,
+    OP_ARTIFACTS_VIDEO_STATUS,
     OP_WORKFLOWS_EXECUTE,
     OP_WORKFLOWS_CANCEL,
     OP_ARTIFACTS_WRITE,
@@ -150,6 +153,8 @@ SDK_CHANNEL_ALLOWED_OPS = frozenset(
         OP_ARTIFACTS_CREATE_SPREADSHEET,
         OP_ARTIFACTS_CREATE_TEXT,
         OP_ARTIFACTS_CREATE_IMAGE,
+        OP_ARTIFACTS_CREATE_VIDEO,
+        OP_ARTIFACTS_VIDEO_STATUS,
         OP_FILES_READ,
         OP_FILES_WRITE,
         OP_FILES_LIST,
@@ -529,6 +534,10 @@ async def dispatch_frames(
         return await _dispatch_artifacts_create_text(session_factory, principal, frame_id, frame)
     if op == OP_ARTIFACTS_CREATE_IMAGE:
         return await _dispatch_artifacts_create_image(session_factory, principal, frame_id, frame)
+    if op == OP_ARTIFACTS_CREATE_VIDEO:
+        return await _dispatch_artifacts_create_video(session_factory, principal, frame_id, frame)
+    if op == OP_ARTIFACTS_VIDEO_STATUS:
+        return await _dispatch_artifacts_video_status(session_factory, principal, frame_id, frame)
     if op == OP_FILES_READ:
         return await _dispatch_files_read(session_factory, principal, frame_id, frame)
     if op == OP_FILES_WRITE:
@@ -3126,6 +3135,148 @@ async def _dispatch_artifacts_create_image(
         log_key=request.filename,
         status_errors=(SdkArtifactError,),
         timeout_seconds=ARTIFACT_IMAGE_DISPATCH_TIMEOUT_SECONDS,
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+def _video_user_for_principal(principal: LocalDispatchPrincipal) -> Any:
+    """Token-equivalent ``UserPrincipal`` for SDK video job operations.
+
+    Reuses the table token-equivalent shape so enqueue attribution and
+    job visibility decide identically on both transports: workflows run
+    as the system-user superuser with no org (the ``mint_engine_token()``
+    shape), services run as the system-user non-superuser confined to
+    their service org (the ``mint_service_token()`` shape). Built only
+    from the parent-derived ``LocalDispatchPrincipal`` — never from
+    child frame fields, which carry data only.
+    """
+    return _table_user_for_principal(principal)
+
+
+async def _dispatch_artifacts_create_video(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``artifacts.create_video`` enqueue through the shared service.
+
+    Validates with the same ``VideoArtifactSpec`` DTO as the HTTP
+    handler, resolves the optional workspace id like the HTTP query
+    param, and calls the exact ``shared.sdk_video`` enqueue/finalize
+    sequence the HTTP handler calls — requester/org/resource metadata,
+    notification creation, and the commit/refresh/update ordering agree
+    by construction. The execution id comes from the parent-derived
+    dispatch principal (like the HTTP query param on engine calls),
+    never from a child claim. ``SdkVideoJobError`` is unreachable here
+    (enqueue validates the DTO only); the accepted payload rides the
+    shared ``PlatformJobAccepted`` shape. No commit on errors, no HTTP
+    retry after a failed local enqueue.
+    """
+    from src.models.contracts.artifacts import VideoArtifactSpec
+
+    request, invalid = _validate_request(
+        VideoArtifactSpec,
+        {
+            "filename": frame.get("filename"),
+            "prompt": frame.get("prompt"),
+        },
+        frame_id,
+        OP_ARTIFACTS_CREATE_VIDEO,
+    )
+    if invalid is not None:
+        return [invalid]
+    assert request is not None
+    workspace_id, invalid = _workspace_id_from_frame(
+        frame, frame_id, OP_ARTIFACTS_CREATE_VIDEO, required=False
+    )
+    if invalid is not None:
+        return [invalid]
+    execution_id = UUID(principal.execution_id) if principal.execution_id else None
+    user = _video_user_for_principal(principal)
+
+    async def _enqueue(session: Any) -> dict[str, Any]:
+        from shared.sdk_video import (
+            enqueue_sdk_video_job,
+            finalize_sdk_video_job,
+            sdk_video_job_accepted,
+        )
+
+        job, reused = await enqueue_sdk_video_job(
+            session,
+            user,
+            spec=request,
+            workspace_id=workspace_id,
+            execution_id=execution_id,
+        )
+        await finalize_sdk_video_job(session, job)
+        return sdk_video_job_accepted(job, reused).model_dump(mode="json")
+
+    result, error = await _run_short(
+        session_factory,
+        _enqueue,
+        op=OP_ARTIFACTS_CREATE_VIDEO,
+        log_key=request.filename,
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_artifacts_video_status(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``artifacts.video_status`` polling through the shared service.
+
+    The job id validates as a UUID (422 on malformed, like the HTTP
+    path-param parsing). Visibility and serialization are the shared
+    ``shared.sdk_video`` service's — the same requester-visibility rule
+    and ``PlatformJobPublic`` shape as the HTTP status endpoint — and
+    the call stays fixed to SDK video jobs (any other job type is a 404
+    error frame, never a generic job API). Each poll runs on its own
+    short parent session, so child polling holds no DB connection and
+    pins no API container.
+    """
+    from shared.sdk_video import SdkVideoJobError, get_sdk_video_job_status
+
+    raw_id = frame.get("job_id")
+    if not isinstance(raw_id, str) or not raw_id.strip():
+        return [
+            _error(
+                frame_id,
+                422,
+                f"invalid {OP_ARTIFACTS_VIDEO_STATUS} request: 'job_id' is required",
+            )
+        ]
+    try:
+        job_uuid = UUID(raw_id)
+    except ValueError:
+        return [
+            _error(
+                frame_id,
+                422,
+                f"invalid {OP_ARTIFACTS_VIDEO_STATUS} request: 'job_id' must be a UUID",
+            )
+        ]
+    user = _video_user_for_principal(principal)
+
+    async def _status(session: Any) -> dict[str, Any]:
+        public = await get_sdk_video_job_status(session, user, job_uuid)
+        return public.model_dump(mode="json")
+
+    result, error = await _run_short(
+        session_factory,
+        _status,
+        op=OP_ARTIFACTS_VIDEO_STATUS,
+        log_key=raw_id,
+        status_errors=(SdkVideoJobError,),
     )
     if error is not None:
         error["id"] = frame_id

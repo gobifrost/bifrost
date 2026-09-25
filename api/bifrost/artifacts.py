@@ -17,6 +17,7 @@ from .models import ArtifactRef
 from ._local_transport import (
     ARTIFACT_IMAGE_LOCAL_TIMEOUT_SECONDS,
     ARTIFACT_RENDER_LOCAL_TIMEOUT_SECONDS,
+    LocalTransportError,
     get as _get_local_transport,
 )
 
@@ -31,6 +32,42 @@ def _workspace_params() -> dict[str, str]:
         "workspace_id": str(workspace_id),
         "execution_id": str(context.execution_id),
     }
+
+
+def _video_job_artifact_or_raise(job: dict[str, Any]) -> ArtifactRef | None:
+    """Map one platform-job status dict to its terminal artifact.
+
+    Returns the reference when the job succeeded, None while the job
+    is still running, and raises the historical ``RuntimeError`` for
+    failed/cancelled/requires_action jobs. Shared by the HTTP and
+    engine-local polling loops so both transports agree by
+    construction.
+    """
+    status = str(job.get("status") or "")
+    if status == "succeeded":
+        result = job.get("result")
+        artifact = result.get("artifact") if isinstance(result, dict) else None
+        if not isinstance(artifact, dict):
+            raise RuntimeError("Video generation completed without an artifact.")
+        return ArtifactRef.model_validate(artifact)
+    if status in {"failed", "cancelled", "requires_action"}:
+        error = job.get("error")
+        message = error.get("message") if isinstance(error, dict) else None
+        result = job.get("result")
+        action = (
+            result.get("requires_action")
+            if isinstance(result, dict)
+            else None
+        )
+        if status == "requires_action":
+            follow_up = (
+                f" Required action: {action}."
+                if isinstance(action, str)
+                else " User action is required."
+            )
+            raise RuntimeError(f"Video generation requires action.{follow_up}")
+        raise RuntimeError(message or f"Video generation {status}.")
+    return None
 
 
 class artifacts:
@@ -220,11 +257,51 @@ class artifacts:
         timeout_seconds: float = 1_800,
         poll_interval_seconds: float = 2,
     ) -> ArtifactRef:
-        """Generate a video through a durable platform job and return its reference."""
+        """Generate a video through a durable platform job and return its reference.
+
+        Inside an engine child this enqueues through the parent over the
+        dedicated local transport (same service as the HTTP endpoint) and
+        polls that SDK video job over the same channel; elsewhere it
+        calls the SDK API endpoint. A local attempt never falls back to
+        HTTP.
+        """
         if timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be greater than zero.")
         if poll_interval_seconds <= 0:
             raise ValueError("poll_interval_seconds must be greater than zero.")
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent validates the same
+            # VideoArtifactSpec and runs the same
+            # notification/commit/refresh/publish sequence over the
+            # dedicated channel. The workspace id is the caller's own
+            # (like the HTTP query param); user, organization, and
+            # execution identity come from the parent's dispatch
+            # context, never from child frames. Each poll runs on a
+            # short parent session, so child polling holds no DB
+            # connection. A local attempt never falls back to HTTP.
+            params = _workspace_params()
+            accepted = await transport.call_artifacts_create_video(
+                filename,
+                prompt,
+                params.get("workspace_id"),
+            )
+            raw_job_id = accepted.get("job_id")
+            if not isinstance(raw_job_id, str) or not raw_job_id:
+                raise LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            job_id = raw_job_id
+            deadline = time.monotonic() + timeout_seconds
+            while time.monotonic() < deadline:
+                job = await transport.call_artifacts_video_status(job_id)
+                ref = _video_job_artifact_or_raise(job)
+                if ref is not None:
+                    return ref
+                await asyncio.sleep(poll_interval_seconds)
+            raise TimeoutError(
+                f"Video generation is still running as platform job {job_id}."
+            )
         client = get_client()
         response = await client.post(
             "/api/sdk/artifacts/video",
@@ -240,31 +317,9 @@ class artifacts:
         while time.monotonic() < deadline:
             status_response = await client.get(f"/api/platform-jobs/{job_id}")
             raise_for_status_with_detail(status_response)
-            job = status_response.json()
-            status = str(job.get("status") or "")
-            if status == "succeeded":
-                result = job.get("result")
-                artifact = result.get("artifact") if isinstance(result, dict) else None
-                if not isinstance(artifact, dict):
-                    raise RuntimeError("Video generation completed without an artifact.")
-                return ArtifactRef.model_validate(artifact)
-            if status in {"failed", "cancelled", "requires_action"}:
-                error = job.get("error")
-                message = error.get("message") if isinstance(error, dict) else None
-                result = job.get("result")
-                action = (
-                    result.get("requires_action")
-                    if isinstance(result, dict)
-                    else None
-                )
-                if status == "requires_action":
-                    follow_up = (
-                        f" Required action: {action}."
-                        if isinstance(action, str)
-                        else " User action is required."
-                    )
-                    raise RuntimeError(f"Video generation requires action.{follow_up}")
-                raise RuntimeError(message or f"Video generation {status}.")
+            ref = _video_job_artifact_or_raise(status_response.json())
+            if ref is not None:
+                return ref
             await asyncio.sleep(poll_interval_seconds)
         raise TimeoutError(
             f"Video generation is still running as platform job {job_id}."

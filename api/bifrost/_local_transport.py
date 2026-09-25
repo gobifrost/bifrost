@@ -11,7 +11,10 @@ Protocol (``config.get/set/list/delete``, the full
 delete_mapping/refresh_token`` — and the full ``tables`` facade —
 ``create/list/delete`` metadata plus ``insert/upsert/get/update/
 delete_document/batch/batch_delete/query/count`` document operations,
-plus artifact write/read/list/download URL, the full files facade, and
+plus artifact write/read/list/download URL, artifact generation
+(``create_document``/``create_spreadsheet``/``create_text``/
+``create_image``), the durable video ``create_video`` enqueue plus its
+fixed ``video_status`` poll, the full files facade, and
 the workflow ``execute``/``cancel`` mutations):
 
 - One request frame (or a bounded chunked request), one-or-many response
@@ -54,6 +57,11 @@ the workflow ``execute``/``cancel`` mutations):
   ``delay_seconds`` (the same fields the HTTP payload carries; ``sync``
   is fixed to false — the SDK surface is fire-and-forget);
   ``workflows.cancel`` sends ``execution_id``.
+   ``artifacts.create_video`` sends ``filename``/``prompt``/
+   ``workspace_id`` (the caller's own workspace, like the HTTP query
+   param; actor, org, and execution identity come from the parent's
+   dispatch principal, never from child frames); ``artifacts.video_status``
+   sends ``job_id``.
   Per-call Solution targets may ride a frame; the parent derives the
   caller's own install id from its dispatch context, never from child frames.
   Small responses carry the same ``id`` with either
@@ -89,7 +97,11 @@ the workflow ``execute``/``cancel`` mutations):
   returns the ``WorkflowExecutionResponse`` dict (the facade returns its
   ``execution_id`` — fire-and-forget, like HTTP); ``workflows.cancel``
   returns the ``{"execution_id", "status"}`` dict (the facade returns
-  ``None``, like HTTP).
+  ``None``, like HTTP). ``artifacts.create_video`` returns the
+   ``PlatformJobAccepted`` dict (the facade polls it to a terminal
+   ``ArtifactRef``); ``artifacts.video_status`` returns the
+   ``PlatformJobPublic`` dict for that SDK video job (any other job type
+   is a 404 error frame — never a generic job API).
 - Large payloads in EITHER direction use bounded chunked transfer: a
   header frame ``{"ok": true, "chunked": true, "total": <bytes>,
   "parts": <n>}`` (requests: ``{"op": ..., "chunked": true, "total",
@@ -133,7 +145,9 @@ from typing import Any, NoReturn
 # ``execute``/``cancel`` mutations ride the local transport. The
 # parent enforces the same allowlist; anything else is a 404 response.
 # Artifact generation (``create_document``/``create_spreadsheet``/
-# ``create_text``/``create_image``) rides the same channel.
+# ``create_text``/``create_image``) plus the durable video enqueue
+# (``create_video``) and its fixed status poll (``video_status``) ride
+# the same channel.
 OP_CONFIG_GET = "config.get"
 OP_CONFIG_SET = "config.set"
 OP_CONFIG_LIST = "config.list"
@@ -171,6 +185,8 @@ OP_ARTIFACTS_CREATE_DOCUMENT = "artifacts.create_document"
 OP_ARTIFACTS_CREATE_SPREADSHEET = "artifacts.create_spreadsheet"
 OP_ARTIFACTS_CREATE_TEXT = "artifacts.create_text"
 OP_ARTIFACTS_CREATE_IMAGE = "artifacts.create_image"
+OP_ARTIFACTS_CREATE_VIDEO = "artifacts.create_video"
+OP_ARTIFACTS_VIDEO_STATUS = "artifacts.video_status"
 OP_FILES_READ = "files.read"
 OP_FILES_WRITE = "files.write"
 OP_FILES_LIST = "files.list"
@@ -1621,6 +1637,70 @@ class ChildLocalTransport:
                 "prompt": prompt,
                 "workspace_id": workspace_id,
             },
+            timeout,
+        )
+        if not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+    async def call_artifacts_create_video(
+        self,
+        filename: str,
+        prompt: str,
+        workspace_id: str | None = None,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """Enqueue durable video generation through the parent.
+
+        No HTTP fallback. Sends only the filename/prompt plus the
+        caller's own workspace id (like the HTTP query param); actor,
+        org, and execution identity come from the parent's dispatch
+        principal, never from child frames. Returns the
+        ``PlatformJobAccepted`` dict, identical to the HTTP 202 body
+        (the facade polls ``video_status`` to a terminal
+        ``ArtifactRef``). A local attempt never falls back to HTTP — a
+        failure raises loudly (an enqueue may already have committed,
+        so a retry over HTTP could double-enqueue).
+        """
+        result = await self._call(
+            OP_ARTIFACTS_CREATE_VIDEO,
+            {
+                "filename": filename,
+                "prompt": prompt,
+                "workspace_id": workspace_id,
+            },
+            timeout,
+        )
+        if not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+    async def call_artifacts_video_status(
+        self,
+        job_id: str,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """Poll one SDK video PlatformJob through the parent.
+
+        No HTTP fallback. Sends only the job id; visibility is the
+        parent-derived principal's (owner requester or platform admin
+        reads, anything else is a 404 — identical to the HTTP status
+        endpoint). Returns the ``PlatformJobPublic`` dict. A non-video
+        job type is a 404 error frame: this stays a fixed SDK video
+        status call, never a generic job API. Each poll runs on a short
+        parent session, so child polling holds no DB connection.
+        """
+        result = await self._call(
+            OP_ARTIFACTS_VIDEO_STATUS,
+            {"job_id": job_id},
             timeout,
         )
         if not isinstance(result, dict):

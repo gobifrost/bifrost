@@ -398,7 +398,7 @@ class TestHttpLocalParity:
     async def test_unknown_op_is_404(self, db_session):
         from src.services.execution.sdk_local_dispatch import dispatch_frame
 
-        frame = {"v": 1, "id": "gen-unknown", "op": "artifacts.create_video"}
+        frame = {"v": 1, "id": "gen-unknown", "op": "artifacts.create_audio"}
         result = await dispatch_frame(
             lambda: _db_factory(db_session), _principal(), frame
         )
