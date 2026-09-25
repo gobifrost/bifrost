@@ -1542,53 +1542,22 @@ async def sdk_generate_video_artifact(
     db: AsyncSession = Depends(get_db),
 ) -> PlatformJobAccepted:
     """Queue durable video generation into canonical artifact storage."""
-    from src.jobs.platform.video_generation import (
-        SDK_VIDEO_GENERATION_DEFINITION,
-        SDKVideoGenerationPayload,
-    )
-    from src.services.platform_jobs import (
-        enqueue_platform_job,
-        ensure_platform_job_notification,
-        publish_platform_job_update,
+    from shared.sdk_video import (
+        enqueue_sdk_video_job,
+        finalize_sdk_video_job,
+        sdk_video_job_accepted,
     )
 
-    job, reused = await enqueue_platform_job(
+    job, reused = await enqueue_sdk_video_job(
         db,
-        SDK_VIDEO_GENERATION_DEFINITION,
-        SDKVideoGenerationPayload(
-            filename=request.filename,
-            prompt=request.prompt,
-            workspace_id=workspace_id,
-            execution_id=execution_id,
-        ),
-        dedupe_key=None,
-        organization_id=current_user.organization_id,
-        requested_by_user_id=current_user.user_id,
-        requested_by_email=current_user.email,
-        requested_by_name=current_user.name or current_user.email,
-        resource_type="artifact",
-        resource_id=request.filename,
-        title=f"Generating {request.filename}",
-        action_url=None,
+        current_user,
+        spec=request,
+        workspace_id=workspace_id,
+        execution_id=execution_id,
     )
-    try:
-        await ensure_platform_job_notification(db, job)
-    except Exception:
-        logger.warning(
-            "SDK video generation queued without a progress notification",
-            extra={"platform_job_id": str(job.id)},
-            exc_info=True,
-        )
-    await db.commit()
-    await db.refresh(job)
-    await publish_platform_job_update(job)
+    await finalize_sdk_video_job(db, job)
     response.headers["Location"] = f"/api/platform-jobs/{job.id}"
-    return PlatformJobAccepted(
-        job_id=job.id,
-        notification_id=job.notification_id,
-        status=job.status,
-        reused=reused,
-    )
+    return sdk_video_job_accepted(job, reused)
 
 
 @router.get("/artifacts/{artifact_id}/content")
