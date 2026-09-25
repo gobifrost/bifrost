@@ -138,6 +138,19 @@ No traffic benchmark is a prerequisite. Each stage should record API request
 counts by operation in its end-to-end test: a local call must make zero API
 requests for that fixed operation while external SDK calls still use HTTP.
 
+An opt-in live-worker transport benchmark is available for the implemented
+config slice: `./test.sh tests/performance/test_sdk_config_transport.py -s -v`.
+It runs `config.set/get/list/delete` through both paths in one forked engine
+child, alternates HTTP and local blocks, warms each block, and prints p50/p95
+latency and fixed-operation HTTP call counts. It asserts parity and request
+counts, but has no machine-dependent timing threshold. On the 2026-09-24 test
+stack, 60 measured calls per operation and path yielded these medians (ms):
+set 50.093 HTTP / 31.950 local; get 51.431 / 30.702; list 36.381 / 15.740;
+delete 50.164 / 27.826. The measured fixed-operation HTTP count was 240 / 0.
+This is one workstation test-stack result, not a production load or API CPU
+measurement; rerun on deployment-like hardware before using the latency
+ratios for capacity planning.
+
 ## Stage acceptance and verification
 
 For every migrated operation, test the same inputs via HTTP and local service:
