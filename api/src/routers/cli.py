@@ -242,59 +242,18 @@ async def get_dev_context(
     org. The optional ``org_id`` query parameter lets platform admins and
     provider-org members target another org for the session — gated by
     the same C2 rule the scope resolver applies elsewhere.
+
+    Context behavior lives in the shared service (``shared.sdk_context``),
+    which the engine-local dispatcher can call with the same inputs.
     """
-    # Resolve which org to return.
-    if org_id is not None and org_id != current_user.organization_id:
-        # Explicit override of another org — C2 gate: platform admin or
-        # provider-org member only. Provider-org membership is looked up
-        # against the caller's own org's ``is_provider`` flag.
-        is_provider_org = False
-        if not current_user.is_superuser and current_user.organization_id is not None:
-            row = await db.execute(
-                select(Organization.is_provider).where(
-                    Organization.id == current_user.organization_id
-                )
-            )
-            is_provider_org = bool(row.scalar_one_or_none())
-        if not (current_user.is_superuser or is_provider_org):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Only platform admins or provider-org members can target another organization",
-            )
-        target_org_id = org_id
-    elif org_id is not None:
-        target_org_id = org_id
-    else:
-        target_org_id = current_user.organization_id
+    from shared.sdk_context import SdkContextError, get_sdk_context
 
-    org_data = None
-    if target_org_id is not None:
-        stmt = select(Organization).where(Organization.id == target_org_id)
-        result = await db.execute(stmt)
-        org = result.scalar_one_or_none()
-        if org is None or not org.is_active:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Organization {target_org_id} not found or inactive",
-            )
-        org_data = {
-            "id": str(org.id),
-            "name": org.name,
-            "is_active": org.is_active,
-            "is_provider": org.is_provider,
-        }
+    try:
+        data = await get_sdk_context(db, current_user, org_id=org_id)
+    except SdkContextError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
 
-    return DeveloperContextResponse(
-        user={
-            "id": str(current_user.user_id),
-            "email": current_user.email,
-            "name": current_user.name,
-            "is_superuser": current_user.is_superuser,
-        },
-        organization=org_data,
-        default_parameters={},
-        track_executions=True,
-    )
+    return DeveloperContextResponse(**data)
 
 
 # =============================================================================
