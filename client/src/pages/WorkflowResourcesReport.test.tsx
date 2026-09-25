@@ -14,6 +14,7 @@ function LocationProbe() {
 }
 
 const mockUseWorkflowResourceReport = vi.fn();
+let mockTotal: number | null = null;
 vi.mock("@/services/workflow-resources", () => ({
 	useWorkflowResourceReport: (...args: unknown[]) =>
 		mockUseWorkflowResourceReport(...args),
@@ -24,6 +25,7 @@ vi.mock("@/components/forms/OrganizationSelect", () => ({
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	mockTotal = null;
 	mockUseWorkflowResourceReport.mockImplementation(
 		(filters: { view: string }) => ({
 			isLoading: false,
@@ -38,7 +40,7 @@ beforeEach(() => {
 					total_ai_cost: "0.30",
 					total_ai_calls: 2,
 				},
-				total: filters.view === "runs" ? 2 : 1,
+				total: mockTotal ?? (filters.view === "runs" ? 2 : 1),
 				runs: [
 					{
 						execution_id: "run-1",
@@ -102,7 +104,15 @@ describe("WorkflowResourcesReport", () => {
 				page: 2,
 			}),
 		);
+		expect(
+			screen.getByRole("navigation", { name: "Workflow resource pages" }),
+		).toBeVisible();
 		await user.click(screen.getByRole("tab", { name: "Runs" }));
+		expect(
+			screen.queryByRole("navigation", {
+				name: "Workflow resource pages",
+			}),
+		).not.toBeInTheDocument();
 		expect(
 			screen.getByRole("status", { name: "Current URL" }),
 		).not.toHaveTextContent("workflow_page=2");
@@ -138,6 +148,28 @@ describe("WorkflowResourcesReport", () => {
 		expect(
 			screen.getByRole("link", { name: "Build patch plan" }),
 		).toHaveAttribute("href", "/history/run-1");
+	});
+
+	it("shows pagination only when another page is available", async () => {
+		const { user, rerender } = renderWithProviders(
+			<WorkflowResourcesReport reportSwitch={null} />,
+		);
+		expect(
+			screen.queryByRole("navigation", {
+				name: "Workflow resource pages",
+			}),
+		).not.toBeInTheDocument();
+		await user.click(screen.getByRole("tab", { name: "By Workflow" }));
+		expect(
+			screen.queryByRole("navigation", {
+				name: "Workflow resource pages",
+			}),
+		).not.toBeInTheDocument();
+		mockTotal = 51;
+		rerender(<WorkflowResourcesReport reportSwitch={null} />);
+		expect(
+			screen.getByRole("navigation", { name: "Workflow resource pages" }),
+		).toBeVisible();
 	});
 
 	it("shows peak CPU by workflow and drills into its runs", async () => {

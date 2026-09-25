@@ -56,6 +56,7 @@ import {
 
 type View = "runs" | "workflows";
 type Sort = "cpu" | "elapsed" | "memory" | "ai" | "started";
+const PAGE_SIZE = 50;
 
 function duration(seconds: number | null | undefined) {
 	if (seconds == null) return "—";
@@ -381,7 +382,7 @@ export function WorkflowResourcesReport({
 			view,
 			sort,
 			page,
-			pageSize: 50,
+			pageSize: PAGE_SIZE,
 			orgId: typeof orgId === "string" ? orgId : undefined,
 			workflowId,
 			workflow: workflowId
@@ -614,23 +615,28 @@ export function WorkflowResourcesReport({
 							No workflow runs match these filters.
 						</p>
 					)}
-				<PaginationFooter
-					aria-label="Workflow resource pages"
-					summary={`${data?.total ?? 0} ${view === "runs" ? "runs" : "workflows"} · Page ${page}`}
-					pending={isFetching}
-					previousDisabled={page === 1 || isFetching}
-					nextDisabled={
-						!data || page * 50 >= data.total || isFetching
-					}
-					onPrevious={() =>
-						updateParams({
-							workflow_page: page > 2 ? String(page - 1) : null,
-						})
-					}
-					onNext={() =>
-						updateParams({ workflow_page: String(page + 1) })
-					}
-				/>
+				{(page > 1 || (data?.total ?? 0) > PAGE_SIZE) && (
+					<PaginationFooter
+						aria-label="Workflow resource pages"
+						summary={`${data?.total ?? 0} ${view === "runs" ? "runs" : "workflows"} · Page ${page}`}
+						pending={isFetching}
+						previousDisabled={page === 1 || isFetching}
+						nextDisabled={
+							!data ||
+							page * PAGE_SIZE >= data.total ||
+							isFetching
+						}
+						onPrevious={() =>
+							updateParams({
+								workflow_page:
+									page > 2 ? String(page - 1) : null,
+							})
+						}
+						onNext={() =>
+							updateParams({ workflow_page: String(page + 1) })
+						}
+					/>
+				)}
 				<p className="text-xs text-muted-foreground">
 					Average CPU is CPU time divided by elapsed time. Peak CPU is
 					the busiest sample, checked about once a second; short
