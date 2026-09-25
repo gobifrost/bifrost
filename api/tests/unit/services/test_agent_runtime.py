@@ -487,6 +487,8 @@ async def test_opencode_go_messages_requests_target_the_messages_surface() -> No
     assert len(seen_requests) == 1
     request = seen_requests[0]
     assert request.url.path == "/zen/go/v1/messages"
+    assert request.url.params.get("beta") == "true"
+    assert request.headers["x-api-key"] == "test-key"
     assert request.headers["x-opencode-session"] == "conv-msg"
     assert request.headers["User-Agent"].startswith("Bifrost/")
 

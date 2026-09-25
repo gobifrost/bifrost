@@ -5,6 +5,7 @@ from src.services.opencode_go import (
     is_opencode_go_endpoint,
     opencode_go_anthropic_endpoint,
     opencode_go_extra_headers,
+    opencode_go_known_wire_api,
     opencode_go_wire_api,
 )
 
@@ -30,9 +31,19 @@ def test_wire_api_matches_the_published_catalog() -> None:
     assert opencode_go_wire_api("muse-spark-1.3-contributor") == "responses"
     assert opencode_go_wire_api("minimax-m3") == "messages"
     assert opencode_go_wire_api("qwen3.8-flash") == "messages"
+    assert opencode_go_wire_api("qwen4-flash") == "messages"
+    assert opencode_go_wire_api("union-alpha") == "messages"
     assert opencode_go_wire_api("deepseek-v4.1-flash") == "chat_completions"
     assert opencode_go_wire_api("glm-5.3") == "chat_completions"
     assert opencode_go_wire_api("brand-new-model") == "chat_completions"
+
+
+def test_known_wire_api_returns_none_for_undocumented_models() -> None:
+    assert opencode_go_known_wire_api("grok-4.7") == "responses"
+    assert opencode_go_known_wire_api("minimax-m3") == "messages"
+    assert opencode_go_known_wire_api("glm-5.3") is None
+    assert opencode_go_known_wire_api("omen-alpha") is None
+    assert opencode_go_known_wire_api("brand-new-model") is None
 
 
 def test_anthropic_endpoint_drops_the_v1_suffix_the_sdk_re_adds() -> None:

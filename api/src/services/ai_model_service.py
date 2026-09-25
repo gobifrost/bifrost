@@ -28,7 +28,7 @@ from src.services.opencode_go import (
     OPENCODE_GO_DEFAULT_ENDPOINT,
     opencode_go_anthropic_endpoint,
     opencode_go_extra_headers,
-    opencode_go_wire_api,
+    opencode_go_known_wire_api,
 )
 
 if TYPE_CHECKING:
@@ -364,16 +364,6 @@ class AIModelService:
         provider = self.client_provider(connection.provider)
         endpoint = connection.endpoint
         openai_transport = profile.openai_transport
-        if connection.provider == "opencode_go":
-            # The Go catalog spreads models across three wire surfaces; route
-            # each model to the one its catalog entry documents. The Messages
-            # surface needs the Anthropic client and its own base URL.
-            wire_api = opencode_go_wire_api(profile.model)
-            if wire_api == "messages":
-                provider = "anthropic"
-                endpoint = opencode_go_anthropic_endpoint(endpoint)
-            else:
-                openai_transport = wire_api
         if provider not in ("openai", "anthropic", "google"):
             raise ValueError(f"Unsupported LLM provider '{connection.provider}'.")
 
@@ -383,6 +373,32 @@ class AIModelService:
                 f"No API key configured for LLM provider connection '{connection.name}'. "
                 "Please configure the API key in System Settings > AI Configuration."
             )
+
+        if connection.provider == "opencode_go":
+            # The Go catalog spreads models across three wire surfaces; route
+            # each model to the one its catalog entry documents. The Messages
+            # surface needs the Anthropic client and its own base URL.
+            # Models newer than the documented catalog carry a persisted
+            # probed surface; only unmapped models pay for one probe, once.
+            wire_api = profile.wire_api or opencode_go_known_wire_api(profile.model)
+            if wire_api is None:
+                from src.services.opencode_go_detection import (
+                    detect_opencode_go_wire_api,
+                )
+
+                wire_api = await detect_opencode_go_wire_api(
+                    api_key=api_key,
+                    endpoint=connection.endpoint,
+                    model=profile.model,
+                )
+                profile.wire_api = wire_api
+                profile.updated_at = datetime.now(timezone.utc)
+                await self.session.flush()
+            if wire_api == "messages":
+                provider = "anthropic"
+                endpoint = opencode_go_anthropic_endpoint(endpoint)
+            else:
+                openai_transport = wire_api
 
         if connection.provider == "openai_compatible" and openai_transport is None:
             from src.services.openai_transport_detection import (
@@ -587,7 +603,7 @@ class AIModelService:
             await self.session.execute(
                 update(AIModelProfile)
                 .where(AIModelProfile.connection_id == connection.id)
-                .values(openai_transport=None)
+                .values(openai_transport=None, wire_api=None)
             )
         connection.updated_at = datetime.now(timezone.utc)
         await self.session.flush()
@@ -736,12 +752,14 @@ class AIModelService:
             await self.get_connection(connection_id)
             profile.connection_id = connection_id
             profile.openai_transport = None
+            profile.wire_api = None
         if model is not None:
             trimmed_model = model.strip()
             if not trimmed_model:
                 raise ValueError("Model id is required")
             profile.model = trimmed_model
             profile.openai_transport = None
+            profile.wire_api = None
         if capabilities_provided:
             profile.capabilities = (
                 capabilities.model_dump(mode="json") if capabilities else None

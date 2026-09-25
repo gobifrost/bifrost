@@ -31,7 +31,7 @@ OPENCODE_GO_RESPONSES_MODEL_PREFIXES = (
     "muse-spark",
 )
 #: Model-id prefixes served through the Anthropic Messages API.
-OPENCODE_GO_MESSAGES_MODEL_PREFIXES = ("minimax-", "qwen3")
+OPENCODE_GO_MESSAGES_MODEL_PREFIXES = ("minimax-", "qwen", "union-alpha")
 
 OpenCodeGoWireApi = Literal["chat_completions", "responses", "messages"]
 
@@ -56,12 +56,23 @@ def opencode_go_wire_api(model: str) -> OpenCodeGoWireApi:
     since the documentation was last updated.
     """
 
+    return opencode_go_known_wire_api(model) or "chat_completions"
+
+
+def opencode_go_known_wire_api(model: str) -> OpenCodeGoWireApi | None:
+    """Return the documented wire surface, or None when no prefix matches.
+
+    A None result means the model is newer than the documented catalog: the
+    caller should probe the surfaces once and persist the answer rather than
+    silently assuming Chat Completions.
+    """
+
     normalized = model.strip().lower()
     if normalized.startswith(OPENCODE_GO_RESPONSES_MODEL_PREFIXES):
         return "responses"
     if normalized.startswith(OPENCODE_GO_MESSAGES_MODEL_PREFIXES):
         return "messages"
-    return "chat_completions"
+    return None
 
 
 def opencode_go_anthropic_endpoint(endpoint: str | None) -> str | None:
