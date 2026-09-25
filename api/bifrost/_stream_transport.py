@@ -563,8 +563,9 @@ class ChildStreamTransport:
 
     def _fail(self, error: StreamTransportError) -> NoReturn:
         self._break(error)
-        if isinstance(self._broken, StreamTransportError):
-            raise self._broken
+        broken = self._broken
+        if isinstance(broken, StreamTransportError):
+            raise broken
         raise error
 
     async def open_stream_async(
@@ -581,8 +582,9 @@ class ChildStreamTransport:
         ``__anext__`` raises — the channel stays usable for a later
         stream.
         """
-        if self._broken is not None:
-            raise self._broken
+        broken = self._broken
+        if isinstance(broken, StreamTransportError):
+            raise broken
         if self._active is not None:
             raise StreamTransportError(
                 "a local stream is already active on this channel"

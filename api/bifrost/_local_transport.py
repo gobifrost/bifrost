@@ -462,8 +462,9 @@ class ChildLocalTransport:
 
     def _fail(self, error: LocalTransportError) -> NoReturn:
         self._break(error)
-        if isinstance(self._broken, LocalTransportError):
-            raise self._broken
+        broken = self._broken
+        if isinstance(broken, LocalTransportError):
+            raise broken
         raise error
 
     async def _recv_frame(self) -> dict[str, Any]:
@@ -472,7 +473,8 @@ class ChildLocalTransport:
         try:
             return decode_frame(raw)
         except LocalTransportError as e:
-            self._fail(e)
+            self._break(e)
+            raise
 
     def _check_id(self, frame: dict[str, Any], request_id: str) -> None:
         if frame.get("id") != request_id:
@@ -657,8 +659,9 @@ class ChildLocalTransport:
         unchanged, so workflow/service cancellation keeps working.
         """
         async with self._lock:
-            if self._broken is not None:
-                raise self._broken
+            broken = self._broken
+            if isinstance(broken, LocalTransportError):
+                raise broken
             self._seq += 1
             request_id = f"{self._seq}-{uuid.uuid4().hex}"
             request = {
