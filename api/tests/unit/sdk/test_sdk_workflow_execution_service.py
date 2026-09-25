@@ -624,18 +624,19 @@ class TestExecuteDispatch:
         for error, status_code in cases:
             patches = _patch_dispatch()
             _start_patches(patches)
-            # Force the dispatch failure through run_workflow.
-            with patch(
-                "src.services.execution.service.run_workflow",
-                new=AsyncMock(side_effect=error),
-            ):
-                try:
+            try:
+                # Stop this nested patch before stopping the outer patches;
+                # otherwise its exit restores the outer AsyncMock globally.
+                with patch(
+                    "src.services.execution.service.run_workflow",
+                    new=AsyncMock(side_effect=error),
+                ):
                     with pytest.raises(SdkWorkflowExecutionError) as exc_info:
                         await execute_sdk_workflow(
                             db_session, principal, req, caller_org_id=org.id
                         )
-                finally:
-                    _stop_patches(patches)
+            finally:
+                _stop_patches(patches)
             assert exc_info.value.status_code == status_code
             if isinstance(error, RuntimeError):
                 assert "Failed to execute workflow" in exc_info.value.detail

@@ -48,7 +48,6 @@ dedicated local channel).
 from __future__ import annotations
 
 import asyncio
-import logging
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
@@ -57,9 +56,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.principal import UserPrincipal
 from src.models.contracts.artifacts import ArtifactDownloadResponse, ArtifactRef
-
-logger = logging.getLogger(__name__)
-
 
 class SdkArtifactError(Exception):
     """SDK artifact failure with an HTTP-style status.

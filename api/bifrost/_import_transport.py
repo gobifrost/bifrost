@@ -205,12 +205,12 @@ class ChildSyncImportTransport:
             try:
                 conn.close()
             except Exception:
-                pass
+                continue
 
     def _fail(self, error: ImportTransportError) -> NoReturn:
         self._break(error)
-        assert self._broken is not None
-        raise self._broken
+        failure = self._broken if self._broken is not None else error
+        raise failure
 
     def _recv_frame(self, deadline: float) -> dict[str, Any]:
         """Read one bounded frame, waiting at most until ``deadline``.

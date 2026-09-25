@@ -967,10 +967,9 @@ async def test_facade_stream_terminal_error_propagates_without_http():
 
     request = httpx.Request("POST", "local://sdk/ai/stream")
     response = httpx.Response(403, json={"detail": "denied"}, request=request)
-    try:
+    with pytest.raises(BifrostAuthorizationError) as mapped:
         raise_for_status_with_detail(response)
-    except BifrostAuthorizationError as mapped:
-        terminal = mapped
+    terminal = mapped.value
     transport = _stream_transport_for(_FakeChildStream(error=terminal))
     with (
         patch("bifrost._stream_transport.get", return_value=transport),

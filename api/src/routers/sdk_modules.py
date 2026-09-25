@@ -4,6 +4,9 @@ SDK Module-Fetch Router
 Provides authenticated HTTP endpoints that worker child processes use to
 fetch workspace module source code.
 
+Also retains the administrative requirements read endpoint for external
+callers. Worker requirements setup reads Redis/S3 directly.
+
 This eliminates the need for BIFROST_S3_* credentials in child processes
 (Phase 2 of the execution sandbox hardening).  The child authenticates with
 its pre-minted engine token; the server performs the Redis→S3 lookup and
@@ -30,6 +33,7 @@ from shared.sdk_modules import (
 from src.core.auth import get_current_superuser
 from src.core.constants import SYSTEM_USER_UUID
 from src.core.principal import UserPrincipal
+from src.core.requirements_cache import get_requirements
 from src.core.security import decode_token
 
 router = APIRouter(prefix="/api/sdk", tags=["SDK Internals"])
@@ -156,3 +160,17 @@ async def resolve_module(
         ) from exc
 
     return JSONResponse(content=result)
+
+
+@router.get("/requirements")
+async def fetch_requirements(
+    _user: Annotated[object, Depends(get_current_superuser)],
+) -> JSONResponse:
+    """Return the existing requirements.txt HTTP contract for external callers."""
+    cached = await get_requirements()
+    if cached is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="requirements.txt not found",
+        )
+    return JSONResponse(content=dict(cached))

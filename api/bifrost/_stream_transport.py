@@ -6,9 +6,8 @@ children must never import PostgreSQL drivers, the ORM, or the API server
 stack. (The HTTP-style error mapping imports ``httpx``/``bifrost.client``
 lazily, inside the raising function, long after the child runtime is loaded.)
 
-Protocol (generic named-operation streams; the production ``ai.stream``
-operation is registered on the parent — a later stage binds no further
-operation to this channel):
+Protocol (generic named-operation streams; the parent registers the
+production ``ai.stream`` operation):
 
 - One stream at a time per child over a dedicated child<->parent channel
   pair, separate from the unary SDK pipes and the synchronous import pipes.
@@ -440,9 +439,11 @@ class ChildStream:
             # termination; this credit simply ends.
             self._finish()
             raise StopAsyncIteration
-        transport._fail(
-            StreamTransportError(f"unexpected local stream frame {kind!r}; channel closed")
+        error = StreamTransportError(
+            f"unexpected local stream frame {kind!r}; channel closed"
         )
+        transport._break(error)
+        raise error
 
     async def _send_cancel(self) -> None:
         transport = self._transport
@@ -558,12 +559,13 @@ class ChildStreamTransport:
             try:
                 conn.close()
             except Exception:
-                pass
+                continue
 
     def _fail(self, error: StreamTransportError) -> NoReturn:
         self._break(error)
-        assert self._broken is not None
-        raise self._broken
+        if isinstance(self._broken, StreamTransportError):
+            raise self._broken
+        raise error
 
     async def open_stream_async(
         self,

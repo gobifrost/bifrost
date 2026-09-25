@@ -141,7 +141,7 @@ class TestListSdkForms:
         assert exc_info.value.status_code == 422
 
     async def test_dependency_counts(self, db_session) -> None:
-        await _seed_form(
+        seeded = await _seed_form(
             db_session,
             "counted",
             workflow_id=str(uuid4()),
@@ -149,7 +149,8 @@ class TestListSdkForms:
             with_provider_field=True,
         )
 
-        (form,) = await list_sdk_forms(db_session, _principal(is_superuser=True))
+        forms = await list_sdk_forms(db_session, _principal(is_superuser=True))
+        form = next(item for item in forms if item.id == seeded.id)
 
         assert form.dependency_count == 3
 
@@ -166,7 +167,8 @@ class TestListSdkForms:
             logo_thumbnail_content_type="image/webp",
         )
 
-        (listed,) = await list_sdk_forms(db_session, _principal(is_superuser=True))
+        forms = await list_sdk_forms(db_session, _principal(is_superuser=True))
+        listed = next(item for item in forms if item.id == form.id)
 
         assert listed.logo is None
         assert listed.logo_url == f"/api/forms/{form.id}/logo?v={version}"

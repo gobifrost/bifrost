@@ -38,6 +38,30 @@ def _request_with_bearer(token: str = "signed-token") -> MagicMock:
     return request
 
 
+async def test_requirements_http_contract_is_retained():
+    from src.routers.sdk_modules import fetch_requirements
+
+    with patch(
+        "src.routers.sdk_modules.get_requirements",
+        new_callable=AsyncMock,
+        return_value={"content": "example==1\n", "hash": "digest"},
+    ):
+        response = await fetch_requirements(_admin_user())
+    assert response.status_code == 200
+    assert response.body == b'{"content":"example==1\\n","hash":"digest"}'
+
+    with (
+        patch(
+            "src.routers.sdk_modules.get_requirements",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        pytest.raises(HTTPException) as exc,
+    ):
+        await fetch_requirements(_admin_user())
+    assert exc.value.status_code == 404
+
+
 # --- Router: engine proof ---
 
 

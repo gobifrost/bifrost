@@ -934,7 +934,6 @@ async def _run_short(
     coro_factory: Callable[[], Any],
     *,
     op: str,
-    log_key: str,
     status_errors: tuple[type[Exception], ...] = (),
     timeout_seconds: float = DISPATCH_TIMEOUT_SECONDS,
 ) -> tuple[Any, dict[str, Any] | None]:
@@ -953,7 +952,7 @@ async def _run_short(
 
         result = await asyncio.wait_for(_run(), timeout_seconds)
     except asyncio.TimeoutError:
-        logger.warning("local %s dispatch timed out for key=%r", op, log_key)
+        logger.warning("local %s dispatch timed out", op)
         return None, _error(None, 503, f"local {op} dispatch timed out")
     except status_errors as e:
         status = getattr(e, "status_code", 500)
@@ -966,7 +965,7 @@ async def _run_short(
             detail = str(detail)
         return None, _error(None, status, detail)
     except Exception as e:  # noqa: BLE001 - transport must return errors, not raise
-        logger.exception("local %s dispatch failed for key=%r", op, log_key)
+        logger.exception("local %s dispatch failed", op)
         return None, _error(None, 500, f"local {op} failed: {type(e).__name__}")
     return result, None
 
@@ -1073,7 +1072,7 @@ async def _dispatch_config_set(
             actor_email=principal.actor_email,
         )
 
-    _, error = await _run_short(session_factory, _set, op=OP_CONFIG_SET, log_key=key)
+    _, error = await _run_short(session_factory, _set, op=OP_CONFIG_SET)
     if error is not None:
         error["id"] = frame_id
         return [error]
@@ -1111,7 +1110,7 @@ async def _dispatch_config_list(
         )
 
     result, error = await _run_short(
-        session_factory, _list, op=OP_CONFIG_LIST, log_key=""
+        session_factory, _list, op=OP_CONFIG_LIST
     )
     if error is not None:
         error["id"] = frame_id
@@ -1156,7 +1155,7 @@ async def _dispatch_config_delete(
         )
 
     result, error = await _run_short(
-        session_factory, _delete, op=OP_CONFIG_DELETE, log_key=key
+        session_factory, _delete, op=OP_CONFIG_DELETE
     )
     if error is not None:
         error["id"] = frame_id
@@ -1202,7 +1201,7 @@ async def _dispatch_config_frames(
         )
 
     result, error = await _run_short(
-        session_factory, _get, op=OP_CONFIG_GET, log_key=request.key
+        session_factory, _get, op=OP_CONFIG_GET
     )
     if error is not None:
         error["id"] = frame_id
@@ -1262,7 +1261,6 @@ async def _dispatch_integrations_get(
         session_factory,
         _get,
         op=OP_INTEGRATIONS_GET,
-        log_key=request.name,
         status_errors=(IntegrationServiceError,),
     )
     if error is not None:
@@ -1311,7 +1309,6 @@ async def _dispatch_integrations_list_mappings(
         session_factory,
         _list,
         op=OP_INTEGRATIONS_LIST_MAPPINGS,
-        log_key=request.name,
         status_errors=(ScopeResolutionError,),
     )
     if error is not None:
@@ -1362,7 +1359,6 @@ async def _dispatch_integrations_get_mapping(
         session_factory,
         _get_mapping,
         op=OP_INTEGRATIONS_GET_MAPPING,
-        log_key=request.name,
         status_errors=(ScopeResolutionError,),
     )
     if error is not None:
@@ -1429,7 +1425,6 @@ async def _dispatch_integrations_upsert_mapping(
         session_factory,
         _upsert,
         op=OP_INTEGRATIONS_UPSERT_MAPPING,
-        log_key=request.name,
         status_errors=(IntegrationServiceError, ScopeResolutionError),
     )
     if error is not None:
@@ -1478,7 +1473,6 @@ async def _dispatch_integrations_delete_mapping(
         session_factory,
         _delete,
         op=OP_INTEGRATIONS_DELETE_MAPPING,
-        log_key=request.name,
         status_errors=(ScopeResolutionError,),
     )
     if error is not None:
@@ -1535,7 +1529,6 @@ async def _dispatch_integrations_refresh_token(
         session_factory,
         _refresh,
         op=OP_INTEGRATIONS_REFRESH_TOKEN,
-        log_key=request.connection_name,
         status_errors=(IntegrationServiceError, ScopeResolutionError),
         timeout_seconds=OAUTH_REFRESH_DISPATCH_TIMEOUT_SECONDS,
     )
@@ -1657,7 +1650,6 @@ async def _dispatch_agents_enqueue(
         session_factory,
         _enqueue,
         op=OP_AGENTS_ENQUEUE,
-        log_key=request.agent_name,
         status_errors=(SdkAgentRunError,),
     )
     if error is not None:
@@ -1711,7 +1703,6 @@ async def _dispatch_agents_get_run(
         session_factory,
         _get,
         op=OP_AGENTS_GET_RUN,
-        log_key=raw_id,
         status_errors=(SdkAgentRunError,),
     )
     if error is not None:
@@ -1773,7 +1764,6 @@ async def _dispatch_forms_list(
         session_factory,
         _list,
         op=OP_FORMS_LIST,
-        log_key="forms",
     )
     if error is not None:
         error["id"] = frame_id
@@ -1825,7 +1815,6 @@ async def _dispatch_forms_get(
         session_factory,
         _get,
         op=OP_FORMS_GET,
-        log_key=str(form_uuid),
         status_errors=(SdkFormError,),
     )
     if error is not None:
@@ -1942,7 +1931,6 @@ async def _dispatch_roles_create(
         session_factory,
         _create,
         op=OP_ROLES_CREATE,
-        log_key=request.name,
         status_errors=(RoleServiceError, HTTPException),
     )
     if error is not None:
@@ -1985,7 +1973,6 @@ async def _dispatch_roles_get(
         session_factory,
         _get,
         op=OP_ROLES_GET,
-        log_key=str(role_uuid),
         status_errors=(RoleServiceError, HTTPException),
     )
     if error is not None:
@@ -2031,7 +2018,6 @@ async def _dispatch_roles_list(
         session_factory,
         _list,
         op=OP_ROLES_LIST,
-        log_key="roles",
         status_errors=(RoleServiceError, HTTPException),
     )
     if error is not None:
@@ -2108,7 +2094,6 @@ async def _dispatch_roles_update(
         session_factory,
         _update,
         op=OP_ROLES_UPDATE,
-        log_key=str(role_uuid),
         status_errors=(RoleServiceError, HTTPException),
     )
     if error is not None:
@@ -2160,7 +2145,6 @@ async def _dispatch_roles_delete(
         session_factory,
         _delete,
         op=OP_ROLES_DELETE,
-        log_key=str(role_uuid),
         status_errors=(RoleServiceError, HTTPException),
     )
     if error is not None:
@@ -2206,7 +2190,6 @@ async def _dispatch_roles_list_users(
         session_factory,
         _list,
         op=OP_ROLES_LIST_USERS,
-        log_key=str(role_uuid),
         status_errors=(RoleServiceError, HTTPException),
     )
     if error is not None:
@@ -2252,7 +2235,6 @@ async def _dispatch_roles_list_forms(
         session_factory,
         _list,
         op=OP_ROLES_LIST_FORMS,
-        log_key=str(role_uuid),
         status_errors=(RoleServiceError, HTTPException),
     )
     if error is not None:
@@ -2322,7 +2304,6 @@ async def _dispatch_roles_assign_users(
         session_factory,
         _assign,
         op=OP_ROLES_ASSIGN_USERS,
-        log_key=str(role_uuid),
         status_errors=(RoleServiceError, HTTPException),
     )
     if error is not None:
@@ -2393,7 +2374,6 @@ async def _dispatch_roles_assign_forms(
         session_factory,
         _assign,
         op=OP_ROLES_ASSIGN_FORMS,
-        log_key=str(role_uuid),
         status_errors=(RoleServiceError, HTTPException),
     )
     if error is not None:
@@ -2514,7 +2494,6 @@ async def _dispatch_users_list(
         session_factory,
         _list,
         op=OP_USERS_LIST,
-        log_key="users",
         status_errors=(UserServiceError,),
     )
     if error is not None:
@@ -2589,7 +2568,6 @@ async def _dispatch_users_create(
         session_factory,
         _create,
         op=OP_USERS_CREATE,
-        log_key=str(request.email),
         status_errors=(UserServiceError,),
     )
     if error is not None:
@@ -2633,7 +2611,6 @@ async def _dispatch_users_get(
         session_factory,
         _get,
         op=OP_USERS_GET,
-        log_key=user_id,
         status_errors=(UserServiceError,),
     )
     if error is not None:
@@ -2713,7 +2690,6 @@ async def _dispatch_users_update(
         session_factory,
         _update,
         op=OP_USERS_UPDATE,
-        log_key=user_id,
         status_errors=(UserServiceError,),
     )
     if error is not None:
@@ -2776,7 +2752,6 @@ async def _dispatch_users_delete(
         session_factory,
         _delete,
         op=OP_USERS_DELETE,
-        log_key=user_id,
         status_errors=(UserServiceError,),
     )
     if error is not None:
@@ -2877,7 +2852,6 @@ async def _dispatch_organizations_create(
         session_factory,
         _create,
         op=OP_ORGANIZATIONS_CREATE,
-        log_key=request.name,
         status_errors=(OrganizationServiceError,),
     )
     if error is not None:
@@ -2921,7 +2895,6 @@ async def _dispatch_organizations_get(
         session_factory,
         _get,
         op=OP_ORGANIZATIONS_GET,
-        log_key=str(org_uuid),
         status_errors=(OrganizationServiceError,),
     )
     if error is not None:
@@ -2964,7 +2937,6 @@ async def _dispatch_organizations_list(
         session_factory,
         _list,
         op=OP_ORGANIZATIONS_LIST,
-        log_key="organizations",
         status_errors=(OrganizationServiceError,),
     )
     if error is not None:
@@ -3041,7 +3013,6 @@ async def _dispatch_organizations_update(
         session_factory,
         _update,
         op=OP_ORGANIZATIONS_UPDATE,
-        log_key=str(org_uuid),
         status_errors=(OrganizationServiceError,),
     )
     if error is not None:
@@ -3092,7 +3063,6 @@ async def _dispatch_organizations_delete(
         session_factory,
         _delete,
         op=OP_ORGANIZATIONS_DELETE,
-        log_key=str(org_uuid),
         status_errors=(OrganizationServiceError,),
     )
     if error is not None:
@@ -3199,7 +3169,6 @@ async def _dispatch_events_emit(
         session_factory,
         _emit,
         op=OP_EVENTS_EMIT,
-        log_key=request.topic,
         status_errors=(EventEmissionError,),
     )
     if error is not None:
@@ -3343,7 +3312,6 @@ async def _dispatch_ai_complete(
         session_factory,
         _complete,
         op=OP_AI_COMPLETE,
-        log_key="ai.complete",
         status_errors=(SdkAIError,),
         timeout_seconds=parent_timeout,
     )
@@ -3379,7 +3347,6 @@ async def _dispatch_ai_model_info(
         session_factory,
         _info,
         op=OP_AI_MODEL_INFO,
-        log_key="ai.model_info",
         status_errors=(SdkAIError,),
     )
     if error is not None:
@@ -3587,7 +3554,6 @@ async def _dispatch_workflows_list(
         session_factory,
         _list,
         op=OP_WORKFLOWS_LIST,
-        log_key="workflows",
         status_errors=(SdkExecutionReadError,),
     )
     if error is not None:
@@ -3738,7 +3704,6 @@ async def _dispatch_executions_list(
         session_factory,
         _list,
         op=OP_EXECUTIONS_LIST,
-        log_key=workflow_name or "",
         status_errors=(SdkExecutionReadError,),
     )
     if error is not None:
@@ -3797,7 +3762,6 @@ async def _dispatch_executions_get(
         session_factory,
         _get,
         op=OP_EXECUTIONS_GET,
-        log_key=raw_id,
         status_errors=(SdkExecutionReadError,),
     )
     if error is not None:
@@ -3897,7 +3861,6 @@ async def _dispatch_workflows_execute(
         session_factory,
         _execute,
         op=OP_WORKFLOWS_EXECUTE,
-        log_key=request.workflow_id or "",
         status_errors=(SdkWorkflowExecutionError,),
     )
     if error is not None:
@@ -3959,7 +3922,6 @@ async def _dispatch_workflows_cancel(
         session_factory,
         _cancel,
         op=OP_WORKFLOWS_CANCEL,
-        log_key=raw_id,
         status_errors=(SdkWorkflowExecutionError,),
     )
     if error is not None:
@@ -4058,7 +4020,6 @@ async def _dispatch_tables_get(
         session_factory,
         _get,
         op=OP_TABLES_GET,
-        log_key=table_ref,
         status_errors=(HTTPException,),
     )
     if error is not None:
@@ -4128,7 +4089,6 @@ async def _dispatch_tables_query(
         session_factory,
         _query,
         op=OP_TABLES_QUERY,
-        log_key=table_ref,
         status_errors=(HTTPException,),
     )
     if error is not None:
@@ -4186,7 +4146,6 @@ async def _dispatch_tables_count(
         session_factory,
         _count,
         op=OP_TABLES_COUNT,
-        log_key=table_ref,
         status_errors=(HTTPException,),
     )
     if error is not None:
@@ -4262,7 +4221,6 @@ async def _dispatch_tables_create(
         session_factory,
         _create,
         op=OP_TABLES_CREATE,
-        log_key=request.name,
         status_errors=(SDKTableMetadataError,),
     )
     if error is not None:
@@ -4314,7 +4272,7 @@ async def _dispatch_tables_list(
         }
 
     result, error = await _run_short(
-        session_factory, _list, op=OP_TABLES_LIST, log_key=""
+        session_factory, _list, op=OP_TABLES_LIST
     )
     if error is not None:
         error["id"] = frame_id
@@ -4372,7 +4330,6 @@ async def _dispatch_tables_delete(
         session_factory,
         _delete,
         op=OP_TABLES_DELETE,
-        log_key=raw_id,
         status_errors=(SDKTableMetadataError,),
     )
     if error is not None:
@@ -4505,7 +4462,6 @@ async def _dispatch_tables_insert(
         session_factory,
         _insert,
         op=OP_TABLES_INSERT,
-        log_key=table_ref,
         status_errors=(HTTPException, TableWriteError),
     )
     if error is not None:
@@ -4584,7 +4540,6 @@ async def _dispatch_tables_upsert(
         session_factory,
         _upsert,
         op=OP_TABLES_UPSERT,
-        log_key=table_ref,
         status_errors=(HTTPException, TableWriteError),
     )
     if error is not None:
@@ -4656,7 +4611,6 @@ async def _dispatch_tables_update(
         session_factory,
         _update,
         op=OP_TABLES_UPDATE,
-        log_key=table_ref,
         status_errors=(HTTPException, TableWriteError),
     )
     if error is not None:
@@ -4712,7 +4666,6 @@ async def _dispatch_tables_delete_document(
         session_factory,
         _delete,
         op=OP_TABLES_DELETE_DOCUMENT,
-        log_key=table_ref,
         status_errors=(HTTPException, TableWriteError),
     )
     if error is not None:
@@ -4816,7 +4769,6 @@ async def _dispatch_tables_batch(
         session_factory,
         _batch,
         op=OP_TABLES_BATCH,
-        log_key=table_ref,
         status_errors=(HTTPException, TableWriteError),
     )
     if error is not None:
@@ -4880,7 +4832,6 @@ async def _dispatch_tables_batch_delete(
         session_factory,
         _batch_delete,
         op=OP_TABLES_BATCH_DELETE,
-        log_key=table_ref,
         status_errors=(HTTPException, TableWriteError),
     )
     if error is not None:
@@ -5002,7 +4953,6 @@ async def _dispatch_artifacts_write(
         session_factory,
         _store,
         op=OP_ARTIFACTS_WRITE,
-        log_key=filename,
         status_errors=(SdkArtifactError,),
     )
     if error is not None:
@@ -5050,7 +5000,6 @@ async def _dispatch_artifacts_read(
         session_factory,
         _read,
         op=OP_ARTIFACTS_READ,
-        log_key=str(artifact_id),
         status_errors=(SdkArtifactError,),
     )
     if error is not None:
@@ -5093,7 +5042,6 @@ async def _dispatch_artifacts_list(
         session_factory,
         _list,
         op=OP_ARTIFACTS_LIST,
-        log_key=str(workspace_id),
     )
     if error is not None:
         error["id"] = frame_id
@@ -5134,7 +5082,6 @@ async def _dispatch_artifacts_download_url(
         session_factory,
         _url,
         op=OP_ARTIFACTS_GET_DOWNLOAD_URL,
-        log_key=str(artifact_id),
         status_errors=(SdkArtifactError,),
     )
     if error is not None:
@@ -5211,7 +5158,6 @@ async def _dispatch_artifacts_create_document(
         session_factory,
         _create,
         op=OP_ARTIFACTS_CREATE_DOCUMENT,
-        log_key=request.filename,
         status_errors=(SdkArtifactError,),
         timeout_seconds=ARTIFACT_RENDER_DISPATCH_TIMEOUT_SECONDS,
     )
@@ -5273,7 +5219,6 @@ async def _dispatch_artifacts_create_spreadsheet(
         session_factory,
         _create,
         op=OP_ARTIFACTS_CREATE_SPREADSHEET,
-        log_key=request.filename,
         status_errors=(SdkArtifactError,),
         timeout_seconds=ARTIFACT_RENDER_DISPATCH_TIMEOUT_SECONDS,
     )
@@ -5336,7 +5281,6 @@ async def _dispatch_artifacts_create_text(
         session_factory,
         _create,
         op=OP_ARTIFACTS_CREATE_TEXT,
-        log_key=request.filename,
         status_errors=(SdkArtifactError,),
         timeout_seconds=ARTIFACT_RENDER_DISPATCH_TIMEOUT_SECONDS,
     )
@@ -5408,7 +5352,6 @@ async def _dispatch_artifacts_create_image(
         session_factory,
         _create,
         op=OP_ARTIFACTS_CREATE_IMAGE,
-        log_key=request.filename,
         status_errors=(SdkArtifactError,),
         timeout_seconds=ARTIFACT_IMAGE_DISPATCH_TIMEOUT_SECONDS,
     )
@@ -5495,7 +5438,6 @@ async def _dispatch_artifacts_create_video(
         session_factory,
         _enqueue,
         op=OP_ARTIFACTS_CREATE_VIDEO,
-        log_key=request.filename,
     )
     if error is not None:
         error["id"] = frame_id
@@ -5551,7 +5493,6 @@ async def _dispatch_artifacts_video_status(
         session_factory,
         _status,
         op=OP_ARTIFACTS_VIDEO_STATUS,
-        log_key=raw_id,
         status_errors=(SdkVideoJobError,),
     )
     if error is not None:
@@ -5815,7 +5756,6 @@ async def _dispatch_files_read(
         session_factory,
         _read,
         op=OP_FILES_READ,
-        log_key=request.path,
         status_errors=(FileServiceError,),
     )
     if error is not None:
@@ -5906,7 +5846,6 @@ async def _dispatch_files_write(
         session_factory,
         _write,
         op=OP_FILES_WRITE,
-        log_key=request.path,
         status_errors=(FileServiceError,),
     )
     if error is not None:
@@ -5982,7 +5921,6 @@ async def _dispatch_files_list(
         session_factory,
         _list,
         op=OP_FILES_LIST,
-        log_key=request.directory,
         status_errors=(FileServiceError,),
     )
     if error is not None:
@@ -6058,7 +5996,6 @@ async def _dispatch_files_delete(
         session_factory,
         _delete,
         op=OP_FILES_DELETE,
-        log_key=request.path,
         status_errors=(FileServiceError,),
     )
     if error is not None:
@@ -6124,7 +6061,6 @@ async def _dispatch_files_exists(
         session_factory,
         _exists,
         op=OP_FILES_EXISTS,
-        log_key=request.path,
         status_errors=(FileServiceError,),
     )
     if error is not None:
@@ -6196,7 +6132,6 @@ async def _dispatch_files_stat(
         session_factory,
         _stat,
         op=OP_FILES_STAT,
-        log_key=request.path,
         status_errors=(FileServiceError,),
     )
     if error is not None:
@@ -6293,7 +6228,6 @@ async def _dispatch_files_signed_url(
         session_factory,
         _sign,
         op=OP_FILES_SIGNED_URL,
-        log_key=request.path,
         status_errors=(FileServiceError,),
     )
     if error is not None:
@@ -6355,7 +6289,6 @@ async def _dispatch_files_search(
         session_factory,
         _search,
         op=OP_FILES_SEARCH,
-        log_key=request.query,
         status_errors=(FileServiceError,),
     )
     if error is not None:
@@ -6404,7 +6337,7 @@ async def _knowledge_embedder(
             raise SDKKnowledgeError(500, f"{fail_prefix}: {str(e)}") from None
 
     embedder, error = await _run_short(
-        session_factory, _load, op=op, log_key="",
+        session_factory, _load, op=op,
         status_errors=(SDKKnowledgeError,),
     )
     if error is not None:
@@ -6494,7 +6427,6 @@ async def _dispatch_knowledge_store(
         session_factory,
         _store,
         op=OP_KNOWLEDGE_STORE,
-        log_key=request.namespace,
         status_errors=(SDKKnowledgeError,),
     )
     if error is not None:
@@ -6584,7 +6516,6 @@ async def _dispatch_knowledge_store_many(
         session_factory,
         _store,
         op=OP_KNOWLEDGE_STORE_MANY,
-        log_key=request.namespace,
         status_errors=(SDKKnowledgeError,),
     )
     if error is not None:
@@ -6671,7 +6602,6 @@ async def _dispatch_knowledge_search(
         session_factory,
         _search,
         op=OP_KNOWLEDGE_SEARCH,
-        log_key=request.query[:50],
         status_errors=(SDKKnowledgeError,),
     )
     if error is not None:
@@ -6725,7 +6655,6 @@ async def _dispatch_knowledge_delete(
         session_factory,
         _delete,
         op=OP_KNOWLEDGE_DELETE,
-        log_key=request.key,
         status_errors=(SDKKnowledgeError,),
     )
     if error is not None:
@@ -6788,7 +6717,6 @@ async def _dispatch_knowledge_delete_namespace(
         session_factory,
         _delete,
         op=OP_KNOWLEDGE_DELETE_NAMESPACE,
-        log_key=namespace,
         status_errors=(SDKKnowledgeError,),
     )
     if error is not None:
@@ -6853,7 +6781,6 @@ async def _dispatch_knowledge_list_namespaces(
         session_factory,
         _list,
         op=OP_KNOWLEDGE_LIST_NAMESPACES,
-        log_key="",
         status_errors=(SDKKnowledgeError,),
     )
     if error is not None:
@@ -6925,7 +6852,6 @@ async def _dispatch_knowledge_get(
         session_factory,
         _get,
         op=OP_KNOWLEDGE_GET,
-        log_key=key,
         status_errors=(SDKKnowledgeError,),
     )
     if error is not None:
@@ -6996,7 +6922,6 @@ async def _dispatch_modules_resolve(
         session_factory,
         _resolve,
         op=OP_MODULES_RESOLVE,
-        log_key=name,
         status_errors=(ModuleSourceError,),
     )
     if error is not None:
@@ -7037,7 +6962,6 @@ async def _dispatch_modules_fetch(
         session_factory,
         _fetch,
         op=OP_MODULES_FETCH,
-        log_key=path,
         status_errors=(ModuleSourceError,),
     )
     if error is not None:
@@ -7093,7 +7017,6 @@ async def _dispatch_sdk_context(
         session_factory,
         _context,
         op=OP_SDK_CONTEXT,
-        log_key="context",
         status_errors=(SdkContextError,),
     )
     if error is not None:

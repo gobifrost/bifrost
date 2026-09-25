@@ -458,12 +458,13 @@ class ChildLocalTransport:
             try:
                 conn.close()
             except Exception:
-                pass
+                continue
 
     def _fail(self, error: LocalTransportError) -> NoReturn:
         self._break(error)
-        assert self._broken is not None
-        raise self._broken
+        if isinstance(self._broken, LocalTransportError):
+            raise self._broken
+        raise error
 
     async def _recv_frame(self) -> dict[str, Any]:
         """Read one bounded frame. EOF/OSError propagate to the caller."""

@@ -61,7 +61,6 @@ dedicated local channel).
 from __future__ import annotations
 
 import asyncio
-import logging
 from uuid import UUID
 
 from src.models.contracts.artifacts import (
@@ -73,9 +72,6 @@ from src.models.contracts.artifacts import (
 )
 from shared.sdk_artifacts import ArtifactCaller, SdkArtifactError
 from sqlalchemy.ext.asyncio import AsyncSession
-
-logger = logging.getLogger(__name__)
-
 
 def _isolated_session(caller_db: AsyncSession) -> AsyncSession:
     """Open a short-lived session on the caller's engine.

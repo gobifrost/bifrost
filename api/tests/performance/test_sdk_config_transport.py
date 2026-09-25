@@ -15,6 +15,10 @@ import pytest
 from tests.e2e.conftest import E2E_API_URL, execute_workflow_sync, write_and_register
 
 
+# This opt-in live-worker benchmark is not part of the fast unit lane.
+pytestmark = pytest.mark.slow
+
+
 @pytest.fixture(scope="session")
 def e2e_client():
     with httpx.Client(base_url=E2E_API_URL, timeout=60.0) as client:

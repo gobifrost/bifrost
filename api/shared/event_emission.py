@@ -1,14 +1,14 @@
 """Shared application service for topic event emission (``bifrost.events.emit``).
 
 Single implementation of the fixed emission behavior used by the HTTP
-handler (``api/src/routers/events.py::emit_topic_event``) and a future
+handler (``api/src/routers/events.py::emit_topic_event``) and the
 engine-local dispatcher. Both paths share authorization, topic
 validation, scope parsing, service-org confinement, target Solution
 resolution, the inbound gate, and trustworthy caller resolution — so HTTP
 and local results are identical by construction.
 
 All failures raise :class:`EventEmissionError` (transport-neutral); the
-HTTP adapter maps them to ``HTTPException`` and a future local dispatcher
+HTTP adapter maps them to ``HTTPException`` and the local dispatcher
 maps them to ``ok: false`` frames.
 
 Trust model (read carefully before wiring a local dispatcher):
@@ -42,7 +42,6 @@ module.
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
@@ -51,9 +50,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.principal import UserPrincipal
 from src.models.contracts.events import EmitEventRequest, EmitEventResponse
-
-logger = logging.getLogger(__name__)
-
 
 class EventEmissionError(Exception):
     """Transport-neutral emission failure with an HTTP-style status.
