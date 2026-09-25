@@ -30,8 +30,9 @@ Allowlist: ``config.get/set/list/delete``, the full
 delete_mapping/refresh_token``), the full tables facade, and artifact
 write/read/list/download URL plus artifact generation
 (``create_document``/``create_spreadsheet``/``create_text``/
-``create_image``), all fixed file operations, and the SDK
-agent ``enqueue``/``get_run`` operations. Engine import fast path: ``modules.resolve``
+``create_image``), all fixed file operations, the SDK agent
+``enqueue``/``get_run`` operations, and the SDK workflow
+``execute``/``cancel`` mutations. Engine import fast path: ``modules.resolve``
 and ``modules.fetch`` (served on the dedicated import channel through the
 shared ``sdk_modules`` service, scoped by the parent-derived principal).
 Unknown operations or wire versions get an error response — never silent
@@ -59,6 +60,8 @@ from bifrost._local_transport import (
     OP_ARTIFACTS_CREATE_IMAGE,
     OP_ARTIFACTS_CREATE_SPREADSHEET,
     OP_ARTIFACTS_CREATE_TEXT,
+    OP_WORKFLOWS_EXECUTE,
+    OP_WORKFLOWS_CANCEL,
     OP_ARTIFACTS_WRITE,
     OP_ARTIFACTS_READ,
     OP_ARTIFACTS_LIST,
@@ -166,6 +169,8 @@ SDK_CHANNEL_ALLOWED_OPS = frozenset(
         OP_TABLES_CREATE,
         OP_AGENTS_ENQUEUE,
         OP_AGENTS_GET_RUN,
+        OP_WORKFLOWS_EXECUTE,
+        OP_WORKFLOWS_CANCEL,
     }
 )
 IMPORT_CHANNEL_ALLOWED_OPS = frozenset({OP_MODULES_RESOLVE, OP_MODULES_FETCH})
@@ -558,6 +563,10 @@ async def dispatch_frames(
         return await _dispatch_agents_enqueue(session_factory, principal, frame_id, frame)
     if op == OP_AGENTS_GET_RUN:
         return await _dispatch_agents_get_run(session_factory, principal, frame_id, frame)
+    if op == OP_WORKFLOWS_EXECUTE:
+        return await _dispatch_workflows_execute(session_factory, principal, frame_id, frame)
+    if op == OP_WORKFLOWS_CANCEL:
+        return await _dispatch_workflows_cancel(session_factory, principal, frame_id, frame)
     if op == OP_MODULES_RESOLVE:
         return await _dispatch_modules_resolve(session_factory, principal, frame_id, frame)
     if op == OP_MODULES_FETCH:
@@ -1510,6 +1519,168 @@ async def _dispatch_agents_get_run(
         error["id"] = frame_id
         return [error]
     return _ok_frames(frame_id, result)
+
+
+def _workflow_user_for_principal(principal: LocalDispatchPrincipal) -> Any:
+    """Token-equivalent ``UserPrincipal`` for SDK workflow execute/cancel.
+
+    Reuses the table token-equivalent shape so workflow lookup, role
+    checks, Solution scope, org override / ``run_as`` rules, and cancel
+    attribution decide identically on both transports: workflows run as
+    the system-user superuser with the signed engine claims (the
+    ``mint_engine_token()`` shape), services run as the system-user
+    non-superuser confined to their service org (the
+    ``mint_service_token()`` shape). Built only from the parent-derived
+    ``LocalDispatchPrincipal`` — never from child frame fields.
+    """
+    return _table_user_for_principal(principal)
+
+
+async def _dispatch_workflows_execute(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``workflows.execute`` through the shared workflow service.
+
+    Validates with the same ``WorkflowExecutionRequest`` DTO as the HTTP
+    handler, so required-field, mutual-exclusion, and scheduling rules
+    match (422, like HTTP). The frame carries the same fields the HTTP
+    payload carries; ``sync`` is fixed to false — the SDK surface is
+    fire-and-forget. The actor, org, and Solution caller come only from
+    the parent-derived principal: the request runs under the
+    token-equivalent engine/service user, the execution org defaults to
+    the parent caller org, and the engine ``?solution=``/app-header
+    context is unset (an engine child sends neither — the per-call
+    target rides the frame's ``solution`` field; the caller's own install
+    comes from the parent principal). A
+    requested ``org_id``/``run_as`` override still passes through the
+    shared service's authorization check, and the Solution inbound gate
+    attests the caller from the signed engine claims. Malformed
+    scope/UUID inputs map to 422 (the global ``ValueError`` handler on
+    HTTP). The queue service owns its durable transaction; this
+    dispatcher adds no commit. A local attempt never retries over HTTP.
+    """
+    from shared.sdk_workflow_execution import (
+        SdkWorkflowExecutionError,
+        execute_sdk_workflow,
+    )
+    from src.models import WorkflowExecutionRequest
+
+    request, invalid = _validate_request(
+        WorkflowExecutionRequest,
+        {
+            "workflow_id": frame.get("workflow"),
+            "input_data": frame.get("input_data", {}),
+            "solution_id": frame.get("solution"),
+            "caller_solution_id": (
+                str(principal.solution_id) if principal.solution_id else None
+            ),
+            "org_id": frame.get("org_id"),
+            "run_as": frame.get("run_as"),
+            "scheduled_at": frame.get("scheduled_at"),
+            "delay_seconds": frame.get("delay_seconds"),
+            "sync": False,
+        },
+        frame_id,
+        OP_WORKFLOWS_EXECUTE,
+    )
+    if invalid is not None:
+        return [invalid]
+    assert request is not None
+    user = _workflow_user_for_principal(principal)
+
+    async def _execute(session: Any) -> dict[str, Any]:
+        try:
+            result = await execute_sdk_workflow(
+                session,
+                user,
+                request,
+                caller_org_id=principal.caller_org_id,
+                context_solution_id=None,
+                context_app_id=None,
+                context_caller_solution_id=None,
+            )
+        except ValueError as e:
+            # Malformed scope/UUID inputs reach the global 422 handler on
+            # HTTP; map them to 422 here.
+            raise SdkWorkflowExecutionError(422, str(e)) from e
+        return result.model_dump(mode="json")
+
+    result, error = await _run_short(
+        session_factory,
+        _execute,
+        op=OP_WORKFLOWS_EXECUTE,
+        log_key=request.workflow_id or "",
+        status_errors=(SdkWorkflowExecutionError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_workflows_cancel(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``workflows.cancel`` through the shared workflow service.
+
+    The execution id validates as a UUID (422 on malformed, like the
+    HTTP path-param parsing). Org/submitter checks and the
+    status-guarded UPDATE race are the shared service's — a missing row
+    is a 404 error frame, a foreign row a 403, and a non-scheduled row
+    a 409 carrying the current status. A local attempt never retries
+    over HTTP.
+    """
+    from shared.sdk_workflow_execution import (
+        SdkWorkflowExecutionError,
+        cancel_scheduled_sdk_execution,
+    )
+
+    raw_id = frame.get("execution_id")
+    if not isinstance(raw_id, str) or not raw_id.strip():
+        return [
+            _error(
+                frame_id,
+                422,
+                f"invalid {OP_WORKFLOWS_CANCEL} request: 'execution_id' is required",
+            )
+        ]
+    try:
+        execution_uuid = UUID(raw_id)
+    except ValueError:
+        return [
+            _error(
+                frame_id,
+                422,
+                f"invalid {OP_WORKFLOWS_CANCEL} request: 'execution_id' must be a UUID",
+            )
+        ]
+    user = _workflow_user_for_principal(principal)
+
+    async def _cancel(session: Any) -> dict[str, Any]:
+        return await cancel_scheduled_sdk_execution(
+            session,
+            user,
+            execution_uuid,
+            caller_org_id=principal.caller_org_id,
+        )
+
+    result, error = await _run_short(
+        session_factory,
+        _cancel,
+        op=OP_WORKFLOWS_CANCEL,
+        log_key=raw_id,
+        status_errors=(SdkWorkflowExecutionError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _single_ok(frame_id, result)
 
 
 def _tables_target_solution_id(

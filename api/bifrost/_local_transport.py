@@ -11,7 +11,8 @@ Protocol (``config.get/set/list/delete``, the full
 delete_mapping/refresh_token`` — and the full ``tables`` facade —
 ``create/list/delete`` metadata plus ``insert/upsert/get/update/
 delete_document/batch/batch_delete/query/count`` document operations,
-plus artifact write/read/list/download URL and the full files facade):
+plus artifact write/read/list/download URL, the full files facade, and
+the workflow ``execute``/``cancel`` mutations):
 
 - One request frame (or a bounded chunked request), one-or-many response
   frames, JSON over ``multiprocessing.Connection.send_bytes`` /
@@ -48,10 +49,13 @@ plus artifact write/read/list/download URL and the full files facade):
   ``write_mode``/``return_documents``/``scope``; ``tables.batch_delete``
   sends ``table``/``ids``/``scope``. ``agents.enqueue`` sends
   ``agent_name``/``input``/``output_schema``; ``agents.get_run`` sends
-  ``run_id``.
-  No request carries Solution identity beyond the per-call table target:
-  the parent derives the caller's own install id from its own dispatch
-  context, never from child frames.
+  ``run_id``. ``workflows.execute`` sends ``workflow``/``input_data``/
+  ``org_id``/``run_as``/``solution``/``scheduled_at``/
+  ``delay_seconds`` (the same fields the HTTP payload carries; ``sync``
+  is fixed to false — the SDK surface is fire-and-forget);
+  ``workflows.cancel`` sends ``execution_id``.
+  Per-call Solution targets may ride a frame; the parent derives the
+  caller's own install id from its dispatch context, never from child frames.
   Small responses carry the same ``id`` with either
   ``{"ok": true, "result": ...}`` or
   ``{"ok": false, "status": <http-status>, "detail": <str>}``. ``set``
@@ -81,7 +85,11 @@ plus artifact write/read/list/download URL and the full files facade):
   ``{"status": "paused", ...}`` body the facade maps to
   ``AgentPausedError``; ``agents.get_run`` returns the
   ``AgentRunDetailResponse`` dict (a hidden or missing run is a 404
-  error frame the facade maps to ``ValueError``).
+  error frame the facade maps to ``ValueError``). ``workflows.execute``
+  returns the ``WorkflowExecutionResponse`` dict (the facade returns its
+  ``execution_id`` — fire-and-forget, like HTTP); ``workflows.cancel``
+  returns the ``{"execution_id", "status"}`` dict (the facade returns
+  ``None``, like HTTP).
 - Large payloads in EITHER direction use bounded chunked transfer: a
   header frame ``{"ok": true, "chunked": true, "total": <bytes>,
   "parts": <n>}`` (requests: ``{"op": ..., "chunked": true, "total",
@@ -120,8 +128,9 @@ import uuid
 from typing import Any, NoReturn
 
 # Operation allowlist (stage 3b): the config facade, the full
-# integrations facade, the full tables facade, and the SDK agent
-# ``enqueue``/``get_run`` operations ride the local transport. The
+# integrations facade, the full tables facade, the SDK agent
+# ``enqueue``/``get_run`` operations, and the SDK workflow
+# ``execute``/``cancel`` mutations ride the local transport. The
 # parent enforces the same allowlist; anything else is a 404 response.
 # Artifact generation (``create_document``/``create_spreadsheet``/
 # ``create_text``/``create_image``) rides the same channel.
@@ -172,6 +181,8 @@ OP_FILES_SIGNED_URL = "files.signed_url"
 OP_FILES_SEARCH = "files.search"
 OP_AGENTS_ENQUEUE = "agents.enqueue"
 OP_AGENTS_GET_RUN = "agents.get_run"
+OP_WORKFLOWS_EXECUTE = "workflows.execute"
+OP_WORKFLOWS_CANCEL = "workflows.cancel"
 
 # Wire version. The parent rejects anything else instead of guessing.
 TRANSPORT_VERSION = 1
@@ -1954,6 +1965,70 @@ class ChildLocalTransport:
         result = await self._call(
             OP_AGENTS_GET_RUN,
             {"run_id": run_id},
+            timeout,
+        )
+        if not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+    async def call_workflows_execute(
+        self,
+        workflow: str,
+        input_data: dict[str, Any] | None,
+        org_id: str | None,
+        run_as: str | None,
+        solution: str | None,
+        scheduled_at: str | None,
+        delay_seconds: int | None,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """Execute a workflow through the parent. No HTTP fallback.
+
+        Sends the same fields the HTTP payload carries (``sync`` is fixed
+        to false — the SDK surface is fire-and-forget). Returns the
+        ``WorkflowExecutionResponse`` dict; the facade returns its
+        ``execution_id``. A local attempt never falls back to HTTP.
+        """
+        result = await self._call(
+            OP_WORKFLOWS_EXECUTE,
+            {
+                "workflow": workflow,
+                "input_data": input_data,
+                "org_id": org_id,
+                "run_as": run_as,
+                "solution": solution,
+                "scheduled_at": scheduled_at,
+                "delay_seconds": delay_seconds,
+            },
+            timeout,
+        )
+        if not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+    async def call_workflows_cancel(
+        self,
+        execution_id: str,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """Cancel a scheduled execution through the parent. No HTTP fallback.
+
+        Returns the ``{"execution_id", "status"}`` dict (the facade returns
+        ``None``). A missing row is a 404 error frame, a foreign row a 403,
+        and a non-scheduled row a 409 — identical to the HTTP path. A
+        local attempt never falls back to HTTP.
+        """
+        result = await self._call(
+            OP_WORKFLOWS_CANCEL,
+            {"execution_id": execution_id},
             timeout,
         )
         if not isinstance(result, dict):

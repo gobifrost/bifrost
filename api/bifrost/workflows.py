@@ -124,11 +124,38 @@ class workflows:
             raise ValueError("'scheduled_at' must be timezone-aware")
 
         from ._context import get_caller_solution, get_default_scope, get_effective_solution
+        from ._local_transport import get as _get_local_transport
 
         # Auto-include org_id from execution context if not explicitly provided,
         # same as tables, config, etc.
         if org_id is None:
             org_id = get_default_scope()
+
+        solution_id = get_effective_solution(solution)
+        caller = get_caller_solution()
+
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent enqueues through the shared
+            # workflow execution service over the dedicated channel. A
+            # local attempt never falls back to HTTP — failures raise
+            # loudly below (an enqueue may already have committed, so a
+            # retry over HTTP could double-enqueue).
+            data = await transport.call_workflows_execute(
+                workflow,
+                input_data or {},
+                org_id,
+                run_as,
+                solution_id,
+                scheduled_at.isoformat() if scheduled_at is not None else None,
+                delay_seconds,
+            )
+            execution_id = data.get("execution_id")
+            if not isinstance(execution_id, str) or not execution_id:
+                raise RuntimeError(
+                    "local workflows.execute returned no execution_id"
+                )
+            return execution_id
 
         client = get_client()
         payload: dict[str, Any] = {
@@ -136,10 +163,8 @@ class workflows:
             "input_data": input_data or {},
             "sync": False,
         }
-        solution_id = get_effective_solution(solution)
         if solution_id:
             payload["solution_id"] = str(solution_id)
-        caller = get_caller_solution()
         if caller:
             payload["caller_solution_id"] = str(caller)
         if org_id is not None:
@@ -170,6 +195,16 @@ class workflows:
             >>> from bifrost import workflows
             >>> await workflows.cancel("exec-123")
         """
+        from ._local_transport import get as _get_local_transport
+
+        transport = _get_local_transport()
+        if transport is not None:
+            # Engine-local path: the parent cancels through the shared
+            # workflow execution service over the dedicated channel. A
+            # local attempt never falls back to HTTP — failures raise
+            # loudly below (a cancellation may already have committed).
+            await transport.call_workflows_cancel(execution_id)
+            return None
         client = get_client()
         response = await client.post(
             f"/api/workflows/executions/{execution_id}/cancel"
