@@ -147,8 +147,9 @@ class KnowledgeRepository(OrgScopedRepository[KnowledgeStore]):
             created_at=first.created_at,
         )
 
-    async def _embed_chunks(
-        self, content: str, embedder: BaseEmbeddingClient
+    @staticmethod
+    async def embed_chunks(
+        content: str, embedder: BaseEmbeddingClient
     ) -> tuple[list[str], list[list[float]]]:
         """Split content and embed every chunk, validating batch shape."""
         chunks = split_into_chunks(content)
@@ -222,7 +223,33 @@ class KnowledgeRepository(OrgScopedRepository[KnowledgeStore]):
             raise ValueError("store_chunked requires an embedder")
 
         target_org_id = organization_id if organization_id is not None else self.org_id
-        chunks, embeddings = await self._embed_chunks(content, embedder)
+        chunks, embeddings = await self.embed_chunks(content, embedder)
+
+        return await self.store_preembedded(
+            chunks,
+            embeddings,
+            namespace=namespace,
+            key=key,
+            metadata=metadata,
+            organization_id=target_org_id,
+            created_by=created_by,
+        )
+
+    async def store_preembedded(
+        self,
+        chunks: list[str],
+        embeddings: list[list[float]],
+        *,
+        namespace: str = "default",
+        key: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        organization_id: UUID | None = None,
+        created_by: UUID | None = None,
+    ) -> list[str]:
+        """Flush one embedded document through the shared upsert path."""
+        if len(chunks) != len(embeddings):
+            raise ValueError("chunk and embedding counts must match")
+        target_org_id = organization_id if organization_id is not None else self.org_id
 
         if key is not None:
             await self.session.execute(
@@ -277,7 +304,7 @@ class KnowledgeRepository(OrgScopedRepository[KnowledgeStore]):
             Inserted row IDs (UUID strings) in chunk_index order;
             the first is always ``str(doc_id)``.
         """
-        chunks, embeddings = await self._embed_chunks(content, embedder)
+        chunks, embeddings = await self.embed_chunks(content, embedder)
 
         canonical_result = await self.session.execute(
             select(KnowledgeStore).where(KnowledgeStore.id == doc_id)

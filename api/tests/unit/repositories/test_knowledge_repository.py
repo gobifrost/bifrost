@@ -84,14 +84,24 @@ async def test_store_replaces_existing_chunks_atomically(db_session):
     await repo.store_chunked(content=long_v1, namespace="ns", key="k", embedder=embedder)
     count_v1 = (
         await db_session.execute(
-            select(func.count()).select_from(KnowledgeStore).where(KnowledgeStore.key == "k")
+            select(func.count()).select_from(KnowledgeStore).where(
+                KnowledgeStore.namespace == "ns",
+                KnowledgeStore.key == "k",
+                KnowledgeStore.organization_id.is_(None),
+            )
         )
     ).scalar_one()
     assert count_v1 >= 4
 
     await repo.store_chunked(content=long_v2, namespace="ns", key="k", embedder=embedder)
     rows = (
-        await db_session.execute(select(KnowledgeStore).where(KnowledgeStore.key == "k"))
+        await db_session.execute(
+            select(KnowledgeStore).where(
+                KnowledgeStore.namespace == "ns",
+                KnowledgeStore.key == "k",
+                KnowledgeStore.organization_id.is_(None),
+            )
+        )
     ).scalars().all()
     assert all("Version two" in row.content for row in rows)
     assert all("Version one" not in row.content for row in rows)

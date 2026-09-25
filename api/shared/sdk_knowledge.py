@@ -90,6 +90,7 @@ def _stored_result_dict(doc: Any) -> dict[str, Any]:
         "namespace": doc.namespace,
         "content": doc.content,
         "metadata": doc.metadata,
+        "score": None,
         "organization_id": doc.organization_id,
         "key": doc.key,
         "created_at": doc.created_at.isoformat() if doc.created_at else None,
@@ -474,18 +475,12 @@ async def embed_content_chunks(
     """Phase 2 (off-connection): split content and embed every chunk.
 
     Same chunking, batch shape check, and ``ValueError`` contract as
-    ``KnowledgeRepository._embed_chunks`` — no DB access, so the parent
+    ``KnowledgeRepository.embed_chunks`` — no DB access, so the parent
     holds no pooled connection across this external provider work.
     """
-    from src.services.knowledge.chunking import split_into_chunks
-
-    chunks = split_into_chunks(content)
-    embeddings = await embedder.embed(chunks)
-    if len(embeddings) != len(chunks):
-        raise ValueError(
-            f"Embedder returned {len(embeddings)} embeddings for {len(chunks)} chunks"
-        )
-    return chunks, embeddings
+    return await knowledge_repo_module.KnowledgeRepository.embed_chunks(
+        content, embedder
+    )
 
 
 async def embed_query_text(embedder: Any, query: str) -> list[float]:
@@ -513,8 +508,13 @@ async def store_knowledge_preembedded(
     """
     try:
         repo = knowledge_repo_module.KnowledgeRepository(session, org_id=org_id)
-        doc_ids = await _store_preembedded_rows(
-            repo, chunks, embeddings, namespace, key, metadata, created_by
+        doc_ids = await repo.store_preembedded(
+            chunks,
+            embeddings,
+            namespace=namespace,
+            key=key,
+            metadata=metadata,
+            created_by=created_by,
         )
         doc_id = doc_ids[0]
 
@@ -530,45 +530,6 @@ async def store_knowledge_preembedded(
         await session.rollback()
         logger.error(f"CLI knowledge store failed: {log_safe(e)}")
         raise SDKKnowledgeError(500, f"Knowledge store failed: {str(e)}") from None
-
-
-async def _store_preembedded_rows(
-    repo: Any,
-    chunks: list[str],
-    embeddings: list[list[float]],
-    namespace: str,
-    key: str | None,
-    metadata: dict[str, Any] | None,
-    created_by: UUID | None,
-) -> list[str]:
-    """Insert pre-embedded chunk rows through the repository's row builder.
-
-    Uses the repository's own ``_build_chunk_rows`` plus its upsert
-    delete (same identity clauses as ``store_chunked``), flushed but
-    never committed — the caller's transaction boundary decides.
-    """
-    from sqlalchemy import delete as _delete
-
-    from src.models.orm.knowledge import KnowledgeStore
-
-    if key is not None:
-        await repo.session.execute(
-            _delete(KnowledgeStore).where(
-                *repo._identity_clauses(namespace, key, repo.org_id)
-            )
-        )
-    rows = repo._build_chunk_rows(
-        chunks,
-        embeddings,
-        namespace=namespace,
-        key=key,
-        metadata=metadata,
-        organization_id=repo.org_id,
-        created_by=created_by,
-    )
-    repo.session.add_all(rows)
-    await repo.session.flush()
-    return [str(row.id) for row in rows]
 
 
 async def store_many_preembedded(
@@ -592,14 +553,13 @@ async def store_many_preembedded(
         repo = knowledge_repo_module.KnowledgeRepository(session, org_id=org_id)
         doc_ids = []
         for item in items:
-            inserted_ids = await _store_preembedded_rows(
-                repo,
+            inserted_ids = await repo.store_preembedded(
                 item["chunks"],
                 item["embeddings"],
-                namespace,
-                item.get("key"),
-                item.get("metadata"),
-                created_by,
+                namespace=namespace,
+                key=item.get("key"),
+                metadata=item.get("metadata"),
+                created_by=created_by,
             )
             doc_ids.append(inserted_ids[0])
 

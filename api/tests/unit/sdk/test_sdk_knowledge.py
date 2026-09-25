@@ -524,11 +524,13 @@ class TestListAndGetServices:
         repo.get_by_key.assert_awaited_once_with(key="k", namespace="ns")
         assert item["content"] == "full content"
         assert item["created_at"] == created.isoformat()
+        assert item["score"] is None
         assert set(item) == {
             "id",
             "namespace",
             "content",
             "metadata",
+            "score",
             "organization_id",
             "key",
             "created_at",
