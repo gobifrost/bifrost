@@ -56,7 +56,9 @@ from src.models.contracts.notifications import NotificationCategory, Notificatio
 from src.services.execution.memory_monitor import get_cgroup_memory, has_sufficient_memory_cgroup
 from src.services.execution.requirements_setup_result import RequirementsInstallResult
 from src.services.execution.sdk_local_dispatch import (
+    IMPORT_CHANNEL_ALLOWED_OPS,
     LocalDispatchPrincipal,
+    SDK_CHANNEL_ALLOWED_OPS,
     principal_from_context,
     serve_channel,
 )
@@ -298,6 +300,14 @@ class ProcessHandle:
     sdk_resp: Any = None
     # Pump task serving the SDK channel. None once finished/closed.
     sdk_task: Any = None
+    # Parent ends of the dedicated local import channel (synchronous
+    # module resolution/source fetch). Separate from the SDK pair so an
+    # import blocking the child's event loop cannot deadlock an in-flight
+    # async SDK request. None once closed.
+    imp_req: Any = None
+    imp_resp: Any = None
+    # Pump task serving the import channel. None once finished/closed.
+    imp_task: Any = None
 
     @property
     def is_alive(self) -> bool:
@@ -454,7 +464,8 @@ class ProcessPoolManager:
         self._heartbeat_task: asyncio.Task[None] | None = None
         self._cancel_task: asyncio.Task[None] | None = None
         self._command_task: asyncio.Task[None] | None = None
-        # Local-SDK channel pumps (one per live child, plus bounded threads).
+        # Local-channel pumps (one SDK pump plus one import pump per live
+        # child, sharing one task set and the bounded IO thread pool).
         self._sdk_tasks: set[asyncio.Task[None]] = set()
         self._sdk_executor: ThreadPoolExecutor | None = None
 
@@ -661,7 +672,11 @@ class ProcessPoolManager:
         installs the engine-local transport on its ends before user code
         runs, and the pool serves ``config.get`` on the parent ends (see
         :meth:`_start_sdk_pump`). The pump starts once the caller supplies
-        the dispatch context.
+        the dispatch context. Every child additionally gets a second
+        dedicated import channel for synchronous module resolution and
+        source fetch (see :meth:`_start_import_pump`): an import may block
+        the child's event loop while an async SDK request is awaiting a
+        response, so the two channels never share a lock.
 
         Returns:
             ProcessHandle for the new forked worker. State starts at BUSY
@@ -681,10 +696,19 @@ class ProcessPoolManager:
 
         # Fork from template (COW memory sharing). persistent=False is
         # the only mode: child runs one execution then exits.
-        child_pid, work_queue, result_queue, sdk_req_recv, sdk_resp_send = self._template.fork(
+        (
+            child_pid,
+            work_queue,
+            result_queue,
+            sdk_req_recv,
+            sdk_resp_send,
+            imp_req_recv,
+            imp_resp_send,
+        ) = self._template.fork(
             worker_id=process_id,
             persistent=False,
             with_sdk=True,
+            with_import=True,
         )
 
         handle = ProcessHandle(
@@ -699,6 +723,8 @@ class ProcessPoolManager:
             executions_completed=0,
             sdk_req=sdk_req_recv,
             sdk_resp=sdk_resp_send,
+            imp_req=imp_req_recv,
+            imp_resp=imp_resp_send,
         )
 
         self.processes[process_id] = handle
@@ -752,10 +778,57 @@ class ProcessPoolManager:
                 session_factory=get_session_factory(),
                 principal=principal,
                 executor=self._sdk_executor,
+                allowed_ops=SDK_CHANNEL_ALLOWED_OPS,
             )
             logger.debug("Local-SDK channel for %s ended: %s", handle.id, reason)
         finally:
             self._close_sdk_channel(handle)
+
+    def _start_import_pump(
+        self,
+        handle: ProcessHandle,
+        principal: LocalDispatchPrincipal,
+    ) -> None:
+        """Serve one child's local import channel for a validated principal.
+
+        Runs concurrently with the async SDK pump: an import may block the
+        child's event loop while an async SDK request is awaiting a
+        response, so the two pumps never share a channel or a lock. The
+        principal is derived from parent-owned dispatch context before
+        forking — never from child frames. The pump ends on child
+        EOF/crash, protocol violation, or explicit close.
+        """
+        task: asyncio.Task[None] = asyncio.create_task(
+            self._serve_import_channel(handle, principal),
+            name=f"pool-import-{handle.id}",
+        )
+        handle.imp_task = task
+        self._sdk_tasks.add(task)
+        task.add_done_callback(self._sdk_task_done)
+
+    async def _serve_import_channel(
+        self,
+        handle: ProcessHandle,
+        principal: LocalDispatchPrincipal,
+    ) -> None:
+        """Pump one child import channel; close it when the pump ends."""
+        from src.core.database import get_session_factory
+
+        imp_req, imp_resp = handle.imp_req, handle.imp_resp
+        if imp_req is None or imp_resp is None:
+            return
+        try:
+            reason = await serve_channel(
+                recv_conn=imp_req,
+                send_conn=imp_resp,
+                session_factory=get_session_factory(),
+                principal=principal,
+                executor=self._sdk_executor,
+                allowed_ops=IMPORT_CHANNEL_ALLOWED_OPS,
+            )
+            logger.debug("Local-import channel for %s ended: %s", handle.id, reason)
+        finally:
+            self._close_import_channel(handle)
 
     def _close_sdk_channel(self, handle: ProcessHandle) -> None:
         """Stop the SDK pump and release one child's channel descriptors.
@@ -780,6 +853,40 @@ class ProcessPoolManager:
                 except (OSError, EOFError) as e:
                     logger.debug("SDK channel close ignored for %s: %s", handle.id, e)
 
+    def _close_import_channel(self, handle: ProcessHandle) -> None:
+        """Stop the import pump and release one child's channel descriptors.
+
+        Idempotent: safe to call from result, crash, kill, and shutdown
+        paths. Never raises.
+        """
+        task = handle.imp_task
+        handle.imp_task = None
+        if task is not None:
+            try:
+                if task is not asyncio.current_task():
+                    task.cancel()
+            except Exception as e:
+                logger.debug("Import pump cancel ignored for %s: %s", handle.id, e)
+        for attr in ("imp_req", "imp_resp"):
+            conn = getattr(handle, attr)
+            setattr(handle, attr, None)
+            if conn is not None:
+                try:
+                    conn.close()
+                except (OSError, EOFError) as e:
+                    logger.debug("Import channel close ignored for %s: %s", handle.id, e)
+
+    def _close_local_channels(self, handle: ProcessHandle) -> None:
+        """Stop both local pumps and release one child's channel pairs.
+
+        Idempotent: safe to call from result, crash, kill, and shutdown
+        paths. Never raises. Both pairs must always close together — a
+        half-closed child would keep importing or calling SDK operations
+        on a stale principal.
+        """
+        self._close_sdk_channel(handle)
+        self._close_import_channel(handle)
+
     async def start(self) -> None:
         """
         Start the pool manager and spawn initial workers.
@@ -802,11 +909,11 @@ class ProcessPoolManager:
         self._started_at = datetime.now(timezone.utc)
         self._last_active_execution_refresh = time.monotonic()
 
-        # Bounded thread pool for blocking local-SDK pipe IO: at most one
-        # blocked reader per live child plus headroom.
+        # Bounded thread pool for blocking local-channel pipe IO: at most one
+        # blocked reader per live child per channel plus headroom.
         if self._sdk_executor is None:
             self._sdk_executor = ThreadPoolExecutor(
-                max_workers=self.max_workers + self.max_service_workers + 4,
+                max_workers=2 * (self.max_workers + self.max_service_workers) + 4,
                 thread_name_prefix="sdk-local",
             )
 
@@ -882,11 +989,12 @@ class ProcessPoolManager:
         for handle in list(self.service_processes.values()):
             await self._terminate_process(handle)
 
-        # Stop every local-SDK pump and release channel descriptors, then
-        # retire the bounded IO pool. Children are already dead, so blocked
-        # pipe reads resolve via EOF promptly.
+        # Stop every local pump (SDK and import channels share the task
+        # set) and release channel descriptors, then retire the bounded IO
+        # pool. Children are already dead, so blocked pipe reads resolve
+        # via EOF promptly.
         for handle in list(self.processes.values()) + list(self.service_processes.values()):
-            self._close_sdk_channel(handle)
+            self._close_local_channels(handle)
         for task in list(self._sdk_tasks):
             if not task.done():
                 task.cancel()
@@ -1082,6 +1190,10 @@ class ProcessPoolManager:
         # Serve this child's local-SDK channel from the validated
         # dispatch principal the child will execute under.
         self._start_sdk_pump(handle, principal)
+        # Serve the import channel concurrently under the same principal:
+        # entry-source loads and cold imports must not wait on (or block)
+        # async SDK traffic.
+        self._start_import_pump(handle, principal)
 
         try:
             await self._write_active_execution_lease(handle.current_execution)
@@ -1102,7 +1214,7 @@ class ProcessPoolManager:
             handle.work_queue.put_nowait((execution_id, context))
         except Exception:
             self._unregister_result_reader(handle)
-            self._close_sdk_channel(handle)
+            self._close_local_channels(handle)
             self.processes.pop(handle.id, None)
             await self._notify_slot_free()
             try:
@@ -1179,6 +1291,10 @@ class ProcessPoolManager:
             # Serve this service child's local-SDK channel for the life of
             # the attempt, under the validated dispatch principal.
             self._start_sdk_pump(handle, principal)
+            # Serve the import channel concurrently under the same
+            # principal: cold service-source loads must not wait on (or
+            # block) async SDK traffic.
+            self._start_import_pump(handle, principal)
 
             self._register_result_reader(handle)
 
@@ -1186,7 +1302,7 @@ class ProcessPoolManager:
                 handle.work_queue.put_nowait((attempt_id, context))
             except Exception:
                 self._unregister_result_reader(handle)
-                self._close_sdk_channel(handle)
+                self._close_local_channels(handle)
                 self.service_processes.pop(handle.id, None)
                 await self._notify_service_slot_free()
                 raise
@@ -1396,7 +1512,7 @@ class ProcessPoolManager:
             handle: ProcessHandle to kill
         """
         self._unregister_result_reader(handle)
-        self._close_sdk_channel(handle)
+        self._close_local_channels(handle)
 
         # Mark as KILLED immediately to prevent route_execution from sending
         # work to this process during the graceful_shutdown_seconds sleep.
@@ -1817,13 +1933,13 @@ class ProcessPoolManager:
                 handle = self.processes.get(process_id)
                 if handle is not None:
                     self._unregister_result_reader(handle)
-                    self._close_sdk_channel(handle)
+                    self._close_local_channels(handle)
                 if self.processes.pop(process_id, None) is not None:
                     removed_any = True
                 handle = self.service_processes.get(process_id)
                 if handle is not None:
                     self._unregister_result_reader(handle)
-                    self._close_sdk_channel(handle)
+                    self._close_local_channels(handle)
                 if self.service_processes.pop(process_id, None) is not None:
                     removed_service_any = True
             if removed_any:
@@ -1983,7 +2099,7 @@ class ProcessPoolManager:
         self._unregister_result_reader(handle)
         # Terminal outcome received: the child is done, so its SDK channel
         # is closed (the pump would otherwise linger until EOF).
-        self._close_sdk_channel(handle)
+        self._close_local_channels(handle)
 
         if handle.service is not None:
             await self._handle_service_result(handle, result)
@@ -2050,7 +2166,7 @@ class ProcessPoolManager:
         self._unregister_result_reader(handle)
         # Terminal attempt outcome received: the service child is done, so
         # its SDK channel is closed.
-        self._close_sdk_channel(handle)
+        self._close_local_channels(handle)
         callback_already_owned = handle.result_reported
         handle.result_reported = True
         handle.current_execution = None

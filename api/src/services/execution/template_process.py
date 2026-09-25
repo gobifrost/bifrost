@@ -265,6 +265,7 @@ def _template_main(
     # while leaving database and object-storage implementations out entirely.
     import bifrost.client  # noqa: F401
     import bifrost._local_transport  # noqa: F401  # stdlib-only; installed per-fork, never auto-selected
+    import bifrost._import_transport  # noqa: F401  # stdlib-only sync import channel; installed per-fork
     import bifrost.models  # noqa: F401
     import src.sdk.decorators  # noqa: F401
     import bifrost.credentials  # noqa: F401
@@ -323,7 +324,11 @@ def _template_main(
             work_recv: Connection = cmd["work_recv"]
             result_send: Connection = cmd["result_send"]
             with_sdk = bool(cmd.get("with_sdk", False))
-            _handle_fork_request(pipe, worker_id, persistent, work_recv, result_send, with_sdk)
+            with_import = bool(cmd.get("with_import", False))
+            _handle_fork_request(
+                pipe, worker_id, persistent, work_recv, result_send,
+                with_sdk, with_import,
+            )
 
     logger.info("Template process exiting")
 
@@ -354,6 +359,7 @@ def _handle_fork_request(
     work_recv: Connection,
     result_send: Connection,
     with_sdk: bool = False,
+    with_import: bool = False,
 ) -> None:
     """
     Handle a fork request: fork and wire up pre-created pipe connections.
@@ -374,6 +380,14 @@ def _handle_fork_request(
     acquires them; the control-pipe fd passing carries the parent ends back.
     These channels are separate from the work/result pipes.
 
+    When ``with_import`` is set, the template additionally creates a second
+    dedicated import channel pair for synchronous module resolution and
+    source fetch. It is separate from the async SDK channel because an
+    import may block the child's event loop while an async SDK request is
+    awaiting a response — sharing that channel's lock could deadlock.
+    The child installs the stdlib-only synchronous import transport on its
+    ends before user code runs.
+
     Args:
         pipe: Control pipe to send response back to consumer.
         worker_id: ID to assign to the forked child worker.
@@ -382,24 +396,36 @@ def _handle_fork_request(
         work_recv: Read end of work pipe (child reads execution IDs from here).
         result_send: Write end of result pipe (child writes results here).
         with_sdk: If True, create a dedicated local-SDK channel for the child.
+        with_import: If True, create a dedicated local import channel.
     """
     sdk_req_recv: Connection | None = None
     sdk_req_send: Connection | None = None
     sdk_resp_recv: Connection | None = None
     sdk_resp_send: Connection | None = None
+    imp_req_recv: Connection | None = None
+    imp_req_send: Connection | None = None
+    imp_resp_recv: Connection | None = None
+    imp_resp_send: Connection | None = None
     if with_sdk:
         # Request pipe: child writes (sdk_req_send), consumer reads
         # (sdk_req_recv). Response pipe: consumer writes (sdk_resp_send),
         # child reads (sdk_resp_recv).
         sdk_req_recv, sdk_req_send = multiprocessing.Pipe(duplex=False)
         sdk_resp_recv, sdk_resp_send = multiprocessing.Pipe(duplex=False)
+    if with_import:
+        # Import request pipe: child writes (imp_req_send), consumer reads
+        # (imp_req_recv). Import response pipe: consumer writes
+        # (imp_resp_send), child reads (imp_resp_recv).
+        imp_req_recv, imp_req_send = multiprocessing.Pipe(duplex=False)
+        imp_resp_recv, imp_resp_send = multiprocessing.Pipe(duplex=False)
 
     child_pid = os.fork()
 
     if child_pid > 0:
         # ----- Parent (template) -----
         # Close the child-side connections — the child owns them now
-        for conn in (work_recv, result_send, sdk_req_send, sdk_resp_recv):
+        for conn in (work_recv, result_send, sdk_req_send, sdk_resp_recv,
+                     imp_req_send, imp_resp_recv):
             if conn is None:
                 continue
             try:
@@ -408,8 +434,8 @@ def _handle_fork_request(
                 # Already closed — ignore
                 logger.debug(f"parent: sdk/work conn.close ignored: {e}")
 
-        # Send child PID back to consumer (parent SDK ends travel via fd
-        # passing; our copies close right after the send)
+        # Send child PID back to consumer (parent SDK/import ends travel via
+        # fd passing; our copies close right after the send)
         reply: dict[str, Any] = {
             "status": "forked",
             "child_pid": child_pid,
@@ -419,8 +445,12 @@ def _handle_fork_request(
             assert sdk_req_recv is not None and sdk_resp_send is not None
             reply["sdk_req_recv"] = sdk_req_recv
             reply["sdk_resp_send"] = sdk_resp_send
+        if with_import:
+            assert imp_req_recv is not None and imp_resp_send is not None
+            reply["imp_req_recv"] = imp_req_recv
+            reply["imp_resp_send"] = imp_resp_send
         pipe.send(reply)
-        for conn in (sdk_req_recv, sdk_resp_send):
+        for conn in (sdk_req_recv, sdk_resp_send, imp_req_recv, imp_resp_send):
             if conn is None:
                 continue
             try:
@@ -435,8 +465,8 @@ def _handle_fork_request(
         except (OSError, BrokenPipeError) as e:
             # Already closed in parent post-fork — ignore
             logger.debug(f"child: pipe.close ignored: {e}")
-        # Close the parent-side SDK ends — the consumer owns them
-        for conn in (sdk_req_recv, sdk_resp_send):
+        # Close the parent-side SDK/import ends — the consumer owns them
+        for conn in (sdk_req_recv, sdk_resp_send, imp_req_recv, imp_resp_send):
             if conn is None:
                 continue
             try:
@@ -448,6 +478,7 @@ def _handle_fork_request(
         _run_forked_child(
             work_recv, result_send, worker_id, persistent,
             sdk_req_send=sdk_req_send, sdk_resp_recv=sdk_resp_recv,
+            imp_req_send=imp_req_send, imp_resp_recv=imp_resp_recv,
         )
         os._exit(0)
 
@@ -459,6 +490,8 @@ def _run_forked_child(
     persistent: bool,
     sdk_req_send: Connection | None = None,
     sdk_resp_recv: Connection | None = None,
+    imp_req_send: Connection | None = None,
+    imp_resp_recv: Connection | None = None,
 ) -> None:
     """
     Entry point for a forked child process.
@@ -476,6 +509,14 @@ def _run_forked_child(
     injection point: there is no user-controlled flag, and outside this
     path no transport exists so the SDK uses HTTP.
 
+    When the template created a dedicated import channel (``imp_req_send`` /
+    ``imp_resp_recv``), the stdlib-only synchronous import transport is
+    installed alongside it — before user code runs and before the entry
+    workflow's own source is loaded — so cold module resolution and source
+    fetch ride the parent instead of HTTP/S3. It is a separate pipe pair
+    because an import may block the child's event loop while an async SDK
+    request is awaiting a response.
+
     Args:
         work_recv: Read end of work pipe; receives ``(execution_id, context)``.
         result_send: Write end of result pipe; sends result dicts via .send().
@@ -483,6 +524,8 @@ def _run_forked_child(
         persistent: If True, loop for multiple executions. If False, run once.
         sdk_req_send: Write end of the SDK request pipe (child → parent).
         sdk_resp_recv: Read end of the SDK response pipe (parent → child).
+        imp_req_send: Write end of the import request pipe (child → parent).
+        imp_resp_recv: Read end of the import response pipe (parent → child).
     """
     # Reconfigure logging for this child
     logging.basicConfig(
@@ -495,10 +538,15 @@ def _run_forked_child(
     # a dedicated channel. Installed before any user code runs.
     from bifrost._local_transport import clear as _clear_local_transport
     from bifrost._local_transport import install as _install_local_transport
+    from bifrost._import_transport import clear as _clear_import_transport
+    from bifrost._import_transport import install as _install_import_transport
 
     if sdk_req_send is not None and sdk_resp_recv is not None:
         _install_local_transport(sdk_req_send, sdk_resp_recv)
         logger.info(f"Forked worker {worker_id} using engine-local SDK transport")
+    if imp_req_send is not None and imp_resp_recv is not None:
+        _install_import_transport(imp_req_send, imp_resp_recv)
+        logger.info(f"Forked worker {worker_id} using engine-local import transport")
 
     # Setup signal handler for graceful shutdown
     shutdown_requested = False
@@ -611,11 +659,12 @@ def _run_forked_child(
             if not persistent:
                 break
 
-    # Engine teardown: drop the local transport so a reused (persistent)
+    # Engine teardown: drop the local transports so a reused (persistent)
     # child never serves the next execution on a stale channel, and release
     # the child-side descriptors.
     _clear_local_transport()
-    for _conn in (sdk_req_send, sdk_resp_recv):
+    _clear_import_transport()
+    for _conn in (sdk_req_send, sdk_resp_recv, imp_req_send, imp_resp_recv):
         if _conn is None:
             continue
         try:
@@ -718,6 +767,7 @@ class TemplateProcess:
         worker_id: str = "worker",
         persistent: bool = False,
         with_sdk: Literal[False] = False,
+        with_import: Literal[False] = False,
     ) -> tuple[int, _SendQueue, _RecvQueue]:
         ...
 
@@ -727,7 +777,28 @@ class TemplateProcess:
         worker_id: str = "worker",
         persistent: bool = False,
         with_sdk: Literal[True] = True,
+        with_import: Literal[False] = False,
     ) -> tuple[int, _SendQueue, _RecvQueue, Any, Any]:
+        ...
+
+    @overload
+    def fork(
+        self,
+        worker_id: str = "worker",
+        persistent: bool = False,
+        with_sdk: Literal[False] = False,
+        with_import: Literal[True] = True,
+    ) -> tuple[int, _SendQueue, _RecvQueue, Any, Any]:
+        ...
+
+    @overload
+    def fork(
+        self,
+        worker_id: str = "worker",
+        persistent: bool = False,
+        with_sdk: bool = True,
+        with_import: bool = True,
+    ) -> tuple[int, _SendQueue, _RecvQueue, Any, Any, Any, Any]:
         ...
 
     def fork(
@@ -735,7 +806,12 @@ class TemplateProcess:
         worker_id: str = "worker",
         persistent: bool = False,
         with_sdk: bool = False,
-    ) -> tuple[int, _SendQueue, _RecvQueue] | tuple[int, _SendQueue, _RecvQueue, Any, Any]:
+        with_import: bool = False,
+    ) -> (
+        tuple[int, _SendQueue, _RecvQueue]
+        | tuple[int, _SendQueue, _RecvQueue, Any, Any]
+        | tuple[int, _SendQueue, _RecvQueue, Any, Any, Any, Any]
+    ):
         """
         Request the template to fork a new child worker.
 
@@ -750,16 +826,27 @@ class TemplateProcess:
         The child installs the engine-local SDK transport on its ends
         before user code runs.
 
+        When ``with_import`` is set, the template additionally creates a
+        second dedicated import channel pair (parent ends appended after
+        the SDK ends) for synchronous module resolution and source fetch.
+        The child installs the stdlib-only synchronous import transport on
+        its ends before user code runs. It is separate from the SDK pair
+        because an import may block the child's event loop while an async
+        SDK request is awaiting a response.
+
         Args:
             worker_id: Identifier for the new worker (for logging).
             persistent: If True, child loops for multiple executions.
                         If False (default), child runs one execution and exits.
             with_sdk: If True, also wire a dedicated local-SDK channel.
+            with_import: If True, also wire a dedicated local import channel.
 
         Returns:
             ``(child_pid, work_queue, result_queue)``, or with ``with_sdk``
             ``(child_pid, work_queue, result_queue, sdk_req_recv,
-            sdk_resp_send)``.
+            sdk_resp_send)``, or with both ``(child_pid, work_queue,
+            result_queue, sdk_req_recv, sdk_resp_send, imp_req_recv,
+            imp_resp_send)``.
             work_queue.put(execution_id) sends work to the child.
             result_queue.get() retrieves the result from the child.
 
@@ -777,6 +864,8 @@ class TemplateProcess:
 
         sdk_req_recv: Any = None
         sdk_resp_send: Any = None
+        imp_req_recv: Any = None
+        imp_resp_send: Any = None
         try:
             # Send fork command with child-side connections (picklable)
             self._pipe.send({
@@ -786,6 +875,7 @@ class TemplateProcess:
                 "work_recv": work_recv,
                 "result_send": result_send,
                 "with_sdk": with_sdk,
+                "with_import": with_import,
             })
 
             # Close child-side connections on our end after sending
@@ -804,9 +894,15 @@ class TemplateProcess:
                 sdk_resp_send = msg.get("sdk_resp_send")
                 if sdk_req_recv is None or sdk_resp_send is None:
                     raise RuntimeError(f"Fork response missing SDK channel: {msg}")
+            if with_import:
+                imp_req_recv = msg.get("imp_req_recv")
+                imp_resp_send = msg.get("imp_resp_send")
+                if imp_req_recv is None or imp_resp_send is None:
+                    raise RuntimeError(f"Fork response missing import channel: {msg}")
         except Exception:
             for conn in (work_recv, work_send, result_recv, result_send,
-                         sdk_req_recv, sdk_resp_send):
+                         sdk_req_recv, sdk_resp_send,
+                         imp_req_recv, imp_resp_send):
                 if conn is None:
                     continue
                 with suppress(OSError, BrokenPipeError):
@@ -819,6 +915,16 @@ class TemplateProcess:
         work_queue = _SendQueue(work_send)
         result_queue = _RecvQueue(result_recv)
 
+        if with_sdk and with_import:
+            return (
+                msg["child_pid"],
+                work_queue,
+                result_queue,
+                sdk_req_recv,
+                sdk_resp_send,
+                imp_req_recv,
+                imp_resp_send,
+            )
         if with_sdk:
             return (
                 msg["child_pid"],
@@ -826,6 +932,14 @@ class TemplateProcess:
                 result_queue,
                 sdk_req_recv,
                 sdk_resp_send,
+            )
+        if with_import:
+            return (
+                msg["child_pid"],
+                work_queue,
+                result_queue,
+                imp_req_recv,
+                imp_resp_send,
             )
         return (
             msg["child_pid"],

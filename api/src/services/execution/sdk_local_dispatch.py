@@ -27,10 +27,12 @@ bound); small payloads use a single frame.
 Allowlist (stage 3a): ``config.get/set/list/delete``, the full
 ``integrations`` facade (``get/list_mappings/get_mapping/upsert_mapping/
 delete_mapping/refresh_token``), and the table document reads
-(``tables.get/query/count``). Unknown operations
-or wire versions get an error response — never silent acceptance, never
-arbitrary route forwarding. The existing engine token path is untouched
-for every operation not yet migrated.
+(``tables.get/query/count``). Engine import fast path: ``modules.resolve``
+and ``modules.fetch`` (served on the dedicated import channel through the
+shared ``sdk_modules`` service, scoped by the parent-derived principal).
+Unknown operations or wire versions get an error response — never silent
+acceptance, never arbitrary route forwarding. The existing engine token
+path is untouched for every operation not yet migrated.
 """
 
 from __future__ import annotations
@@ -63,14 +65,21 @@ from bifrost._local_transport import (
     TRANSPORT_VERSION,
     decode_frame,
 )
+from bifrost._import_transport import (
+    OP_MODULES_FETCH,
+    OP_MODULES_RESOLVE,
+)
 from shared.sdk_config import ScopeResolutionError, resolve_sdk_scope
 
 logger = logging.getLogger(__name__)
 
-# Operations this dispatcher will serve. Stage 3a: the config facade, the
+# Operations this dispatcher can dispatch. Stage 3a: the config facade, the
 # full integrations facade (reads, mapping mutations, token refresh), and
-# the table document reads (get/query/unfiltered count).
-ALLOWLIST = frozenset(
+# the table document reads (get/query/unfiltered count). Engine import
+# fast path: cold module-name resolution and candidate source fetch
+# (served on the dedicated import channel through the shared sdk_modules
+# service).
+SDK_CHANNEL_ALLOWED_OPS = frozenset(
     {
         OP_CONFIG_GET,
         OP_CONFIG_SET,
@@ -87,6 +96,8 @@ ALLOWLIST = frozenset(
         OP_TABLES_COUNT,
     }
 )
+IMPORT_CHANNEL_ALLOWED_OPS = frozenset({OP_MODULES_RESOLVE, OP_MODULES_FETCH})
+ALLOWLIST = SDK_CHANNEL_ALLOWED_OPS | IMPORT_CHANNEL_ALLOWED_OPS
 
 # Wall-clock bound for one parent-side operation (short session + indexed
 # read). A stall fails that request loudly; the child has its own timeout
@@ -154,6 +165,13 @@ class LocalDispatchPrincipal:
     # Service attempt id for supervised ``@service`` children, from the
     # parent-owned ``service`` block. See ``service_id``.
     service_attempt_id: str | None = None
+    # Whether Solution-managed code in this execution may import from the
+    # bare workspace repository (the install's ``global_repo_access``
+    # flag). Derived from the parent-owned
+    # ``context_data["solution_global_repo_access"]`` — never from child
+    # frames — and combined with ``solution_id`` into the authoritative
+    # ``ModuleSourceScope`` for the ``modules.*`` import operations.
+    solution_global_repo_access: bool = False
 
 
 class LocalPrincipalError(ValueError):
@@ -207,6 +225,26 @@ def _execution_id_from_context(context_data: Mapping[str, Any]) -> str | None:
     return None
 
 
+def _global_repo_access_from_context(context_data: Mapping[str, Any]) -> bool:
+    """Whether Solution code may import from the bare workspace repository.
+
+    Reads only the parent-owned ``solution_global_repo_access`` (set by the
+    workflow and service producers from the install's
+    ``global_repo_access`` flag). A missing value defaults to False (no
+    fallback imports — the sealed-Solution posture). A present-but-malformed
+    (non-bool) value fails closed: silently coercing truthy junk would widen
+    a sealed install's import surface.
+    """
+    raw = context_data.get("solution_global_repo_access", False)
+    if isinstance(raw, bool):
+        return raw
+    raise LocalPrincipalError(
+        f"local dispatch: solution_global_repo_access {raw!r} is not a "
+        "bool; refusing to serve local SDK calls (no silent import-scope "
+        "downgrade)"
+    )
+
+
 def principal_from_context(context_data: Mapping[str, Any]) -> LocalDispatchPrincipal:
     """Derive the dispatch principal from parent-owned execution context.
 
@@ -228,6 +266,9 @@ def principal_from_context(context_data: Mapping[str, Any]) -> LocalDispatchPrin
     ``service_id``/``attempt_id`` ride along for the token-equivalent table
     principal (signed engine/service claims) — non-string values degrade to
     None (outside any install) rather than failing the whole dispatch.
+    ``solution_global_repo_access`` rides along for the authoritative
+    module-source scope — missing defaults to False (sealed), malformed
+    fails closed.
     """
     from src.core.security import ENGINE_SDK_ACTOR_EMAIL, service_sdk_actor_email
 
@@ -262,6 +303,9 @@ def principal_from_context(context_data: Mapping[str, Any]) -> LocalDispatchPrin
             is_service=False,
             solution_id=_solution_id_from_context(context_data),
             execution_id=_execution_id_from_context(context_data),
+            solution_global_repo_access=_global_repo_access_from_context(
+                context_data
+            ),
         )
     if not isinstance(service_raw, Mapping):
         raise LocalPrincipalError(
@@ -295,6 +339,9 @@ def principal_from_context(context_data: Mapping[str, Any]) -> LocalDispatchPrin
         execution_id=_execution_id_from_context(context_data),
         service_id=raw_service_id if isinstance(raw_service_id, str) else None,
         service_attempt_id=service_attempt_id,
+        solution_global_repo_access=_global_repo_access_from_context(
+            context_data
+        ),
     )
 
 
@@ -359,6 +406,10 @@ async def dispatch_frames(
         return await _dispatch_tables_query(session_factory, principal, frame_id, frame)
     if op == OP_TABLES_COUNT:
         return await _dispatch_tables_count(session_factory, principal, frame_id, frame)
+    if op == OP_MODULES_RESOLVE:
+        return await _dispatch_modules_resolve(session_factory, principal, frame_id, frame)
+    if op == OP_MODULES_FETCH:
+        return await _dispatch_modules_fetch(session_factory, principal, frame_id, frame)
     return [_error(frame_id, 404, f"local SDK operation not allowed: {op!r}")]
 
 
@@ -1409,6 +1460,118 @@ async def _dispatch_tables_count(
     return _ok_frames(frame_id, result)
 
 
+def _required_str_field(
+    frame: dict[str, Any], field: str, frame_id: str | None, op: str
+) -> tuple[str | None, dict[str, Any] | None]:
+    """One required non-empty string frame field, else a 422 error frame."""
+    value = frame.get(field)
+    if isinstance(value, str) and value:
+        return value, None
+    return None, _error(frame_id, 422, f"invalid {op} request: {field!r} is required")
+
+
+def _module_source_scope(
+    principal: LocalDispatchPrincipal,
+) -> Any:
+    """Authoritative source scope for one child's ``modules.*`` calls.
+
+    Built only from the parent-derived principal (its Solution install id
+    plus the install's global-repo flag) — child frames are never read
+    for scope, so a child cannot forge another install's sources or widen
+    a sealed Solution's import surface.
+    """
+    from shared.sdk_modules import ModuleSourceScope
+
+    return ModuleSourceScope(
+        solution_id=(
+            str(principal.solution_id) if principal.solution_id is not None else None
+        ),
+        global_repo_access=principal.solution_global_repo_access,
+    )
+
+
+async def _dispatch_modules_resolve(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``modules.resolve`` through the shared module-source service.
+
+    The child supplies only the logical import ``name``; the scope comes
+    exclusively from the parent-derived principal. Calls the exact shared
+    ``shared.sdk_modules.resolve_module_name`` the HTTP handler calls, so
+    Solution-first ordering, sealed-Solution restrictions, cache keys/TTLs,
+    and namespace handling are identical by construction. Large resolved
+    sources ride bounded chunked frames via ``_ok_frames``.
+    """
+    from shared.sdk_modules import ModuleSourceError, resolve_module_name
+
+    name, invalid = _required_str_field(
+        frame, "name", frame_id, OP_MODULES_RESOLVE
+    )
+    if invalid is not None:
+        return [invalid]
+    assert name is not None
+    scope = _module_source_scope(principal)
+
+    async def _resolve(session: Any) -> dict[str, object]:
+        return await resolve_module_name(name, scope=scope)
+
+    result, error = await _run_short(
+        session_factory,
+        _resolve,
+        op=OP_MODULES_RESOLVE,
+        log_key=name,
+        status_errors=(ModuleSourceError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_modules_fetch(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``modules.fetch`` through the shared module-source service.
+
+    The child supplies only the candidate storage ``path``; the scope
+    comes exclusively from the parent-derived principal, which also
+    enforces the Solution-path access rules (a sealed install's bare
+    workspace fetch 403s; an out-of-install solution path 403s; a miss
+    404s so the child advances to the next candidate). Large sources ride
+    bounded chunked frames via ``_ok_frames``.
+    """
+    from shared.sdk_modules import ModuleSourceError, fetch_module_source
+
+    path, invalid = _required_str_field(
+        frame, "path", frame_id, OP_MODULES_FETCH
+    )
+    if invalid is not None:
+        return [invalid]
+    assert path is not None
+    scope = _module_source_scope(principal)
+
+    async def _fetch(session: Any) -> dict:
+        return await fetch_module_source(path, scope=scope)
+
+    result, error = await _run_short(
+        session_factory,
+        _fetch,
+        op=OP_MODULES_FETCH,
+        log_key=path,
+        status_errors=(ModuleSourceError,),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
 def _chunked_frames(
     frame_id: str | None, raw_result: bytes
 ) -> Iterable[dict[str, Any]]:
@@ -1445,6 +1608,10 @@ def _chunked_frames(
 
 class _RequestGone(Exception):
     """The child went away mid-request (EOF/pipe error during reassembly)."""
+
+
+class _FrameOversized(Exception):
+    """A received frame exceeds the wire-size bound."""
 
 
 class _RequestMalformed(Exception):
@@ -1488,9 +1655,9 @@ async def _reassemble_request(header: dict[str, Any], recv: Callable[[], Any]) -
             raw = await recv()
         except EOFError as e:
             raise _RequestGone("child went away mid-request") from e
+        except _FrameOversized as e:
+            raise _RequestMalformed("request part exceeded frame bound") from e
         except OSError as e:
-            if "bad message length" in str(e):
-                raise _RequestMalformed("request part exceeded frame bound") from e
             raise _RequestGone(f"child channel failed mid-request: {e}") from e
         try:
             part = decode_frame(raw)
@@ -1530,6 +1697,7 @@ async def serve_channel(
     session_factory: SessionFactory,
     principal: LocalDispatchPrincipal,
     executor: Any = None,
+    allowed_ops: frozenset[str] = SDK_CHANNEL_ALLOWED_OPS,
 ) -> str:
     """Pump one child SDK channel until EOF, protocol violation, or cancel.
 
@@ -1556,10 +1724,14 @@ async def serve_channel(
 
     async def _recv() -> bytes:
         if executor is not None:
-            return await loop.run_in_executor(
+            raw = await loop.run_in_executor(
                 executor, recv_conn.recv_bytes, MAX_FRAME_BYTES + 1
             )
-        return await asyncio.to_thread(recv_conn.recv_bytes, MAX_FRAME_BYTES + 1)
+        else:
+            raw = await asyncio.to_thread(recv_conn.recv_bytes, MAX_FRAME_BYTES + 1)
+        if len(raw) > MAX_FRAME_BYTES:
+            raise _FrameOversized
+        return raw
 
     async def _send(raw: bytes) -> None:
         if executor is not None:
@@ -1587,13 +1759,14 @@ async def serve_channel(
             raw = await _recv()
         except EOFError:
             return "eof"
-        except OSError as e:
-            # recv_bytes enforces the maxlength without allocating the
-            # announced size; an oversized peer breaks the channel here.
-            if "bad message length" in str(e):
-                logger.warning("local SDK frame exceeded byte bound; closing channel")
-                return "oversized"
-            return "eof"
+        except _FrameOversized:
+            logger.warning("local SDK frame exceeded byte bound; closing channel")
+            return "oversized"
+        except OSError:
+            # Connection has no portable exception subtype for an
+            # over-bound frame. The descriptor cannot be safely reused, and
+            # every OSError on this bounded receive has the same close path.
+            return "oversized"
         try:
             frame = decode_frame(raw)
         except Exception:
@@ -1613,15 +1786,24 @@ async def serve_channel(
             except _RequestMalformed as e:
                 logger.warning("local SDK chunked request rejected: %s", e)
                 return "malformed"
-            except OSError as e:
-                if "bad message length" in str(e):
-                    logger.warning(
-                        "local SDK frame exceeded byte bound; closing channel"
-                    )
-                    return "oversized"
-                return "eof"
+            except _FrameOversized:
+                logger.warning("local SDK frame exceeded byte bound; closing channel")
+                return "oversized"
+            except OSError:
+                return "oversized"
         if not isinstance(frame.get("id"), str):
             return "malformed"
+        if frame.get("op") not in allowed_ops:
+            reason = await _send_frame(
+                _error(
+                    frame["id"],
+                    404,
+                    f"local channel operation not allowed: {frame.get('op')!r}",
+                )
+            )
+            if reason is not None:
+                return reason
+            continue
         for response in await dispatch_frames(session_factory, principal, frame):
             reason = await _send_frame(response)
             if reason is not None:

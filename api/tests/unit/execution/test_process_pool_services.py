@@ -17,6 +17,8 @@ from src.services.execution.process_pool import (
     ProcessState,
 )
 
+SERVICE_ID = "00000000-0000-4000-8000-000000000001"
+
 
 def _make_pool(**kwargs):
     kwargs.setdefault("max_workers", 2)
@@ -46,7 +48,7 @@ def _service_context():
     return {
         "execution_id": "attempt-1",
         "service": {
-            "service_id": "service-1",
+            "service_id": SERVICE_ID,
             "attempt_id": "attempt-1",
             "lease_token": "lease-1",
         },
@@ -55,7 +57,7 @@ def _service_context():
 
 async def _route(pool, **kwargs):
     args = {
-        "service_id": "service-1",
+        "service_id": SERVICE_ID,
         "attempt_id": "attempt-1",
         "lease_token": "lease-1",
         "context": _service_context(),
@@ -80,7 +82,7 @@ class TestRouteService:
         assert len(pool.service_processes) == 1
         handle = next(iter(pool.service_processes.values()))
         assert handle.service is not None
-        assert handle.service.service_id == "service-1"
+        assert handle.service.service_id == SERVICE_ID
         assert handle.service.attempt_id == "attempt-1"
         assert handle.service.lease_token == "lease-1"
         assert handle.service.graceful_shutdown_seconds == 30
@@ -109,7 +111,7 @@ class TestRouteService:
         ):
             with pytest.raises(MemoryError, match="memory pressure"):
                 await pool.route_service(
-                    service_id="service-1",
+                    service_id=SERVICE_ID,
                     attempt_id="attempt-1",
                     lease_token="lease-1",
                     context=_service_context(),
@@ -172,7 +174,7 @@ class TestServiceHealth:
         from src.services.execution.process_pool import ServiceInfo
 
         handle.service = ServiceInfo(
-            service_id="service-1",
+            service_id=SERVICE_ID,
             attempt_id="attempt-1",
             lease_token="lease-1",
         )
@@ -293,7 +295,7 @@ class TestServiceAccounting:
         assert heartbeat["service_count"] == 1
         assert heartbeat["busy_count"] == 0
         assert heartbeat["service_children"][0]["service"] == {
-            "service_id": "service-1",
+            "service_id": SERVICE_ID,
             "attempt_id": "attempt-1",
         }
         # Service children report memory like workflow children
