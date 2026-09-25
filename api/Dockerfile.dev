@@ -49,6 +49,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     nodejs npm \
     && rm -rf /var/lib/apt/lists/*
 
+# Match the production App build toolchain; Debian's npm 9.2.0 crashes while
+# resolving valid V2 App peer dependencies ("edgesOut").
+RUN npm install --global npm@10.9.3 --no-audit --no-fund
+
 # Copy installed packages from builder
 COPY --from=builder /usr/local/lib/python3.14/site-packages /usr/local/lib/python3.14/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin

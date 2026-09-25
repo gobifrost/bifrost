@@ -33,6 +33,28 @@ async def test_foundry_catalog_is_not_presented_as_deployment_names():
 
 
 @pytest.mark.asyncio
+async def test_openai_catalog_forwards_opencode_go_identity_headers():
+    client = SimpleNamespace(
+        models=SimpleNamespace(
+            list=AsyncMock(return_value=SimpleNamespace(data=[]))
+        )
+    )
+    headers = {
+        "User-Agent": "Bifrost/test",
+        "x-opencode-session": "catalog-session",
+    }
+    with patch("openai.AsyncOpenAI", return_value=client):
+        result = await ProviderCatalogService().list_openai(
+            "sk-test",
+            "https://opencode.ai/zen/go/v1",
+            extra_headers=headers,
+        )
+
+    assert result.success is True
+    assert client.models.list.await_args.kwargs["extra_headers"] == headers
+
+
+@pytest.mark.asyncio
 async def test_openrouter_catalog_merges_text_image_and_video_models():
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.headers["Authorization"] == "Bearer sk-test"

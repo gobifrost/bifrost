@@ -48,129 +48,131 @@ def _deploy(e2e_client, headers, solution_id: str, *, python_files: dict, workfl
     return resp.json()
 
 
-def test_deploy_and_run_solution_local_import(e2e_client, platform_admin):
-    """A solution workflow imports its own modules/* and runs (criteria 2,3)."""
+def test_solution_deploy_resolves_local_workflows_and_blocks_global_import(
+    e2e_client, platform_admin,
+):
+    """One deploy checks local modules, vendored shared imports, function
+    identity, and repo isolation."""
+    import asyncio
+
+    from src.services.solutions.deploy import solution_entity_id
+    from src.services.solutions.vendoring import vendor_shared_deps
     from tests.e2e.conftest import execute_workflow_sync
 
     headers = platform_admin.headers
     slug = f"sol-import-{uuid.uuid4().hex[:8]}"
     sid = _create_solution(e2e_client, headers, slug=slug, global_repo_access=False)
+    vendored_workflow_id = uuid.uuid4()
 
-    wf_id = str(uuid.uuid4())
+    solution_files = {
+        "modules/calc.py": "VALUE = 42\n",
+        "workflows/answer.py": (
+            "from modules.calc import VALUE\n"
+            "from bifrost import workflow\n\n"
+            "@workflow\n"
+            "async def answer():\n"
+            "    return {'value': VALUE}\n"
+        ),
+        "workflows/uses_shared.py": (
+            "from shared.vend_calc import VALUE\n"
+            "from bifrost import workflow\n\n"
+            "@workflow\n"
+            "async def go():\n"
+            "    return {'value': VALUE}\n"
+        ),
+        "workflows/snap.py": (
+            "from bifrost import workflow\n\n"
+            '@workflow(name="Sandbox Ticket Snapshot")\n'
+            "async def snapshot():\n"
+            "    return {'ok': True}\n"
+        ),
+        "workflows/needs_shared.py": (
+            "import shared.definitely_not_in_solution  # noqa\n"
+            "from bifrost import workflow\n\n"
+            "@workflow\n"
+            "async def go():\n"
+            "    return 1\n"
+        ),
+    }
+
+    async def repo_read(path: str):
+        return {"shared/vend_calc.py": "VALUE = 7\n"}.get(path)
+
+    vendored_files = asyncio.run(vendor_shared_deps(solution_files, repo_read))
+    assert vendored_files == {"shared/vend_calc.py": "VALUE = 7\n"}
+
     _deploy(
         e2e_client,
         headers,
         sid,
-        python_files={
-            "modules/calc.py": "VALUE = 42\n",
-            "workflows/answer.py": (
-                "from modules.calc import VALUE\n"
-                "from bifrost import workflow\n\n"
-                "@workflow\n"
-                "async def answer():\n"
-                "    return {'value': VALUE}\n"
-            ),
-        },
-        workflows=[{
-            "id": wf_id,
-            "name": f"answer_{slug}",
-            "function_name": "answer",
-            "path": "workflows/answer.py",
-            "type": "workflow",
-        }],
+        python_files={**solution_files, **vendored_files},
+        workflows=[
+            {
+                "id": str(uuid.uuid4()),
+                "name": f"answer_{slug}",
+                "function_name": "answer",
+                "path": "workflows/answer.py",
+                "type": "workflow",
+            },
+            {
+                "id": str(uuid.uuid4()),
+                "name": "hello",  # diverges from decorator name and function_name
+                "function_name": "snapshot",
+                "path": "workflows/snap.py",
+                "type": "workflow",
+            },
+            {
+                "id": str(vendored_workflow_id),
+                "name": f"uses_shared_{slug}",
+                "function_name": "go",
+                "path": "workflows/uses_shared.py",
+                "type": "workflow",
+            },
+            {
+                "id": str(uuid.uuid4()),
+                "name": f"needs_shared_{slug}",
+                "function_name": "go",
+                "path": "workflows/needs_shared.py",
+                "type": "workflow",
+            },
+        ],
     )
 
-    # Execute by PORTABLE path::fn ref (what a v2 app / form uses) — the deployed
-    # row id is remapped per-install (uuid5), so the manifest UUID is not a valid
-    # execution handle; the path ref resolves within the install's scope (R7-P1-c).
-    result = execute_workflow_sync(
+    # Portable path::fn references resolve within this install, even though
+    # manifest UUIDs are remapped during deployment.
+    local = execute_workflow_sync(
         e2e_client, headers, "workflows/answer.py::answer", request_sync=True
     )
-    assert result["status"] == "Success", f"unexpected: {result}"
-    assert result["result"] == {"value": 42}
+    assert local["status"] == "Success", local
+    assert local["result"] == {"value": 42}
 
-
-def test_deploy_and_run_when_name_diverges_from_function(e2e_client, platform_admin):
-    """Regression for the "Executable 'hello' not found" bug.
-
-    Deploy a workflow whose manifest ``name`` differs from BOTH the decorator
-    display name AND the Python ``function_name``. Execution must still run it —
-    resolution is by ``function_name`` (service.py / module_loader.py), and the
-    DB ``name`` is identity/display only. Before the fix, execution matched the
-    decorator display name against the DB name and raised "Executable not found".
-    """
-    from tests.e2e.conftest import execute_workflow_sync
-
-    headers = platform_admin.headers
-    slug = f"sol-namediv-{uuid.uuid4().hex[:8]}"
-    sid = _create_solution(e2e_client, headers, slug=slug, global_repo_access=False)
-
-    _deploy(
+    # The vendored module resolves after deploy by the remapped entity ID,
+    # even though global_repo_access is disabled.
+    vendored = execute_workflow_sync(
         e2e_client,
         headers,
-        sid,
-        python_files={
-            "workflows/snap.py": (
-                "from bifrost import workflow\n\n"
-                '@workflow(name="Sandbox Ticket Snapshot")\n'  # decorator display name
-                "async def snapshot():\n"  # function_name = "snapshot"
-                "    return {'ok': True}\n"
-            ),
-        },
-        workflows=[{
-            "id": str(uuid.uuid4()),
-            "name": "hello",  # manifest name diverges from decorator AND function
-            "function_name": "snapshot",
-            "path": "workflows/snap.py",
-            "type": "workflow",
-        }],
+        str(solution_entity_id(uuid.UUID(sid), vendored_workflow_id)),
+        request_sync=True,
     )
+    assert vendored["status"] == "Success", vendored
+    assert vendored["result"] == {"value": 7}
 
-    result = execute_workflow_sync(
+    # Execution uses function_name; the manifest name and decorator display
+    # name are intentionally different.
+    named = execute_workflow_sync(
         e2e_client, headers, "workflows/snap.py::snapshot", request_sync=True
     )
-    assert result["status"] == "Success", f"name-divergent workflow failed to run: {result}"
-    assert result["result"] == {"ok": True}
+    assert named["status"] == "Success", named
+    assert named["result"] == {"ok": True}
 
-
-def test_global_repo_import_blocked_when_flag_off(e2e_client, platform_admin):
-    """With global_repo_access OFF, importing a _repo/ `shared.*` module must
-    NOT resolve — no silent fallback (criterion 4)."""
-    from tests.e2e.conftest import execute_workflow_sync
-
-    headers = platform_admin.headers
-    slug = f"sol-noglobal-{uuid.uuid4().hex[:8]}"
-    sid = _create_solution(e2e_client, headers, slug=slug, global_repo_access=False)
-
-    wf_id = str(uuid.uuid4())
-    _deploy(
-        e2e_client,
-        headers,
-        sid,
-        python_files={
-            "workflows/needs_shared.py": (
-                "import shared.definitely_not_in_solution  # noqa\n"
-                "from bifrost import workflow\n\n"
-                "@workflow\n"
-                "async def go():\n"
-                "    return 1\n"
-            ),
-        },
-        workflows=[{
-            "id": wf_id,
-            "name": f"needs_shared_{slug}",
-            "function_name": "go",
-            "path": "workflows/needs_shared.py",
-            "type": "workflow",
-        }],
-    )
-
-    result = execute_workflow_sync(
+    # global_repo_access=False forbids silently resolving a shared.* import
+    # from the workspace repository.
+    blocked = execute_workflow_sync(
         e2e_client, headers, "workflows/needs_shared.py::go", request_sync=True
     )
-    assert result["status"] == "Failed", f"expected import failure, got: {result}"
-    blob = f"{result.get('error')} {result.get('error_type')}".lower()
-    assert "module" in blob or "import" in blob, f"unexpected error: {result}"
+    assert blocked["status"] == "Failed", blocked
+    error = f"{blocked.get('error')} {blocked.get('error_type')}".lower()
+    assert "module" in error or "import" in error, blocked
 
 
 def _execute_with_app(e2e_client, headers, workflow_ref: str, app_id: str) -> dict:
@@ -242,34 +244,31 @@ def _deploy_install_with_app(e2e_client, headers, marker: str, org_id: str | Non
     }
 
 
-def test_two_installs_same_path_resolve_own_workflow_via_app_id(e2e_client, platform_admin):
-    """Codex #8 P1 end-to-end: two Solution installs each ship
-    workflows/main.py::main (different return values) AND an app. Executing each
-    app's workflow ref with that app's app_id resolves THAT install's own
-    workflow — deterministically, not a sibling install's that shares the path."""
+@pytest.fixture(scope="module")
+def orgbound_install(e2e_client, platform_admin, org1) -> dict:
+    """One real deploy for independent app-scoped resolution checks."""
+    return _deploy_install_with_app(
+        e2e_client, platform_admin.headers, "orgbound", org_id=org1["id"]
+    )
+
+
+def test_two_installs_same_path_resolve_own_workflow_via_app_scope(
+    e2e_client, platform_admin, orgbound_install,
+):
+    """Both body app_id and the browser's X-Bifrost-App header resolve the
+    workflow from the matching install when two installs share a path."""
     headers = platform_admin.headers
 
-    app_a = _deploy_install_with_app(e2e_client, headers, "aaa")["app_id"]
+    app_a = orgbound_install["app_id"]
     app_b = _deploy_install_with_app(e2e_client, headers, "bbb")["app_id"]
 
-    # Each app's path-ref resolves to ITS OWN install's workflow.
+    # Each app's path-ref resolves to its own install via the body scope.
     res_a = _execute_with_app(e2e_client, headers, "workflows/main.py::main", app_a)
     res_b = _execute_with_app(e2e_client, headers, "workflows/main.py::main", app_b)
     assert res_a["status"] == "Success", res_a
     assert res_b["status"] == "Success", res_b
-    assert res_a["result"] == {"marker": "aaa"}, res_a
+    assert res_a["result"] == {"marker": "orgbound"}, res_a
     assert res_b["result"] == {"marker": "bbb"}, res_b
-
-
-def test_app_header_alone_scopes_workflow_execution(e2e_client, platform_admin):
-    """The deployed-browser transport contract: X-Bifrost-App header, NO body
-    app_id. Auth derives ctx.solution_id from the header; workflow execution
-    must honor that context scope so a path::fn ref resolves the install's own
-    workflow — same as tables/files already do."""
-    headers = platform_admin.headers
-
-    app_a = _deploy_install_with_app(e2e_client, headers, "hdr-aaa")["app_id"]
-    app_b = _deploy_install_with_app(e2e_client, headers, "hdr-bbb")["app_id"]
 
     def _execute_with_header(app_id: str) -> dict:
         resp = e2e_client.post(
@@ -280,21 +279,24 @@ def test_app_header_alone_scopes_workflow_execution(e2e_client, platform_admin):
         assert resp.status_code == 200, f"execute failed: {resp.status_code} {resp.text}"
         return resp.json()
 
-    res_a = _execute_with_header(app_a)
-    res_b = _execute_with_header(app_b)
-    assert res_a["status"] == "Success", res_a
-    assert res_b["status"] == "Success", res_b
-    assert res_a["result"] == {"marker": "hdr-aaa"}, res_a
-    assert res_b["result"] == {"marker": "hdr-bbb"}, res_b
+    # The deployed browser sends only X-Bifrost-App, with no body app_id.
+    header_a = _execute_with_header(app_a)
+    header_b = _execute_with_header(app_b)
+    assert header_a["status"] == "Success", header_a
+    assert header_b["status"] == "Success", header_b
+    assert header_a["result"] == {"marker": "orgbound"}, header_a
+    assert header_b["result"] == {"marker": "bbb"}, header_b
 
 
-def test_workflow_404_includes_scope_diagnostics(e2e_client, platform_admin):
+def test_workflow_404_includes_scope_diagnostics(
+    e2e_client, platform_admin, orgbound_install,
+):
     """A scope-resolution miss must identify itself: the 404 detail carries the
     ref and the derived install scope, so a dropped/wrong scope reads as
     `derived_solution_scope: null` instead of a mystery 404 (drive lesson —
     the unscoped courtesy fallback masked scope loss for a whole POC day)."""
     headers = platform_admin.headers
-    app_a = _deploy_install_with_app(e2e_client, headers, "diag")["app_id"]
+    app_a = orgbound_install["app_id"]
 
     resp = e2e_client.post(
         "/api/workflows/execute",
@@ -310,7 +312,7 @@ def test_workflow_404_includes_scope_diagnostics(e2e_client, platform_admin):
 
 
 def test_admin_resolves_orgbound_install_path_ref_cross_org(
-    e2e_client, platform_admin, org1
+    e2e_client, platform_admin, orgbound_install,
 ):
     """Dev14 regression: an ORG-BOUND install's workflows carry the install's
     org; a platform admin whose effective org differs (the normal demo/support
@@ -319,7 +321,7 @@ def test_admin_resolves_orgbound_install_path_ref_cross_org(
     match, exactly like resolve_solution_table_by_name does for tables.
     Global installs never caught this (their rows have organization_id NULL)."""
     headers = platform_admin.headers
-    app_a = _deploy_install_with_app(e2e_client, headers, "orgbound", org_id=org1["id"])["app_id"]
+    app_a = orgbound_install["app_id"]
 
     resp = e2e_client.post(
         "/api/workflows/execute",
@@ -332,15 +334,16 @@ def test_admin_resolves_orgbound_install_path_ref_cross_org(
     assert body["result"] == {"marker": "orgbound"}, body
 
 
-def test_all_three_ref_shapes_resolve_identically(e2e_client, platform_admin, org1):
+def test_all_three_ref_shapes_resolve_identically(
+    e2e_client, platform_admin, orgbound_install,
+):
     """The calling contract: UUID, portable path::fn, AND bare workflow name
     must all resolve a deployed install's own workflow through the same
     header-scoped transport — including the hard case (ORG-BOUND install,
     admin caller in a different org)."""
     headers = platform_admin.headers
-    deployed = _deploy_install_with_app(e2e_client, headers, "refshapes", org_id=org1["id"])
-    app_id = deployed["app_id"]
-    wf_name = deployed["workflow_name"]
+    app_id = orgbound_install["app_id"]
+    wf_name = orgbound_install["workflow_name"]
 
     def _execute(ref: str) -> dict:
         resp = e2e_client.post(
@@ -357,18 +360,17 @@ def test_all_three_ref_shapes_resolve_identically(e2e_client, platform_admin, or
 
     for label, res in (("path", by_path), ("name", by_name), ("uuid", by_uuid)):
         assert res["status"] == "Success", (label, res)
-        assert res["result"] == {"marker": "refshapes"}, (label, res)
+        assert res["result"] == {"marker": "orgbound"}, (label, res)
     assert by_path["workflow_id"] == by_name["workflow_id"] == by_uuid["workflow_id"]
 
 
 def test_foreign_app_header_cannot_reach_other_orgs_workflow(
-    e2e_client, platform_admin, org1, org2_user
+    e2e_client, orgbound_install, org2_user,
 ):
     """PINNING (expected to hold): a regular user from org2 smuggling org1's
     X-Bifrost-App must NOT execute org1's install workflow — the resolver's
     org gate (cascade scope) holds under ctx-first scoping."""
-    headers = platform_admin.headers
-    app_a = _deploy_install_with_app(e2e_client, headers, "xorg", org_id=org1["id"])["app_id"]
+    app_a = orgbound_install["app_id"]
 
     resp = e2e_client.post(
         "/api/workflows/execute",

@@ -244,6 +244,19 @@ class TestProcessPoolManagerInit:
         assert pool.on_result is callback
 
 
+def test_reported_process_highwater_survives_lower_parent_sample():
+    pool = ProcessPoolManager()
+    handle = MagicMock()
+    handle.cpu_sampler.peak_cpu_cores = 0.8
+    handle.cpu_sampler.peak_process_rss_bytes = 80 * 1024 * 1024
+    result = {"metrics": {"peak_process_rss_bytes": 120 * 1024 * 1024}}
+
+    pool._attach_resource_peaks(handle, result)
+
+    assert result["metrics"]["peak_process_rss_bytes"] == 120 * 1024 * 1024
+    assert result["metrics"]["peak_cpu_cores"] == 0.8
+
+
 class TestProcessPoolManagerStart:
     """Tests for pool startup."""
 

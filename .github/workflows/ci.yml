@@ -82,6 +82,9 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: python3 api/scripts/check_github_action_pins.py --verify-versions
 
+      - name: Check E2E shard allocation
+        run: python3 -m unittest scripts.test_e2e_shard
+
       # Codex skill mirrors (plugins/bifrost/skills/, .codex/skills/) are
       # generated from the canonical .claude/skills/ source. Regenerate and fail
       # if the committed mirrors drift. NOTE: ci.yml paths-ignore skips CI for
@@ -170,17 +173,18 @@ jobs:
         run: npm test
 
   # =============================================================================
-  # Dev Artifact Candidate - build once for the exact merge candidate.
+  # Dev Artifact Candidates - build both images for the exact merge candidate.
   #
   # The SHA-addressed candidate tags are internal staging references, not the
-  # shared :dev channel. This job runs in parallel with the complete suite and
-  # is folded into the required aggregate below. Only after the identical SHA
-  # reaches main may build-dev promote these exact digests to :dev.
+  # shared :dev channel. API and client build in parallel with the complete
+  # suite; both are folded into the required aggregate below. Browser smoke
+  # can start as soon as its exact client image is ready. Only after the
+  # identical SHA reaches main may build-dev promote these digests to :dev.
   # =============================================================================
-  build-dev-candidate:
+  build-dev-api-candidate:
     if: github.event_name == 'merge_group'
     runs-on: ubuntu-latest
-    name: Build Dev Candidate
+    name: Build API Dev Candidate
     permissions:
       contents: read
       packages: write
@@ -244,6 +248,38 @@ jobs:
           subject-digest: ${{ steps.api.outputs.digest }}
           push-to-registry: true
 
+  build-dev-client-candidate:
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    name: Build Client Dev Candidate
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout exact merge candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Compute candidate version
+        id: version
+        run: echo "version=$(./scripts/compute-dev-version.sh)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
       - name: Build and push SHA-addressed client candidate
         id: client
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
@@ -283,7 +319,7 @@ jobs:
         github.event_name == 'workflow_dispatch' ||
         startsWith(github.ref, 'refs/tags/v')
       )
-    needs: [build-dev-candidate]
+    needs: [build-dev-client-candidate]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     name: Critical Browser Smoke
@@ -406,11 +442,10 @@ jobs:
           ./test.sh unit
 
   # =============================================================================
-  # E2E Tests - Sharded across 2 parallel runners. Each shard boots its own
+  # E2E Tests - Sharded across 3 parallel runners. Each shard boots its own
   # isolated test stack (no xdist, no shared services between shards).
-  # scripts/e2e_shard.py deterministically allocates test files: heavies
-  # bin-packed first, then round-robin in sorted order — adding a file only
-  # moves files in shards downstream of the insertion point.
+  # scripts/e2e_shard.py deterministically assigns larger source files first
+  # to the shard with the least assigned source, with no maintained timing map.
   #
   # The complete suite intentionally runs on merge_group rather than ordinary
   # pull_request events. The merge queue's synthetic ref is the exact candidate
@@ -418,7 +453,7 @@ jobs:
   # workflow_dispatch runs remain complete as well.
   #
   # The internal matrix job (test-e2e) uses shard names like
-  # "E2E Tests (shard 1/2)". The aggregate gate job below (test-e2e-gate)
+  # "E2E Tests (shard 1/3)". The aggregate gate job below (test-e2e-gate)
   # is named EXACTLY "E2E Tests" to match the required status check name —
   # no ruleset edits needed.
   # =============================================================================
@@ -428,11 +463,11 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
-    name: E2E Tests (shard ${{ matrix.shard }}/2)
+    name: E2E Tests (shard ${{ matrix.shard }}/3)
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3]
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -451,19 +486,19 @@ jobs:
           cache-from: type=gha,scope=test-api-dev
           cache-to: type=gha,scope=test-api-dev,mode=max
 
-      - name: Run E2E tests (shard ${{ matrix.shard }}/2)
+      - name: Run E2E tests (shard ${{ matrix.shard }}/3)
         env:
           BIFROST_SKIP_BUILD: "1"
           BIFROST_TEST_USE_CLEAN_BOOT: "1"
         run: |
           chmod +x test.sh
           ./test.sh stack up
-          mapfile -t shard_files < <(python3 scripts/e2e_shard.py --shard-id ${{ matrix.shard }} --total 2)
+          mapfile -t shard_files < <(python3 scripts/e2e_shard.py --shard-id ${{ matrix.shard }} --total 3)
           if [ ${#shard_files[@]} -eq 0 ]; then
             echo "ERROR: shard ${{ matrix.shard }} resolved to zero files" >&2
             exit 1
           fi
-          echo "Shard ${{ matrix.shard }}/2: ${#shard_files[@]} files"
+          echo "Shard ${{ matrix.shard }}/3: ${#shard_files[@]} files"
           ./test.sh "${shard_files[@]}" -v --durations=50
 
       - name: Show API errors after E2E failure
@@ -474,7 +509,7 @@ jobs:
           COMPOSE_PROJECT_NAME="$bifrost_test_project" docker compose -f docker-compose.test.yml logs --tail=300 api
 
   # Aggregate gate — required check named "E2E Tests" (matches ruleset 15329014).
-  # Fails if either backend E2E shard, the client unit suite, or the critical
+  # Fails if any backend E2E shard, the client unit suite, or the critical
   # browser smoke failed/cancelled. The component/browser jobs have their own
   # visible names but are folded into this required context so the repository
   # settings do not need to change.
@@ -488,7 +523,7 @@ jobs:
         github.event_name == 'workflow_dispatch' ||
         startsWith(github.ref, 'refs/tags/v')
       )
-    needs: [test-e2e, test-client-unit, test-client-smoke, build-dev-candidate]
+    needs: [test-e2e, test-client-unit, test-client-smoke, build-dev-api-candidate, build-dev-client-candidate]
     runs-on: ubuntu-latest
     name: E2E Tests
     steps:
@@ -508,11 +543,13 @@ jobs:
              [ "${{ needs.test-client-unit.result }}" != "success" ] || \
              [ "${{ needs.test-client-smoke.result }}" != "success" ] || \
              { [ "${{ github.event_name }}" = "merge_group" ] && \
-               [ "${{ needs.build-dev-candidate.result }}" != "success" ]; }; then
+               { [ "${{ needs.build-dev-api-candidate.result }}" != "success" ] || \
+                 [ "${{ needs.build-dev-client-candidate.result }}" != "success" ]; }; }; then
             echo "E2E matrix result: ${{ needs.test-e2e.result }}"
             echo "Client unit result: ${{ needs.test-client-unit.result }}"
             echo "Critical browser smoke result: ${{ needs.test-client-smoke.result }}"
-            echo "Dev candidate result: ${{ needs.build-dev-candidate.result }}"
+            echo "API candidate result: ${{ needs.build-dev-api-candidate.result }}"
+            echo "Client candidate result: ${{ needs.build-dev-client-candidate.result }}"
             exit 1
           fi
           echo "All exact-candidate suites and required artifact builds passed."
@@ -822,7 +859,7 @@ jobs:
   # Build API Image - Only on version tags, after tests pass
   # =============================================================================
   build-api:
-    # test-e2e-gate intentionally depends on build-dev-candidate, which is
+    # test-e2e-gate intentionally depends on both candidate builds, which are
     # skipped for tag runs. GitHub propagates that skipped ancestor through the
     # dependency chain unless this job uses a status function, even though the
     # aggregate gate itself succeeds. Check every direct gate explicitly so a

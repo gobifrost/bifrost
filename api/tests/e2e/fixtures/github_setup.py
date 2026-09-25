@@ -192,7 +192,7 @@ def _wait_for_platform_job(
         )
         assert response.status_code == 200, response.text
         data = response.json()
-        if data["status"] in {"succeeded", "failed", "cancelled"}:
+        if data["status"] in {"succeeded", "failed", "cancelled", "requires_action"}:
             return data
         time.sleep(0.5)
     raise AssertionError(f"Git connection job {job_id} did not finish")
@@ -264,10 +264,16 @@ def github_configured(e2e_client, platform_admin, github_test_branch):
         platform_admin.headers,
         response.json()["job_id"],
     )
-    assert job["status"] == "succeeded", job
-    logger.info(f"GitHub connection completed: {repo_url} @ {config['branch']}")
+    # Earlier tests may have created workspace entities absent from the test
+    # repository. A reviewed connect then correctly pauses for delete approval;
+    # this fixture must not delete another test's data to complete setup.
+    assert job["status"] in {"succeeded", "requires_action"}, job
+    if job["status"] == "requires_action":
+        assert job["result"]["needs_delete_confirmation"] is True, job
+        assert job["result"]["pending_deletes"], job
+    logger.info("GitHub connection job reached %s", job["status"])
 
-    yield config
+    yield {**config, "connect_job": job}
 
     # Cleanup: Disconnect GitHub integration
     try:

@@ -1,19 +1,26 @@
 import { ExternalLink, X } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { ExecutionDetails } from "@/pages/ExecutionDetails";
+import {
+	createExecutionHistoryOriginState,
+	type ExecutionHistoryOrigin,
+} from "../navigation";
 
 interface ExecutionPreviewPanelProps {
 	executionId: string | null;
 	onClose: () => void;
 	onExecutionChange?: (newExecutionId: string) => void;
+	getOrigin: () => ExecutionHistoryOrigin;
 }
 
 export function ExecutionPreviewPanel({
 	executionId,
 	onClose,
 	onExecutionChange,
+	getOrigin,
 }: ExecutionPreviewPanelProps) {
+	const navigate = useNavigate();
 	if (!executionId) {
 		return null;
 	}
@@ -43,6 +50,24 @@ export function ExecutionPreviewPanel({
 						>
 							<Link
 								to={`/history/${executionId}`}
+								onClick={(event) => {
+									if (
+										event.defaultPrevented ||
+										event.button !== 0 ||
+										event.metaKey ||
+										event.ctrlKey ||
+										event.shiftKey ||
+										event.altKey
+									) {
+										return;
+									}
+									event.preventDefault();
+									navigate(`/history/${executionId}`, {
+										state: createExecutionHistoryOriginState(
+											getOrigin(),
+										),
+									});
+								}}
 								aria-label="Open execution"
 								title="Open execution"
 							>

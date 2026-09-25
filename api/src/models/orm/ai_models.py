@@ -48,7 +48,7 @@ class AIProviderConnection(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "provider IN ('openai', 'anthropic', 'google', 'openrouter', 'openai_compatible')",
+            "provider IN ('openai', 'anthropic', 'google', 'openrouter', 'openai_compatible', 'opencode_go')",
             name="ck_ai_provider_connections_provider",
         ),
         Index("uq_ai_provider_connections_name_ci", text("lower(name)"), unique=True),
@@ -68,6 +68,7 @@ class AIModelProfile(Base):
     )
     model: Mapped[str] = mapped_column(String(200), nullable=False)
     openai_transport: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    wire_api: Mapped[str | None] = mapped_column(String(32), nullable=True)
     default_max_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     capabilities: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     enabled_for_chat: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
@@ -104,6 +105,10 @@ class AIModelProfile(Base):
         CheckConstraint(
             "openai_transport IS NULL OR openai_transport IN ('responses', 'chat_completions')",
             name="ck_ai_model_profiles_openai_transport",
+        ),
+        CheckConstraint(
+            "wire_api IS NULL OR wire_api IN ('chat_completions', 'responses', 'messages')",
+            name="ck_ai_model_profiles_wire_api",
         ),
         CheckConstraint(
             "default_max_tokens IS NULL OR (default_max_tokens >= 1 AND default_max_tokens <= 200000)",

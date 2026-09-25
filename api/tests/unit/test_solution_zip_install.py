@@ -1,19 +1,18 @@
-"""Unit tests for the Solution zip-install PREVIEW path (parse-only) + zip-slip
-safety. The preview function unzips a Solution workspace, parses the manifests
-via the CLI collectors, and returns what it would create — no DB, no S3, no
-build. The COMMIT path is covered by the e2e test (it needs a live deployer)."""
+"""Tests for Solution zip-install validation and direct service contracts."""
 from __future__ import annotations
 
 import io
 import zipfile
+from pathlib import Path
+from uuid import uuid4
 
 import pytest
-
-from pathlib import Path
 
 from src.services.solutions.zip_install import (
     BadExportPassword,
     PreviewResult,
+    UnmetDependency,
+    install_zip,
     preview_zip,
     validate_install_zip,
 )
@@ -79,6 +78,37 @@ def _make_workspace_zip(extra: dict[str, str] | None = None) -> bytes:
         for name, content in files.items():
             z.writestr(name, content)
     return buf.getvalue()
+
+
+@pytest.mark.e2e
+async def test_install_zip_rejects_missing_module_before_persisting(db_session) -> None:
+    """The installer invokes the dependency gate before committing an install."""
+    from sqlalchemy import select
+
+    from src.models.orm.solutions import Solution
+
+    bundle = _make_workspace_zip(
+        extra={
+            "workflows/main.py": (
+                "from modules.absent import x\n\n"
+                "def run(sdk):\n    return x\n"
+            )
+        }
+    )
+    with pytest.raises(UnmetDependency, match="modules.absent"):
+        await install_zip(
+            db_session,
+            bundle,
+            organization_id=None,
+            config_values={},
+            deployer_email="dev@gobifrost.com",
+        )
+
+    await db_session.rollback()
+    rows = (await db_session.execute(
+        select(Solution).where(Solution.slug == "zip-demo")
+    )).scalars().all()
+    assert rows == []
 
 
 def test_preview_lists_entities_and_config_schemas() -> None:
@@ -224,3 +254,215 @@ def test_validate_install_zip_correct_password_for_secrets(tmp_path: Path) -> No
     )
     # Must not raise.
     validate_install_zip(zp, password="correct-horse")
+
+
+@pytest.mark.e2e
+async def test_secret_content_collision_requires_replace_and_preserves_integration_config(
+    db_session,
+) -> None:
+    """Only solution-scope config rows collide, and replacement is explicit."""
+    from sqlalchemy import select
+
+    from src.core.security import decrypt_secret
+    from src.models.enums import ConfigType as ConfigTypeEnum
+    from src.models.orm.config import Config
+    from src.models.orm.integrations import Integration
+    from src.models.orm.organizations import Organization
+    from src.models.orm.solution_config_schema import SolutionConfigSchema
+    from src.models.orm.solutions import Solution
+    from src.services.solutions.secrets_blob import SolutionContent
+    from src.services.solutions.zip_install import (
+        ContentCollision,
+        _apply_content,
+        _assert_no_unforced_collisions,
+    )
+
+    org = Organization(
+        id=uuid4(), name=f"Import secrets {uuid4().hex[:8]}", created_by="test"
+    )
+    solution = Solution(
+        id=uuid4(),
+        slug=f"import-secrets-{uuid4().hex[:8]}",
+        name="Import secrets",
+        organization_id=org.id,
+    )
+    integration = Integration(name=f"Import secrets {uuid4().hex[:8]}")
+    db_session.add_all([org, solution, integration])
+    await db_session.flush()
+    db_session.add_all(
+        [
+            SolutionConfigSchema(
+                id=uuid4(),
+                solution_id=solution.id,
+                key="API_KEY",
+                type=ConfigTypeEnum.SECRET.value,
+            ),
+            Config(
+                key="API_KEY",
+                value={"value": "integration-owned"},
+                config_type=ConfigTypeEnum.STRING,
+                organization_id=org.id,
+                integration_id=integration.id,
+                updated_by="test",
+            ),
+        ]
+    )
+    await db_session.flush()
+
+    initial = SolutionContent(config_values={"API_KEY": "initial-secret"})
+    await _assert_no_unforced_collisions(
+        db_session,
+        solution=solution,
+        content=initial,
+        replace_secrets=False,
+        replace_data=False,
+    )
+    await _apply_content(
+        db_session,
+        solution=solution,
+        content=initial,
+        workspace=Path(),
+        password=None,
+        replace_secrets=False,
+        replace_data=False,
+        deployer_email="test",
+    )
+
+    replacement = SolutionContent(config_values={"API_KEY": "replacement-secret"})
+    with pytest.raises(ContentCollision) as exc_info:
+        await _assert_no_unforced_collisions(
+            db_session,
+            solution=solution,
+            content=replacement,
+            replace_secrets=False,
+            replace_data=False,
+        )
+    assert exc_info.value.keys == ["API_KEY"]
+
+    await _assert_no_unforced_collisions(
+        db_session,
+        solution=solution,
+        content=replacement,
+        replace_secrets=True,
+        replace_data=False,
+    )
+    await _apply_content(
+        db_session,
+        solution=solution,
+        content=replacement,
+        workspace=Path(),
+        password=None,
+        replace_secrets=True,
+        replace_data=False,
+        deployer_email="test",
+    )
+    stored = (
+        await db_session.execute(
+            select(Config).where(
+                Config.key == "API_KEY",
+                Config.organization_id == org.id,
+                Config.integration_id.is_(None),
+            )
+        )
+    ).scalar_one()
+    assert decrypt_secret(stored.value["value"]) == "replacement-secret"
+
+
+@pytest.mark.e2e
+async def test_table_content_collision_requires_replace_data_and_replaces_all_rows(
+    db_session,
+) -> None:
+    """Existing runtime rows block import until replace_data replaces them all."""
+    from sqlalchemy import select
+
+    from src.models.orm.organizations import Organization
+    from src.models.orm.solutions import Solution
+    from src.models.orm.tables import Document, Table
+    from src.services.solutions.secrets_blob import SolutionContent
+    from src.services.solutions.zip_install import (
+        ContentCollision,
+        _apply_content,
+        _assert_no_unforced_collisions,
+    )
+
+    org = Organization(
+        id=uuid4(), name=f"Import table {uuid4().hex[:8]}", created_by="test"
+    )
+    solution = Solution(
+        id=uuid4(),
+        slug=f"import-table-{uuid4().hex[:8]}",
+        name="Import table",
+        organization_id=org.id,
+    )
+    table_name = f"import_rows_{uuid4().hex[:8]}"
+    db_session.add_all([org, solution])
+    await db_session.flush()
+
+    table = Table(
+        id=uuid4(),
+        name=table_name,
+        organization_id=org.id,
+        solution_id=solution.id,
+    )
+    db_session.add(table)
+    await db_session.flush()
+    db_session.add(
+        Document(
+            id="target-only",
+            table_id=table.id,
+            data={"account": "south", "total": 99},
+        )
+    )
+    await db_session.flush()
+
+    exported = SolutionContent(
+        table_data={table_name: [{"account": "north", "total": 42}]}
+    )
+    with pytest.raises(ContentCollision) as exc_info:
+        await _assert_no_unforced_collisions(
+            db_session,
+            solution=solution,
+            content=exported,
+            replace_secrets=False,
+            replace_data=False,
+        )
+    assert exc_info.value.keys == []
+    assert exc_info.value.tables == [table_name]
+    retained_rows = (
+        (
+            await db_session.execute(
+                select(Document.data).where(Document.table_id == table.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert retained_rows == [{"account": "south", "total": 99}]
+
+    await _assert_no_unforced_collisions(
+        db_session,
+        solution=solution,
+        content=exported,
+        replace_secrets=False,
+        replace_data=True,
+    )
+    await _apply_content(
+        db_session,
+        solution=solution,
+        content=exported,
+        workspace=Path(),
+        password=None,
+        replace_secrets=False,
+        replace_data=True,
+        deployer_email="test",
+    )
+    replaced_rows = (
+        (
+            await db_session.execute(
+                select(Document.data).where(Document.table_id == table.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert replaced_rows == [{"account": "north", "total": 42}]

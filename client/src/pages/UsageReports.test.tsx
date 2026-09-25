@@ -3,6 +3,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen } from "@/test-utils";
 import { UsageReports } from "./UsageReports";
+import { useLocation } from "react-router-dom";
+
+function LocationProbe() {
+	const location = useLocation();
+	return (
+		<output role="status" aria-label="Current URL">
+			{location.pathname}
+			{location.search}
+		</output>
+	);
+}
 
 const mockUseAuth = vi.fn();
 const mockUseOrganizations = vi.fn();
@@ -26,18 +37,34 @@ vi.mock("@/services/usage", () => ({
 	useUsageReport: (...args: unknown[]) => mockUseUsageReport(...args),
 }));
 
+vi.mock("./WorkflowResourcesReport", () => ({
+	WorkflowResourcesReport: ({
+		reportSwitch,
+	}: {
+		reportSwitch: ReactNode;
+	}) => (
+		<section aria-label="workflow resources report">
+			{reportSwitch}
+			Resource runs
+		</section>
+	),
+}));
+
 vi.mock("@/components/layout/ListPageHeader", () => ({
 	ListPageHeader: ({
 		title,
+		titleAccessory,
 		description,
 		actions,
 	}: {
 		title: string;
+		titleAccessory?: ReactNode;
 		description?: string;
 		actions?: ReactNode;
 	}) => (
 		<header>
 			<h1>{title}</h1>
+			{titleAccessory}
 			{description && <p>{description}</p>}
 			{actions}
 		</header>
@@ -65,7 +92,23 @@ vi.mock("@/components/forms/OrganizationSelect", () => ({
 }));
 
 vi.mock("@/components/ui/date-range-picker", () => ({
-	DateRangePicker: () => <div>Report date range picker</div>,
+	DateRangePicker: ({
+		onDateRangeChange,
+	}: {
+		onDateRangeChange: (value: { from: Date; to: Date }) => void;
+	}) => (
+		<button
+			type="button"
+			onClick={() =>
+				onDateRangeChange({
+					from: new Date(2026, 8, 2),
+					to: new Date(2026, 8, 13),
+				})
+			}
+		>
+			Choose report dates
+		</button>
+	),
 }));
 
 vi.mock("@/components/reports/UsageCharts", () => ({
@@ -219,6 +262,57 @@ beforeEach(() => {
 });
 
 describe("UsageReports", () => {
+	it("restores the selected report and AI filters from the URL", async () => {
+		const { user } = renderWithProviders(
+			<>
+				<UsageReports />
+				<LocationProbe />
+			</>,
+			{
+				initialEntries: [
+					"/usage?tab=workflow&ai_source=chat&ai_org=org-1&ai_from=2026-09-01&ai_to=2026-09-12",
+				],
+			},
+		);
+		expect(
+			screen.getByRole("region", { name: "workflow resources report" }),
+		).toBeVisible();
+		await user.click(screen.getByRole("radio", { name: "AI Usage" }));
+		expect(mockUseUsageReport).toHaveBeenLastCalledWith(
+			"2026-09-01",
+			"2026-09-12",
+			"chat",
+			"org-1",
+		);
+		expect(
+			screen.getByRole("status", { name: "Current URL" }),
+		).toHaveTextContent("ai_source=chat");
+		expect(
+			screen.getByRole("status", { name: "Current URL" }),
+		).toHaveTextContent("tab=ai");
+		await user.click(
+			screen.getByRole("button", { name: "Choose report dates" }),
+		);
+		expect(
+			screen.getByRole("status", { name: "Current URL" }),
+		).toHaveTextContent("ai_to=2026-09-13");
+	});
+
+	it("keeps AI Usage as the default and switches to Workflow Resources beside the title", async () => {
+		const { user } = await renderPage();
+		expect(screen.getByRole("heading", { name: "Usage" })).toBeVisible();
+		expect(screen.getByText("Total AI Cost")).toBeVisible();
+		await user.click(
+			screen.getByRole("radio", { name: "Workflow Resources" }),
+		);
+		expect(
+			screen.getByRole("region", { name: "workflow resources report" }),
+		).toBeVisible();
+		expect(screen.queryByText("Total AI Cost")).not.toBeInTheDocument();
+		await user.click(screen.getByRole("radio", { name: "AI Usage" }));
+		expect(screen.getByText("Total AI Cost")).toBeVisible();
+	});
+
 	it("shows retry instead of empty report claims when the first read fails", async () => {
 		const refetch = vi.fn();
 		mockUseUsageReport.mockReturnValue({

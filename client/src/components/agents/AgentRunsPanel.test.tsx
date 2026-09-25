@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { Route, Routes, useLocation } from "react-router-dom";
+import { Route, Routes, useLocation, useNavigate } from "react-router-dom";
 
-import { fireEvent, renderWithProviders, screen } from "@/test-utils";
+import { fireEvent, renderWithProviders, screen, waitFor } from "@/test-utils";
 
 const mockIsDesktop = vi.hoisted(() => vi.fn(() => true));
 vi.mock("@/hooks/useMediaQuery", () => ({
@@ -45,6 +45,56 @@ function NavigationStateProbe() {
 	);
 }
 
+function BackToHistory() {
+	const navigate = useNavigate();
+	return <button onClick={() => navigate(-1)}>Back to history</button>;
+}
+
+function mockPanelScrollRange(scrollHeight: number, clientHeight: number) {
+	let nextScrollHeight = scrollHeight;
+	const originalScrollHeight = Object.getOwnPropertyDescriptor(
+		HTMLElement.prototype,
+		"scrollHeight",
+	);
+	const originalClientHeight = Object.getOwnPropertyDescriptor(
+		HTMLElement.prototype,
+		"clientHeight",
+	);
+	Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+		configurable: true,
+		get: () => nextScrollHeight,
+	});
+	Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+		configurable: true,
+		get: () => clientHeight,
+	});
+	return {
+		setScrollHeight(value: number) {
+			nextScrollHeight = value;
+		},
+		restore() {
+			if (originalScrollHeight)
+				Object.defineProperty(
+					HTMLElement.prototype,
+					"scrollHeight",
+					originalScrollHeight,
+				);
+			else
+				delete (HTMLElement.prototype as { scrollHeight?: number })
+					.scrollHeight;
+			if (originalClientHeight)
+				Object.defineProperty(
+					HTMLElement.prototype,
+					"clientHeight",
+					originalClientHeight,
+				);
+			else
+				delete (HTMLElement.prototype as { clientHeight?: number })
+					.clientHeight;
+		},
+	};
+}
+
 const run = {
 	id: "run-1",
 	agent_id: "agent-1",
@@ -68,6 +118,7 @@ const secondPageRun = {
 };
 
 beforeEach(() => {
+	sessionStorage.clear();
 	mockIsDesktop.mockReturnValue(true);
 	mockUseAuth.mockReturnValue({ isPlatformAdmin: true });
 	mockUseAgents.mockReturnValue({
@@ -152,6 +203,170 @@ describe("AgentRunsPanel", () => {
 		expect(screen.getByRole("row", { name: /428950/ })).toBeInTheDocument();
 	});
 
+	it("restores agent history filters and the selected page from the URL", () => {
+		const expectedStartDate = new Date("2026-07-20T00:00:00");
+		expectedStartDate.setHours(0, 0, 0, 0);
+		const expectedEndDate = new Date("2026-07-23T00:00:00");
+		expectedEndDate.setHours(23, 59, 59, 999);
+		mockUseInfiniteAgentRuns.mockReturnValue({
+			data: {
+				pages: [
+					{ items: [run], total: 50 },
+					{ items: [secondPageRun], total: 50 },
+				],
+			},
+			isLoading: false,
+			isFetching: false,
+			isError: false,
+			isFetchNextPageError: false,
+			hasNextPage: false,
+			isFetchingNextPage: false,
+			refetch: vi.fn(),
+			fetchNextPage: vi.fn(),
+		});
+
+		renderWithProviders(
+			<Routes>
+				<Route path="/history" element={<AgentRunsPanel />} />
+			</Routes>,
+			{
+				initialEntries: [
+					"/history?type=agents&agent=agent-2&status=failed&q=acme&org=org-1&from=2026-07-20&to=2026-07-23&page=2",
+				],
+			},
+		);
+
+		expect(mockUseInfiniteAgentRuns).toHaveBeenLastCalledWith({
+			pageSize: 25,
+			agentId: "agent-2",
+			status: "failed",
+			q: "acme",
+			orgId: "org-1",
+			startDate: expectedStartDate.toISOString(),
+			endDate: expectedEndDate.toISOString(),
+		});
+		expect(screen.getByRole("row", { name: /428976/ })).toBeInTheDocument();
+		expect(
+			screen.getByText(/1 run on this page · Page 2/),
+		).toBeInTheDocument();
+	});
+
+	it("loads missing pages for a direct page link", async () => {
+		const fetchNextPage = vi.fn().mockResolvedValue({ data: undefined });
+		mockUseInfiniteAgentRuns.mockReturnValue({
+			data: { pages: [{ items: [run], total: 50 }] },
+			isLoading: false,
+			isFetching: false,
+			isError: false,
+			isFetchNextPageError: false,
+			hasNextPage: true,
+			isFetchingNextPage: false,
+			refetch: vi.fn(),
+			fetchNextPage,
+		});
+
+		renderWithProviders(
+			<Routes>
+				<Route path="/history" element={<AgentRunsPanel />} />
+			</Routes>,
+			{ initialEntries: ["/history?type=agents&page=2"] },
+		);
+
+		await waitFor(() => expect(fetchNextPage).toHaveBeenCalledOnce());
+	});
+
+	it("bounds a direct page link before loading a long cursor chain", () => {
+		const fetchNextPage = vi.fn();
+		mockUseInfiniteAgentRuns.mockReturnValue({
+			data: { pages: [{ items: [run], total: 2525 }] },
+			isLoading: false,
+			isFetching: false,
+			isError: false,
+			isFetchNextPageError: false,
+			hasNextPage: true,
+			isFetchingNextPage: false,
+			refetch: vi.fn(),
+			fetchNextPage,
+		});
+
+		renderWithProviders(
+			<Routes>
+				<Route path="/history" element={<AgentRunsPanel />} />
+			</Routes>,
+			{ initialEntries: ["/history?type=agents&page=101"] },
+		);
+
+		expect(screen.getByText(/Page 1/)).toBeInTheDocument();
+		expect(fetchNextPage).not.toHaveBeenCalled();
+	});
+
+	it("restores the agent runs scroll position after returning from a run", async () => {
+		const scrollRange = mockPanelScrollRange(500, 100);
+		try {
+			const { user } = renderWithProviders(
+				<Routes>
+					<Route path="/history" element={<AgentRunsPanel />} />
+					<Route
+						path="/agents/:agentId/runs/:runId"
+						element={<BackToHistory />}
+					/>
+				</Routes>,
+				{ initialEntries: ["/history?type=agents"] },
+			);
+
+			const panel = screen.getByTestId("agent-runs-panel");
+			panel.scrollTop = 116;
+			fireEvent.scroll(panel);
+			await user.click(
+				screen.getByRole("row", {
+					name: /Service Desk Triage.*Completed/i,
+				}),
+			);
+			await user.click(
+				screen.getByRole("button", { name: "Back to history" }),
+			);
+
+			await waitFor(() =>
+				expect(screen.getByTestId("agent-runs-panel").scrollTop).toBe(
+					116,
+				),
+			);
+		} finally {
+			scrollRange.restore();
+		}
+	});
+
+	it("waits for the agent runs layout before consuming a saved scroll position", async () => {
+		const scrollRange = mockPanelScrollRange(100, 100);
+		try {
+			sessionStorage.setItem(
+				"bifrost.agent-runs.scroll:/history?type=agents",
+				"116",
+			);
+			renderWithProviders(
+				<Routes>
+					<Route path="/history" element={<AgentRunsPanel />} />
+				</Routes>,
+				{ initialEntries: ["/history?type=agents"] },
+			);
+
+			const panel = screen.getByTestId("agent-runs-panel");
+			expect(panel.scrollTop).toBe(0);
+			fireEvent.scroll(panel);
+			expect(
+				sessionStorage.getItem(
+					"bifrost.agent-runs.scroll:/history?type=agents",
+				),
+			).toBe("116");
+
+			scrollRange.setScrollHeight(500);
+			panel.append(document.createElement("div"));
+			await waitFor(() => expect(panel.scrollTop).toBe(116));
+		} finally {
+			scrollRange.restore();
+		}
+	});
+
 	it("passes supported filters to the agent-runs API wrapper", async () => {
 		const { user } = renderWithProviders(
 			<Routes>
@@ -211,7 +426,23 @@ describe("AgentRunsPanel", () => {
 		).toHaveClass("hidden", "xl:table-cell");
 	});
 
-	it("keeps fleet run history as the origin when opening a run", async () => {
+	it("keeps every agent history selection in the origin when opening a run", async () => {
+		mockUseInfiniteAgentRuns.mockReturnValue({
+			data: {
+				pages: [
+					{ items: [run], total: 50 },
+					{ items: [secondPageRun], total: 50 },
+				],
+			},
+			isLoading: false,
+			isFetching: false,
+			isError: false,
+			isFetchNextPageError: false,
+			hasNextPage: false,
+			isFetchingNextPage: false,
+			refetch: vi.fn(),
+			fetchNextPage: vi.fn(),
+		});
 		const { user } = renderWithProviders(
 			<Routes>
 				<Route path="/history" element={<AgentRunsPanel />} />
@@ -220,18 +451,22 @@ describe("AgentRunsPanel", () => {
 					element={<NavigationStateProbe />}
 				/>
 			</Routes>,
-			{ initialEntries: ["/history?type=agents"] },
+			{
+				initialEntries: [
+					"/history?type=agents&agent=agent-2&status=failed&q=acme&org=org-1&from=2026-07-20&to=2026-07-23&page=2",
+				],
+			},
 		);
 
 		await user.click(
 			screen.getByRole("row", {
-				name: /Service Desk Triage.*Completed/i,
+				name: /428976/,
 			}),
 		);
 		expect(screen.getByTestId("navigation-state")).toHaveTextContent(
 			JSON.stringify({
 				agentRunOrigin: {
-					href: "/history?type=agents",
+					href: "/history?type=agents&agent=agent-2&status=failed&q=acme&org=org-1&from=2026-07-20&to=2026-07-23&page=2",
 					label: "Back to run history",
 				},
 			}),
@@ -248,7 +483,9 @@ describe("AgentRunsPanel", () => {
 		);
 
 		fireEvent.click(
-			screen.getByRole("row", { name: /Service Desk Triage.*Completed/i }),
+			screen.getByRole("row", {
+				name: /Service Desk Triage.*Completed/i,
+			}),
 			{ ctrlKey: true },
 		);
 

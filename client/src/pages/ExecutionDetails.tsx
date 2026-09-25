@@ -45,6 +45,10 @@ import { createPortal } from "react-dom";
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { copyToClipboard } from "@/lib/clipboard";
 import type { StreamingLog } from "@/stores/executionStreamStore";
+import {
+	createExecutionHistoryRestoreState,
+	readExecutionHistoryOrigin,
+} from "./ExecutionHistory/navigation";
 
 type ExecutionStatus =
 	components["schemas"]["ExecutionStatus"] | "Cancelling" | "Cancelled";
@@ -109,6 +113,23 @@ export function ExecutionDetails({
 	const executionId = propExecutionId || urlExecutionId;
 	const navigate = useNavigate();
 	const location = useLocation();
+	const [historyOrigin] = useState(() =>
+		readExecutionHistoryOrigin(location.state),
+	);
+	const [usageReturn] = useState(() => {
+		const candidate = (location.state as { usageReturn?: unknown } | null)
+			?.usageReturn;
+		if (typeof candidate !== "string") return null;
+		try {
+			const url = new URL(candidate, window.location.origin);
+			return url.origin === window.location.origin &&
+				url.pathname === "/reports/usage"
+				? `${url.pathname}${url.search}`
+				: null;
+		} catch {
+			return null;
+		}
+	});
 	const { isPlatformAdmin, hasRole } = useAuth();
 	const isEmbed = hasRole("EmbedUser");
 	const queryClient = useQueryClient();
@@ -122,16 +143,40 @@ export function ExecutionDetails({
 	);
 	const hasCachedExecution = !!queryClient.getQueryData(executionQueryKey);
 
-	// Check if we came from an execution trigger (has navigation state).
+	// Only the full page consumes execution-trigger state; embedded previews
+	// share the parent page's location state (including History restoration).
 	// location.state persists across browser refreshes (React Router uses history.state),
 	// so we clear it immediately after reading to prevent deferred-fetch on refresh.
-	const [hasNavigationState] = useState(() => location.state != null);
+	const [hasNavigationState] = useState(
+		() =>
+			!embedded &&
+			location.state != null &&
+			historyOrigin === null &&
+			usageReturn === null,
+	);
 	const shouldDeferInitialFetch = hasNavigationState && !hasCachedExecution;
 	useEffect(() => {
-		if (location.state != null) {
-			navigate(location.pathname, { replace: true, state: null });
+		if (hasNavigationState && location.state != null) {
+			navigate(
+				{ pathname: location.pathname, search: location.search },
+				{ replace: true, state: null },
+			);
 		}
 	}, []); // eslint-disable-line react-hooks/exhaustive-deps -- clear once on mount
+	const handleBackToHistory = () => {
+		if (usageReturn) {
+			navigate(usageReturn, { replace: true });
+			return;
+		}
+		if (historyOrigin) {
+			navigate(historyOrigin.href, {
+				replace: true,
+				state: createExecutionHistoryRestoreState(historyOrigin),
+			});
+			return;
+		}
+		navigate("/history");
+	};
 
 	// WebSocket streaming enabled state - starts enabled only for new executions from triggers
 	const [signalrEnabled, setSignalrEnabled] = useState(false);
@@ -516,7 +561,10 @@ export function ExecutionDetails({
 				<ExecutionReadError
 					pending={isFetching}
 					onRetry={() => void refetch()}
-					onBack={embedded ? undefined : () => navigate("/history")}
+					onBack={embedded ? undefined : handleBackToHistory}
+					backLabel={
+						usageReturn ? "Back to usage" : "Back to history"
+					}
 				/>
 			</div>
 		);
@@ -524,6 +572,7 @@ export function ExecutionDetails({
 	const refreshError = error ? (
 		<ExecutionReadError
 			cached
+			backLabel={usageReturn ? "Back to usage" : "Back to history"}
 			pending={isFetching}
 			onRetry={() => void refetch()}
 		/>
@@ -811,6 +860,7 @@ export function ExecutionDetails({
 			{/* Page Header - hidden for embedded users (embedded prop short-circuits earlier) */}
 			{!isEmbed && (
 				<ExecutionPageHeader
+					backLabel={usageReturn ? "Usage" : "History"}
 					name={execution.workflow_name}
 					status={
 						<RunStatusBadge
@@ -821,7 +871,7 @@ export function ExecutionDetails({
 							requiredMemoryMb={streamState?.requiredMemoryMb}
 						/>
 					}
-					onBack={() => navigate("/history")}
+					onBack={handleBackToHistory}
 					onCopyId={() =>
 						void copyWithToast(
 							execution.execution_id,

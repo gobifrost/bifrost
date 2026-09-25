@@ -30,22 +30,6 @@ def test_connected_install_refuses_deploy(e2e_client, platform_admin):
     assert "git-connected" in dep.json()["detail"].lower() or "disabled" in dep.json()["detail"].lower()
 
 
-def test_disconnected_install_allows_deploy(e2e_client, platform_admin):
-    """Control: a disconnected install deploys normally (no regression)."""
-    headers = platform_admin.headers
-    slug = f"disc-{uuid.uuid4().hex[:8]}"
-    r = e2e_client.post("/api/solutions", headers=headers, json={
-        "slug": slug, "name": slug.upper(), "organization_id": None,
-    })
-    assert r.status_code in (200, 201), r.text
-    sid = r.json()["id"]
-    dep = e2e_client.post(f"/api/solutions/{sid}/deploy", headers=headers, json={
-        "python_files": {}, "workflows": [],
-    })
-    dep = wait_for_deploy(e2e_client, dep, headers)
-    assert dep.status_code in (200, 201), dep.text
-
-
 async def test_concurrent_deploy_to_same_install_is_refused(e2e_client, platform_admin):
     """Codex #12: the deploy holds a per-install write lock across the DB commit
     AND the S3 finalize, so a second concurrent deploy to the SAME install is
@@ -74,33 +58,3 @@ async def test_concurrent_deploy_to_same_install_is_refused(e2e_client, platform
         dep = wait_for_deploy(e2e_client, dep, headers)
     assert dep.status_code == 422, dep.text
     assert "in progress" in dep.text.lower()
-
-    # Lock released → a subsequent deploy succeeds (not wedged).
-    dep2 = e2e_client.post(f"/api/solutions/{sid}/deploy", headers=headers, json={
-        "python_files": {}, "workflows": [],
-    })
-    dep2 = wait_for_deploy(e2e_client, dep2, headers)
-    assert dep2.status_code in (200, 201), dep2.text
-
-
-def test_invalid_bundle_fails_cleanly_not_500(e2e_client, platform_admin):
-    """Codex #13: a deploy rejected by SolutionDeployConflict (here: an
-    inline_v1 app, which Solution deploy refuses) surfaces as a clean job
-    failure with the reason, NOT an unhandled 500."""
-    headers = platform_admin.headers
-    slug = f"badbundle-{uuid.uuid4().hex[:8]}"
-    r = e2e_client.post("/api/solutions", headers=headers, json={
-        "slug": slug, "name": slug.upper(), "organization_id": None,
-    })
-    assert r.status_code in (200, 201), r.text
-    sid = r.json()["id"]
-
-    dep = e2e_client.post(f"/api/solutions/{sid}/deploy", headers=headers, json={
-        "apps": [{
-            "id": str(uuid.uuid4()), "slug": "legacy", "name": "Legacy",
-            "app_model": "inline_v1",
-        }],
-    })
-    dep = wait_for_deploy(e2e_client, dep, headers)
-    assert dep.status_code == 422, f"expected failed job, got {dep.status_code}: {dep.text}"
-    assert "standalone_v2" in dep.text

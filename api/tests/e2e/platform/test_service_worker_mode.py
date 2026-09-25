@@ -4,8 +4,8 @@ The test-stack worker runs the worker-pull claim loop, so these tests drive
 desired state through the API and assert durable outcomes — no local pool,
 no PIDs:
 
-* claim → fork → run → ready() → streaming logs → stop → no restart
-* rolling restart → new attempt runs
+* claim → fork → run → ready() → emits → streaming logs → rolling restart
+  → stop → no restart
 * self-crashing service → repeated failure → crash_loop → manual restart clears
 * service token: valid org credential, rejected at platform-admin gates
 
@@ -28,13 +28,15 @@ _SERVICE_SOURCE = '''"""E2E fixture service."""
 
 import logging
 
+from bifrost import events
 from bifrost import service
 
 
 @service
 async def {function_name}() -> None:
-    """Ready, log one line, then wait for stop."""
+    """Ready, emit once, log one line, then wait for stop."""
     await service.ready()
+    await events.emit("{topic}", {{"bridge": "up"}})
     logging.getLogger(__name__).info("e2e service live")
     await service.wait_until_stopping()
 '''
@@ -51,28 +53,16 @@ async def {function_name}() -> None:
     raise RuntimeError("e2e boom")
 '''
 
-_EMITTING_SOURCE = '''"""E2E fixture service that emits one event."""
-
-from bifrost import events
-from bifrost import service
-
-
-@service
-async def {function_name}() -> None:
-    """Report ready, bridge one event, then wait for stop."""
-    await service.ready()
-    await events.emit("{topic}", {{"bridge": "up"}})
-    await service.wait_until_stopping()
-'''
-
-
-def _register(e2e_client, headers, suffix: str, source: str) -> dict:
+def _register(e2e_client, headers, suffix: str, source: str, **source_values: str) -> dict:
     from tests.e2e.conftest import write_and_register
 
     function_name = f"e2e_svc_{suffix}"
     path = f"workflows/e2e_svc_{suffix}.py"
     registered = write_and_register(
-        e2e_client, headers, path, source.format(function_name=function_name),
+        e2e_client,
+        headers,
+        path,
+        source.format(function_name=function_name, **source_values),
         function_name,
     )
     assert registered["type"] == "service", registered
@@ -110,40 +100,34 @@ def _live_attempt(e2e_client, headers, definition_id: str) -> dict | None:
     return None
 
 
+async def _wait_for_live_attempt(
+    e2e_client,
+    headers,
+    definition_id: str,
+    *,
+    different_from: str | None = None,
+    ready: bool = False,
+    timeout: float = 120.0,
+) -> dict:
+    deadline = time.monotonic() + timeout
+    last: dict | None = None
+    while time.monotonic() < deadline:
+        candidate = _live_attempt(e2e_client, headers, definition_id)
+        if candidate is not None:
+            last = candidate
+            if (
+                candidate["id"] != different_from
+                and (not ready or candidate.get("ready_at"))
+            ):
+                return candidate
+        await asyncio.sleep(1.0)
+    raise AssertionError(f"service {definition_id} never had a matching live attempt: {last}")
+
+
 @pytest.fixture
 def service_def(e2e_client, platform_admin):
-    """Register a healthy fixture service; park it afterwards."""
+    """Register a healthy service and its topic source; park both afterwards."""
     suffix = uuid4().hex[:8]
-    registered = _register(e2e_client, platform_admin.headers, suffix, _SERVICE_SOURCE)
-    definition = _definition_for(e2e_client, platform_admin.headers, registered["id"])
-    yield definition
-    e2e_client.post(f"/api/services/{definition['id']}/stop", headers=platform_admin.headers)
-    e2e_client.post(f"/api/services/{definition['id']}/disable", headers=platform_admin.headers)
-
-
-@pytest.fixture
-def crashing_def(e2e_client, platform_admin):
-    """Register a self-crashing fixture service; park it afterwards."""
-    suffix = uuid4().hex[:8]
-    registered = _register(e2e_client, platform_admin.headers, suffix, _CRASHING_SOURCE)
-    definition = _definition_for(e2e_client, platform_admin.headers, registered["id"])
-    yield definition
-    e2e_client.post(f"/api/services/{definition['id']}/stop", headers=platform_admin.headers)
-    e2e_client.post(f"/api/services/{definition['id']}/disable", headers=platform_admin.headers)
-
-
-@pytest.fixture
-def emitting_def(e2e_client, platform_admin):
-    """Register a service that bridges one event; park it afterwards.
-
-    Pre-creates the topic source so the emit materializes an event row
-    (emit without a source is a no-op by design).
-    """
-    from tests.e2e.conftest import write_and_register
-
-    suffix = uuid4().hex[:8]
-    function_name = f"e2e_svc_{suffix}"
-    path = f"workflows/e2e_svc_{suffix}.py"
     topic = f"e2e.svc.{suffix}"
     source = e2e_client.post(
         "/api/events/sources",
@@ -156,14 +140,13 @@ def emitting_def(e2e_client, platform_admin):
     )
     assert source.status_code == 201, source.text
     source_id = source.json()["id"]
-    registered = write_and_register(
+    registered = _register(
         e2e_client,
         platform_admin.headers,
-        path,
-        _EMITTING_SOURCE.format(function_name=function_name, topic=topic),
-        function_name,
+        suffix,
+        _SERVICE_SOURCE,
+        topic=topic,
     )
-    assert registered["type"] == "service", registered
     definition = _definition_for(e2e_client, platform_admin.headers, registered["id"])
     definition["emit_topic"] = topic
     yield definition
@@ -172,24 +155,63 @@ def emitting_def(e2e_client, platform_admin):
     e2e_client.delete(f"/api/events/sources/{source_id}", headers=platform_admin.headers)
 
 
+@pytest.fixture
+def crashing_def(e2e_client, platform_admin):
+    """Register one real crash; unit tests cover repeated-failure accounting."""
+    suffix = uuid4().hex[:8]
+    registered = _register(e2e_client, platform_admin.headers, suffix, _CRASHING_SOURCE)
+    definition = _definition_for(e2e_client, platform_admin.headers, registered["id"])
+    policy = e2e_client.patch(
+        f"/api/services/{definition['id']}",
+        headers=platform_admin.headers,
+        json={"crash_loop_max_restarts": 1},
+    )
+    assert policy.status_code == 200, policy.text
+    yield definition
+    e2e_client.post(f"/api/services/{definition['id']}/stop", headers=platform_admin.headers)
+    e2e_client.post(f"/api/services/{definition['id']}/disable", headers=platform_admin.headers)
+
+
 class TestServiceWorkerMode:
-    async def test_claim_runs_ready_and_streams_logs(
+    async def test_healthy_service_lifecycle(
         self, e2e_client, platform_admin, service_def
     ):
+        """One service runs its ready, emit, log, restart, and stop lifecycle."""
         definition_id = service_def["id"]
         observed = await _wait_for(e2e_client, platform_admin.headers, definition_id, "running")
         assert observed["active_attempt_id"]
         assert observed["restart_count"] >= 1
 
-        deadline = time.monotonic() + 60.0
-        live = None
-        while time.monotonic() < deadline:
-            live = _live_attempt(e2e_client, platform_admin.headers, definition_id)
-            if live and live.get("ready_at"):
-                break
-            await asyncio.sleep(1.0)
-        assert live and live.get("ready_at"), "attempt never reported ready"
+        live = await _wait_for_live_attempt(
+            e2e_client, platform_admin.headers, definition_id, ready=True
+        )
+        assert live.get("ready_at"), "attempt never reported ready"
         assert live.get("worker_id"), "attempt has no owning worker"
+
+        # The producer path: this attempt may emit within its own organization.
+        deadline = time.monotonic() + 60.0
+        found = None
+        while time.monotonic() < deadline:
+            sources = e2e_client.get(
+                "/api/events/sources", headers=platform_admin.headers
+            ).json()["items"]
+            source = next(
+                (s for s in sources if s.get("event_type") == service_def["emit_topic"]),
+                None,
+            )
+            if source is not None:
+                items = e2e_client.get(
+                    f"/api/events/sources/{source['id']}/events",
+                    headers=platform_admin.headers,
+                ).json()["items"]
+                found = next(
+                    (event for event in items if event.get("data") == {"bridge": "up"}),
+                    None,
+                )
+                if found is not None:
+                    break
+            await asyncio.sleep(2.0)
+        assert found is not None, f"service never emitted {service_def['emit_topic']}"
 
         from src.core.cache import get_redis
         from src.core.cache.keys import service_logs_stream_key
@@ -200,18 +222,7 @@ class TestServiceWorkerMode:
         assert any("e2e service live" in m for m in messages), messages
         assert any("service starting" in m for m in messages), messages
 
-    async def test_logs_endpoint_serves_flushed_stream(
-        self, e2e_client, platform_admin, service_def
-    ):
-        """Beat flush persists stream lines; the logs endpoint reads them.
-
-        Polls until the claim-loop beat drains the live stream into
-        Postgres, then asserts the read contract (shape, filters) and that
-        rows survive the stop transition (final drain on completion).
-        """
-        definition_id = service_def["id"]
-        await _wait_for(e2e_client, platform_admin.headers, definition_id, "running")
-
+        # A worker beat must flush the live Redis stream into Postgres.
         deadline = time.monotonic() + 90.0
         logs: dict = {"items": [], "total": 0}
         while time.monotonic() < deadline:
@@ -266,6 +277,66 @@ class TestServiceWorkerMode:
         assert resp.status_code == 200, resp.text
         assert resp.json()["items"] == []
 
+        # The token for the actual live attempt has org-scoped access only.
+        from src.core.cache.keys import service_token_key
+
+        live = await _wait_for_live_attempt(
+            e2e_client, platform_admin.headers, definition_id, ready=True
+        )
+        async with get_redis() as r:
+            raw = await r.get(service_token_key(live["id"]))
+        assert raw, "no rotation token handed to the child"
+        token = json.loads(raw)["token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        resp = e2e_client.get("/api/services", headers=headers)
+        assert resp.status_code == 403, resp.text
+
+        from uuid import uuid4 as _uuid4
+
+        resp = e2e_client.post(
+            "/api/events/emit",
+            headers=headers,
+            json={
+                "topic": "e2e.svc.probe",
+                "data": {},
+                "scope": str(_uuid4()),
+            },
+        )
+        assert resp.status_code == 403, resp.text
+        resp = e2e_client.post(
+            "/api/events/emit",
+            headers=headers,
+            json={"topic": "e2e.svc.probe", "data": {}, "scope": "GLOBAL"},
+        )
+        assert resp.status_code == 403, resp.text
+
+        resp = e2e_client.post(
+            "/api/files/read",
+            headers=headers,
+            json={"location": "workspace", "path": "workflows/nope.py"},
+        )
+        assert resp.status_code != 401, resp.text
+
+        # A rolling restart must replace the live attempt before the final stop.
+        resp = e2e_client.post(
+            f"/api/services/{definition_id}/restart", headers=platform_admin.headers
+        )
+        assert resp.status_code == 200, resp.text
+        second = await _wait_for_live_attempt(
+            e2e_client,
+            platform_admin.headers,
+            definition_id,
+            different_from=live["id"],
+            ready=True,
+            timeout=90.0,
+        )
+        assert second["id"] != live["id"]
+
+        before_attempts = e2e_client.get(
+            f"/api/services/{definition_id}/attempts", headers=platform_admin.headers
+        ).json()["total"]
+
         # Rows survive the stop transition (final drain on completion).
         resp = e2e_client.post(
             f"/api/services/{definition_id}/stop",
@@ -301,19 +372,8 @@ class TestServiceWorkerMode:
         )
         assert resp.status_code == 422, resp.text
 
-    async def test_stop_completes_without_restart(
-        self, e2e_client, platform_admin, service_def
-    ):
-        definition_id = service_def["id"]
-        await _wait_for(e2e_client, platform_admin.headers, definition_id, "running")
-        before = e2e_client.get(
-            f"/api/services/{definition_id}/attempts", headers=platform_admin.headers
-        ).json()["total"]
-
-        resp = e2e_client.post(f"/api/services/{definition_id}/stop", headers=platform_admin.headers)
-        assert resp.status_code == 200, resp.text
-        await _wait_for(e2e_client, platform_admin.headers, definition_id, "stopped")
-
+        # Observe one worker beat after terminal completion before confirming
+        # the stopped desire cannot launch a replacement attempt.
         await asyncio.sleep(6.0)
         observed = e2e_client.get(
             f"/api/services/{definition_id}", headers=platform_admin.headers
@@ -322,30 +382,7 @@ class TestServiceWorkerMode:
         after = e2e_client.get(
             f"/api/services/{definition_id}/attempts", headers=platform_admin.headers
         ).json()["total"]
-        assert after == before
-
-    async def test_rolling_restart_starts_new_attempt(
-        self, e2e_client, platform_admin, service_def
-    ):
-        definition_id = service_def["id"]
-        await _wait_for(e2e_client, platform_admin.headers, definition_id, "running")
-        first = _live_attempt(e2e_client, platform_admin.headers, definition_id)
-        assert first is not None
-
-        resp = e2e_client.post(
-            f"/api/services/{definition_id}/restart", headers=platform_admin.headers
-        )
-        assert resp.status_code == 200, resp.text
-
-        deadline = time.monotonic() + 90.0
-        second = None
-        while time.monotonic() < deadline:
-            candidate = _live_attempt(e2e_client, platform_admin.headers, definition_id)
-            if candidate and candidate["id"] != first["id"]:
-                second = candidate
-                break
-            await asyncio.sleep(1.0)
-        assert second is not None, "restart did not start a new attempt"
+        assert after == before_attempts
 
     async def test_crashing_service_enters_crash_loop_then_recovers(
         self, e2e_client, platform_admin, crashing_def
@@ -360,7 +397,7 @@ class TestServiceWorkerMode:
             f"/api/services/{definition_id}/attempts", headers=platform_admin.headers
         ).json()["items"]
         failed = [a for a in attempts if a["state"] == "failed"]
-        assert len(failed) >= 5, f"expected crash-loop failures, got {len(failed)}"
+        assert failed, "the child process must report a failed attempt"
         assert any("e2e boom" in (a.get("error") or "") for a in failed)
 
         # Manual restart clears the loop — but the code still fails, so park
@@ -380,81 +417,3 @@ class TestServiceWorkerMode:
                 break
             await asyncio.sleep(1.0)
         assert cleared, "restart did not clear the crash loop"
-
-    async def test_service_token_is_scoped_not_superuser(        self, e2e_client, platform_admin, service_def
-    ):
-        definition_id = service_def["id"]
-        await _wait_for(e2e_client, platform_admin.headers, definition_id, "running")
-        live = _live_attempt(e2e_client, platform_admin.headers, definition_id)
-        assert live is not None
-
-        from src.core.cache import get_redis
-        from src.core.cache.keys import service_token_key
-
-        async with get_redis() as r:
-            raw = await r.get(service_token_key(live["id"]))
-        assert raw, "no rotation token handed to the child"
-        token = json.loads(raw)["token"]
-        headers = {"Authorization": f"Bearer {token}"}
-
-        resp = e2e_client.get("/api/services", headers=headers)
-        assert resp.status_code == 403, resp.text
-
-        # A service token cannot emit outside its own org (or globally).
-        from uuid import uuid4 as _uuid4
-
-        resp = e2e_client.post(
-            "/api/events/emit",
-            headers=headers,
-            json={
-                "topic": "e2e.svc.probe",
-                "data": {},
-                "scope": str(_uuid4()),
-            },
-        )
-        assert resp.status_code == 403, resp.text
-        resp = e2e_client.post(
-            "/api/events/emit",
-            headers=headers,
-            json={"topic": "e2e.svc.probe", "data": {}, "scope": "GLOBAL"},
-        )
-        assert resp.status_code == 403, resp.text
-
-        resp = e2e_client.post(
-            "/api/files/read",
-            headers=headers,
-            json={"location": "workspace", "path": "workflows/nope.py"},
-        )
-        assert resp.status_code != 401, resp.text
-
-    async def test_service_emits_into_own_org(
-        self, e2e_client, platform_admin, emitting_def
-    ):
-        """The producer path: a service token can emit org-scoped events."""
-        definition_id = emitting_def["id"]
-        topic = emitting_def["emit_topic"]
-        await _wait_for(e2e_client, platform_admin.headers, definition_id, "running")
-
-        deadline = time.monotonic() + 60.0
-        found = None
-        while time.monotonic() < deadline:
-            sources = e2e_client.get(
-                "/api/events/sources", headers=platform_admin.headers
-            ).json()["items"]
-            source = next(
-                (s for s in sources if s.get("event_type") == topic),
-                None,
-            )
-            if source is not None:
-                items = e2e_client.get(
-                    f"/api/events/sources/{source['id']}/events",
-                    headers=platform_admin.headers,
-                ).json()["items"]
-                found = next(
-                    (e for e in items if e.get("data") == {"bridge": "up"}),
-                    None,
-                )
-                if found is not None:
-                    break
-            await asyncio.sleep(2.0)
-        assert found is not None, f"service never emitted {topic}"

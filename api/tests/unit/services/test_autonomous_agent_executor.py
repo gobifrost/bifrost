@@ -21,6 +21,7 @@ from src.services.execution.autonomous_agent_executor import (
     DelegationOutcome,
     MAX_DELEGATION_DEPTH,
     ToolError,
+    _parse_structured_output,
 )
 from src.services.llm.base import LLMConfig, LLMResponse, ToolCallRequest, ToolDefinition
 
@@ -990,17 +991,22 @@ class TestAutonomousAgentExecutor:
         assert result["output"] is None
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "content",
+        ['{"result": 42}', '```json\n{"result": 42}\n```'],
+        ids=["bare", "fenced"],
+    )
     @patch("src.services.agent_runtime.model_factory.create_agent_model")
     @patch("src.services.execution.autonomous_agent_executor.resolve_agent_tools")
     async def test_run_parses_json_output_when_schema_given(
-        self, mock_resolve_tools, mock_create_model, mock_session, mock_agent
+        self, mock_resolve_tools, mock_create_model, content, mock_session, mock_agent
     ):
-        """When output_schema is provided, run attempts to parse JSON from LLM output."""
+        """When output_schema is provided, run parses the JSON reply, fenced or not."""
         mock_resolve_tools.return_value = ([], {})
 
         mock_llm = AsyncMock()
         mock_llm.complete = AsyncMock(return_value=LLMResponse(
-            content='{"result": 42}',
+            content=content,
             tool_calls=None,
             finish_reason="end_turn",
             input_tokens=100,
@@ -1017,6 +1023,27 @@ class TestAutonomousAgentExecutor:
 
         assert result["status"] == "completed"
         assert result["output"] == {"result": 42}
+
+    @pytest.mark.parametrize(
+        "content",
+        [
+            '{"result": 42}',
+            '```json\n{"result": 42}\n```',
+            '```\n{"result": 42}\n```',
+            '  ```json\n{"result": 42}\n```\n',
+        ],
+    )
+    def test_parse_structured_output_accepts_fenced_json(self, content):
+        """A ```json fence around the reply must not defeat the structured parse."""
+        assert _parse_structured_output(content) == {"result": 42}
+
+    @pytest.mark.parametrize(
+        "content",
+        ["Not JSON at all", "Here you go:\n```json\n{\"result\": 42}\n```"],
+    )
+    def test_parse_structured_output_returns_non_json_unchanged(self, content):
+        """Anything that is not a bare or fenced JSON document comes back as the raw string."""
+        assert _parse_structured_output(content) == content
 
     @pytest.mark.asyncio
     @patch("src.services.agent_runtime.model_factory.create_agent_model")

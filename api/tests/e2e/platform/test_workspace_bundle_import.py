@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import json
 import time
 from uuid import uuid4
 
@@ -122,8 +123,8 @@ async def test_workspace_bundle_job_imports_entities_files_indexes_cache_and_dir
         time.sleep(0.25)
     assert job["status"] == "succeeded", job
 
-    from src.core.module_cache import get_module
     from src.core.cache.redis_client import get_redis
+    from src.core.module_cache_contract import MODULE_KEY_PREFIX
     from src.core.repo_dirty import DIRTY_KEY
     from src.models.orm.file_index import FileIndex
     from src.models.orm.workflows import Workflow
@@ -135,8 +136,8 @@ async def test_workspace_bundle_job_imports_entities_files_indexes_cache_and_dir
     assert await RepoStorage().read(path) == source.encode()
     indexed = (await db_session.execute(select(FileIndex).where(FileIndex.path == path))).scalar_one()
     assert indexed.content == source
-    cached = await get_module(path)
-    assert cached is not None
-    assert cached["content"] == source
     async with get_redis() as redis:
+        cached = await redis.get(f"{MODULE_KEY_PREFIX}{path}")
+        assert cached is not None
+        assert json.loads(cached)["content"] == source
         assert await redis.get(DIRTY_KEY) is not None

@@ -1,14 +1,13 @@
-"""E2E: full-backup zip import — decrypt secrets blob, per-key collision handling.
+"""E2E: full-backup zip import restores an encrypted secret through a job.
 
 Task 13 of the Solutions success-criteria programme.
 
-Contract under test:
-- A full-backup zip (with .bifrost/secrets.enc) installs + fills config slots silently
-  when the slot is empty.
-- A collision (existing Config value for that key in the target org) refuses with 409
-  unless replace_secrets=true.
-- A wrong password refuses the WHOLE import with 422 — nothing lands (decrypt-before-
-  deploy is the critical ordering contract).
+Contract under test: a full-backup zip (with .bifrost/secrets.enc) is exported,
+queued for install, and restores its secret value at rest in the target organization.
+
+Collision and replacement transitions are covered directly by the zip-install
+service tests. Wrong-password rejection is checked at the HTTP boundary below
+and by the synchronous ``validate_install_zip`` unit test.
 
 make_full_backup_zip builds a real full-backup zip by:
   1. Creating a source solution with a declared config + set value via the
@@ -72,9 +71,6 @@ def make_full_backup_zip(e2e_client, platform_admin, db_session):
     Using the REAL export endpoint guarantees we exercise the real encrypted blob
     format (not a hand-assembled one), so the import path is tested end-to-end.
 
-    When a ``source_solution_id`` is provided, skip solution creation and use that
-    existing solution (for updating the value and re-exporting, e.g. collision
-    test).
     """
     from src.core.security import encrypt_secret
     from src.models.enums import ConfigType as ConfigTypeEnum
@@ -86,82 +82,30 @@ def make_full_backup_zip(e2e_client, platform_admin, db_session):
         password: str,
         slug: str | None = None,
         config_type: str = "secret",
-        source_solution_id: str | None = None,
-        source_org_id: str | None = None,
-    ) -> tuple[bytes, str, str]:
+    ) -> bytes:
         headers = platform_admin.headers
+        src_org_id = _create_org(e2e_client, headers)
+        actual_slug = slug or f"import-sec-{uuid.uuid4().hex[:8]}"
+        r = e2e_client.post(
+            "/api/solutions",
+            headers=headers,
+            json={
+                "slug": actual_slug,
+                "name": actual_slug.upper(),
+                "scope": "org",
+                "organization_id": src_org_id,
+            },
+        )
+        assert r.status_code in (200, 201), r.text
+        sol = r.json()
+        sol_id = uuid.UUID(sol["id"])
+        org_id = uuid.UUID(sol["organization_id"])
 
-        if source_solution_id is not None:
-            # Re-use an existing source solution: update the config values and
-            # re-export. This lets the collision test produce two zips from the
-            # SAME source solution (same config schema UUIDs) with different
-            # values — avoiding the duplicate PK issue that would occur if two
-            # separate source solutions each tried to insert the same deterministic
-            # schema UUID.
-            assert source_org_id is not None
-            sol_id = uuid.UUID(source_solution_id)
-            org_id = uuid.UUID(source_org_id)
-
-            # Update each config value in-place.
-            for key, value in values.items():
-                is_secret = config_type == ConfigTypeEnum.SECRET.value
-                stored = encrypt_secret(str(value)) if is_secret else str(value)
-                # Upsert: find existing Config row for (key, org) and update.
-                from sqlalchemy import select as sa_select
-                existing = (
-                    await db_session.execute(
-                        sa_select(Config).where(
-                            Config.key == key,
-                            Config.organization_id == org_id,
-                            Config.integration_id.is_(None),
-                        )
-                    )
-                ).scalar_one_or_none()
-                if existing is not None:
-                    existing.value = {"value": stored}
-                    existing.config_type = (
-                        ConfigTypeEnum.SECRET if is_secret else ConfigTypeEnum.STRING
-                    )
-                    existing.updated_by = "import-secrets-test-update"
-                else:
-                    db_session.add(
-                        Config(
-                            key=key,
-                            value={"value": stored},
-                            config_type=(
-                                ConfigTypeEnum.SECRET if is_secret else ConfigTypeEnum.STRING
-                            ),
-                            organization_id=org_id,
-                            updated_by="import-secrets-test-update",
-                        )
-                    )
-            await db_session.commit()
-
-        else:
-            # Create a fresh source org + solution.
-            src_org_id = _create_org(e2e_client, headers)
-            actual_slug = slug or f"import-sec-{uuid.uuid4().hex[:8]}"
-            r = e2e_client.post(
-                "/api/solutions",
-                headers=headers,
-                json={
-                    "slug": actual_slug,
-                    "name": actual_slug.upper(),
-                    "scope": "org",
-                    "organization_id": src_org_id,
-                },
-            )
-            assert r.status_code in (200, 201), r.text
-            sol = r.json()
-            sol_id = uuid.UUID(sol["id"])
-            org_id = uuid.UUID(sol["organization_id"]) if sol.get("organization_id") else None
-
-            # Declare each key + set each value in the source org.
-            for position, (key, value) in enumerate(values.items()):
-                schema_id = uuid.uuid5(
-                    uuid.NAMESPACE_URL, f"{str(sol_id)}/configs/{key}"
-                )
-                decl = SolutionConfigSchema(
+        # Declare each key + set each value in the source org.
+        for position, (key, value) in enumerate(values.items()):
+            schema_id = uuid.uuid5(uuid.NAMESPACE_URL, f"{sol_id}/configs/{key}")
+            db_session.add(
+                SolutionConfigSchema(
                     id=schema_id,
                     solution_id=sol_id,
                     key=key,
@@ -171,22 +115,19 @@ def make_full_backup_zip(e2e_client, platform_admin, db_session):
                     default=None,
                     position=position,
                 )
-                db_session.add(decl)
-
-                is_secret = config_type == ConfigTypeEnum.SECRET.value
-                stored = encrypt_secret(str(value)) if is_secret else str(value)
-                db_session.add(
-                    Config(
-                        key=key,
-                        value={"value": stored},
-                        config_type=(
-                            ConfigTypeEnum.SECRET if is_secret else ConfigTypeEnum.STRING
-                        ),
-                        organization_id=org_id,
-                        updated_by="import-secrets-test",
-                    )
+            )
+            is_secret = config_type == ConfigTypeEnum.SECRET.value
+            stored = encrypt_secret(str(value)) if is_secret else str(value)
+            db_session.add(
+                Config(
+                    key=key,
+                    value={"value": stored},
+                    config_type=ConfigTypeEnum.SECRET if is_secret else ConfigTypeEnum.STRING,
+                    organization_id=org_id,
+                    updated_by="import-secrets-test",
                 )
-            await db_session.commit()
+            )
+        await db_session.commit()
 
         # Export via the real endpoint — exercises the real blob format.
         export_r = e2e_client.post(
@@ -200,45 +141,25 @@ def make_full_backup_zip(e2e_client, platform_admin, db_session):
         assert ".bifrost/secrets.enc" in zipfile.ZipFile(io.BytesIO(zip_bytes)).namelist(), (
             "full export must include .bifrost/secrets.enc"
         )
-        return zip_bytes, str(sol_id), str(org_id)
+        return zip_bytes
 
     return _make
 
 
-async def test_full_import_ignores_integration_owned_config_with_same_key(
+async def test_full_import_restores_encrypted_secret_via_platform_job(
     e2e_client, platform_admin, make_full_backup_zip, make_org, db_session
 ):
-    """An integration-OWNED Config row (integration_id NOT NULL) sharing the key
-    must NOT trigger a collision: solution config values live in the
-    integration_id IS NULL partition, so the two rows never collide. The import
-    must fill the solution's own NULL-partition slot and succeed (200)."""
-    from src.models.enums import ConfigType as ConfigTypeEnum
+    """A real encrypted export restores its plaintext only through the job."""
+    from sqlalchemy import select
+
+    from src.core.security import decrypt_secret
     from src.models.orm.config import Config
-    from src.models.orm.integrations import Integration
 
     headers = platform_admin.headers
     upload_headers = _upload_headers(headers)
 
-    zip_bytes, _, _ = await make_full_backup_zip(values={"api_key": "xyz"}, password="pw")
+    zip_bytes = await make_full_backup_zip(values={"api_key": "xyz"}, password="pw")
     org = await make_org()
-
-    # Seed an integration-owned config for the SAME key in the TARGET org. This
-    # is the false-positive trap: a naive collision check (missing the
-    # integration_id IS NULL filter) would 409 this valid import.
-    integ = Integration(name=f"import-sec-integ-{uuid.uuid4().hex[:8]}")
-    db_session.add(integ)
-    await db_session.flush()
-    db_session.add(
-        Config(
-            key="api_key",
-            value={"value": "integration-owned-value"},
-            config_type=ConfigTypeEnum.STRING,
-            organization_id=org.id,
-            integration_id=integ.id,
-            updated_by="import-secrets-test-integ",
-        )
-    )
-    await db_session.commit()
 
     r = wait_for_install(
         e2e_client,
@@ -251,157 +172,41 @@ async def test_full_import_ignores_integration_owned_config_with_same_key(
         headers,
     )
     assert r.status_code in (200, 201), r.text
-    sol_id = r.json()["id"]
+    db_session.expire_all()
+    stored = (
+        await db_session.execute(
+            select(Config).where(
+                Config.key == "api_key",
+                Config.organization_id == org.id,
+                Config.integration_id.is_(None),
+            )
+        )
+    ).scalar_one()
+    assert decrypt_secret(stored.value["value"]) == "xyz"
 
-    setup_r = e2e_client.get(f"/api/solutions/{sol_id}/setup", headers=headers)
-    assert setup_r.status_code == 200, setup_r.text
-    api_key_item = next(
-        (i for i in setup_r.json()["items"] if i["key"] == "api_key"), None
-    )
-    assert api_key_item is not None
-    assert api_key_item["is_set"] is True, (
-        "the solution's own (integration_id NULL) api_key slot must be filled "
-        "despite the integration-owned row sharing the key"
-    )
 
-
-# ---------------------------------------------------------------------------
-# Test 2: collision without replace_secrets → 409, naming the key
-# Test 3: collision with replace_secrets → 200
-# ---------------------------------------------------------------------------
-
-async def test_full_import_collision_refuses_without_replace_flag(
+async def test_wrong_password_rejected_before_install(
     e2e_client, platform_admin, make_full_backup_zip, make_org
 ):
-    """Re-installing a full-backup zip into an org that ALREADY has a value for
-    the key must refuse with 409 (naming the colliding key). With replace_secrets=true
-    the same install must succeed."""
+    """A bad password returns 422 without creating the target install."""
     headers = platform_admin.headers
-    upload_headers = _upload_headers(headers)
-
-    # Both zips must install to the SAME slug in the SAME org so the second
-    # install is a re-install that collides.  Both zips are produced from the
-    # SAME source solution (same config schema UUIDs) so that re-installing z2
-    # doesn't hit a (solution_id, key) unique constraint from a different schema
-    # UUID trying to coexist with the z1 schema.
-    slug = f"import-sec-col-{uuid.uuid4().hex[:8]}"
-
-    # First install: api_key=EXISTING (fresh source solution with slug pinned).
-    z1, src_sol_id, src_org_id = await make_full_backup_zip(
-        values={"api_key": "EXISTING"}, password="pw", slug=slug
-    )
-    org = await make_org()
-    files1 = {"file": ("s.zip", z1, "application/zip")}
-    r0 = wait_for_install(
-        e2e_client,
-        e2e_client.post(
-            "/api/solutions/install",
-            headers=upload_headers,
-            files=files1,
-            data={"organization_id": str(org.id), "password": "pw"},
-        ),
-        headers,
-    )
-    assert r0.status_code in (200, 201), r0.text
-
-    # The first install also owns the empty-slot restore contract. Keeping the
-    # setup assertion in this lifecycle avoids rebuilding and reinstalling an
-    # equivalent encrypted bundle in a separate nine-second E2E test.
-    setup_r = e2e_client.get(
-        f"/api/solutions/{r0.json()['id']}/setup", headers=headers
-    )
-    assert setup_r.status_code == 200, setup_r.text
-    api_key_item = next(
-        (item for item in setup_r.json()["items"] if item["key"] == "api_key"),
-        None,
-    )
-    assert api_key_item is not None, "api_key should be declared after install"
-    assert api_key_item["is_set"] is True
-
-    # Second install: SAME source solution, updated value api_key=NEW → collision.
-    # Re-using the same source solution keeps the config schema UUIDs identical,
-    # so the deployer can upsert them without hitting the (solution_id, key)
-    # unique index.
-    z2, _, _ = await make_full_backup_zip(
-        values={"api_key": "NEW"},
-        password="pw",
-        source_solution_id=src_sol_id,
-        source_org_id=src_org_id,
-    )
-    files2 = {"file": ("s.zip", z2, "application/zip")}
-    r = wait_for_install(
-        e2e_client,
-        e2e_client.post(
-            "/api/solutions/install",
-            headers=upload_headers,
-            files=files2,
-            data={"organization_id": str(org.id), "password": "pw"},
-        ),
-        headers,
-    )
-    assert r.status_code == 409, r.text
-    # The error body must name the colliding key.
-    assert "api_key" in r.text, f"expected 'api_key' in collision error, got: {r.text}"
-
-    # Same zip again, but with replace_secrets=true → must succeed.
-    files3 = {"file": ("s.zip", z2, "application/zip")}
-    r2 = wait_for_install(
-        e2e_client,
-        e2e_client.post(
-            "/api/solutions/install",
-            headers=upload_headers,
-            files=files3,
-            data={"organization_id": str(org.id), "password": "pw", "replace_secrets": "true"},
-        ),
-        headers,
-    )
-    assert r2.status_code in (200, 201), r2.text
-
-
-# ---------------------------------------------------------------------------
-# Test 4: wrong password → 422, and NOTHING lands
-# ---------------------------------------------------------------------------
-
-async def test_wrong_password_rejected(
-    e2e_client, platform_admin, make_full_backup_zip, make_org
-):
-    """A wrong password must be rejected with 422, and nothing must be created
-    (decrypt-before-deploy contract: if decrypt fails, nothing lands at all)."""
-    headers = platform_admin.headers
-    upload_headers = _upload_headers(headers)
-
     slug = f"import-sec-badpw-{uuid.uuid4().hex[:8]}"
-    zip_bytes, _, _ = await make_full_backup_zip(
+    archive = await make_full_backup_zip(
         values={"api_key": "x"}, password="correct-pw", slug=slug
     )
     org = await make_org()
 
-    # Wrong password → must fail (synchronous fail-fast 422; wait_for_install
-    # passes the non-202 response through unchanged).
-    r = wait_for_install(
-        e2e_client,
-        e2e_client.post(
-            "/api/solutions/install",
-            headers=upload_headers,
-            files={"file": ("s.zip", zip_bytes, "application/zip")},
-            data={"organization_id": str(org.id), "password": "WRONG"},
-        ),
-        headers,
+    response = e2e_client.post(
+        "/api/solutions/install",
+        headers=_upload_headers(headers),
+        files={"file": ("s.zip", archive, "application/zip")},
+        data={"organization_id": str(org.id), "password": "WRONG"},
     )
-    assert r.status_code == 422, r.text
+    assert response.status_code == 422, response.text
 
-    # CRITICAL CONTRACT: no solution with this slug must exist in the TARGET org.
-    # (The source org has a solution with this slug from make_full_backup_zip, but
-    # that's a different org — we check that the target org's copy doesn't exist.)
-    list_r = e2e_client.get("/api/solutions", headers=headers)
-    assert list_r.status_code == 200, list_r.text
-    target_org_slugs = [
-        s["slug"]
-        for s in list_r.json()["solutions"]
-        if s.get("organization_id") == str(org.id)
-    ]
-    assert slug not in target_org_slugs, (
-        f"slug '{slug}' must not exist in target org after a wrong-password import, "
-        f"but it was found — decrypt-before-deploy contract violated. "
-        f"(Target org solutions: {target_org_slugs})"
+    listed = e2e_client.get("/api/solutions", headers=headers)
+    assert listed.status_code == 200, listed.text
+    assert not any(
+        item["slug"] == slug and item.get("organization_id") == str(org.id)
+        for item in listed.json()["solutions"]
     )

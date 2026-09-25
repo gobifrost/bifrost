@@ -145,9 +145,14 @@ async def test_preview_repo_rejects_traversing_subpath(e2e_client, platform_admi
     assert "escapes the repo checkout" in resp.text
 
 
-async def test_install_from_repo_creates_connected_install(e2e_client, platform_admin):
+async def test_connected_install_lifecycle(e2e_client, platform_admin, db_session):
+    """One repo install covers sync, connection export, writer guards, and deletion."""
+    from src.models.orm.solutions import Solution as SolutionORM
+
     slug = f"fromrepo-{uuid.uuid4().hex[:8]}"
-    repo_url = _make_fixture_repo(subdir="microsoft-csp", slug=slug)
+    repo_url = _make_fixture_repo(
+        subdir="microsoft-csp", slug=slug, with_connection=True
+    )
     resp = wait_for_install(
         e2e_client,
         e2e_client.post(
@@ -168,20 +173,6 @@ async def test_install_from_repo_creates_connected_install(e2e_client, platform_
     )
     assert dep.status_code == 409, dep.text
 
-
-async def test_install_from_repo_conflicts_on_existing(e2e_client, platform_admin):
-    slug = f"fromrepo-{uuid.uuid4().hex[:8]}"
-    repo_url = _make_fixture_repo(subdir="microsoft-csp", slug=slug)
-    first = wait_for_install(
-        e2e_client,
-        e2e_client.post(
-            "/api/solutions/install/from-repo",
-            json={"repo_url": repo_url, "repo_subpath": "microsoft-csp"},
-            headers=platform_admin.headers,
-        ),
-        platform_admin.headers,
-    )
-    assert first.status_code in (200, 201), first.text
     # The slug+scope conflict is a synchronous fast-path 409 (the install row was
     # created before the first job even ran), so the second POST refuses directly.
     again = e2e_client.post(
@@ -190,6 +181,73 @@ async def test_install_from_repo_conflicts_on_existing(e2e_client, platform_admi
         headers=platform_admin.headers,
     )
     assert again.status_code == 409, again.text
+
+    # Auto-pull through the durable job clears the scheduler's update signal.
+    row = await db_session.get(SolutionORM, uuid.UUID(sol["id"]))
+    assert row is not None
+    row.update_available_version = "1.1.0"
+    await db_session.commit()
+    before = e2e_client.get(
+        f"/api/solutions/{sol['id']}", headers=platform_admin.headers
+    )
+    assert before.status_code == 200, before.text
+    assert before.json()["update_available_version"] == "1.1.0"
+
+    synced = e2e_client.post(
+        f"/api/solutions/{sol['id']}/sync", headers=platform_admin.headers
+    )
+    assert synced.status_code == 202, synced.text
+    job_id = synced.json()["job_id"]
+    assert synced.headers["Location"] == f"/api/platform-jobs/{job_id}"
+    job = {}
+    for _ in range(240):
+        status_response = e2e_client.get(
+            f"/api/platform-jobs/{job_id}", headers=platform_admin.headers
+        )
+        assert status_response.status_code == 200, status_response.text
+        job = status_response.json()
+        if job["status"] in {"succeeded", "failed", "cancelled"}:
+            break
+        time.sleep(0.25)
+    assert job["status"] == "succeeded", job
+    after = e2e_client.get(
+        f"/api/solutions/{sol['id']}", headers=platform_admin.headers
+    )
+    assert after.status_code == 200, after.text
+    assert after.json()["update_available_version"] is None
+
+    # Export rebuilds from the installed connection declaration. Previewing the
+    # exported ZIP proves the declaration survives distribution.
+    exp = e2e_client.post(
+        f"/api/solutions/{sol['id']}/export?mode=shareable",
+        headers=platform_admin.headers,
+    )
+    assert exp.status_code == 200, exp.text
+    upload_headers = {
+        k: v for k, v in platform_admin.headers.items() if k.lower() != "content-type"
+    }
+    prev = e2e_client.post(
+        "/api/solutions/install/preview",
+        files={"file": ("backup.zip", exp.content, "application/zip")},
+        headers=upload_headers,
+    )
+    assert prev.status_code == 200, prev.text
+    names = [
+        c["integration_name"]
+        for c in (prev.json().get("connection_schemas") or [])
+    ]
+    assert "microsoft" in names, prev.json()
+
+    # A connected install with a connection child must delete without the
+    # read-only guard rejecting the child's DB cascade.
+    deleted = e2e_client.delete(
+        f"/api/solutions/{sol['id']}?confirm={slug}",
+        headers=platform_admin.headers,
+    )
+    assert deleted.status_code == 200, deleted.text
+    assert e2e_client.get(
+        f"/api/solutions/{sol['id']}", headers=platform_admin.headers
+    ).status_code == 404
 
 
 async def test_install_from_repo_rolls_back_on_deploy_failure(e2e_client, platform_admin):
@@ -212,161 +270,7 @@ async def test_install_from_repo_rolls_back_on_deploy_failure(e2e_client, platfo
     assert resp.status_code == 409, resp.text
     assert "manifest invalid" in resp.text
 
-    # The failed install must NOT have persisted: a later, VALID install of the
-    # SAME slug succeeds instead of 409'ing — proving the job deleted the orphan.
-    good = _make_fixture_repo(slug=slug)
-    retry = wait_for_install(
-        e2e_client,
-        e2e_client.post(
-            "/api/solutions/install/from-repo",
-            json={"repo_url": good},
-            headers=platform_admin.headers,
-        ),
-        platform_admin.headers,
-    )
-    assert retry.status_code in (200, 201), retry.text
-    assert retry.json()["slug"] == slug
-
-
-async def test_sync_clears_update_available_version(e2e_client, platform_admin, db_session):
-    """A successful /sync (auto-pull) means the install is now at repo HEAD, so the
-    scheduler-set update_available_version signal must be cleared (drives the badge).
-    """
-    from src.models.orm.solutions import Solution as SolutionORM
-
-    slug = f"syncclear-{uuid.uuid4().hex[:8]}"
-    repo_url = _make_fixture_repo(subdir="microsoft-csp", slug=slug)
-    inst = wait_for_install(
-        e2e_client,
-        e2e_client.post(
-            "/api/solutions/install/from-repo",
-            json={"repo_url": repo_url, "repo_subpath": "microsoft-csp"},
-            headers=platform_admin.headers,
-        ),
-        platform_admin.headers,
-    )
-    assert inst.status_code == 201, inst.text
-    sid = inst.json()["id"]
-
-    # Simulate the update-check scheduler having flagged an available update — this
-    # field is NOT caller-settable, so set it directly on the row.
-    row = await db_session.get(SolutionORM, uuid.UUID(sid))
-    assert row is not None
-    row.update_available_version = "1.1.0"
-    await db_session.commit()
-
-    # Sanity: the read DTO surfaces the signal before the pull.
-    before = e2e_client.get(f"/api/solutions/{sid}", headers=platform_admin.headers)
-    assert before.status_code == 200, before.text
-    assert before.json()["update_available_version"] == "1.1.0"
-
-    # Pull the connected repo through the shared durable job — a successful
-    # sync clears the signal after the worker completes, not in the POST.
-    synced = e2e_client.post(f"/api/solutions/{sid}/sync", headers=platform_admin.headers)
-    assert synced.status_code == 202, synced.text
-    job_id = synced.json()["job_id"]
-    assert synced.headers["Location"] == f"/api/platform-jobs/{job_id}"
-
-    job = {}
-    for _ in range(240):
-        status_response = e2e_client.get(
-            f"/api/platform-jobs/{job_id}", headers=platform_admin.headers
-        )
-        assert status_response.status_code == 200, status_response.text
-        job = status_response.json()
-        if job["status"] in {"succeeded", "failed", "cancelled"}:
-            break
-        time.sleep(0.25)
-    assert job["status"] == "succeeded", job
-
-    after = e2e_client.get(f"/api/solutions/{sid}", headers=platform_admin.headers)
-    assert after.status_code == 200, after.text
-    assert after.json()["update_available_version"] is None
-
-
-async def test_delete_git_connected_install_with_connections(e2e_client, platform_admin):
-    """Drive F3: deleting a git-connected install that declared >=1 integration
-    (so it has ``SolutionConnectionSchema`` rows) must NOT 500.
-
-    The connection_schema children carry ``solution_id``, so the relationship's
-    ``delete-orphan`` cascade used to mark them in ``session.deleted`` and the
-    Solutions read-only backstop rejected them. The fix routes them through the
-    DB-level ``ondelete=CASCADE`` instead (``passive_deletes=True`` + ``noload``
-    on the delete fetch), as workflows/apps already are.
-    """
-    slug = f"delconn-{uuid.uuid4().hex[:8]}"
-    repo_url = _make_fixture_repo(subdir="acme", slug=slug, with_connection=True)
-    inst = wait_for_install(
-        e2e_client,
-        e2e_client.post(
-            "/api/solutions/install/from-repo",
-            json={"repo_url": repo_url, "repo_subpath": "acme"},
-            headers=platform_admin.headers,
-        ),
-        platform_admin.headers,
-    )
-    assert inst.status_code == 201, inst.text
-    inst_data = inst.json()
-    sid = inst_data["id"]
-    inst_slug = inst_data["slug"]
-
-    resp = e2e_client.delete(
-        f"/api/solutions/{sid}?confirm={inst_slug}", headers=platform_admin.headers
-    )
-    assert resp.status_code == 200, resp.text  # MUST NOT 500 (F3)
-
-    assert (
-        e2e_client.get(f"/api/solutions/{sid}", headers=platform_admin.headers).status_code
-        == 404
-    )
-
-
-async def test_export_carries_connection_declarations(e2e_client, platform_admin):
-    """Drive F4: exporting an installed solution must carry its declared
-    integrations into the zip (a DR backup must restore the Setup integrations).
-
-    The export rebuilds the bundle LIVE from owned entities. For a deployed
-    install the workflow source lives under ``_solutions/`` (unreadable via the
-    ``_repo/`` path), so the source-scan re-derivation silently dropped every
-    declaration — the zip had no ``connections.yaml`` and restore-preview showed
-    ``connection_schemas: []``. The fix reads the persisted
-    ``SolutionConnectionSchema`` rows (the deploy-time source of truth). A
-    restore-preview of the exported zip is the cleanest end-to-end assertion.
-    """
-    slug = f"exportconn-{uuid.uuid4().hex[:8]}"
-    repo_url = _make_fixture_repo(subdir="acme", slug=slug, with_connection=True)
-    inst = wait_for_install(
-        e2e_client,
-        e2e_client.post(
-            "/api/solutions/install/from-repo",
-            json={"repo_url": repo_url, "repo_subpath": "acme"},
-            headers=platform_admin.headers,
-        ),
-        platform_admin.headers,
-    )
-    assert inst.status_code == 201, inst.text
-    sid = inst.json()["id"]
-
-    # Shareable export (no values/password needed).
-    exp = e2e_client.post(
-        f"/api/solutions/{sid}/export?mode=shareable",
-        headers=platform_admin.headers,
-    )
-    assert exp.status_code == 200, exp.text
-
-    # The exported zip must declare the connection(s) — restore-preview surfaces them.
-    # httpx sets the multipart Content-Type itself; strip the auth headers'
-    # application/json Content-Type so it doesn't override the boundary.
-    upload_headers = {
-        k: v for k, v in platform_admin.headers.items() if k.lower() != "content-type"
-    }
-    files = {"file": ("backup.zip", exp.content, "application/zip")}
-    prev = e2e_client.post(
-        "/api/solutions/install/preview", files=files, headers=upload_headers
-    )
-    assert prev.status_code == 200, prev.text
-    names = [
-        c["integration_name"] for c in (prev.json().get("connection_schemas") or [])
-    ]
-    assert names, f"export dropped connection declarations: {prev.json()}"
-    assert "microsoft" in names, prev.json()
+    # The failed job deleted its newly-created install row.
+    listing = e2e_client.get("/api/solutions", headers=platform_admin.headers)
+    assert listing.status_code == 200, listing.text
+    assert not [s for s in listing.json()["solutions"] if s["slug"] == slug]

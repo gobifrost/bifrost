@@ -34,10 +34,7 @@
 #   ./test.sh pre-pr                    Optional full local reproduction of the merge gate (diagnostic).
 #   ./test.sh ci                        Full isolated run: up, all tests, down.
 #
-# Global flags (apply to most subcommands):
-#   --no-reset    Skip state reset before running tests.
-#   --coverage    Enable coverage reporting (backend only).
-#   --wait        On failure, pause before cleanup.
+# Pytest flags follow a test selector (for example, `./test.sh tests/unit/test_foo.py -v`).
 
 set -euo pipefail
 
@@ -286,7 +283,18 @@ stack_status() {
 # =============================================================================
 
 run_pytest() {
-    local runner_lock_fd runner_name runner_status
+    local runner_lock_fd runner_name runner_status target unit_only
+
+    unit_only="${BIFROST_TEST_UNIT_ONLY:-0}"
+    if [[ "${1:-}" == tests/unit/* ]]; then
+        unit_only=1
+        for target in "$@"; do
+            if [[ "$target" == tests/e2e/* ]]; then
+                unit_only=0
+                break
+            fi
+        done
+    fi
 
     # One worktree owns one mutable Docker test stack.  A second pytest process
     # against that stack can reset the database underneath the first process and
@@ -320,6 +328,12 @@ run_pytest() {
     # changed migrations they should run `./test.sh stack reset` once.
     require_stack_up
     prepare_test_state
+    if [[ "$unit_only" == "1" ]]; then
+        # Unit tests create committed service rows while exercising claim
+        # logic. A live scheduler/worker can claim those rows before the test
+        # loop does, making the result depend on an unrelated process tick.
+        docker compose -f "$COMPOSE_FILE" stop worker scheduler > /dev/null
+    fi
     # LOG_DIR is mkdir'd on the host as the runner/host user, then bind-mounted
     # into the test-runner container at /tmp/bifrost. The container runs as
     # uid 1000 (non-root, hardened), so it cannot write pytest's --junitxml file
@@ -344,7 +358,7 @@ run_pytest() {
 # not the ms a unit test should cost). Those still run in `all` and nightly, so
 # no coverage is dropped — just moved off the per-PR critical path. A caller can
 # re-include them ad hoc with `./test.sh unit -m slow` or `-m ""`.
-cmd_unit() { run_pytest tests/ --ignore=tests/e2e/ -m "not slow" -v "$@"; }
+cmd_unit() { BIFROST_TEST_UNIT_ONLY=1 run_pytest tests/ --ignore=tests/e2e/ -m "not slow" -v "$@"; }
 cmd_e2e()  { run_pytest tests/e2e/ -v "$@"; }
 cmd_all()  { run_pytest tests/ -v "$@"; }
 
@@ -408,6 +422,7 @@ client_ci_checks() {
 repository_ci_checks() {
     bash scripts/lib/test_stack_lock_test.sh
     python3 -m unittest scripts.test_codeql_changed_lines
+    python3 -m unittest scripts.test_e2e_shard
     echo "Checking GitHub Action pins..."
     python3 api/scripts/check_github_action_pins.py --verify-versions
 

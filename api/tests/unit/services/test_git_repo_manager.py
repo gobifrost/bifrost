@@ -167,6 +167,7 @@ class TestSyncDown:
             assert cmd[0:3] == ["aws", "s3", "sync"]
             assert cmd[3] == "s3://bifrost-local/_repo/"
             assert cmd[4] == str(tmp_path)
+            assert "--delete" in cmd
 
     @pytest.mark.asyncio
     async def test_creates_target_dir(self, manager):

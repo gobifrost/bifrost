@@ -3,17 +3,19 @@ everything it owns (workflows/apps/forms/agents/tables) and its config
 declarations paired with whether each has a value set (admin only)."""
 from __future__ import annotations
 
-import base64
 import io
 import uuid
 from uuid import UUID
 
 import pytest
 from PIL import Image
+from sqlalchemy import select
 
+from shared.logo_processing import process_logo
+from src.models.orm.applications import Application
+from src.models.orm.solution_config_schema import SolutionConfigSchema
 from src.models.orm.solution_file_location import SolutionFileLocation
 from src.services.solutions.deploy import solution_entity_id
-from tests.e2e.platform.conftest import wait_for_deploy
 
 pytestmark = pytest.mark.e2e
 
@@ -37,27 +39,51 @@ def _create_solution(e2e_client, headers, slug: str) -> str:
     return r.json()["id"]
 
 
-def _create_org_solution(e2e_client, headers, slug: str) -> str:
-    r = e2e_client.post("/api/solutions", headers=headers, json={
-        "slug": slug, "name": slug.upper(), "scope": "org",
-    })
-    assert r.status_code in (200, 201), r.text
-    return r.json()["id"]
-
-
-async def test_get_solution_entities_reports_config_status(e2e_client, platform_admin):
+async def test_get_solution_entities_reports_config_status_and_app_logo(
+    e2e_client, platform_admin, db_session,
+):
     headers = platform_admin.headers
     slug = f"ent-e2e-{uuid.uuid4().hex[:8]}"
     sid = _create_solution(e2e_client, headers, slug)
+    app_id = str(uuid.uuid4())
+    real_app_id = str(solution_entity_id(UUID(sid), UUID(app_id)))
+    logo = process_logo(CLEAN_PNG, "image/png")
+    db_session.add_all([
+        SolutionConfigSchema(
+            solution_id=UUID(sid),
+            key="API_KEY",
+            type="secret",
+            required=True,
+            description="needed",
+            position=0,
+        ),
+        Application(
+            id=UUID(real_app_id),
+            solution_id=UUID(sid),
+            slug=f"summary-app-{uuid.uuid4().hex[:8]}",
+            name="Summary App",
+            app_model="standalone_v2",
+            dependencies={},
+            access_level="authenticated",
+            logo_data=logo.original_data,
+            logo_content_type=logo.original_content_type,
+            logo_thumbnail_data=logo.thumbnail_data,
+            logo_thumbnail_content_type=logo.thumbnail_content_type,
+            logo_thumbnail_version=logo.thumbnail_version,
+        ),
+    ])
+    await db_session.commit()
 
-    dep = e2e_client.post(f"/api/solutions/{sid}/deploy", headers=headers, json={
-        "config_schemas": [{
-            "id": str(uuid.uuid4()), "key": "API_KEY", "type": "secret",
-            "required": True, "description": "needed", "position": 0,
-        }],
-    })
-    dep = wait_for_deploy(e2e_client, dep, headers)
-    assert dep.status_code == 200, dep.text
+    declarations = (await db_session.execute(
+        select(SolutionConfigSchema).where(
+            SolutionConfigSchema.solution_id == UUID(sid)
+        )
+    )).scalars().all()
+    assert len(declarations) == 1
+    assert declarations[0].key == "API_KEY"
+    assert declarations[0].type == "secret"
+    assert declarations[0].required is True
+    assert declarations[0].description == "needed"
 
     r = e2e_client.get(f"/api/solutions/{sid}/entities", headers=headers)
     assert r.status_code == 200, r.text
@@ -73,6 +99,11 @@ async def test_get_solution_entities_reports_config_status(e2e_client, platform_
     assert api_key is not None, body["configs"]
     assert api_key["required"] is True
     assert api_key["value_set"] is False
+    solution_app = next(item for item in body["apps"] if item["id"] == real_app_id)
+    assert solution_app["logo"] is None
+    assert solution_app["logo_url"].startswith(
+        f"/api/applications/{real_app_id}/logo?v="
+    )
 
     # Set a value for this global install's scope → API_KEY becomes satisfied.
     sc = e2e_client.post("/api/config", headers=headers, json={
@@ -93,59 +124,6 @@ async def test_get_solution_entities_reports_config_status(e2e_client, platform_
 async def test_get_solution_entities_404(e2e_client, platform_admin):
     r = e2e_client.get(f"/api/solutions/{uuid.uuid4()}/entities", headers=platform_admin.headers)
     assert r.status_code == 404, r.text
-
-
-async def test_get_solution_entities_includes_app_logo(e2e_client, platform_admin):
-    headers = platform_admin.headers
-    slug = f"app-logo-summary-{uuid.uuid4().hex[:8]}"
-    sid = _create_org_solution(e2e_client, headers, slug)
-    app_slug = f"summary-app-{uuid.uuid4().hex[:8]}"
-    app_id = str(uuid.uuid4())
-    real_id = str(solution_entity_id(UUID(sid), UUID(app_id)))
-
-    # Solution-managed apps are standalone_v2 and arrive via deploy (loose-app
-    # capture rejects v1, and bare standalone_v2 creation is blocked). A managed
-    # app is read-only, so its logo travels IN the deploy payload (a post-deploy
-    # logo upload is correctly rejected by the read-only guard). The CLI resolves
-    # the manifest's logo path to bytes and sends logo_b64 + logo_content_type;
-    # deploy decodes those (deploy.py:_decode_logo). Confirm it round-trips in
-    # entities. Deploy remaps the supplied manifest id to solution_entity_id.
-    logo_b64 = base64.b64encode(CLEAN_PNG).decode("ascii")
-    dep = e2e_client.post(
-        f"/api/solutions/{sid}/deploy",
-        headers=headers,
-        json={
-            "apps": [
-                {
-                    "id": app_id,
-                    "slug": app_slug,
-                    "name": "Summary App",
-                    "app_model": "standalone_v2",
-                    "dependencies": {},
-                    "access_level": "authenticated",
-                    "logo_b64": logo_b64,
-                    "logo_content_type": "image/png",
-                    "dist_files": {
-                        "index.html": '<!doctype html><html><body><div id="root"></div></body></html>',
-                    },
-                }
-            ]
-        },
-    )
-    dep = wait_for_deploy(e2e_client, dep, headers)
-    assert dep.status_code in (200, 201), dep.text
-
-    app = {"id": real_id}
-
-    entities = e2e_client.get(f"/api/solutions/{sid}/entities", headers=headers)
-    assert entities.status_code == 200, entities.text
-    solution_app = next(
-        item for item in entities.json()["apps"] if item["id"] == app["id"]
-    )
-    assert solution_app["logo"] is None
-    assert solution_app["logo_url"].startswith(
-        f"/api/applications/{app['id']}/logo?v="
-    )
 
 
 async def test_capture_candidates_list_and_capture_loose_config(e2e_client, platform_admin):

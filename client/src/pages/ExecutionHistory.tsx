@@ -2,8 +2,13 @@ import { PageScrollArea } from "@/components/layout/PageWorkspace";
 import { useIsFetching, useQueryClient } from "@tanstack/react-query";
 import { ExecutionCancelAction } from "./ExecutionHistory/components/ExecutionCancelAction";
 import { ExecutionCleanupDialog } from "./ExecutionHistory/components/ExecutionCleanupDialog";
-import { useState, useMemo, Fragment } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { useState, useMemo, useEffect, useRef, Fragment } from "react";
+import {
+	Link,
+	useLocation,
+	useNavigate,
+	useSearchParams,
+} from "react-router-dom";
 import {
 	RefreshCw,
 	History as HistoryIcon,
@@ -66,6 +71,10 @@ import { PaginationFooter } from "@/components/pagination/PaginationFooter";
 import { DateRangePicker } from "@/components/ui/date-range-picker";
 import type { DateRange } from "react-day-picker";
 import type { components } from "@/lib/v1";
+import {
+	createExecutionHistoryRestoreState,
+	readExecutionHistoryRestore,
+} from "./ExecutionHistory/navigation";
 
 type Organization = components["schemas"]["OrganizationPublic"];
 type ExecutionStatus =
@@ -80,6 +89,38 @@ const STATUS_TABS: ExecutionStatus[] = [
 	"Scheduled",
 ];
 
+const LOG_LEVELS = new Set(["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]);
+const HISTORY_RETURN_STORAGE_KEY = "bifrost.execution-history.return";
+
+function parseDateParam(value: string | null): Date | undefined {
+	if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined;
+	const date = new Date(`${value}T00:00:00`);
+	return Number.isNaN(date.getTime()) ? undefined : date;
+}
+
+function formatDateParam(date: Date): string {
+	const year = date.getFullYear();
+	const month = String(date.getMonth() + 1).padStart(2, "0");
+	const day = String(date.getDate()).padStart(2, "0");
+	return `${year}-${month}-${day}`;
+}
+
+function readSavedHistoryOrigin() {
+	try {
+		const saved = sessionStorage.getItem(HISTORY_RETURN_STORAGE_KEY);
+		if (!saved) return null;
+		return readExecutionHistoryRestore({
+			executionHistoryRestore: JSON.parse(saved),
+		});
+	} catch {
+		return null;
+	}
+}
+
+function historySearch(href: string): string {
+	return new URL(href, "https://bifrost.local").search;
+}
+
 export function ExecutionHistory() {
 	const isDesktop = useIsDesktop();
 	const queryClient = useQueryClient();
@@ -91,10 +132,44 @@ export function ExecutionHistory() {
 	});
 	const [filtersOpen, setFiltersOpen] = useState(false);
 	const [searchParams, setSearchParams] = useSearchParams();
-	const { isPlatformAdmin, user } = useAuth();
-	const [filterOrgId, setFilterOrgId] = useState<string | null | undefined>(
-		undefined,
+	const location = useLocation();
+	const navigate = useNavigate();
+	const historyScrollRef = useRef<HTMLDivElement>(null);
+	const restoreOrigin = useMemo(
+		() => readExecutionHistoryRestore(location.state),
+		[location.state],
 	);
+	const [savedHistoryOrigin] = useState(() =>
+		location.search || restoreOrigin ? null : readSavedHistoryOrigin(),
+	);
+	const [restorePaginationSearch, setRestorePaginationSearch] = useState<
+		string | null
+	>(
+		(restoreOrigin ?? savedHistoryOrigin)
+			? historySearch((restoreOrigin ?? savedHistoryOrigin)!.href)
+			: null,
+	);
+	const [restoredScrollOrigin, setRestoredScrollOrigin] =
+		useState<typeof restoreOrigin>(null);
+	const updateSearchParams = (update: (next: URLSearchParams) => void) => {
+		setSearchParams(
+			(prev) => {
+				const next = new URLSearchParams(prev);
+				update(next);
+				return next;
+			},
+			{ replace: true },
+		);
+	};
+	const { isPlatformAdmin, user } = useAuth();
+	const orgParam = searchParams.get("org");
+	const filterOrgId = orgParam === "global" ? null : orgParam || undefined;
+	const setFilterOrgId = (value: string | null | undefined) => {
+		updateSearchParams((next) => {
+			if (value === undefined) next.delete("org");
+			else next.set("org", value ?? "global");
+		});
+	};
 	const workflowIdFilter = searchParams.get("workflow") || "";
 	// `?status=` is the single source of truth for the status tab — derived
 	// from the URL and written back through setSearchParams (same pattern as
@@ -104,35 +179,56 @@ export function ExecutionHistory() {
 	const statusFilter: ExecutionStatus | "all" =
 		STATUS_TABS.find((s) => s.toLowerCase() === statusParam) ?? "all";
 	const setStatusFilter = (value: ExecutionStatus | "all") => {
-		setSearchParams(
-			(prev) => {
-				const next = new URLSearchParams(prev);
-				if (value === "all") {
-					next.delete("status");
-				} else {
-					next.set("status", value);
-				}
-				return next;
-			},
-			{ replace: true },
-		);
+		updateSearchParams((next) => {
+			if (value === "all") next.delete("status");
+			else next.set("status", value);
+		});
 	};
-	const [searchTerm, setSearchTerm] = useState("");
-	const [dateRange, setDateRange] = useState<DateRange | undefined>();
-	const [viewMode, setViewMode] = useState<"executions" | "logs">(
-		"executions",
-	);
+	const searchTerm = searchParams.get("q") ?? "";
+	const setSearchTerm = (value: string) => {
+		updateSearchParams((next) => {
+			if (value) next.set("q", value);
+			else next.delete("q");
+		});
+	};
+	const from = parseDateParam(searchParams.get("from"));
+	const to = parseDateParam(searchParams.get("to"));
+	const dateRange = from ? { from, to } : undefined;
+	const setDateRange = (value: DateRange | undefined) => {
+		updateSearchParams((next) => {
+			if (value?.from) next.set("from", formatDateParam(value.from));
+			else next.delete("from");
+			if (value?.to) next.set("to", formatDateParam(value.to));
+			else next.delete("to");
+		});
+	};
+	const viewMode =
+		searchParams.get("view") === "logs" ? "logs" : "executions";
+	const setViewMode = (value: "executions" | "logs") => {
+		updateSearchParams((next) => {
+			if (value === "logs") next.set("view", "logs");
+			else next.delete("view");
+		});
+	};
 	const historyType = (
 		searchParams.get("type") === "agents" ? "agents" : "workflows"
 	) as "workflows" | "agents";
-	const [logLevelFilter, setLogLevelFilter] = useState<string>("all");
-	const [drawerExecutionId, setDrawerExecutionId] = useState<string | null>(
-		null,
-	);
-	const [drawerOpen, setDrawerOpen] = useState(false);
-	const [previewExecutionId, setPreviewExecutionId] = useState<string | null>(
-		null,
-	);
+	const logLevelParam = searchParams.get("level");
+	const logLevelFilter =
+		logLevelParam && LOG_LEVELS.has(logLevelParam) ? logLevelParam : "all";
+	const setLogLevelFilter = (value: string) => {
+		updateSearchParams((next) => {
+			if (value === "all") next.delete("level");
+			else next.set("level", value);
+		});
+	};
+	const selectedExecutionId = searchParams.get("execution");
+	const setSelectedExecutionId = (value: string | null) => {
+		updateSearchParams((next) => {
+			if (value) next.set("execution", value);
+			else next.delete("execution");
+		});
+	};
 	// IDs that were optimistically flipped to Cancelled after a successful 200.
 	const [optimisticCancelledIds, setOptimisticCancelledIds] = useState<
 		Set<string>
@@ -150,9 +246,11 @@ export function ExecutionHistory() {
 		userId: user?.id,
 	});
 	// Pagination state - stack of continuation tokens for "back" navigation
-	const [pageStack, setPageStack] = useState<(string | null)[]>([]);
+	const [pageStack, setPageStack] = useState<(string | null)[]>(
+		() => (restoreOrigin ?? savedHistoryOrigin)?.pageStack ?? [],
+	);
 	const [currentToken, setCurrentToken] = useState<string | undefined>(
-		undefined,
+		() => (restoreOrigin ?? savedHistoryOrigin)?.currentToken,
 	);
 
 	// Fetch organizations for the org name lookup (platform admins only)
@@ -236,17 +334,8 @@ export function ExecutionHistory() {
 				: isFetching;
 	const hasMore = nextToken !== null;
 
-	const handleViewDetails = (execution_id: string) => {
-		setDrawerExecutionId(execution_id);
-		setDrawerOpen(true);
-	};
-
 	const handlePreviewExecution = (execution_id: string) => {
-		if (isDesktop) {
-			setPreviewExecutionId(execution_id);
-			return;
-		}
-		handleViewDetails(execution_id);
+		setSelectedExecutionId(execution_id);
 	};
 
 	const handleCancelled = (id: string, scheduled: boolean) => {
@@ -288,8 +377,12 @@ export function ExecutionHistory() {
 	const [prevFiltersKey, setPrevFiltersKey] = useState(filtersKey);
 	if (prevFiltersKey !== filtersKey) {
 		setPrevFiltersKey(filtersKey);
-		setPageStack([]);
-		setCurrentToken(undefined);
+		const restoringPagination = restorePaginationSearch === location.search;
+		if (restoringPagination) setRestorePaginationSearch(null);
+		if (!restoringPagination) {
+			setPageStack([]);
+			setCurrentToken(undefined);
+		}
 	}
 
 	// Drop optimistic-cancel entries once the server echoes the row as
@@ -323,18 +416,19 @@ export function ExecutionHistory() {
 			(workflowIdFilter !== "" || filterOrgId !== undefined));
 
 	const handleClearFilters = () => {
-		setSearchTerm("");
-		setDateRange(undefined);
-		setFilterOrgId(undefined);
-		setSearchParams(
-			(prev) => {
-				const next = new URLSearchParams(prev);
-				next.delete("workflow");
-				next.delete("status");
-				return next;
-			},
-			{ replace: true },
-		);
+		updateSearchParams((next) => {
+			for (const key of [
+				"q",
+				"from",
+				"to",
+				"org",
+				"workflow",
+				"status",
+				"level",
+			]) {
+				next.delete(key);
+			}
+		});
 	};
 
 	// Header rollup: page-level run counts. Honest about scope — these are
@@ -348,7 +442,84 @@ export function ExecutionHistory() {
 	);
 
 	// One source of truth for the column count (admins get the Org column).
-	const previewOpen = isDesktop && previewExecutionId !== null;
+	const previewOpen = isDesktop && selectedExecutionId !== null;
+	const createHistoryOrigin = () => ({
+		href: `${location.pathname}${location.search}`,
+		scrollTop: isDesktop
+			? (historyScrollRef.current?.scrollTop ??
+				document.querySelector<HTMLElement>("[data-page-scroll]")
+					?.scrollTop ??
+				0)
+			: window.scrollY,
+		currentToken,
+		pageStack,
+	});
+	useEffect(() => {
+		if (!savedHistoryOrigin) return;
+		navigate(savedHistoryOrigin.href, {
+			replace: true,
+			state: createExecutionHistoryRestoreState(savedHistoryOrigin),
+		});
+	}, [navigate, savedHistoryOrigin]);
+	useEffect(() => {
+		if (savedHistoryOrigin && !restoreOrigin) return;
+		const save = () => {
+			try {
+				sessionStorage.setItem(
+					HISTORY_RETURN_STORAGE_KEY,
+					JSON.stringify(createHistoryOrigin()),
+				);
+			} catch {
+				// Storage can be unavailable in private browsing; URL state still restores filters.
+			}
+		};
+		save();
+		if (!isDesktop) {
+			window.addEventListener("scroll", save, { passive: true });
+			return () => window.removeEventListener("scroll", save);
+		}
+		const scrollArea =
+			historyScrollRef.current ??
+			document.querySelector<HTMLElement>("[data-page-scroll]");
+		if (!scrollArea) return;
+		scrollArea.addEventListener("scroll", save, { passive: true });
+		return () => scrollArea.removeEventListener("scroll", save);
+	}, [isDesktop, location.search, restoreOrigin, savedHistoryOrigin]);
+	useEffect(() => {
+		if (
+			!restoreOrigin ||
+			isFetching ||
+			restoredScrollOrigin === restoreOrigin
+		)
+			return;
+		const frame = requestAnimationFrame(() => {
+			if (!isDesktop) {
+				window.scrollTo({
+					top: restoreOrigin.scrollTop,
+					behavior: "auto",
+				});
+				if (window.scrollY === restoreOrigin.scrollTop) {
+					setRestoredScrollOrigin(restoreOrigin);
+				}
+			} else {
+				const scrollArea =
+					historyScrollRef.current ??
+					document.querySelector<HTMLElement>("[data-page-scroll]");
+				if (!scrollArea) return;
+				scrollArea.scrollTop = restoreOrigin.scrollTop;
+				if (scrollArea.scrollTop === restoreOrigin.scrollTop) {
+					setRestoredScrollOrigin(restoreOrigin);
+				}
+			}
+		});
+		return () => cancelAnimationFrame(frame);
+	}, [
+		executions,
+		isDesktop,
+		isFetching,
+		restoreOrigin,
+		restoredScrollOrigin,
+	]);
 	const columnCount = previewOpen ? 4 : isPlatformAdmin ? 7 : 6;
 
 	const showPaginationFooter = hasMore || pageStack.length > 0;
@@ -372,18 +543,10 @@ export function ExecutionHistory() {
 			value={historyType}
 			onValueChange={(value: string) => {
 				if (!value) return;
-				setSearchParams(
-					(prev) => {
-						const next = new URLSearchParams(prev);
-						if (value === "workflows") {
-							next.delete("type");
-						} else {
-							next.set("type", value);
-						}
-						return next;
-					},
-					{ replace: true },
-				);
+				updateSearchParams((next) => {
+					if (value === "workflows") next.delete("type");
+					else next.set("type", value);
+				});
 			}}
 			aria-label="Execution history type"
 			size="lg"
@@ -494,6 +657,7 @@ export function ExecutionHistory() {
 
 			{historyType === "workflows" ? (
 				<PageScrollArea
+					ref={historyScrollRef}
 					aria-label="Workflow history workspace"
 					className="flex flex-col gap-3"
 				>
@@ -566,26 +730,15 @@ export function ExecutionHistory() {
 											}
 											onChange={(value) => {
 												const newFilter = value ?? "";
-												setSearchParams(
-													(prev) => {
-														const next =
-															new URLSearchParams(
-																prev,
-															);
-														if (newFilter) {
-															next.set(
-																"workflow",
-																newFilter,
-															);
-														} else {
-															next.delete(
-																"workflow",
-															);
-														}
-														return next;
-													},
-													{ replace: true },
-												);
+												updateSearchParams((next) => {
+													if (newFilter)
+														next.set(
+															"workflow",
+															newFilter,
+														);
+													else
+														next.delete("workflow");
+												});
 											}}
 											variant="combobox"
 											allowClear={true}
@@ -923,6 +1076,9 @@ export function ExecutionHistory() {
 																			execution.execution_id,
 																		)
 																	}
+																	getOrigin={
+																		createHistoryOrigin
+																	}
 																	actions={
 																		<ExecutionCancelAction
 																			executionId={
@@ -1093,7 +1249,7 @@ export function ExecutionHistory() {
 																						execution.execution_id
 																					}
 																					data-state={
-																						previewExecutionId ===
+																						selectedExecutionId ===
 																						execution.execution_id
 																							? "selected"
 																							: undefined
@@ -1307,15 +1463,18 @@ export function ExecutionHistory() {
 											{previewOpen && (
 												<ExecutionPreviewPanel
 													executionId={
-														previewExecutionId
+														selectedExecutionId
 													}
 													onClose={() =>
-														setPreviewExecutionId(
+														setSelectedExecutionId(
 															null,
 														)
 													}
 													onExecutionChange={
-														setPreviewExecutionId
+														setSelectedExecutionId
+													}
+													getOrigin={
+														createHistoryOrigin
 													}
 												/>
 											)}
@@ -1367,10 +1526,12 @@ export function ExecutionHistory() {
 			) : null}
 
 			<ExecutionDrawer
-				executionId={drawerExecutionId}
-				open={drawerOpen}
-				onOpenChange={setDrawerOpen}
-				onExecutionChange={setDrawerExecutionId}
+				executionId={selectedExecutionId}
+				open={!isDesktop && selectedExecutionId !== null}
+				onOpenChange={(open) => {
+					if (!open) setSelectedExecutionId(null);
+				}}
+				onExecutionChange={setSelectedExecutionId}
 			/>
 		</section>
 	);

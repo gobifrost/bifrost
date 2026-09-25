@@ -48,6 +48,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     nodejs npm \
     && rm -rf /var/lib/apt/lists/*
 
+# Debian's npm 9.2.0 crashes in Arborist peer-set resolution on valid V2 App
+# dependency trees ("Cannot read properties of null (reading 'edgesOut')").
+# Keep the build toolchain pinned so App deploys and SDK rebuilds resolve them.
+RUN npm install --global npm@10.9.3 --no-audit --no-fund
+
 # Copy installed packages from builder
 COPY --from=builder /usr/local/lib/python3.14/site-packages /usr/local/lib/python3.14/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin

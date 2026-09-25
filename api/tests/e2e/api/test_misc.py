@@ -21,14 +21,13 @@ class TestPackages:
         data = response.json()
         assert isinstance(data, list) or "packages" in data
 
-    def test_check_package_updates(self, e2e_client, platform_admin):
-        """Platform admin can check for package updates."""
+    def test_package_updates_requires_admin(self, e2e_client, org1_user):
+        """Reject a non-admin before invoking the network-backed pip check."""
         response = e2e_client.get(
             "/api/packages/updates",
-            headers=platform_admin.headers,
+            headers=org1_user.headers,
         )
-        # May return 200 or 404 depending on implementation
-        assert response.status_code in [200, 404]
+        assert response.status_code == 403
 
 
 @pytest.mark.e2e

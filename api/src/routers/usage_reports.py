@@ -9,12 +9,13 @@ Endpoint Structure:
 """
 
 import logging
-from datetime import date
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Literal
+from uuid import UUID
 
-from fastapi import APIRouter, Query
-from sqlalchemy import func, select
+from fastapi import APIRouter, HTTPException, Query
+from sqlalchemy import case, func, select
 
 from src.core.auth import Context, CurrentActiveUser, RequirePlatformAdmin
 from src.core.db_deps import DbSession
@@ -28,7 +29,12 @@ from src.models import (
     OrganizationUsage,
     KnowledgeStorageUsage,
     KnowledgeStorageTrend,
+    WorkflowResourceReport,
+    WorkflowResourceRun,
+    WorkflowResourceSummary as WorkflowResourceSummaryModel,
+    WorkflowResourceWorkflow,
 )
+from src.models.enums import ExecutionStatus
 from src.models.orm import (
     AIUsage,
     Conversation,
@@ -414,4 +420,223 @@ async def get_usage_report(
         knowledge_storage=knowledge_storage,
         knowledge_storage_trends=knowledge_storage_trends,
         knowledge_storage_as_of=knowledge_storage_as_of,
+    )
+
+
+@router.get(
+    "/workflow-resources",
+    response_model=WorkflowResourceReport,
+    summary="Get workflow resource report",
+    description="Get per-execution workflow resource usage for a time window. Platform admin only.",
+    dependencies=[RequirePlatformAdmin],
+)
+async def get_workflow_resource_report(
+    db: DbSession,
+    started_after: datetime = Query(..., description="Start of window (timezone-aware ISO)"),
+    started_before: datetime = Query(..., description="End of window (timezone-aware ISO)"),
+    view: Literal["runs", "workflows"] = Query(default="runs", description="Aggregate by run or workflow"),
+    sort: Literal["cpu", "elapsed", "memory", "ai", "started"] = Query(default="started", description="Sort runs by column"),
+    page: int = Query(default=1, ge=1, description="1-based page number"),
+    page_size: int = Query(default=25, ge=1, le=100, description="Items per page (max 100)"),
+    org_id: UUID | None = Query(default=None, description="Filter by organization ID"),
+    workflow_id: UUID | None = Query(default=None, description="Filter by workflow ID"),
+    workflow: str | None = Query(default=None, description="Partial workflow name filter"),
+    status: ExecutionStatus | None = Query(default=None, description="Filter by execution status"),
+) -> WorkflowResourceReport:
+    """
+    Return one row per execution (runs view) or workflow identity and name
+    (workflows view) with resource metrics and aggregated AI usage.
+
+    AI usage is pre-aggregated by execution before joining so multiple AI
+    calls do not multiply the run count and executions without AI still appear.
+    """
+    # Time window validation
+    if started_after.tzinfo is None or started_before.tzinfo is None:
+        raise HTTPException(status_code=422, detail="started_after and started_before must be timezone-aware")
+    if started_before <= started_after:
+        raise HTTPException(status_code=422, detail="started_before must be after started_after")
+    if started_before - started_after > timedelta(days=31):
+        raise HTTPException(status_code=422, detail="Time window must not exceed 31 days")
+
+    # Build filters against the authoritative execution record.
+    filters = [
+        Execution.started_at >= started_after,
+        Execution.started_at <= started_before,
+    ]
+    if org_id is not None:
+        filters.append(Execution.organization_id == org_id)
+    if workflow_id is not None:
+        filters.append(Execution.workflow_id == workflow_id)
+    if workflow:
+        filters.append(Execution.workflow_name.ilike(f"%{workflow}%"))
+    if status is not None:
+        filters.append(Execution.status == status)
+
+    # Pre-aggregate AI usage by execution so multiple calls do not multiply rows.
+    ai_agg = (
+        select(
+            AIUsage.execution_id,
+            func.coalesce(func.sum(AIUsage.cost), Decimal("0")).label("ai_cost"),
+            func.count(AIUsage.id).label("ai_calls"),
+            func.coalesce(
+                func.sum(
+                    AIUsage.input_tokens + AIUsage.output_tokens
+                ),
+                0,
+            ).label("ai_tokens"),
+        )
+        .where(AIUsage.execution_id.in_(select(Execution.id).where(*filters)))
+        .group_by(AIUsage.execution_id)
+    ).cte("ai_agg")
+
+    # Summary totals (always computed over the full filtered window).
+    summary_result = await db.execute(
+        select(
+            func.count(Execution.id).label("run_count"),
+            func.coalesce(func.sum(Execution.cpu_total_seconds), 0.0).label("total_cpu_seconds"),
+            func.coalesce(func.sum(Execution.duration_ms), 0).label("total_duration_ms"),
+            func.coalesce(func.sum(ai_agg.c.ai_cost), Decimal("0")).label("total_ai_cost"),
+            func.coalesce(func.sum(ai_agg.c.ai_calls), 0).label("total_ai_calls"),
+        )
+        .select_from(Execution)
+        .outerjoin(ai_agg, Execution.id == ai_agg.c.execution_id)
+        .where(*filters)
+    )
+    summary_row = summary_result.one()
+    summary = WorkflowResourceSummaryModel(
+        run_count=int(summary_row.run_count or 0),
+        total_cpu_seconds=float(summary_row.total_cpu_seconds or 0),
+        total_duration_ms=int(summary_row.total_duration_ms or 0),
+        total_ai_cost=Decimal(str(summary_row.total_ai_cost or 0)),
+        total_ai_calls=int(summary_row.total_ai_calls or 0),
+    )
+
+    if view == "workflows":
+        workflow_sort = {
+            "cpu": func.coalesce(func.sum(Execution.cpu_total_seconds), 0.0).desc(),
+            "elapsed": func.coalesce(func.sum(Execution.duration_ms), 0).desc(),
+            "memory": func.max(Execution.peak_process_rss_bytes).desc().nullslast(),
+            "ai": func.coalesce(func.sum(ai_agg.c.ai_cost), Decimal("0")).desc(),
+            "started": func.max(Execution.started_at).desc().nullslast(),
+        }[sort]
+        workflow_query = (
+            select(
+                Execution.workflow_id,
+                Execution.workflow_name,
+                func.count(Execution.id).label("run_count"),
+                func.sum(case((Execution.status == ExecutionStatus.FAILED, 1), else_=0)).label("failed_count"),
+                func.coalesce(func.sum(Execution.cpu_total_seconds), 0.0).label("total_cpu_seconds"),
+                func.coalesce(func.sum(Execution.duration_ms), 0).label("total_duration_ms"),
+                func.max(Execution.peak_cpu_cores).label("max_peak_cpu_cores"),
+                func.max(Execution.peak_process_rss_bytes).label("max_peak_process_rss_bytes"),
+                func.coalesce(func.sum(ai_agg.c.ai_cost), Decimal("0")).label("total_ai_cost"),
+            )
+            .select_from(Execution)
+            .outerjoin(ai_agg, Execution.id == ai_agg.c.execution_id)
+            .where(*filters)
+            .group_by(Execution.workflow_id, Execution.workflow_name)
+            .order_by(workflow_sort, Execution.workflow_name.asc(), Execution.workflow_id.asc())
+        )
+        grouped_workflows = (
+            select(Execution.workflow_id, Execution.workflow_name)
+            .where(*filters)
+            .group_by(Execution.workflow_id, Execution.workflow_name)
+            .subquery()
+        )
+        count_result = await db.execute(
+            select(func.count()).select_from(grouped_workflows)
+        )
+        total = int(count_result.scalar() or 0)
+        workflow_rows = await db.execute(
+            workflow_query.offset((page - 1) * page_size).limit(page_size)
+        )
+        workflows = [
+            WorkflowResourceWorkflow(
+                workflow_id=str(row.workflow_id) if row.workflow_id is not None else None,
+                workflow_name=row.workflow_name or "Unknown",
+                run_count=int(row.run_count or 0),
+                failed_count=int(row.failed_count or 0),
+                total_cpu_seconds=float(row.total_cpu_seconds or 0),
+                total_duration_ms=int(row.total_duration_ms or 0),
+                max_peak_cpu_cores=row.max_peak_cpu_cores,
+                max_peak_process_rss_bytes=row.max_peak_process_rss_bytes,
+                total_ai_cost=Decimal(str(row.total_ai_cost or 0)),
+            )
+            for row in workflow_rows.all()
+        ]
+        return WorkflowResourceReport(
+            summary=summary,
+            runs=[],
+            workflows=workflows,
+            total=total,
+            page=page,
+            page_size=page_size,
+        )
+
+    # Runs view
+    order_clause = {
+        "cpu": Execution.cpu_total_seconds.desc().nullslast(),
+        "elapsed": Execution.duration_ms.desc().nullslast(),
+        "memory": Execution.peak_process_rss_bytes.desc().nullslast(),
+        "ai": func.coalesce(ai_agg.c.ai_cost, Decimal("0")).desc(),
+        "started": Execution.started_at.desc().nullslast(),
+    }[sort]
+
+    runs_query = (
+        select(
+            Execution.id,
+            Execution.workflow_id,
+            Execution.workflow_name,
+            Organization.name.label("organization_name"),
+            Execution.status,
+            Execution.started_at,
+            Execution.duration_ms,
+            Execution.cpu_total_seconds,
+            Execution.peak_cpu_cores,
+            Execution.peak_process_rss_bytes,
+            func.coalesce(ai_agg.c.ai_cost, Decimal("0")).label("ai_cost"),
+            func.coalesce(ai_agg.c.ai_calls, 0).label("ai_calls"),
+            func.coalesce(ai_agg.c.ai_tokens, 0).label("ai_tokens"),
+        )
+        .select_from(Execution)
+        .outerjoin(ai_agg, Execution.id == ai_agg.c.execution_id)
+        .outerjoin(Organization, Execution.organization_id == Organization.id)
+        .where(*filters)
+        .order_by(order_clause, Execution.id.desc())
+    )
+
+    count_result = await db.execute(
+        select(func.count(Execution.id)).select_from(Execution).where(*filters)
+    )
+    total = int(count_result.scalar() or 0)
+
+    runs_rows = await db.execute(
+        runs_query.offset((page - 1) * page_size).limit(page_size)
+    )
+    runs = [
+        WorkflowResourceRun(
+            execution_id=str(row.id),
+            workflow_id=str(row.workflow_id) if row.workflow_id is not None else None,
+            workflow_name=row.workflow_name or "Unknown",
+            organization_name=row.organization_name,
+            status=row.status.value if hasattr(row.status, "value") else str(row.status),
+            started_at=row.started_at,
+            duration_ms=row.duration_ms,
+            cpu_total_seconds=float(row.cpu_total_seconds) if row.cpu_total_seconds is not None else None,
+            peak_cpu_cores=row.peak_cpu_cores,
+            peak_process_rss_bytes=row.peak_process_rss_bytes,
+            ai_cost=Decimal(str(row.ai_cost or 0)),
+            ai_calls=int(row.ai_calls or 0),
+            ai_tokens=int(row.ai_tokens or 0),
+        )
+        for row in runs_rows.all()
+    ]
+
+    return WorkflowResourceReport(
+        summary=summary,
+        runs=runs,
+        workflows=[],
+        total=total,
+        page=page,
+        page_size=page_size,
     )

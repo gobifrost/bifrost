@@ -2,8 +2,13 @@ import type { ReactNode } from "react";
 import { Eye } from "lucide-react";
 import { RunStatusBadge } from "@/components/execution";
 import { Button } from "@/components/ui/button";
+import { Link, useNavigate } from "react-router-dom";
 import type { components } from "@/lib/v1";
 import { formatRunDuration, formatRunTime } from "./historyView";
+import {
+	createExecutionHistoryOriginState,
+	type ExecutionHistoryOrigin,
+} from "../navigation";
 
 type ExecutionSummary = components["schemas"]["ExecutionSummary"];
 interface ExecutionRecordProps {
@@ -12,6 +17,7 @@ interface ExecutionRecordProps {
 	organizationName?: string;
 	onPreview: () => void;
 	actions: ReactNode;
+	getOrigin: () => ExecutionHistoryOrigin;
 }
 
 export function ExecutionRecord({
@@ -20,7 +26,9 @@ export function ExecutionRecord({
 	organizationName,
 	onPreview,
 	actions,
+	getOrigin,
 }: ExecutionRecordProps) {
+	const navigate = useNavigate();
 	const anchorIso =
 		execution.started_at ??
 		execution.scheduled_at ??
@@ -43,12 +51,28 @@ export function ExecutionRecord({
 					Preview
 				</Button>
 			</div>
-			<a
-				href={`/history/${execution.execution_id}`}
+			<Link
+				to={`/history/${execution.execution_id}`}
+				onClick={(event) => {
+					if (
+						event.defaultPrevented ||
+						event.button !== 0 ||
+						event.metaKey ||
+						event.ctrlKey ||
+						event.shiftKey ||
+						event.altKey
+					) {
+						return;
+					}
+					event.preventDefault();
+					navigate(`/history/${execution.execution_id}`, {
+						state: createExecutionHistoryOriginState(getOrigin()),
+					});
+				}}
 				className="flex min-h-11 items-center rounded-[var(--bf-radius-control)] font-mono text-sm font-medium [overflow-wrap:anywhere] hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 			>
 				{execution.workflow_name}
-			</a>
+			</Link>
 			<dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-2 text-xs">
 				{organizationName !== undefined && (
 					<>

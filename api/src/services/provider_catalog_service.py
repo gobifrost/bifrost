@@ -115,7 +115,13 @@ async def list_openrouter_models(
 
 
 class ProviderCatalogService:
-    async def list_openai(self, api_key: str, endpoint: str | None = None) -> ProviderTestResult:
+    async def list_openai(
+        self,
+        api_key: str,
+        endpoint: str | None = None,
+        *,
+        extra_headers: dict[str, str] | None = None,
+    ) -> ProviderTestResult:
         try:
             from openai import AsyncOpenAI
 
@@ -132,7 +138,7 @@ class ProviderCatalogService:
                     model="catalog",
                     surface="provider_catalog",
                 ):
-                    response = await client.models.list()
+                    response = await client.models.list(extra_headers=extra_headers)
                 models = [
                     ProviderModelInfo(m.id, m.id, _model_output_modalities(m))
                     for m in sorted(response.data, key=lambda item: item.id)

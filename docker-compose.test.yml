@@ -100,6 +100,8 @@ services:
   # Stores workspace files and runtime outputs
   seaweedfs:
     image: chrislusf/seaweedfs:latest
+    # Its default admin gRPC port 33646 can collide with an ephemeral port.
+    command: ["mini", "-dir=/data", "-admin.port=12646"]
     environment:
       AWS_ACCESS_KEY_ID: bifrost
       AWS_SECRET_ACCESS_KEY: bifrost_test_key
@@ -221,6 +223,9 @@ services:
       BIFROST_REDIS_URL: redis://redis:6379/0
       BIFROST_SECRET_KEY: test-secret-key-for-e2e-testing-must-be-32-chars
       BIFROST_ENVIRONMENT: testing
+      # Exercise the same claim/beat transitions without production idle intervals.
+      BIFROST_SERVICE_CLAIM_INTERVAL_SECONDS: "1"
+      BIFROST_SERVICE_HEARTBEAT_INTERVAL_SECONDS: "2"
       # S3-compatible object storage
       BIFROST_S3_BUCKET: bifrost-test
       BIFROST_S3_ENDPOINT_URL: http://seaweedfs:8333
