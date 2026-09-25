@@ -1,6 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen } from "@/test-utils";
 import { WorkflowResourcesReport } from "./WorkflowResourcesReport";
+import { useLocation } from "react-router-dom";
+
+function LocationProbe() {
+	const location = useLocation();
+	return (
+		<output role="status" aria-label="Current URL">
+			{location.pathname}
+			{location.search}
+		</output>
+	);
+}
 
 const mockUseWorkflowResourceReport = vi.fn();
 vi.mock("@/services/workflow-resources", () => ({
@@ -66,6 +77,45 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe("WorkflowResourcesReport", () => {
+	it("restores view, filters, dates, and page from the URL", async () => {
+		const { user } = renderWithProviders(
+			<>
+				<WorkflowResourcesReport reportSwitch={null} />
+				<LocationProbe />
+			</>,
+			{
+				initialEntries: [
+					"/usage?tab=workflow&workflow_tab=workflows&workflow_search=patch&workflow_org=org-1&workflow_status=Failed&workflow_from=2026-09-01&workflow_to=2026-09-12&workflow_page=2",
+				],
+			},
+		);
+		expect(
+			screen.getByRole("tab", { name: "By Workflow" }),
+		).toHaveAttribute("data-state", "active");
+		expect(mockUseWorkflowResourceReport).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				view: "workflows",
+				workflow: "patch",
+				orgId: "org-1",
+				status: "Failed",
+				sort: "cpu",
+				page: 2,
+			}),
+		);
+		await user.click(screen.getByRole("tab", { name: "Runs" }));
+		expect(
+			screen.getByRole("status", { name: "Current URL" }),
+		).not.toHaveTextContent("workflow_page=2");
+		expect(mockUseWorkflowResourceReport).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				view: "runs",
+				workflow: "patch",
+				sort: "started",
+				page: 1,
+			}),
+		);
+	});
+
 	it("keeps its date window stable while the report rerenders", () => {
 		vi.useFakeTimers({ toFake: ["Date"] });
 		vi.setSystemTime(new Date("2026-09-24T20:00:00Z"));

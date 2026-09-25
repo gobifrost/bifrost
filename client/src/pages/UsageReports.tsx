@@ -4,8 +4,9 @@ import {
 } from "@/components/layout/PageWorkspace";
 import { Button } from "@/components/ui/button";
 import { ListPageHeader } from "@/components/layout/ListPageHeader";
-import { useState, useMemo, type ReactNode } from "react";
-import { format, subDays } from "date-fns";
+import { useEffect, useMemo, type ReactNode } from "react";
+import { format, isValid, parse, subDays } from "date-fns";
+import { useSearchParams } from "react-router-dom";
 import type { DateRange } from "react-day-picker";
 import { AlertCircle, Sparkles, Workflow as WorkflowIcon } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -36,12 +37,23 @@ import {
 // ============================================================================
 
 export function UsageReports() {
-	const [report, setReport] = useState("ai");
+	const [searchParams, setSearchParams] = useSearchParams();
+	const report = searchParams.get("tab") === "workflow" ? "workflow" : "ai";
 	const reportSwitch = (
 		<ToggleGroup
 			type="single"
 			value={report}
-			onValueChange={(value) => value && setReport(value)}
+			onValueChange={(value) => {
+				if (!value) return;
+				setSearchParams(
+					(previous) => {
+						const next = new URLSearchParams(previous);
+						next.set("tab", value);
+						return next;
+					},
+					{ replace: true },
+				);
+			}}
 			aria-label="Usage report type"
 			size="lg"
 			className="grid w-full grid-cols-2 justify-start sm:flex sm:w-auto"
@@ -50,7 +62,7 @@ export function UsageReports() {
 				<Sparkles className="h-3.5 w-3.5" />
 				AI Usage
 			</ToggleGroupItem>
-			<ToggleGroupItem value="resources" className="gap-1.5">
+			<ToggleGroupItem value="workflow" className="gap-1.5">
 				<WorkflowIcon className="h-3.5 w-3.5" />
 				Workflow Resources
 			</ToggleGroupItem>
@@ -65,12 +77,49 @@ export function UsageReports() {
 
 function AIUsageReport({ reportSwitch }: { reportSwitch: ReactNode }) {
 	const { isPlatformAdmin } = useAuth();
+	const [searchParams, setSearchParams] = useSearchParams();
+	useEffect(() => {
+		if (
+			searchParams.get("tab") === "ai" &&
+			(searchParams.has("ai_from") || searchParams.has("ai_to"))
+		)
+			return;
+		const today = new Date();
+		setSearchParams(
+			(previous) => {
+				const next = new URLSearchParams(previous);
+				next.set("tab", "ai");
+				if (!next.has("ai_from") && !next.has("ai_to")) {
+					next.set(
+						"ai_from",
+						format(subDays(today, 30), "yyyy-MM-dd"),
+					);
+					next.set("ai_to", format(today, "yyyy-MM-dd"));
+				}
+				return next;
+			},
+			{ replace: true },
+		);
+	}, [searchParams, setSearchParams]);
+	const updateParams = (updates: Record<string, string | null>) => {
+		setSearchParams(
+			(previous) => {
+				const next = new URLSearchParams(previous);
+				for (const [key, value] of Object.entries(updates)) {
+					if (value === null) next.delete(key);
+					else next.set(key, value);
+				}
+				return next;
+			},
+			{ replace: true },
+		);
+	};
 
 	// Organization filter state (platform admins only)
 	// undefined = all, null = global only, UUID string = specific org
-	const [filterOrgId, setFilterOrgId] = useState<string | null | undefined>(
-		undefined,
-	);
+	const selectedOrg = searchParams.get("ai_org");
+	const filterOrgId =
+		selectedOrg === "global" ? null : (selectedOrg ?? undefined);
 
 	// Derive isGlobalScope from filterOrgId for display logic
 	const isGlobalScope = filterOrgId === undefined || filterOrgId === null;
@@ -79,16 +128,30 @@ function AIUsageReport({ reportSwitch }: { reportSwitch: ReactNode }) {
 	const { data: orgsData } = useOrganizations({ enabled: isPlatformAdmin });
 
 	// Demo mode state
-	const [showDemoData, setShowDemoData] = useState(false);
+	const showDemoData = searchParams.get("ai_demo") === "1";
 
 	// Source filter (Executions | Chat | All)
-	const [source, setSource] = useState<UsageSource>("all");
+	const sourceParam = searchParams.get("ai_source");
+	const source: UsageSource =
+		sourceParam === "executions" ||
+		sourceParam === "chat" ||
+		sourceParam === "agents"
+			? sourceParam
+			: "all";
 
 	// Default to last 30 days
-	const [dateRange, setDateRange] = useState<DateRange | undefined>({
-		from: subDays(new Date(), 30),
-		to: new Date(),
-	});
+	const readDate = (key: string) => {
+		const raw = searchParams.get(key);
+		if (!raw) return undefined;
+		const value = parse(raw, "yyyy-MM-dd", new Date());
+		return isValid(value) && format(value, "yyyy-MM-dd") === raw
+			? value
+			: undefined;
+	};
+	const selectedFrom = readDate("ai_from");
+	const dateRange: DateRange = selectedFrom
+		? { from: selectedFrom, to: readDate("ai_to") }
+		: { from: subDays(new Date(), 30), to: new Date() };
 
 	// Format dates for API (YYYY-MM-DD)
 	const startDate = dateRange?.from
@@ -152,7 +215,11 @@ function AIUsageReport({ reportSwitch }: { reportSwitch: ReactNode }) {
 								<Switch
 									id="demo-mode"
 									checked={showDemoData}
-									onCheckedChange={setShowDemoData}
+									onCheckedChange={(value) =>
+										updateParams({
+											ai_demo: value ? "1" : null,
+										})
+									}
 								/>
 								<Label
 									htmlFor="demo-mode"
@@ -185,7 +252,11 @@ function AIUsageReport({ reportSwitch }: { reportSwitch: ReactNode }) {
 						<Label className="text-sm font-medium">Source:</Label>
 						<Tabs
 							value={source}
-							onValueChange={(v) => setSource(v as UsageSource)}
+							onValueChange={(value) =>
+								updateParams({
+									ai_source: value === "all" ? null : value,
+								})
+							}
 						>
 							<TabsList>
 								<TabsTrigger value="all">All</TabsTrigger>
@@ -200,7 +271,14 @@ function AIUsageReport({ reportSwitch }: { reportSwitch: ReactNode }) {
 							<div className="w-full sm:ml-auto sm:w-56">
 								<OrganizationSelect
 									value={filterOrgId}
-									onChange={setFilterOrgId}
+									onChange={(value) =>
+										updateParams({
+											ai_org:
+												value === undefined
+													? null
+													: (value ?? "global"),
+										})
+									}
 									showAll={true}
 									showGlobal={true}
 									placeholder="All organizations"
@@ -211,7 +289,16 @@ function AIUsageReport({ reportSwitch }: { reportSwitch: ReactNode }) {
 					<div className="w-full sm:w-auto sm:max-w-sm">
 						<DateRangePicker
 							dateRange={dateRange}
-							onDateRangeChange={setDateRange}
+							onDateRangeChange={(value) =>
+								updateParams({
+									ai_from: value?.from
+										? format(value.from, "yyyy-MM-dd")
+										: null,
+									ai_to: value?.to
+										? format(value.to, "yyyy-MM-dd")
+										: null,
+								})
+							}
 						/>
 					</div>
 				</section>

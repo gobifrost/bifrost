@@ -11,7 +11,11 @@ vi.mock("@/pages/ExecutionDetails", () => ({
 describe("ExecutionPreviewPanel", () => {
 	it("does not reserve preview space when no execution is selected", () => {
 		const { container } = renderWithProviders(
-			<ExecutionPreviewPanel executionId={null} onClose={vi.fn()} />,
+			<ExecutionPreviewPanel
+				executionId={null}
+				onClose={vi.fn()}
+				getOrigin={() => ({ href: "/history", scrollTop: 0 })}
+			/>,
 		);
 
 		expect(
@@ -23,7 +27,14 @@ describe("ExecutionPreviewPanel", () => {
 	it("embeds execution details with close and open actions", async () => {
 		const onClose = vi.fn();
 		const { user } = renderWithProviders(
-			<ExecutionPreviewPanel executionId="run-one" onClose={onClose} />,
+			<ExecutionPreviewPanel
+				executionId="run-one"
+				onClose={onClose}
+				getOrigin={() => ({
+					href: "/history?status=Failed&execution=run-one",
+					scrollTop: 48,
+				})}
+			/>,
 		);
 
 		expect(screen.getByTestId("execution-preview-panel")).toHaveTextContent(

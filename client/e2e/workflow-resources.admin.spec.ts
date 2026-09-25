@@ -35,12 +35,25 @@ test("an administrator finds a workflow in resource runs and its ranking", async
 
 		await page.goto("/reports/usage");
 		await page.getByRole("radio", { name: "Workflow Resources" }).click();
+		await expect(page).toHaveURL(/tab=workflow/);
 		await expect(
 			page.getByRole("heading", { name: "Usage" }),
 		).toBeVisible();
 		await page
 			.getByRole("textbox", { name: "Search workflows" })
 			.fill(name);
+		await expect(page).toHaveURL(/workflow_search=/);
+		await page.setViewportSize({ width: 1024, height: 768 });
+		const dateButton = await page.locator("#date").boundingBox();
+		expect(dateButton).not.toBeNull();
+		expect(dateButton!.x + dateButton!.width).toBeLessThanOrEqual(1024);
+		expect(
+			await page
+				.locator("#date")
+				.evaluate(
+					(element) => element.scrollWidth <= element.clientWidth,
+				),
+		).toBe(true);
 		await expect(
 			page.getByRole("columnheader", { name: "Peak CPU %" }),
 		).toBeVisible();
@@ -64,6 +77,15 @@ test("an administrator finds a workflow in resource runs and its ranking", async
 		);
 		await runRow.click();
 		await expect(page).toHaveURL(new RegExp(`/history/${executionId}$`));
+		await page.getByRole("button", { name: "Back to usage" }).click();
+		await expect(page).toHaveURL(/tab=workflow/);
+		await expect(
+			page.getByRole("textbox", { name: "Search workflows" }),
+		).toHaveValue(name);
+		await expect(page.getByRole("tab", { name: "Runs" })).toHaveAttribute(
+			"data-state",
+			"active",
+		);
 	} finally {
 		if (workflowId) {
 			const remove = await api.delete(`/api/workflows/${workflowId}`);

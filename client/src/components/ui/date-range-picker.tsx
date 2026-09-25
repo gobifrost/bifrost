@@ -32,14 +32,16 @@ export function DateRangePicker({
 	};
 
 	return (
-		<div className={cn("flex w-full min-w-0 gap-2 sm:w-auto", className)}>
+		<div
+			className={cn("flex w-full min-w-0 gap-2 sm:w-[300px]", className)}
+		>
 			<Popover>
 				<PopoverTrigger asChild>
 					<Button
 						id="date"
 						variant={"outline"}
 						className={cn(
-							"h-auto min-h-11 min-w-0 flex-1 justify-start whitespace-normal text-left font-normal sm:min-h-10 sm:w-[300px]",
+							"h-auto min-h-11 min-w-0 flex-1 justify-start whitespace-normal text-left font-normal sm:min-h-10",
 							!dateRange && "text-muted-foreground",
 						)}
 					>

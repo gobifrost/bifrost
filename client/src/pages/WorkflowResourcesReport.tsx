@@ -1,6 +1,18 @@
-import { useState, type ReactNode } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { endOfDay, startOfDay, subDays } from "date-fns";
+import { useEffect, type ReactNode } from "react";
+import {
+	Link,
+	useLocation,
+	useNavigate,
+	useSearchParams,
+} from "react-router-dom";
+import {
+	endOfDay,
+	format,
+	isValid,
+	parse,
+	startOfDay,
+	subDays,
+} from "date-fns";
 import type { DateRange } from "react-day-picker";
 import { AlertCircle } from "lucide-react";
 import {
@@ -79,6 +91,8 @@ function money(value: string | number | null | undefined) {
 
 function RunTable({ runs }: { runs: WorkflowResourceRun[] }) {
 	const navigate = useNavigate();
+	const location = useLocation();
+	const usageReturn = `${location.pathname}${location.search}`;
 	return (
 		<DataTable className="min-w-0" aria-label="Workflow resource runs">
 			<DataTableHeader>
@@ -116,11 +130,16 @@ function RunTable({ runs }: { runs: WorkflowResourceRun[] }) {
 						key={run.execution_id}
 						clickable
 						href={`/history/${run.execution_id}`}
-						onClick={() => navigate(`/history/${run.execution_id}`)}
+						onClick={() =>
+							navigate(`/history/${run.execution_id}`, {
+								state: { usageReturn },
+							})
+						}
 					>
 						<DataTableCell className="max-w-0">
 							<Link
 								to={`/history/${run.execution_id}`}
+								state={{ usageReturn }}
 								className="block truncate rounded-[var(--bf-radius-control)] font-mono font-medium hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 							>
 								{run.workflow_name}
@@ -269,17 +288,89 @@ interface WorkflowResourcesReportProps {
 export function WorkflowResourcesReport({
 	reportSwitch,
 }: WorkflowResourcesReportProps) {
-	const [view, setView] = useState<View>("runs");
-	const [dateRange, setDateRange] = useState<DateRange>(() => ({
-		from: subDays(new Date(), 7),
-		to: new Date(),
-	}));
-	const [orgId, setOrgId] = useState<string | null | undefined>();
-	const [workflowSearch, setWorkflowSearch] = useState("");
-	const [workflowId, setWorkflowId] = useState<string>();
-	const [status, setStatus] = useState<WorkflowResourceStatus | "">("");
-	const [sort, setSort] = useState<Sort>("started");
-	const [page, setPage] = useState(1);
+	const [searchParams, setSearchParams] = useSearchParams();
+	useEffect(() => {
+		if (
+			searchParams.has("workflow_from") ||
+			searchParams.has("workflow_to")
+		)
+			return;
+		const today = new Date();
+		setSearchParams(
+			(previous) => {
+				const next = new URLSearchParams(previous);
+				if (next.has("workflow_from") || next.has("workflow_to"))
+					return next;
+				next.set(
+					"workflow_from",
+					format(subDays(today, 7), "yyyy-MM-dd"),
+				);
+				next.set("workflow_to", format(today, "yyyy-MM-dd"));
+				return next;
+			},
+			{ replace: true },
+		);
+	}, [searchParams, setSearchParams]);
+	const updateParams = (updates: Record<string, string | null>) => {
+		setSearchParams(
+			(previous) => {
+				const next = new URLSearchParams(previous);
+				for (const [key, value] of Object.entries(updates)) {
+					if (value === null) next.delete(key);
+					else next.set(key, value);
+				}
+				return next;
+			},
+			{ replace: true },
+		);
+	};
+	const changeFilter = (updates: Record<string, string | null>) =>
+		updateParams({ ...updates, workflow_page: null });
+	const readDate = (key: string) => {
+		const raw = searchParams.get(key);
+		if (!raw) return undefined;
+		const value = parse(raw, "yyyy-MM-dd", new Date());
+		return isValid(value) && format(value, "yyyy-MM-dd") === raw
+			? value
+			: undefined;
+	};
+	const view: View =
+		searchParams.get("workflow_tab") === "workflows" ? "workflows" : "runs";
+	const selectedFrom = readDate("workflow_from");
+	const dateRange: DateRange = selectedFrom
+		? { from: selectedFrom, to: readDate("workflow_to") }
+		: { from: subDays(new Date(), 7), to: new Date() };
+	const orgId = searchParams.get("workflow_org") ?? undefined;
+	const workflowSearch = searchParams.get("workflow_search") ?? "";
+	const workflowId = searchParams.get("workflow_id") ?? undefined;
+	const statusParam = searchParams.get("workflow_status");
+	const status: WorkflowResourceStatus | "" =
+		statusParam === "Scheduled" ||
+		statusParam === "Pending" ||
+		statusParam === "Running" ||
+		statusParam === "Success" ||
+		statusParam === "CompletedWithErrors" ||
+		statusParam === "Failed" ||
+		statusParam === "Timeout" ||
+		statusParam === "Stuck" ||
+		statusParam === "Cancelling" ||
+		statusParam === "Cancelled"
+			? statusParam
+			: "";
+	const sortParam = searchParams.get("workflow_sort");
+	const sort: Sort =
+		sortParam === "cpu" ||
+		sortParam === "elapsed" ||
+		sortParam === "memory" ||
+		sortParam === "ai" ||
+		sortParam === "started"
+			? sortParam
+			: view === "workflows"
+				? "cpu"
+				: "started";
+	const pageParam = Number(searchParams.get("workflow_page"));
+	const page =
+		Number.isSafeInteger(pageParam) && pageParam > 0 ? pageParam : 1;
 	const start = startOfDay(dateRange.from ?? subDays(new Date(), 7));
 	const selectedEnd = dateRange.to ?? dateRange.from ?? new Date();
 	const end = endOfDay(selectedEnd);
@@ -299,13 +390,14 @@ export function WorkflowResourcesReport({
 			status: status || undefined,
 		});
 	const summary = data?.summary;
-	const changeFilter = () => setPage(1);
 	const selectWorkflow = (selected: WorkflowResourceWorkflow) => {
-		setWorkflowId(selected.workflow_id ?? undefined);
-		setWorkflowSearch(selected.workflow_name);
-		setView("runs");
-		setSort("started");
-		setPage(1);
+		updateParams({
+			workflow_id: selected.workflow_id ?? null,
+			workflow_search: selected.workflow_name,
+			workflow_tab: null,
+			workflow_sort: null,
+			workflow_page: null,
+		});
 	};
 
 	return (
@@ -321,9 +413,10 @@ export function WorkflowResourcesReport({
 						<SearchBox
 							value={workflowSearch}
 							onChange={(value) => {
-								setWorkflowSearch(value);
-								setWorkflowId(undefined);
-								changeFilter();
+								changeFilter({
+									workflow_search: value || null,
+									workflow_id: null,
+								});
 							}}
 							placeholder="Search workflows…"
 							aria-label="Search workflows"
@@ -333,8 +426,12 @@ export function WorkflowResourcesReport({
 							<OrganizationSelect
 								value={orgId}
 								onChange={(value) => {
-									setOrgId(value);
-									changeFilter();
+									changeFilter({
+										workflow_org:
+											typeof value === "string"
+												? value
+												: null,
+									});
 								}}
 								showAll
 								placeholder="All organizations"
@@ -343,12 +440,10 @@ export function WorkflowResourcesReport({
 						<Select
 							value={status || "all"}
 							onValueChange={(value) => {
-								setStatus(
-									value === "all"
-										? ""
-										: (value as WorkflowResourceStatus),
-								);
-								changeFilter();
+								changeFilter({
+									workflow_status:
+										value === "all" ? null : value,
+								});
 							}}
 						>
 							<SelectTrigger
@@ -388,16 +483,17 @@ export function WorkflowResourcesReport({
 						<DateRangePicker
 							dateRange={dateRange}
 							onDateRangeChange={(value) => {
-								setDateRange(
-									value ?? {
-										from: subDays(new Date(), 7),
-										to: new Date(),
-									},
-								);
-								changeFilter();
+								changeFilter({
+									workflow_from: value?.from
+										? format(value.from, "yyyy-MM-dd")
+										: null,
+									workflow_to: value?.to
+										? format(value.to, "yyyy-MM-dd")
+										: null,
+								});
 							}}
 							maxDays={29}
-							className="w-full min-w-0 sm:w-auto lg:w-56"
+							className="w-full min-w-0 sm:w-auto lg:w-80"
 						/>
 					</div>
 				</ListToolbar>
@@ -455,12 +551,21 @@ export function WorkflowResourcesReport({
 						value={view}
 						onValueChange={(value) => {
 							if (value === "workflows" && workflowId) {
-								setWorkflowId(undefined);
-								setWorkflowSearch("");
+								updateParams({
+									workflow_id: null,
+									workflow_search: null,
+									workflow_tab: "workflows",
+									workflow_sort: null,
+									workflow_page: null,
+								});
+								return;
 							}
-							setView(value as View);
-							setSort(value === "workflows" ? "cpu" : "started");
-							setPage(1);
+							updateParams({
+								workflow_tab:
+									value === "workflows" ? "workflows" : null,
+								workflow_sort: null,
+								workflow_page: null,
+							});
 						}}
 					>
 						<TabsList aria-label="Workflow resource view">
@@ -473,8 +578,7 @@ export function WorkflowResourcesReport({
 					<Select
 						value={sort}
 						onValueChange={(value) => {
-							setSort(value as Sort);
-							setPage(1);
+							changeFilter({ workflow_sort: value });
 						}}
 					>
 						<SelectTrigger aria-label="Sort by" className="w-44">
@@ -518,8 +622,14 @@ export function WorkflowResourcesReport({
 					nextDisabled={
 						!data || page * 50 >= data.total || isFetching
 					}
-					onPrevious={() => setPage(page - 1)}
-					onNext={() => setPage(page + 1)}
+					onPrevious={() =>
+						updateParams({
+							workflow_page: page > 2 ? String(page - 1) : null,
+						})
+					}
+					onNext={() =>
+						updateParams({ workflow_page: String(page + 1) })
+					}
 				/>
 				<p className="text-xs text-muted-foreground">
 					Average CPU is CPU time divided by elapsed time. Peak CPU is
