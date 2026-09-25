@@ -4,12 +4,12 @@ Single implementation used by both entry points:
 
 - the HTTP handlers (``api/src/routers/roles.py``) serving SDK/CLI
   callers, and
-- a future engine-local dispatcher serving workflow children through
+- the engine-local dispatcher serving workflow children through
   the parent-side local transport.
 
 Both paths can share DTOs, response fields, HTTP statuses/error precedence,
 side effects, audit attribution, cache invalidation, and assignment
-transaction behavior. Each caller must enforce platform-admin authority
+transaction behavior. Each caller must enforce the effective token's authority
 before invoking these operations.
 
 Scope is the nine SDK methods: ``create``, ``get``, ``list``,
@@ -53,7 +53,7 @@ class RoleServiceError(Exception):
     """Role operation failure with an HTTP-style status.
 
     Raised by the shared service so the HTTP handler (``HTTPException``)
-    and the future local dispatcher (``ok: false`` frames) can map the
+    and the local dispatcher (``ok: false`` frames) can map the
     same failure to their own transport. Solution-managed 409s arrive as
     the guard's own exception and propagate unchanged.
     """

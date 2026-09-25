@@ -163,6 +163,27 @@ class TestRoleCRUD:
         assert searched.json()["total"] == 1
         assert searched.json()["users"][0]["email"] == org2_user.email
 
+    def test_delete_assigned_role_cascades(
+        self, e2e_client, platform_admin, org1_user, test_role
+    ):
+        """The HTTP and local shared service can delete an assigned role."""
+        role_id = test_role["id"]
+        assigned = e2e_client.post(
+            f"/api/roles/{role_id}/users",
+            headers=platform_admin.headers,
+            json={"user_ids": [str(org1_user.user_id)]},
+        )
+        assert assigned.status_code == 204, assigned.text
+
+        deleted = e2e_client.delete(
+            f"/api/roles/{role_id}", headers=platform_admin.headers
+        )
+        assert deleted.status_code == 204, deleted.text
+        missing = e2e_client.get(
+            f"/api/roles/{role_id}", headers=platform_admin.headers
+        )
+        assert missing.status_code == 404, missing.text
+
 
 @pytest.mark.e2e
 class TestRoleAccess:

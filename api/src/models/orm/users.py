@@ -123,7 +123,9 @@ class Role(Base):
     )
 
     # Relationships
-    users: Mapped[list["UserRole"]] = relationship(back_populates="role")
+    users: Mapped[list["UserRole"]] = relationship(
+        back_populates="role", passive_deletes="all"
+    )
     # Agents via junction table
     agents: Mapped[list["Agent"]] = relationship(
         secondary="agent_roles",

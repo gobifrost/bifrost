@@ -7,7 +7,14 @@ list_mappings, get_mapping, upsert_mapping, delete_mapping,
 refresh_token), the SDK workflow/execution reads
 (``workflows.list``, ``executions.list``/``executions.get``), and the
 SDK form reads (``forms.list``, ``forms.get``) arriving
-on each child's dedicated SDK channel. The synchronous client-context
+on each child's dedicated SDK channel. The fixed ``roles`` facade
+(``create/get/list/update/delete/list_users/list_forms/assign_users/
+assign_forms``) rides the same channel through the shared
+``sdk_roles`` service; every roles operation requires the HTTP
+``CurrentSuperuser`` token-equivalent principal (workflow engine tokens
+pass, supervised service tokens do not), and child frame actor, org,
+and Solution claims can never
+grant access. The synchronous client-context
 read (``sdk.context``) rides the dedicated import channel instead, so
 the synchronous ``BifrostClient.context`` property never deadlocks a
 running child event loop.
@@ -41,6 +48,9 @@ fixed ``video_status`` poll, all fixed file operations, the SDK agent
 ``enqueue``/``get_run`` operations, the SDK workflow and execution
 reads (``workflows.list``, ``executions.list``/``executions.get``),
 the SDK form reads (``forms.list``, ``forms.get``),
+the fixed ``roles`` facade (``create/get/list/update/delete/
+list_users/list_forms/assign_users/assign_forms``, token-equivalent
+superuser only),
 and the SDK workflow
 ``execute``/``cancel`` mutations. Engine import fast path: ``modules.resolve``
 and ``modules.fetch`` (served on the dedicated import channel through the
@@ -71,6 +81,15 @@ from bifrost._local_transport import (
     OP_AGENTS_GET_RUN,
     OP_FORMS_GET,
     OP_FORMS_LIST,
+    OP_ROLES_CREATE,
+    OP_ROLES_GET,
+    OP_ROLES_LIST,
+    OP_ROLES_UPDATE,
+    OP_ROLES_DELETE,
+    OP_ROLES_LIST_USERS,
+    OP_ROLES_LIST_FORMS,
+    OP_ROLES_ASSIGN_USERS,
+    OP_ROLES_ASSIGN_FORMS,
     OP_ARTIFACTS_CREATE_DOCUMENT,
     OP_ARTIFACTS_CREATE_IMAGE,
     OP_ARTIFACTS_CREATE_SPREADSHEET,
@@ -201,6 +220,15 @@ SDK_CHANNEL_ALLOWED_OPS = frozenset(
         OP_AGENTS_GET_RUN,
         OP_FORMS_LIST,
         OP_FORMS_GET,
+        OP_ROLES_CREATE,
+        OP_ROLES_GET,
+        OP_ROLES_LIST,
+        OP_ROLES_UPDATE,
+        OP_ROLES_DELETE,
+        OP_ROLES_LIST_USERS,
+        OP_ROLES_LIST_FORMS,
+        OP_ROLES_ASSIGN_USERS,
+        OP_ROLES_ASSIGN_FORMS,
         OP_WORKFLOWS_EXECUTE,
         OP_WORKFLOWS_CANCEL,
         OP_WORKFLOWS_LIST,
@@ -608,6 +636,24 @@ async def dispatch_frames(
         return await _dispatch_forms_list(session_factory, principal, frame_id, frame)
     if op == OP_FORMS_GET:
         return await _dispatch_forms_get(session_factory, principal, frame_id, frame)
+    if op == OP_ROLES_CREATE:
+        return await _dispatch_roles_create(session_factory, principal, frame_id, frame)
+    if op == OP_ROLES_GET:
+        return await _dispatch_roles_get(session_factory, principal, frame_id, frame)
+    if op == OP_ROLES_LIST:
+        return await _dispatch_roles_list(session_factory, principal, frame_id, frame)
+    if op == OP_ROLES_UPDATE:
+        return await _dispatch_roles_update(session_factory, principal, frame_id, frame)
+    if op == OP_ROLES_DELETE:
+        return await _dispatch_roles_delete(session_factory, principal, frame_id, frame)
+    if op == OP_ROLES_LIST_USERS:
+        return await _dispatch_roles_list_users(session_factory, principal, frame_id, frame)
+    if op == OP_ROLES_LIST_FORMS:
+        return await _dispatch_roles_list_forms(session_factory, principal, frame_id, frame)
+    if op == OP_ROLES_ASSIGN_USERS:
+        return await _dispatch_roles_assign_users(session_factory, principal, frame_id, frame)
+    if op == OP_ROLES_ASSIGN_FORMS:
+        return await _dispatch_roles_assign_forms(session_factory, principal, frame_id, frame)
     if op == OP_WORKFLOWS_LIST:
         return await _dispatch_workflows_list(session_factory, principal, frame_id, frame)
     if op == OP_EXECUTIONS_LIST:
@@ -1686,6 +1732,574 @@ async def _dispatch_forms_get(
         error["id"] = frame_id
         return [error]
     return _ok_frames(frame_id, result)
+
+
+# =============================================================================
+# SDK roles facade
+# (create/get/list/update/delete/list_users/list_forms/assign_users/
+# assign_forms)
+# =============================================================================
+
+
+def _require_platform_admin(
+    principal: LocalDispatchPrincipal, frame_id: str | None
+) -> dict[str, Any] | None:
+    """Enforce the HTTP ``CurrentSuperuser`` gate on a local roles call.
+
+    Workflow children authenticate to HTTP with the engine superuser token,
+    regardless of the initiating user's platform-admin flag. Supervised
+    services authenticate with a non-superuser service token. The gate reads
+    only that parent-derived token-equivalent distinction; child frame claims
+    cannot grant access. It runs before frame validation, as the HTTP auth
+    dependency does before validating path and body parameters.
+    """
+    if principal.is_service:
+        return _error(frame_id, 403, "Superuser privileges required")
+    return None
+
+
+def _parse_roles_role_id(
+    frame: dict[str, Any], frame_id: str | None, op: str
+) -> tuple[UUID | None, dict[str, Any] | None]:
+    """One role-id frame field (UUID), else an HTTP-style 422.
+
+    Mirrors the route's FastAPI path parsing: a missing or malformed id
+    is a 422, never a 404.
+    """
+    raw_id = frame.get("role_id")
+    role_uuid: UUID | None = None
+    if isinstance(raw_id, str) and raw_id.strip():
+        try:
+            role_uuid = UUID(raw_id)
+        except ValueError:
+            role_uuid = None
+    if role_uuid is None:
+        return None, _error(
+            frame_id,
+            422,
+            f"invalid {op} request: 'role_id' must be a UUID",
+        )
+    return role_uuid, None
+
+
+async def _dispatch_roles_create(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``roles.create`` through the shared roles service.
+
+    Validates with the same ``RoleCreate`` DTO the HTTP handler uses
+    (422), gates on the parent-derived token-equivalent authority (403, before
+    validation — like the HTTP dependency), then calls the same
+    ``shared.sdk_roles.create_role`` the handler calls, so response
+    fields, actor attribution, audit, and cache invalidation are
+    identical by construction. The shared service only flushes; the
+    dispatcher commits explicitly because the HTTP ``get_db``
+    dependency commits after the handler returns while ``_run_short``
+    never commits. A local attempt never retries over HTTP.
+    """
+    from fastapi import HTTPException
+
+    from shared.sdk_roles import RoleServiceError, create_role
+    from src.models import RoleCreate
+
+    denied = _require_platform_admin(principal, frame_id)
+    if denied is not None:
+        return [denied]
+    request, invalid = _validate_request(
+        RoleCreate,
+        {
+            "name": frame.get("name"),
+            "description": frame.get("description"),
+        },
+        frame_id,
+        OP_ROLES_CREATE,
+    )
+    if invalid is not None:
+        return [invalid]
+    actor_error = _require_actor(principal, frame_id, OP_ROLES_CREATE)
+    if actor_error is not None:
+        return [actor_error]
+    assert principal.actor_email is not None
+
+    async def _create(session: Any) -> dict[str, Any]:
+        role = await create_role(
+            session,
+            name=request.name,
+            description=request.description,
+            permissions=request.permissions,
+            actor_email=principal.actor_email,
+        )
+        # The HTTP dependency commits after the handler returns. The
+        # local session factory only closes its session, so persist the
+        # role before the child can read it in a subsequent SDK call.
+        await session.commit()
+        return role.model_dump(mode="json")
+
+    result, error = await _run_short(
+        session_factory,
+        _create,
+        op=OP_ROLES_CREATE,
+        log_key=request.name,
+        status_errors=(RoleServiceError, HTTPException),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_roles_get(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``roles.get`` through the shared roles service.
+
+    Platform-admin gate first (403, like the HTTP dependency), then
+    role-id UUID parsing (422, like the route's FastAPI parsing), then
+    the same ``shared.sdk_roles.get_role`` the handler calls — the
+    missing-role 404 the facade maps to ``ValueError`` is identical by
+    construction. A local attempt never retries over HTTP.
+    """
+    from fastapi import HTTPException
+
+    from shared.sdk_roles import RoleServiceError, get_role
+
+    denied = _require_platform_admin(principal, frame_id)
+    if denied is not None:
+        return [denied]
+    role_uuid, invalid = _parse_roles_role_id(frame, frame_id, OP_ROLES_GET)
+    if invalid is not None:
+        return [invalid]
+    assert role_uuid is not None
+
+    async def _get(session: Any) -> dict[str, Any]:
+        role = await get_role(session, role_id=role_uuid)
+        return role.model_dump(mode="json")
+
+    result, error = await _run_short(
+        session_factory,
+        _get,
+        op=OP_ROLES_GET,
+        log_key=str(role_uuid),
+        status_errors=(RoleServiceError, HTTPException),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_roles_list(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``roles.list`` through the shared roles service.
+
+    The frame carries no fields (the SDK exposes no search/sort filter)
+    — the parent applies the route defaults (unfiltered, name ascending,
+    unbounded), like the unfiltered HTTP call. Platform-admin gate
+    first (403), then the same ``shared.sdk_roles.list_roles`` the
+    handler calls. Returns the ``{"items", "total"}`` envelope (the
+    transport result contract does not carry bare lists; ``total``
+    mirrors the HTTP ``X-Total-Count`` header the facade ignores).
+    Large listings ride bounded chunked frames via ``_ok_frames``. A
+    local attempt never retries over HTTP.
+    """
+    from fastapi import HTTPException
+
+    from shared.sdk_roles import RoleServiceError, list_roles
+
+    denied = _require_platform_admin(principal, frame_id)
+    if denied is not None:
+        return [denied]
+
+    async def _list(session: Any) -> dict[str, Any]:
+        items, total = await list_roles(session)
+        return {
+            "items": [item.model_dump(mode="json") for item in items],
+            "total": total,
+        }
+
+    result, error = await _run_short(
+        session_factory,
+        _list,
+        op=OP_ROLES_LIST,
+        log_key="roles",
+        status_errors=(RoleServiceError, HTTPException),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_roles_update(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``roles.update`` through the shared roles service.
+
+    Platform-admin gate first (403, like the HTTP dependency), then
+    role-id UUID parsing (422) and the same ``RoleUpdate`` DTO the HTTP
+    handler uses (422 — unknown fields ignored, only non-None fields
+    applied), then the same ``shared.sdk_roles.update_role`` the
+    handler calls. The missing-role 404 the facade maps to
+    ``ValueError`` is identical by construction. The dispatcher commits
+    explicitly (the shared service only flushes; HTTP commits via
+    ``get_db``). A local attempt never retries over HTTP.
+    """
+    from fastapi import HTTPException
+
+    from shared.sdk_roles import RoleServiceError, update_role
+    from src.models import RoleUpdate
+
+    denied = _require_platform_admin(principal, frame_id)
+    if denied is not None:
+        return [denied]
+    role_uuid, invalid_id = _parse_roles_role_id(
+        frame, frame_id, OP_ROLES_UPDATE
+    )
+    if invalid_id is not None:
+        return [invalid_id]
+    assert role_uuid is not None
+    raw_updates = frame.get("updates")
+    if not isinstance(raw_updates, dict):
+        return [
+            _error(
+                frame_id,
+                422,
+                f"invalid {OP_ROLES_UPDATE} request: 'updates' must be an object",
+            )
+        ]
+    request, invalid = _validate_request(
+        RoleUpdate, raw_updates, frame_id, OP_ROLES_UPDATE
+    )
+    if invalid is not None:
+        return [invalid]
+    actor_error = _require_actor(principal, frame_id, OP_ROLES_UPDATE)
+    if actor_error is not None:
+        return [actor_error]
+    assert principal.actor_email is not None
+
+    async def _update(session: Any) -> dict[str, Any]:
+        role = await update_role(
+            session,
+            role_id=role_uuid,
+            name=request.name,
+            description=request.description,
+            permissions=request.permissions,
+            actor_email=principal.actor_email,
+        )
+        # The HTTP dependency commits after the handler returns; the
+        # local session never commits itself.
+        await session.commit()
+        return role.model_dump(mode="json")
+
+    result, error = await _run_short(
+        session_factory,
+        _update,
+        op=OP_ROLES_UPDATE,
+        log_key=str(role_uuid),
+        status_errors=(RoleServiceError, HTTPException),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_roles_delete(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``roles.delete`` through the shared roles service.
+
+    Platform-admin gate first (403), then role-id UUID parsing (422),
+    then the same ``shared.sdk_roles.delete_role`` the handler calls —
+    missing-role 404 and the solution-guard 409 (which propagates
+    unchanged as an ``HTTPException``) are identical by construction.
+    Returns no body (null result, like HTTP 204). The dispatcher
+    commits explicitly (the shared service only flushes; HTTP commits
+    via ``get_db``). A local attempt never retries over HTTP.
+    """
+    from fastapi import HTTPException
+
+    from shared.sdk_roles import RoleServiceError, delete_role
+
+    denied = _require_platform_admin(principal, frame_id)
+    if denied is not None:
+        return [denied]
+    role_uuid, invalid = _parse_roles_role_id(
+        frame, frame_id, OP_ROLES_DELETE
+    )
+    if invalid is not None:
+        return [invalid]
+    assert role_uuid is not None
+    actor_error = _require_actor(principal, frame_id, OP_ROLES_DELETE)
+    if actor_error is not None:
+        return [actor_error]
+
+    async def _delete(session: Any) -> None:
+        await delete_role(session, role_id=role_uuid)
+        # The HTTP dependency commits after the handler returns; the
+        # local session never commits itself.
+        await session.commit()
+
+    _, error = await _run_short(
+        session_factory,
+        _delete,
+        op=OP_ROLES_DELETE,
+        log_key=str(role_uuid),
+        status_errors=(RoleServiceError, HTTPException),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _single_ok(frame_id, None)
+
+
+async def _dispatch_roles_list_users(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``roles.list_users`` through the shared roles service.
+
+    Platform-admin gate first (403), then role-id UUID parsing (422),
+    then the same ``shared.sdk_roles.list_role_users`` the handler
+    calls — the exact ``RoleUsersResponse`` envelope, empty (never 404)
+    for an unknown role, is identical by construction. A local attempt
+    never retries over HTTP.
+    """
+    from fastapi import HTTPException
+
+    from shared.sdk_roles import RoleServiceError, list_role_users
+
+    denied = _require_platform_admin(principal, frame_id)
+    if denied is not None:
+        return [denied]
+    role_uuid, invalid = _parse_roles_role_id(
+        frame, frame_id, OP_ROLES_LIST_USERS
+    )
+    if invalid is not None:
+        return [invalid]
+    assert role_uuid is not None
+
+    async def _list(session: Any) -> dict[str, Any]:
+        return (
+            await list_role_users(session, role_id=role_uuid)
+        ).model_dump(mode="json")
+
+    result, error = await _run_short(
+        session_factory,
+        _list,
+        op=OP_ROLES_LIST_USERS,
+        log_key=str(role_uuid),
+        status_errors=(RoleServiceError, HTTPException),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_roles_list_forms(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``roles.list_forms`` through the shared roles service.
+
+    Platform-admin gate first (403), then role-id UUID parsing (422),
+    then the same ``shared.sdk_roles.list_role_forms`` the handler
+    calls — the exact ``RoleFormsResponse`` envelope, empty (never 404)
+    for an unknown role, is identical by construction. A local attempt
+    never retries over HTTP.
+    """
+    from fastapi import HTTPException
+
+    from shared.sdk_roles import RoleServiceError, list_role_forms
+
+    denied = _require_platform_admin(principal, frame_id)
+    if denied is not None:
+        return [denied]
+    role_uuid, invalid = _parse_roles_role_id(
+        frame, frame_id, OP_ROLES_LIST_FORMS
+    )
+    if invalid is not None:
+        return [invalid]
+    assert role_uuid is not None
+
+    async def _list(session: Any) -> dict[str, Any]:
+        return (
+            await list_role_forms(session, role_id=role_uuid)
+        ).model_dump(mode="json")
+
+    result, error = await _run_short(
+        session_factory,
+        _list,
+        op=OP_ROLES_LIST_FORMS,
+        log_key=str(role_uuid),
+        status_errors=(RoleServiceError, HTTPException),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _ok_frames(frame_id, result)
+
+
+async def _dispatch_roles_assign_users(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``roles.assign_users`` through the shared roles service.
+
+    Platform-admin gate first (403), then role-id UUID parsing (422)
+    and the same ``AssignUsersToRoleRequest`` DTO the HTTP handler uses
+    (422 — an empty list fails its ``min_length`` exactly like the HTTP
+    body validation), then the same
+    ``shared.sdk_roles.assign_users_to_role`` the handler calls:
+    unknown users skipped, already-assigned no-ops, per-user cache
+    invalidation, and actor attribution are identical by construction.
+    Returns no body (null result, like HTTP 204). The dispatcher
+    commits explicitly (the shared service only flushes; HTTP commits
+    via ``get_db``). A local attempt never retries over HTTP.
+    """
+    from fastapi import HTTPException
+
+    from shared.sdk_roles import RoleServiceError, assign_users_to_role
+    from src.models import AssignUsersToRoleRequest
+
+    denied = _require_platform_admin(principal, frame_id)
+    if denied is not None:
+        return [denied]
+    role_uuid, invalid_id = _parse_roles_role_id(
+        frame, frame_id, OP_ROLES_ASSIGN_USERS
+    )
+    if invalid_id is not None:
+        return [invalid_id]
+    assert role_uuid is not None
+    request, invalid = _validate_request(
+        AssignUsersToRoleRequest,
+        {"user_ids": frame.get("user_ids")},
+        frame_id,
+        OP_ROLES_ASSIGN_USERS,
+    )
+    if invalid is not None:
+        return [invalid]
+    actor_error = _require_actor(principal, frame_id, OP_ROLES_ASSIGN_USERS)
+    if actor_error is not None:
+        return [actor_error]
+    assert principal.actor_email is not None
+
+    async def _assign(session: Any) -> None:
+        await assign_users_to_role(
+            session,
+            role_id=role_uuid,
+            user_ids=request.user_ids,
+            actor_email=principal.actor_email,
+        )
+        # The HTTP dependency commits after the handler returns; the
+        # local session never commits itself.
+        await session.commit()
+
+    _, error = await _run_short(
+        session_factory,
+        _assign,
+        op=OP_ROLES_ASSIGN_USERS,
+        log_key=str(role_uuid),
+        status_errors=(RoleServiceError, HTTPException),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _single_ok(frame_id, None)
+
+
+async def _dispatch_roles_assign_forms(
+    session_factory: SessionFactory,
+    principal: LocalDispatchPrincipal,
+    frame_id: str | None,
+    frame: dict[str, Any],
+) -> Iterable[dict[str, Any]]:
+    """Serve ``roles.assign_forms`` through the shared roles service.
+
+    Platform-admin gate first (403), then role-id UUID parsing (422)
+    and the same ``AssignFormsToRoleRequest`` DTO the HTTP handler uses
+    (422), then the same ``shared.sdk_roles.assign_forms_to_role`` the
+    handler calls: missing forms 404, solution-managed forms 409 via
+    the guard (propagates unchanged), already-assigned no-ops, and a
+    malformed form id raising ``ValueError`` (unlisted in
+    ``status_errors``, so the generic 500 — exactly the HTTP outcome)
+    are identical by construction. Returns no body (null result, like
+    HTTP 204). The dispatcher commits explicitly (the shared service
+    only flushes; HTTP commits via ``get_db``). A local attempt never
+    retries over HTTP.
+    """
+    from fastapi import HTTPException
+
+    from shared.sdk_roles import RoleServiceError, assign_forms_to_role
+    from src.models import AssignFormsToRoleRequest
+
+    denied = _require_platform_admin(principal, frame_id)
+    if denied is not None:
+        return [denied]
+    role_uuid, invalid_id = _parse_roles_role_id(
+        frame, frame_id, OP_ROLES_ASSIGN_FORMS
+    )
+    if invalid_id is not None:
+        return [invalid_id]
+    assert role_uuid is not None
+    request, invalid = _validate_request(
+        AssignFormsToRoleRequest,
+        {"form_ids": frame.get("form_ids")},
+        frame_id,
+        OP_ROLES_ASSIGN_FORMS,
+    )
+    if invalid is not None:
+        return [invalid]
+    actor_error = _require_actor(principal, frame_id, OP_ROLES_ASSIGN_FORMS)
+    if actor_error is not None:
+        return [actor_error]
+    assert principal.actor_email is not None
+
+    async def _assign(session: Any) -> None:
+        await assign_forms_to_role(
+            session,
+            role_id=role_uuid,
+            form_ids=request.form_ids,
+            actor_email=principal.actor_email,
+        )
+        # The HTTP dependency commits after the handler returns; the
+        # local session never commits itself.
+        await session.commit()
+
+    _, error = await _run_short(
+        session_factory,
+        _assign,
+        op=OP_ROLES_ASSIGN_FORMS,
+        log_key=str(role_uuid),
+        status_errors=(RoleServiceError, HTTPException),
+    )
+    if error is not None:
+        error["id"] = frame_id
+        return [error]
+    return _single_ok(frame_id, None)
 
 
 # =============================================================================

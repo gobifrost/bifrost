@@ -68,7 +68,17 @@ reads (``forms.list``, ``forms.get``)):
   ``workflows.cancel`` sends ``execution_id``. ``forms.list``
   sends no fields (the SDK exposes no scope filter — the parent
   applies the route defaults, like the unfiltered HTTP call);
-  ``forms.get`` sends ``form_id``.
+  ``forms.get`` sends ``form_id``. ``roles.create`` sends
+  ``name``/``description``; ``roles.get``/``roles.delete``/
+  ``roles.list_users``/``roles.list_forms`` send ``role_id``;
+  ``roles.list`` sends no fields (the parent applies the route
+  defaults, like the unfiltered HTTP call); ``roles.update`` sends
+  ``role_id``/``updates``; ``roles.assign_users`` sends
+  ``role_id``/``user_ids``; ``roles.assign_forms`` sends
+  ``role_id``/``form_ids``. Roles are global and platform-admin
+  only: the parent gates every roles operation on its own dispatch
+  principal and never reads actor, org, or Solution claims from
+  child frames.
    ``artifacts.create_video`` sends ``filename``/``prompt``/
    ``workspace_id`` (the caller's own workspace, like the HTTP query
    param; actor, org, and execution identity come from the parent's
@@ -119,7 +129,21 @@ reads (``forms.list``, ``forms.get``)):
   included, like the HTTP JSON body); ``forms.get`` returns the
   ``FormPublic`` dict (a missing/inactive/hidden form is a 404 error
   frame the facade maps to ``ValueError``; a denied form is a 403 the
-  facade maps to ``PermissionError``). ``workflows.execute``
+  facade maps to ``PermissionError``). ``roles.create``/``roles.get``/
+  ``roles.update`` return the ``RolePublic`` dict (a missing role is a
+  404 error frame the facade maps to ``ValueError``); ``roles.list``
+  returns an ``{"items": [...], "total": n}`` envelope of
+  ``RolePublic`` dicts (the result contract does not carry bare lists;
+  ``total`` mirrors the HTTP ``X-Total-Count`` header the facade
+  ignores); ``roles.delete``/``roles.assign_users``/
+  ``roles.assign_forms`` return no body (``result`` null, like HTTP
+  204); ``roles.list_users`` returns the exact ``RoleUsersResponse``
+  envelope (``{"user_ids", "users", "total"}`` — an unknown role
+  is an empty envelope, never a 404, like HTTP); ``roles.list_forms``
+  returns the exact ``RoleFormsResponse`` envelope (``{"form_ids"}``
+  — likewise empty, never 404). A non-platform-admin caller is a 403
+  error frame on every roles operation, like the HTTP
+  ``CurrentSuperuser`` gate. ``workflows.execute``
   returns the ``WorkflowExecutionResponse`` dict (the facade returns its
   ``execution_id`` — fire-and-forget, like HTTP); ``workflows.cancel``
   returns the ``{"execution_id", "status"}`` dict (the facade returns
@@ -170,7 +194,9 @@ from typing import Any, NoReturn
 # ``enqueue``/``get_run`` operations, the SDK workflow and execution
 # reads (``workflows.list``, ``executions.list``/``executions.get`` —
 # ``workflows.get`` delegates to ``executions.get``), the SDK form
-# reads (``forms.list``, ``forms.get``), and the SDK workflow
+# reads (``forms.list``, ``forms.get``), the fixed ``roles`` facade
+# (``create/get/list/update/delete/list_users/list_forms/assign_users/
+# assign_forms``), and the SDK workflow
 # ``execute``/``cancel`` mutations ride the local transport. The
 # parent enforces the same allowlist; anything else is a 404 response.
 # Artifact generation (``create_document``/``create_spreadsheet``/
@@ -233,6 +259,15 @@ OP_WORKFLOWS_EXECUTE = "workflows.execute"
 OP_WORKFLOWS_CANCEL = "workflows.cancel"
 OP_FORMS_LIST = "forms.list"
 OP_FORMS_GET = "forms.get"
+OP_ROLES_CREATE = "roles.create"
+OP_ROLES_GET = "roles.get"
+OP_ROLES_LIST = "roles.list"
+OP_ROLES_UPDATE = "roles.update"
+OP_ROLES_DELETE = "roles.delete"
+OP_ROLES_LIST_USERS = "roles.list_users"
+OP_ROLES_LIST_FORMS = "roles.list_forms"
+OP_ROLES_ASSIGN_USERS = "roles.assign_users"
+OP_ROLES_ASSIGN_FORMS = "roles.assign_forms"
 
 # Wire version. The parent rejects anything else instead of guessing.
 TRANSPORT_VERSION = 1
@@ -2320,6 +2355,248 @@ class ChildLocalTransport:
                 )
             )
         return result
+
+
+    async def call_roles_create(
+        self,
+        name: str,
+        description: str | None,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """Create one role through the parent. No HTTP fallback.
+
+        Sends ``name``/``description`` (the facade exposes no
+        permissions field — the parent validates with the same
+        ``RoleCreate`` DTO the HTTP handler uses, so over-long names
+        are the same 422). Returns the ``RolePublic`` dict. A
+        non-platform-admin caller is a 403 error frame, like the
+        HTTP ``CurrentSuperuser`` gate. The parent commits before
+        returning, like the HTTP dependency.
+        """
+        result = await self._call(
+            OP_ROLES_CREATE,
+            {"name": name, "description": description},
+            timeout,
+        )
+        if not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+    async def call_roles_get(
+        self,
+        role_id: str,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """Get one role through the parent. No HTTP fallback.
+
+        Returns the ``RolePublic`` dict. A missing role is a 404 error
+        frame the facade maps to ``ValueError`` (like HTTP); a
+        malformed id is a 422; a non-platform-admin caller is a 403.
+        """
+        result = await self._call(
+            OP_ROLES_GET,
+            {"role_id": role_id},
+            timeout,
+        )
+        if not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+    async def call_roles_list(
+        self,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> list[dict[str, Any]]:
+        """List roles through the parent. No HTTP fallback.
+
+        Sends no fields (the SDK exposes no search/sort filter — the
+        parent applies the route defaults, like the unfiltered HTTP
+        call). Returns the ``RolePublic`` dicts (unwrapped from the
+        ``{"items", "total"}`` envelope — the transport result contract
+        does not carry bare lists), identical to the HTTP path.
+        """
+        result = await self._call(
+            OP_ROLES_LIST,
+            {},
+            timeout,
+        )
+        if not isinstance(result, dict) or not isinstance(
+            result.get("items"), list
+        ):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result["items"]
+
+    async def call_roles_update(
+        self,
+        role_id: str,
+        updates: dict[str, Any],
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """Update one role through the parent. No HTTP fallback.
+
+        ``updates`` carries the facade's ``**updates`` mapping; the
+        parent validates it with the same ``RoleUpdate`` DTO the HTTP
+        handler uses (unknown fields ignored, same 422s). Only
+        non-None fields are applied, like HTTP. Returns the
+        ``RolePublic`` dict. A missing role is a 404 error frame the
+        facade maps to ``ValueError``; a malformed id is a 422; a
+        non-platform-admin caller is a 403. The parent commits before
+        returning, like the HTTP dependency.
+        """
+        result = await self._call(
+            OP_ROLES_UPDATE,
+            {"role_id": role_id, "updates": updates},
+            timeout,
+        )
+        if not isinstance(result, dict):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result
+
+    async def call_roles_delete(
+        self,
+        role_id: str,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> None:
+        """Delete one role through the parent. No HTTP fallback.
+
+        Returns no body (``result`` null, like HTTP 204). A missing
+        role is a 404 error frame the facade maps to ``ValueError``; a
+        malformed id is a 422; a non-platform-admin caller is a 403; a
+        role bound to a solution-managed entity is a 409 — all like
+        HTTP. The parent commits before returning, like the HTTP
+        dependency.
+        """
+        result = await self._call(
+            OP_ROLES_DELETE, {"role_id": role_id}, timeout
+        )
+        if result is not None:
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+
+    async def call_roles_list_users(
+        self,
+        role_id: str,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> list[str]:
+        """List user ids assigned to a role through the parent.
+
+        No HTTP fallback. Returns the ``user_ids`` list unwrapped from
+        the exact ``RoleUsersResponse`` envelope (``{"user_ids",
+        "users", "total"}``). An unknown role is an empty envelope,
+        never a 404 — like HTTP. A malformed id is a 422; a
+        non-platform-admin caller is a 403.
+        """
+        result = await self._call(
+            OP_ROLES_LIST_USERS, {"role_id": role_id}, timeout
+        )
+        if not isinstance(result, dict) or not isinstance(
+            result.get("user_ids"), list
+        ):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result["user_ids"]
+
+    async def call_roles_list_forms(
+        self,
+        role_id: str,
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> list[str]:
+        """List form ids assigned to a role through the parent.
+
+        No HTTP fallback. Returns the ``form_ids`` list unwrapped from
+        the exact ``RoleFormsResponse`` envelope. An unknown role is an
+        empty envelope, never a 404 — like HTTP. A malformed id is a
+        422; a non-platform-admin caller is a 403.
+        """
+        result = await self._call(
+            OP_ROLES_LIST_FORMS, {"role_id": role_id}, timeout
+        )
+        if not isinstance(result, dict) or not isinstance(
+            result.get("form_ids"), list
+        ):
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+        return result["form_ids"]
+
+    async def call_roles_assign_users(
+        self,
+        role_id: str,
+        user_ids: list[str],
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> None:
+        """Assign users to a role through the parent. No HTTP fallback.
+
+        Returns no body (``result`` null, like HTTP 204). Unknown
+        users are skipped with a warning and already-assigned users
+        are no-ops — exactly like HTTP. An empty ``user_ids`` list is
+        the same 422 the HTTP body validation raises; a malformed
+        ``role_id`` is a 422; a non-platform-admin caller is a 403.
+        The parent commits before returning, like the HTTP dependency.
+        """
+        result = await self._call(
+            OP_ROLES_ASSIGN_USERS,
+            {"role_id": role_id, "user_ids": user_ids},
+            timeout,
+        )
+        if result is not None:
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
+
+    async def call_roles_assign_forms(
+        self,
+        role_id: str,
+        form_ids: list[str],
+        timeout: float = DEFAULT_OP_TIMEOUT_SECONDS,
+    ) -> None:
+        """Assign forms to a role through the parent. No HTTP fallback.
+
+        Returns no body (``result`` null, like HTTP 204).
+        Already-assigned forms are no-ops; a missing form is a 404
+        error frame; a solution-managed form is a 409; a malformed
+        form id is a 500 — all exactly like HTTP. An empty
+        ``form_ids`` list is the same 422 the HTTP body validation
+        raises; a malformed ``role_id`` is a 422; a
+        non-platform-admin caller is a 403. The parent commits before
+        returning, like the HTTP dependency.
+        """
+        result = await self._call(
+            OP_ROLES_ASSIGN_FORMS,
+            {"role_id": role_id, "form_ids": form_ids},
+            timeout,
+        )
+        if result is not None:
+            self._fail(
+                LocalTransportError(
+                    "malformed local SDK result; channel closed"
+                )
+            )
 
 
 _installed: ChildLocalTransport | None = None
