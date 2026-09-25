@@ -2,7 +2,7 @@
 SDK Module-Fetch Router
 
 Provides authenticated HTTP endpoints that worker child processes use to
-fetch workspace module source code and requirements.txt content.
+fetch workspace module source code.
 
 This eliminates the need for BIFROST_S3_* credentials in child processes
 (Phase 2 of the execution sandbox hardening).  The child authenticates with
@@ -13,8 +13,6 @@ Endpoints:
     GET /api/sdk/modules/{path:path}
         Fetch a single module's source (JSON: {content, path, hash}).
 
-    GET /api/sdk/requirements
-        Fetch requirements.txt content (JSON: {content}).
 """
 
 from typing import Annotated
@@ -31,7 +29,6 @@ from shared.sdk_modules import (
 )
 from src.core.auth import get_current_superuser
 from src.core.constants import SYSTEM_USER_UUID
-from src.core.requirements_cache import get_requirements
 from src.core.principal import UserPrincipal
 from src.core.security import decode_token
 
@@ -159,23 +156,3 @@ async def resolve_module(
         ) from exc
 
     return JSONResponse(content=result)
-
-
-@router.get("/requirements")
-async def fetch_requirements(
-    _user: Annotated[object, Depends(get_current_superuser)],
-) -> JSONResponse:
-    """
-    Fetch requirements.txt content.
-
-    Returns JSON: {"content": "...", "hash": "..."} or 404 if none exists.
-    Used by the child's install_requirements() when Redis is cold.
-    """
-    cached = await get_requirements()
-    if cached is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="requirements.txt not found",
-        )
-
-    return JSONResponse(content=dict(cached))

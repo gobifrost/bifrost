@@ -526,42 +526,6 @@ def resolve_module_sync(name: str) -> ModuleResolution:
     return resolution
 
 
-def _fetch_requirements_from_api() -> tuple[bool, str | None]:
-    """
-    Fetch requirements.txt via GET /api/sdk/requirements (synchronous).
-
-    Returns ``(authoritative, content)``. A 404 is authoritative absence, while
-    connection/auth/server failures return ``(False, None)`` so the caller can
-    distinguish them from a workspace that intentionally has no requirements.
-    Used as the primary cold-cache fallback in get_requirements_sync() when
-    BIFROST_S3_* are absent from the child environment (Phase 2 hardening).
-    """
-    creds = _get_engine_credentials()
-    if not creds:
-        return False, None
-    creds_url, token = creds
-    api_url = creds_url or os.environ.get("BIFROST_API_URL", "").rstrip("/")
-    if not api_url:
-        return False, None
-
-    try:
-        resp = _get_http_client().get(
-            f"{api_url}/api/sdk/requirements",
-            headers={"Authorization": f"Bearer {token}"},
-        )
-        if resp.status_code == 404:
-            return True, None
-        if resp.status_code != 200:
-            logger.warning(f"API requirements-fetch returned {resp.status_code}")
-            return False, None
-
-        data = resp.json()
-        return True, data.get("content")
-    except Exception as e:
-        logger.warning(f"API requirements-fetch error: {e}")
-        return False, None
-
-
 def _get_s3_client() -> Any:
     """
     Get or create a sync S3 client using botocore (always available via aiobotocore).
