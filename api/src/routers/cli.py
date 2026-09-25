@@ -2583,68 +2583,57 @@ async def cli_create_table(
     db: AsyncSession = Depends(get_db),
 ) -> SDKTableInfo:
     """Create a new table via SDK."""
-    from src.models.orm.tables import Table
+    from shared.sdk_config import ScopeResolutionError, resolve_sdk_scope
+    from shared.sdk_table_metadata import (
+        SDKTableMetadataError,
+        create_sdk_table,
+        ensure_sdk_table_create_allowed,
+    )
     from src.services.solution_scope import solution_context_id
 
     # A solution execution context (?solution= or X-Bifrost-App, resolved by
     # auth onto ctx) may not create tables ad hoc — tables are declared by the
     # solution manifest and created at deploy.
-    if await solution_context_id(db, ctx) is not None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Tables must be declared by the solution manifest",
+    solution_present = await solution_context_id(db, ctx) is not None
+
+    # The historical endpoint returns the Solution restriction before it
+    # examines a requested scope. Keep that ordering for malformed or
+    # forbidden scopes as well as valid ones.
+    try:
+        ensure_sdk_table_create_allowed(solution_present)
+    except SDKTableMetadataError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
+
+    try:
+        org_uuid = await resolve_sdk_scope(
+            request.scope,
+            caller_org_id=current_user.organization_id,
+            is_platform_admin=current_user.is_superuser,
+            session=db,
         )
-
-    org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
-    org_uuid = UUID(org_id) if org_id else None
-
-    # Exact-scope uniqueness check (not a cascade): "is there already a
-    # table named X in MY scope?" Cascade would mask collisions when a
-    # global Table with the same name exists. See repositories/README.md.
-    stmt = select(Table).where(
-        Table.name == request.name,
-        Table.organization_id == org_uuid,
-        Table.solution_id.is_(None),
-    )
-    result = await db.execute(stmt)
-    existing = result.scalar_one_or_none()
-
-    if existing:
+    except ScopeResolutionError as e:
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Table '{request.name}' already exists",
+            status_code=e.status_code,
+            detail=e.detail,
+        ) from None
+
+    try:
+        result = await create_sdk_table(
+            db,
+            name=request.name,
+            table_schema=request.table_schema,
+            description=request.description,
+            org_id=org_uuid,
+            actor_email=current_user.email,
+            solution_present=solution_present,
         )
+    except SDKTableMetadataError as e:
+        raise HTTPException(
+            status_code=e.status_code,
+            detail=e.detail,
+        ) from None
 
-    # Seed admin_bypass so platform admins can still operate on tables
-    # created via the SDK. SDK callers can override this later by setting
-    # explicit policies through the REST `PATCH /api/tables/{id}` endpoint.
-    from shared.policies.probe import make_seed_admin_bypass
-
-    table = Table(
-        name=request.name,
-        description=request.description,
-        schema=request.table_schema,
-        organization_id=org_uuid,
-        created_by=current_user.email,
-        access=make_seed_admin_bypass(),
-    )
-    db.add(table)
-    await db.commit()
-    await db.refresh(table)
-
-    logger.info(
-        f"CLI created table '{log_safe(request.name)}' for user {current_user.email}"
-    )
-
-    return SDKTableInfo(
-        id=str(table.id),
-        name=table.name,
-        organization_id=str(table.organization_id) if table.organization_id else None,
-        table_schema=table.schema,
-        description=table.description,
-        created_at=table.created_at.isoformat(),
-        updated_at=table.updated_at.isoformat(),
-    )
+    return SDKTableInfo(**result)
 
 
 @router.post(
@@ -2665,33 +2654,26 @@ async def cli_list_tables(
     cascade (org + global table names/schemas; row data is policy-gated).
     """
     # Local import keeps the router file's top-level imports lean.
-    from src.repositories.tables import TableRepository
+    from shared.sdk_config import ScopeResolutionError, resolve_sdk_scope
+    from shared.sdk_table_metadata import list_sdk_tables
 
-    org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
-    org_uuid = UUID(org_id) if org_id else None
+    try:
+        org_uuid = await resolve_sdk_scope(
+            request.scope,
+            caller_org_id=current_user.organization_id,
+            is_platform_admin=current_user.is_superuser,
+            session=db,
+        )
+    except ScopeResolutionError as e:
+        raise HTTPException(
+            status_code=e.status_code,
+            detail=e.detail,
+        ) from None
 
-    # Principal-derived sentinel trust (OPEN-B): the sentinel/admins keep
-    # is_superuser=True (their is_external claim is neutralized at mint); an
-    # EXTERNAL principal must not inherit it — they get the regular-user
-    # cascade instead.
-    repo = TableRepository(
+    items = await list_sdk_tables(
         db,
         org_id=org_uuid,
-        is_superuser=not current_user.is_external,
-        is_external=current_user.is_external,
+        external=current_user.is_external,
     )
-    tables = await repo.list()
-    tables = sorted(tables, key=lambda t: t.name)
 
-    return [
-        SDKTableInfo(
-            id=str(t.id),
-            name=t.name,
-            organization_id=str(t.organization_id) if t.organization_id else None,
-            table_schema=t.schema,
-            description=t.description,
-            created_at=t.created_at.isoformat(),
-            updated_at=t.updated_at.isoformat(),
-        )
-        for t in tables
-    ]
+    return [SDKTableInfo(**item) for item in items]

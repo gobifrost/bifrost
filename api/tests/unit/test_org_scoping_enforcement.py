@@ -76,7 +76,9 @@ ALLOW_LIST_INLINE_ORG: set[tuple[str, str, str]] = {
     # The cli.py `ConfigModel.organization_id == org_uuid` entry was removed
     # in the SDK engine-local stage 2a: cli_set/list/delete_config now share
     # shared/sdk_config.py with the local dispatcher (no inline router copy).
-    ('routers/cli.py', 'Table.organization_id == org_uuid,', 'cli_create_table exact-scope uniqueness check (NOT cascade)'),
+    # The cli_create_table `Table.organization_id == org_uuid` entry was
+    # removed in the SDK table-metadata stage: cli_create_table now shares
+    # shared/sdk_table_metadata.py (exact-scope check, no cascade).
     # cli_list_tables migrated to TableRepository.list() in phase 6.
     ('routers/executions.py', 'query = query.where(ExecutionModel.organization_id == org_id)', 'Execution identity-entity filter (permanent)'),
     ('routers/export_import.py', 'Config.organization_id == mapping.organization_id', 'manifest sync inline; phase 8 follow-up'),

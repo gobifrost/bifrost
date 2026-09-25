@@ -615,9 +615,17 @@ async def delete_table(
     user: CurrentSuperuser,
 ) -> None:
     """Delete a table and all its documents by ID (platform admin only)."""
-    await assert_entity_id_not_solution_managed(ctx.db, Table, table_id)
-    repo = TableRepository(ctx.db, ctx.org_id, is_superuser=True)
-    success = await repo.delete_table(table_id)
+    from shared.sdk_table_metadata import SDKTableMetadataError, delete_sdk_table
+
+    try:
+        success = await delete_sdk_table(
+            ctx.db, table_id=table_id, org_id=ctx.org_id
+        )
+    except SDKTableMetadataError as e:
+        raise HTTPException(
+            status_code=e.status_code,
+            detail=e.detail,
+        ) from None
 
     if not success:
         raise HTTPException(
