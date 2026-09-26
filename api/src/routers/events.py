@@ -1199,6 +1199,7 @@ async def emit_topic_event(
 )
 async def list_topics(
     db: DbSession,
+    _user: CurrentSuperuser,
 ) -> TopicsRegistryResponse:
     """Return the curated topic registry plus topics currently in use."""
     source_repo = EventSourceRepository(db)

@@ -541,7 +541,7 @@ async def cancel_scheduled_execution(
 )
 async def validate_workflow(
     request: WorkflowValidationRequest,
-    user: CurrentActiveUser,
+    user: CurrentSuperuser,
 ) -> WorkflowValidationResponse:
     """Validate a workflow file for errors."""
     from src.services.workflow_validation import validate_workflow_file

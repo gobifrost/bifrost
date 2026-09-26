@@ -493,46 +493,49 @@ def config_canaries(e2e_client, platform_admin, org1):
 
 
 class TestExternalUserConfigPath:
-    """The secrets carve-out (NEW-1/OPEN-E): a direct EXTERNAL user calling the
-    SDK config-get endpoint gets ONLY their org's config on default scope (no
-    global union — a global SECRET is never returned/decrypted), and is 403'd
-    if they explicitly ask for global or a foreign org. The engine-sentinel
-    path is unaffected (separate principal)."""
+    """``/api/sdk/config/get`` is gated to execution credentials and bypass
+    principals (the C2 gate). An external user's own login token is neither,
+    so it is refused before scope resolution ever runs — superseding the old
+    NEW-1/OPEN-E carve-out (no global secret for externals on default scope,
+    403 on an explicit global/foreign-org ask), which is now unreachable via
+    this route for a direct external caller. The engine-sentinel path is
+    unaffected (separate principal) and untouched here."""
 
-    def _get(self, e2e_client, user, *, key, scope=None):
+    def _get(self, e2e_client, headers, *, key, scope=None):
         body = {"key": key}
         if scope is not None:
             body["scope"] = scope
-        return e2e_client.post("/api/sdk/config/get", headers=user.headers, json=body)
+        return e2e_client.post("/api/sdk/config/get", headers=headers, json=body)
 
-    def test_external_default_scope_excludes_global_secret(
+    def test_external_user_token_is_refused(
         self, e2e_client, external_user, config_canaries
     ):
-        resp = self._get(e2e_client, external_user, key=config_canaries["global_key"])
-        assert resp.status_code in (200, 404), resp.text
-        if resp.status_code == 200:
-            assert resp.json() is None, (
-                "external user must NOT receive the global secret value"
+        """Replaces the old default-scope and explicit-global-scope carve-out
+        tests: both are now unreachable, since the gate 403s an external
+        user's own token before any scope is resolved — default scope and an
+        explicit global/foreign-org ask are refused identically."""
+        for scope in (None, "global"):
+            resp = self._get(
+                e2e_client,
+                external_user.headers,
+                key=config_canaries["global_key"],
+                scope=scope,
+            )
+            assert resp.status_code == 403, (
+                f"external user's own token must be refused (scope={scope}): "
+                f"{resp.status_code} {resp.text}"
             )
 
-    def test_external_explicit_global_scope_is_forbidden(
-        self, e2e_client, external_user, config_canaries
+    def test_normal_user_default_scope_sees_global(
+        self, e2e_client, org1_service_headers, config_canaries
     ):
         resp = self._get(
-            e2e_client, external_user, key=config_canaries["global_key"], scope="global"
+            e2e_client, org1_service_headers, key=config_canaries["global_key"]
         )
-        assert resp.status_code == 403, (
-            f"external user requesting global scope must be 403'd: {resp.status_code}"
-        )
-
-    def test_normal_user_default_scope_sees_global(
-        self, e2e_client, org1_user, config_canaries
-    ):
-        resp = self._get(e2e_client, org1_user, key=config_canaries["global_key"])
         assert resp.status_code == 200, resp.text
         body = resp.json()
         assert body is not None and body.get("value") == "GLOBAL-SECRET", (
-            "normal org user's default-scope read still unions global config"
+            "a regular org caller's default-scope read still unions global config"
         )
 
 
@@ -759,31 +762,36 @@ def table_canaries(e2e_client, platform_admin, org1):
 
 
 class TestExternalUserSDKTablesList:
-    """Tables are cascade-scoped like everything else: an external lists org +
-    global table names/schemas (row DATA stays policy-gated, default deny).
-    OPEN-B's keeper is sentinel trust: the external must not inherit
-    ``is_superuser=True`` and see ALL orgs."""
+    """``/api/sdk/tables/list`` is gated to execution credentials and bypass
+    principals. An external user's own login token is refused outright, so
+    the old "external lists org + global tables like any org user" cascade
+    proof is unreachable via this route for a direct external caller;
+    OPEN-B's sentinel-trust concern (external must not inherit
+    ``is_superuser=True`` and see ALL orgs) is exercised instead through the
+    engine-sentinel path, which is unaffected (separate principal, not
+    covered here). The regular-org cascade (org + global tables) is proven
+    via an org1-scoped execution credential."""
 
-    def _names(self, e2e_client, user) -> set[str]:
+    def _names(self, e2e_client, headers) -> set[str]:
         resp = e2e_client.post(
-            "/api/sdk/tables/list", headers=user.headers, json={}
+            "/api/sdk/tables/list", headers=headers, json={}
         )
         assert resp.status_code == 200, resp.text
         return {t["name"] for t in resp.json()}
 
-    def test_external_list_matches_normal_cascade(
+    def test_external_user_token_is_refused(
         self, e2e_client, external_user, table_canaries
     ):
-        names = self._names(e2e_client, external_user)
-        assert table_canaries["org"]["name"] in names
-        assert table_canaries["global"]["name"] in names, (
-            "external user lists global table names like any org user"
+        resp = e2e_client.post(
+            "/api/sdk/tables/list", headers=external_user.headers, json={}
         )
+        assert resp.status_code == 403, resp.text
 
     def test_normal_user_list_includes_global_table(
-        self, e2e_client, org1_user, table_canaries
+        self, e2e_client, org1_service_headers, table_canaries
     ):
-        names = self._names(e2e_client, org1_user)
+        names = self._names(e2e_client, org1_service_headers)
+        assert table_canaries["org"]["name"] in names
         assert table_canaries["global"]["name"] in names
 
 

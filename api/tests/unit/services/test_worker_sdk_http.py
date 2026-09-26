@@ -798,6 +798,8 @@ class TestSocketServesConfigRoute:
                 "email": "user@example.com",
                 "name": "User",
                 "org_id": str(org_a),
+                "engine_execution_id": str(uuid4()),
+                "service_id": str(uuid4()),
             }
         )
         headers = {"Authorization": f"Bearer {token}"}
@@ -928,6 +930,8 @@ class TestSocketConfigContracts:
                 "email": "user@example.com",
                 "name": "User",
                 "org_id": str(org_a),
+                "engine_execution_id": str(uuid4()),
+                "service_id": str(uuid4()),
             }
         )
         headers = {"Authorization": f"Bearer {token}"}
@@ -1735,8 +1739,8 @@ class TestSocketKnowledge:
         try:
             async with _socket_client(server) as client:
                 response = await client.post(
-                    "/api/sdk/knowledge/store",
-                    json={"content": "x", "namespace": "ns"},
+                    "/api/sdk/knowledge/search",
+                    json={"query": "x", "namespace": ["ns"]},
                     headers=headers,
                 )
             assert response.status_code == 403, response.text
@@ -1816,6 +1820,8 @@ class TestSocketKnowledge:
                 "email": "user@example.com",
                 "name": "User",
                 "org_id": str(org_a_id),
+                "engine_execution_id": str(uuid4()),
+                "service_id": str(uuid4()),
             }
         )
         headers = {"Authorization": f"Bearer {token}"}

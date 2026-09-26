@@ -70,12 +70,21 @@ def _get_config_via_sdk(e2e_client, headers, *, key: str, scope: str | None):
 
 
 @pytest.mark.e2e
+class TestScenario0_SdkRequiresExecutionCredentials:
+    """A regular user's own session token cannot use the SDK secret routes."""
+
+    def test_regular_user_token_is_refused(self, e2e_client, org1_user):
+        r = _get_config_via_sdk(e2e_client, org1_user.headers, key="anything", scope=None)
+        assert r.status_code == 403, r.text
+
+
+@pytest.mark.e2e
 class TestScenario1_OrgsReachOwnData:
-    """Regular org users can read their own org's data via the SDK,
-    and the resolver returns their org_id on UNSET scope."""
+    """An org-scoped execution credential reads its own org's data via the
+    SDK, and the resolver returns its org_id on UNSET scope."""
 
     def test_org_user_sdk_get_with_unset_scope_resolves_to_own_org(
-        self, e2e_client, platform_admin, org1, org1_user
+        self, e2e_client, platform_admin, org1, org1_service_headers
     ):
         key = f"own_{uuid4().hex[:8]}"
         _seed_config(
@@ -86,14 +95,14 @@ class TestScenario1_OrgsReachOwnData:
             org_id=org1["id"],
         )
 
-        r = _get_config_via_sdk(e2e_client, org1_user.headers, key=key, scope=None)
+        r = _get_config_via_sdk(e2e_client, org1_service_headers, key=key, scope=None)
         assert r.status_code == 200, r.text
         body = r.json()
-        assert body is not None, "Unset scope should resolve to org1_user's own org"
+        assert body is not None, "Unset scope should resolve to the caller's own org"
         assert body["value"] == "org1_value"
 
     def test_org_user_sdk_get_with_explicit_own_org_succeeds(
-        self, e2e_client, platform_admin, org1, org1_user
+        self, e2e_client, platform_admin, org1, org1_service_headers
     ):
         key = f"explicit_own_{uuid4().hex[:8]}"
         _seed_config(
@@ -105,7 +114,7 @@ class TestScenario1_OrgsReachOwnData:
         )
 
         r = _get_config_via_sdk(
-            e2e_client, org1_user.headers, key=key, scope=org1["id"]
+            e2e_client, org1_service_headers, key=key, scope=org1["id"]
         )
         assert r.status_code == 200, r.text
         body = r.json()
@@ -212,7 +221,7 @@ class TestScenario2b_ProviderOrgBypass:
         assert r.json() is not None
 
     def test_provider_member_unset_list_mappings_returns_all_orgs(
-        self, e2e_client, platform_admin, provider_org_user, org1, org1_user, org2
+        self, e2e_client, platform_admin, provider_org_user, org1, org1_service_headers, org2
     ):
         integration_name = f"prov_list_mappings_{uuid4().hex[:8]}"
         integration_resp = e2e_client.post(
@@ -260,7 +269,7 @@ class TestScenario2b_ProviderOrgBypass:
 
             org1_resp = e2e_client.post(
                 "/api/sdk/integrations/list_mappings",
-                headers=org1_user.headers,
+                headers=org1_service_headers,
                 json={"name": integration_name},
             )
             assert org1_resp.status_code == 200, org1_resp.text
@@ -388,7 +397,7 @@ class TestScenario3_OrgThenGlobalCascade:
     of truth for this behavior."""
 
     def test_org_value_overrides_global_on_unset(
-        self, e2e_client, platform_admin, org1, org1_user
+        self, e2e_client, platform_admin, org1, org1_service_headers
     ):
         # Same key at global and org scope — org wins.
         key = f"cascade_{uuid4().hex[:8]}"
@@ -403,7 +412,7 @@ class TestScenario3_OrgThenGlobalCascade:
             org_id=org1["id"],
         )
 
-        r = _get_config_via_sdk(e2e_client, org1_user.headers, key=key, scope=None)
+        r = _get_config_via_sdk(e2e_client, org1_service_headers, key=key, scope=None)
         assert r.status_code == 200, r.text
         body = r.json()
         assert body is not None
@@ -412,7 +421,7 @@ class TestScenario3_OrgThenGlobalCascade:
         )
 
     def test_falls_back_to_global_when_org_value_missing(
-        self, e2e_client, platform_admin, org1_user
+        self, e2e_client, platform_admin, org1_service_headers
     ):
         # Only a global row exists; org caller should see it via cascade.
         key = f"fallback_{uuid4().hex[:8]}"
@@ -424,7 +433,7 @@ class TestScenario3_OrgThenGlobalCascade:
             org_id=None,
         )
 
-        r = _get_config_via_sdk(e2e_client, org1_user.headers, key=key, scope=None)
+        r = _get_config_via_sdk(e2e_client, org1_service_headers, key=key, scope=None)
         assert r.status_code == 200, r.text
         body = r.json()
         assert body is not None
@@ -446,7 +455,7 @@ class TestScenario4_CrossOrgBlocked:
     not the other org's), not via explicit global."""
 
     def test_org_user_explicit_other_org_returns_403(
-        self, e2e_client, platform_admin, org2, org1_user
+        self, e2e_client, platform_admin, org2, org1_service_headers
     ):
         key = f"other_org_{uuid4().hex[:8]}"
         _seed_config(
@@ -457,7 +466,7 @@ class TestScenario4_CrossOrgBlocked:
             org_id=org2["id"],
         )
         r = _get_config_via_sdk(
-            e2e_client, org1_user.headers, key=key, scope=org2["id"]
+            e2e_client, org1_service_headers, key=key, scope=org2["id"]
         )
         # Resolver raises 403; the endpoint may also legitimately return
         # 200 with null body if the implementation chooses to swallow.
@@ -468,17 +477,17 @@ class TestScenario4_CrossOrgBlocked:
         )
 
     def test_org_user_explicit_global_returns_403(
-        self, e2e_client, org1_user
+        self, e2e_client, org1_service_headers
     ):
         r = _get_config_via_sdk(
-            e2e_client, org1_user.headers, key="anything", scope="global"
+            e2e_client, org1_service_headers, key="anything", scope="global"
         )
         assert r.status_code == 403, (
             f"Org user requesting global must be 403, not {r.status_code}: {r.text}"
         )
 
     def test_org_user_unset_does_not_leak_other_org(
-        self, e2e_client, platform_admin, org2, org1_user
+        self, e2e_client, platform_admin, org2, org1_service_headers
     ):
         """The forgery scenario the overhaul exists to close. Pre-fix a
         user could set DeveloperContext.default_org_id to another org and
@@ -494,7 +503,7 @@ class TestScenario4_CrossOrgBlocked:
             value="org2_should_be_invisible",
             org_id=org2["id"],
         )
-        r = _get_config_via_sdk(e2e_client, org1_user.headers, key=key, scope=None)
+        r = _get_config_via_sdk(e2e_client, org1_service_headers, key=key, scope=None)
         # Either 200 with null body (org1 has no such key, no global
         # fallback either) or 404. NOT 200 with the org2 value.
         if r.status_code == 200:

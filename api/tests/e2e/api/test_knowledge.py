@@ -377,14 +377,22 @@ class TestKnowledgeStoreIsolation:
         org2,
         org1_user,
         org2_user,
+        org1_service_headers,
+        org2_service_headers,
         embedding_config_setup,
         knowledge_cleanup,
     ):
-        """Test that org1 users cannot access org2's knowledge documents."""
-        # Org1 stores a document (via org1_user who is scoped to org1)
+        """Test that org1 users cannot access org2's knowledge documents.
+
+        ``knowledge/store`` is gated to execution credentials and bypass
+        principals, so the writes go through org-scoped service tokens; the
+        isolation assertion itself is exercised over ``knowledge/search``
+        (unaffected by the gate) with each org's own login token.
+        """
+        # Org1 stores a document (via an org1-scoped service token)
         response = e2e_client.post(
             "/api/sdk/knowledge/store",
-            headers=org1_user.headers,
+            headers=org1_service_headers,
             json={
                 "content": "Org1 secret knowledge about their systems.",
                 "namespace": "e2e-isolation",
@@ -397,7 +405,7 @@ class TestKnowledgeStoreIsolation:
         # Org2 stores a document
         response = e2e_client.post(
             "/api/sdk/knowledge/store",
-            headers=org2_user.headers,
+            headers=org2_service_headers,
             json={
                 "content": "Org2 proprietary knowledge about their processes.",
                 "namespace": "e2e-isolation",
@@ -444,14 +452,20 @@ class TestKnowledgeStoreIsolation:
         e2e_client,
         org1_user,
         org2_user,
+        org2_service_headers,
         embedding_config_setup,
         knowledge_cleanup,
     ):
-        """Test that org1 cannot retrieve org2's document by key."""
+        """Test that org1 cannot retrieve org2's document by key.
+
+        Store is gated, so it goes through org2's service token; the
+        cross-org get (unaffected by the gate) is exercised with org1_user's
+        own login token.
+        """
         # Org2 stores a document
         response = e2e_client.post(
             "/api/sdk/knowledge/store",
-            headers=org2_user.headers,
+            headers=org2_service_headers,
             json={
                 "content": "Org2 only document",
                 "namespace": "e2e-isolation",
@@ -473,14 +487,21 @@ class TestKnowledgeStoreIsolation:
         e2e_client,
         org1_user,
         org2_user,
+        org1_service_headers,
+        org2_service_headers,
         embedding_config_setup,
         knowledge_cleanup,
     ):
-        """Test that org1 cannot delete org2's document."""
+        """Test that org1 cannot delete org2's document.
+
+        Store and delete are gated, so both go through org-scoped service
+        tokens; the follow-up get (unaffected by the gate) is exercised with
+        org2_user's own login token.
+        """
         # Org2 stores a document
         response = e2e_client.post(
             "/api/sdk/knowledge/store",
-            headers=org2_user.headers,
+            headers=org2_service_headers,
             json={
                 "content": "Org2 protected document",
                 "namespace": "e2e-isolation",
@@ -492,7 +513,7 @@ class TestKnowledgeStoreIsolation:
         # Org1 tries to delete it - should return deleted=False
         delete_response = e2e_client.post(
             "/api/sdk/knowledge/delete",
-            headers=org1_user.headers,
+            headers=org1_service_headers,
             json={"namespace": "e2e-isolation", "key": "org2-protected"},
         )
         assert delete_response.status_code == 200
