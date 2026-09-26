@@ -1,5 +1,17 @@
 # Engine SDK local transport
 
+> **Historical — superseded. Do not implement from this document.**
+> This document records the abandoned dedicated child-parent channel plan (named
+> operation frames, per-operation pumps, chunked binary channels, and a separate
+> stream channel). That plan was replaced by ordinary HTTP over a worker-local
+> Unix socket served by the worker parent, and the channel/import/stream code and
+> its tests were deleted at `2012f87f2`.
+> The current, final design is
+> [`2026-09-25-engine-sdk-worker-http.md`](2026-09-25-engine-sdk-worker-http.md).
+> The "Transport contract" section below has been corrected to record the
+> supersession. Everything from "SDK coverage" downward is the historical stage
+> log, kept only as a record.
+
 ## Goal and ownership
 
 Owner/reviewer: Codex. Executor: OpenCode, one bounded stage at a time, using the
@@ -18,25 +30,46 @@ focused verification are accepted. The owner reviews each stage before the
 next. OpenCode makes no commit or push and does not modify configuration,
 credentials, dependencies, or unrelated files.
 
-## Transport contract
+## Transport contract (superseded)
 
-- Engine startup injects the transport. No user-controlled `engine` flag.
-- Use dedicated child-parent channels, not terminal result or work frames.
-- Parent dispatches an explicit allowlist of named, versioned SDK operations.
-- Parent reconstructs principal, execution, organization, Solution and app
-  scope from its own dispatch context. It does not trust caller-supplied scope
-  claims or actor identity in the request payload.
-- Child-origin frames have bounded, non-pickle serialization. Include request
-  IDs, method, payload size limits, deadlines, cancellation, and concurrent
-  request support. Binary payloads need bounded chunking/backpressure.
-- Parent uses its pooled database engine, with one short session per operation
-  and bounded concurrent requests. Never share a connection across processes.
-- The HTTP handler and local dispatcher call the same business service. SDK
-  response parsing and public exceptions remain identical.
-- A failed local request does not automatically retry over HTTP: a write may
-  already have committed. Preserve existing idempotency semantics explicitly.
-- Child exit, parent shutdown, template recycle, timeout and long-lived
-  `@service` stop must cancel requests and close descriptors cleanly.
+The original contract here prescribed dedicated child-parent channels. That is
+no longer the design and must not be implemented. The shipped transport is
+ordinary HTTP over a Unix-domain socket, selected from trusted injection. See
+[`2026-09-25-engine-sdk-worker-http.md`](2026-09-25-engine-sdk-worker-http.md)
+for the full description.
+
+What the final transport actually does:
+
+- Engine startup injects a trusted socket path to each child. No user-controlled
+  `engine` flag, and no HTTP fallback after a local request fails.
+- The child sends ordinary HTTP requests to the **existing** API routes served
+  by the worker parent. Auth, scope resolution, DTO validation, shared services,
+  status codes, and side effects are the API's; no route or handler is copied.
+- The original routes authenticate the signed engine or service bearer token
+  and resolve request scope through their normal dependencies. The parent
+  validates identity fields before forking the child.
+- The parent uses its pooled database engine. Never share a connection across
+  processes.
+- The HTTP handler and the worker-local route call the same business service.
+  SDK response parsing and public exceptions remain identical.
+- A failed local request does not retry over HTTP: a write may already have
+  committed. Existing idempotency semantics are preserved explicitly.
+- The worker removes the socket during shutdown, and children exit with it.
+
+The original channel requirements are withdrawn: dedicated
+child-parent channels instead of terminal result or work frames; an explicit
+allowlist of named, versioned SDK operations dispatched as frames; bounded
+non-pickle frame serialization with request IDs, payload size limits, deadlines,
+cancellation, and concurrent request support; and chunked, backpressured binary
+payload channels. The current implementation uses HTTP
+semantics, and the separate stream channel was replaced by HTTP streaming.
+
+---
+
+## Historical stage log
+
+The sections below (`SDK coverage` onward) are retained only as a record of the
+channel-era plan and its stage handoffs. Do not implement from them.
 
 ## SDK coverage
 
