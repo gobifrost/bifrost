@@ -24,13 +24,20 @@ from src.models.contracts.cli import CLIKnowledgeSearchRequest, SDKTableListRequ
 from src.routers.cli import cli_knowledge_search, cli_list_tables
 
 
-def _principal(*, is_external: bool, is_superuser: bool = False, org_id=...):
+def _principal(
+    *,
+    is_external: bool,
+    is_superuser: bool = False,
+    org_id=...,
+    engine_execution_id: str | None = None,
+):
     return UserPrincipal(
         user_id=uuid4(),
         email="x@y.z",
         organization_id=uuid4() if org_id is ... else org_id,
         is_superuser=is_superuser,
         is_external=is_external,
+        engine_execution_id=engine_execution_id,
     )
 
 
@@ -90,7 +97,13 @@ class TestCLIKnowledgeSearchExternal:
         session.execute.assert_not_awaited()
 
     async def test_normal_user_search_keeps_global_fallback(self):
-        sql = await self._search(_principal(is_external=False))
+        # An execution credential (engine_execution_id set, non-sentinel):
+        # this asserts the query SHAPE (org + global cascade), not namespace-
+        # role filtering, which only applies to a regular user's own
+        # session token (see shared/knowledge_access.py).
+        sql = await self._search(
+            _principal(is_external=False, engine_execution_id=str(uuid4()))
+        )
         assert "organization_id IS NULL" in sql
 
     async def test_sentinel_search_unchanged(self):

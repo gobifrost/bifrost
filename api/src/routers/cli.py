@@ -1850,6 +1850,7 @@ async def cli_knowledge_search(
 ) -> list[CLIKnowledgeDocumentResponse]:
     """Search knowledge using fused lexical and vector rankings."""
     _deny_external_knowledge(current_user)
+    from shared.knowledge_access import accessible_namespaces_for_user
     from shared.sdk_knowledge import SDKKnowledgeError, search_knowledge_documents
 
     try:
@@ -1858,6 +1859,22 @@ async def cli_knowledge_search(
         # Auth/scope failures (e.g. 403 from _resolve_sdk_org_id) must surface.
         raise
     org_uuid = UUID(org_id) if org_id else None
+
+    # Execution credentials and bypass principals keep the org-scoped
+    # behavior above unchanged. A regular user's OWN session token (not an
+    # execution credential) is additionally filtered to the namespaces
+    # their roles grant — the same KnowledgeNamespaceRole gate as REST
+    # knowledge_sources.py and GET /api/agents/accessible-knowledge.
+    accessible_namespaces = await accessible_namespaces_for_user(db, current_user)
+    if accessible_namespaces is not None:
+        requested = set(request.namespace)
+        if not requested <= accessible_namespaces:
+            raise HTTPException(
+                status_code=403,
+                detail="One or more requested namespaces are not accessible.",
+            )
+        if not accessible_namespaces:
+            return []
 
     try:
         items = await search_knowledge_documents(
@@ -1950,6 +1967,7 @@ async def cli_knowledge_list_namespaces(
 ) -> list[CLIKnowledgeNamespaceInfo]:
     """List all namespaces with document counts per scope."""
     _deny_external_knowledge(current_user)
+    from shared.knowledge_access import accessible_namespaces_for_user
     from shared.sdk_knowledge import SDKKnowledgeError, list_knowledge_namespaces
 
     try:
@@ -1968,6 +1986,13 @@ async def cli_knowledge_list_namespaces(
     except SDKKnowledgeError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail) from None
 
+    # Execution credentials and bypass principals see every namespace in
+    # scope, as before. A regular user's own token is filtered to the
+    # namespaces their roles grant.
+    accessible_namespaces = await accessible_namespaces_for_user(db, current_user)
+    if accessible_namespaces is not None:
+        items = [item for item in items if item.get("namespace") in accessible_namespaces]
+
     return [CLIKnowledgeNamespaceInfo(**item) for item in items]
 
 
@@ -1984,6 +2009,7 @@ async def cli_knowledge_get(
 ) -> CLIKnowledgeDocumentResponse | None:
     """Get a document by key from the knowledge store."""
     _deny_external_knowledge(current_user)
+    from shared.knowledge_access import accessible_namespaces_for_user
     from shared.sdk_knowledge import SDKKnowledgeError, get_knowledge_document
 
     try:
@@ -1991,6 +2017,12 @@ async def cli_knowledge_get(
     except HTTPException:
         raise
     org_uuid = UUID(org_id) if org_id else None
+
+    accessible_namespaces = await accessible_namespaces_for_user(db, current_user)
+    if accessible_namespaces is not None and namespace not in accessible_namespaces:
+        raise HTTPException(
+            status_code=403, detail=f"Namespace '{namespace}' is not accessible."
+        )
 
     try:
         item = await get_knowledge_document(

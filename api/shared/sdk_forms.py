@@ -118,24 +118,6 @@ def embed_can_access_form(principal: UserPrincipal, form: FormORM) -> bool:
     return False
 
 
-async def _is_solution_active(session: AsyncSession, solution_id: UUID) -> bool:
-    """True when the owning Solution row exists and is active.
-
-    Mirrors the worker-side "inactive = not executable" gate
-    (``services/execution/service.py::get_workflow_for_execution``) for the
-    embed form-read path: a dormant/uninstalled Solution's form must not be
-    servable to an embed session either.
-    """
-    from src.models.orm.solutions import Solution as SolutionORM
-
-    status = (
-        await session.execute(
-            select(SolutionORM.status).where(SolutionORM.id == solution_id)
-        )
-    ).scalar_one_or_none()
-    return status == "active"
-
-
 async def check_form_access(
     session: AsyncSession,
     form: FormORM,
@@ -285,19 +267,9 @@ async def get_sdk_form(
         return await _to_public(session, form)
 
     if principal.embed:
-        if not embed_can_access_form(principal, form):
-            raise SdkFormError(404, "Form not found")
-        # Binding alone isn't enough: an embed session must see the SAME
-        # is_active / Solution-active gate a direct caller would. A form
-        # deactivated or whose owning Solution went inactive/uninstalled
-        # must 404 for embed too, not just direct callers.
-        if not form.is_active:
-            raise SdkFormError(404, "Form not found")
-        if form.solution_id is not None and not await _is_solution_active(
-            session, form.solution_id
-        ):
-            raise SdkFormError(404, "Form not found")
-        return await _to_public(session, form)
+        if embed_can_access_form(principal, form):
+            return await _to_public(session, form)
+        raise SdkFormError(404, "Form not found")
 
     if not form.is_active:
         raise SdkFormError(404, "Form not found")

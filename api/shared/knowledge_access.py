@@ -1,4 +1,4 @@
-"""Namespace-role visibility for direct (non-engine) knowledge reads.
+"""Namespace-role visibility for direct (non-execution) knowledge reads.
 
 The knowledge store has no per-document grant axis (no roles, no
 access_level, no row policies) — see ``knowledge_sources.py``'s
@@ -10,10 +10,16 @@ computes the equivalent set for direct read surfaces (REST
 ``knowledge_sources.py`` and the SDK ``/api/sdk/knowledge/*`` routes in
 ``cli.py``) so the two don't drift.
 
-Engine/service callers and other bypass principals (platform admin,
-provider org) are unrestricted — the engine sentinel always resolves with
-the full cascade (see ``api/src/repositories/README.md``). Only a direct,
-non-bypass human caller is filtered down to namespaces their roles grant.
+Unrestricted (``None``) for:
+- Execution credentials — engine/service tokens carrying
+  ``engine_execution_id`` and never an embed claim (see
+  ``get_current_engine_or_bypass_user``) — the engine sentinel always
+  resolves with the full cascade (``api/src/repositories/README.md``).
+- Bypass principals (platform admin, provider org).
+
+Everyone else — including a regular user's OWN session token, which is
+not an execution credential — is filtered down to namespaces their roles
+grant via ``KnowledgeNamespaceRole``.
 """
 
 from __future__ import annotations
@@ -25,17 +31,23 @@ from shared.scope_resolver import has_scope_bypass
 from src.core.principal import UserPrincipal
 
 
+def _is_execution_credential(user: UserPrincipal) -> bool:
+    """True for engine/service tokens; never true for embed sessions."""
+    return bool(user.engine_execution_id) and not user.embed
+
+
 async def accessible_namespaces_for_user(
     db: AsyncSession, user: UserPrincipal
 ) -> set[str] | None:
     """Return the namespaces ``user`` may read directly.
 
-    Returns ``None`` for a bypass caller (platform admin / provider org),
-    meaning "unrestricted." Returns a (possibly empty) set of namespace
-    names for a regular caller, derived from their roles'
-    ``KnowledgeNamespaceRole`` grants.
+    Returns ``None`` for an execution credential or a bypass caller
+    (platform admin / provider org), meaning "unrestricted." Returns a
+    (possibly empty) set of namespace names for every other caller —
+    including a regular user's own session token — derived from their
+    roles' ``KnowledgeNamespaceRole`` grants.
     """
-    if has_scope_bypass(
+    if _is_execution_credential(user) or has_scope_bypass(
         is_platform_admin=user.is_superuser,
         is_provider_org=user.is_provider_org,
     ):

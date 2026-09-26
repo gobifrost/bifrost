@@ -88,12 +88,12 @@ def _doc(**overrides):
     return SimpleNamespace(**base)
 
 
-def _user(*, is_external=False):
+def _user(*, is_external=False, is_superuser=False):
     return UserPrincipal(
         user_id=uuid4(),
         email="sdk-knowledge@test.local",
         organization_id=uuid4(),
-        is_superuser=False,
+        is_superuser=is_superuser,
         is_external=is_external,
     )
 
@@ -597,7 +597,10 @@ class TestHandlerAdapters:
     async def test_search_handler_wraps_dicts_in_dtos(self):
         from src.routers.cli import cli_knowledge_search
 
-        user = _user()
+        # Bypass principal: this test is about DTO wrapping, not namespace-
+        # role filtering (a regular user's own token additionally queries
+        # KnowledgeNamespaceRole, which this bare session mock doesn't model).
+        user = _user(is_superuser=True)
         session = _session()
         created = datetime.now(timezone.utc)
         repo = AsyncMock()
@@ -624,7 +627,9 @@ class TestHandlerAdapters:
     async def test_get_handler_miss_maps_to_404(self):
         from src.routers.cli import cli_knowledge_get
 
-        user = _user()
+        # Bypass principal: this test is about 404 mapping, not namespace-
+        # role filtering (see test_search_handler_wraps_dicts_in_dtos).
+        user = _user(is_superuser=True)
         session = _session()
         with patch.object(
             svc,
