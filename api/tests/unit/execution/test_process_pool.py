@@ -629,8 +629,6 @@ class TestProcessPoolManagerRouting:
 
     @pytest.mark.asyncio
     async def test_dispatch_failure_removes_active_lease_and_context(self):
-        from src.services.execution.sdk_local_dispatch import LocalDispatchPrincipal
-
         pool = ProcessPoolManager(max_workers=1)
         redis = AsyncMock()
         pool._redis = redis
@@ -660,7 +658,6 @@ class TestProcessPoolManagerRouting:
                     {"timeout_seconds": 300},
                     300,
                     _active_execution("exec-failed-dispatch"),
-                    LocalDispatchPrincipal(caller_org_id=None),
                 )
 
         redis.delete.assert_awaited_once_with(
@@ -1995,12 +1992,6 @@ class TestBurstRaceRegression:
 def _fork_reply(pid: int) -> tuple:
     return (
         pid,
-        MagicMock(),
-        MagicMock(),
-        MagicMock(),
-        MagicMock(),
-        MagicMock(),
-        MagicMock(),
         MagicMock(),
         MagicMock(),
     )
