@@ -2,10 +2,12 @@
  * Realtime bridge between backend AgentRun broadcasts and react-query caches.
  *
  * The summarizer and execution worker publish `agent_run_update` messages on
- * the `agent-runs` channel (and `agent-run:{id}` for per-run). This hook
- * subscribes once per mounted consumer and invalidates the list-of-runs
- * queries so pages rerender with fresh summary_status / asked / did without
- * polling.
+ * the shared `agent-runs` channel and the per-run `agent-run:{id}` channel.
+ * The shared channel is bypass-only server-side (platform admin / provider
+ * org); regular callers only receive it if their own run's `agent-run:{id}`
+ * channel is subscribed. Pass `runId` when the consumer is viewing a single
+ * run (e.g. a detail page) so non-bypass users still get live updates for
+ * their own run.
  */
 
 import { useEffect } from "react";
@@ -19,16 +21,20 @@ import {
 export interface UseAgentRunUpdatesOptions {
 	/** If set, only react to broadcasts for this agent. */
 	agentId?: string;
+	/** If set, also subscribe to this run's own channel (works for non-bypass callers). */
+	runId?: string;
 	/** Extra callback (e.g. for toasting or per-row patching). */
 	onUpdate?: (update: AgentRunUpdate) => void;
 }
 
 export function useAgentRunUpdates(options: UseAgentRunUpdatesOptions = {}) {
-	const { agentId, onUpdate } = options;
+	const { agentId, runId, onUpdate } = options;
 	const queryClient = useQueryClient();
 
 	useEffect(() => {
-		void webSocketService.connect(["agent-runs"]);
+		const channels = ["agent-runs"];
+		if (runId) channels.push(`agent-run:${runId}`);
+		void webSocketService.connect(channels);
 		const unsubscribe = webSocketService.onAgentRunUpdate((update) => {
 			if (agentId && update.agent_id !== agentId) return;
 			// Invalidate the list query (prefix match picks up both
@@ -55,5 +61,5 @@ export function useAgentRunUpdates(options: UseAgentRunUpdatesOptions = {}) {
 			onUpdate?.(update);
 		});
 		return unsubscribe;
-	}, [agentId, onUpdate, queryClient]);
+	}, [agentId, runId, onUpdate, queryClient]);
 }

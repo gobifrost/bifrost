@@ -14,6 +14,8 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import delete, select, update
 
+from shared.knowledge_access import accessible_namespaces_for_user
+from shared.scope_resolver import has_scope_bypass
 from src.core.auth import CurrentActiveUser, CurrentSuperuser
 from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
@@ -83,6 +85,10 @@ async def list_namespaces(
     else:
         # ORG_PLUS_GLOBAL
         ns_list = await repo.list_namespaces(organization_id=filter_org_id, include_global=True)
+
+    accessible_namespaces = await accessible_namespaces_for_user(db, user)
+    if accessible_namespaces is not None:
+        ns_list = [ns for ns in ns_list if ns.namespace in accessible_namespaces]
 
     return [
         KnowledgeNamespaceInfo(
@@ -244,6 +250,12 @@ async def list_all_documents(
             | KnowledgeStore.key.ilike(f"%{search}%")
         )
 
+    accessible_namespaces = await accessible_namespaces_for_user(db, user)
+    if accessible_namespaces is not None:
+        if not accessible_namespaces:
+            return []
+        stmt = stmt.where(KnowledgeStore.namespace.in_(accessible_namespaces))
+
     stmt = stmt.order_by(KnowledgeStore.created_at.desc()).offset(offset).limit(limit)
     result = await db.execute(stmt)
     docs = result.scalars().all()
@@ -359,6 +371,10 @@ async def list_documents(
     """List documents in a namespace."""
     _deny_external(user)
 
+    accessible_namespaces = await accessible_namespaces_for_user(db, user)
+    if accessible_namespaces is not None and namespace not in accessible_namespaces:
+        raise HTTPException(403, f"Namespace '{namespace}' is not accessible.")
+
     try:
         filter_type, filter_org_id = resolve_org_filter(user, scope)
     except ValueError as e:
@@ -464,6 +480,25 @@ async def get_document(
 
     if not doc or doc.namespace != namespace:
         raise HTTPException(404, f"Document {doc_id} not found in namespace {namespace}")
+
+    # get_by_id() is a pure ID lookup with no cascade/org check (the
+    # organization_id column records where the document is stored, not an
+    # access grant) — enforce org scope here for non-bypass callers: own
+    # org or global only, never another org's document.
+    bypass = has_scope_bypass(
+        is_platform_admin=user.is_superuser, is_provider_org=user.is_provider_org
+    )
+    if not bypass:
+        # KnowledgeDocument.organization_id is a str (repo dataclass);
+        # user.organization_id is a UUID — compare as strings.
+        doc_org_id = doc.organization_id
+        user_org_id = str(user.organization_id) if user.organization_id else None
+        if doc_org_id is not None and doc_org_id != user_org_id:
+            raise HTTPException(404, f"Document {doc_id} not found in namespace {namespace}")
+
+        accessible_namespaces = await accessible_namespaces_for_user(db, user)
+        if accessible_namespaces is not None and namespace not in accessible_namespaces:
+            raise HTTPException(404, f"Document {doc_id} not found in namespace {namespace}")
 
     return KnowledgeDocumentPublic(
         id=doc.id,

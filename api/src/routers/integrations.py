@@ -1099,6 +1099,7 @@ async def upload_integration_logo(
 async def get_integration_logo(
     integration_id: UUID,
     ctx: Context,
+    user: CurrentSuperuser,
 ) -> Response:
     integration = (
         await ctx.db.execute(select(Integration).where(Integration.id == integration_id))

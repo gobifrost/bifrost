@@ -53,6 +53,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.scope_resolver import has_scope_bypass
 from src.core.principal import UserPrincipal
 from src.models.contracts.artifacts import ArtifactDownloadResponse, ArtifactRef
 
@@ -143,6 +144,10 @@ async def sdk_store_artifact(
         organization_id=caller.user.organization_id,
         workspace_id=workspace_id,
         logical_path=filename,
+        bypass=has_scope_bypass(
+            is_platform_admin=caller.user.is_superuser,
+            is_provider_org=caller.user.is_provider_org,
+        ),
     )
     return artifact_ref(artifact)
 
@@ -154,17 +159,20 @@ async def sdk_list_artifacts(
 ) -> list[ArtifactRef]:
     """List the latest logical file in one authorized execution workspace.
 
-    Versioning (latest per ``logical_path``) and scope filtering
-    (owner-or-org unless platform admin) live in
-    ``ArtifactService.list_workspace`` and are preserved unchanged.
+    Versioning (latest per ``logical_path``) lives in
+    ``ArtifactService.list_workspace``. Scope filtering there is owner-only
+    for regular callers; ``has_scope_bypass`` callers (platform admin or
+    provider org) see every artifact in the workspace.
     """
     from src.services.artifacts import ArtifactService, artifact_ref
 
     stored = await ArtifactService(caller.db).list_workspace(
         workspace_id,
         user_id=caller.user.user_id,
-        organization_id=caller.user.organization_id,
-        is_platform_admin=caller.user.is_platform_admin,
+        bypass=has_scope_bypass(
+            is_platform_admin=caller.user.is_superuser,
+            is_provider_org=caller.user.is_provider_org,
+        ),
     )
     return [artifact_ref(item) for item in stored]
 
@@ -192,8 +200,10 @@ async def sdk_read_artifact(
         artifact = await service.get_authorized(
             artifact_id,
             user_id=caller.user.user_id,
-            organization_id=caller.user.organization_id,
-            is_platform_admin=caller.user.is_platform_admin,
+            bypass=has_scope_bypass(
+                is_platform_admin=caller.user.is_superuser,
+                is_provider_org=caller.user.is_provider_org,
+            ),
         )
     except ArtifactAccessError as exc:
         raise SdkArtifactError(404, str(exc)) from exc
@@ -247,8 +257,10 @@ async def sdk_artifact_download_url(
         artifact = await service.get_authorized(
             artifact_id,
             user_id=caller.user.user_id,
-            organization_id=caller.user.organization_id,
-            is_platform_admin=caller.user.is_platform_admin,
+            bypass=has_scope_bypass(
+                is_platform_admin=caller.user.is_superuser,
+                is_provider_org=caller.user.is_provider_org,
+            ),
         )
     except ArtifactAccessError as exc:
         raise SdkArtifactError(404, str(exc)) from exc

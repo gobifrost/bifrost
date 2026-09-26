@@ -69,6 +69,7 @@ from src.models.contracts.artifacts import (
     SpreadsheetArtifactSpec,
     TextArtifactSpec,
 )
+from shared.scope_resolver import has_scope_bypass
 from shared.sdk_artifacts import ArtifactCaller, SdkArtifactError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -117,8 +118,10 @@ async def sdk_render_document_artifact(
                     workspace_id,
                     image.path,
                     user_id=caller.user.user_id,
-                    organization_id=caller.user.organization_id,
-                    is_platform_admin=caller.user.is_platform_admin,
+                    bypass=has_scope_bypass(
+                        is_platform_admin=caller.user.is_superuser,
+                        is_provider_org=caller.user.is_provider_org,
+                    ),
                 )
                 if not stored_image.content_type.startswith("image/"):
                     raise SdkArtifactError(
@@ -138,6 +141,10 @@ async def sdk_render_document_artifact(
         organization_id=caller.user.organization_id,
         workspace_id=workspace_id,
         logical_path=generated.filename,
+        bypass=has_scope_bypass(
+            is_platform_admin=caller.user.is_superuser,
+            is_provider_org=caller.user.is_provider_org,
+        ),
     )
     return artifact_ref(artifact)
 
@@ -161,6 +168,10 @@ async def sdk_render_spreadsheet_artifact(
         organization_id=caller.user.organization_id,
         workspace_id=workspace_id,
         logical_path=generated.filename,
+        bypass=has_scope_bypass(
+            is_platform_admin=caller.user.is_superuser,
+            is_provider_org=caller.user.is_provider_org,
+        ),
     )
     return artifact_ref(artifact)
 
@@ -184,6 +195,10 @@ async def sdk_render_text_artifact(
         organization_id=caller.user.organization_id,
         workspace_id=workspace_id,
         logical_path=generated.filename,
+        bypass=has_scope_bypass(
+            is_platform_admin=caller.user.is_superuser,
+            is_provider_org=caller.user.is_provider_org,
+        ),
     )
     return artifact_ref(artifact)
 
@@ -225,6 +240,10 @@ async def sdk_generate_image_artifact(
         organization_id=caller.user.organization_id,
         workspace_id=workspace_id,
         logical_path=generated.filename,
+        bypass=has_scope_bypass(
+            is_platform_admin=caller.user.is_superuser,
+            is_provider_org=caller.user.is_provider_org,
+        ),
     )
     await record_media_usage(
         caller.db,

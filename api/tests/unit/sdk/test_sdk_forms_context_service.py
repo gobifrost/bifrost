@@ -260,6 +260,60 @@ class TestGetSdkForm:
             await get_sdk_form(db_session, token, other.id)
         assert exc_info.value.status_code == 404
 
+    async def test_form_embed_token_bound_to_inactive_form_is_404(
+        self, db_session
+    ) -> None:
+        """Binding alone must not bypass is_active — a deactivated form
+        must 404 for an embed session, same as a direct caller."""
+        org = await _seed_org(db_session)
+        form = await _seed_form(
+            db_session, "embed-inactive", org_id=org.id, is_active=False
+        )
+
+        bound = _principal(org.id, embed=True, form_id=str(form.id))
+        with pytest.raises(SdkFormError) as exc_info:
+            await get_sdk_form(db_session, bound, form.id)
+        assert exc_info.value.status_code == 404
+
+    async def test_form_embed_token_bound_to_inactive_solution_form_is_404(
+        self, db_session
+    ) -> None:
+        """A form owned by an inactive/uninstalled Solution must 404 for
+        an embed session even when the token is bound to it directly."""
+        from src.models.orm.solutions import Solution as SolutionModel
+
+        org = await _seed_org(db_session)
+        solution = SolutionModel(
+            slug=f"sdk-forms-sol-{uuid4().hex[:8]}",
+            name="sdk-forms-solution",
+            organization_id=org.id,
+            status="inactive",
+        )
+        db_session.add(solution)
+        await db_session.flush()
+
+        # Set solution_id at INSERT time (not a post-create mutation) — the
+        # solution-managed write guard only inspects session.dirty, so a
+        # dirty-change to an already-flushed row would trip it here even
+        # though this is test setup, not a real mutation surface.
+        from src.models.orm.forms import Form as FormModel
+
+        form = FormModel(
+            name="embed-dormant-solution",
+            access_level=FormAccessLevel.AUTHENTICATED,
+            organization_id=org.id,
+            is_active=True,
+            solution_id=solution.id,
+            created_by="sdk-forms-test",
+        )
+        db_session.add(form)
+        await db_session.flush()
+
+        bound = _principal(org.id, embed=True, form_id=str(form.id))
+        with pytest.raises(SdkFormError) as exc_info:
+            await get_sdk_form(db_session, bound, form.id)
+        assert exc_info.value.status_code == 404
+
 
 class TestGetSdkContext:
     async def test_superuser_can_target_other_org(self, db_session) -> None:

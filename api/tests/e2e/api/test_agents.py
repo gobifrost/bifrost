@@ -674,6 +674,42 @@ class TestAgentScopeFiltering:
             f"got {response.status_code}"
         )
 
+    def test_provider_org_non_admin_cannot_get_other_users_private_agent(
+        self, e2e_client, org1_user, provider_org_user
+    ):
+        """Private is owner-only regardless of org/provider scope bypass —
+        a provider-org non-admin's scope bypass does not extend to another
+        user's private agent."""
+        create_resp = e2e_client.post(
+            "/api/agents",
+            json={
+                "name": f"Private Owner Only {uuid4().hex[:8]}",
+                "system_prompt": "Private agent for owner-only test.",
+                "access_level": "private",
+            },
+            headers=org1_user.headers,
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        agent_id = create_resp.json()["id"]
+
+        try:
+            own_read = e2e_client.get(
+                f"/api/agents/{agent_id}", headers=org1_user.headers
+            )
+            assert own_read.status_code == 200, own_read.text
+
+            provider_read = e2e_client.get(
+                f"/api/agents/{agent_id}", headers=provider_org_user.headers
+            )
+            assert provider_read.status_code == 404, provider_read.text
+
+            provider_stats = e2e_client.get(
+                f"/api/agents/{agent_id}/stats", headers=provider_org_user.headers
+            )
+            assert provider_stats.status_code == 404, provider_stats.text
+        finally:
+            e2e_client.delete(f"/api/agents/{agent_id}", headers=org1_user.headers)
+
 
 # =============================================================================
 # Fixtures

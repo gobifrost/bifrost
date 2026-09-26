@@ -120,6 +120,81 @@ async def insert_scheduled_execution(
     return exec_id
 
 
+async def _enforce_app_embed_workflow_binding(
+    session: AsyncSession,
+    principal: UserPrincipal,
+    request: "WorkflowExecutionRequest",
+    context_app_id: str | None,
+) -> None:
+    """An app-embed token may only execute workflows belonging to its own
+    bound app — never a client-supplied override, and never another app's
+    workflow.
+
+    The embed JWT's ``app_id`` claim (HMAC-verified at mint time, carried on
+    ``principal.app_id``) is the only trustworthy app binding for an embed
+    session. The ``X-Bifrost-App`` header (``context_app_id``) and the
+    request body's ``app_id``/``form_id``/``solution_id`` fields are
+    ordinary client input for this principal and must never be allowed to
+    retarget it — even though they are legitimate signals for a direct
+    (non-embed) SDK caller.
+    """
+    if not (principal.embed and principal.embed_kind == "app"):
+        return
+
+    bound_app_id = principal.app_id
+    if not bound_app_id:
+        raise SdkWorkflowExecutionError(403, "Embed token missing app binding")
+
+    if context_app_id and context_app_id != bound_app_id:
+        raise SdkWorkflowExecutionError(
+            403, "Embed token cannot target a different app"
+        )
+    if request.app_id and request.app_id != bound_app_id:
+        raise SdkWorkflowExecutionError(
+            403, "Embed token cannot target a different app"
+        )
+    if request.solution_id or request.form_id:
+        raise SdkWorkflowExecutionError(
+            403, "Embed token cannot override solution/form targeting"
+        )
+
+    if not request.workflow_id or request.code:
+        raise SdkWorkflowExecutionError(
+            403, "Embed token may only execute a workflow by id"
+        )
+
+
+async def _assert_app_embed_can_execute(
+    session: AsyncSession,
+    principal: UserPrincipal,
+    workflow: Any,
+) -> None:
+    """After workflow resolution: the workflow must belong to the embed
+    token's bound app (referenced by the app's source) or to that app's own
+    Solution install — never an unrelated workflow merely reachable via
+    org/role cascade.
+    """
+    if not (principal.embed and principal.embed_kind == "app"):
+        return
+
+    from shared.sdk_execution_reads import get_app_workflow_ids
+    from src.models.orm.applications import Application
+
+    bound_app_id = UUID(str(principal.app_id))
+    app_row = await session.get(Application, bound_app_id)
+    if app_row is None:
+        raise SdkWorkflowExecutionError(403, "Embed token's app no longer exists")
+
+    if app_row.solution_id is not None and workflow.solution_id == app_row.solution_id:
+        return
+
+    allowed_ids = await get_app_workflow_ids(session, bound_app_id)
+    if workflow.id not in allowed_ids:
+        raise SdkWorkflowExecutionError(
+            403, "Embed token cannot execute this workflow"
+        )
+
+
 def _server_caller_context(
     principal: UserPrincipal,
     context_solution_id: str | None,
@@ -176,6 +251,10 @@ async def execute_sdk_workflow(
         SolutionInboundDenied,
         derive_execution_solution_scope,
         solution_allows_global,
+    )
+
+    await _enforce_app_embed_workflow_binding(
+        session, principal, request, context_app_id
     )
 
     # Resolve org scope for workflow lookup — superusers/provider-org members
@@ -259,6 +338,9 @@ async def execute_sdk_workflow(
                     ),
                 },
             )
+
+    if workflow is not None:
+        await _assert_app_embed_can_execute(session, principal, workflow)
 
     # Authorization check
     if request.code:

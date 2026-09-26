@@ -117,6 +117,7 @@ async def test_store_uses_actor_ownership_and_org_scope() -> None:
         organization_id=user.organization_id,
         workspace_id=workspace_id,
         logical_path="Workflow Notes.md",
+        bypass=False,
     )
     assert ref.id == str(stored.id)
     assert ref.filename == "Workflow Notes.md"
@@ -156,8 +157,7 @@ async def test_list_maps_latest_versions_with_caller_scope() -> None:
     service.list_workspace.assert_awaited_once_with(
         workspace_id,
         user_id=user.user_id,
-        organization_id=user.organization_id,
-        is_platform_admin=False,
+        bypass=False,
     )
     assert [ref.filename for ref in refs] == ["Notes.md", "Portrait.png"]
     assert all(ref.type == "bifrost_artifact" for ref in refs)
@@ -268,8 +268,7 @@ async def test_download_url_delegates_to_signed_url_path() -> None:
     service.get_authorized.assert_awaited_once_with(
         artifact.id,
         user_id=user.user_id,
-        organization_id=user.organization_id,
-        is_platform_admin=False,
+        bypass=False,
     )
     service.generate_download_url.assert_awaited_once_with(artifact)
     assert response.url == "https://cdn.example/artifact?sig=1"

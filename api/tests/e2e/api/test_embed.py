@@ -8,6 +8,8 @@ import jwt
 import pytest
 from sqlalchemy import delete
 
+from tests.e2e.conftest import write_and_register
+
 
 def _create_app(client, headers, slug):
     r = client.post("/api/applications", headers=headers, json={"name": slug, "slug": slug, "app_model": "inline_v1"})
@@ -107,6 +109,168 @@ class TestEmbedEntryPoint:
         r = e2e_client.get(
             f"/embed/apps/{app['slug']}",
             params={**params, "hmac": hmac_val},
+        )
+        assert r.status_code == 403, r.text
+
+
+@pytest.mark.e2e
+class TestEmbedAppWorkflowBinding:
+    """An app-embed token may execute only workflows its own app references
+    (or its own Solution install); it must not be able to reach another
+    workflow via a raw workflow_id, nor retarget itself to another app via
+    the X-Bifrost-App header or body app_id/form_id/solution_id overrides."""
+
+    @pytest.fixture
+    async def bound_app(self, e2e_client, platform_admin, db_session):
+        """An inline_v1 app whose source references exactly one workflow,
+        plus a second, unreferenced workflow the app has no ties to."""
+        from src.models.orm.file_index import FileIndex
+
+        tag = uuid4().hex[:8]
+        slug = f"embed-wf-bind-{tag}"
+        fn_slug = f"embed_wf_bind_{tag}"
+        app = _create_app(e2e_client, platform_admin.headers, slug)
+
+        allowed = write_and_register(
+            e2e_client,
+            platform_admin.headers,
+            f"{fn_slug}_allowed.py",
+            f'''"""E2E embed-bound workflow."""
+from bifrost import workflow
+
+@workflow(name="{fn_slug}_allowed", description="Referenced by the bound app")
+async def {fn_slug}_allowed():
+    return {{"ok": True}}
+''',
+            f"{fn_slug}_allowed",
+        )
+        denied = write_and_register(
+            e2e_client,
+            platform_admin.headers,
+            f"{fn_slug}_denied.py",
+            f'''"""E2E embed-unbound workflow."""
+from bifrost import workflow
+
+@workflow(name="{fn_slug}_denied", description="NOT referenced by the bound app")
+async def {fn_slug}_denied():
+    return {{"ok": True}}
+''',
+            f"{fn_slug}_denied",
+        )
+        for wf_id in (allowed["id"], denied["id"]):
+            patched = e2e_client.patch(
+                f"/api/workflows/{wf_id}",
+                headers=platform_admin.headers,
+                json={"access_level": "authenticated"},
+            )
+            assert patched.status_code == 200, patched.text
+
+        db_session.add(
+            FileIndex(
+                path=f"apps/{slug}/page.tsx",
+                content=f"useWorkflowQuery('{allowed['name']}')",
+            )
+        )
+        await db_session.commit()
+
+        secret_resp = e2e_client.post(
+            f"/api/applications/{app['id']}/embed-secrets",
+            headers=platform_admin.headers,
+            json={"name": "Test"},
+        )
+        assert secret_resp.status_code == 201, secret_resp.text
+        raw_secret = secret_resp.json()["raw_secret"]
+
+        params = {"agent_id": "42"}
+        hmac_val = _compute_hmac(params, raw_secret)
+        embed_resp = e2e_client.get(
+            f"/embed/apps/{app['slug']}",
+            params={**params, "hmac": hmac_val},
+            follow_redirects=False,
+        )
+        assert embed_resp.status_code == 302, embed_resp.text
+        location = embed_resp.headers.get("location", "")
+        embed_token = location.split("#embed_token=", 1)[1]
+
+        yield {
+            "app": app,
+            "allowed_workflow_id": allowed["id"],
+            "denied_workflow_id": denied["id"],
+            "embed_token": embed_token,
+        }
+
+        _delete_app(e2e_client, platform_admin.headers, app["id"])
+        for path in (f"{fn_slug}_allowed.py", f"{fn_slug}_denied.py"):
+            e2e_client.delete(
+                "/api/files/editor",
+                headers=platform_admin.headers,
+                params={"path": path},
+            )
+        from sqlalchemy import delete as sa_delete
+
+        await db_session.execute(
+            sa_delete(FileIndex).where(FileIndex.path == f"apps/{slug}/page.tsx")
+        )
+        await db_session.commit()
+
+    async def test_embed_token_can_execute_its_own_referenced_workflow(
+        self, e2e_client, bound_app
+    ):
+        r = e2e_client.post(
+            "/api/workflows/execute",
+            headers={"Authorization": f"Bearer {bound_app['embed_token']}"},
+            json={"workflow_id": bound_app["allowed_workflow_id"], "input_data": {}},
+        )
+        assert r.status_code in (200, 201), r.text
+
+    async def test_embed_token_cannot_execute_an_unreferenced_workflow(
+        self, e2e_client, bound_app
+    ):
+        r = e2e_client.post(
+            "/api/workflows/execute",
+            headers={"Authorization": f"Bearer {bound_app['embed_token']}"},
+            json={"workflow_id": bound_app["denied_workflow_id"], "input_data": {}},
+        )
+        assert r.status_code == 403, r.text
+
+    async def test_embed_token_cannot_override_app_via_header(
+        self, e2e_client, bound_app
+    ):
+        r = e2e_client.post(
+            "/api/workflows/execute",
+            headers={
+                "Authorization": f"Bearer {bound_app['embed_token']}",
+                "X-Bifrost-App": str(uuid4()),
+            },
+            json={"workflow_id": bound_app["allowed_workflow_id"], "input_data": {}},
+        )
+        assert r.status_code == 403, r.text
+
+    async def test_embed_token_cannot_override_app_via_body(
+        self, e2e_client, bound_app
+    ):
+        r = e2e_client.post(
+            "/api/workflows/execute",
+            headers={"Authorization": f"Bearer {bound_app['embed_token']}"},
+            json={
+                "workflow_id": bound_app["allowed_workflow_id"],
+                "input_data": {},
+                "app_id": str(uuid4()),
+            },
+        )
+        assert r.status_code == 403, r.text
+
+    async def test_embed_token_cannot_override_solution_via_body(
+        self, e2e_client, bound_app
+    ):
+        r = e2e_client.post(
+            "/api/workflows/execute",
+            headers={"Authorization": f"Bearer {bound_app['embed_token']}"},
+            json={
+                "workflow_id": bound_app["allowed_workflow_id"],
+                "input_data": {},
+                "solution_id": str(uuid4()),
+            },
         )
         assert r.status_code == 403, r.text
 

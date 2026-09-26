@@ -138,6 +138,13 @@ ALLOW_LIST_INLINE_ORG: set[tuple[str, str, str]] = {
     ('routers/workflows.py', 'forms_query = forms_query.where(Form.organization_id == org_filter)', 'workflows inline cascade; phase 6 migrates'),
     ('routers/workflows.py', 'agents_query = agents_query.where(Agent.organization_id == org_filter)', 'workflows inline cascade; phase 6 migrates'),
     ('routers/workflows.py', 'apps_base_query = apps_base_query.where(Application.organization_id == org_filter)', 'workflows inline cascade; phase 6 migrates'),
+    ('routers/agents.py', 'Workflow.organization_id.is_(None),', 'accessible-tools org filter on the role-join result; not an OrgScopedRepository read path'),
+    ('routers/agents.py', 'Workflow.organization_id == user.organization_id,', 'accessible-tools org filter on the role-join result; not an OrgScopedRepository read path'),
+    ('routers/agents.py', 'KnowledgeNamespaceRole.organization_id.is_(None),', 'accessible-knowledge org filter on the role-join result; not an OrgScopedRepository read path'),
+    ('routers/agents.py', 'KnowledgeNamespaceRole.organization_id == user.organization_id,', 'accessible-knowledge org filter on the role-join result; not an OrgScopedRepository read path'),
+    ('routers/agents.py', 'in_scope = a.organization_id is None or a.organization_id == user.organization_id', 'delegations: per-delegate visibility re-check, not a repository list query'),
+    ('routers/mcp_servers.py', 'else [conn for conn in server.connections if conn.organization_id == ctx.org_id]', 'get_mcp_server: filters an already-fetched relationship for the response, never assigned back to the ORM collection (see comment above) — not a query'),
+    ('routers/metrics.py', 'ExecutionModel.organization_id == organization_id', 'recent_failures org scoping for non-bypass dashboard callers; Execution is an identity-entity (telemetry), not OrgScopedRepository'),
 }
 
 

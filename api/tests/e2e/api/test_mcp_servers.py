@@ -114,6 +114,74 @@ class TestMCPServersCRUD:
         )
         assert response.status_code == 404
 
+    def test_get_server_hides_other_orgs_connections_from_regular_users(
+        self, e2e_client, platform_admin, org1_user, org2_user, org1, org2, server
+    ):
+        """A shared server template's connections are per-org secrets-bearing
+        rows; a regular user must only see their own org's connection, never
+        another org's — even though the template itself is shared/global."""
+        conn1 = e2e_client.post(
+            "/api/mcp-connections",
+            headers=platform_admin.headers,
+            json={
+                "server_id": server["id"],
+                "organization_id": str(org1["id"]),
+                "client_id": "org1-client",
+                "client_secret": "org1-secret",
+            },
+        )
+        assert conn1.status_code == 201, conn1.text
+        conn2 = e2e_client.post(
+            "/api/mcp-connections",
+            headers=platform_admin.headers,
+            json={
+                "server_id": server["id"],
+                "organization_id": str(org2["id"]),
+                "client_id": "org2-client",
+                "client_secret": "org2-secret",
+            },
+        )
+        assert conn2.status_code == 201, conn2.text
+
+        try:
+            # Platform admin sees both connections.
+            admin_view = e2e_client.get(
+                f"/api/mcp-servers/{server['id']}",
+                headers=platform_admin.headers,
+            )
+            assert admin_view.status_code == 200, admin_view.text
+            admin_org_ids = {
+                c["organization_id"] for c in admin_view.json()["connections"]
+            }
+            assert admin_org_ids == {str(org1["id"]), str(org2["id"])}
+
+            # org1_user sees only org1's connection.
+            org1_view = e2e_client.get(
+                f"/api/mcp-servers/{server['id']}",
+                headers=org1_user.headers,
+            )
+            assert org1_view.status_code == 200, org1_view.text
+            org1_connections = org1_view.json()["connections"]
+            assert [c["organization_id"] for c in org1_connections] == [str(org1["id"])]
+
+            # org2_user sees only org2's connection.
+            org2_view = e2e_client.get(
+                f"/api/mcp-servers/{server['id']}",
+                headers=org2_user.headers,
+            )
+            assert org2_view.status_code == 200, org2_view.text
+            org2_connections = org2_view.json()["connections"]
+            assert [c["organization_id"] for c in org2_connections] == [str(org2["id"])]
+        finally:
+            e2e_client.delete(
+                f"/api/mcp-connections/{conn1.json()['id']}",
+                headers=platform_admin.headers,
+            )
+            e2e_client.delete(
+                f"/api/mcp-connections/{conn2.json()['id']}",
+                headers=platform_admin.headers,
+            )
+
     def test_update_server(self, e2e_client, platform_admin, server):
         response = e2e_client.patch(
             f"/api/mcp-servers/{server['id']}",

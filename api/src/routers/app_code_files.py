@@ -703,6 +703,30 @@ async def get_bundle_manifest(
                 needs_rebuild = True
 
     if needs_rebuild:
+        bypass = has_scope_bypass(
+            is_platform_admin=ctx.user.is_superuser,
+            is_provider_org=ctx.user.is_provider_org,
+        )
+        if not bypass:
+            # A GET must never trigger a _repo build/write for a non-bypass
+            # caller. Serve the existing (possibly stale-schema) manifest
+            # as-is, or 404 if there is none yet — never build here.
+            if manifest_bytes is None:
+                raise HTTPException(
+                    status_code=404, detail="Bundle manifest not built yet"
+                )
+            manifest_bytes_stale = manifest_bytes
+            m = _json.loads(manifest_bytes_stale)
+            return {
+                "entry": m.get("entry"),
+                "css": m.get("css"),
+                "base_url": f"/api/applications/{app_id}/bundle-asset",
+                "mode": storage_mode,
+                "dependencies": m.get("dependencies") or (app.dependencies or {}),
+                "migrated": False,
+                "organization_id": str(app.organization_id) if app.organization_id else None,
+                "app_model": app.app_model,
+            }
         repo_prefix = app.repo_prefix
         # Serialize migrate+rebuild across concurrent first-viewers so two
         # requests don't double-migrate or race on writes. Hold the lock

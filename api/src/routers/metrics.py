@@ -35,7 +35,9 @@ from src.models import (
     WorkflowMetricsSummary,
     WorkflowMetricsResponse,
 )
+from shared.scope_resolver import has_scope_bypass
 from src.core.auth import Context, CurrentActiveUser, RequirePlatformAdmin
+from src.core.principal import UserPrincipal
 from src.models import Execution as ExecutionModel
 from src.models import ExecutionMetricsDaily, Organization
 from src.models.orm import PlatformMetricsSnapshot as PlatformMetricsSnapshotORM
@@ -97,20 +99,29 @@ async def get_metrics(
                 avg_duration_seconds=float(snapshot.avg_duration_ms_24h) / 1000.0,
             )
 
-            # Still need to fetch recent failures (they change frequently)
-            recent_failures = await _get_recent_failures(ctx)
-
-            # Fetch ROI settings for display units
-            roi_service = ROISettingsService(ctx.db)
-            roi_settings = await roi_service.get_settings()
-
-            # Build ROI snapshot
-            roi_24h = ROISnapshot(
-                total_time_saved=snapshot.time_saved_24h,
-                total_value=float(snapshot.value_24h),
-                time_saved_unit=roi_settings.time_saved_unit,
-                value_unit=roi_settings.value_unit,
+            # Still need to fetch recent failures (they change frequently).
+            # Bypass callers (platform admin / provider org) see platform-wide
+            # recent failures; regular users see only their own org's.
+            bypass = has_scope_bypass(
+                is_platform_admin=user.is_superuser,
+                is_provider_org=user.is_provider_org,
             )
+            recent_failures = await _get_recent_failures(
+                ctx, bypass=bypass, organization_id=user.organization_id
+            )
+
+            # ROI is platform-wide (the snapshot carries one global row with
+            # no per-org breakdown) — bypass callers only.
+            roi_24h = None
+            if bypass:
+                roi_service = ROISettingsService(ctx.db)
+                roi_settings = await roi_service.get_settings()
+                roi_24h = ROISnapshot(
+                    total_time_saved=snapshot.time_saved_24h,
+                    total_value=float(snapshot.value_24h),
+                    time_saved_unit=roi_settings.time_saved_unit,
+                    value_unit=roi_settings.value_unit,
+                )
 
             response = DashboardMetricsResponse(
                 workflow_count=snapshot.workflow_count,
@@ -128,7 +139,7 @@ async def get_metrics(
 
         # Fallback: compute metrics directly (slower, for when snapshot doesn't exist)
         logger.warning("Snapshot not available, computing metrics directly")
-        return await _compute_metrics_directly(ctx)
+        return await _compute_metrics_directly(ctx, user)
 
     except Exception as e:
         logger.error(f"Error getting metrics: {str(e)}", exc_info=True)
@@ -614,8 +625,18 @@ async def get_workflow_metrics(
 # =============================================================================
 
 
-async def _get_recent_failures(ctx: Context, limit: int = 5) -> list[RecentFailure]:
-    """Get recent failed executions."""
+async def _get_recent_failures(
+    ctx: Context,
+    limit: int = 5,
+    *,
+    bypass: bool = True,
+    organization_id=None,
+) -> list[RecentFailure]:
+    """Get recent failed executions.
+
+    Bypass callers (platform admin / provider org) see platform-wide recent
+    failures. Regular callers are scoped to their own org.
+    """
     failures_query = (
         select(
             ExecutionModel.id,
@@ -627,6 +648,10 @@ async def _get_recent_failures(ctx: Context, limit: int = 5) -> list[RecentFailu
         .order_by(ExecutionModel.started_at.desc())
         .limit(limit)
     )
+    if not bypass:
+        failures_query = failures_query.where(
+            ExecutionModel.organization_id == organization_id
+        )
     failures_result = await ctx.db.execute(failures_query)
     failures_rows = failures_result.all()
 
@@ -641,7 +666,9 @@ async def _get_recent_failures(ctx: Context, limit: int = 5) -> list[RecentFailu
     ]
 
 
-async def _compute_metrics_directly(ctx: Context) -> DashboardMetricsResponse:
+async def _compute_metrics_directly(
+    ctx: Context, user: UserPrincipal
+) -> DashboardMetricsResponse:
     """
     Compute metrics directly from tables.
 
@@ -724,8 +751,15 @@ async def _compute_metrics_directly(ctx: Context) -> DashboardMetricsResponse:
     success_rate = (success_count / total_executions * 100) if total_executions > 0 else 0.0
     avg_duration_seconds = float(avg_duration_ms) / 1000.0 if avg_duration_ms else 0.0
 
-    # Get recent failures
-    recent_failures = await _get_recent_failures(ctx)
+    # Get recent failures — bypass callers see platform-wide, regular users
+    # are scoped to their own org.
+    bypass = has_scope_bypass(
+        is_platform_admin=user.is_superuser,
+        is_provider_org=user.is_provider_org,
+    )
+    recent_failures = await _get_recent_failures(
+        ctx, bypass=bypass, organization_id=user.organization_id
+    )
 
     # Execution statistics
     execution_stats = ExecutionStats(
@@ -738,17 +772,17 @@ async def _compute_metrics_directly(ctx: Context) -> DashboardMetricsResponse:
         avg_duration_seconds=avg_duration_seconds,
     )
 
-    # Fetch ROI settings (fallback has no ROI data)
-    roi_service = ROISettingsService(ctx.db)
-    roi_settings = await roi_service.get_settings()
-
-    # ROI snapshot (fallback: no data available)
-    roi_24h = ROISnapshot(
-        total_time_saved=0,
-        total_value=0.0,
-        time_saved_unit=roi_settings.time_saved_unit,
-        value_unit=roi_settings.value_unit,
-    )
+    # ROI is platform-wide — bypass callers only.
+    roi_24h = None
+    if bypass:
+        roi_service = ROISettingsService(ctx.db)
+        roi_settings = await roi_service.get_settings()
+        roi_24h = ROISnapshot(
+            total_time_saved=0,
+            total_value=0.0,
+            time_saved_unit=roi_settings.time_saved_unit,
+            value_unit=roi_settings.value_unit,
+        )
 
     return DashboardMetricsResponse(
         workflow_count=workflow_count,

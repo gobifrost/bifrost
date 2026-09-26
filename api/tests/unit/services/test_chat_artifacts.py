@@ -100,8 +100,7 @@ async def test_document_tool_reads_prior_workspace_image() -> None:
         conversation_id,
         "Bluetick Portrait.png",
         user_id=user_id,
-        organization_id=user.organization_id,
-        is_platform_admin=False,
+        bypass=False,
     )
     render.assert_called_once()
     assert render.call_args.args[1] == {"Bluetick Portrait.png": b"png"}

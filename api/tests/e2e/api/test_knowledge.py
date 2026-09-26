@@ -528,6 +528,132 @@ class TestKnowledgeStoreIsolation:
         assert get_response.status_code == 200
 
 
+class TestKnowledgeSourcesRestBrowsingVisibility:
+    """GET /api/knowledge-sources/* (the raw document-browsing REST surface,
+    distinct from the org-scoped SDK CRUD surface used by workflows/CLI):
+    a regular user needs a KnowledgeNamespaceRole grant to browse a
+    namespace's raw documents directly, same as the role gate that already
+    applies to GET /api/agents/accessible-knowledge and MCP search_knowledge.
+    Cross-org id lookups also 404 for non-bypass callers."""
+
+    def test_regular_user_without_namespace_role_sees_nothing(
+        self,
+        e2e_client,
+        platform_admin,
+        org1_user,
+        org1,
+        embedding_config_setup,
+        knowledge_cleanup,
+    ):
+        namespace = "e2e-nsrole-denied"
+        created = e2e_client.post(
+            f"/api/knowledge-sources/{namespace}/documents",
+            headers=platform_admin.headers,
+            json={"content": "role-gated content", "key": "role-gated-doc"},
+        )
+        assert created.status_code == 201, created.text
+        doc_id = created.json()["id"]
+
+        listed = e2e_client.get(
+            f"/api/knowledge-sources/{namespace}/documents",
+            headers=org1_user.headers,
+        )
+        assert listed.status_code == 403, listed.text
+
+        all_docs = e2e_client.get(
+            "/api/knowledge-sources/documents",
+            headers=org1_user.headers,
+            params={"namespace": namespace},
+        )
+        assert all_docs.status_code == 200, all_docs.text
+        assert all_docs.json() == []
+
+        namespaces = e2e_client.get(
+            "/api/knowledge-sources",
+            headers=org1_user.headers,
+        )
+        assert namespaces.status_code == 200, namespaces.text
+        assert namespace not in {n["namespace"] for n in namespaces.json()}
+
+        got = e2e_client.get(
+            f"/api/knowledge-sources/{namespace}/documents/{doc_id}",
+            headers=org1_user.headers,
+        )
+        assert got.status_code == 404, got.text
+
+    def test_regular_user_with_namespace_role_sees_own_org_document(
+        self,
+        e2e_client,
+        platform_admin,
+        org1_user,
+        org2_user,
+        org1,
+        embedding_config_setup,
+        knowledge_cleanup,
+    ):
+        namespace = "e2e-nsrole-granted"
+        created = e2e_client.post(
+            f"/api/knowledge-sources/{namespace}/documents",
+            headers=platform_admin.headers,
+            json={
+                "content": "role-granted content",
+                "key": "role-granted-doc",
+                "metadata": {},
+            },
+            params={"scope": str(org1["id"])},
+        )
+        assert created.status_code == 201, created.text
+        doc_id = created.json()["id"]
+
+        role = e2e_client.post(
+            "/api/roles",
+            headers=platform_admin.headers,
+            json={"name": f"E2E KB role {namespace}", "description": "test role"},
+        )
+        assert role.status_code == 201, role.text
+        role_id = role.json()["id"]
+
+        try:
+            assign_user = e2e_client.post(
+                f"/api/roles/{role_id}/users",
+                headers=platform_admin.headers,
+                json={"user_ids": [str(org1_user.user_id)]},
+            )
+            assert assign_user.status_code in (200, 201, 204), assign_user.text
+
+            assign_namespace = e2e_client.post(
+                "/api/knowledge-sources/roles",
+                headers=platform_admin.headers,
+                json={"namespace": namespace, "role_ids": [role_id]},
+            )
+            assert assign_namespace.status_code == 201, assign_namespace.text
+            assert len(assign_namespace.json()) == 1, assign_namespace.text
+
+            got = e2e_client.get(
+                f"/api/knowledge-sources/{namespace}/documents/{doc_id}",
+                headers=org1_user.headers,
+            )
+            assert got.status_code == 200, got.text
+            assert got.json()["content"] == "role-granted content"
+
+            listed = e2e_client.get(
+                f"/api/knowledge-sources/{namespace}/documents",
+                headers=org1_user.headers,
+            )
+            assert listed.status_code == 200, listed.text
+            assert any(d["id"] == doc_id for d in listed.json())
+
+            # A different org's user (no role grant and wrong org) still
+            # 404s on this org-scoped document.
+            other_org_get = e2e_client.get(
+                f"/api/knowledge-sources/{namespace}/documents/{doc_id}",
+                headers=org2_user.headers,
+            )
+            assert other_org_get.status_code == 404, other_org_get.text
+        finally:
+            e2e_client.delete(f"/api/roles/{role_id}", headers=platform_admin.headers)
+
+
 class TestKnowledgeStoreGlobalScope:
     """Test global scope functionality (platform admin only)."""
 

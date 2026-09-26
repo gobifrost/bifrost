@@ -476,16 +476,79 @@ class TestMetrics:
         assert response.status_code == 403, \
             f"Org user should not access snapshot: {response.status_code}"
 
-    def test_get_metrics_authenticated(self, e2e_client, org1_user):
-        """Authenticated org user can access basic metrics endpoint."""
+    def test_get_metrics_authenticated_hides_roi_from_regular_users(
+        self, e2e_client, org1_user
+    ):
+        """A regular org user still gets the dashboard payload, but ROI
+        (platform-wide, no per-org breakdown) is bypass-only."""
         response = e2e_client.get(
             "/api/metrics",
             headers=org1_user.headers,
         )
-        # Org user may get 200 (limited view) or 403 (platform admin only)
-        # Depends on implementation - both are valid
-        assert response.status_code in [200, 403], \
-            f"Unexpected status for org user metrics: {response.status_code}"
+        assert response.status_code == 200, f"Unexpected status: {response.text}"
+        data = response.json()
+        assert data.get("roi_24h") is None
+
+    @pytest.mark.asyncio
+    async def test_get_metrics_recent_failures_scoped_to_own_org(
+        self, e2e_client, platform_admin, org1_user, org2_user, db_session
+    ):
+        """recent_failures only shows the caller's own org's failed runs
+        for a regular user; a platform admin sees ROI and is not org-filtered."""
+        from uuid import uuid4
+
+        from sqlalchemy import delete
+
+        from src.models.enums import ExecutionStatus
+        from src.models.orm import Execution
+
+        org1_workflow_name = f"org1-metrics-probe-{uuid4().hex[:8]}"
+        org2_workflow_name = f"org2-metrics-probe-{uuid4().hex[:8]}"
+        db_session.add_all(
+            [
+                Execution(
+                    id=uuid4(),
+                    workflow_name=org1_workflow_name,
+                    status=ExecutionStatus.FAILED.value,
+                    organization_id=org1_user.organization_id,
+                    executed_by=org1_user.user_id,
+                    executed_by_name=org1_user.name,
+                ),
+                Execution(
+                    id=uuid4(),
+                    workflow_name=org2_workflow_name,
+                    status=ExecutionStatus.FAILED.value,
+                    organization_id=org2_user.organization_id,
+                    executed_by=org2_user.user_id,
+                    executed_by_name=org2_user.name,
+                ),
+            ]
+        )
+        await db_session.commit()
+
+        try:
+            org1_response = e2e_client.get("/api/metrics", headers=org1_user.headers)
+            assert org1_response.status_code == 200, org1_response.text
+            org1_names = {
+                f["workflow_name"] for f in org1_response.json()["recent_failures"]
+            }
+            assert org1_workflow_name in org1_names
+            assert org2_workflow_name not in org1_names
+
+            admin_response = e2e_client.get(
+                "/api/metrics", headers=platform_admin.headers
+            )
+            assert admin_response.status_code == 200, admin_response.text
+            assert admin_response.json().get("roi_24h") is not None
+        finally:
+            await db_session.execute(
+                delete(Execution).where(
+                    Execution.workflow_name.in_(
+                        [org1_workflow_name, org2_workflow_name]
+                    )
+                )
+            )
+            await db_session.commit()
 
     def test_get_organization_metrics_superuser(self, e2e_client, platform_admin, org1):
         """Superuser can get organization-specific metrics."""

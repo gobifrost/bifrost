@@ -38,11 +38,14 @@ def _register_tool(e2e_client, headers, organization_id: str | None) -> dict:
     assert register_resp.status_code in (200, 201), register_resp.text
     workflow = register_resp.json()
 
-    # Pin org scope (endpoint distinguishes unset from explicit null via model_fields_set)
+    # Pin org scope (endpoint distinguishes unset from explicit null via model_fields_set).
+    # access_level is explicit "authenticated" (not the registration default
+    # of "role_based") since these tests exercise org/global cascade
+    # visibility, not role-based tool gating.
     patch_resp = e2e_client.patch(
         f"/api/workflows/{workflow['id']}",
         headers=headers,
-        json={"organization_id": organization_id},
+        json={"organization_id": organization_id, "access_level": "authenticated"},
     )
     assert patch_resp.status_code == 200, patch_resp.text
     return {**patch_resp.json(), "_path": path}
@@ -199,3 +202,44 @@ class TestToolsEndpointOrgScope:
         assert global_tool["id"] in ids
         assert org1_tool["id"] in ids
         assert org2_tool["id"] not in ids
+
+    def test_role_based_tool_hidden_until_role_assigned(
+        self, e2e_client, platform_admin, org1_user
+    ):
+        """Org/global cascade alone isn't enough for a role_based tool
+        workflow — the caller also needs the assigned role."""
+        tool = _register_tool(e2e_client, platform_admin.headers, None)
+        try:
+            role_resp = e2e_client.post(
+                "/api/roles",
+                headers=platform_admin.headers,
+                json={"name": f"Tool Role {uuid.uuid4().hex[:8]}"},
+            )
+            assert role_resp.status_code == 201, role_resp.text
+            role_id = role_resp.json()["id"]
+            try:
+                patched = e2e_client.patch(
+                    f"/api/workflows/{tool['id']}",
+                    headers=platform_admin.headers,
+                    json={"access_level": "role_based", "role_ids": [role_id]},
+                )
+                assert patched.status_code == 200, patched.text
+
+                ids_before = self._workflow_tool_ids(e2e_client, org1_user.headers)
+                assert tool["id"] not in ids_before
+
+                assign = e2e_client.post(
+                    f"/api/roles/{role_id}/users",
+                    headers=platform_admin.headers,
+                    json={"user_ids": [str(org1_user.user_id)]},
+                )
+                assert assign.status_code in (200, 201, 204), assign.text
+
+                ids_after = self._workflow_tool_ids(e2e_client, org1_user.headers)
+                assert tool["id"] in ids_after
+            finally:
+                e2e_client.delete(
+                    f"/api/roles/{role_id}", headers=platform_admin.headers
+                )
+        finally:
+            _cleanup_tool(e2e_client, platform_admin.headers, tool)

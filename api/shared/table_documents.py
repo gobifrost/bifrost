@@ -455,14 +455,21 @@ async def get_table_document(
 ) -> DocumentPublic:
     """Fetch a single document, enforcing the ``read`` policy.
 
-    Returns 404 for a missing row; denies with 403 (plus the shared deny
-    audit + commit) when the read policy rejects the row.
+    Missing table, missing row, and a policy-denied row are all
+    indistinguishable to the caller: 404 "Document not found" in every
+    case (still records the ``policy.deny`` audit row on the denied-row
+    path). This avoids leaking row existence via a 403-vs-404 signal.
     """
     repo = DocumentRepository(db, table)
     doc = await repo.get(doc_id)
     if doc is None:
         raise HTTPException(status_code=404, detail="Document not found")
-    await check_table_action_or_403("read", table, _row_from_doc(doc), user, db=db)
+    try:
+        await check_table_action_or_403("read", table, _row_from_doc(doc), user, db=db)
+    except HTTPException as exc:
+        if exc.status_code == 403:
+            raise HTTPException(status_code=404, detail="Document not found") from exc
+        raise
     return DocumentPublic.model_validate(doc)
 
 

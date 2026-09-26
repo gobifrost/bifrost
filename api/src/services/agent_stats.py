@@ -17,8 +17,13 @@ async def get_agent_stats_batch(
     db: AsyncSession,
     *,
     window_days: int = 7,
+    caller_user_id: UUID | None = None,
 ) -> dict[UUID, AgentStatsResponse]:
-    """Compute the list-card stats for many agents in four bounded queries."""
+    """Compute the list-card stats for many agents in four bounded queries.
+
+    ``caller_user_id`` scopes runs/chats to that caller only (regular,
+    non-bypass callers) — omit (``None``) for the platform-wide/bypass view.
+    """
     if not agent_ids:
         return {}
 
@@ -26,14 +31,16 @@ async def get_agent_stats_batch(
     now = datetime.now(timezone.utc)
     unique_agent_ids = list(dict.fromkeys(agent_ids))
 
+    run_conditions = [
+        AgentRun.agent_id.in_(unique_agent_ids),
+        AgentRun.created_at >= cutoff,
+    ]
+    if caller_user_id is not None:
+        run_conditions.append(AgentRun.caller_user_id == str(caller_user_id))
+
     runs = (
         (
-            await db.execute(
-                select(AgentRun).where(
-                    AgentRun.agent_id.in_(unique_agent_ids),
-                    AgentRun.created_at >= cutoff,
-                )
-            )
+            await db.execute(select(AgentRun).where(*run_conditions))
         )
         .scalars()
         .all()
@@ -58,6 +65,12 @@ async def get_agent_stats_batch(
             for agent_id, cost in cost_rows
         }
 
+    chat_conditions = [
+        Conversation.agent_id.in_(unique_agent_ids),
+        Conversation.updated_at >= cutoff,
+    ]
+    if caller_user_id is not None:
+        chat_conditions.append(Conversation.user_id == caller_user_id)
     chat_rows = (
         await db.execute(
             select(
@@ -65,10 +78,7 @@ async def get_agent_stats_batch(
                 func.count(Conversation.id),
                 func.max(Conversation.updated_at),
             )
-            .where(
-                Conversation.agent_id.in_(unique_agent_ids),
-                Conversation.updated_at >= cutoff,
-            )
+            .where(*chat_conditions)
             .group_by(Conversation.agent_id)
         )
     ).all()
@@ -76,6 +86,12 @@ async def get_agent_stats_batch(
         agent_id: (count, last_at) for agent_id, count, last_at in chat_rows
     }
 
+    chat_cost_conditions = [
+        Conversation.agent_id.in_(unique_agent_ids),
+        AIUsage.timestamp >= cutoff,
+    ]
+    if caller_user_id is not None:
+        chat_cost_conditions.append(Conversation.user_id == caller_user_id)
     chat_cost_rows = (
         await db.execute(
             select(
@@ -83,10 +99,7 @@ async def get_agent_stats_batch(
                 func.coalesce(func.sum(AIUsage.cost), 0),
             )
             .join(AIUsage, AIUsage.conversation_id == Conversation.id)
-            .where(
-                Conversation.agent_id.in_(unique_agent_ids),
-                AIUsage.timestamp >= cutoff,
-            )
+            .where(*chat_cost_conditions)
             .group_by(Conversation.agent_id)
         )
     ).all()
@@ -156,6 +169,7 @@ async def get_agent_stats(
     db: AsyncSession,
     *,
     window_days: int = 7,
+    caller_user_id: UUID | None = None,
 ) -> AgentStatsResponse:
     """Per-agent stats over the last ``window_days`` (default 7).
 
@@ -181,6 +195,7 @@ async def get_agent_stats(
             [agent_id],
             db,
             window_days=window_days,
+            caller_user_id=caller_user_id,
         )
     )[agent_id]
 
@@ -190,11 +205,15 @@ async def get_fleet_stats(
     *,
     org_id: UUID | None,
     window_days: int = 7,
+    caller_user_id: UUID | None = None,
 ) -> FleetStatsResponse:
     """Fleet-wide stats over the last ``window_days``.
 
     Optionally scoped to a single organization (org_id=None means
-    cross-org, only allowed for superusers — the router enforces that).
+    cross-org, only allowed for superusers/bypass callers — the router
+    enforces that). ``caller_user_id`` additionally scopes runs/chats/agent
+    counts to that caller's own activity and excludes other users' private
+    agents — pass it for any non-bypass caller.
 
     Chat-channel rollup mirrors :func:`get_agent_stats`: each
     ``Conversation`` updated in window counts as one run, and chat
@@ -202,15 +221,30 @@ async def get_fleet_stats(
     fleet spend. ``avg_success_rate`` stays keyed on ``AgentRun`` only —
     there is no "success" concept on a chat conversation.
     """
+    from sqlalchemy import or_
+
+    from src.models.enums import AgentAccessLevel
+
     cutoff = datetime.now(timezone.utc) - timedelta(days=window_days)
 
     agent_filter = []
     if org_id is not None:
         agent_filter.append(Agent.organization_id == org_id)
+    if caller_user_id is not None:
+        # A private agent owned by someone else never contributes to this
+        # caller's fleet counts.
+        agent_filter.append(
+            or_(
+                Agent.access_level != AgentAccessLevel.PRIVATE,
+                Agent.owner_user_id == caller_user_id,
+            )
+        )
 
     run_filter = [AgentRun.created_at >= cutoff]
     if org_id is not None:
         run_filter.append(AgentRun.org_id == org_id)
+    if caller_user_id is not None:
+        run_filter.append(AgentRun.caller_user_id == str(caller_user_id))
 
     total_runs = (
         await db.execute(select(func.count(AgentRun.id)).where(*run_filter))
@@ -250,20 +284,20 @@ async def get_fleet_stats(
     chat_conv_q = (
         select(func.count(Conversation.id))
         .join(Agent, Agent.id == Conversation.agent_id)
-        .where(Conversation.updated_at >= cutoff)
+        .where(Conversation.updated_at >= cutoff, *agent_filter)
     )
-    if org_id is not None:
-        chat_conv_q = chat_conv_q.where(Agent.organization_id == org_id)
+    if caller_user_id is not None:
+        chat_conv_q = chat_conv_q.where(Conversation.user_id == caller_user_id)
     chat_runs = (await db.execute(chat_conv_q)).scalar() or 0
 
     chat_cost_q = (
         select(func.coalesce(func.sum(AIUsage.cost), 0))
         .join(Conversation, Conversation.id == AIUsage.conversation_id)
         .join(Agent, Agent.id == Conversation.agent_id)
-        .where(AIUsage.timestamp >= cutoff)
+        .where(AIUsage.timestamp >= cutoff, *agent_filter)
     )
-    if org_id is not None:
-        chat_cost_q = chat_cost_q.where(Agent.organization_id == org_id)
+    if caller_user_id is not None:
+        chat_cost_q = chat_cost_q.where(Conversation.user_id == caller_user_id)
     chat_cost = (await db.execute(chat_cost_q)).scalar() or Decimal("0")
     chat_cost_decimal = (
         chat_cost if isinstance(chat_cost, Decimal) else Decimal(chat_cost)
