@@ -280,6 +280,31 @@ class EventProcessor:
             filter_decision.matches,
         )
 
+    async def retry_delivery(self, delivery: EventDelivery) -> str:
+        """Reset and queue one failed delivery as a new timed attempt."""
+        delivery.status = EventDeliveryStatus.PENDING
+        delivery.error_message = None
+        delivery.execution_id = None
+        delivery.completed_at = None
+        delivery.attempt_started_at = datetime.now(timezone.utc)
+        await self.session.flush()
+
+        try:
+            await self.queue_event_deliveries(delivery.event_id)
+            if delivery.status == EventDeliveryStatus.FAILED:
+                delivery.completed_at = datetime.now(timezone.utc)
+                await self.session.flush()
+                return f"Failed to queue retry: {delivery.error_message}"
+            return "Delivery queued for retry"
+        except Exception as exc:
+            error_message = format_exception_message(exc, context="queueing event delivery retry")
+            logger.error("Failed to queue retry: %s", error_message, exc_info=True)
+            delivery.status = EventDeliveryStatus.FAILED
+            delivery.error_message = error_message
+            delivery.completed_at = datetime.now(timezone.utc)
+            await self.session.flush()
+            return f"Failed to queue retry: {error_message}"
+
     async def process_webhook(
         self,
         event_source: EventSource,
