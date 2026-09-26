@@ -71,6 +71,7 @@ from src.core.cache import (
     invalidate_role_users,
     invalidate_role_forms,
 )
+from src.services.operation_catalog import operation_route
 
 # Agent cache invalidation (optional, may not exist yet)
 try:
@@ -91,7 +92,7 @@ router = APIRouter(prefix="/api/roles", tags=["Roles"])
     response_model=list[RolePublic],
     summary="List all roles",
     description="Get all roles (Platform admin only)",
-)
+**operation_route("roles.list"))
 async def list_roles(
     user: CurrentSuperuser,
     db: DbSession,
@@ -128,7 +129,7 @@ async def list_roles(
     status_code=status.HTTP_201_CREATED,
     summary="Create a role",
     description="Create a new role (Platform admin only)",
-)
+**operation_route("roles.create"))
 async def create_role(
     request: RoleCreate,
     user: CurrentSuperuser,
@@ -154,7 +155,7 @@ async def create_role(
     response_model=RolePublic,
     summary="Get a role",
     description="Get a role by ID (Platform admin only)",
-)
+**operation_route("roles.get"))
 async def get_role(
     role_id: UUID,
     user: CurrentSuperuser,
@@ -174,7 +175,7 @@ async def get_role(
     response_model=RolePublic,
     summary="Update a role",
     description="Update a role (Platform admin only)",
-)
+**operation_route("roles.update"))
 async def update_role(
     role_id: UUID,
     request: RoleUpdate,
@@ -220,7 +221,7 @@ async def update_role_put(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete a role",
     description="Delete a role (Platform admin only). CASCADE removes all role assignments.",
-)
+**operation_route("roles.delete"))
 async def delete_role(
     role_id: UUID,
     user: CurrentSuperuser,
@@ -245,7 +246,7 @@ async def delete_role(
     response_model=RoleUsersResponse,
     summary="Get role users",
     description="Get all users assigned to a role",
-)
+**operation_route("roles.users.list"))
 async def get_role_users(
     role_id: UUID,
     user: CurrentSuperuser,
@@ -276,7 +277,7 @@ async def get_role_users(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Assign users to role",
     description="Assign users to a role (batch operation)",
-)
+**operation_route("roles.users.assign"))
 async def assign_users_to_role(
     role_id: UUID,
     request: AssignUsersToRoleRequest,
@@ -305,7 +306,7 @@ async def assign_users_to_role(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Remove user from role",
     description="Remove a user from a role",
-)
+**operation_route("roles.users.remove"))
 async def remove_user_from_role(
     role_id: UUID,
     user_id: str,
@@ -365,7 +366,7 @@ async def remove_user_from_role(
     response_model=RoleFormsResponse,
     summary="Get role forms",
     description="Get all forms assigned to a role",
-)
+**operation_route("roles.forms.list"))
 async def get_role_forms(
     role_id: UUID,
     user: CurrentSuperuser,
@@ -382,7 +383,7 @@ async def get_role_forms(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Assign forms to role",
     description="Assign forms to a role (batch operation)",
-)
+**operation_route("roles.forms.assign"))
 async def assign_forms_to_role(
     role_id: UUID,
     request: AssignFormsToRoleRequest,
@@ -411,7 +412,7 @@ async def assign_forms_to_role(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Remove form from role",
     description="Remove a form from a role",
-)
+**operation_route("roles.forms.remove"))
 async def remove_form_from_role(
     role_id: UUID,
     form_id: UUID,
@@ -449,7 +450,7 @@ async def remove_form_from_role(
     response_model=RoleAgentsResponse,
     summary="Get role agents",
     description="Get all agents assigned to a role",
-)
+**operation_route("roles.agents.list"))
 async def get_role_agents(
     role_id: UUID,
     user: CurrentSuperuser,
@@ -468,7 +469,7 @@ async def get_role_agents(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Assign agents to role",
     description="Assign agents to a role (batch operation)",
-)
+**operation_route("roles.agents.assign"))
 async def assign_agents_to_role(
     role_id: UUID,
     request: AssignAgentsToRoleRequest,
@@ -523,7 +524,7 @@ async def assign_agents_to_role(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Remove agent from role",
     description="Remove an agent from a role",
-)
+**operation_route("roles.agents.remove"))
 async def remove_agent_from_role(
     role_id: UUID,
     agent_id: UUID,
@@ -567,7 +568,7 @@ async def remove_agent_from_role(
         "Bulk unassign N users from a role in one call. Pass the user UUIDs in the "
         "request body as {user_ids: [...]}. Unknown ids are silently skipped."
     ),
-)
+**operation_route("roles.users.bulk_remove"))
 async def bulk_unassign_users(
     role_id: UUID,
     request: UnassignUsersFromRoleRequest,
@@ -611,7 +612,7 @@ async def bulk_unassign_users(
     "/{role_id}/forms",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Bulk unassign forms from role",
-)
+**operation_route("roles.forms.bulk_remove"))
 async def bulk_unassign_forms(
     role_id: UUID,
     request: UnassignFormsFromRoleRequest,
@@ -646,7 +647,7 @@ async def bulk_unassign_forms(
     "/{role_id}/agents",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Bulk unassign agents from role",
-)
+**operation_route("roles.agents.bulk_remove"))
 async def bulk_unassign_agents(
     role_id: UUID,
     request: UnassignAgentsFromRoleRequest,
@@ -687,7 +688,7 @@ async def bulk_unassign_agents(
     "/{role_id}/apps",
     response_model=RoleAppsResponse,
     summary="Get role apps",
-)
+**operation_route("roles.apps.list"))
 async def get_role_apps(
     role_id: UUID,
     user: CurrentSuperuser,
@@ -703,7 +704,7 @@ async def get_role_apps(
     "/{role_id}/apps",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Assign apps to role",
-)
+**operation_route("roles.apps.assign"))
 async def assign_apps_to_role(
     role_id: UUID,
     request: AssignAppsToRoleRequest,
@@ -751,7 +752,7 @@ async def assign_apps_to_role(
     "/{role_id}/apps",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Bulk unassign apps from role",
-)
+**operation_route("roles.apps.bulk_remove"))
 async def bulk_unassign_apps(
     role_id: UUID,
     request: UnassignAppsFromRoleRequest,
@@ -787,7 +788,7 @@ async def bulk_unassign_apps(
     "/{role_id}/workflows",
     response_model=RoleWorkflowsResponse,
     summary="Get role workflows",
-)
+**operation_route("roles.workflows.list"))
 async def get_role_workflows(
     role_id: UUID,
     user: CurrentSuperuser,
@@ -805,7 +806,7 @@ async def get_role_workflows(
     "/{role_id}/workflows",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Assign workflows to role",
-)
+**operation_route("roles.workflows.assign"))
 async def assign_workflows_to_role(
     role_id: UUID,
     request: AssignWorkflowsToRoleRequest,
@@ -853,7 +854,7 @@ async def assign_workflows_to_role(
     "/{role_id}/workflows",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Bulk unassign workflows from role",
-)
+**operation_route("roles.workflows.bulk_remove"))
 async def bulk_unassign_workflows(
     role_id: UUID,
     request: UnassignWorkflowsFromRoleRequest,
@@ -889,7 +890,7 @@ async def bulk_unassign_workflows(
     "/{role_id}/knowledge",
     response_model=RoleKnowledgeResponse,
     summary="Get role knowledge-namespace assignments",
-)
+**operation_route("roles.knowledge.list"))
 async def get_role_knowledge(
     role_id: UUID,
     user: CurrentSuperuser,
@@ -916,7 +917,7 @@ async def get_role_knowledge(
     "/{role_id}/knowledge",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Assign knowledge namespaces to role",
-)
+**operation_route("roles.knowledge.assign"))
 async def assign_knowledge_to_role(
     role_id: UUID,
     request: AssignKnowledgeToRoleRequest,
@@ -964,7 +965,7 @@ async def assign_knowledge_to_role(
     "/{role_id}/knowledge",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Bulk unassign knowledge namespaces from role",
-)
+**operation_route("roles.knowledge.bulk_remove"))
 async def bulk_unassign_knowledge(
     role_id: UUID,
     request: UnassignKnowledgeFromRoleRequest,

@@ -13,6 +13,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from src.core.auth import CurrentSuperuser
 from src.core.db_deps import DbSession
 from src.models import OrganizationCreate, OrganizationPublic, OrganizationUpdate
+from src.services.operation_catalog import operation_route
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,7 @@ router = APIRouter(prefix="/api/organizations", tags=["Organizations"])
     response_model=list[OrganizationPublic],
     summary="List organizations",
     description="Get active organizations, optionally including inactive ones (Platform admin only)",
-)
+**operation_route("organizations.list"))
 async def list_organizations(
     user: CurrentSuperuser,
     db: DbSession,
@@ -49,7 +50,7 @@ async def list_organizations(
     status_code=status.HTTP_201_CREATED,
     summary="Create a new organization",
     description="Create a new client organization (Platform admin only)",
-)
+**operation_route("organizations.create"))
 async def create_organization(
     request: OrganizationCreate,
     user: CurrentSuperuser,
@@ -79,7 +80,7 @@ async def create_organization(
     response_model=OrganizationPublic,
     summary="Get organization by ID",
     description="Get a specific organization by ID (Platform admin only)",
-)
+**operation_route("organizations.get"))
 async def get_organization(
     org_id: UUID,
     user: CurrentSuperuser,
@@ -102,7 +103,7 @@ async def get_organization(
     response_model=OrganizationPublic,
     summary="Update an organization",
     description="Update an existing organization (Platform admin only)",
-)
+**operation_route("organizations.update"))
 async def update_organization(
     org_id: UUID,
     request: OrganizationUpdate,
@@ -133,7 +134,7 @@ async def update_organization(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete an organization",
     description="Soft delete an organization (sets is_active=False, Platform admin only)",
-)
+**operation_route("organizations.delete"))
 async def delete_organization(
     org_id: UUID,
     user: CurrentSuperuser,

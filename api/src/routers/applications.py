@@ -128,6 +128,7 @@ def extract_external_deps(content: str) -> set[str]:
 
 
 from src.repositories.applications import ApplicationRepository  # noqa: E402
+from src.services.operation_catalog import operation_route  # noqa: E402
 
 
 # =============================================================================
@@ -466,7 +467,7 @@ async def get_application_for_write_or_404(
     response_model=ApplicationPublic,
     status_code=status.HTTP_201_CREATED,
     summary="Create an application",
-)
+**operation_route("apps.create"))
 async def create_application(
     data: ApplicationCreate,
     ctx: Context,
@@ -525,7 +526,7 @@ async def create_application(
     "",
     response_model=ApplicationListResponse,
     summary="List applications",
-)
+**operation_route("apps.list"))
 async def list_applications(
     ctx: Context,
     user: CurrentUser,
@@ -643,7 +644,7 @@ async def batch_update_application_sdks(
     "/{slug}",
     response_model=ApplicationPublic,
     summary="Get application metadata",
-)
+**operation_route("apps.get"))
 async def get_application(
     slug: str,
     ctx: Context,
@@ -666,7 +667,7 @@ async def get_application(
     "/{app_id}",
     response_model=ApplicationPublic,
     summary="Update application metadata",
-)
+**operation_route("apps.update"))
 async def update_application(
     app_id: UUID,
     data: ApplicationUpdate,
@@ -725,7 +726,7 @@ async def update_application(
     "/{app_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete application",
-)
+**operation_route("apps.delete"))
 async def delete_application(
     app_id: UUID,
     ctx: Context,
@@ -1055,7 +1056,7 @@ async def update_application_sdk(
     response_model=PlatformJobAccepted,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Publish draft to live",
-)
+**operation_route("apps.publish"))
 async def publish_application(
     app_id: UUID,
     ctx: Context,
@@ -1138,7 +1139,7 @@ async def publish_application(
     "/{app_id}/replace",
     response_model=ApplicationPublic,
     summary="Repoint application source directory",
-)
+**operation_route("apps.replace"))
 async def replace_application_endpoint(
     app_id: UUID,
     data: ApplicationReplaceRequest,
@@ -1237,7 +1238,7 @@ async def swap_application_slugs(
     "/{app_id}/validate",
     response_model=AppValidationResponse,
     summary="Validate application files",
-)
+**operation_route("apps.validate"))
 async def validate_application(
     app_id: UUID,
     ctx: Context,

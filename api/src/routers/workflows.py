@@ -64,6 +64,7 @@ from src.services.solutions.guard import (
 from src.core.auth import Context, CurrentActiveUser, CurrentSuperuser
 from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
+from src.services.operation_catalog import operation_route
 
 logger = logging.getLogger(__name__)
 
@@ -185,7 +186,7 @@ async def _compute_used_by_counts(db: DbSession, workflow_ids: list[UUID]) -> di
     response_model=list[WorkflowMetadata],
     summary="List all workflows",
     description="Returns metadata for all registered workflows in the system",
-)
+**operation_route("workflows.list"))
 async def list_workflows(
     user: CurrentSuperuser,
     db: DbSession,
@@ -446,7 +447,7 @@ async def get_workflow_usage_stats(
     response_model=WorkflowExecutionResponse,
     summary="Execute a workflow, data provider, or script",
     description="Execute a workflow or data provider by ID. For data providers, returns options list in result field. Requires platform admin, API key, or access via form/app/integration.",
-)
+**operation_route("workflows.execute"))
 async def execute_workflow(
     request: WorkflowExecutionRequest,
     ctx: Context,
@@ -538,7 +539,7 @@ async def cancel_scheduled_execution(
     response_model=WorkflowValidationResponse,
     summary="Validate a workflow file",
     description="Validate a workflow file for syntax errors and decorator issues",
-)
+**operation_route("workflows.validate"))
 async def validate_workflow(
     request: WorkflowValidationRequest,
     user: CurrentSuperuser,
@@ -574,7 +575,7 @@ async def validate_workflow(
     status_code=201,
     summary="Register a workflow function",
     description="Register a decorated function from an existing .py file as a workflow.",
-)
+**operation_route("workflows.register"))
 async def register_workflow(
     request: RegisterWorkflowRequest,
     db: DbSession,
@@ -789,7 +790,7 @@ async def register_workflow(
     response_model=WorkflowMetadata,
     summary="Update a workflow",
     description="Update editable workflow properties like organization scope (Platform admin only)",
-)
+**operation_route("workflows.update"))
 async def update_workflow(
     workflow_id: UUID,
     request: WorkflowUpdateRequest,
@@ -1447,7 +1448,7 @@ async def get_workflow_roles(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Assign roles to workflow",
     description="Assign roles to a workflow (batch operation, Platform admin only)",
-)
+**operation_route("workflows.roles.grant"))
 async def assign_roles_to_workflow(
     workflow_id: UUID,
     request: AssignRolesToWorkflowRequest,
@@ -1520,7 +1521,7 @@ async def assign_roles_to_workflow(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Remove role from workflow",
     description="Remove a role from a workflow (Platform admin only)",
-)
+**operation_route("workflows.roles.revoke"))
 async def remove_role_from_workflow(
     workflow_id: UUID,
     role_id: UUID,
@@ -1564,7 +1565,7 @@ async def remove_role_from_workflow(
         409: {"description": "Workflow has dependencies or history, confirmation required"},
     },
     response_model=None,
-)
+**operation_route("workflows.delete"))
 async def delete_workflow(
     workflow_id: UUID,
     user: CurrentSuperuser,

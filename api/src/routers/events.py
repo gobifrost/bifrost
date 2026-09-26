@@ -73,6 +73,7 @@ from src.services.webhooks.lifecycle import (
     resubscribe_provider,
     unsubscribe_provider,
 )
+from src.services.operation_catalog import operation_route
 
 logger = logging.getLogger(__name__)
 
@@ -211,7 +212,7 @@ async def _build_event_subscription_response(
     response_model=WebhookAdapterListResponse,
     summary="List available webhook adapters",
     description="List all available webhook adapters and their configuration schemas (Platform admin only).",
-)
+**operation_route("events.webhook_adapters.list"))
 async def list_adapters(
     ctx: Context,
     user: CurrentSuperuser,
@@ -313,7 +314,7 @@ async def get_dynamic_values(
     response_model=EventSourceListResponse,
     summary="List event sources",
     description="List all event sources (Platform admin only).",
-)
+**operation_route("events.sources.list"))
 async def list_sources(
     ctx: Context,
     user: CurrentSuperuser,
@@ -386,7 +387,7 @@ async def list_sources(
     status_code=status.HTTP_201_CREATED,
     summary="Create event source",
     description="Create a new event source (Platform admin only).",
-)
+**operation_route("events.sources.create"))
 async def create_source(
     request: EventSourceCreate,
     ctx: Context,
@@ -569,7 +570,7 @@ async def create_source(
     response_model=EventSourceResponse,
     summary="Get event source",
     description="Get a specific event source by ID (Platform admin only).",
-)
+**operation_route("events.sources.get"))
 async def get_source(
     source_id: UUID,
     ctx: Context,
@@ -594,7 +595,7 @@ async def get_source(
     response_model=EventSourceResponse,
     summary="Update event source",
     description="Update an event source (Platform admin only).",
-)
+**operation_route("events.sources.update"))
 async def update_source(
     source_id: UUID,
     request: EventSourceUpdate,
@@ -747,7 +748,7 @@ async def resubscribe_source(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete event source",
     description="Permanently delete an event source and all its subscriptions, events, and deliveries (Platform admin only).",
-)
+**operation_route("events.sources.delete"))
 async def delete_source(
     source_id: UUID,
     ctx: Context,
@@ -820,7 +821,7 @@ async def delete_source(
     response_model=EventSubscriptionListResponse,
     summary="List subscriptions",
     description="List subscriptions for an event source (Platform admin only).",
-)
+**operation_route("events.subscriptions.list"))
 async def list_subscriptions(
     source_id: UUID,
     ctx: Context,
@@ -857,7 +858,7 @@ async def list_subscriptions(
     status_code=status.HTTP_201_CREATED,
     summary="Create subscription",
     description="Create a subscription to an event source (Platform admin only).",
-)
+**operation_route("events.subscriptions.create"))
 async def create_subscription(
     source_id: UUID,
     request: EventSubscriptionCreate,
@@ -940,7 +941,7 @@ async def create_subscription(
     response_model=EventSubscriptionResponse,
     summary="Update subscription",
     description="Update an event subscription (Platform admin only).",
-)
+**operation_route("events.subscriptions.update"))
 async def update_subscription(
     source_id: UUID,
     subscription_id: UUID,
@@ -1006,7 +1007,7 @@ async def update_subscription(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete subscription",
     description="Permanently delete an event subscription (Platform admin only).",
-)
+**operation_route("events.subscriptions.delete"))
 async def delete_subscription(
     source_id: UUID,
     subscription_id: UUID,

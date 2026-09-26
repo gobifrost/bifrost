@@ -41,6 +41,7 @@ from src.repositories.execution_logs import (
     ExecutionLogRepository,
     decode_execution_log_cursor,
 )
+from src.services.operation_catalog import operation_route
 
 logger = logging.getLogger(__name__)
 
@@ -343,7 +344,7 @@ class ExecutionRepository:
     response_model=ExecutionsListResponse,
     summary="List workflow executions",
     description="List workflow executions with filtering and pagination",
-)
+**operation_route("executions.list"))
 async def list_executions(
     ctx: Context,
     request: Request,
@@ -531,7 +532,7 @@ async def list_logs(
     response_model=WorkflowExecution,
     summary="Get execution details",
     description="Get detailed information about a specific execution",
-)
+**operation_route("executions.get"))
 async def get_execution(
     execution_id: UUID,
     ctx: Context,

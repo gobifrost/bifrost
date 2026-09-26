@@ -148,6 +148,7 @@ from src.services.solutions.export_jobs import (
     list_export_jobs,
     public_job,
 )
+from src.services.operation_catalog import operation_route
 
 if TYPE_CHECKING:
     from src.services.solutions.zip_install import PreviewResult
@@ -644,7 +645,7 @@ async def _enqueue_solution_deploy_job(
     return projection
 
 
-@router.post("", response_model=SolutionDTO, status_code=status.HTTP_201_CREATED, summary="Create a Solution install (admin only)")
+@router.post("", response_model=SolutionDTO, status_code=status.HTTP_201_CREATED, summary="Create a Solution install (admin only)", **operation_route("solutions.create"))
 async def create_solution(body: SolutionCreate, ctx: Context, user: CurrentSuperuser) -> SolutionDTO:
     # Install kind is DERIVED from organization_id (unified --org standard) —
     # there is no `scope` input. HOME (organization_id absent) => the caller's
@@ -810,7 +811,7 @@ async def _solution_sdk_statuses_for_rows(
     }
 
 
-@router.get("", response_model=SolutionsList, summary="List Solution installs (admin only)")
+@router.get("", response_model=SolutionsList, summary="List Solution installs (admin only)", **operation_route("solutions.list"))
 async def list_solutions(ctx: Context, user: CurrentSuperuser) -> SolutionsList:
     rows = (
         (
@@ -1054,7 +1055,7 @@ async def update_solution_app_sdks(
     )
 
 
-@router.get("/{solution_id}", response_model=SolutionDTO, summary="Get a Solution install (admin only)")
+@router.get("/{solution_id}", response_model=SolutionDTO, summary="Get a Solution install (admin only)", **operation_route("solutions.get"))
 async def get_solution(solution_id: UUID, ctx: Context, user: CurrentSuperuser) -> SolutionDTO:
     row = await ctx.db.get(SolutionORM, solution_id)
     if row is None:
@@ -1188,7 +1189,7 @@ async def solution_setup(
         200: {"content": {"application/zip": {}}},
         404: {"description": "Install not found, or it predates export support"},
     },
-)
+**operation_route("solutions.export"))
 async def export_solution(
     solution_id: UUID,
     ctx: Context,
@@ -1876,7 +1877,7 @@ async def preview_solution_capture(
     "/{solution_id}",
     response_model=SolutionDTO,
     summary="Update an install's local fields (admin only)",
-)
+**operation_route("solutions.update"))
 async def update_solution(
     solution_id: UUID, body: SolutionUpdate, ctx: Context, user: CurrentSuperuser
 ) -> SolutionDTO:
@@ -2133,7 +2134,7 @@ async def get_solution_deletion_summary(
     "/{solution_id}",
     response_model=SolutionDeleteSummary,
     summary="Hard-delete an install and ALL owned data — irreversible (admin only)",
-)
+**operation_route("solutions.delete"))
 async def delete_solution(
     solution_id: UUID,
     ctx: Context,
@@ -2532,7 +2533,7 @@ async def _run_install_job(
     response_model=SolutionDeployEnqueued,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Enqueue a deploy to an install (async, full replace, admin only)",
-)
+**operation_route("solutions.deploy"))
 async def deploy_solution(
     solution_id: UUID,
     file: Annotated[UploadFile, File(description="Solution workspace zip")],
@@ -2643,7 +2644,7 @@ async def get_deploy_job(
     "/{solution_id}/capture",
     response_model=SolutionCaptureResponse,
     summary="Capture existing loose entities into an install (admin only)",
-)
+**operation_route("solutions.capture"))
 async def capture_solution_entities(
     solution_id: UUID, body: SolutionCaptureRequest, ctx: Context, user: CurrentSuperuser
 ) -> SolutionCaptureResponse:
@@ -2748,7 +2749,7 @@ async def ack_pulled_captures(
     response_model=PlatformJobAccepted,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Queue a git-connected install update from its repo (admin only)",
-)
+**operation_route("solutions.sync"))
 async def sync_solution(
     solution_id: UUID, response: Response, ctx: Context, user: CurrentSuperuser
 ) -> PlatformJobAccepted:
@@ -3123,7 +3124,7 @@ async def install_from_repo(
     response_model=SolutionDeployEnqueued,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Enqueue a Solution zip install (async deploy + config values, admin only)",
-)
+**operation_route("solutions.install"))
 async def install_solution(
     file: Annotated[UploadFile, File(description="Solution workspace zip")],
     ctx: Context,

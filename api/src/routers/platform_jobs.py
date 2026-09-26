@@ -20,6 +20,7 @@ from src.services.platform_jobs import (
     platform_job_to_public,
     request_platform_job_cancel,
 )
+from src.services.operation_catalog import operation_route
 
 router = APIRouter(prefix="/api/platform-jobs", tags=["Platform Jobs"])
 
@@ -103,7 +104,7 @@ async def list_platform_jobs(
     "/{job_id}",
     response_model=PlatformJobPublic,
     summary="Get durable platform-job status",
-)
+**operation_route("platform.jobs.get"))
 async def get_platform_job_status(
     job_id: UUID,
     ctx: Context,

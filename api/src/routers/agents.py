@@ -57,6 +57,7 @@ from src.services.solutions.guard import assert_not_solution_managed
 from src.routers.tools import get_system_tool_ids
 from src.services.agent_stats import get_agent_stats, get_agent_stats_batch, get_fleet_stats
 from src.services.workflow_role_service import sync_agent_roles_to_workflows
+from src.services.operation_catalog import operation_route
 
 logger = logging.getLogger(__name__)
 
@@ -290,7 +291,7 @@ def _agent_to_public(agent: Agent) -> AgentPublic:
 # =============================================================================
 
 
-@router.get("")
+@router.get("", **operation_route("agents.list"))
 async def list_agents(
     db: DbSession,
     user: CurrentActiveUser,
@@ -403,7 +404,7 @@ async def list_agents(
     return result
 
 
-@router.post("", status_code=status.HTTP_201_CREATED)
+@router.post("", status_code=status.HTTP_201_CREATED, **operation_route("agents.create"))
 async def create_agent(
     agent_data: AgentCreate,
     db: DbSession,
@@ -717,7 +718,7 @@ async def get_fleet_stats_endpoint(
     )
 
 
-@router.get("/{agent_id}")
+@router.get("/{agent_id}", **operation_route("agents.get"))
 async def get_agent(
     agent_id: UUID,
     db: DbSession,
@@ -761,7 +762,7 @@ async def get_agent(
     return _agent_to_public(agent)
 
 
-@router.put("/{agent_id}")
+@router.put("/{agent_id}", **operation_route("agents.update"))
 async def update_agent(
     agent_id: UUID,
     agent_data: AgentUpdate,
@@ -1009,7 +1010,7 @@ async def update_agent(
     return _agent_to_public(agent)
 
 
-@router.delete("/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{agent_id}", status_code=status.HTTP_204_NO_CONTENT, **operation_route("agents.delete"))
 async def delete_agent(
     agent_id: UUID,
     db: DbSession,

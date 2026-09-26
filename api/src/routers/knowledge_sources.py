@@ -33,6 +33,7 @@ from src.models.orm.knowledge import KnowledgeStore
 from src.models.orm.knowledge_sources import KnowledgeNamespaceRole
 from src.models.orm.users import Role
 from src.repositories.knowledge import KnowledgeRepository
+from src.services.operation_catalog import operation_route
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +60,7 @@ def _deny_external(user) -> None:
 # =============================================================================
 
 
-@router.get("")
+@router.get("", **operation_route("knowledge.namespaces.list"))
 async def list_namespaces(
     db: DbSession,
     user: CurrentActiveUser,
@@ -203,7 +204,7 @@ async def remove_namespace_role(
 # =============================================================================
 
 
-@router.get("/documents")
+@router.get("/documents", **operation_route("knowledge.documents.list"))
 async def list_all_documents(
     db: DbSession,
     user: CurrentActiveUser,
@@ -398,7 +399,7 @@ async def list_documents(
     ]
 
 
-@router.post("/{namespace}/documents", status_code=status.HTTP_201_CREATED)
+@router.post("/{namespace}/documents", status_code=status.HTTP_201_CREATED, **operation_route("knowledge.documents.create"))
 async def create_document(
     namespace: str,
     data: KnowledgeDocumentCreate,
@@ -451,7 +452,7 @@ async def create_document(
     )
 
 
-@router.get("/{namespace}/documents/{doc_id}")
+@router.get("/{namespace}/documents/{doc_id}", **operation_route("knowledge.documents.get"))
 async def get_document(
     namespace: str,
     doc_id: UUID,
@@ -492,7 +493,7 @@ async def get_document(
     )
 
 
-@router.put("/{namespace}/documents/{doc_id}")
+@router.put("/{namespace}/documents/{doc_id}", **operation_route("knowledge.documents.update"))
 async def update_document(
     namespace: str,
     doc_id: UUID,
@@ -623,7 +624,7 @@ async def update_document(
     )
 
 
-@router.delete("/{namespace}/documents/{doc_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{namespace}/documents/{doc_id}", status_code=status.HTTP_204_NO_CONTENT, **operation_route("knowledge.documents.delete"))
 async def delete_document(
     namespace: str,
     doc_id: UUID,

@@ -42,6 +42,7 @@ from src.routers.applications import ApplicationRepository
 from src.services.app_storage import AppStorageService
 from src.services.repo_storage import RepoStorage
 from src.services.file_storage.service import get_file_storage_service
+from src.services.operation_catalog import operation_route
 
 logger = logging.getLogger(__name__)
 
@@ -930,7 +931,7 @@ async def get_v2_dist_asset(
     "/dependencies",
     response_model=dict[str, str],
     summary="Get app dependencies",
-)
+**operation_route("apps.dependencies.get"))
 async def get_dependencies(
     app_id: UUID = Path(..., description="Application UUID"),
     *,
@@ -946,7 +947,7 @@ async def get_dependencies(
     "/dependencies",
     response_model=dict[str, str],
     summary="Update app dependencies",
-)
+**operation_route("apps.dependencies.update"))
 async def put_dependencies(
     deps: dict[str, str],
     app_id: UUID = Path(..., description="Application UUID"),

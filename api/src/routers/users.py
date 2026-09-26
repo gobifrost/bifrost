@@ -35,6 +35,7 @@ from src.models.contracts.user_invites import (
     SendInviteRequest,
 )
 from src.core.constants import PROVIDER_ORG_ID
+from src.services.operation_catalog import operation_route
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,7 @@ router = APIRouter(prefix="/api/users", tags=["Users"])
     response_model=list[UserPublic],
     summary="List users",
     description="List all users with optional filtering by type and organization",
-)
+**operation_route("users.list"))
 async def list_users(
     user: CurrentSuperuser,
     db: DbSession,
@@ -103,7 +104,7 @@ async def list_users(
     status_code=status.HTTP_201_CREATED,
     summary="Create user",
     description="Create a new user proactively (Platform admin only)",
-)
+**operation_route("users.create"))
 async def create_user(
     request: UserCreate,
     user: CurrentSuperuser,
@@ -132,7 +133,7 @@ async def create_user(
         "Apply one operation (move_org, replace_roles, set_active) to a batch of users "
         "in a single transaction. Returns per-user pass/fail."
     ),
-)
+**operation_route("users.bulk_update"))
 async def bulk_update_users(
     request: BulkUserOperation,
     actor: CurrentSuperuser,
@@ -215,7 +216,7 @@ async def bulk_update_users(
     response_model=CreateInviteResponse,
     summary="Resend invite",
     description="Generate a fresh invite token and email it to the user.",
-)
+**operation_route("users.invites.resend"))
 async def resend_invite(
     user_id: UUID,
     user: CurrentSuperuser,
@@ -229,7 +230,7 @@ async def resend_invite(
     response_model=CreateInviteResponse,
     summary="Send invite",
     description="Emit invite automation for an existing registration link without rotating the token.",
-)
+**operation_route("users.invites.send"))
 async def send_invite(
     user_id: UUID,
     request: SendInviteRequest,
@@ -268,7 +269,7 @@ async def send_invite(
     response_model=CreateInviteResponse,
     summary="Regenerate invite link",
     description="Generate a fresh invite token without sending an email; returns the URL.",
-)
+**operation_route("users.invites.regenerate"))
 async def regenerate_invite(
     user_id: UUID,
     user: CurrentSuperuser,
@@ -282,7 +283,7 @@ async def regenerate_invite(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Revoke invite",
     description="Revoke any active invite for the user.",
-)
+**operation_route("users.invites.revoke"))
 async def revoke_invite(
     user_id: UUID,
     user: CurrentSuperuser,
@@ -372,7 +373,7 @@ async def _emit_user_invited_event(
     response_model=UserPublic,
     summary="Get user details",
     description="Get a specific user's details (Platform admin only)",
-)
+**operation_route("users.get"))
 async def get_user(
     user_id: str,
     user: CurrentSuperuser,
@@ -392,7 +393,7 @@ async def get_user(
     response_model=UserPublic,
     summary="Update user",
     description="Update user properties including role transitions",
-)
+**operation_route("users.update"))
 async def update_user(
     user_id: str,
     request: UserUpdate,
@@ -425,7 +426,7 @@ async def update_user(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete user",
     description="Delete a user from the system",
-)
+**operation_route("users.delete"))
 async def delete_user(
     user_id: str,
     user: CurrentSuperuser,
@@ -450,7 +451,7 @@ async def delete_user(
     response_model=UserRolesResponse,
     summary="Get user roles",
     description="Get all roles assigned to a user",
-)
+**operation_route("users.roles.list"))
 async def get_user_roles(
     user_id: str,
     user: CurrentSuperuser,
@@ -482,7 +483,7 @@ async def get_user_roles(
     response_model=UserFormsResponse,
     summary="Get user forms",
     description="Get all forms a user can access based on their roles",
-)
+**operation_route("users.forms.list"))
 async def get_user_forms(
     user_id: str,
     user: CurrentSuperuser,

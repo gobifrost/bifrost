@@ -71,6 +71,7 @@ from src.repositories.tables import TableRepository
 from src.core.pubsub import (
     publish_policy_changed,
 )
+from src.services.operation_catalog import operation_route
 
 router = APIRouter(prefix="/api/tables", tags=["Tables"])
 
@@ -148,7 +149,7 @@ async def _validate_table_policy_claim_refs(
     response_model=TablePublic,
     status_code=status.HTTP_201_CREATED,
     summary="Create a table",
-)
+**operation_route("tables.create"))
 async def create_table(
     data: TableCreate,
     ctx: Context,
@@ -195,7 +196,7 @@ async def create_table(
     "",
     response_model=TableListResponse,
     summary="List tables",
-)
+**operation_route("tables.list"))
 async def list_tables(
     ctx: Context,
     user: CurrentSuperuser,
@@ -398,7 +399,7 @@ async def validate_policies(
     "/{table_id}",
     response_model=TablePublic,
     summary="Get table metadata",
-)
+**operation_route("tables.get"))
 async def get_table(
     table_id: UUID,
     ctx: Context,
@@ -419,7 +420,7 @@ async def get_table(
     "/{table_id}",
     response_model=TablePublic,
     summary="Update table",
-)
+**operation_route("tables.update"))
 async def update_table(
     table_id: UUID,
     data: TableUpdate,
@@ -483,7 +484,7 @@ async def update_table(
     "/{table_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete table",
-)
+**operation_route("tables.delete"))
 async def delete_table(
     table_id: UUID,
     ctx: Context,

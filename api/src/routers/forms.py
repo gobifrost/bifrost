@@ -100,6 +100,7 @@ except ImportError:
 
 # Import workflow role sync
 from src.services.workflow_role_service import sync_form_roles_to_workflows
+from src.services.operation_catalog import operation_route
 
 logger = logging.getLogger(__name__)
 
@@ -286,7 +287,7 @@ async def _validate_form_references(
     response_model=list[FormPublic],
     summary="List forms",
     description="List all forms visible to the user based on their permissions",
-)
+**operation_route("forms.list"))
 async def list_forms(
     ctx: Context,
     db: DbSession,
@@ -412,7 +413,7 @@ async def _publication_response(
     status_code=status.HTTP_201_CREATED,
     summary="Create a new form",
     description="Create a new form (Platform admin only)",
-)
+**operation_route("forms.create"))
 async def create_form(
     request: FormCreate,
     ctx: Context,
@@ -740,7 +741,7 @@ async def create_form_captcha(
     response_model=FormPublic,
     summary="Get form by ID",
     description="Get a specific form by ID. User must have access to the form.",
-)
+**operation_route("forms.get"))
 async def get_form(
     form_id: UUID,
     ctx: Context,
@@ -762,7 +763,7 @@ async def get_form(
     response_model=FormPublic,
     summary="Update a form",
     description="Update an existing form (Platform admin only)",
-)
+**operation_route("forms.update"))
 async def update_form(
     form_id: UUID,
     request: FormUpdate,
@@ -1045,7 +1046,7 @@ async def delete_form_logo(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete a form",
     description="Delete a form. Use ?purge=true to permanently remove it from the database (Platform admin only)",
-)
+**operation_route("forms.delete"))
 async def delete_form(
     form_id: UUID,
     ctx: Context,
