@@ -12,6 +12,7 @@ The real forked-child round trip lives in
 import asyncio
 import os
 from dataclasses import dataclass
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -465,14 +466,13 @@ class TestRouteReuse:
         )
 
     def test_ai_route_selection_is_exact(self):
-        """Gate C5f mounts only the AI completion POST and model-info GET."""
+        """Gate C5f/C5g mounts the AI unary routes and the streaming POST."""
         assert AI_ROUTE_METHODS == {
             "/api/sdk/ai/complete": frozenset({"POST"}),
             "/api/sdk/ai/info": frozenset({"GET"}),
+            "/api/sdk/ai/stream": frozenset({"POST"}),
         }
         assert AI_ROUTE_PATHS == frozenset(AI_ROUTE_METHODS)
-        # The streaming route stays on its existing channel path.
-        assert "/api/sdk/ai/stream" not in AI_ROUTE_PATHS
         assert AI_ROUTE_PATHS.isdisjoint(
             CONFIG_ROUTE_PATHS
             | INTEGRATION_ROUTE_PATHS
@@ -1086,6 +1086,25 @@ class TestSocketTableWrites:
                 await cleanup.commit()
 
 
+class _ProviderStream:
+    """Async-iterable provider stream that records ``aclose``."""
+
+    def __init__(self, chunks):
+        self._chunks = list(chunks)
+        self.closed = False
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if not self._chunks:
+            raise StopAsyncIteration
+        return self._chunks.pop(0)
+
+    async def aclose(self):
+        self.closed = True
+
+
 class TestEngineLocalTransportSelection:
     """The shared BifrostClient owns one engine-local transport choice.
 
@@ -1223,6 +1242,119 @@ class TestEngineLocalTransportSelection:
             assert client._get_engine_async_client() is engine
         finally:
             await server.stop()
+
+    def test_engine_stream_selects_transport_without_network_fallback(self):
+        """``engine_stream`` picks the socket once injected, never the network."""
+        client = BifrostClient("http://dead-api", "token")
+        network_http = MagicMock()
+        engine_http = MagicMock()
+        client._get_async_client = MagicMock(return_value=network_http)  # type: ignore[method-assign]
+        client._get_engine_async_client = MagicMock(return_value=engine_http)  # type: ignore[method-assign]
+
+        # Outside an engine there is no local transport to prefer, so the
+        # ordinary network client is correct.
+        assert get_engine_socket_path() is None
+        client.engine_stream("POST", "/api/sdk/ai/stream", json={"x": 1})
+        network_http.stream.assert_called_once_with(
+            "POST", "/api/sdk/ai/stream", json={"x": 1}
+        )
+        assert engine_http.stream.call_count == 0
+
+        # Once injected, the same call resolves to the socket and never to
+        # the network client.
+        _install_engine_socket(f"/tmp/bifrost-{uuid4().hex}.sock")
+        client.engine_stream("POST", "/api/sdk/ai/stream", json={"x": 2})
+        engine_http.stream.assert_called_once_with(
+            "POST", "/api/sdk/ai/stream", json={"x": 2}
+        )
+        assert network_http.stream.call_count == 1
+
+    def test_engine_and_network_stream_clients_share_read_timeout(self):
+        """Both transports preserve HTTPX's 30s per-read gap bound."""
+        client = BifrostClient("http://dead-api", "token")
+        _install_engine_socket(f"/tmp/bifrost-{uuid4().hex}.sock")
+        engine = client._get_engine_async_client()
+        network = client._get_async_client()
+        assert engine.timeout.read == 30.0
+        assert network.timeout.read == 30.0
+
+    @pytest.mark.asyncio
+    async def test_engine_stream_socket_failure_does_not_reach_network(self):
+        """A dead socket raises; the network client is never selected."""
+        client = BifrostClient("http://dead-api", "token")
+        _install_engine_socket(
+            os.path.join("/tmp", f"bifrost-missing-{uuid4().hex}.sock")
+        )
+        with patch.object(
+            client,
+            "_get_async_client",
+            side_effect=AssertionError("network fallback is forbidden"),
+        ):
+            with pytest.raises(httpx.ConnectError):
+                async with client.engine_stream(
+                    "POST", "/api/sdk/ai/stream", json={}
+                ):
+                    pass
+
+    @pytest.mark.asyncio
+    async def test_ai_stream_serves_real_sse_route_over_socket(self):
+        """``ai.stream`` reads the mounted SSE route over the injected socket."""
+        import src.services.llm as llm_pkg
+        from bifrost.ai import ai as ai_facade
+
+        provider_stream = _ProviderStream(
+            [
+                SimpleNamespace(type="delta", content="hello"),
+                SimpleNamespace(
+                    type="done",
+                    content=None,
+                    input_tokens=4,
+                    output_tokens=6,
+                    cache_read_tokens=0,
+                    cache_write_tokens=0,
+                    provider_cost=None,
+                ),
+            ]
+        )
+        provider = AsyncMock()
+        provider.provider_name = "openai"
+        provider.model_name = "gpt-4o"
+        provider.stream = MagicMock(return_value=provider_stream)
+
+        server = WorkerSdkHttpServer()
+        await server.start()
+        try:
+            _install_engine_socket(server.socket_path)  # type: ignore[arg-type]
+            client = BifrostClient("http://dead-api", _engine_token())
+            _set_client(client)
+            with (
+                patch.object(
+                    llm_pkg,
+                    "get_llm_client",
+                    new=AsyncMock(return_value=provider),
+                ),
+                patch(
+                    "src.core.cache.get_shared_redis",
+                    new=AsyncMock(return_value=AsyncMock()),
+                ),
+                patch(
+                    "src.services.ai_usage_service.record_ai_usage",
+                    new=AsyncMock(),
+                ),
+            ):
+                chunks = [chunk async for chunk in ai_facade.stream("Hi")]
+        finally:
+            await server.stop()
+
+        assert [(chunk.content, chunk.done) for chunk in chunks] == [
+            ("hello", False),
+            ("", True),
+        ]
+        assert chunks[-1].input_tokens == 4
+        assert chunks[-1].output_tokens == 6
+        assert provider_stream.closed is True
+        # The exact mounted route served it: the body rode the engine client.
+        assert client._engine_http is not None
 
     @pytest.mark.asyncio
     async def test_engine_local_401_does_not_refresh_or_replay(self):

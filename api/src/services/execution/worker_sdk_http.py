@@ -31,9 +31,11 @@ emit route (``events.emit``) plus the form read routes (``forms.list`` /
 (list/get/create/update/delete). Gate C5e adds the role facade routes
 (create/get/list/update/delete plus the user and form assignment reads and
 writes). Gate C5f adds the AI unary facade routes (``ai.complete`` POST and
-``ai.get_model_info`` GET); the streaming route stays on its existing channel
-path until its own Gate C slice migrates it. Streams and other domains stay
-on their existing channel path until their own Gate C slice migrates them.
+``ai.get_model_info`` GET). Gate C5g adds the AI streaming facade route
+(``ai.stream`` POST), served as the original SSE ``APIRoute``: the child's
+``ai.stream`` reads it over the socket with the same SSE parser it uses on
+the network path. Other domains and legacy stream/channel operations stay on
+their existing channel path until their own Gate C slice migrates them.
 
 ``import fastapi``/``uvicorn`` happen inside the functions so the worker
 entry closure stays free of those heavyweights at import time (see
@@ -259,14 +261,16 @@ ROLES_ROUTE_METHODS: dict[str, frozenset[str]] = {
     "/api/roles/{role_id}/forms": frozenset({"GET", "POST"}),
 }
 
-# Gate C5f: the SDK AI unary facade routes, selected from ``src.routers.cli``
-# by path AND method. ``/api/sdk/ai/complete`` is the POST completion and
-# ``/api/sdk/ai/info`` the GET model read; the streaming sibling
-# ``/api/sdk/ai/stream`` stays on its existing channel path until its own
-# Gate C slice migrates it.
+# Gate C5f/C5g: the SDK AI facade routes, selected from ``src.routers.cli``
+# by path AND method. ``/api/sdk/ai/complete`` is the POST completion,
+# ``/api/sdk/ai/info`` the GET model read, and ``/api/sdk/ai/stream`` the
+# POST SSE stream. All three are mounted as their exact registered APIRoute
+# objects, so the streaming behavior (status-before-headers, per-event SSE
+# frames, terminal ``[DONE]``) is the API's own.
 AI_ROUTE_METHODS: dict[str, frozenset[str]] = {
     "/api/sdk/ai/complete": frozenset({"POST"}),
     "/api/sdk/ai/info": frozenset({"GET"}),
+    "/api/sdk/ai/stream": frozenset({"POST"}),
 }
 AI_ROUTE_PATHS: frozenset[str] = frozenset(AI_ROUTE_METHODS)
 
@@ -314,7 +318,7 @@ def build_worker_sdk_app() -> Any:
     # The config, integrations, table-definition, and knowledge facade paths
     # are unique, so they are selected by exact path. Artifact and AI routes
     # are selected by (path, method) because ``/api/sdk/artifacts`` is both
-    # GET and POST and the AI paths must exclude the streaming sibling.
+    # GET and POST and the AI paths carry unary plus streaming POSTs.
     cli_path_only = (
         CONFIG_ROUTE_PATHS
         | INTEGRATION_ROUTE_PATHS

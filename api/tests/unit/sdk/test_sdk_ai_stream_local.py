@@ -1,9 +1,16 @@
-"""Engine-local transport for ``ai.stream``.
+"""AI stream transport tests.
 
-Covers the parent ``ai.stream`` stream source
-(``sdk_stream_dispatch.ai_stream_source``), the child ``bifrost.ai.stream``
-binding, and the two together over real pipe pairs — without a forked
-child:
+Covers two paths:
+
+- the **legacy** parent stream channel
+  (``sdk_stream_dispatch.ai_stream_source``/``serve_stream_channel``),
+  retained for the channels not yet migrated but no longer used by
+  ``bifrost.ai.stream``;
+- the migrated ``bifrost.ai.stream`` facade, which now rides
+  ``BifrostClient.engine_stream`` (worker Unix socket in an engine child,
+  ordinary network HTTP outside) and the single external SSE parser.
+
+The channel half covers:
 
 - the source calls the same ``shared.sdk_ai.stream_sdk_ai`` generator
   the HTTP handler consumes, with the same ``CLIAICompleteRequest`` DTO
@@ -22,11 +29,16 @@ child:
   the channel stays reusable for a later stream;
 - large ``input_files`` ride the chunked open frames;
 - an ordinary unary call (``config.get``) works while a stream is
-  active on the independent descriptors;
-- the SDK facade keeps knowledge composition and input-file encoding on
-  the child, maps events to ``AIStreamChunk`` exactly like the HTTP
-  branch (a provider error event becomes one empty non-done chunk, then
-  EOF), and never falls back to HTTP.
+  active on the independent descriptors.
+
+The facade half covers:
+
+- knowledge composition and input-file encoding stay on the child, and
+  events map to ``AIStreamChunk`` exactly like the HTTP SSE branch (a
+  provider error event becomes one empty non-done chunk, then EOF);
+- the exact POST body and path reach ``engine_stream``, early close exits
+  the streaming response, and a slow provider gap has no SDK deadline;
+- external network callers keep the same route and parser.
 """
 
 from __future__ import annotations
@@ -41,6 +53,7 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
+import httpx
 import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -868,72 +881,86 @@ async def test_pipe_config_call_while_streaming(db_session, monkeypatch):
 
 
 # =============================================================================
-# SDK facade (no DB)
+# SDK facade (no DB): ``ai.stream`` rides ``engine_stream`` + the SSE parser
 # =============================================================================
 
 
-class _FakeChildStream:
-    """Minimal async-iterable stream the facade consumes."""
+class _SSEResponse:
+    """Minimal httpx-like streaming response with scripted SSE lines."""
 
-    def __init__(self, events=None, error=None):
-        self._events = list(events or [])
-        self._error = error
-        self.closed = False
-        self.aclose_called = False
+    def __init__(self, lines, *, delay: float = 0.0):
+        self._lines = list(lines)
+        self._delay = delay
+        self.is_success = True
+        self.status_code = 200
+        self.entered = False
+        self.exited = False
+
+    async def __aenter__(self):
+        self.entered = True
+        return self
+
+    async def __aexit__(self, *args):
+        self.exited = True
+        return False
+
+    def aiter_lines(self):
+        return self
 
     def __aiter__(self):
         return self
 
     async def __anext__(self):
-        if self._error is not None:
-            self.closed = True
-            raise self._error
-        if not self._events:
-            self.closed = True
+        if not self._lines:
             raise StopAsyncIteration
-        return self._events.pop(0)
+        line = self._lines.pop(0)
+        if self._delay:
+            await asyncio.sleep(self._delay)
+        return line
 
-    async def aclose(self):
-        self.aclose_called = True
-        self.closed = True
+
+class _EngineStreamClient:
+    """Records ``engine_stream`` calls and returns one scripted response."""
+
+    def __init__(self, response):
+        self.response = response
+        self.calls: list[tuple[str, str, dict[str, Any]]] = []
+
+    def engine_stream(self, method, path, **kwargs):
+        self.calls.append((method, path, kwargs))
+        return self.response
 
 
-def _stream_transport_for(fake_stream):
-    transport = AsyncMock()
-    transport.open_stream_async.return_value = fake_stream
-    return transport
+def _sse(*payloads: str, delay: float = 0.0) -> _SSEResponse:
+    return _SSEResponse([f"data: {payload}" for payload in payloads], delay=delay)
 
 
 @pytest.mark.asyncio
-async def test_facade_stream_local_chunks_match_http_shape():
+async def test_facade_stream_chunks_match_http_shape():
+    """``engine_stream`` carries the exact body; the SSE parser maps it."""
     from bifrost.ai import ai as ai_facade
     from bifrost.models import AIStreamChunk
 
-    transport = _stream_transport_for(
-        _FakeChildStream(
-            [
-                {"content": "hello"},
-                {"content": " world"},
-                {"done": True, "input_tokens": 4, "output_tokens": 6},
-            ]
+    client = _EngineStreamClient(
+        _sse(
+            '{"content": "hello"}',
+            '{"content": " world"}',
+            '{"done": true, "input_tokens": 4, "output_tokens": 6}',
+            "[DONE]",
         )
     )
-    with (
-        patch("bifrost._stream_transport.get", return_value=transport),
-        patch(
-            "bifrost.ai.get_client",
-            side_effect=AssertionError("HTTP fallback is forbidden"),
-        ),
-    ):
+    with patch("bifrost.ai.get_client", return_value=client):
         chunks = [chunk async for chunk in ai_facade.stream("Hi")]
     assert chunks == [
         AIStreamChunk(content="hello", done=False),
         AIStreamChunk(content=" world", done=False),
         AIStreamChunk(content="", done=True, input_tokens=4, output_tokens=6),
     ]
-    params = transport.open_stream_async.await_args.args[1]
-    assert params["messages"] == [{"role": "user", "content": "Hi"}]
-    assert params["input_files"] == []
+    method, path, kwargs = client.calls[0]
+    assert (method, path) == ("POST", "/api/sdk/ai/stream")
+    assert kwargs["json"]["messages"] == [{"role": "user", "content": "Hi"}]
+    assert kwargs["json"]["input_files"] == []
+    assert client.response.exited is True
 
 
 @pytest.mark.asyncio
@@ -941,45 +968,12 @@ async def test_facade_stream_error_event_becomes_empty_chunk_then_eof():
     """Provider-error parity: one empty non-done chunk, then EOF."""
     from bifrost.ai import ai as ai_facade
 
-    transport = _stream_transport_for(
-        _FakeChildStream([{"content": "a"}, {"error": "boom"}])
-    )
-    with (
-        patch("bifrost._stream_transport.get", return_value=transport),
-        patch(
-            "bifrost.ai.get_client",
-            side_effect=AssertionError("HTTP fallback is forbidden"),
-        ),
-    ):
+    client = _EngineStreamClient(_sse('{"content": "a"}', '{"error": "boom"}'))
+    with patch("bifrost.ai.get_client", return_value=client):
         chunks = [chunk async for chunk in ai_facade.stream("Hi")]
     assert len(chunks) == 2
     assert chunks[0].content == "a" and chunks[0].done is False
     assert chunks[1].content == "" and chunks[1].done is False
-
-
-@pytest.mark.asyncio
-async def test_facade_stream_terminal_error_propagates_without_http():
-    """Scope/validation denials raise the HTTP-mapped error loudly."""
-    import httpx
-
-    from bifrost.ai import ai as ai_facade
-    from bifrost.client import BifrostAuthorizationError, raise_for_status_with_detail
-
-    request = httpx.Request("POST", "local://sdk/ai/stream")
-    response = httpx.Response(403, json={"detail": "denied"}, request=request)
-    with pytest.raises(BifrostAuthorizationError) as mapped:
-        raise_for_status_with_detail(response)
-    terminal = mapped.value
-    transport = _stream_transport_for(_FakeChildStream(error=terminal))
-    with (
-        patch("bifrost._stream_transport.get", return_value=transport),
-        patch(
-            "bifrost.ai.get_client",
-            side_effect=AssertionError("HTTP fallback is forbidden"),
-        ),
-    ):
-        with pytest.raises(BifrostAuthorizationError):
-            [chunk async for chunk in ai_facade.stream("Hi")]
 
 
 @pytest.mark.asyncio
@@ -999,16 +993,12 @@ async def test_facade_stream_knowledge_and_files_composed_on_child():
         key="refund",
         created_at=None,
     )
-    transport = _stream_transport_for(_FakeChildStream([{"done": True}]))
+    client = _EngineStreamClient(_sse('{"done": true}'))
     with (
-        patch("bifrost._stream_transport.get", return_value=transport),
+        patch("bifrost.ai.get_client", return_value=client),
         patch.object(
             knowledge, "search", new=AsyncMock(return_value=[doc])
         ) as search,
-        patch(
-            "bifrost.ai.get_client",
-            side_effect=AssertionError("HTTP fallback is forbidden"),
-        ),
     ):
         chunks = [
             chunk
@@ -1024,7 +1014,7 @@ async def test_facade_stream_knowledge_and_files_composed_on_child():
         ]
     assert chunks[-1].done is True
     search.assert_awaited_once()
-    params = transport.open_stream_async.await_args.args[1]
+    params = client.calls[0][2]["json"]
     assert any(
         "Refunds within 30 days" in m.get("content", "")
         for m in params["messages"]
@@ -1033,145 +1023,151 @@ async def test_facade_stream_knowledge_and_files_composed_on_child():
 
 
 @pytest.mark.asyncio
-async def test_facade_close_cancels_parent_source_and_reuses_channel(
-    db_session, monkeypatch
-):
-    """Closing the facade stream cancels the parent source, not just the child view."""
-    from bifrost._stream_transport import ChildStreamTransport
+async def test_facade_close_exits_stream_and_second_stream_works():
+    """Closing the generator exits the response; a later stream is independent."""
     from bifrost.ai import ai as ai_facade
-    from src.services.execution.sdk_stream_dispatch import serve_stream_channel
 
-    _patch_session_factory(monkeypatch, db_session)
-    client = _FakeClient(chunks=[_delta("a"), _delta("b"), _done()])
-    get_client, redis_patch, record_patch = _patch_provider(client)
-    record = record_patch.new
-    child_send, child_recv, parent_recv, parent_send = _pipes()
-    pump = asyncio.create_task(
-        serve_stream_channel(
-            recv_conn=parent_recv,
-            send_conn=parent_send,
-            principal=_workflow_principal(execution_id=str(uuid4())),
+    first_client = _EngineStreamClient(
+        _sse('{"content": "a"}', '{"content": "b"}')
+    )
+    stream = ai_facade.stream("first")
+    with patch("bifrost.ai.get_client", return_value=first_client):
+        assert (await stream.__anext__()).content == "a"
+        await stream.aclose()
+    assert first_client.response.exited is True
+
+    second_client = _EngineStreamClient(
+        _sse(
+            '{"content": "z"}',
+            '{"done": true, "input_tokens": 1, "output_tokens": 2}',
+            "[DONE]",
         )
     )
-    try:
-        with (
-            get_client,
-            redis_patch,
-            record_patch,
-            patch(
-                "bifrost._stream_transport.get",
-                return_value=ChildStreamTransport(child_send, child_recv),
-            ),
-            patch(
-                "bifrost.ai.get_client",
-                side_effect=AssertionError("HTTP fallback is forbidden"),
-            ),
-        ):
-            first = ai_facade.stream("Hi")
-            assert (await first.__anext__()).content == "a"
-            await first.aclose()
-            assert client.tracked.closed is True
-            assert record.await_count == 0
-            second = [chunk async for chunk in ai_facade.stream("Hi")]
-        assert [c.content for c in second] == ["a", "b", ""]
-        assert second[-1].done is True
-        assert record.await_count == 1
-    finally:
-        child_send.close()
-        child_recv.close()
-        pump.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await pump
-        parent_recv.close()
-        parent_send.close()
+    with patch("bifrost.ai.get_client", return_value=second_client):
+        second = [chunk async for chunk in ai_facade.stream("second")]
+    assert [chunk.content for chunk in second] == ["z", ""]
+    assert second[-1].done is True
+    assert second[-1].output_tokens == 2
 
 
 @pytest.mark.asyncio
-async def test_facade_stream_never_falls_back_to_http():
-    from bifrost._stream_transport import StreamTransportClosed
+async def test_facade_stream_cancellation_exits_response():
+    """Cancelling the consuming task propagates and closes the response."""
     from bifrost.ai import ai as ai_facade
 
-    transport = AsyncMock()
-    transport.open_stream_async.side_effect = StreamTransportClosed("closed")
-    with (
-        patch("bifrost._stream_transport.get", return_value=transport),
-        patch(
-            "bifrost.ai.get_client",
-            side_effect=AssertionError("HTTP fallback is forbidden"),
-        ),
-    ):
-        with pytest.raises(StreamTransportClosed):
-            [chunk async for chunk in ai_facade.stream("Hi")]
+    class _Blocking(_SSEResponse):
+        def __init__(self):
+            super().__init__(["data: {\"content\": \"a\"}"])
+            self.unblock = asyncio.Event()
+
+        async def __anext__(self):
+            if self._lines:
+                return self._lines.pop(0)
+            await self.unblock.wait()
+            raise StopAsyncIteration
+
+    response = _Blocking()
+    client = _EngineStreamClient(response)
+    started = asyncio.Event()
+
+    async def _consume() -> None:
+        async for _chunk in ai_facade.stream("Hi"):
+            started.set()
+
+    with patch("bifrost.ai.get_client", return_value=client):
+        task = asyncio.create_task(_consume())
+        await started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    assert response.exited is True
 
 
 @pytest.mark.asyncio
-async def test_external_http_stream_unchanged():
-    """External callers keep the SSE path with composed files attached."""
+async def test_facade_slow_gap_between_events_is_tolerated():
+    """No SDK-level deadline: a slow provider gap under the read bound is fine.
+
+    HTTPX's 30s per-read timeout (preserved on both clients, see
+    ``BifrostClient.engine_stream``) is the only gap bound; there is no
+    separate channel/stream deadline. A sub-second stall between events must
+    still deliver every chunk.
+    """
     from bifrost.ai import ai as ai_facade
 
+    client = _EngineStreamClient(
+        _sse(
+            '{"content": "slow"}',
+            '{"done": true, "input_tokens": 2, "output_tokens": 3}',
+            delay=0.3,
+        )
+    )
+    with patch("bifrost.ai.get_client", return_value=client):
+        chunks = [chunk async for chunk in ai_facade.stream("Hi")]
+    assert [(chunk.content, chunk.done) for chunk in chunks] == [
+        ("slow", False),
+        ("", True),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_external_network_stream_uses_same_parser_and_route():
+    """External callers keep network SSE: same route, same chunk mapping."""
+    from bifrost.ai import ai as ai_facade
+    from bifrost.client import BifrostClient, get_engine_socket_path
+
+    body = (
+        b'data: {"content": "hi"}\n\n'
+        b'data: {"done": true, "input_tokens": 1, "output_tokens": 2}\n\n'
+        b"data: [DONE]\n\n"
+    )
     seen: dict[str, Any] = {}
 
-    class _Lines:
-        def __init__(self, lines):
-            self._lines = lines
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["method"] = request.method
+        seen["path"] = request.url.path
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=body,
+        )
 
-        async def __aiter__(self):
-            for line in self._lines:
-                yield line
+    assert get_engine_socket_path() is None
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="https://example.test"
+    ) as http:
+        client = BifrostClient("https://example.test", "token")
+        client._http = http
+        client._http_loop = asyncio.get_running_loop()
+        with patch("bifrost.ai.get_client", return_value=client):
+            chunks = [chunk async for chunk in ai_facade.stream("Hi")]
 
-    class _Response:
-        is_success = True
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return False
-
-        def aiter_lines(self):
-            return _Lines(
-                [
-                    'data: {"content": "hi"}',
-                    'data: {"done": true, "input_tokens": 1, "output_tokens": 2}',
-                    "data: [DONE]",
-                ]
-            )
-
-    class _Client:
-        def stream(self, method, url, json=None):
-            seen.update(json or {})
-            assert method == "POST"
-            assert url == "/api/sdk/ai/stream"
-            return _Response()
-
-    with (
-        patch("bifrost._stream_transport.get", return_value=None),
-        patch("bifrost.ai.get_client", return_value=_Client()),
-    ):
-        chunks = [chunk async for chunk in ai_facade.stream("Hi")]
-    assert [c.content for c in chunks] == ["hi", ""]
+    assert [chunk.content for chunk in chunks] == ["hi", ""]
     assert chunks[-1].done is True
     assert chunks[-1].input_tokens == 1
-    assert seen["messages"] == [{"role": "user", "content": "Hi"}]
-    assert seen["input_files"] == []
+    assert chunks[-1].output_tokens == 2
+    assert seen["method"] == "POST"
+    assert seen["path"] == "/api/sdk/ai/stream"
+    assert seen["body"]["messages"] == [{"role": "user", "content": "Hi"}]
+    assert seen["body"]["input_files"] == []
 
 
 @pytest.mark.asyncio
-async def test_external_http_stream_preflight_error_matches_local():
-    """A rejected stream request raises the same public SDK error on HTTP."""
-    import httpx
-
+async def test_external_network_stream_preflight_error_matches_local():
+    """A rejected stream request raises the same public SDK error as a socket."""
     from bifrost.ai import ai as ai_facade
-    from bifrost.client import BifrostAuthorizationError
+    from bifrost.client import BifrostAuthorizationError, BifrostClient
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, json={"detail": "denied"})
 
     async with httpx.AsyncClient(
-        transport=httpx.MockTransport(
-            lambda request: httpx.Response(403, json={"detail": "denied"})
-        ),
-        base_url="https://example.test",
-    ) as client:
+        transport=httpx.MockTransport(handler), base_url="https://example.test"
+    ) as http:
+        client = BifrostClient("https://example.test", "token")
+        client._http = http
+        client._http_loop = asyncio.get_running_loop()
         with (
-            patch("bifrost._stream_transport.get", return_value=None),
             patch("bifrost.ai.get_client", return_value=client),
             pytest.raises(BifrostAuthorizationError, match="denied"),
         ):

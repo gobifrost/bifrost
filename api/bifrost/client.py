@@ -1080,6 +1080,24 @@ class BifrostClient:
         """
         return self._get_async_client().stream(method, path, **kwargs)
 
+    def engine_stream(self, method: str, path: str, **kwargs):
+        """Open a streaming request over the engine-local transport.
+
+        Shares :meth:`engine_request`'s single transport choice: the trusted
+        worker Unix socket when the engine injected one, the ordinary network
+        client otherwise. The transport is selected once, before the request
+        is sent, so a local attempt never falls back to the network API after
+        a socket failure.
+
+        Timeout behavior is the external HTTP path's exactly: both cached
+        clients are built with HTTPX ``timeout=30.0``, so the per-read gap
+        bound is 30 seconds on either transport. No SDK-level stream or
+        channel deadline is added here; a slow provider that keeps sending
+        within that gap runs to completion.
+        """
+        http = self._async_http_for(engine_local=True)
+        return http.stream(method, path, **kwargs)
+
     def get_sync(self, path: str, **kwargs) -> httpx.Response:
         """Make synchronous GET request.
 
