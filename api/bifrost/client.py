@@ -812,64 +812,35 @@ class BifrostClient:
 
         return instance
 
-    def _fetch_context_local(self, transport: Any) -> dict[str, Any]:
-        """Read context over the engine-local sync channel (no caching).
-
-        Shared by the sync property (direct call) and the async fetch
-        (run off-loop via ``asyncio.to_thread``): both ride the
-        independent synchronous pipe, never the async SDK channel, so a
-        sync property read cannot deadlock a running child event loop.
-        Error mapping matches the HTTP path; a local attempt never falls
-        back to HTTP.
-        """
-        from ._import_transport import ImportServiceError, raise_for_import_status
-
-        try:
-            return transport.call_sdk_context()
-        except ImportServiceError as e:
-            if e.status_code is not None:
-                raise_for_import_status(
-                    e.status_code, e.detail or "", "sdk.context"
-                )
-            raise
-
     def _fetch_context_sync(self) -> dict[str, Any]:
-        """Fetch development context synchronously."""
-        if self._context is None:
-            from ._import_transport import get as _get_import_transport
+        """Fetch development context synchronously.
 
-            transport = _get_import_transport()
-            if transport is not None:
-                # Engine-local path: the parent serves ``sdk.context``
-                # from the shared context service over the dedicated
-                # sync channel. A local attempt never falls back to
-                # HTTP — failures raise loudly below.
-                self._context = self._fetch_context_local(transport)
-            else:
-                response = self.get_sync("/api/sdk/context")
-                raise_for_status_with_detail(response)
-                self._context = response.json()
+        Reads ``GET /api/sdk/context`` through the single engine-local entry
+        point: the trusted worker socket when the engine injected one, the
+        ordinary network client otherwise. The synchronous HTTPX request runs
+        on the calling thread over its own connection, so a property read
+        cannot deadlock a running child event loop even while an async SDK
+        call is in flight. Once the socket is injected a local attempt never
+        falls back to the network; status mapping is the shared HTTP mapping.
+        """
+        if self._context is None:
+            response = self.engine_request_sync("GET", "/api/sdk/context")
+            raise_for_status_with_detail(response)
+            self._context = response.json()
         return self._context or {}
 
     async def _fetch_context(self) -> dict[str, Any]:
-        """Fetch development context."""
-        if self._context is None:
-            from ._import_transport import get as _get_import_transport
+        """Fetch development context.
 
-            transport = _get_import_transport()
-            if transport is not None:
-                # Engine-local path: the same independent synchronous
-                # pipe as the sync property, run off-loop so the child
-                # event loop stays responsive while a concurrent async
-                # SDK call holds the async channel. A local attempt
-                # never falls back to HTTP.
-                self._context = await asyncio.to_thread(
-                    self._fetch_context_local, transport
-                )
-            else:
-                response = await self.get("/api/sdk/context")
-                raise_for_status_with_detail(response)
-                self._context = response.json()
+        Reads the same ``GET /api/sdk/context`` route through
+        :meth:`engine_request`, which resolves to the worker socket when the
+        engine injected one and the ordinary network client otherwise. Cached
+        after the first fetch; statuses map through the shared HTTP mapping.
+        """
+        if self._context is None:
+            response = await self.engine_request("GET", "/api/sdk/context")
+            raise_for_status_with_detail(response)
+            self._context = response.json()
         return self._context or {}
 
     @property

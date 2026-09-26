@@ -34,8 +34,12 @@ writes). Gate C5f adds the AI unary facade routes (``ai.complete`` POST and
 ``ai.get_model_info`` GET). Gate C5g adds the AI streaming facade route
 (``ai.stream`` POST), served as the original SSE ``APIRoute``: the child's
 ``ai.stream`` reads it over the socket with the same SSE parser it uses on
-the network path. Other domains and legacy stream/channel operations stay on
-their existing channel path until their own Gate C slice migrates them.
+the network path. Gate C5h adds the SDK context bootstrap route
+(``GET /api/sdk/context``): the child's synchronous ``BifrostClient.context``
+property and async ``_fetch_context`` both read it through the shared
+``engine_request_sync`` / ``engine_request`` entry points. Other domains and
+legacy stream/channel operations stay on their existing channel path until
+their own Gate C slice migrates them.
 
 ``import fastapi``/``uvicorn`` happen inside the functions so the worker
 entry closure stays free of those heavyweights at import time (see
@@ -274,6 +278,18 @@ AI_ROUTE_METHODS: dict[str, frozenset[str]] = {
 }
 AI_ROUTE_PATHS: frozenset[str] = frozenset(AI_ROUTE_METHODS)
 
+# Gate C5h: the SDK context bootstrap route, selected from
+# ``src.routers.cli`` by path AND method. ``/api/sdk/context`` is a unique
+# GET; the child's synchronous ``BifrostClient.context`` property and async
+# ``_fetch_context`` both read it through the shared ``engine_request_sync``
+# / ``engine_request`` entry points. Mounted as the exact registered
+# APIRoute object, so the endpoint's auth dependency (ordinary engine bearer
+# token), its ``shared.sdk_context`` service, status mapping, and response
+# DTO are the API's own.
+SDK_CONTEXT_ROUTE_METHODS: dict[str, frozenset[str]] = {
+    "/api/sdk/context": frozenset({"GET"}),
+}
+
 # Every route path this worker-local app serves from the cli SDK router.
 # Other SDK domains keep their existing channel path until their Gate C
 # slice migrates them.
@@ -284,6 +300,7 @@ SDK_ROUTE_PATHS: frozenset[str] = (
     | ARTIFACT_ROUTE_PATHS
     | KNOWLEDGE_ROUTE_PATHS
     | AI_ROUTE_PATHS
+    | frozenset(SDK_CONTEXT_ROUTE_METHODS)
 )
 
 
@@ -316,9 +333,10 @@ def build_worker_sdk_app() -> Any:
         openapi_url=None,
     )
     # The config, integrations, table-definition, and knowledge facade paths
-    # are unique, so they are selected by exact path. Artifact and AI routes
-    # are selected by (path, method) because ``/api/sdk/artifacts`` is both
-    # GET and POST and the AI paths carry unary plus streaming POSTs.
+    # are unique, so they are selected by exact path. Artifact, AI, and
+    # context routes are selected by (path, method) because
+    # ``/api/sdk/artifacts`` is both GET and POST, the AI paths carry unary
+    # plus streaming POSTs, and ``/api/sdk/context`` is an exact GET.
     cli_path_only = (
         CONFIG_ROUTE_PATHS
         | INTEGRATION_ROUTE_PATHS
@@ -343,12 +361,18 @@ def build_worker_sdk_app() -> Any:
             if methods & AI_ROUTE_METHODS[path]:
                 app.router.routes.append(route)
                 selected += 1
+        elif path in SDK_CONTEXT_ROUTE_METHODS:
+            methods = getattr(route, "methods", None) or frozenset()
+            if methods & SDK_CONTEXT_ROUTE_METHODS[path]:
+                app.router.routes.append(route)
+                selected += 1
     # Each wanted method is one registered APIRoute, so the expected count is
-    # the total number of (path, method) pairs for artifacts and AI.
+    # the total number of (path, method) pairs for artifacts, AI, and context.
     expected = (
         len(cli_path_only)
         + sum(len(methods) for methods in ARTIFACT_ROUTE_METHODS.values())
         + sum(len(methods) for methods in AI_ROUTE_METHODS.values())
+        + sum(len(methods) for methods in SDK_CONTEXT_ROUTE_METHODS.values())
     )
 
     # Files facade routes are selected by exact path from the files router.

@@ -8,17 +8,20 @@ Covers the acceptance surface that does not need a forked child:
   never child fields) and maps list/get scoping, 404-before-403 error
   precedence, cross-org denial, malformed frames, and missing-org
   outcomes to HTTP-style statuses;
-- ``forms.list``/``forms.get`` ride the async SDK channel while
-  ``sdk.context`` rides the synchronous import channel (membership
-  asserted on both allowlists, and cross-channel requests rejected);
+- ``forms.list``/``forms.get`` ride the async SDK channel while the
+  retained ``sdk.context`` operation is still served on the synchronous
+  import channel (membership asserted on both allowlists, and
+  cross-channel requests rejected);
 - a synchronous context call completes while an async SDK request is
   held open on the other channel (separate pipes/locks — no deadlock);
 - the migrated forms facade rides ``BifrostClient.engine_request`` with the
   exact HTTP paths, mapping results to the public surface (``FormPublic``
   list, ``ValueError``/``PermissionError`` on get) and preserving
-  HTTP-shaped errors, while the context facade keeps its cached
-  ``BifrostClient.context`` (with ``user``/``organization``/
-  ``default_parameters`` views) on the import channel;
+  HTTP-shaped errors, while the context facade now reads
+  ``GET /api/sdk/context`` over the engine socket through the sync
+  ``engine_request_sync`` / async ``engine_request`` entry points, keeping
+  its cached ``BifrostClient.context`` (with ``user``/``organization``/
+  ``default_parameters`` views);
 - external callers (no injected socket) keep the HTTP path unchanged.
 """
 
@@ -708,8 +711,17 @@ class TestFormsFacadeEngineRequest:
             assert exc_info.value.response.status_code == status
 
 
-@pytest.mark.asyncio
-class TestContextFacadeLocalMapping:
+class TestContextFacadeEngineRequest:
+    """Gate C5h: the context facade rides ``engine_request``.
+
+    ``BifrostClient.context`` reads ``GET /api/sdk/context`` over the
+    engine-local transport with the synchronous ``engine_request_sync`` entry
+    point; the async ``_fetch_context`` uses ``engine_request``. Both cache,
+    map statuses through the shared HTTP mapping, and never fall back to the
+    network once the engine socket is injected. External callers (no socket)
+    keep the ordinary HTTP client.
+    """
+
     def _client(self):
         from bifrost.client import BifrostClient
 
@@ -730,36 +742,26 @@ class TestContextFacadeLocalMapping:
         data.update(overrides)
         return data
 
-    def _install_fake_import_transport(self, monkeypatch, fake):
-        import bifrost._import_transport as import_transport
-
-        monkeypatch.setattr(import_transport, "_installed", fake)
-        return import_transport
-
-    async def test_sync_property_uses_local_and_caches(self, monkeypatch):
-        calls = []
-
-        class FakeImportTransport:
-            def call_sdk_context(self, timeout=30.0):
-                calls.append(timeout)
-                return self.payload
-
-        fake = FakeImportTransport()
-        fake.payload = self._payload()
-        self._install_fake_import_transport(monkeypatch, fake)
-
+    def test_sync_property_uses_engine_request_sync_and_caches(self):
+        payload = self._payload()
         client = self._client()
+        client.engine_request_sync = MagicMock(
+            return_value=httpx.Response(200, json=payload)
+        )
+
         first = client.context
         second = client.context
 
-        assert first == fake.payload
-        assert second == fake.payload
-        assert len(calls) == 1
-        assert client.user == fake.payload["user"]
+        assert first == payload
+        assert second == payload
+        client.engine_request_sync.assert_called_once_with(
+            "GET", "/api/sdk/context"
+        )
+        assert client.user == payload["user"]
         assert client.organization is None
         assert client.default_parameters == {}
 
-    async def test_sync_property_views_service_payload(self, monkeypatch):
+    def test_sync_property_views_service_payload(self):
         org_id = str(uuid4())
         payload = self._payload(
             user={
@@ -770,122 +772,114 @@ class TestContextFacadeLocalMapping:
             },
             organization={"id": org_id, "name": "Svc Org"},
         )
-
-        class FakeImportTransport:
-            def call_sdk_context(self, timeout=30.0):
-                return payload
-
-        self._install_fake_import_transport(monkeypatch, FakeImportTransport())
-
         client = self._client()
+        client.engine_request_sync = MagicMock(
+            return_value=httpx.Response(200, json=payload)
+        )
+
         assert client.organization == {"id": org_id, "name": "Svc Org"}
         assert client.user["email"] == "service-abc@bifrost.internal"
 
-    async def test_async_fetch_uses_local_too(self, monkeypatch):
-        calls = []
-
-        class FakeImportTransport:
-            def call_sdk_context(self, timeout=30.0):
-                calls.append(timeout)
-                return self.payload
-
-        fake = FakeImportTransport()
-        fake.payload = self._payload()
-        self._install_fake_import_transport(monkeypatch, fake)
-
+    @pytest.mark.asyncio
+    async def test_async_fetch_uses_engine_request_and_caches(self):
+        payload = self._payload()
         client = self._client()
-
-        def _dead_sync(*args, **kwargs):
-            raise AssertionError("context HTTP must not be used in the engine path")
-
-        async def _dead_async(*args, **kwargs):
-            raise AssertionError("context HTTP must not be used in the engine path")
-
-        monkeypatch.setattr(client, "get_sync", _dead_sync)
-        monkeypatch.setattr(client, "get", _dead_async)
+        client.engine_request = AsyncMock(
+            return_value=httpx.Response(200, json=payload)
+        )
+        client.engine_request_sync = MagicMock(
+            side_effect=AssertionError("cached fetch must not re-read")
+        )
 
         result = await client._fetch_context()
 
-        assert result == fake.payload
-        assert len(calls) == 1
+        assert result == payload
+        client.engine_request.assert_awaited_once_with("GET", "/api/sdk/context")
         # Cached: the sync property reuses the async fetch.
-        assert client.context == fake.payload
-        assert len(calls) == 1
+        assert client.context == payload
+        assert client.engine_request.await_count == 1
 
-    async def test_local_errors_match_http_mapping(self, monkeypatch):
-        from bifrost._import_transport import (
-            ImportNotFound,
-            ImportServiceError,
-        )
+    def test_errors_match_http_mapping(self):
         from bifrost.client import (
             BifrostAPIError,
+            BifrostAuthenticationError,
             BifrostAuthorizationError,
         )
 
-        class FailContext:
-            def __init__(self, error):
-                self.error = error
-
-            def call_sdk_context(self, timeout=30.0):
-                raise self.error
-
-        for error, expected in (
-            (ImportNotFound("missed", status_code=404, detail="nope"), BifrostAPIError),
-            (
-                ImportServiceError("denied", status_code=403, detail="denied"),
-                BifrostAuthorizationError,
-            ),
-            (
-                ImportServiceError("boom", status_code=500, detail="boom"),
-                BifrostAPIError,
-            ),
+        request = httpx.Request("GET", "http://bifrost-engine/api/sdk/context")
+        for status, expected in (
+            (401, BifrostAuthenticationError),
+            (403, BifrostAuthorizationError),
+            (404, BifrostAPIError),
+            (500, BifrostAPIError),
         ):
-            self._install_fake_import_transport(monkeypatch, FailContext(error))
             client = self._client()
+            client.engine_request_sync = MagicMock(
+                return_value=httpx.Response(
+                    status, json={"detail": "denied"}, request=request
+                )
+            )
             with pytest.raises(expected) as exc_info:
                 client.context
-            assert exc_info.value.response.status_code == error.status_code
+            assert exc_info.value.response.status_code == status
 
-    async def test_external_callers_keep_http(self, monkeypatch):
-        import bifrost._import_transport as import_transport
-
-        monkeypatch.setattr(import_transport, "_installed", None)
-
+    def test_injected_socket_never_uses_the_network_client(self, monkeypatch):
         payload = self._payload()
-        sync_response = MagicMock()
-        sync_response.is_success = True
-        sync_response.json = lambda: payload
-        async_response = MagicMock()
-        async_response.is_success = True
-        async_response.json = lambda: payload
-
         client = self._client()
-        monkeypatch.setattr(
-            client, "get_sync", lambda path, **kwargs: sync_response
+        engine_sync = MagicMock()
+        engine_sync.request.return_value = httpx.Response(200, json=payload)
+        network_sync = MagicMock()
+        network_sync.request.side_effect = AssertionError(
+            "context must not fall back to the network with a socket injected"
         )
-        calls = []
-
-        async def _fake_get(path, **kwargs):
-            calls.append(path)
-            return async_response
-
-        monkeypatch.setattr(client, "get", _fake_get)
+        monkeypatch.setattr(client, "_get_engine_sync_client", lambda: engine_sync)
+        monkeypatch.setattr(client, "_sync_http", network_sync)
+        monkeypatch.setattr("bifrost.client._engine_socket_path", "/tmp/ctx.sock")
 
         assert client.context == payload
-        fresh = self._client()
-        monkeypatch.setattr(fresh, "get", _fake_get)
-        assert await fresh._fetch_context() == payload
-        assert calls == ["/api/sdk/context"]
 
-    async def test_broken_channel_raises_loudly_without_http(self, monkeypatch):
-        from bifrost._import_transport import ImportTransportClosed
+        engine_sync.request.assert_called_once()
+        assert network_sync.request.call_count == 0
 
-        class BrokenTransport:
-            def call_sdk_context(self, timeout=30.0):
-                raise ImportTransportClosed("parent is gone")
+    def test_external_callers_keep_http(self, monkeypatch):
+        payload = self._payload()
+        captured: list[str] = []
 
-        self._install_fake_import_transport(monkeypatch, BrokenTransport())
+        def _handler(request: httpx.Request) -> httpx.Response:
+            captured.append(str(request.url))
+            return httpx.Response(200, json=payload)
 
+        monkeypatch.setattr("bifrost.client._engine_socket_path", None)
         client = self._client()
-        with pytest.raises(ImportTransportClosed):
-            client.context
+        # No engine socket resolves the shared entry point to the ordinary
+        # network sync client, which we point at a mock transport.
+        client._sync_http = httpx.Client(
+            base_url="http://external-api",
+            transport=httpx.MockTransport(_handler),
+        )
+
+        assert client.context == payload
+        assert captured == ["http://external-api/api/sdk/context"]
+
+    @pytest.mark.asyncio
+    async def test_external_async_fetch_keeps_http(self, monkeypatch):
+        payload = self._payload()
+        captured: list[str] = []
+
+        def _handler(request: httpx.Request) -> httpx.Response:
+            captured.append(str(request.url))
+            return httpx.Response(200, json=payload)
+
+        monkeypatch.setattr("bifrost.client._engine_socket_path", None)
+        client = self._client()
+        async_http = httpx.AsyncClient(
+            base_url="http://external-api",
+            transport=httpx.MockTransport(_handler),
+        )
+        client._http = async_http
+        client._http_loop = asyncio.get_running_loop()
+        try:
+            assert await client._fetch_context() == payload
+        finally:
+            await async_http.aclose()
+        assert captured == ["http://external-api/api/sdk/context"]

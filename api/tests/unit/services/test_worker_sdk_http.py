@@ -44,6 +44,7 @@ from src.services.execution.worker_sdk_http import (
     ORGANIZATION_ROUTE_METHODS,
     PLATFORM_JOB_ROUTE_METHODS,
     ROLES_ROUTE_METHODS,
+    SDK_CONTEXT_ROUTE_METHODS,
     SDK_ROUTE_PATHS,
     TABLE_ROUTE_METHODS,
     TABLE_SDK_ROUTE_PATHS,
@@ -534,6 +535,7 @@ class TestRouteReuse:
             | ARTIFACT_ROUTE_PATHS
             | KNOWLEDGE_ROUTE_PATHS
             | AI_ROUTE_PATHS
+            | frozenset(SDK_CONTEXT_ROUTE_METHODS)
         )
         assert len(INTEGRATION_ROUTE_PATHS) == 6
         assert all(

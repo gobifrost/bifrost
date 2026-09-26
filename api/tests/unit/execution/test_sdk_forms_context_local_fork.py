@@ -1,15 +1,20 @@
 """Engine-local form reads and client context through a real forked worker.
 
 Uses a real ``TemplateProcess`` (the same fork primitive the pool uses):
-the child installs the worker's private Unix socket and the synchronous
-import transport at engine start, then runs ``bifrost.forms.list`` /
-``bifrost.forms.get`` (now over the socket) plus the synchronous
-``BifrostClient.context`` property (on the import channel) with the
-network API dead and fixed-operation HTTP hard-disabled. The parent serves
-the **real** form routes on that socket via uvicorn against the worker's
-global database engine, and ``sdk.context`` on the import channel from the
-shared service. Envelope success proves zero API requests for the migrated
-operations, and the parent re-reads the same rows over its own session.
+the child installs the worker's private Unix socket at engine start, then
+runs ``bifrost.forms.list`` / ``bifrost.forms.get`` plus the synchronous
+``BifrostClient.context`` property and the async ``_fetch_context`` over
+that socket, with the network API dead and fixed-operation HTTP
+hard-disabled. The parent serves the **real** form routes and the original
+``GET /api/sdk/context`` route on that socket via uvicorn against the
+worker's global database engine. Envelope success proves zero API requests
+for the migrated operations, and the parent re-reads the same rows and the
+same context payload over its own session.
+
+The child installs neither the legacy synchronous import transport nor the
+async SDK channel: context and forms both ride the socket, and a
+synchronous context read while async form calls are in flight proves the
+separate sync/async socket connections cannot deadlock.
 
 Marked ``slow`` like the other real-fork tests: template boot costs
 seconds. Run explicitly alongside the focused suite.
@@ -19,25 +24,21 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import contextlib
 import os
 import time
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import select
 
-from src.services.execution.sdk_local_dispatch import (
-    IMPORT_CHANNEL_ALLOWED_OPS,
-    LocalDispatchPrincipal,
-    dispatch_frame,
-    principal_from_context,
-    serve_channel,
-)
 from src.services.execution.template_process import TemplateProcess
 from src.services.execution.worker_sdk_http import WorkerSdkHttpServer
 
 pytestmark = pytest.mark.slow
+
+# The signed subject of a minted engine token (``mint_engine_token``), used
+# to build the parent's token-equivalent principal for parity.
+_ENGINE_USER_ID = UUID("00000000-0000-0000-0000-000000000001")
 
 
 def _script_b64(source: str) -> str:
@@ -66,11 +67,6 @@ def _context_for(code_b64: str, engine_token: str) -> dict:
     }
 
 
-@contextlib.asynccontextmanager
-async def _factory(db_session):
-    yield db_session
-
-
 def _wait_for_pid_to_die(pid: int, timeout: float = 10.0) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -83,14 +79,17 @@ def _wait_for_pid_to_die(pid: int, timeout: float = 10.0) -> None:
 
 @pytest.mark.asyncio
 class TestForkedFormsContextTransport:
-    async def test_forms_over_socket_and_context_without_http(
+    async def test_forms_and_context_over_socket_without_http(
         self, db_session, monkeypatch
     ):
-        """A real forked child reads forms over the socket and context."""
-        from src.core.security import mint_engine_token
+        """A real forked child reads forms and context over the socket."""
+        from src.core.principal import UserPrincipal
+        from src.core.security import ENGINE_SDK_ACTOR_EMAIL, mint_engine_token
         from src.models.enums import FormAccessLevel
         from src.models.orm.forms import Form as FormModel
         from src.models.orm.organizations import Organization as OrganizationModel
+        from shared.sdk_context import get_sdk_context
+        from shared.sdk_forms import list_sdk_forms
 
         stem = f"fork-forms-{uuid4().hex[:8]}"
         org = OrganizationModel(
@@ -126,7 +125,11 @@ class TestForkedFormsContextTransport:
         lines = [
             "import asyncio",
             "from bifrost import forms",
-            "from bifrost.client import BifrostClient, get_engine_socket_path",
+            "from bifrost.client import (",
+            "    BifrostClient,",
+            "    get_client,",
+            "    get_engine_socket_path,",
+            ")",
             "from bifrost._local_transport import get as _get_transport",
             "from bifrost._import_transport import get as _get_import_transport",
             "_used_socket = get_engine_socket_path() is not None",
@@ -137,20 +140,11 @@ class TestForkedFormsContextTransport:
             "    _loop_running = True",
             "except RuntimeError:",
             "    _loop_running = False",
-            "def _dead(*args, **kwargs):",
-            "    raise AssertionError(",
-            "        'fixed-operation HTTP must not be used in the engine path'",
-            "    )",
-            "async def _dead_async(*args, **kwargs):",
-            "    raise AssertionError(",
-            "        'fixed-operation HTTP must not be used in the engine path'",
-            "    )",
-            "_client = BifrostClient('http://127.0.0.1:9', 'fork-dead-token')",
-            "_client.get_sync = _dead",
-            "_client.get = _dead_async",
-            # Sync property from inside the active event loop: the
-            # independent sync pipe must not deadlock the loop.
+            # Sync property from inside the active event loop: its own
+            # synchronous socket connection must not deadlock the loop.
+            "_client = get_client()",
             "_ctx_direct = _client.context",
+            "_used_sync_socket = _client._engine_sync_http is not None",
             "_wf_list = await forms.list()",
             "_saw = {_f.name for _f in _wf_list}",
             f"_saw_global = {global_name!r} in _saw",
@@ -164,26 +158,27 @@ class TestForkedFormsContextTransport:
             "    _missing = 'ValueError'",
             "except Exception as _e:",
             "    _missing = f'{type(_e).__name__}'",
-            # Sync context from a worker thread while async form calls
-            # hold the socket: separate transports must not deadlock.
-            "_fresh = BifrostClient('http://127.0.0.1:9', 'fork-dead-token')",
-            "_fresh.get_sync = _dead",
-            "_fresh.get = _dead_async",
+            # The deadlock probe: a synchronous context read on a worker
+            # thread while async form calls are in flight over the socket.
+            # Separate sync/async HTTPX connections share the socket, not a
+            # single channel lock.
+            "_fresh = BifrostClient(_client.api_url, _client._access_token)",
             "_concurrent_forms, _concurrent_ctx = await asyncio.gather(",
             "    forms.list(),",
             "    asyncio.to_thread(lambda: _fresh.context),",
             ")",
-            # Async fetch rides the local path too (instance HTTP dead).
-            "_async_client = BifrostClient('http://127.0.0.1:9', 'fork-dead-token')",
-            "_async_client.get_sync = _dead",
-            "_async_client.get = _dead_async",
+            # Async fetch rides the local socket too.
+            "_async_client = BifrostClient(_client.api_url, _client._access_token)",
             "_ctx_async = await _async_client._fetch_context()",
+            "_used_async_socket = _async_client._engine_http is not None",
             "import os, sys",
             "result = {",
             "    'used_socket': _used_socket,",
             "    'used_channel': _used_channel,",
             "    'used_import': _used_import,",
             "    'loop_running': _loop_running,",
+            "    'used_sync_socket': _used_sync_socket,",
+            "    'used_async_socket': _used_async_socket,",
             "    'saw_global': _saw_global,",
             "    'saw_org': _saw_org,",
             "    'saw_inactive': _saw_inactive,",
@@ -207,15 +202,15 @@ class TestForkedFormsContextTransport:
         context = _context_for(
             _script_b64("\n".join(lines) + "\n"),
             mint_engine_token(
-                execution_id="gate-c5c-forms-fork",
+                execution_id="gate-c5h-forms-fork",
                 solution_id=None,
                 global_repo_access=True,
                 timeout_seconds=120,
             )[0],
         )
-        # Hard-disable HTTP for every forked child: any SDK call that
-        # reaches HTTP fails with connection-refused, so success proves
-        # the socket and import transports served every migrated operation.
+        # Hard-disable HTTP for the forked child: any SDK call that reaches
+        # HTTP fails with connection-refused, so success proves the socket
+        # served every migrated operation.
         monkeypatch.setenv("BIFROST_API_URL", "http://127.0.0.1:9")
 
         server = WorkerSdkHttpServer()
@@ -224,31 +219,10 @@ class TestForkedFormsContextTransport:
 
         template = TemplateProcess()
         template.start()
-        imp_pump = None
-        conns = []
         try:
-            (
-                child_pid,
-                work_queue,
-                result_queue,
-                imp_req,
-                imp_resp,
-            ) = template.fork(
+            child_pid, work_queue, result_queue = template.fork(
                 worker_id="sdk-forms-context-fork",
-                with_import=True,
                 sdk_socket_path=server.socket_path,
-            )
-            conns = [imp_req, imp_resp]
-            principal = principal_from_context(context)
-            assert isinstance(principal, LocalDispatchPrincipal)
-            imp_pump = asyncio.create_task(
-                serve_channel(
-                    recv_conn=imp_req,
-                    send_conn=imp_resp,
-                    session_factory=lambda: _factory(db_session),
-                    principal=principal,
-                    allowed_ops=IMPORT_CHANNEL_ALLOWED_OPS,
-                )
             )
             work_queue.put(("exec-forms-context-fork", context))
             envelope = await asyncio.to_thread(result_queue.get, True, 120.0)
@@ -256,17 +230,17 @@ class TestForkedFormsContextTransport:
             result = envelope["result"]
             assert result["used_socket"] is True, result
             assert result["used_channel"] is False, result
-            assert result["used_import"] is True, result
+            assert result["used_import"] is False, result
             assert result["loop_running"] is True, result
+            assert result["used_sync_socket"] is True, result
+            assert result["used_async_socket"] is True, result
             assert result["saw_global"] is True, result
             assert result["saw_org"] is True, result
             assert result["saw_inactive"] is True, result
             assert result["detail_id"] == str(org_form_id), result
             assert result["detail_name"] == org_name, result
             assert result["missing"] == "ValueError", result
-            assert (
-                result["ctx_user"].get("email") == "engine@bifrost.internal"
-            ), result
+            assert result["ctx_user"].get("email") == ENGINE_SDK_ACTOR_EMAIL, result
             assert result["ctx_org"] is None, result
             assert result["ctx_params"] == {}, result
             assert result["ctx_track"] is True, result
@@ -276,56 +250,31 @@ class TestForkedFormsContextTransport:
             assert result["had_db_url"] is False, result
             assert result["had_sqlalchemy"] is False, result
 
-            # The parent sees the same rows over its own session, and
-            # the context payload agrees with the shared service.
-            parent_list = await dispatch_frame(
-                lambda: _factory(db_session),
-                principal,
-                {"v": 1, "id": "fork-parity-list", "op": "forms.list"},
+            # External parity: the child's context equals the shared service
+            # output for the token-equivalent engine principal, and the
+            # parent sees the same seeded rows over its own session.
+            engine_user = UserPrincipal(
+                user_id=_ENGINE_USER_ID,
+                email=ENGINE_SDK_ACTOR_EMAIL,
+                name="Bifrost Engine",
+                organization_id=None,
+                is_superuser=True,
             )
-            assert parent_list["ok"] is True, parent_list
-            assert {global_name, org_name, inactive_name} <= {
-                f["name"] for f in parent_list["result"]["items"]
-            }
-            parent_get = await dispatch_frame(
-                lambda: _factory(db_session),
-                principal,
-                {
-                    "v": 1,
-                    "id": "fork-parity-get",
-                    "op": "forms.get",
-                    "form_id": str(org_form_id),
-                },
-            )
-            assert parent_get["ok"] is True, parent_get
-            assert parent_get["result"]["id"] == str(org_form_id)
-            parent_ctx = await dispatch_frame(
-                lambda: _factory(db_session),
-                principal,
-                {"v": 1, "id": "fork-parity-ctx", "op": "sdk.context"},
-            )
-            assert parent_ctx["ok"] is True, parent_ctx
-            assert (
-                parent_ctx["result"]["user"].get("email")
-                == "engine@bifrost.internal"
-            )
-            assert parent_ctx["result"] == {
+            expected_ctx = await get_sdk_context(db_session, engine_user, org_id=None)
+            child_ctx = {
                 "user": result["ctx_user"],
                 "organization": result["ctx_org"],
                 "default_parameters": result["ctx_params"],
                 "track_executions": result["ctx_track"],
-            }, (parent_ctx, result)
+            }
+            assert child_ctx == expected_ctx, (child_ctx, expected_ctx)
+
+            parent_forms = await list_sdk_forms(db_session, engine_user, scope=None)
+            assert {global_name, org_name, inactive_name} <= {
+                f.name for f in parent_forms
+            }
 
             _wait_for_pid_to_die(child_pid)
-            assert await asyncio.wait_for(imp_pump, timeout=15.0) == "eof"
-            imp_pump = None
         finally:
-            if imp_pump is not None:
-                imp_pump.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await imp_pump
-            for conn in conns:
-                with contextlib.suppress(Exception):
-                    conn.close()
             template.shutdown()
             await server.stop()
