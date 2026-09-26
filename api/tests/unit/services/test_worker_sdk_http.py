@@ -201,15 +201,22 @@ class TestRouteReuse:
         )
 
     def test_table_route_selection_is_exact(self):
-        """Gate C3a mounts the two facade paths and four REST (path, method)s."""
+        """Gate C3a/C3b mounts the two facade paths and every REST mutation."""
         assert TABLE_SDK_ROUTE_PATHS == frozenset(
             {"/api/sdk/tables/create", "/api/sdk/tables/list"}
         )
         assert TABLE_ROUTE_METHODS == {
+            "/api/tables": frozenset({"POST"}),
             "/api/tables/{table_id}": frozenset({"DELETE"}),
+            "/api/tables/{table_id}/documents": frozenset({"POST"}),
+            "/api/tables/{table_id}/documents/upsert": frozenset({"POST"}),
             "/api/tables/{table_id}/documents/count": frozenset({"GET"}),
-            "/api/tables/{table_id}/documents/{doc_id}": frozenset({"GET"}),
+            "/api/tables/{table_id}/documents/{doc_id}": frozenset(
+                {"GET", "PATCH", "DELETE"}
+            ),
             "/api/tables/{table_id}/documents/query": frozenset({"POST"}),
+            "/api/tables/{table_id}/documents/batch": frozenset({"POST"}),
+            "/api/tables/{table_id}/documents/batch-delete": frozenset({"POST"}),
         }
 
     @pytest.mark.asyncio
@@ -560,6 +567,85 @@ class TestSocketConfigContracts:
             assert response.json() is False
         finally:
             await server.stop()
+
+
+class TestSocketTableWrites:
+    """Gate C3b: the socket carries the table write routes and commits them."""
+
+    @pytest.mark.asyncio
+    async def test_batch_write_over_socket_commits(self, async_session_factory):
+        from sqlalchemy import delete, select
+
+        from shared.policies.probe import make_seed_admin_bypass
+        from src.models.orm.organizations import Organization as OrganizationModel
+        from src.models.orm.tables import Document as DocumentModel
+        from src.models.orm.tables import Table as TableModel
+
+        table_uuid = None
+        org_uuid = None
+        async with async_session_factory() as session:
+            org = OrganizationModel(
+                name=f"wsdk-write-{uuid4().hex[:8]}",
+                is_active=True,
+                is_provider=False,
+                created_by="worker-sdk-http-test",
+            )
+            session.add(org)
+            await session.flush()
+            table = TableModel(
+                name=f"wsdk_tbl_{uuid4().hex[:8]}",
+                organization_id=org.id,
+                schema={"columns": []},
+                access=make_seed_admin_bypass(),
+                created_by="worker-sdk-http-test",
+            )
+            session.add(table)
+            await session.commit()
+            org_uuid, table_uuid = org.id, table.id
+
+        headers = {"Authorization": f"Bearer {_engine_token()}"}
+        server = WorkerSdkHttpServer()
+        await server.start()
+        try:
+            async with _socket_client(server) as client:
+                response = await client.post(
+                    f"/api/tables/{table_uuid}/documents/batch",
+                    params={"scope": str(org_uuid)},
+                    json={
+                        "documents": [{"id": "b1", "data": {"v": 1}}],
+                        "upsert": False,
+                    },
+                    headers=headers,
+                )
+            assert response.status_code == 200, response.text
+            assert response.json()["inserted"] == 1
+
+            # An independent session must see the committed row. A success
+            # response that only the serving session can observe is not a
+            # durable write.
+            async with async_session_factory() as check:
+                row = (
+                    await check.execute(
+                        select(DocumentModel).where(
+                            DocumentModel.table_id == table_uuid,
+                            DocumentModel.id == "b1",
+                        )
+                    )
+                ).scalar_one_or_none()
+            assert row is not None, "socket batch write returned 200 without committing"
+        finally:
+            await server.stop()
+            async with async_session_factory() as cleanup:
+                await cleanup.execute(
+                    delete(DocumentModel).where(DocumentModel.table_id == table_uuid)
+                )
+                await cleanup.execute(
+                    delete(TableModel).where(TableModel.id == table_uuid)
+                )
+                await cleanup.execute(
+                    delete(OrganizationModel).where(OrganizationModel.id == org_uuid)
+                )
+                await cleanup.commit()
 
 
 class TestEngineLocalTransportSelection:

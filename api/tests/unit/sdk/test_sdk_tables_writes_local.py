@@ -9,20 +9,22 @@ Covers the acceptance surface that does not need a forked child:
   through ``shared.table_document_writes`` (replace vs merge semantics,
   attribution, policy denials, batch modes/limits, Solution and
   explicit-scope write gates);
-- the child transport performing real write round trips with zero HTTP
-  requests: auto-create-once retries, 409 retry loops, and 404 mappings
+- the migrated facade methods now ride the shared
+  ``BifrostClient.engine_request`` transport and never touch the dedicated
+  channel: auto-create-once retries, 409 retry loops, and 404 mappings
   (``update``→None, ``delete_document``→False, ``delete_batch``→empty)
   without HTTP fallback.
 
 Parity is asserted by invoking the real HTTP handlers and the parent
-dispatcher against the same seeded rows and comparing outcomes.
+dispatcher against the same seeded rows and comparing outcomes. The
+``sdk_local_dispatch`` parity classes still exercise the parent dispatcher
+directly; the facade no longer calls it for these writes (see Gate C3b),
+but the shared service it delegates to is the same one the HTTP routes run.
 """
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
-import json
 import multiprocessing
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -1104,7 +1106,24 @@ def _table_info(name="t"):
     }
 
 
-class TestChildTransportWrites:
+class TestSharedClientTransport:
+    """Gate C3b: the migrated writes ride the shared client, not the channel.
+
+    ``tables.insert/upsert/update/delete_document`` and the batch writes now
+    call ``BifrostClient.engine_request`` (the worker Unix socket inside an
+    engine child, the network API elsewhere). A pipe transport is installed
+    and must stay silent; route, body, retry, auto-create, and result mapping
+    stay identical to the HTTP endpoints.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clear_execution_context(self):
+        from bifrost._context import clear_execution_context
+
+        clear_execution_context()
+        yield
+        clear_execution_context()
+
     def _pair(self):
         req_recv, req_send = multiprocessing.Pipe(duplex=False)
         resp_recv, resp_send = multiprocessing.Pipe(duplex=False)
@@ -1115,329 +1134,307 @@ class TestChildTransportWrites:
             with contextlib.suppress(Exception):
                 conn.close()
 
-    async def _pump(self, req_conn, resp_conn, handler, count=1):
-        for _ in range(count):
-            raw = await asyncio.to_thread(req_conn.recv_bytes, 65537)
-            frame = json.loads(raw.decode("utf-8"))
-            response = handler(frame)
-            await asyncio.to_thread(resp_conn.send_bytes, json.dumps(response).encode())
+    @contextlib.contextmanager
+    def _silent_channel(self):
+        """Install a channel that must receive no frame from the facade."""
+        from bifrost import _local_transport as lt
 
-    def _ctx(self):
+        conns = self._pair()
+        lt.install(conns[1], conns[2])
+        try:
+            yield conns
+        finally:
+            lt.clear()
+            self._close_all(conns)
+
+    @staticmethod
+    def _assert_channel_silent(conns):
+        assert conns[0].poll(0.1) is False, "facade wrote to the local channel"
+
+    @staticmethod
+    def _response(status: int, payload=None):
+        import httpx
+
+        return httpx.Response(
+            status,
+            json=payload,
+            request=httpx.Request("POST", "http://api/test"),
+        )
+
+    @staticmethod
+    def _client(responses):
+        from unittest.mock import AsyncMock, MagicMock
+
+        client = MagicMock()
+        client.engine_request = AsyncMock(side_effect=responses)
+        return client
+
+    @pytest.mark.asyncio
+    async def test_insert_auto_creates_once_over_shared_client(self):
+        from bifrost.tables import tables
+
+        table_id = str(uuid4())
+        client = self._client(
+            [
+                self._response(404, {"detail": "Table 't' not found"}),
+                self._response(201, _table_info("t")),
+                self._response(201, _doc(table_id, "d1")),
+            ]
+        )
+        with self._silent_channel() as conns:
+            with patch("bifrost.tables.get_client", return_value=client):
+                doc = await tables.insert("t", {"v": 1}, id="d1", scope="global")
+            self._assert_channel_silent(conns)
+
+        assert doc.id == "d1"
+        calls = client.engine_request.await_args_list
+        assert [(c.args[0], c.args[1]) for c in calls] == [
+            ("POST", "/api/tables/t/documents?scope=global"),
+            ("POST", "/api/tables?scope=global"),
+            ("POST", "/api/tables/t/documents?scope=global"),
+        ]
+        assert calls[0].kwargs["json"] == {"id": "d1", "data": {"v": 1}}
+        assert calls[1].kwargs["json"] == {"name": "t"}
+
+    @pytest.mark.asyncio
+    async def test_insert_in_solution_never_auto_creates(self):
+        from bifrost._context import set_execution_context
+        from bifrost.client import BifrostAPIError
+        from bifrost.tables import tables
         from src.sdk.context import ExecutionContext
 
-        return ExecutionContext(
+        ctx = ExecutionContext(
             user_id="u1", email="e@e.com", name="T", scope="org-1",
             organization=None, is_platform_admin=False,
             is_function_key=False, execution_id="exec-1",
         )
+        ctx.solution_id = str(uuid4())
+        set_execution_context(ctx)
+
+        client = self._client(
+            [self._response(404, {"detail": "Table 't' not found"})]
+        )
+        with self._silent_channel() as conns:
+            with patch("bifrost.tables.get_client", return_value=client):
+                with pytest.raises(BifrostAPIError):
+                    await tables.insert("t", {"v": 1})
+            self._assert_channel_silent(conns)
+        # No auto-create retry inside a Solution.
+        assert client.engine_request.await_count == 1
 
     @pytest.mark.asyncio
-    async def test_create_list_delete_use_shared_client_not_channel(self):
-        from unittest.mock import AsyncMock, MagicMock
+    async def test_upsert_uses_replace_route_with_transient_retry(self):
+        from bifrost.tables import tables
 
-        from bifrost import _local_transport as lt
+        table_id = str(uuid4())
+        client = self._client([self._response(200, _doc(table_id, "k"))])
+        with self._silent_channel() as conns:
+            with patch("bifrost.tables.get_client", return_value=client):
+                doc = await tables.upsert("t", "k", {"v": 2}, scope="global")
+            self._assert_channel_silent(conns)
 
-        req_recv, req_send, resp_recv, resp_send = self._pair()
-        lt.install(req_send, resp_recv)
-        info = _table_info("t")
+        assert doc.id == "k"
+        call = client.engine_request.await_args_list[0]
+        assert call.args == (
+            "POST", "/api/tables/t/documents/upsert?scope=global",
+        )
+        assert call.kwargs["json"] == {"id": "k", "data": {"v": 2}}
+        assert call.kwargs["retry_transient"] is True
 
-        def _handler(frame):
-            raise AssertionError(f"channel must not be used: {frame['op']}")
+    @pytest.mark.asyncio
+    async def test_update_maps_404_to_none_with_transient_retry(self):
+        from bifrost.tables import tables
 
-        client = MagicMock()
-        client.engine_request = AsyncMock(side_effect=[
-            MagicMock(status_code=200, json=lambda: dict(info)),
-            MagicMock(status_code=200, json=lambda: [dict(info)]),
-            MagicMock(status_code=204),
-        ])
-        pump = asyncio.create_task(self._pump(req_recv, resp_send, _handler, count=1))
-        try:
-            from bifrost._context import (
-                clear_execution_context,
-                set_execution_context,
-            )
-            from bifrost.tables import tables
+        client = self._client([self._response(404, {"detail": "not found"})])
+        with self._silent_channel() as conns:
+            with patch("bifrost.tables.get_client", return_value=client):
+                updated = await tables.update("t", "d1", {"a": 2}, scope="global")
+            self._assert_channel_silent(conns)
 
-            set_execution_context(self._ctx())
-            try:
-                with patch("bifrost.tables.get_client", return_value=client):
-                    created = await tables.create("t")
-                    assert created.id == info["id"]
-                    listed = await tables.list()
-                    assert [t.id for t in listed] == [info["id"]]
-                    assert await tables.delete(info["id"]) is True
-            finally:
-                clear_execution_context()
-        finally:
-            pump.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await pump
-            lt.clear()
-            self._close_all((req_recv, req_send, resp_recv, resp_send))
-        # The migrated definition methods never read a channel frame: each
-        # call went through the shared client's engine-local entry point.
-        assert [
-            (call.args[0], call.args[1])
-            for call in client.engine_request.await_args_list
-        ] == [
-            ("POST", "/api/sdk/tables/create"),
-            ("POST", "/api/sdk/tables/list"),
-            ("DELETE", f"/api/tables/{info['id']}"),
+        assert updated is None
+        call = client.engine_request.await_args_list[0]
+        assert call.args == (
+            "PATCH", "/api/tables/t/documents/d1?scope=global",
+        )
+        assert call.kwargs["json"] == {"data": {"a": 2}}
+        assert call.kwargs["retry_transient"] is True
+
+    @pytest.mark.asyncio
+    async def test_delete_document_maps_404_to_false(self):
+        from bifrost.tables import tables
+
+        client = self._client([self._response(404, {"detail": "not found"})])
+        with self._silent_channel() as conns:
+            with patch("bifrost.tables.get_client", return_value=client):
+                deleted = await tables.delete_document("t", "d1", scope="global")
+            self._assert_channel_silent(conns)
+
+        assert deleted is False
+        call = client.engine_request.await_args_list[0]
+        assert call.args == (
+            "DELETE", "/api/tables/t/documents/d1?scope=global",
+        )
+        assert call.kwargs == {}
+
+    @pytest.mark.asyncio
+    async def test_insert_batch_posts_batch_without_transient_retry(self):
+        from bifrost.tables import tables
+
+        table_id = str(uuid4())
+        client = self._client(
+            [self._response(201, {"inserted": 1, "documents": [_doc(table_id, "a")]})]
+        )
+        with self._silent_channel() as conns:
+            with patch("bifrost.tables.get_client", return_value=client):
+                result = await tables.insert_batch(
+                    "t", [{"id": "a", "data": {"v": 1}}], scope="global"
+                )
+            self._assert_channel_silent(conns)
+
+        assert result.count == 1
+        assert result.documents[0].id == "a"
+        call = client.engine_request.await_args_list[0]
+        assert call.args == (
+            "POST", "/api/tables/t/documents/batch?scope=global",
+        )
+        assert call.kwargs["json"] == {
+            "documents": [{"id": "a", "data": {"v": 1}}],
+            "upsert": False,
+        }
+        assert call.kwargs["retry_transient"] is False
+
+    @pytest.mark.asyncio
+    async def test_upsert_batch_retries_transient_with_explicit_ids(self):
+        from bifrost.tables import tables
+
+        table_id = str(uuid4())
+        client = self._client(
+            [self._response(200, {"inserted": 1, "documents": [_doc(table_id, "a")]})]
+        )
+        with self._silent_channel() as conns:
+            with patch("bifrost.tables.get_client", return_value=client):
+                result = await tables.upsert_batch(
+                    "t", [{"id": "a", "data": {"v": 1}}], scope="global"
+                )
+            self._assert_channel_silent(conns)
+
+        assert result.count == 1
+        call = client.engine_request.await_args_list[0]
+        assert call.kwargs["json"]["upsert"] is True
+        assert call.kwargs["retry_transient"] is True
+
+    @pytest.mark.asyncio
+    async def test_insert_batch_404_auto_creates_once(self):
+        from bifrost.tables import tables
+
+        table_id = str(uuid4())
+        client = self._client(
+            [
+                self._response(404, {"detail": "Table 't' not found"}),
+                self._response(201, _table_info("t")),
+                self._response(
+                    201, {"inserted": 1, "documents": [_doc(table_id, "a")]}
+                ),
+            ]
+        )
+        with self._silent_channel() as conns:
+            with patch("bifrost.tables.get_client", return_value=client):
+                result = await tables.insert_batch(
+                    "t", [{"id": "a", "data": {"v": 1}}], scope="global"
+                )
+            self._assert_channel_silent(conns)
+
+        assert result.count == 1
+        calls = client.engine_request.await_args_list
+        assert [(c.args[0], c.args[1]) for c in calls] == [
+            ("POST", "/api/tables/t/documents/batch?scope=global"),
+            ("POST", "/api/tables?scope=global"),
+            ("POST", "/api/tables/t/documents/batch?scope=global"),
         ]
-        assert client.engine_request.await_args_list[0].kwargs["json"]["name"] == "t"
 
     @pytest.mark.asyncio
-    async def test_insert_auto_creates_once_without_http(self):
-        from bifrost import _local_transport as lt
+    async def test_bulk_upsert_retries_bounded_409_count_only(self):
+        from bifrost.tables import tables
 
-        req_recv, req_send, resp_recv, resp_send = self._pair()
-        lt.install(req_send, resp_recv)
-        table_id = str(uuid4())
-        ops = []
+        client = self._client(
+            [
+                self._response(409, {"detail": "conflict"}),
+                self._response(200, {"inserted": 2, "documents": []}),
+            ]
+        )
+        with self._silent_channel() as conns:
+            with patch("bifrost.tables.get_client", return_value=client):
+                result = await tables.bulk_upsert(
+                    "t",
+                    [{"id": "a", "data": {}}, {"id": "b", "data": {}}],
+                    scope="global",
+                    conflict_retries=1,
+                )
+            self._assert_channel_silent(conns)
 
-        def _handler(frame):
-            ops.append(frame["op"])
-            if frame["op"] == "tables.insert" and ops.count("tables.insert") == 1:
-                return {"v": 1, "id": frame["id"], "ok": False,
-                        "status": 404, "detail": "Table 't' not found"}
-            if frame["op"] == "tables.create":
-                return {"v": 1, "id": frame["id"], "ok": True,
-                        "result": _table_info("t")}
-            if frame["op"] == "tables.insert":
-                return {"v": 1, "id": frame["id"], "ok": True,
-                        "result": _doc(table_id, "d1")}
-            raise AssertionError(frame["op"])
-
-        pump = asyncio.create_task(self._pump(req_recv, resp_send, _handler, count=3))
-        try:
-            from bifrost._context import (
-                clear_execution_context,
-                set_execution_context,
-            )
-            from bifrost.tables import tables
-
-            set_execution_context(self._ctx())
-            try:
-                with patch("bifrost.tables.get_client") as get_client:
-                    get_client.side_effect = AssertionError("HTTP must not be used")
-                    doc = await tables.insert("t", {"v": 1}, id="d1")
-                    assert doc.id == "d1"
-            finally:
-                clear_execution_context()
-            await pump
-        finally:
-            lt.clear()
-            self._close_all((req_recv, req_send, resp_recv, resp_send))
-        assert ops == ["tables.insert", "tables.create", "tables.insert"]
-
-    @pytest.mark.asyncio
-    async def test_insert_404_in_solution_never_creates(self):
-        from bifrost import _local_transport as lt
-        from bifrost.client import BifrostAPIError
-
-        req_recv, req_send, resp_recv, resp_send = self._pair()
-        lt.install(req_send, resp_recv)
-        ops = []
-
-        def _handler(frame):
-            ops.append(frame["op"])
-            return {"v": 1, "id": frame["id"], "ok": False,
-                    "status": 404, "detail": "Table 't' not found"}
-
-        pump = asyncio.create_task(self._pump(req_recv, resp_send, _handler, count=1))
-        try:
-            from bifrost._context import (
-                clear_execution_context,
-                set_execution_context,
-            )
-            from bifrost.tables import tables
-
-            ctx = self._ctx()
-            ctx.solution_id = str(uuid4())
-            set_execution_context(ctx)
-            try:
-                with patch("bifrost.tables.get_client") as get_client:
-                    get_client.side_effect = AssertionError("HTTP must not be used")
-                    with pytest.raises(BifrostAPIError):
-                        await tables.insert("t", {"v": 1})
-            finally:
-                clear_execution_context()
-            await pump
-        finally:
-            lt.clear()
-            self._close_all((req_recv, req_send, resp_recv, resp_send))
-        # No auto-create retry inside a Solution, and no HTTP fallback.
-        assert ops == ["tables.insert"]
-
-    @pytest.mark.asyncio
-    async def test_update_delete_mappings_without_http(self):
-        from bifrost import _local_transport as lt
-
-        req_recv, req_send, resp_recv, resp_send = self._pair()
-        lt.install(req_send, resp_recv)
-        table_id = str(uuid4())
-
-        def _handler(frame):
-            if frame["op"] == "tables.update":
-                if frame["doc_id"] == "missing":
-                    return {"v": 1, "id": frame["id"], "ok": False,
-                            "status": 404, "detail": "Document not found"}
-                return {"v": 1, "id": frame["id"], "ok": True,
-                        "result": _doc(table_id, "d1", {"a": 2})}
-            if frame["op"] == "tables.delete_document":
-                if frame["doc_id"] == "missing":
-                    return {"v": 1, "id": frame["id"], "ok": False,
-                            "status": 404, "detail": "Document not found"}
-                return {"v": 1, "id": frame["id"], "ok": True, "result": True}
-            if frame["op"] == "tables.batch_delete":
-                if frame["table"] == "ghost":
-                    return {"v": 1, "id": frame["id"], "ok": False,
-                            "status": 404, "detail": "Table 'ghost' not found"}
-                return {"v": 1, "id": frame["id"], "ok": True,
-                        "result": {"deleted": 1, "deleted_ids": ["d1"]}}
-            raise AssertionError(frame["op"])
-
-        pump = asyncio.create_task(self._pump(req_recv, resp_send, _handler, count=5))
-        try:
-            from bifrost._context import (
-                clear_execution_context,
-                set_execution_context,
-            )
-            from bifrost.tables import tables
-
-            set_execution_context(self._ctx())
-            try:
-                with patch("bifrost.tables.get_client") as get_client:
-                    get_client.side_effect = AssertionError("HTTP must not be used")
-                    updated = await tables.update("t", "d1", {"a": 2})
-                    assert updated is not None and updated.data == {"a": 2}
-                    assert await tables.update("t", "missing", {}) is None
-                    assert await tables.delete_document("t", "d1") is True
-                    assert await tables.delete_document("t", "missing") is False
-                    deleted = await tables.delete_batch("ghost", ["d1"])
-                    assert deleted.deleted_ids == [] and deleted.count == 0
-            finally:
-                clear_execution_context()
-            await pump
-        finally:
-            lt.clear()
-            self._close_all((req_recv, req_send, resp_recv, resp_send))
-
-    @pytest.mark.asyncio
-    async def test_bulk_upsert_retries_409_without_http(self):
-        from bifrost import _local_transport as lt
-
-        req_recv, req_send, resp_recv, resp_send = self._pair()
-        lt.install(req_send, resp_recv)
-        calls = []
-
-        def _handler(frame):
-            assert frame["op"] == "tables.batch"
-            calls.append(frame)
-            if len(calls) == 1:
-                return {"v": 1, "id": frame["id"], "ok": False,
-                        "status": 409,
-                        "detail": "Batch write conflicted with a concurrent insert"}
-            return {"v": 1, "id": frame["id"], "ok": True,
-                    "result": {"inserted": 2, "errors": [], "documents": []}}
-
-        pump = asyncio.create_task(self._pump(req_recv, resp_send, _handler, count=2))
-        try:
-            from bifrost._context import (
-                clear_execution_context,
-                set_execution_context,
-            )
-            from bifrost.tables import tables
-
-            set_execution_context(self._ctx())
-            try:
-                with patch("bifrost.tables.get_client") as get_client:
-                    get_client.side_effect = AssertionError("HTTP must not be used")
-                    result = await tables.bulk_upsert("t", [
-                        {"id": "a", "data": {"v": 1}},
-                        {"id": "b", "data": {"v": 2}},
-                    ])
-                    assert result.count == 2
-            finally:
-                clear_execution_context()
-            await pump
-        finally:
-            lt.clear()
-            self._close_all((req_recv, req_send, resp_recv, resp_send))
+        assert result.count == 2
+        calls = client.engine_request.await_args_list
         assert len(calls) == 2
-        assert calls[0]["write_mode"] == "replace_upsert"
-        assert calls[0]["return_documents"] is False
+        assert calls[0].args == (
+            "POST", "/api/tables/t/documents/batch?scope=global",
+        )
+        assert calls[0].kwargs["json"]["write_mode"] == "replace_upsert"
+        assert calls[0].kwargs["json"]["return_documents"] is False
+        assert "retry_transient" not in calls[0].kwargs
 
     @pytest.mark.asyncio
-    async def test_bulk_upsert_409_exhausted_raises(self):
-        from bifrost import _local_transport as lt
-        from bifrost.client import BifrostAPIError
+    async def test_bulk_upsert_404_auto_creates_then_retries(self):
+        from bifrost.tables import tables
 
-        req_recv, req_send, resp_recv, resp_send = self._pair()
-        lt.install(req_send, resp_recv)
-        calls = []
+        client = self._client(
+            [
+                self._response(404, {"detail": "Table 't' not found"}),
+                self._response(201, _table_info("t")),
+                self._response(200, {"inserted": 1, "documents": []}),
+            ]
+        )
+        with self._silent_channel() as conns:
+            with patch("bifrost.tables.get_client", return_value=client):
+                result = await tables.bulk_upsert(
+                    "t", [{"id": "a", "data": {}}], scope="global"
+                )
+            self._assert_channel_silent(conns)
 
-        def _handler(frame):
-            calls.append(frame)
-            return {"v": 1, "id": frame["id"], "ok": False,
-                    "status": 409, "detail": "conflict"}
-
-        pump = asyncio.create_task(self._pump(req_recv, resp_send, _handler, count=1))
-        try:
-            from bifrost._context import (
-                clear_execution_context,
-                set_execution_context,
-            )
-            from bifrost.tables import tables
-
-            set_execution_context(self._ctx())
-            try:
-                with patch("bifrost.tables.get_client") as get_client:
-                    get_client.side_effect = AssertionError("HTTP must not be used")
-                    with pytest.raises(BifrostAPIError):
-                        await tables.bulk_upsert(
-                            "t", [{"id": "a", "data": {}}],
-                            conflict_retries=0,
-                        )
-            finally:
-                clear_execution_context()
-            await pump
-        finally:
-            lt.clear()
-            self._close_all((req_recv, req_send, resp_recv, resp_send))
-        assert len(calls) == 1
+        assert result.count == 1
+        calls = client.engine_request.await_args_list
+        assert [(c.args[0], c.args[1]) for c in calls] == [
+            ("POST", "/api/tables/t/documents/batch?scope=global"),
+            ("POST", "/api/tables?scope=global"),
+            ("POST", "/api/tables/t/documents/batch?scope=global"),
+        ]
 
     @pytest.mark.asyncio
-    async def test_write_error_never_falls_back_to_http(self):
-        from bifrost import _local_transport as lt
-        from bifrost.client import BifrostAuthorizationError
+    async def test_delete_batch_maps_404_to_empty(self):
+        from bifrost.tables import tables
 
-        req_recv, req_send, resp_recv, resp_send = self._pair()
-        lt.install(req_send, resp_recv)
+        client = self._client([self._response(404, {"detail": "not found"})])
+        with self._silent_channel() as conns:
+            with patch("bifrost.tables.get_client", return_value=client):
+                result = await tables.delete_batch("t", ["a"], scope="global")
+            self._assert_channel_silent(conns)
 
-        def _handler(frame):
-            return {"v": 1, "id": frame["id"], "ok": False,
-                    "status": 403, "detail": "Access denied"}
+        assert result.deleted_ids == [] and result.count == 0
+        call = client.engine_request.await_args_list[0]
+        assert call.args == (
+            "POST", "/api/tables/t/documents/batch-delete?scope=global",
+        )
+        assert call.kwargs["json"] == {"ids": ["a"]}
 
-        pump = asyncio.create_task(self._pump(req_recv, resp_send, _handler, count=2))
-        try:
-            from bifrost._context import (
-                clear_execution_context,
-                set_execution_context,
-            )
-            from bifrost.tables import tables
+    @pytest.mark.asyncio
+    async def test_delete_batch_maps_response(self):
+        from bifrost.tables import tables
 
-            set_execution_context(self._ctx())
-            try:
-                with patch("bifrost.tables.get_client") as get_client:
-                    get_client.side_effect = AssertionError("HTTP must not be used")
-                    with pytest.raises(BifrostAuthorizationError):
-                        await tables.insert("t", {"v": 1})
-                    with pytest.raises(BifrostAuthorizationError):
-                        await tables.upsert("t", "d", {"v": 1})
-            finally:
-                clear_execution_context()
-            await pump
-        finally:
-            lt.clear()
-            self._close_all((req_recv, req_send, resp_recv, resp_send))
+        client = self._client(
+            [self._response(200, {"deleted": 1, "deleted_ids": ["a"]})]
+        )
+        with self._silent_channel() as conns:
+            with patch("bifrost.tables.get_client", return_value=client):
+                result = await tables.delete_batch("t", ["a", "ghost"], scope="global")
+            self._assert_channel_silent(conns)
+
+        assert result.deleted_ids == ["a"] and result.count == 1

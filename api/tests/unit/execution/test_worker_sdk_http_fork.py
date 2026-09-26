@@ -628,7 +628,9 @@ async def _cleanup_committed_org(async_session_factory, org_id: str) -> None:
         await session.commit()
 
 
-def _table_script(*, scope: str, table_name: str, missing_name: str) -> str:
+def _table_script(
+    *, scope: str, table_name: str, missing_name: str, auto_name: str
+) -> str:
     source = f'''import os, sys
 from bifrost import tables
 from bifrost.client import get_engine_socket_path
@@ -652,7 +654,53 @@ _channel = "installed" if _installed else "absent"
 
 _missing_query = await tables.query({missing_name!r}, scope={scope!r})
 _missing_count = await tables.count({missing_name!r}, scope={scope!r})
+
+# Single-document writes.
+_inserted = await tables.insert({table_name!r}, {{"v": 1}}, id="ins-1", scope={scope!r})
+_upserted = await tables.upsert({table_name!r}, "ups-1", {{"v": 2}}, scope={scope!r})
+_updated = await tables.update({table_name!r}, "ups-1", {{"v": 3}}, scope={scope!r})
+_update_missing = await tables.update({table_name!r}, "nope", {{"v": 0}}, scope={scope!r})
+_delete_missing = await tables.delete_document({table_name!r}, "nope", scope={scope!r})
+_delete_hit = await tables.delete_document({table_name!r}, "ins-1", scope={scope!r})
+
+# Batch writes.
+_insert_batch = await tables.insert_batch(
+    {table_name!r},
+    [{{"id": "b1", "data": {{"v": 1}}}}, {{"data": {{"v": 2}}}}],
+    scope={scope!r},
+)
+_upsert_batch = await tables.upsert_batch(
+    {table_name!r}, [{{"id": "b1", "data": {{"v": 9}}}}], scope={scope!r},
+)
+_bulk = await tables.bulk_upsert(
+    {table_name!r},
+    [{{"id": "u1", "data": {{"v": 5}}}}, {{"id": "u2", "data": {{"v": 6}}}}],
+    scope={scope!r},
+)
+_delete_batch = await tables.delete_batch(
+    {table_name!r}, ["u1", "ghost"], scope={scope!r},
+)
+_delete_batch_missing = await tables.delete_batch(
+    {missing_name!r}, ["x"], scope={scope!r},
+)
+
+# Auto-create-on-insert helper creates the table then retries the write.
+_auto_doc = await tables.insert({auto_name!r}, {{"v": 7}}, id="auto-1", scope={scope!r})
+_auto_query = await tables.query({auto_name!r}, scope={scope!r})
+
+_written_count = await tables.count({table_name!r}, scope={scope!r})
+
+# A realistic 24 MiB batch: one request over the same socket, with no
+# base64 channel wrapper and no frame-size ceiling.
+import json as _json
+_blob = "x" * (1024 * 1024)
+_large_docs = [{{"id": f"big-{{i}}", "data": {{"blob": _blob}}}} for i in range(24)]
+_large_request_bytes = len(_json.dumps(_large_docs))
+_large_result = await tables.bulk_upsert({table_name!r}, _large_docs, scope={scope!r})
+_large_count = await tables.count({table_name!r}, scope={scope!r})
+
 _deleted = await tables.delete(_created.id)
+_auto_deleted = await tables.delete(_auto_doc.table_id)
 _after_delete = await tables.list(scope={scope!r})
 
 result = {{
@@ -674,7 +722,29 @@ result = {{
     "missing_total": _missing_query.total,
     "missing_docs": _missing_query.documents,
     "missing_count": _missing_count,
+    "inserted_id": _inserted.id,
+    "inserted_data": _inserted.data,
+    "upserted_id": _upserted.id,
+    "updated_data": _updated.data,
+    "update_missing": _update_missing,
+    "delete_missing": _delete_missing,
+    "delete_hit": _delete_hit,
+    "insert_batch_count": _insert_batch.count,
+    "insert_batch_docs": len(_insert_batch.documents),
+    "upsert_batch_count": _upsert_batch.count,
+    "bulk_count": _bulk.count,
+    "delete_batch_ids": _delete_batch.deleted_ids,
+    "delete_batch_count": _delete_batch.count,
+    "delete_batch_missing_ids": _delete_batch_missing.deleted_ids,
+    "delete_batch_missing_count": _delete_batch_missing.count,
+    "auto_doc_id": _auto_doc.id,
+    "auto_total": _auto_query.total,
+    "written_count": _written_count,
+    "large_request_bytes": _large_request_bytes,
+    "large_result_count": _large_result.count,
+    "large_count": _large_count,
     "deleted": _deleted,
+    "auto_deleted": _auto_deleted,
     "after_delete": _after_delete,
 }}
 '''
@@ -685,14 +755,16 @@ result = {{
 async def test_forked_child_tables_over_worker_socket(
     async_session_factory, monkeypatch
 ):
-    """Gate C3a: table definitions/reads reach the real routes over the socket.
+    """Gate C3a/C3b: all table routes reach the real routes over the socket.
 
     A real child forks with the worker's Unix socket injected and a dead
-    network API. It creates/lists/deletes table definitions and reads
-    documents. This fork installs only the worker socket, not the dedicated
-    channel. Success with no DB credential proves the shared client carried
-    every call to the parent-served routes over the socket, with the same
-    scope, 404, and delete semantics as the network API.
+    network API. It creates/lists/deletes table definitions, reads
+    documents, performs every single/batch write (including auto-create),
+    and pushes a realistic ~24 MiB batch. This fork installs only the worker
+    socket, not the dedicated channel. Success with no DB credential proves
+    the shared client carried every call to the parent-served routes over
+    the socket, with the same scope, 404, retry, and delete semantics as the
+    network API.
     """
     from src.core.security import mint_engine_token
 
@@ -700,6 +772,7 @@ async def test_forked_child_tables_over_worker_socket(
     tag = uuid4().hex[:8]
     table_name = f"forktbl_{tag}"
     missing_name = f"forkmissing_{tag}"
+    auto_name = f"forkauto_{tag}"
 
     # Any attempt to reach the network API fails loudly; the socket must
     # serve every call.
@@ -733,6 +806,7 @@ async def test_forked_child_tables_over_worker_socket(
                             scope=org_id,
                             table_name=table_name,
                             missing_name=missing_name,
+                            auto_name=auto_name,
                         ),
                         engine_token,
                         organization,
@@ -771,8 +845,39 @@ async def test_forked_child_tables_over_worker_socket(
         assert result["missing_total"] == 0
         assert result["missing_docs"] == []
         assert result["missing_count"] == 0
-        # Delete commits.
+        # Single-document writes: insert/upsert/update/delete round-trip the
+        # same results as the HTTP routes, and a missing row maps to
+        # update→None / delete→False.
+        assert result["inserted_id"] == "ins-1"
+        assert result["inserted_data"] == {"v": 1}
+        assert result["upserted_id"] == "ups-1"
+        assert result["updated_data"] == {"v": 3}
+        assert result["update_missing"] is None
+        assert result["delete_missing"] is False
+        assert result["delete_hit"] is True
+        # Batch writes: counts, generated ids, and missing-id skipping.
+        assert result["insert_batch_count"] == 2
+        assert result["insert_batch_docs"] == 2
+        assert result["upsert_batch_count"] == 1
+        assert result["bulk_count"] == 2
+        assert result["delete_batch_ids"] == ["u1"]
+        assert result["delete_batch_count"] == 1
+        assert result["delete_batch_missing_ids"] == []
+        assert result["delete_batch_missing_count"] == 0
+        assert result["written_count"] == 4
+        # Auto-create-on-insert: the helper creates the missing table over
+        # the socket and retries the write.
+        assert result["auto_doc_id"] == "auto-1"
+        assert result["auto_total"] == 1
+        # ~24 MiB in one batch proves the socket path carries realistic large
+        # payloads with no base64 channel wrapper.
+        assert 23 * 1024 * 1024 < result["large_request_bytes"] < 26 * 1024 * 1024
+        assert result["large_result_count"] == 24
+        assert result["large_count"] == 28
+        # Delete commits for both the definition-created and auto-created
+        # tables.
         assert result["deleted"] is True
+        assert result["auto_deleted"] is True
         assert result["after_delete"] == []
 
         _wait_for_pid_to_die(child_pid)

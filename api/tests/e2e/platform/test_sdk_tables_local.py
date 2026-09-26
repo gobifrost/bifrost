@@ -43,6 +43,7 @@ def live_table_keys():
         "tag": tag,
         "table": f"slive_tbl_{tag}",
         "missing_table": f"slive_tbl_missing_{tag}",
+        "write_table": f"slive_wtbl_{tag}",
     }
 
 
@@ -70,6 +71,27 @@ def live_table(e2e_client, platform_admin, live_table_keys):
             json={"id": doc_id, "data": data},
         )
         assert insert.status_code == 201, insert.text
+    yield {"table_id": table_id}
+    e2e_client.delete(f"/api/tables/{table_id}", headers=platform_admin.headers)
+
+
+@pytest.fixture(scope="module")
+def live_write_table(e2e_client, platform_admin, org1, live_table_keys):
+    """Seed one empty org-scoped table for the writer workflow to mutate.
+
+    The workflow's default scope is its own organization, so the table must
+    live in that org: the batch route enforces that an explicit scope names
+    the table's own scope.
+    """
+    name = live_table_keys["write_table"]
+    create = e2e_client.post(
+        "/api/tables",
+        headers=platform_admin.headers,
+        json={"name": name, "description": "stage 3b local table writes E2E",
+              "organization_id": org1["id"]},
+    )
+    assert create.status_code == 201, create.text
+    table_id = create.json()["id"]
     yield {"table_id": table_id}
     e2e_client.delete(f"/api/tables/{table_id}", headers=platform_admin.headers)
 
@@ -118,6 +140,84 @@ async def {name}():
         "created_id": created.id,
         "created_listed": "{created_name}" in listed_names,
         "deleted": deleted,
+    }}
+'''
+    registered = write_and_register(
+        e2e_client,
+        platform_admin.headers,
+        path,
+        content,
+        name,
+        organization_id=org1["id"],
+    )
+    resp = e2e_client.patch(
+        f"/api/workflows/{registered['id']}",
+        headers=platform_admin.headers,
+        json={"organization_id": org1["id"], "access_level": "authenticated"},
+    )
+    assert resp.status_code == 200, f"workflow patch failed: {resp.text}"
+    yield registered
+
+    e2e_client.delete(
+        f"/api/files/editor?path={path}",
+        headers=platform_admin.headers,
+    )
+
+
+@pytest.fixture(scope="module")
+def live_tables_write_workflow(
+    e2e_client, platform_admin, org1, live_table_keys, live_write_table
+):
+    name = f"e2e_sdk_local_table_writes_{live_table_keys['tag']}"
+    path = f"{name}.py"
+    table = live_table_keys["write_table"]
+    content = f'''"""Stage 3b local table writes E2E workflow."""
+from bifrost import workflow, tables
+
+@workflow(name="{name}", description="Stage 3b local table writes E2E")
+async def {name}():
+    inserted = await tables.insert("{table}", {{"status": "inserted", "n": 1}}, id="w-ins")
+    upserted = await tables.upsert("{table}", "w-ups", {{"status": "upserted", "n": 2}})
+    updated = await tables.update("{table}", "w-ups", {{"n": 3}})
+    missing_update = await tables.update("{table}", "w-missing", {{"n": 0}})
+    deleted_hit = await tables.delete_document("{table}", "w-ins")
+    deleted_missing = await tables.delete_document("{table}", "w-missing")
+    inserted_batch = await tables.insert_batch(
+        "{table}", [{{"id": "w-batch", "data": {{"status": "batch", "n": 4}}}}]
+    )
+    upserted_batch = await tables.upsert_batch(
+        "{table}", [{{"id": "w-batch", "data": {{"status": "batch", "n": 5}}}}]
+    )
+    bulk = await tables.bulk_upsert(
+        "{table}",
+        [{{"id": "w-bulk-a", "data": {{"status": "bulk", "n": 6}}}},
+         {{"id": "w-bulk-b", "data": {{"status": "bulk", "n": 7}}}}],
+    )
+    deleted_batch = await tables.delete_batch("{table}", ["w-bulk-a", "ghost"])
+    total = await tables.count("{table}")
+    # ~24 MiB in one batch: the socket carries realistic large payloads with
+    # no base64 channel wrapper and no frame-size ceiling.
+    _blob = "y" * (1024 * 1024)
+    large = await tables.bulk_upsert(
+        "{table}",
+        [{{"id": f"w-big-{{i}}", "data": {{"blob": _blob}}}} for i in range(24)],
+    )
+    total_with_large = await tables.count("{table}")
+    return {{
+        "inserted_id": inserted.id,
+        "upserted_id": upserted.id,
+        "updated_n": updated.data.get("n"),
+        "missing_update": missing_update,
+        "deleted_hit": deleted_hit,
+        "deleted_missing": deleted_missing,
+        "inserted_batch_count": inserted_batch.count,
+        "upserted_batch_count": upserted_batch.count,
+        "bulk_count": bulk.count,
+        "deleted_batch_ids": deleted_batch.deleted_ids,
+        "deleted_batch_count": deleted_batch.count,
+        "total": total,
+        "large_count": large.count,
+        "total_with_large": total_with_large,
     }}
 '''
     registered = write_and_register(
@@ -206,6 +306,86 @@ class TestSdkTablesLocalLiveE2E:
         )
         assert counted.status_code == 200, counted.text
         assert counted.json() == {"count": 3}
+
+
+class TestSdkTablesWritesLocalLiveE2E:
+    def test_workflow_writes_match_http(
+        self, e2e_client, org1_user, platform_admin, live_tables_write_workflow,
+        live_write_table,
+    ):
+        result = execute_workflow_sync(
+            e2e_client,
+            org1_user.headers,
+            live_tables_write_workflow["id"],
+            max_wait=120.0,
+        )
+        assert result["status"] == "Success", result
+        out = result["result"]
+        # Single-document writes: the same results as the HTTP routes, with a
+        # missing row mapping to update→None / delete→False.
+        assert out["inserted_id"] == "w-ins"
+        assert out["upserted_id"] == "w-ups"
+        assert out["updated_n"] == 3
+        assert out["missing_update"] is None
+        assert out["deleted_hit"] is True
+        assert out["deleted_missing"] is False
+        # Batch writes: counts, generated ids, and missing-id skipping.
+        assert out["inserted_batch_count"] == 1
+        assert out["upserted_batch_count"] == 1
+        assert out["bulk_count"] == 2
+        assert out["deleted_batch_ids"] == ["w-bulk-a"]
+        assert out["deleted_batch_count"] == 1
+        assert out["total"] == 3
+        # ~24 MiB batch over the real worker socket.
+        assert out["large_count"] == 24
+        assert out["total_with_large"] == 27
+
+        # Committed state verified over external HTTP (parity).
+        table_id = live_write_table["table_id"]
+
+        upserted = e2e_client.get(
+            f"/api/tables/{table_id}/documents/w-ups",
+            headers=platform_admin.headers,
+        )
+        assert upserted.status_code == 200, upserted.text
+        assert upserted.json()["data"] == {"status": "upserted", "n": 3}
+
+        batched = e2e_client.get(
+            f"/api/tables/{table_id}/documents/w-batch",
+            headers=platform_admin.headers,
+        )
+        assert batched.status_code == 200, batched.text
+        assert batched.json()["data"] == {"status": "batch", "n": 5}
+
+        bulk = e2e_client.get(
+            f"/api/tables/{table_id}/documents/w-bulk-b",
+            headers=platform_admin.headers,
+        )
+        assert bulk.status_code == 200, bulk.text
+        assert bulk.json()["data"] == {"status": "bulk", "n": 7}
+
+        # Deleted rows are gone.
+        for gone_id in ("w-ins", "w-bulk-a"):
+            gone = e2e_client.get(
+                f"/api/tables/{table_id}/documents/{gone_id}",
+                headers=platform_admin.headers,
+            )
+            assert gone.status_code == 404, (gone_id, gone.text)
+
+        counted = e2e_client.get(
+            f"/api/tables/{table_id}/documents/count",
+            headers=platform_admin.headers,
+        )
+        assert counted.status_code == 200, counted.text
+        assert counted.json() == {"count": 27}
+
+        # One large row commits with its full ~1 MiB payload.
+        large_doc = e2e_client.get(
+            f"/api/tables/{table_id}/documents/w-big-0",
+            headers=platform_admin.headers,
+        )
+        assert large_doc.status_code == 200, large_doc.text
+        assert len(large_doc.json()["data"]["blob"]) == 1024 * 1024
 
 
 _SERVICE_SOURCE = '''"""Stage 3a local table reads E2E service (service token identity)."""

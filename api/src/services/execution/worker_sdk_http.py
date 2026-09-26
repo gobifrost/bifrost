@@ -14,9 +14,12 @@ app is started and no handler or service is copied.
 
 Gate A proved the approach with the config routes; Gate C1 wired the config
 facade to the shared client transport, Gate C2 added the six integrations
-routes, and Gate C3a adds the table-definition routes (create/list/delete)
-and the document reads (get/query/count). Streams and other domains stay on
-their existing channel path until their own Gate C slice migrates them.
+routes, Gate C3a added the table-definition routes (create/list/delete)
+and the document reads (get/query/count), and Gate C3b adds the table
+mutations and batch writes (insert/upsert/update/delete_document/batch/
+batch-delete plus the auto-create POST /api/tables helper). Streams and
+other domains stay on their existing channel path until their own Gate C
+slice migrates them.
 
 ``import fastapi``/``uvicorn`` happen inside the functions so the worker
 entry closure stays free of those heavyweights at import time (see
@@ -79,16 +82,27 @@ TABLE_SDK_ROUTE_PATHS: frozenset[str] = frozenset(
     }
 )
 
-# Gate C3a: table-definition delete plus the document reads served by the
-# tables REST router. Keyed by path AND the exact methods needed, because
-# ``/api/tables/{table_id}`` is also a GET/PATCH metadata route we must not
-# accidentally mount. The shared ``BifrostClient.engine_request`` calls each
-# one with the ordinary verb.
+# Gate C3a/C3b: the table-definition delete plus every document read and
+# write served by the tables REST router. Keyed by path AND the exact
+# methods needed, because ``/api/tables/{table_id}`` is also a GET/PATCH
+# metadata route and ``/api/tables/{table_id}/documents/{doc_id}`` carries
+# GET/PATCH/DELETE, and we must not accidentally mount an unrelated sibling.
+# The shared ``BifrostClient.engine_request`` calls each one with the
+# ordinary verb.
 TABLE_ROUTE_METHODS: dict[str, frozenset[str]] = {
+    # Auto-create-on-insert (loose table ensure helper).
+    "/api/tables": frozenset({"POST"}),
     "/api/tables/{table_id}": frozenset({"DELETE"}),
+    # Document writes.
+    "/api/tables/{table_id}/documents": frozenset({"POST"}),
+    "/api/tables/{table_id}/documents/upsert": frozenset({"POST"}),
+    # Document reads.
     "/api/tables/{table_id}/documents/count": frozenset({"GET"}),
-    "/api/tables/{table_id}/documents/{doc_id}": frozenset({"GET"}),
+    "/api/tables/{table_id}/documents/{doc_id}": frozenset({"GET", "PATCH", "DELETE"}),
     "/api/tables/{table_id}/documents/query": frozenset({"POST"}),
+    # Batch writes.
+    "/api/tables/{table_id}/documents/batch": frozenset({"POST"}),
+    "/api/tables/{table_id}/documents/batch-delete": frozenset({"POST"}),
 }
 
 # Every route this worker-local app serves from the cli SDK router. Other SDK
@@ -136,7 +150,9 @@ def build_worker_sdk_app() -> Any:
         if wanted and methods & wanted:
             app.router.routes.append(route)
             selected += 1
-    expected += len(TABLE_ROUTE_METHODS)
+    # Each wanted method is one registered APIRoute, so the expected count is
+    # the total number of (path, method) pairs, not the number of paths.
+    expected += sum(len(methods) for methods in TABLE_ROUTE_METHODS.values())
 
     if selected != expected:
         raise RuntimeError(

@@ -9,12 +9,12 @@ otherwise. Same path, body, bearer token, timeout, and error handling on
 both transports; a local failure raises and never falls back to the
 network API.
 
-As of Gate C3a the table-definition methods (``create``/``list``/``delete``)
-and the document reads (``get``/``query``/``count``) use those ordinary
-HTTP routes. The remaining table mutations
-(``insert``/``upsert``/``update``/``delete_document``/``batch``/
-``bulk_upsert``) still ride the dedicated local transport until their own
-Gate C slice migrates them.
+As of Gate C3b every table method — definitions (``create``/``list``/
+``delete``), document reads (``get``/``query``/``count``), document
+mutations (``insert``/``upsert``/``update``/``delete_document``), and the
+batch writes (``insert_batch``/``upsert_batch``/``bulk_upsert``/
+``delete_batch``) plus the auto-create-on-insert helper — uses those
+ordinary HTTP routes.
 
 All methods are async and must be awaited.
 """
@@ -34,7 +34,6 @@ from .models import (
     BulkUpsertResult,
 )
 from ._context import resolve_scope, _execution_context, get_effective_solution
-from ._local_transport import get as _get_local_transport
 
 
 def _current_context():
@@ -93,35 +92,21 @@ async def _ensure_table_exists(table: str, scope: str | None) -> None:
     This used to live in the CLI handler (``_find_or_create_table_for_sdk``);
     moved here so the SDK and web UI share one document-write code path.
     Idempotent: a 409 from a concurrent creator is treated as success.
+
+    Rides the shared ``BifrostClient`` exactly like the write that triggered
+    it: over the worker's private Unix socket inside an engine child, and
+    over the network API otherwise. A local attempt never falls back to
+    HTTP.
     """
     client = get_client()
-    response = await client.post(
+    response = await client.engine_request(
+        "POST",
         f"/api/tables{_scope_query(scope)}",
         json={"name": table},
     )
     if response.status_code == 409:
         return
     raise_for_status_with_detail(response)
-
-
-async def _ensure_table_exists_local(table: str, scope: str | None) -> None:
-    """Local equivalent of :func:`_ensure_table_exists` for engine children.
-
-    Creates the table through the parent over the dedicated channel.
-    Idempotent: a 409 from a concurrent creator is treated as success,
-    exactly like the HTTP path. A failed local write never retries via
-    HTTP — this raises loudly instead.
-    """
-    from .client import BifrostAPIError
-
-    transport = _get_local_transport()
-    assert transport is not None
-    try:
-        await transport.call_tables_create(table, None, None, scope)
-    except BifrostAPIError as e:
-        if e.response.status_code == 409:
-            return
-        raise
 
 
 class tables:
@@ -131,10 +116,8 @@ class tables:
     Allows workflows to create tables and store/query documents.
     Every operation goes through the ordinary HTTP API endpoints, carried
     by the shared ``BifrostClient`` over the worker's private Unix socket
-    inside an engine child and over the network otherwise. The remaining
-    write operations additionally use the dedicated local transport until
-    their own migration; either way a local attempt never falls back to
-    HTTP.
+    inside an engine child and over the network otherwise; a local attempt
+    never falls back to HTTP.
 
     All methods are async - await is required.
 
@@ -335,37 +318,16 @@ class tables:
         if created_by is not None:
             body["created_by"] = created_by
 
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: the parent resolves the table and runs
-            # the shared write service over the dedicated channel, with
-            # the same auto-create-once retry outside a Solution. A
-            # local attempt never falls back to HTTP.
-            from .client import BifrostAPIError
-
-            target_solution = get_effective_solution(solution)
-            try:
-                result = await transport.call_tables_insert(
-                    table, id, data, created_by, None,
-                    effective_scope, target_solution,
-                )
-            except BifrostAPIError as e:
-                if e.response.status_code == 404 and _auto_create_allowed(solution):
-                    await _ensure_table_exists_local(table, effective_scope)
-                    result = await transport.call_tables_insert(
-                        table, id, data, created_by, None,
-                        effective_scope, target_solution,
-                    )
-                else:
-                    raise
-            return DocumentData.model_validate(result)
+        # The shared BifrostClient carries this over the worker's private
+        # Unix socket when the engine injected one, and over the network
+        # otherwise. A local attempt never falls back to HTTP.
         client = get_client()
         url = f"/api/tables/{table}/documents{_scope_query(effective_scope, solution)}"
-        response = await client.post(url, json=body)
+        response = await client.engine_request("POST", url, json=body)
         if response.status_code == 404 and _auto_create_allowed(solution):
             # Table doesn't exist — auto-create then retry.
             await _ensure_table_exists(table, effective_scope)
-            response = await client.post(url, json=body)
+            response = await client.engine_request("POST", url, json=body)
         raise_for_status_with_detail(response)
         return DocumentData.model_validate(response.json())
 
@@ -412,35 +374,20 @@ class tables:
         if updated_by is not None:
             body["updated_by"] = updated_by
 
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: the parent runs the shared replace-upsert
-            # service over the dedicated channel, with the same
-            # auto-create-once retry outside a Solution. A local attempt
-            # never falls back to HTTP.
-            from .client import BifrostAPIError
-
-            try:
-                result = await transport.call_tables_upsert(
-                    table, id, data, created_by, updated_by,
-                    effective_scope,
-                )
-            except BifrostAPIError as e:
-                if e.response.status_code == 404 and not _has_solution_context():
-                    await _ensure_table_exists_local(table, effective_scope)
-                    result = await transport.call_tables_upsert(
-                        table, id, data, created_by, updated_by,
-                        effective_scope,
-                    )
-                else:
-                    raise
-            return DocumentData.model_validate(result)
+        # The shared BifrostClient carries this over the worker's private
+        # Unix socket when the engine injected one, and over the network
+        # otherwise, with the same auto-create-once retry outside a
+        # Solution. A local attempt never falls back to HTTP.
         client = get_client()
         url = f"/api/tables/{table}/documents/upsert{_scope_query(effective_scope)}"
-        response = await client.post(url, json=body, retry_transient=True)
+        response = await client.engine_request(
+            "POST", url, json=body, retry_transient=True
+        )
         if response.status_code == 404 and not _has_solution_context():
             await _ensure_table_exists(table, effective_scope)
-            response = await client.post(url, json=body, retry_transient=True)
+            response = await client.engine_request(
+                "POST", url, json=body, retry_transient=True
+            )
         raise_for_status_with_detail(response)
         return DocumentData.model_validate(response.json())
 
@@ -521,25 +468,13 @@ class tables:
         body: dict[str, Any] = {"data": data}
         if updated_by is not None:
             body["updated_by"] = updated_by
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: the parent runs the shared merge-update
-            # service over the dedicated channel (a missing table or row
-            # maps to None, like the HTTP path). A local attempt never
-            # falls back to HTTP.
-            from .client import BifrostAPIError
-
-            try:
-                result = await transport.call_tables_update(
-                    table, doc_id, data, updated_by, effective_scope,
-                )
-            except BifrostAPIError as e:
-                if e.response.status_code == 404:
-                    return None
-                raise
-            return DocumentData.model_validate(result)
+        # The shared BifrostClient carries this over the worker's private
+        # Unix socket when the engine injected one, and over the network
+        # otherwise (a missing table or row maps to None). A local attempt
+        # never falls back to HTTP.
         client = get_client()
-        response = await client.patch(
+        response = await client.engine_request(
+            "PATCH",
             f"/api/tables/{table}/documents/{doc_id}{_scope_query(effective_scope)}",
             json=body,
             retry_transient=True,
@@ -573,25 +508,13 @@ class tables:
             >>> deleted = await tables.delete_document("customers", "acme-001")
         """
         effective_scope = resolve_scope(scope)
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: the parent runs the shared delete service
-            # over the dedicated channel (a missing table or row maps to
-            # False, like the HTTP path). A local attempt never falls back
-            # to HTTP.
-            from .client import BifrostAPIError
-
-            try:
-                await transport.call_tables_delete_document(
-                    table, doc_id, effective_scope,
-                )
-            except BifrostAPIError as e:
-                if e.response.status_code == 404:
-                    return False
-                raise
-            return True
+        # The shared BifrostClient carries this over the worker's private
+        # Unix socket when the engine injected one, and over the network
+        # otherwise (a missing table or row maps to False). A local attempt
+        # never falls back to HTTP.
         client = get_client()
-        response = await client.delete(
+        response = await client.engine_request(
+            "DELETE",
             f"/api/tables/{table}/documents/{doc_id}{_scope_query(effective_scope)}",
         )
         if response.status_code == 404:
@@ -730,48 +653,11 @@ class tables:
                 item["updated_by"] = updated_by
             items.append(item)
 
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: each attempt rides the dedicated channel
-            # with the same bounded 409-retry and auto-create-once
-            # behavior as the HTTP loop below. A local attempt never
-            # falls back to HTTP.
-            from .client import BifrostAPIError
-
-            async def _post_once() -> dict[str, Any]:
-                return await transport.call_tables_batch(
-                    table, items, False, "replace_upsert", False,
-                    effective_scope,
-                )
-
-            attempts = max(0, conflict_retries) + 1
-            ensured_table = False
-            local_body: dict[str, Any] | None = None
-            for attempt in range(attempts):
-                try:
-                    local_body = await _post_once()
-                except BifrostAPIError as e:
-                    status = e.response.status_code
-                    if (
-                        status == 404
-                        and not _has_solution_context()
-                        and not ensured_table
-                    ):
-                        await _ensure_table_exists_local(table, effective_scope)
-                        ensured_table = True
-                        try:
-                            local_body = await _post_once()
-                        except BifrostAPIError as e2:
-                            if e2.response.status_code == 409 and attempt < attempts - 1:
-                                continue
-                            raise
-                    elif status == 409 and attempt < attempts - 1:
-                        continue
-                    else:
-                        raise
-                break
-            assert local_body is not None
-            return BulkUpsertResult(count=local_body["inserted"])
+        # The shared BifrostClient carries each attempt over the worker's
+        # private Unix socket when the engine injected one, and over the
+        # network otherwise, with the same bounded 409-retry and
+        # auto-create-once behavior. A local attempt never falls back to
+        # HTTP.
         client = get_client()
         url = f"/api/tables/{table}/documents/batch{_scope_query(effective_scope)}"
         body = {
@@ -783,11 +669,11 @@ class tables:
         ensured_table = False
         response = None
         for attempt in range(attempts):
-            response = await client.post(url, json=body)
+            response = await client.engine_request("POST", url, json=body)
             if response.status_code == 404 and not _has_solution_context() and not ensured_table:
                 await _ensure_table_exists(table, effective_scope)
                 ensured_table = True
-                response = await client.post(url, json=body)
+                response = await client.engine_request("POST", url, json=body)
             if response.status_code != 409 or attempt == attempts - 1:
                 break
         assert response is not None
@@ -830,38 +716,22 @@ class tables:
                 item["updated_by"] = updated_by
             items.append(item)
 
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: the parent runs the shared batch service
-            # over the dedicated channel, with the same auto-create-once
-            # retry outside a Solution. A local attempt never falls back
-            # to HTTP.
-            from .client import BifrostAPIError
-
-            try:
-                local_body = await transport.call_tables_batch(
-                    table, items, upsert, None, True, effective_scope,
-                )
-            except BifrostAPIError as e:
-                if e.response.status_code == 404 and not _has_solution_context():
-                    await _ensure_table_exists_local(table, effective_scope)
-                    local_body = await transport.call_tables_batch(
-                        table, items, upsert, None, True, effective_scope,
-                    )
-                else:
-                    raise
-            return BatchResult(
-                documents=[DocumentData.model_validate(d) for d in local_body.get("documents", [])],
-                count=local_body["inserted"],
-            )
+        # The shared BifrostClient carries this over the worker's private
+        # Unix socket when the engine injected one, and over the network
+        # otherwise, with the same auto-create-once retry outside a
+        # Solution. A local attempt never falls back to HTTP.
         req_body: dict[str, Any] = {"documents": items, "upsert": upsert}
         client = get_client()
         url = f"/api/tables/{table}/documents/batch{_scope_query(effective_scope)}"
         retry_transient = upsert and all(item["id"] for item in items)
-        response = await client.post(url, json=req_body, retry_transient=retry_transient)
+        response = await client.engine_request(
+            "POST", url, json=req_body, retry_transient=retry_transient
+        )
         if response.status_code == 404 and not _has_solution_context():
             await _ensure_table_exists(table, effective_scope)
-            response = await client.post(url, json=req_body, retry_transient=retry_transient)
+            response = await client.engine_request(
+                "POST", url, json=req_body, retry_transient=retry_transient
+            )
         raise_for_status_with_detail(response)
         body = response.json()
         return BatchResult(
@@ -893,28 +763,13 @@ class tables:
             >>> result = await tables.delete_batch("customers", ["acme-001", "beta-001"])
         """
         effective_scope = resolve_scope(scope)
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: the parent runs the shared batch-delete
-            # service over the dedicated channel (a missing table maps to
-            # an empty result, like the HTTP path). A local attempt never
-            # falls back to HTTP.
-            from .client import BifrostAPIError
-
-            try:
-                local_body = await transport.call_tables_batch_delete(
-                    table, doc_ids, effective_scope,
-                )
-            except BifrostAPIError as e:
-                if e.response.status_code == 404:
-                    return BatchDeleteResult(deleted_ids=[], count=0)
-                raise
-            return BatchDeleteResult(
-                deleted_ids=local_body.get("deleted_ids", []),
-                count=local_body["deleted"],
-            )
+        # The shared BifrostClient carries this over the worker's private
+        # Unix socket when the engine injected one, and over the network
+        # otherwise (a missing table maps to an empty result). A local
+        # attempt never falls back to HTTP.
         client = get_client()
-        response = await client.post(
+        response = await client.engine_request(
+            "POST",
             f"/api/tables/{table}/documents/batch-delete{_scope_query(effective_scope)}",
             json={"ids": doc_ids},
         )
