@@ -7,6 +7,8 @@ actively claims eligible services here — control-plane tests assert shapes
 and transitions, not the absence of attempts.
 """
 
+import time
+
 import pytest
 
 from tests.e2e.conftest import write_and_register
@@ -110,6 +112,15 @@ def test_stop_start_restart_cycle(e2e_client, platform_admin, service_workflow):
     response = e2e_client.post(f"/api/services/{service_id}/stop", headers=platform_admin.headers)
     assert response.status_code == 200
     assert response.json()["desired_state"] == "stopped"
+
+    # A worker can claim an attempt while the stop request is being committed.
+    # The durable desire changes immediately; the observed state follows once
+    # the worker sees the stop request and exits that attempt.
+    deadline = time.monotonic() + 10
+    while response.json()["observed_state"] != "stopped" and time.monotonic() < deadline:
+        time.sleep(0.2)
+        response = e2e_client.get(f"/api/services/{service_id}", headers=platform_admin.headers)
+        assert response.status_code == 200
     assert response.json()["observed_state"] == "stopped"
 
     response = e2e_client.post(f"/api/services/{service_id}/start", headers=platform_admin.headers)

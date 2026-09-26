@@ -318,6 +318,13 @@ class TestServiceWorkerMode:
         )
         assert resp.status_code != 401, resp.text
 
+        # Force the replacement child to load the service source through the
+        # cold-cache path that previously rejected its non-superuser token.
+        from src.core.module_cache_contract import MODULE_KEY_PREFIX
+
+        async with get_redis() as r:
+            await r.delete(f"{MODULE_KEY_PREFIX}{service_def['workflow_path']}")
+
         # A rolling restart must replace the live attempt before the final stop.
         resp = e2e_client.post(
             f"/api/services/{definition_id}/restart", headers=platform_admin.headers
