@@ -1,14 +1,14 @@
 """
-Knowledge Store SDK for Bifrost - API-only implementation.
+Knowledge Store SDK for Bifrost.
 
 Provides Python API for semantic search and RAG (Retrieval Augmented Generation).
 Uses pgvector for vector similarity search with org-scoped namespaces.
 
-Outside an engine child all operations go through HTTP API endpoints;
-inside an engine child the fixed operations ride the dedicated local
-transport to the parent (same shared services, same results) with no
-HTTP requests and no database connection in the child. A local attempt
-never falls back to HTTP.
+Every fixed operation sends the ordinary HTTP request through the shared
+``BifrostClient``: over the worker's private Unix socket when the engine
+injected one, and over the network API otherwise. The worker parent owns the
+pooled database and protected embedding/provider credentials; an engine child
+holds neither, and a local attempt never falls back to the network API.
 All methods are async and must be awaited.
 
 Usage:
@@ -42,7 +42,6 @@ from typing import Any
 from .client import get_client, raise_for_status_with_detail
 from .models import KnowledgeDocument, NamespaceInfo
 from ._context import resolve_scope
-from ._local_transport import get as _get_local_transport
 
 
 class knowledge:
@@ -52,11 +51,12 @@ class knowledge:
     Provides semantic search and storage for RAG.
     Documents are scoped to organizations with global fallback.
 
-    Outside an engine child all operations go through HTTP API endpoints;
-    inside an engine child the fixed operations resolve through the parent
-    over the dedicated local transport (same shared services as the HTTP
-    endpoints) with no HTTP requests and no database connection in the
-    child. A local attempt never falls back to HTTP.
+    Every operation sends the ordinary HTTP request through the shared
+    ``BifrostClient``: over the worker's private Unix socket when the engine
+    injected one, and over the network API otherwise. The worker parent owns
+    the pooled database and protected embedding/provider credentials; an
+    engine child holds neither, and a local attempt never falls back to the
+    network API after a failure.
     """
 
     @staticmethod
@@ -72,6 +72,11 @@ class knowledge:
         Store a document in the knowledge store.
 
         If key is provided and exists, updates the existing document (upsert).
+
+        Sends the ordinary HTTP request through the shared ``BifrostClient``:
+        over the worker's private Unix socket when the engine injected one,
+        and over the network API otherwise. A local failure raises and never
+        falls back to the network API.
 
         Args:
             content: Text content to store and embed
@@ -96,18 +101,9 @@ class knowledge:
             ... )
         """
         effective_scope = resolve_scope(scope)
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: the parent validates the same
-            # ``CLIKnowledgeStoreRequest`` DTO and runs the shared
-            # knowledge service over the dedicated channel. A local
-            # attempt never falls back to HTTP.
-            result = await transport.call_knowledge_store(
-                content, namespace, key, metadata, effective_scope,
-            )
-            return result["id"]
         client = get_client()
-        response = await client.post(
+        response = await client.engine_request(
+            "POST",
             "/api/sdk/knowledge/store",
             json={
                 "content": content,
@@ -136,6 +132,12 @@ class knowledge:
         - key (optional): Key for upserts
         - metadata (optional): Metadata dict
 
+        Sends the ordinary HTTP request through the shared ``BifrostClient``:
+        over the worker's private Unix socket when the engine injected one,
+        and over the network API otherwise. A local failure raises and never
+        falls back to the network API, and the read timeout rides the request
+        so a large batch's embedding generation is not cut short.
+
         Args:
             documents: List of document dicts
             namespace: Namespace for all documents
@@ -157,21 +159,9 @@ class knowledge:
             ... ], namespace="faq")
         """
         effective_scope = resolve_scope(scope)
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: the parent validates the same
-            # ``CLIKnowledgeStoreManyRequest`` DTO and runs the shared
-            # knowledge service over the dedicated channel (embedding
-            # happens off-connection in the parent, so the batch
-            # timeout rides the local call). A local attempt never
-            # falls back to HTTP.
-            result = await transport.call_knowledge_store_many(
-                documents, namespace, effective_scope,
-                timeout=timeout if timeout is not None else 300.0,
-            )
-            return result["ids"]
         client = get_client()
-        response = await client.post(
+        response = await client.engine_request(
+            "POST",
             "/api/sdk/knowledge/store-many",
             json={
                 "documents": documents,
@@ -199,6 +189,11 @@ class knowledge:
 
         Uses semantic similarity (vector search) to find relevant documents.
 
+        Sends the ordinary HTTP request through the shared ``BifrostClient``:
+        over the worker's private Unix socket when the engine injected one,
+        and over the network API otherwise. A local failure raises and never
+        falls back to the network API.
+
         Args:
             query: Search query (will be embedded)
             namespace: Namespace(s) to search
@@ -225,24 +220,9 @@ class knowledge:
             ...     print(f"{doc.score:.2f}: {doc.content[:100]}")
         """
         effective_scope = resolve_scope(scope)
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: the parent validates the same
-            # ``CLIKnowledgeSearchRequest`` DTO and runs the shared
-            # knowledge service over the dedicated channel. A local
-            # attempt never falls back to HTTP.
-            items = await transport.call_knowledge_search(
-                query,
-                namespace if isinstance(namespace, list) else [namespace],
-                limit,
-                min_score,
-                metadata_filter,
-                effective_scope,
-                fallback,
-            )
-            return [KnowledgeDocument.model_validate(doc) for doc in items]
         client = get_client()
-        response = await client.post(
+        response = await client.engine_request(
+            "POST",
             "/api/sdk/knowledge/search",
             json={
                 "query": query,
@@ -271,6 +251,12 @@ class knowledge:
         """
         Delete a document by key.
 
+        Sends the ordinary HTTP request through the shared ``BifrostClient``:
+        over the worker's private Unix socket when the engine injected one,
+        and over the network API otherwise. A local failure raises and never
+        falls back to the network API (a delete may already have committed, so
+        a retry could not be trusted).
+
         Args:
             key: Document key
             namespace: Namespace
@@ -286,18 +272,9 @@ class knowledge:
             >>> deleted = await knowledge.delete("ticket-123", namespace="tickets")
         """
         effective_scope = resolve_scope(scope)
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: the parent validates the same
-            # ``CLIKnowledgeDeleteRequest`` DTO and runs the shared
-            # knowledge service over the dedicated channel. A local
-            # attempt never falls back to HTTP.
-            result = await transport.call_knowledge_delete(
-                key, namespace, effective_scope,
-            )
-            return result["deleted"]
         client = get_client()
-        response = await client.post(
+        response = await client.engine_request(
+            "POST",
             "/api/sdk/knowledge/delete",
             json={
                 "key": key,
@@ -317,6 +294,11 @@ class knowledge:
         """
         Delete all documents in a namespace.
 
+        Sends the ordinary HTTP request through the shared ``BifrostClient``:
+        over the worker's private Unix socket when the engine injected one,
+        and over the network API otherwise. A local failure raises and never
+        falls back to the network API.
+
         Args:
             namespace: Namespace to delete
             scope: Organization scope - can be:
@@ -332,20 +314,12 @@ class knowledge:
             >>> print(f"Deleted {count} documents")
         """
         effective_scope = resolve_scope(scope)
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: the parent runs the shared knowledge
-            # service over the dedicated channel. A local attempt never
-            # falls back to HTTP.
-            result = await transport.call_knowledge_delete_namespace(
-                namespace, effective_scope,
-            )
-            return result["deleted_count"]
         client = get_client()
         params = {}
         if effective_scope:
             params["scope"] = effective_scope
-        response = await client.delete(
+        response = await client.engine_request(
+            "DELETE",
             f"/api/sdk/knowledge/namespace/{namespace}",
             params=params if params else None,
         )
@@ -359,6 +333,11 @@ class knowledge:
     ) -> list[NamespaceInfo]:
         """
         List available namespaces with document counts per scope.
+
+        Sends the ordinary HTTP request through the shared ``BifrostClient``:
+        over the worker's private Unix socket when the engine injected one,
+        and over the network API otherwise. A local failure raises and never
+        falls back to the network API.
 
         Args:
             scope: Organization scope - can be:
@@ -375,20 +354,12 @@ class knowledge:
             ...     print(f"{ns.namespace}: {ns.scopes['total']} docs")
         """
         effective_scope = resolve_scope(scope)
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: the parent runs the shared knowledge
-            # service over the dedicated channel. A local attempt never
-            # falls back to HTTP.
-            items = await transport.call_knowledge_list_namespaces(
-                effective_scope, include_global,
-            )
-            return [NamespaceInfo.model_validate(ns) for ns in items]
         client = get_client()
         params: dict[str, Any] = {"include_global": include_global}
         if effective_scope:
             params["scope"] = effective_scope
-        response = await client.get(
+        response = await client.engine_request(
+            "GET",
             "/api/sdk/knowledge/namespaces",
             params=params,
         )
@@ -408,6 +379,12 @@ class knowledge:
         """
         Get a document by key.
 
+        Sends the ordinary HTTP request through the shared ``BifrostClient``:
+        over the worker's private Unix socket when the engine injected one,
+        and over the network API otherwise. A miss (404) maps to None on both
+        transports, and a local failure raises without falling back to the
+        network API.
+
         Args:
             key: Document key
             namespace: Namespace
@@ -425,23 +402,6 @@ class knowledge:
             ...     print(doc.content)
         """
         effective_scope = resolve_scope(scope)
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: the parent runs the shared knowledge
-            # service over the dedicated channel (a miss is a 404 error
-            # frame mapped to None, like the HTTP path). A local
-            # attempt never falls back to HTTP.
-            from .client import BifrostAPIError
-
-            try:
-                result = await transport.call_knowledge_get(
-                    key, namespace, effective_scope,
-                )
-            except BifrostAPIError as e:
-                if e.response.status_code == 404:
-                    return None
-                raise
-            return KnowledgeDocument.model_validate(result)
         client = get_client()
         params: dict[str, Any] = {
             "key": key,
@@ -449,7 +409,8 @@ class knowledge:
         }
         if effective_scope:
             params["scope"] = effective_scope
-        response = await client.get(
+        response = await client.engine_request(
+            "GET",
             "/api/sdk/knowledge/get",
             params=params,
         )

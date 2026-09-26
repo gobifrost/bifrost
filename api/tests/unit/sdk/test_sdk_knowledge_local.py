@@ -13,19 +13,20 @@ Covers the acceptance surface that does not need a forked child:
   across embedding work, and serves each phase on short sessions;
 - scope denial parity (cross-org/global 403, malformed scope 422);
 - external-user denial still fires on HTTP before any service call;
-- the child transport performs real knowledge round trips with zero
-  HTTP requests, maps 404s to the facade's method-specific results
-  without HTTP fallback, and never falls back after a local failure.
+- the migrated facade (Gate C4c) rides the shared
+  ``BifrostClient.engine_request`` transport and never touches the
+  dedicated channel: paths, bodies, params, timeouts, response parsing,
+  and error mapping stay identical to the HTTP endpoints, with no silent
+  HTTP fallback, and ``store_many`` sends a realistic batch as one
+  request.
 """
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import contextlib
 import json
-import multiprocessing
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -1029,162 +1030,153 @@ class TestSessionsAndChunking:
             assert len(raw) <= MAX_FRAME_BYTES
 
 
-class TestChildTransport:
-    def _pair(self):
-        req_recv, req_send = multiprocessing.Pipe(duplex=False)
-        resp_recv, resp_send = multiprocessing.Pipe(duplex=False)
-        return req_recv, req_send, resp_recv, resp_send
+class TestEngineRequestFacade:
+    """Gate C4c: the migrated knowledge facade rides ``engine_request``.
 
-    def _close_all(self, conns):
-        for conn in conns:
-            with contextlib.suppress(Exception):
-                conn.close()
+    Every fixed method sends its exact HTTP path, body, params, and retry
+    flag through the shared client entry point, parses the same response
+    shape, and maps a 404 miss to ``None`` — with no dedicated-channel
+    frames and no silent HTTP fallback after a local failure.
+    """
 
-    async def _pump(self, req_conn, resp_conn, handler, count=1):
-        for _ in range(count):
-            raw = await asyncio.to_thread(req_conn.recv_bytes, 65537)
-            frame = json.loads(raw.decode("utf-8"))
-            response = handler(frame)
-            await asyncio.to_thread(resp_conn.send_bytes, json.dumps(response).encode())
+    def _client(self, responses):
+        client = MagicMock()
+        client.engine_request = AsyncMock(side_effect=responses)
+        return client
 
     @pytest.mark.asyncio
-    async def test_all_seven_round_trip_without_http(self):
-        from bifrost import _local_transport as lt
+    async def test_all_seven_methods_call_engine_request(self):
+        import httpx
 
-        req_recv, req_send, resp_recv, resp_send = self._pair()
-        lt.install(req_send, resp_recv)
+        from bifrost.knowledge import knowledge
+
         doc = {
             "id": str(uuid4()), "namespace": "ns", "content": "hello",
             "metadata": {}, "score": 0.9,
             "organization_id": str(uuid4()), "key": "k",
             "created_at": "2026-01-01T00:00:00+00:00",
         }
-        seen = {}
+        client = self._client([
+            httpx.Response(200, json={"id": doc["id"]}),
+            httpx.Response(200, json={"ids": [doc["id"]]}),
+            httpx.Response(200, json=[doc]),
+            httpx.Response(200, json={"deleted": True}),
+            httpx.Response(200, json={"deleted_count": 2}),
+            httpx.Response(200, json=[{"namespace": "ns", "scopes": {}}]),
+            httpx.Response(200, json=doc),
+        ])
+        with (
+            patch("bifrost.knowledge.get_client", return_value=client),
+            patch("bifrost.knowledge.resolve_scope", lambda s: s),
+        ):
+            assert await knowledge.store(
+                "hello", namespace="ns", key="k"
+            ) == doc["id"]
+            assert await knowledge.store_many(
+                [{"content": "hi"}], namespace="ns"
+            ) == [doc["id"]]
+            results = await knowledge.search("hello", namespace="ns")
+            assert [d.key for d in results] == ["k"]
+            assert await knowledge.delete("k", namespace="ns") is True
+            assert await knowledge.delete_namespace("ns") == 2
+            namespaces = await knowledge.list_namespaces()
+            assert [n.namespace for n in namespaces] == ["ns"]
+            got = await knowledge.get("k", namespace="ns")
+            assert got is not None and got.id == doc["id"]
 
-        def _handler(frame):
-            seen[frame["op"]] = frame
-            assert "created_by" not in frame, frame
-            assert "user" not in frame, frame
-            op = frame["op"]
-            if op == "knowledge.store":
-                return {"v": 1, "id": frame["id"], "ok": True,
-                        "result": {"id": doc["id"]}}
-            if op == "knowledge.store_many":
-                return {"v": 1, "id": frame["id"], "ok": True,
-                        "result": {"ids": [doc["id"]] * len(frame["documents"])}}
-            if op == "knowledge.search":
-                return {"v": 1, "id": frame["id"], "ok": True,
-                        "result": {"items": [doc]}}
-            if op == "knowledge.delete":
-                return {"v": 1, "id": frame["id"], "ok": True,
-                        "result": {"deleted": True}}
-            if op == "knowledge.delete_namespace":
-                return {"v": 1, "id": frame["id"], "ok": True,
-                        "result": {"deleted_count": 2}}
-            if op == "knowledge.list_namespaces":
-                return {"v": 1, "id": frame["id"], "ok": True,
-                        "result": {"items": [{"namespace": "ns", "scopes": {}}]}}
-            if op == "knowledge.get":
-                return {"v": 1, "id": frame["id"], "ok": True, "result": doc}
-            raise AssertionError(op)
-
-        pump = asyncio.create_task(self._pump(req_recv, resp_send, _handler, count=7))
-        try:
-            from bifrost._context import clear_execution_context, set_execution_context
-            from bifrost.knowledge import knowledge
-            from src.sdk.context import ExecutionContext
-
-            ctx = ExecutionContext(
-                user_id="u1", email="e@e.com", name="T", scope="org-1",
-                organization=None, is_platform_admin=False,
-                is_function_key=False, execution_id="exec-1",
-            )
-            set_execution_context(ctx)
-            try:
-                with patch("bifrost.knowledge.get_client") as get_client:
-                    get_client.side_effect = AssertionError("HTTP must not be used")
-                    assert await knowledge.store("hello", key="k") == doc["id"]
-                    assert await knowledge.store_many([{"content": "hi"}]) == [doc["id"]]
-                    results = await knowledge.search("hello")
-                    assert [d.key for d in results] == ["k"]
-                    assert await knowledge.delete("k") is True
-                    assert await knowledge.delete_namespace("ns") == 2
-                    namespaces = await knowledge.list_namespaces()
-                    assert [n.namespace for n in namespaces] == ["ns"]
-                    got = await knowledge.get("k")
-                    assert got is not None and got.id == doc["id"]
-            finally:
-                clear_execution_context()
-            await pump
-        finally:
-            lt.clear()
-            self._close_all((req_recv, req_send, resp_recv, resp_send))
-        assert set(seen) == {
-            "knowledge.store", "knowledge.store_many", "knowledge.search",
-            "knowledge.delete", "knowledge.delete_namespace",
-            "knowledge.list_namespaces", "knowledge.get",
+        # Every call rode the shared client's engine-local entry point with
+        # the ordinary HTTP verb and path — never a channel frame.
+        calls = client.engine_request.await_args_list
+        assert [(call.args[0], call.args[1]) for call in calls] == [
+            ("POST", "/api/sdk/knowledge/store"),
+            ("POST", "/api/sdk/knowledge/store-many"),
+            ("POST", "/api/sdk/knowledge/search"),
+            ("POST", "/api/sdk/knowledge/delete"),
+            ("DELETE", "/api/sdk/knowledge/namespace/ns"),
+            ("GET", "/api/sdk/knowledge/namespaces"),
+            ("GET", "/api/sdk/knowledge/get"),
+        ]
+        # Bodies/params match the HTTP endpoints exactly.
+        assert calls[0].kwargs["json"] == {
+            "content": "hello", "namespace": "ns", "key": "k",
+            "metadata": None, "scope": None,
         }
-        assert seen["knowledge.search"]["namespace"] == ["default"]
+        assert calls[1].kwargs["json"] == {
+            "documents": [{"content": "hi"}], "namespace": "ns",
+            "scope": None,
+        }
+        assert calls[1].kwargs["timeout"] == 300.0
+        assert calls[2].kwargs["json"]["namespace"] == ["ns"]
+        assert calls[2].kwargs["retry_transient"] is True
+        assert calls[3].kwargs["json"] == {
+            "key": "k", "namespace": "ns", "scope": None,
+        }
+        assert calls[5].kwargs["params"] == {"include_global": True}
+        assert calls[6].kwargs["params"] == {"key": "k", "namespace": "ns"}
 
     @pytest.mark.asyncio
-    async def test_local_get_404_maps_to_none_without_http(self):
-        from bifrost import _local_transport as lt
+    async def test_store_many_sends_one_realistic_batch(self):
+        """A realistic batch is one request, not per-document frames."""
+        import httpx
 
-        req_recv, req_send, resp_recv, resp_send = self._pair()
-        lt.install(req_send, resp_recv)
-        pump = asyncio.create_task(
-            self._pump(
-                req_recv, resp_send,
-                lambda f: {"v": 1, "id": f["id"], "ok": False,
-                           "status": 404, "detail": "Document not found"},
-                count=1,
+        from bifrost.knowledge import knowledge
+
+        documents = [
+            {"content": f"Document {i}", "key": f"doc-{i}",
+             "metadata": {"index": i}}
+            for i in range(50)
+        ]
+        client = self._client([
+            httpx.Response(200, json={"ids": [f"id-{i}" for i in range(50)]}),
+        ])
+        with (
+            patch("bifrost.knowledge.get_client", return_value=client),
+            patch("bifrost.knowledge.resolve_scope", lambda s: s),
+        ):
+            ids = await knowledge.store_many(
+                documents, namespace="faq", timeout=600.0
             )
-        )
-        try:
-            from bifrost.knowledge import knowledge
-
-            with patch("bifrost.knowledge.get_client") as get_client:
-                get_client.side_effect = AssertionError("HTTP must not be used")
-                assert await knowledge.get("absent") is None
-            await pump
-        finally:
-            lt.clear()
-            self._close_all((req_recv, req_send, resp_recv, resp_send))
+        assert ids == [f"id-{i}" for i in range(50)]
+        assert client.engine_request.await_count == 1
+        call = client.engine_request.await_args
+        assert call.args == ("POST", "/api/sdk/knowledge/store-many")
+        assert call.kwargs["json"]["documents"] == documents
+        assert call.kwargs["timeout"] == 600.0
 
     @pytest.mark.asyncio
-    async def test_local_error_never_falls_back_to_http(self):
-        from bifrost import _local_transport as lt
+    async def test_get_404_maps_to_none_without_fallback(self):
+        import httpx
+
+        from bifrost.knowledge import knowledge
+
+        request = httpx.Request("GET", "http://engine/api/sdk/knowledge/get")
+        client = self._client([
+            httpx.Response(
+                404, json={"detail": "Document not found"}, request=request
+            ),
+        ])
+        with (
+            patch("bifrost.knowledge.get_client", return_value=client),
+            patch("bifrost.knowledge.resolve_scope", lambda s: s),
+        ):
+            assert await knowledge.get("absent", namespace="ns") is None
+        assert client.engine_request.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_error_surfaces_without_channel(self):
+        import httpx
+
         from bifrost.client import BifrostAuthorizationError
+        from bifrost.knowledge import knowledge
 
-        req_recv, req_send, resp_recv, resp_send = self._pair()
-        lt.install(req_send, resp_recv)
-        seen = []
-
-        async def _pump_statuses():
-            for status in (403, 500):
-                raw = await asyncio.to_thread(req_recv.recv_bytes, 65537)
-                frame = json.loads(raw.decode("utf-8"))
-                seen.append(frame["op"])
-                await asyncio.to_thread(
-                    resp_send.send_bytes,
-                    json.dumps(
-                        {"v": 1, "id": frame["id"], "ok": False,
-                         "status": status, "detail": "denied"}
-                    ).encode(),
-                )
-
-        pump = asyncio.create_task(_pump_statuses())
-        try:
-            from bifrost.knowledge import knowledge
-
-            with patch("bifrost.knowledge.get_client") as get_client:
-                get_client.side_effect = AssertionError("HTTP must not be used")
-                with pytest.raises(BifrostAuthorizationError):
-                    await knowledge.store("x")
-                with pytest.raises(Exception):
-                    await knowledge.search("x")
-            await pump
-            assert seen == ["knowledge.store", "knowledge.search"]
-        finally:
-            lt.clear()
-            self._close_all((req_recv, req_send, resp_recv, resp_send))
+        request = httpx.Request("POST", "http://engine/api/sdk/knowledge/store")
+        client = self._client([
+            httpx.Response(403, json={"detail": "denied"}, request=request),
+        ])
+        with (
+            patch("bifrost.knowledge.get_client", return_value=client),
+            patch("bifrost.knowledge.resolve_scope", lambda s: s),
+        ):
+            with pytest.raises(BifrostAuthorizationError):
+                await knowledge.store("x", namespace="ns")
+        assert client.engine_request.await_count == 1

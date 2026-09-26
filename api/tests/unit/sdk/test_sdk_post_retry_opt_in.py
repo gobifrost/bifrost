@@ -87,10 +87,14 @@ async def test_knowledge_search_opts_into_retry(monkeypatch):
     module = importlib.import_module("bifrost.knowledge")
     response = MagicMock(status_code=200)
     response.json.return_value = []
-    client = MagicMock(post=AsyncMock(return_value=response))
+    client = MagicMock()
+    client.engine_request = AsyncMock(return_value=response)
     monkeypatch.setattr(module, "get_client", lambda: client)
 
     assert await module.knowledge.search("backup", scope="global") == []
 
-    assert client.post.await_args.args == ("/api/sdk/knowledge/search",)
-    assert client.post.await_args.kwargs["retry_transient"] is True
+    assert client.engine_request.await_args.args == (
+        "POST",
+        "/api/sdk/knowledge/search",
+    )
+    assert client.engine_request.await_args.kwargs["retry_transient"] is True

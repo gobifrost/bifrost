@@ -145,7 +145,7 @@ async def test_knowledge_store_many_forwards_default_timeout(monkeypatch):
     mock_response.status_code = 200
 
     mock_client = MagicMock()
-    mock_client.post = AsyncMock(return_value=mock_response)
+    mock_client.engine_request = AsyncMock(return_value=mock_response)
     monkeypatch.setattr(mod, "get_client", lambda: mock_client)
     monkeypatch.setattr(mod, "resolve_scope", lambda s: s)
 
@@ -154,7 +154,7 @@ async def test_knowledge_store_many_forwards_default_timeout(monkeypatch):
         namespace="faq",
     )
 
-    kwargs = mock_client.post.call_args.kwargs
+    kwargs = mock_client.engine_request.call_args.kwargs
     assert kwargs.get("timeout") == 300.0
 
 
@@ -169,11 +169,11 @@ async def test_knowledge_store_many_respects_explicit_timeout(monkeypatch):
     mock_response.status_code = 200
 
     mock_client = MagicMock()
-    mock_client.post = AsyncMock(return_value=mock_response)
+    mock_client.engine_request = AsyncMock(return_value=mock_response)
     monkeypatch.setattr(mod, "get_client", lambda: mock_client)
     monkeypatch.setattr(mod, "resolve_scope", lambda s: s)
 
     await mod.knowledge.store_many([], namespace="faq", timeout=600.0)
 
-    kwargs = mock_client.post.call_args.kwargs
+    kwargs = mock_client.engine_request.call_args.kwargs
     assert kwargs.get("timeout") == 600.0

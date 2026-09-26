@@ -33,6 +33,7 @@ from src.services.execution.worker_sdk_http import (
     CONFIG_ROUTE_PATHS,
     FILES_ROUTE_PATHS,
     INTEGRATION_ROUTE_PATHS,
+    KNOWLEDGE_ROUTE_PATHS,
     PLATFORM_JOB_ROUTE_METHODS,
     SDK_ROUTE_PATHS,
     TABLE_ROUTE_METHODS,
@@ -149,7 +150,10 @@ class TestRouteReuse:
         from src.routers.tables import router as tables_router
 
         cli_path_only = (
-            CONFIG_ROUTE_PATHS | INTEGRATION_ROUTE_PATHS | TABLE_SDK_ROUTE_PATHS
+            CONFIG_ROUTE_PATHS
+            | INTEGRATION_ROUTE_PATHS
+            | TABLE_SDK_ROUTE_PATHS
+            | KNOWLEDGE_ROUTE_PATHS
         )
         cli_originals = {
             route.path: route
@@ -278,6 +282,28 @@ class TestRouteReuse:
             | INTEGRATION_ROUTE_PATHS
             | TABLE_SDK_ROUTE_PATHS
             | FILES_ROUTE_PATHS
+            | KNOWLEDGE_ROUTE_PATHS
+        )
+
+    def test_knowledge_route_selection_is_exact(self):
+        """Gate C4c mounts the seven knowledge facade routes as real objects."""
+        assert KNOWLEDGE_ROUTE_PATHS == frozenset(
+            {
+                "/api/sdk/knowledge/store",
+                "/api/sdk/knowledge/store-many",
+                "/api/sdk/knowledge/search",
+                "/api/sdk/knowledge/delete",
+                "/api/sdk/knowledge/namespace/{namespace}",
+                "/api/sdk/knowledge/namespaces",
+                "/api/sdk/knowledge/get",
+            }
+        )
+        assert KNOWLEDGE_ROUTE_PATHS.isdisjoint(
+            CONFIG_ROUTE_PATHS
+            | INTEGRATION_ROUTE_PATHS
+            | TABLE_SDK_ROUTE_PATHS
+            | ARTIFACT_ROUTE_PATHS
+            | FILES_ROUTE_PATHS
         )
 
     def test_files_route_selection_is_exact(self):
@@ -309,6 +335,7 @@ class TestRouteReuse:
             | INTEGRATION_ROUTE_PATHS
             | TABLE_SDK_ROUTE_PATHS
             | ARTIFACT_ROUTE_PATHS
+            | KNOWLEDGE_ROUTE_PATHS
         )
         assert len(INTEGRATION_ROUTE_PATHS) == 6
         assert all(
@@ -1217,3 +1244,181 @@ class TestEngineLocalArtifactsFallback:
         # made-up channel deadline.
         with pytest.raises(httpx.ConnectError):
             await artifacts.create_video("launch", prompt="A launch video")
+
+
+class TestSocketKnowledge:
+    """Gate C4c: the socket serves the real knowledge routes with their DTOs."""
+
+    @pytest.mark.asyncio
+    async def test_external_caller_denied_over_socket(self):
+        from src.core.security import create_access_token
+
+        token = create_access_token(
+            {
+                "sub": str(uuid4()),
+                "email": "external@example.com",
+                "name": "External",
+                "org_id": str(uuid4()),
+                "is_external": True,
+            }
+        )
+        headers = {"Authorization": f"Bearer {token}"}
+        server = WorkerSdkHttpServer()
+        await server.start()
+        try:
+            async with _socket_client(server) as client:
+                response = await client.post(
+                    "/api/sdk/knowledge/store",
+                    json={"content": "x", "namespace": "ns"},
+                    headers=headers,
+                )
+            assert response.status_code == 403, response.text
+            assert response.json()["detail"] == (
+                "External users cannot access the knowledge store directly"
+            )
+        finally:
+            await server.stop()
+
+    @pytest.mark.asyncio
+    async def test_malformed_bodies_are_422_over_socket(self):
+        headers = {"Authorization": f"Bearer {_engine_token()}"}
+        server = WorkerSdkHttpServer()
+        await server.start()
+        try:
+            async with _socket_client(server) as client:
+                store = await client.post(
+                    "/api/sdk/knowledge/store", json={}, headers=headers
+                )
+                search = await client.post(
+                    "/api/sdk/knowledge/search",
+                    json={"query": "q", "limit": "many"},
+                    headers=headers,
+                )
+            assert store.status_code == 422, store.text
+            assert search.status_code == 422, search.text
+        finally:
+            await server.stop()
+
+    @pytest.mark.asyncio
+    async def test_missing_document_get_is_404_over_socket(self):
+        headers = {"Authorization": f"Bearer {_engine_token()}"}
+        server = WorkerSdkHttpServer()
+        await server.start()
+        try:
+            async with _socket_client(server) as client:
+                response = await client.get(
+                    "/api/sdk/knowledge/get",
+                    params={
+                        "key": f"absent-{uuid4().hex[:8]}",
+                        "namespace": f"wsdk-ns-{uuid4().hex[:8]}",
+                    },
+                    headers=headers,
+                )
+            assert response.status_code == 404, response.text
+            assert response.json()["detail"] == "Document not found"
+        finally:
+            await server.stop()
+
+    @pytest.mark.asyncio
+    async def test_cross_org_scope_denied_over_socket(self, async_session_factory):
+        from sqlalchemy import delete
+
+        from src.core.security import create_access_token
+        from src.models.orm.organizations import Organization as OrganizationModel
+
+        async with async_session_factory() as session:
+            org_a = OrganizationModel(
+                name=f"wsdk-knowledge-a-{uuid4().hex[:8]}",
+                is_active=True,
+                is_provider=False,
+                created_by="worker-sdk-http-test",
+            )
+            org_b = OrganizationModel(
+                name=f"wsdk-knowledge-b-{uuid4().hex[:8]}",
+                is_active=True,
+                is_provider=False,
+                created_by="worker-sdk-http-test",
+            )
+            session.add_all([org_a, org_b])
+            await session.commit()
+            org_a_id, org_b_id = org_a.id, org_b.id
+
+        token = create_access_token(
+            {
+                "sub": str(uuid4()),
+                "email": "user@example.com",
+                "name": "User",
+                "org_id": str(org_a_id),
+            }
+        )
+        headers = {"Authorization": f"Bearer {token}"}
+        server = WorkerSdkHttpServer()
+        await server.start()
+        try:
+            async with _socket_client(server) as client:
+                denied = await client.get(
+                    "/api/sdk/knowledge/get",
+                    params={
+                        "key": "k",
+                        "namespace": "ns",
+                        "scope": str(org_b_id),
+                    },
+                    headers=headers,
+                )
+                malformed = await client.post(
+                    "/api/sdk/knowledge/store",
+                    json={
+                        "content": "x",
+                        "namespace": "ns",
+                        "scope": "not-a-uuid",
+                    },
+                    headers=headers,
+                )
+            assert denied.status_code == 403, denied.text
+            assert malformed.status_code == 422, malformed.text
+        finally:
+            await server.stop()
+            async with async_session_factory() as session:
+                await session.execute(
+                    delete(OrganizationModel).where(
+                        OrganizationModel.id.in_([org_a_id, org_b_id])
+                    )
+                )
+                await session.commit()
+
+
+class TestEngineLocalKnowledgeFallback:
+    """A failed knowledge socket request never replays over the network API."""
+
+    @pytest.mark.asyncio
+    async def test_knowledge_local_failure_does_not_fall_back_to_network(
+        self, monkeypatch
+    ):
+        import bifrost.client as client_module
+        from bifrost.knowledge import knowledge
+
+        # This test proves there is no network fallback after a local
+        # failure, not how long the transient backoff runs: collapse the
+        # retry schedule so each request makes one local attempt.
+        monkeypatch.setattr(client_module, "SDK_RETRY_BACKOFF_SECONDS", ())
+
+        missing_socket = os.path.join(
+            "/tmp", f"bifrost-missing-{uuid4().hex}.sock"
+        )
+        _install_engine_socket(missing_socket)
+        _set_client(BifrostClient("http://dead-api", "token"))
+
+        with pytest.raises(httpx.ConnectError):
+            await knowledge.store("x", namespace="ns")
+        with pytest.raises(httpx.ConnectError):
+            await knowledge.store_many([{"content": "x"}], namespace="ns")
+        with pytest.raises(httpx.ConnectError):
+            await knowledge.search("q", namespace="ns")
+        with pytest.raises(httpx.ConnectError):
+            await knowledge.delete("k", namespace="ns")
+        with pytest.raises(httpx.ConnectError):
+            await knowledge.delete_namespace("ns")
+        with pytest.raises(httpx.ConnectError):
+            await knowledge.list_namespaces()
+        with pytest.raises(httpx.ConnectError):
+            await knowledge.get("k", namespace="ns")

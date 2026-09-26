@@ -18,11 +18,12 @@ routes, Gate C3a added the table-definition routes (create/list) and the
 document reads (get/query/count), Gate C3b adds the table mutations and
 batch writes (insert/upsert/update/delete_document/batch/batch-delete plus
 the auto-create POST /api/tables helper), Gate C4a adds the files facade
-routes (read/write/list/delete/stat/exists/signed-url/search), and Gate
-C4b adds the artifact facade routes plus the durable platform-job status
-route that ``artifacts.create_video`` polls. Streams and other domains
-stay on their existing channel path until their own Gate C slice migrates
-them.
+routes (read/write/list/delete/stat/exists/signed-url/search), Gate C4b adds
+the artifact facade routes plus the durable platform-job status route that
+``artifacts.create_video`` polls, and Gate C4c adds the knowledge facade
+routes (store/store-many/search/delete/get/delete_namespace/list_namespaces).
+Streams and other domains stay on their existing channel path until their own
+Gate C slice migrates them.
 
 ``import fastapi``/``uvicorn`` happen inside the functions so the worker
 entry closure stays free of those heavyweights at import time (see
@@ -126,6 +127,23 @@ FILES_ROUTE_PATHS: frozenset[str] = frozenset(
     }
 )
 
+# Gate C4c: the existing knowledge facade routes, selected from the cli SDK
+# router by exact path (each path owns one method, so no method filter is
+# needed). They carry the ordinary ``CurrentUser`` auth, the shared
+# ``shared.sdk_knowledge`` service, and the worker's initialized DB engine;
+# embedding runs in the parent, so the child needs no provider credential.
+KNOWLEDGE_ROUTE_PATHS: frozenset[str] = frozenset(
+    {
+        "/api/sdk/knowledge/store",
+        "/api/sdk/knowledge/store-many",
+        "/api/sdk/knowledge/search",
+        "/api/sdk/knowledge/delete",
+        "/api/sdk/knowledge/namespace/{namespace}",
+        "/api/sdk/knowledge/namespaces",
+        "/api/sdk/knowledge/get",
+    }
+)
+
 # Gate C4b: the existing artifact facade routes, selected from the cli SDK
 # router by path AND method because ``/api/sdk/artifacts`` carries both GET
 # (list) and POST (write). They carry the ordinary ``CurrentUser`` auth, the
@@ -159,6 +177,7 @@ SDK_ROUTE_PATHS: frozenset[str] = (
     | INTEGRATION_ROUTE_PATHS
     | TABLE_SDK_ROUTE_PATHS
     | ARTIFACT_ROUTE_PATHS
+    | KNOWLEDGE_ROUTE_PATHS
 )
 
 
@@ -182,11 +201,15 @@ def build_worker_sdk_app() -> Any:
         redoc_url=None,
         openapi_url=None,
     )
-    # The config, integrations, and table-definition facade paths are unique,
-    # so they are selected by exact path. Artifact routes are selected by
-    # (path, method) because ``/api/sdk/artifacts`` is both GET and POST.
+    # The config, integrations, table-definition, and knowledge facade paths
+    # are unique, so they are selected by exact path. Artifact routes are
+    # selected by (path, method) because ``/api/sdk/artifacts`` is both GET
+    # and POST.
     cli_path_only = (
-        CONFIG_ROUTE_PATHS | INTEGRATION_ROUTE_PATHS | TABLE_SDK_ROUTE_PATHS
+        CONFIG_ROUTE_PATHS
+        | INTEGRATION_ROUTE_PATHS
+        | TABLE_SDK_ROUTE_PATHS
+        | KNOWLEDGE_ROUTE_PATHS
     )
     selected = 0
     for route in sdk_router.routes:
