@@ -11,11 +11,11 @@ Covers ``ai.complete`` and ``ai.model_info`` without a forked child:
   untrusted best-effort scope (never pre-resolved here);
 - the dispatcher commits after the shared completion (usage is flush-only)
   and maps ``SdkAIError`` through its own status;
-- the SDK facade keeps knowledge composition, structured-output handling,
-  and input-file encoding on the child, sends composed messages plus
-  encoded files, applies only an explicitly requested completion deadline,
-  maps local status errors to the public ``RuntimeError`` text,
-  and never falls back to HTTP.
+- the SDK facades ride ``BifrostClient.engine_request`` with the exact
+  HTTP method/path/body and map statuses to the public ``RuntimeError`` text
+  with no network fallback; knowledge composition, structured-output
+  handling, and input-file encoding still happen on the child, and an
+  omitted completion timeout forwards ``None`` (no SDK-imposed deadline).
 """
 
 from __future__ import annotations
@@ -638,242 +638,212 @@ async def test_model_info_missing_config_maps_404(db_session):
 # =============================================================================
 
 
-def _local_error(status, detail="denied"):
-    from bifrost.client import raise_for_status_with_detail
-
-    request = httpx.Request("POST", "local://sdk/ai/complete")
-    response = httpx.Response(status, json={"detail": detail}, request=request)
-    try:
-        raise_for_status_with_detail(response)
-    except Exception as e:  # noqa: BLE001 - re-raised below by the fake
-        return e
-    raise AssertionError("unreachable")
+def _ai_response(status, payload):
+    request = httpx.Request("POST", "http://engine.local/api/sdk/ai/complete")
+    return httpx.Response(status, json=payload, request=request)
 
 
-@pytest.mark.asyncio
-async def test_facade_complete_calls_local_without_http():
-    from bifrost.ai import ai as ai_facade
+class TestEngineRequestAIFacade:
+    """Gate C5f: the migrated AI facade rides ``engine_request``.
 
-    body = {
-        "content": "Hello",
-        "input_tokens": 3,
-        "output_tokens": 5,
-        "model": "gpt-4o",
-    }
-    transport = AsyncMock()
-    transport.call_ai_complete.return_value = body
-    with (
-        patch("bifrost._local_transport.get", return_value=transport),
-        patch(
-            "bifrost.ai.get_client",
-            side_effect=AssertionError("HTTP fallback is forbidden"),
-        ),
-    ):
-        result = await ai_facade.complete("Hi")
-    assert result.content == "Hello"
-    assert result.model == "gpt-4o"
-    assert transport.call_ai_complete.await_count == 1
-    args, kwargs = transport.call_ai_complete.call_args
-    assert args[0] == [{"role": "user", "content": "Hi"}]
-    assert kwargs["timeout"] is None
+    Each method sends the exact HTTP method/path/body the external path
+    used, so the socket-served and network calls stay identical; statuses
+    map to the same public exceptions with no silent fallback. The
+    completion's timeout is forwarded verbatim, so omitting it means no
+    SDK-imposed deadline and never forces a caller to pass one.
+    """
 
+    def _client(self, *responses):
+        client = AsyncMock()
+        client.engine_request = AsyncMock(side_effect=responses)
+        return client
 
-@pytest.mark.asyncio
-async def test_facade_complete_derives_no_extra_http_for_structured():
-    from pydantic import BaseModel
+    @pytest.mark.asyncio
+    async def test_complete_uses_exact_http_call(self):
+        from bifrost.ai import ai as ai_facade
+        from bifrost.models import AIInputFile
 
-    from bifrost.ai import ai as ai_facade
+        body = {
+            "content": "Hello",
+            "input_tokens": 3,
+            "output_tokens": 5,
+            "model": "gpt-4o",
+        }
+        client = self._client(_ai_response(200, body))
+        with patch("bifrost.ai.get_client", return_value=client):
+            result = await ai_facade.complete(
+                "Hi",
+                max_tokens=11,
+                profile="Reasoning",
+                model="gpt-4o",
+                org_id=None,
+                timeout=60.0,
+                files=[
+                    AIInputFile(
+                        filename="a.txt", content_type="text/plain", data=b"x"
+                    )
+                ],
+            )
+        assert result.content == "Hello"
+        assert result.model == "gpt-4o"
+        assert result.input_tokens == 3
+        assert result.output_tokens == 5
+        args, kwargs = client.engine_request.await_args
+        assert args == ("POST", "/api/sdk/ai/complete")
+        assert kwargs["timeout"] == 60.0
+        payload = kwargs["json"]
+        assert payload["messages"] == [{"role": "user", "content": "Hi"}]
+        assert payload["max_tokens"] == 11
+        assert payload["profile"] == "Reasoning"
+        assert payload["model"] == "gpt-4o"
+        assert payload["input_files"][0]["filename"] == "a.txt"
 
-    class Answer(BaseModel):
-        answer: str
+    @pytest.mark.asyncio
+    async def test_complete_omitted_timeout_forwards_none(self):
+        """No mandatory developer timeout and no SDK-imposed 30s deadline."""
+        from bifrost.ai import ai as ai_facade
 
-    transport = AsyncMock()
-    transport.call_ai_complete.return_value = {
-        "content": '{"answer": "yes"}',
-        "input_tokens": 1,
-        "output_tokens": 1,
-        "model": "gpt-4o",
-    }
-    with (
-        patch("bifrost._local_transport.get", return_value=transport),
-        patch(
-            "bifrost.ai.get_client",
-            side_effect=AssertionError("HTTP fallback is forbidden"),
-        ),
-    ):
-        result = await ai_facade.complete("Q?", response_format=Answer)
-    assert isinstance(result, Answer)
-    assert result.answer == "yes"
-    sent_messages = transport.call_ai_complete.call_args.args[0]
-    assert "JSON" in sent_messages[0]["content"]
-
-
-@pytest.mark.asyncio
-async def test_facade_complete_knowledge_composition_stays_local():
-    """knowledge= searches through the local knowledge facade first."""
-    from bifrost import knowledge
-    from bifrost.ai import ai as ai_facade
-    from bifrost.models import KnowledgeDocument
-
-    doc = KnowledgeDocument(
-        id=str(uuid4()),
-        namespace="policies",
-        content="Refunds within 30 days.",
-        metadata={},
-        score=0.9,
-        organization_id=None,
-        key="refund",
-        created_at=None,
-    )
-    transport = AsyncMock()
-    transport.call_ai_complete.return_value = {
-        "content": "ok",
-        "input_tokens": 1,
-        "output_tokens": 1,
-        "model": "gpt-4o",
-    }
-    with (
-        patch("bifrost._local_transport.get", return_value=transport),
-        patch.object(
-            knowledge,
-            "search",
-            new=AsyncMock(return_value=[doc]),
-        ) as search,
-        patch(
-            "bifrost.ai.get_client",
-            side_effect=AssertionError("HTTP fallback is forbidden"),
-        ),
-    ):
-        result = await ai_facade.complete("Refund policy?", knowledge=["policies"])
-    assert result.content == "ok"
-    search.assert_awaited_once()
-    sent_messages = transport.call_ai_complete.call_args.args[0]
-    assert any(
-        "Refunds within 30 days" in m.get("content", "") for m in sent_messages
-    )
-
-
-@pytest.mark.asyncio
-async def test_facade_complete_forwards_timeout_and_files():
-    from bifrost.ai import ai as ai_facade
-    from bifrost.models import AIInputFile
-
-    transport = AsyncMock()
-    transport.call_ai_complete.return_value = {
-        "content": "ok",
-        "input_tokens": 1,
-        "output_tokens": 1,
-        "model": "gpt-4o",
-    }
-    with (
-        patch("bifrost._local_transport.get", return_value=transport),
-        patch(
-            "bifrost.ai.get_client",
-            side_effect=AssertionError("HTTP fallback is forbidden"),
-        ),
-    ):
-        await ai_facade.complete(
-            "Summarize",
-            profile="Reasoning",
-            model="gpt-4o",
-            max_tokens=11,
-            timeout=60.0,
-            files=[AIInputFile(filename="a.txt", content_type="text/plain", data=b"x")],
+        client = self._client(
+            _ai_response(
+                200,
+                {
+                    "content": "Hello",
+                    "input_tokens": 1,
+                    "output_tokens": 1,
+                    "model": "gpt-4o",
+                },
+            )
         )
-    args, kwargs = transport.call_ai_complete.call_args
-    assert args[1] == 11  # max_tokens
-    assert args[3] == "Reasoning"  # profile
-    assert args[4] == "gpt-4o"  # model
-    assert kwargs["timeout"] == 60.0
-    assert args[6][0]["filename"] == "a.txt"
-
-
-@pytest.mark.asyncio
-async def test_facade_complete_never_falls_back_to_http():
-    from bifrost._local_transport import LocalTransportClosed
-    from bifrost.ai import ai as ai_facade
-
-    transport = AsyncMock()
-    transport.call_ai_complete.side_effect = LocalTransportClosed("closed")
-    with (
-        patch("bifrost._local_transport.get", return_value=transport),
-        patch(
-            "bifrost.ai.get_client",
-            side_effect=AssertionError("HTTP fallback is forbidden"),
-        ),
-    ):
-        with pytest.raises(LocalTransportClosed):
+        with patch("bifrost.ai.get_client", return_value=client):
             await ai_facade.complete("Hi")
+        _, kwargs = client.engine_request.await_args
+        assert kwargs["timeout"] is None
 
+    @pytest.mark.asyncio
+    async def test_complete_structured_output_stays_on_facade(self):
+        from pydantic import BaseModel
 
-@pytest.mark.asyncio
-async def test_facade_complete_local_error_text_matches_http():
-    from bifrost.ai import ai as ai_facade
+        from bifrost.ai import ai as ai_facade
 
-    transport = AsyncMock()
-    transport.call_ai_complete.side_effect = _local_error(503, "no profile")
-    with patch("bifrost._local_transport.get", return_value=transport):
-        with pytest.raises(RuntimeError, match="AI completion failed: no profile"):
-            await ai_facade.complete("Hi")
+        class Answer(BaseModel):
+            answer: str
 
+        client = self._client(
+            _ai_response(
+                200,
+                {
+                    "content": '{"answer": "yes"}',
+                    "input_tokens": 1,
+                    "output_tokens": 1,
+                    "model": "gpt-4o",
+                },
+            )
+        )
+        with patch("bifrost.ai.get_client", return_value=client):
+            result = await ai_facade.complete("Q?", response_format=Answer)
+        assert isinstance(result, Answer)
+        assert result.answer == "yes"
+        sent_messages = client.engine_request.await_args.kwargs["json"]["messages"]
+        assert "JSON" in sent_messages[0]["content"]
 
-@pytest.mark.asyncio
-async def test_facade_model_info_calls_local_without_http():
-    from bifrost.ai import ai as ai_facade
+    @pytest.mark.asyncio
+    async def test_complete_knowledge_composition_stays_on_facade(self):
+        """knowledge= searches through the knowledge facade before the call."""
+        from bifrost import knowledge
+        from bifrost.ai import ai as ai_facade
+        from bifrost.models import KnowledgeDocument
 
-    transport = AsyncMock()
-    transport.call_ai_model_info.return_value = {
-        "provider": "openai",
-        "model": "gpt-4o",
-    }
-    with (
-        patch("bifrost._local_transport.get", return_value=transport),
-        patch(
-            "bifrost.ai.get_client",
-            side_effect=AssertionError("HTTP fallback is forbidden"),
-        ),
-    ):
-        info = await ai_facade.get_model_info()
-    assert info == {"provider": "openai", "model": "gpt-4o"}
-    transport.call_ai_model_info.assert_awaited_once_with()
-
-
-@pytest.mark.asyncio
-async def test_facade_model_info_local_error_text_matches_http():
-    from bifrost.ai import ai as ai_facade
-
-    transport = AsyncMock()
-    transport.call_ai_model_info.side_effect = _local_error(404, "no AI config")
-    with patch("bifrost._local_transport.get", return_value=transport):
-        with pytest.raises(
-            RuntimeError, match="Failed to get AI model info: no AI config"
+        doc = KnowledgeDocument(
+            id=str(uuid4()),
+            namespace="policies",
+            content="Refunds within 30 days.",
+            metadata={},
+            score=0.9,
+            organization_id=None,
+            key="refund",
+            created_at=None,
+        )
+        client = self._client(
+            _ai_response(
+                200,
+                {
+                    "content": "ok",
+                    "input_tokens": 1,
+                    "output_tokens": 1,
+                    "model": "gpt-4o",
+                },
+            )
+        )
+        with (
+            patch("bifrost.ai.get_client", return_value=client),
+            patch.object(
+                knowledge, "search", new=AsyncMock(return_value=[doc])
+            ) as search,
         ):
-            await ai_facade.get_model_info()
+            result = await ai_facade.complete(
+                "Refund policy?", knowledge=["policies"]
+            )
+        assert result.content == "ok"
+        search.assert_awaited_once()
+        sent_messages = client.engine_request.await_args.kwargs["json"]["messages"]
+        assert any(
+            "Refunds within 30 days" in m.get("content", "")
+            for m in sent_messages
+        )
 
+    @pytest.mark.asyncio
+    async def test_complete_error_text_matches_http(self):
+        from bifrost.ai import ai as ai_facade
 
-@pytest.mark.asyncio
-async def test_external_http_path_unchanged():
-    from bifrost.ai import ai as ai_facade
+        client = self._client(_ai_response(503, {"detail": "no profile"}))
+        with patch("bifrost.ai.get_client", return_value=client):
+            with pytest.raises(RuntimeError, match="AI completion failed: no profile"):
+                await ai_facade.complete("Hi")
 
-    body = {
-        "content": "Hello",
-        "input_tokens": 2,
-        "output_tokens": 2,
-        "model": "gpt-4o",
-    }
+    @pytest.mark.asyncio
+    async def test_complete_cancellation_propagates(self):
+        """Cancelling the awaiting task cancels the in-flight local request."""
+        import asyncio
 
-    def _response(status, payload):
-        request = httpx.Request("POST", "http://test.local/api/sdk/ai/complete")
-        return httpx.Response(status, json=payload, request=request)
+        from bifrost.ai import ai as ai_facade
 
-    client = AsyncMock()
-    client.post.return_value = _response(200, body)
-    with (
-        patch("bifrost._local_transport.get", return_value=None),
-        patch("bifrost.ai.get_client", return_value=client),
-    ):
-        result = await ai_facade.complete("Hi")
-    assert result.content == "Hello"
-    sent = client.post.await_args.kwargs["json"]
-    assert sent["messages"] == [{"role": "user", "content": "Hi"}]
-    assert sent["input_files"] == []
+        started = asyncio.Event()
+
+        async def _hang(*_args, **_kwargs):
+            started.set()
+            await asyncio.Event().wait()
+
+        client = AsyncMock()
+        client.engine_request = AsyncMock(side_effect=_hang)
+        with patch("bifrost.ai.get_client", return_value=client):
+            task = asyncio.create_task(ai_facade.complete("Hi"))
+            await started.wait()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        assert client.engine_request.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_model_info_uses_exact_http_call(self):
+        from bifrost.ai import ai as ai_facade
+
+        client = self._client(
+            _ai_response(200, {"provider": "openai", "model": "gpt-4o"})
+        )
+        with patch("bifrost.ai.get_client", return_value=client):
+            info = await ai_facade.get_model_info()
+        assert info == {"provider": "openai", "model": "gpt-4o"}
+        args, kwargs = client.engine_request.await_args
+        assert args == ("GET", "/api/sdk/ai/info")
+        assert kwargs == {}
+
+    @pytest.mark.asyncio
+    async def test_model_info_error_text_matches_http(self):
+        from bifrost.ai import ai as ai_facade
+
+        client = self._client(_ai_response(404, {"detail": "no AI config"}))
+        with patch("bifrost.ai.get_client", return_value=client):
+            with pytest.raises(
+                RuntimeError, match="Failed to get AI model info: no AI config"
+            ):
+                await ai_facade.get_model_info()

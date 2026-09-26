@@ -30,8 +30,10 @@ emit route (``events.emit``) plus the form read routes (``forms.list`` /
 (create/get/list/update/delete) and the user facade routes
 (list/get/create/update/delete). Gate C5e adds the role facade routes
 (create/get/list/update/delete plus the user and form assignment reads and
-writes). Streams and other domains stay on their existing channel path
-until their own Gate C slice migrates them.
+writes). Gate C5f adds the AI unary facade routes (``ai.complete`` POST and
+``ai.get_model_info`` GET); the streaming route stays on its existing channel
+path until its own Gate C slice migrates it. Streams and other domains stay
+on their existing channel path until their own Gate C slice migrates them.
 
 ``import fastapi``/``uvicorn`` happen inside the functions so the worker
 entry closure stays free of those heavyweights at import time (see
@@ -257,6 +259,17 @@ ROLES_ROUTE_METHODS: dict[str, frozenset[str]] = {
     "/api/roles/{role_id}/forms": frozenset({"GET", "POST"}),
 }
 
+# Gate C5f: the SDK AI unary facade routes, selected from ``src.routers.cli``
+# by path AND method. ``/api/sdk/ai/complete`` is the POST completion and
+# ``/api/sdk/ai/info`` the GET model read; the streaming sibling
+# ``/api/sdk/ai/stream`` stays on its existing channel path until its own
+# Gate C slice migrates it.
+AI_ROUTE_METHODS: dict[str, frozenset[str]] = {
+    "/api/sdk/ai/complete": frozenset({"POST"}),
+    "/api/sdk/ai/info": frozenset({"GET"}),
+}
+AI_ROUTE_PATHS: frozenset[str] = frozenset(AI_ROUTE_METHODS)
+
 # Every route path this worker-local app serves from the cli SDK router.
 # Other SDK domains keep their existing channel path until their Gate C
 # slice migrates them.
@@ -266,6 +279,7 @@ SDK_ROUTE_PATHS: frozenset[str] = (
     | TABLE_SDK_ROUTE_PATHS
     | ARTIFACT_ROUTE_PATHS
     | KNOWLEDGE_ROUTE_PATHS
+    | AI_ROUTE_PATHS
 )
 
 
@@ -298,9 +312,9 @@ def build_worker_sdk_app() -> Any:
         openapi_url=None,
     )
     # The config, integrations, table-definition, and knowledge facade paths
-    # are unique, so they are selected by exact path. Artifact routes are
-    # selected by (path, method) because ``/api/sdk/artifacts`` is both GET
-    # and POST.
+    # are unique, so they are selected by exact path. Artifact and AI routes
+    # are selected by (path, method) because ``/api/sdk/artifacts`` is both
+    # GET and POST and the AI paths must exclude the streaming sibling.
     cli_path_only = (
         CONFIG_ROUTE_PATHS
         | INTEGRATION_ROUTE_PATHS
@@ -320,10 +334,17 @@ def build_worker_sdk_app() -> Any:
             if methods & ARTIFACT_ROUTE_METHODS[path]:
                 app.router.routes.append(route)
                 selected += 1
+        elif path in AI_ROUTE_METHODS:
+            methods = getattr(route, "methods", None) or frozenset()
+            if methods & AI_ROUTE_METHODS[path]:
+                app.router.routes.append(route)
+                selected += 1
     # Each wanted method is one registered APIRoute, so the expected count is
-    # the total number of (path, method) pairs for artifacts.
-    expected = len(cli_path_only) + sum(
-        len(methods) for methods in ARTIFACT_ROUTE_METHODS.values()
+    # the total number of (path, method) pairs for artifacts and AI.
+    expected = (
+        len(cli_path_only)
+        + sum(len(methods) for methods in ARTIFACT_ROUTE_METHODS.values())
+        + sum(len(methods) for methods in AI_ROUTE_METHODS.values())
     )
 
     # Files facade routes are selected by exact path from the files router.

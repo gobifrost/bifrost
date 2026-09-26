@@ -328,9 +328,9 @@ class ai:
         Optionally returns structured output as a Pydantic model.
 
         Inside an engine child this completes through the parent over the
-        dedicated local transport (same shared service as the HTTP
-        endpoint); elsewhere it calls the SDK API endpoint. A local
-        attempt never falls back to HTTP.
+        worker's private Unix socket (the same HTTP route); elsewhere it
+        calls the SDK API endpoint. A local attempt never falls back to
+        HTTP.
 
         Args:
             prompt: Simple text prompt (becomes a user message)
@@ -342,7 +342,9 @@ class ai:
             org_id: Organization scope for knowledge search
             profile: Model profile name (defaults to the platform default profile)
             model: Override default model (must be compatible with configured provider)
-            timeout: Override default HTTP timeout in seconds (default: 30s)
+            timeout: Optional per-request timeout in seconds. Omitting it
+                applies no SDK-imposed deadline, so a slow completion may
+                run to completion.
             files: Up to five binary inputs or portable ArtifactRef objects.
 
         Returns:
@@ -392,49 +394,14 @@ class ai:
 
         encoded_files = await _encode_input_files(files)
 
-        # Engine-local path: the parent runs the same shared AI service
-        # over the dedicated channel (knowledge context, structured-output
-        # instructions, and input-file encoding already applied above).
+        # Inside an engine child the shared client carries this over the
+        # worker's private Unix socket to the same HTTP route (knowledge
+        # context, structured-output instructions, and input-file encoding
+        # already applied above); outside an engine it goes over the network.
         # A local attempt never falls back to HTTP.
-        from ._local_transport import get as _get_local_transport
-
-        transport = _get_local_transport()
-        if transport is not None:
-            from .client import BifrostAPIError
-
-            try:
-                data = await transport.call_ai_complete(
-                    msg_list,
-                    max_tokens,
-                    org_id,
-                    profile,
-                    model,
-                    execution_id,
-                    encoded_files,
-                    timeout=timeout,
-                )
-            except BifrostAPIError as e:
-                try:
-                    error_data = e.response.json()
-                    error_msg = error_data.get("detail", e.response.text)
-                except Exception:
-                    try:
-                        error_msg = e.response.text or str(e)
-                    except Exception:
-                        error_msg = str(e)
-                raise RuntimeError(f"AI completion failed: {error_msg}") from None
-            if response_format and data.get("content"):
-                return _parse_structured_response(data["content"], response_format)
-            return AIResponse(
-                content=data.get("content") or "",
-                input_tokens=data.get("input_tokens") or 0,
-                output_tokens=data.get("output_tokens") or 0,
-                model=data.get("model") or "",
-            )
-
-        # Call API
         client = get_client()
-        response = await client.post(
+        response = await client.engine_request(
+            "POST",
             "/api/sdk/ai/complete",
             json={
                 "messages": msg_list,
@@ -634,10 +601,9 @@ class ai:
         """
         Get information about the configured LLM.
 
-        Inside an engine child this reads through the parent over the
-        dedicated local transport (same shared service as the HTTP
-        endpoint); elsewhere it calls the SDK API endpoint. A local
-        attempt never falls back to HTTP.
+        Inside an engine child this reads through the worker's private Unix
+        socket (the parent serves the same HTTP route); outside an engine it
+        calls the SDK API endpoint. A local attempt never falls back to HTTP.
 
         Returns:
             Dict with provider, model, and configuration details
@@ -646,28 +612,8 @@ class ai:
             >>> info = await ai.get_model_info()
             >>> print(f"Using {info['provider']}/{info['model']}")
         """
-        from ._local_transport import get as _get_local_transport
-
-        transport = _get_local_transport()
-        if transport is not None:
-            from .client import BifrostAPIError
-
-            try:
-                return await transport.call_ai_model_info()
-            except BifrostAPIError as e:
-                try:
-                    error_data = e.response.json()
-                    error_msg = error_data.get("detail", e.response.text)
-                except Exception:
-                    try:
-                        error_msg = e.response.text or str(e)
-                    except Exception:
-                        error_msg = str(e)
-                raise RuntimeError(
-                    f"Failed to get AI model info: {error_msg}"
-                ) from None
         client = get_client()
-        response = await client.get("/api/sdk/ai/info")
+        response = await client.engine_request("GET", "/api/sdk/ai/info")
         if not response.is_success:
             # Extract error detail from response if available
             try:

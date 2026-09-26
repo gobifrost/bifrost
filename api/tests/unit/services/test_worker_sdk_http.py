@@ -29,6 +29,8 @@ from bifrost.client import (
 )
 from src.services.execution.worker_sdk_http import (
     AGENT_RUN_ROUTE_METHODS,
+    AI_ROUTE_METHODS,
+    AI_ROUTE_PATHS,
     ARTIFACT_ROUTE_METHODS,
     ARTIFACT_ROUTE_PATHS,
     CONFIG_ROUTE_PATHS,
@@ -191,6 +193,19 @@ class TestRouteReuse:
             for method in methods
         }
 
+        ai_originals = {
+            (route.path, method): route
+            for route in sdk_router.routes
+            if getattr(route, "path", None) in AI_ROUTE_METHODS
+            for method in (getattr(route, "methods", None) or set())
+            & AI_ROUTE_METHODS[route.path]
+        }
+        assert set(ai_originals) == {
+            (path, method)
+            for path, methods in AI_ROUTE_METHODS.items()
+            for method in methods
+        }
+
         files_originals = {
             route.path: route
             for route in files_router.routes
@@ -272,6 +287,12 @@ class TestRouteReuse:
             if route.path in ARTIFACT_ROUTE_METHODS
             for method in route.methods
         }
+        mounted_ai = {
+            (route.path, method): route
+            for route in mounted
+            if route.path in AI_ROUTE_METHODS
+            for method in route.methods
+        }
         mounted_files = {
             route.path: route for route in mounted if route.path in FILES_ROUTE_PATHS
         }
@@ -347,6 +368,11 @@ class TestRouteReuse:
         for key, route in mounted_artifacts.items():
             assert route is artifact_originals[key]
             assert route.endpoint is artifact_originals[key].endpoint
+
+        assert set(mounted_ai) == set(ai_originals)
+        for key, route in mounted_ai.items():
+            assert route is ai_originals[key]
+            assert route.endpoint is ai_originals[key].endpoint
 
         assert set(mounted_files) == FILES_ROUTE_PATHS
         for path, route in mounted_files.items():
@@ -438,6 +464,24 @@ class TestRouteReuse:
             | KNOWLEDGE_ROUTE_PATHS
         )
 
+    def test_ai_route_selection_is_exact(self):
+        """Gate C5f mounts only the AI completion POST and model-info GET."""
+        assert AI_ROUTE_METHODS == {
+            "/api/sdk/ai/complete": frozenset({"POST"}),
+            "/api/sdk/ai/info": frozenset({"GET"}),
+        }
+        assert AI_ROUTE_PATHS == frozenset(AI_ROUTE_METHODS)
+        # The streaming route stays on its existing channel path.
+        assert "/api/sdk/ai/stream" not in AI_ROUTE_PATHS
+        assert AI_ROUTE_PATHS.isdisjoint(
+            CONFIG_ROUTE_PATHS
+            | INTEGRATION_ROUTE_PATHS
+            | TABLE_SDK_ROUTE_PATHS
+            | ARTIFACT_ROUTE_PATHS
+            | FILES_ROUTE_PATHS
+            | KNOWLEDGE_ROUTE_PATHS
+        )
+
     def test_knowledge_route_selection_is_exact(self):
         """Gate C4c mounts the seven knowledge facade routes as real objects."""
         assert KNOWLEDGE_ROUTE_PATHS == frozenset(
@@ -489,6 +533,7 @@ class TestRouteReuse:
             | TABLE_SDK_ROUTE_PATHS
             | ARTIFACT_ROUTE_PATHS
             | KNOWLEDGE_ROUTE_PATHS
+            | AI_ROUTE_PATHS
         )
         assert len(INTEGRATION_ROUTE_PATHS) == 6
         assert all(
@@ -2848,3 +2893,192 @@ class TestEngineLocalRolesFallback:
             await roles_mod.roles.get(str(uuid4()))
         with pytest.raises(httpx.ConnectError):
             await roles_mod.roles.create("offline-role")
+
+
+def _patch_ai_provider(monkeypatch, *, content="socket hello", delay=0.0):
+    """Patch the provider leaf with a fake client; no real key is used."""
+    from types import SimpleNamespace
+
+    import src.services.llm as llm_pkg
+    import src.services.llm.factory as llm_factory
+
+    async def _complete(**_kwargs):
+        if delay:
+            await asyncio.sleep(delay)
+        return SimpleNamespace(
+            content=content,
+            input_tokens=4,
+            output_tokens=6,
+            cache_read_tokens=0,
+            cache_write_tokens=0,
+            provider_cost=None,
+            model="gpt-4o",
+        )
+
+    fake_client = AsyncMock()
+    fake_client.provider_name = "openai"
+    fake_client.model_name = "gpt-4o"
+    fake_client.complete = AsyncMock(side_effect=_complete)
+    monkeypatch.setattr(
+        llm_pkg, "get_llm_client", AsyncMock(return_value=fake_client)
+    )
+    monkeypatch.setattr(
+        llm_factory,
+        "get_llm_config",
+        AsyncMock(return_value=SimpleNamespace(provider="openai", model="gpt-4o")),
+    )
+    monkeypatch.setattr(
+        "src.core.cache.get_shared_redis", AsyncMock(return_value=AsyncMock())
+    )
+    monkeypatch.setattr(
+        "src.services.ai_usage_service.record_ai_usage", AsyncMock()
+    )
+    return fake_client
+
+
+class TestSocketAI:
+    """Gate C5f: the socket serves the real AI complete/info routes."""
+
+    @pytest.mark.asyncio
+    async def test_complete_and_info_over_socket(self, monkeypatch):
+        from bifrost.ai import ai as ai_facade
+
+        fake_client = _patch_ai_provider(monkeypatch)
+        server = WorkerSdkHttpServer()
+        await server.start()
+        try:
+            _install_engine_socket(server.socket_path)  # type: ignore[arg-type]
+            _set_client(
+                BifrostClient("http://dead-api", _engine_token())
+            )
+            completed = await ai_facade.complete(
+                "Hi",
+                org_id=None,
+                profile="Reasoning",
+                model="gpt-4o",
+                max_tokens=12,
+            )
+            info = await ai_facade.get_model_info()
+        finally:
+            await server.stop()
+
+        assert completed.content == "socket hello"
+        assert completed.model == "gpt-4o"
+        assert completed.input_tokens == 4
+        assert completed.output_tokens == 6
+        assert info == {"provider": "openai", "model": "gpt-4o"}
+        sent = fake_client.complete.await_args.kwargs
+        assert sent["max_tokens"] == 12
+        assert sent["model"] == "gpt-4o"
+        assert sent["messages"][-1].content == "Hi"
+
+    @pytest.mark.asyncio
+    async def test_large_completion_body_over_socket(self, monkeypatch):
+        """A large input file rides ordinary HTTP with no channel framing."""
+        from bifrost.ai import ai as ai_facade
+        from bifrost.models import AIInputFile
+
+        fake_client = _patch_ai_provider(monkeypatch)
+        blob = b"x" * 200_000
+        server = WorkerSdkHttpServer()
+        await server.start()
+        try:
+            _install_engine_socket(server.socket_path)  # type: ignore[arg-type]
+            _set_client(BifrostClient("http://dead-api", _engine_token()))
+            completed = await ai_facade.complete(
+                "Summarize this",
+                files=[
+                    AIInputFile(
+                        filename="big.bin",
+                        content_type="application/octet-stream",
+                        data=blob,
+                    )
+                ],
+            )
+        finally:
+            await server.stop()
+
+        assert completed.content == "socket hello"
+        sent = fake_client.complete.await_args.kwargs["messages"]
+        assert sent[-1].input_files[0].data == blob
+
+    @pytest.mark.asyncio
+    async def test_slow_completion_ignores_client_default_deadline(self, monkeypatch):
+        """Omitting ``timeout`` applies no SDK deadline (no 30s/patched default).
+
+        The engine client's default is forced to a tiny value: only an
+        explicitly forwarded ``timeout=None`` lets a slower provider finish.
+        """
+        from bifrost.ai import ai as ai_facade
+
+        _patch_ai_provider(monkeypatch, content="slow hello", delay=0.3)
+        server = WorkerSdkHttpServer()
+        await server.start()
+        try:
+            _install_engine_socket(server.socket_path)  # type: ignore[arg-type]
+            client = BifrostClient("http://dead-api", _engine_token())
+            _set_client(client)
+            engine = client._get_engine_async_client()
+            engine.timeout = httpx.Timeout(0.05)
+            completed = await ai_facade.complete("Slow prompt")
+        finally:
+            await server.stop()
+
+        assert completed.content == "slow hello"
+
+    @pytest.mark.asyncio
+    async def test_provider_error_over_socket_maps_to_public_runtime_error(
+        self, monkeypatch
+    ):
+        """A provider failure on the socket route surfaces as public text.
+
+        The real route maps the provider auth failure to a 401, and the
+        facade re-raises the exact HTTP-parity ``RuntimeError`` instead of
+        falling back to the dead network API.
+        """
+        from bifrost.ai import ai as ai_facade
+
+        class AuthenticationError(Exception):
+            pass
+
+        AuthenticationError.__module__ = "openai"
+        fake_client = _patch_ai_provider(monkeypatch)
+        fake_client.complete = AsyncMock(
+            side_effect=AuthenticationError("bad key")
+        )
+        server = WorkerSdkHttpServer()
+        await server.start()
+        try:
+            _install_engine_socket(server.socket_path)  # type: ignore[arg-type]
+            _set_client(BifrostClient("http://dead-api", _engine_token()))
+            with pytest.raises(
+                RuntimeError,
+                match="AI completion failed: OpenAI API key is invalid",
+            ):
+                await ai_facade.complete("Hi")
+        finally:
+            await server.stop()
+
+
+class TestEngineLocalAIFallback:
+    """A failed AI socket request never replays over the network API."""
+
+    @pytest.mark.asyncio
+    async def test_ai_local_failure_does_not_fall_back(self, monkeypatch):
+        import bifrost.client as client_module
+        from bifrost.ai import ai as ai_facade
+
+        # Prove no network fallback, not how long the transient backoff runs:
+        # collapse the retry schedule so each request makes one local attempt.
+        monkeypatch.setattr(client_module, "SDK_RETRY_BACKOFF_SECONDS", ())
+
+        missing_socket = os.path.join(
+            "/tmp", f"bifrost-missing-{uuid4().hex}.sock"
+        )
+        _install_engine_socket(missing_socket)
+        _set_client(BifrostClient("http://dead-api", "token"))
+
+        with pytest.raises(httpx.ConnectError):
+            await ai_facade.complete("offline")
+        with pytest.raises(httpx.ConnectError):
+            await ai_facade.get_model_info()
