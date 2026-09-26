@@ -1,16 +1,18 @@
 """Engine-local roles facade through a real forked worker.
 
 Uses a real ``TemplateProcess`` (the same fork primitive the pool uses):
-the child installs the engine-local transport at engine start, then runs
-the full fixed ``bifrost.roles`` facade — one mutation (create/update),
-one assignment of each kind, reads, and a missing-role error — with
-fixed-operation HTTP hard-disabled, while the parent serves the roles
-ops from the shared ``sdk_roles`` service. A second fork proves a workflow
-started by a non-admin still uses the engine superuser token. Service-token
-denial and forged child claims are covered by the dispatcher tests. The
-parent re-reads the mutated rows over
-a separate connection, proving the real commit boundary (the local
-session commits where the HTTP ``get_db`` dependency commits).
+the child is forked with the worker's private Unix socket injected exactly
+as the pool does, then runs the full fixed ``bifrost.roles`` facade —
+create, get, list, update, one assignment of each kind (users/forms), the
+assignment reads, and a missing-role error. The test process serves the
+**real** role routes on that socket via uvicorn against the worker's global
+database engine, with the child's network API dead and the legacy channel
+transport absent. Success proves every migrated call reached the
+parent-served routes, and the parent re-reads the mutated rows over its own
+session to prove the real commit boundary (the socket route commits where
+the HTTP ``get_db`` dependency commits). A second fork with a non-admin
+initiating context proves the socket authority comes from the engine token,
+never the child's claims.
 
 Marked ``slow`` like the other real-fork tests: template boot costs
 seconds. Run explicitly alongside the focused suite.
@@ -20,7 +22,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import contextlib
 import os
 import time
 from uuid import uuid4
@@ -28,14 +29,8 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import select
 
-from src.services.execution.sdk_local_dispatch import (
-    SDK_CHANNEL_ALLOWED_OPS,
-    LocalDispatchPrincipal,
-    dispatch_frame,
-    principal_from_context,
-    serve_channel,
-)
 from src.services.execution.template_process import TemplateProcess
+from src.services.execution.worker_sdk_http import WorkerSdkHttpServer
 
 pytestmark = pytest.mark.slow
 
@@ -44,16 +39,21 @@ def _script_b64(source: str) -> str:
     return base64.b64encode(source.encode("utf-8")).decode("utf-8")
 
 
-def _context_for(code_b64: str, *, admin: bool) -> dict:
+def _context_for(
+    code_b64: str,
+    engine_token: str,
+    *,
+    is_platform_admin: bool,
+) -> dict:
     return {
         "execution_id": f"exec-roles-fork-{uuid4().hex[:8]}",
         "name": "sdk-roles-local-fork-test",
         "code": code_b64,
         "parameters": {},
         "caller": {
-            "user_id": "fork-test-user",
-            "email": "fork@test.local",
-            "name": "Fork Test",
+            "user_id": "00000000-0000-0000-0000-000000000001",
+            "email": "engine@bifrost.internal",
+            "name": "Bifrost Engine",
         },
         "organization": None,
         "tags": [],
@@ -61,14 +61,9 @@ def _context_for(code_b64: str, *, admin: bool) -> dict:
         "cache_ttl_seconds": 0,
         "transient": True,
         "no_cache": True,
-        "is_platform_admin": admin,
-        "engine_token": "fork-test-dead-token",
+        "is_platform_admin": is_platform_admin,
+        "engine_token": engine_token,
     }
-
-
-@contextlib.asynccontextmanager
-async def _factory(db_session):
-    yield db_session
 
 
 def _wait_for_pid_to_die(pid: int, timeout: float = 10.0) -> None:
@@ -81,93 +76,67 @@ def _wait_for_pid_to_die(pid: int, timeout: float = 10.0) -> None:
             return
 
 
-async def _run_fork(context, db_session):
-    """Boot one template child, pump its SDK channel, return its envelope."""
+async def _run_socket_fork(server: WorkerSdkHttpServer, context: dict) -> dict:
+    """Fork one child against the worker socket and return its envelope."""
     template = TemplateProcess()
     template.start()
-    sdk_pump = None
-    conns = []
     try:
-        (
-            child_pid,
-            work_queue,
-            result_queue,
-            sdk_req,
-            sdk_resp,
-        ) = template.fork(worker_id="sdk-roles-fork", with_sdk=True)
-        conns = [sdk_req, sdk_resp]
-        principal = principal_from_context(context)
-        assert isinstance(principal, LocalDispatchPrincipal)
-        sdk_pump = asyncio.create_task(
-            serve_channel(
-                recv_conn=sdk_req,
-                send_conn=sdk_resp,
-                session_factory=lambda: _factory(db_session),
-                principal=principal,
-                allowed_ops=SDK_CHANNEL_ALLOWED_OPS,
-            )
+        child_pid, work_queue, result_queue = template.fork(
+            worker_id="sdk-roles-fork",
+            sdk_socket_path=server.socket_path,
         )
-        work_queue.put(("exec-roles-fork", context))
-        envelope = await asyncio.to_thread(result_queue.get, True, 120.0)
+        try:
+            work_queue.put(("exec-roles-fork", context))
+            envelope = await asyncio.to_thread(result_queue.get, True, 120.0)
+        finally:
+            work_queue.close()
+            result_queue.close()
         _wait_for_pid_to_die(child_pid)
-        assert await asyncio.wait_for(sdk_pump, timeout=15.0) == "eof"
-        sdk_pump = None
         return envelope
     finally:
-        if sdk_pump is not None:
-            sdk_pump.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await sdk_pump
-        for conn in conns:
-            with contextlib.suppress(Exception):
-                conn.close()
         template.shutdown()
 
 
 @pytest.mark.asyncio
-class TestForkedRolesTransport:
-    async def test_mutation_and_assignment_without_http(
-        self, db_session, async_session_factory, monkeypatch
+class TestForkedRolesSocket:
+    async def test_crud_and_assignments_over_socket(
+        self, async_session_factory, monkeypatch
     ):
-        """A real forked child runs the roles facade with HTTP dead."""
+        """A real forked child runs the roles facade on the worker socket."""
+        from src.core.security import mint_engine_token
         from src.models.enums import FormAccessLevel
         from src.models.orm.forms import Form as FormModel
         from src.models.orm.users import User as UserModel
 
         stem = f"fork-roles-{uuid4().hex[:8]}"
-        user = UserModel(
-            email=f"{stem}@test.local",
-            name="Fork Roles User",
-            is_active=True,
-            # NULL-org users must be superuser
-            # (``ck_users_org_requires_superuser``).
-            is_superuser=True,
-        )
-        form = FormModel(
-            name=f"{stem}-form",
-            access_level=FormAccessLevel.AUTHENTICATED,
-            organization_id=None,
-            is_active=True,
-            created_by="roles-fork-test",
-        )
-        db_session.add_all([user, form])
-        await db_session.flush()
-        user_id, form_id = str(user.id), str(form.id)
-        # Commit seeds so the parent can verify the child's local writes
-        # over a separate connection (the real commit boundary).
-        await db_session.commit()
+        async with async_session_factory() as seed:
+            user = UserModel(
+                email=f"{stem}@test.local",
+                name="Fork Roles User",
+                is_active=True,
+                # NULL-org users must be superuser
+                # (``ck_users_org_requires_superuser``).
+                is_superuser=True,
+            )
+            form = FormModel(
+                name=f"{stem}-form",
+                access_level=FormAccessLevel.AUTHENTICATED,
+                organization_id=None,
+                is_active=True,
+                created_by="roles-fork-test",
+            )
+            seed.add_all([user, form])
+            await seed.commit()
+            user_id, form_id = str(user.id), str(form.id)
         role_name = f"{stem}-role"
 
         lines = [
+            "import os, sys",
             "from bifrost import roles",
+            "from bifrost.client import get_engine_socket_path",
             "from bifrost._local_transport import get as _get_transport",
-            "import bifrost.roles as _rmod",
-            "_used_local = _get_transport() is not None",
-            "def _dead(*args, **kwargs):",
-            "    raise AssertionError(",
-            "        'fixed-operation HTTP must not be used in the engine path'",
-            "    )",
-            "_rmod.get_client = _dead",
+            "_used_socket = get_engine_socket_path() is not None",
+            "_used_channel = _get_transport() is not None",
             f"_created = await roles.create({role_name!r}, description='fork')",
             "_role_id = _created.id",
             "_fetched = await roles.get(_role_id)",
@@ -185,9 +154,9 @@ class TestForkedRolesTransport:
             "    _missing = 'ValueError'",
             "except Exception as _e:",
             "    _missing = f'{type(_e).__name__}'",
-            "import os, sys",
             "result = {",
-            "    'used_local': _used_local,",
+            "    'used_socket': _used_socket,",
+            "    'used_channel': _used_channel,",
             "    'role_id': _role_id,",
             "    'created_name': _created.name,",
             "    'fetched_name': _fetched.name,",
@@ -205,17 +174,35 @@ class TestForkedRolesTransport:
             "    'had_sqlalchemy': 'sqlalchemy' in sys.modules,",
             "}",
         ]
-        context = _context_for(_script_b64("\n".join(lines) + "\n"), admin=True)
-        # Hard-disable HTTP for every forked child: any SDK call that
-        # reaches HTTP fails, so success proves the local transport
-        # served every migrated operation.
+        engine_token, _ = mint_engine_token(
+            execution_id="gate-c5e-roles-fork",
+            solution_id=None,
+            global_repo_access=True,
+            timeout_seconds=120,
+        )
+        context = _context_for(
+            _script_b64("\n".join(lines) + "\n"),
+            engine_token,
+            is_platform_admin=True,
+        )
+        # Hard-disable HTTP for the forked child: any SDK call that reaches
+        # the network API fails with connection-refused, so success proves
+        # the socket served every migrated operation.
         monkeypatch.setenv("BIFROST_API_URL", "http://127.0.0.1:9")
 
+        server = WorkerSdkHttpServer()
+        await server.start()
+        assert server.socket_path is not None
         try:
-            envelope = await _run_fork(context, db_session)
+            envelope = await _run_socket_fork(server, context)
+        finally:
+            await server.stop()
+
+        try:
             assert envelope["success"] is True, envelope
             result = envelope["result"]
-            assert result["used_local"] is True, result
+            assert result["used_socket"] is True, result
+            assert result["used_channel"] is False, result
             assert result["created_name"] == role_name, result
             assert result["fetched_name"] == role_name, result
             assert result["saw_in_list"] is True, result
@@ -229,10 +216,9 @@ class TestForkedRolesTransport:
             assert result["had_sqlalchemy"] is False, result
             role_id = result["role_id"]
 
-            # The parent sees the committed state over a separate
-            # connection: create, update, and both assignments were
-            # really committed by the local dispatcher (not just
-            # flushed on the pump session).
+            # The parent sees the committed state over a separate connection:
+            # create, update, and both assignments were really committed by
+            # the socket route (not just flushed on the request session).
             from src.models import FormRole as FormRoleORM
             from src.models import Role as RoleORM
             from src.models import UserRole as UserRoleORM
@@ -259,41 +245,19 @@ class TestForkedRolesTransport:
                     )
                 ).scalars().all()
                 assert [str(r.form_id) for r in form_rows] == [form_id]
-
-            # External HTTP behavior is unchanged: the same rows read
-            # back through the parent dispatcher like an HTTP handler.
-            principal = principal_from_context(context)
-            parent_get = await dispatch_frame(
-                lambda: _factory(db_session),
-                principal,
-                {
-                    "v": 1,
-                    "id": "fork-parity-get",
-                    "op": "roles.get",
-                    "role_id": role_id,
-                },
-            )
-            assert parent_get["ok"] is True, parent_get
-            assert parent_get["result"]["description"] == "fork-2"
         finally:
-            # Remove committed seeds so later tests see a clean slate.
-            # Delete through the shared service in a fresh session to cover
-            # the HTTP/local deletion path with existing assignments.
+            # Remove committed seeds so later tests see a clean slate. The
+            # role delete CASCADEs both assignments.
+            from sqlalchemy import delete as sa_delete
+
+            from src.models import Role as RoleORM
+            from src.models.orm.forms import Form as FormModel
+            from src.models.orm.users import User as UserModel
+
             async with async_session_factory() as cleanup:
-                from sqlalchemy import delete as sa_delete
-
-                from shared.sdk_roles import delete_role
-                from src.models import Role as RoleORM
-                from src.models.orm.forms import Form as FormModel
-                from src.models.orm.users import User as UserModel
-
-                role_ids = (
-                    await cleanup.execute(
-                        select(RoleORM.id).where(RoleORM.name == role_name)
-                    )
-                ).scalars().all()
-                for rid in role_ids:
-                    await delete_role(cleanup, role_id=rid)
+                await cleanup.execute(
+                    sa_delete(RoleORM).where(RoleORM.name == role_name)
+                )
                 await cleanup.execute(
                     sa_delete(FormModel).where(
                         FormModel.name == f"{stem}-form"
@@ -306,30 +270,48 @@ class TestForkedRolesTransport:
                 )
                 await cleanup.commit()
 
-    async def test_non_admin_initiator_uses_engine_superuser_without_http(
-        self, db_session, monkeypatch
+    async def test_non_admin_initiator_uses_engine_superuser_over_socket(
+        self, async_session_factory, monkeypatch
     ):
-        """A workflow uses its engine superuser token regardless of initiator."""
+        """The socket authority is the engine token, not the child's claims."""
+        from src.core.security import mint_engine_token
+
         lines = [
             "from bifrost import roles",
+            "from bifrost.client import get_engine_socket_path",
             "from bifrost._local_transport import get as _get_transport",
-            "import bifrost.roles as _rmod",
-            "_used_local = _get_transport() is not None",
-            "def _dead(*args, **kwargs):",
-            "    raise AssertionError(",
-            "        'fixed-operation HTTP must not be used in the engine path'",
-            "    )",
-            "_rmod.get_client = _dead",
+            "_used_socket = get_engine_socket_path() is not None",
+            "_used_channel = _get_transport() is not None",
             "_listed = await roles.list()",
-            "result = {'used_local': _used_local, 'listed': isinstance(_listed, list)}",
+            "result = {",
+            "    'used_socket': _used_socket,",
+            "    'used_channel': _used_channel,",
+            "    'listed': isinstance(_listed, list),",
+            "}",
         ]
+        engine_token, _ = mint_engine_token(
+            execution_id="gate-c5e-roles-fork-nonadmin",
+            solution_id=None,
+            global_repo_access=True,
+            timeout_seconds=120,
+        )
         context = _context_for(
-            _script_b64("\n".join(lines) + "\n"), admin=False
+            _script_b64("\n".join(lines) + "\n"),
+            engine_token,
+            is_platform_admin=False,
         )
         monkeypatch.setenv("BIFROST_API_URL", "http://127.0.0.1:9")
 
-        envelope = await _run_fork(context, db_session)
+        server = WorkerSdkHttpServer()
+        await server.start()
+        assert server.socket_path is not None
+        try:
+            envelope = await _run_socket_fork(server, context)
+        finally:
+            await server.stop()
+
         assert envelope["success"] is True, envelope
         result = envelope["result"]
-        assert result["used_local"] is True, result
+        assert result["used_socket"] is True, result
+        assert result["used_channel"] is False, result
         assert result["listed"] is True, result

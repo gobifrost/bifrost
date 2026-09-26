@@ -13,10 +13,10 @@ Covers the acceptance surface that does not need a forked child:
 - mutations commit explicitly (the shared service only flushes; HTTP
   commits via ``get_db``) while reads never commit;
 - child frame actor, org, and Solution claims can never grant access;
-- the SDK facades map local results to the public surface (``Role``
-  objects, ``user_ids``/``form_ids`` lists, ``ValueError`` on 404) and
-  never fall back to HTTP after a failed local call;
-- external callers (no transport) keep the HTTP path unchanged.
+- the SDK facades ride ``BifrostClient.engine_request`` with the exact
+  HTTP method/path/body and map statuses to the same public exceptions
+  (``Role`` objects, ``user_ids``/``form_ids`` lists, ``ValueError`` on
+  404) with no network fallback after a failed local call.
 """
 
 from __future__ import annotations
@@ -773,178 +773,118 @@ def _role_body(role_id=None, name="facade-role"):
     }
 
 
-def _local_error(status, detail="denied"):
-    import httpx
-
-    from bifrost.client import raise_for_status_with_detail
-
-    request = httpx.Request("POST", "local://sdk/roles/op")
-    response = httpx.Response(
-        status, json={"detail": detail}, request=request
-    )
-    try:
-        raise_for_status_with_detail(response)
-    except Exception as e:  # noqa: BLE001 - re-raised below by the fake
-        return e
-    raise AssertionError("unreachable")
+def _response(method, status, payload=None):
+    request = httpx.Request(method, "http://engine.local")
+    return httpx.Response(status, json=payload, request=request)
 
 
-@pytest.mark.asyncio
-async def test_facade_maps_local_results_and_404s():
-    from bifrost.roles import roles as roles_facade
+class TestEngineRequestRolesFacade:
+    """Gate C5e: the migrated roles facade rides ``engine_request``.
 
-    body = _role_body()
-    transport = AsyncMock()
-    transport.call_roles_create.return_value = body
-    transport.call_roles_get.return_value = body
-    transport.call_roles_list.return_value = [body]
-    transport.call_roles_update.return_value = body
-    transport.call_roles_delete.return_value = None
-    transport.call_roles_list_users.return_value = ["u-1"]
-    transport.call_roles_list_forms.return_value = ["f-1"]
-    transport.call_roles_assign_users.return_value = None
-    transport.call_roles_assign_forms.return_value = None
+    Each method sends the exact HTTP method/path/body the external path
+    used, so the socket-served and network calls stay identical; statuses
+    map to the same public exceptions with no silent fallback.
+    """
 
-    with patch("bifrost._local_transport.get", return_value=transport):
-        role = await roles_facade.create("facade-role", description="d")
-        assert role.id == body["id"]
-        transport.call_roles_create.assert_awaited_once_with(
-            "facade-role", "d"
+    def _client(self, *responses):
+        client = AsyncMock()
+        client.engine_request = AsyncMock(side_effect=responses)
+        return client
+
+    @pytest.mark.asyncio
+    async def test_all_nine_methods_use_exact_http_calls(self):
+        from bifrost.roles import roles as roles_facade
+
+        body = _role_body()
+        client = self._client(
+            _response("POST", 201, body),
+            _response("GET", 200, body),
+            _response("GET", 200, [body]),
+            _response("PATCH", 200, body),
+            _response("DELETE", 204, None),
+            _response("GET", 200, {"user_ids": ["u-1"], "users": [], "total": 1}),
+            _response("GET", 200, {"form_ids": ["f-1"]}),
+            _response("POST", 204, None),
+            _response("POST", 204, None),
         )
+        with patch("bifrost.roles.get_client", return_value=client):
+            created = await roles_facade.create(body["name"], description="d")
+            assert created.id == body["id"]
+            args, kwargs = client.engine_request.await_args_list[0]
+            assert args == ("POST", "/api/roles")
+            assert kwargs["json"] == {
+                "name": body["name"],
+                "description": "d",
+                "is_active": True,
+            }
 
-        assert (await roles_facade.get(body["id"])).name == "facade-role"
-        transport.call_roles_get.assert_awaited_once_with(body["id"])
+            assert (await roles_facade.get(body["id"])).id == body["id"]
+            args, _ = client.engine_request.await_args_list[1]
+            assert args == ("GET", f"/api/roles/{body['id']}")
 
-        listed = await roles_facade.list()
-        assert [r.id for r in listed] == [body["id"]]
-        transport.call_roles_list.assert_awaited_once_with()
+            listed = await roles_facade.list()
+            assert [r.id for r in listed] == [body["id"]]
+            args, _ = client.engine_request.await_args_list[2]
+            assert args == ("GET", "/api/roles")
 
-        updated = await roles_facade.update(
-            body["id"], description="d2"
-        )
-        assert updated.id == body["id"]
-        transport.call_roles_update.assert_awaited_once_with(
-            body["id"], {"description": "d2"}
-        )
+            updated = await roles_facade.update(body["id"], description="d2")
+            assert updated.id == body["id"]
+            args, kwargs = client.engine_request.await_args_list[3]
+            assert args == ("PATCH", f"/api/roles/{body['id']}")
+            assert kwargs["json"] == {"description": "d2"}
 
-        assert await roles_facade.delete(body["id"]) is None
-        assert await roles_facade.list_users(body["id"]) == ["u-1"]
-        assert await roles_facade.list_forms(body["id"]) == ["f-1"]
-        assert (
-            await roles_facade.assign_users(body["id"], ["u-1"]) is None
-        )
-        assert (
-            await roles_facade.assign_forms(body["id"], ["f-1"]) is None
-        )
+            assert await roles_facade.delete(body["id"]) is None
+            args, _ = client.engine_request.await_args_list[4]
+            assert args == ("DELETE", f"/api/roles/{body['id']}")
 
-    for method, call in (
-        ("get", lambda m, rid: m.get(rid)),
-        ("update", lambda m, rid: m.update(rid, description="x")),
-        ("delete", lambda m, rid: m.delete(rid)),
-        ("list_users", lambda m, rid: m.list_users(rid)),
-        ("list_forms", lambda m, rid: m.list_forms(rid)),
-        ("assign_users", lambda m, rid: m.assign_users(rid, ["u-1"])),
-        ("assign_forms", lambda m, rid: m.assign_forms(rid, ["f-1"])),
-    ):
-        failing = AsyncMock()
-        getattr(failing, f"call_roles_{method}").side_effect = _local_error(
-            404, "Role not found"
-        )
-        with (
-            patch("bifrost._local_transport.get", return_value=failing),
-            pytest.raises(ValueError, match="Role not found"),
+            assert await roles_facade.list_users(body["id"]) == ["u-1"]
+            args, _ = client.engine_request.await_args_list[5]
+            assert args == ("GET", f"/api/roles/{body['id']}/users")
+
+            assert await roles_facade.list_forms(body["id"]) == ["f-1"]
+            args, _ = client.engine_request.await_args_list[6]
+            assert args == ("GET", f"/api/roles/{body['id']}/forms")
+
+            assert await roles_facade.assign_users(body["id"], ["u-1"]) is None
+            args, kwargs = client.engine_request.await_args_list[7]
+            assert args == ("POST", f"/api/roles/{body['id']}/users")
+            assert kwargs["json"] == {"user_ids": ["u-1"]}
+
+            assert await roles_facade.assign_forms(body["id"], ["f-1"]) is None
+            args, kwargs = client.engine_request.await_args_list[8]
+            assert args == ("POST", f"/api/roles/{body['id']}/forms")
+            assert kwargs["json"] == {"form_ids": ["f-1"]}
+
+    @pytest.mark.asyncio
+    async def test_status_mapping_matches_http(self):
+        from bifrost.client import BifrostAPIError, BifrostAuthorizationError
+        from bifrost.roles import roles as roles_facade
+
+        request = httpx.Request("GET", "http://engine.local/api/roles/x")
+        for call in (
+            lambda m: m.get("missing"),
+            lambda m: m.update("missing", description="x"),
+            lambda m: m.delete("missing"),
+            lambda m: m.list_users("missing"),
+            lambda m: m.list_forms("missing"),
+            lambda m: m.assign_users("missing", ["u-1"]),
+            lambda m: m.assign_forms("missing", ["f-1"]),
         ):
-            await call(roles_facade, str(uuid4()))
+            client = self._client(
+                httpx.Response(404, json={"detail": "x"}, request=request)
+            )
+            with patch("bifrost.roles.get_client", return_value=client):
+                with pytest.raises(ValueError, match="Role not found"):
+                    await call(roles_facade)
 
-
-@pytest.mark.asyncio
-async def test_facade_never_falls_back_to_http():
-    """A failed local call raises loudly instead of retrying over HTTP."""
-    from bifrost.roles import roles as roles_facade
-    from bifrost._local_transport import LocalTransportClosed
-
-    transport = AsyncMock()
-    transport.call_roles_get.side_effect = LocalTransportClosed("closed")
-    with (
-        patch("bifrost._local_transport.get", return_value=transport),
-        patch(
-            "bifrost.roles.get_client",
-            side_effect=AssertionError("HTTP fallback is forbidden"),
-        ),
-    ):
-        with pytest.raises(LocalTransportClosed):
-            await roles_facade.get(str(uuid4()))
-
-
-@pytest.mark.asyncio
-async def test_facade_propagates_local_403_like_http():
-    """Local 403s surface as authorization errors — no silent mapping."""
-    from bifrost.roles import roles as roles_facade
-    from bifrost.client import BifrostAuthorizationError
-
-    transport = AsyncMock()
-    transport.call_roles_create.side_effect = _local_error(
-        403, "Superuser privileges required"
-    )
-    with patch("bifrost._local_transport.get", return_value=transport):
-        with pytest.raises(BifrostAuthorizationError):
-            await roles_facade.create("denied-role")
-
-
-@pytest.mark.asyncio
-async def test_external_http_path_unchanged():
-    """Without a transport the facade keeps the exact HTTP calls."""
-    from bifrost.roles import roles as roles_facade
-
-    body = _role_body()
-
-    def _response(method, status, payload=None):
-        request = httpx.Request(method, "http://test.local/api/roles")
-        return httpx.Response(status, json=payload, request=request)
-
-    client = AsyncMock()
-    client.post.return_value = _response(
-        "POST", 201, {**body, "consumer_counts": None}
-    )
-    client.get.return_value = _response("GET", 200, [body])
-    client.patch.return_value = _response("PATCH", 200, body)
-    client.delete.return_value = _response("DELETE", 204, None)
-
-    with (
-        patch("bifrost._local_transport.get", return_value=None),
-        patch("bifrost.roles.get_client", return_value=client),
-    ):
-        await roles_facade.create("http-role", description="d")
-        args, kwargs = client.post.await_args_list[0]
-        assert args[0] == "/api/roles"
-        assert kwargs["json"]["name"] == "http-role"
-
-        await roles_facade.list()
-        client.get.assert_any_await("/api/roles")
-
-        await roles_facade.update(body["id"], description="d2")
-        args, kwargs = client.patch.await_args_list[0]
-        assert args[0] == f"/api/roles/{body['id']}"
-        assert kwargs["json"] == {"description": "d2"}
-
-        await roles_facade.delete(body["id"])
-        client.delete.assert_awaited_with(f"/api/roles/{body['id']}")
-
-        client.get.return_value = _response(
-            "GET", 200, {"user_ids": ["u-1"], "users": [], "total": 1}
+        # 403 (platform-admin gate) and 422 (DTO validation) surface as the
+        # same public exceptions as the external path.
+        client = self._client(
+            httpx.Response(403, json={"detail": "denied"}, request=request),
+            httpx.Response(422, json={"detail": "bad"}, request=request),
         )
-        assert await roles_facade.list_users(body["id"]) == ["u-1"]
-        client.get.return_value = _response(
-            "GET", 200, {"form_ids": ["f-1"]}
-        )
-        assert await roles_facade.list_forms(body["id"]) == ["f-1"]
-
-        client.post.return_value = _response("POST", 204, None)
-        await roles_facade.assign_users(body["id"], ["u-1"])
-        args, kwargs = client.post.await_args_list[-1]
-        assert args[0] == f"/api/roles/{body['id']}/users"
-        assert kwargs["json"] == {"user_ids": ["u-1"]}
-        await roles_facade.assign_forms(body["id"], ["f-1"])
-        args, kwargs = client.post.await_args_list[-1]
-        assert args[0] == f"/api/roles/{body['id']}/forms"
-        assert kwargs["json"] == {"form_ids": ["f-1"]}
+        with patch("bifrost.roles.get_client", return_value=client):
+            with pytest.raises(BifrostAuthorizationError):
+                await roles_facade.create("denied")
+            with pytest.raises(BifrostAPIError):
+                await roles_facade.list()

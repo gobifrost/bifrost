@@ -28,8 +28,10 @@ adds the SDK agent-run routes (enqueue/get), and Gate C5c adds the topic
 emit route (``events.emit``) plus the form read routes (``forms.list`` /
 ``forms.get``). Gate C5d adds the organization facade routes
 (create/get/list/update/delete) and the user facade routes
-(list/get/create/update/delete). Streams and other domains stay on their
-existing channel path until their own Gate C slice migrates them.
+(list/get/create/update/delete). Gate C5e adds the role facade routes
+(create/get/list/update/delete plus the user and form assignment reads and
+writes). Streams and other domains stay on their existing channel path
+until their own Gate C slice migrates them.
 
 ``import fastapi``/``uvicorn`` happen inside the functions so the worker
 entry closure stays free of those heavyweights at import time (see
@@ -241,6 +243,20 @@ USER_ROUTE_METHODS: dict[str, frozenset[str]] = {
     "/api/users/{user_id}": frozenset({"GET", "PATCH", "DELETE"}),
 }
 
+# Gate C5e: the SDK role facade routes, selected from ``src.routers.roles`` by
+# path AND method. The list and create share ``/api/roles``; the
+# get/update/delete share ``/api/roles/{role_id}``; the user and form
+# assignment reads/writes share ``/api/roles/{role_id}/users`` and
+# ``/api/roles/{role_id}/forms``. The PUT compatibility alias, the per-id
+# remove, the bulk-unassign, and the agents/apps/workflows/knowledge siblings
+# stay on the API.
+ROLES_ROUTE_METHODS: dict[str, frozenset[str]] = {
+    "/api/roles": frozenset({"GET", "POST"}),
+    "/api/roles/{role_id}": frozenset({"GET", "PATCH", "DELETE"}),
+    "/api/roles/{role_id}/users": frozenset({"GET", "POST"}),
+    "/api/roles/{role_id}/forms": frozenset({"GET", "POST"}),
+}
+
 # Every route path this worker-local app serves from the cli SDK router.
 # Other SDK domains keep their existing channel path until their Gate C
 # slice migrates them.
@@ -270,6 +286,7 @@ def build_worker_sdk_app() -> Any:
     from src.routers.forms import router as forms_router
     from src.routers.organizations import router as organizations_router
     from src.routers.platform_jobs import router as platform_jobs_router
+    from src.routers.roles import router as roles_router
     from src.routers.tables import router as tables_router
     from src.routers.users import router as users_router
     from src.routers.workflows import router as workflows_router
@@ -447,6 +464,23 @@ def build_worker_sdk_app() -> Any:
             selected += 1
     expected += sum(
         len(methods) for methods in USER_ROUTE_METHODS.values()
+    )
+
+    # The SDK role facade routes are selected by (path, method) from their
+    # real router. The same path carries several methods, and the roles
+    # router also holds the PUT alias, per-id and bulk-unassign DELETEs, and
+    # the agents/apps/workflows/knowledge siblings, so the exact method set
+    # matters.
+    for route in roles_router.routes:
+        wanted = ROLES_ROUTE_METHODS.get(
+            getattr(route, "path", None), frozenset()
+        )
+        methods = getattr(route, "methods", None) or frozenset()
+        if wanted and methods & wanted:
+            app.router.routes.append(route)
+            selected += 1
+    expected += sum(
+        len(methods) for methods in ROLES_ROUTE_METHODS.values()
     )
 
     if selected != expected:

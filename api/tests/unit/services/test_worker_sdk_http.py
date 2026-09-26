@@ -40,6 +40,7 @@ from src.services.execution.worker_sdk_http import (
     KNOWLEDGE_ROUTE_PATHS,
     ORGANIZATION_ROUTE_METHODS,
     PLATFORM_JOB_ROUTE_METHODS,
+    ROLES_ROUTE_METHODS,
     SDK_ROUTE_PATHS,
     TABLE_ROUTE_METHODS,
     TABLE_SDK_ROUTE_PATHS,
@@ -159,6 +160,7 @@ class TestRouteReuse:
         from src.routers.forms import router as forms_router
         from src.routers.organizations import router as organizations_router
         from src.routers.platform_jobs import router as platform_jobs_router
+        from src.routers.roles import router as roles_router
         from src.routers.tables import router as tables_router
         from src.routers.users import router as users_router
         from src.routers.workflows import router as workflows_router
@@ -252,6 +254,12 @@ class TestRouteReuse:
             if (wanted := USER_ROUTE_METHODS.get(getattr(route, "path", None)))
             for method in (getattr(route, "methods", None) or set()) & wanted
         }
+        roles_originals = {
+            (route.path, method): route
+            for route in roles_router.routes
+            if (wanted := ROLES_ROUTE_METHODS.get(getattr(route, "path", None)))
+            for method in (getattr(route, "methods", None) or set()) & wanted
+        }
 
         app = build_worker_sdk_app()
         mounted = [route for route in app.router.routes if isinstance(route, APIRoute)]
@@ -321,6 +329,12 @@ class TestRouteReuse:
             if route.path in USER_ROUTE_METHODS
             for method in route.methods
         }
+        mounted_roles = {
+            (route.path, method): route
+            for route in mounted
+            if route.path in ROLES_ROUTE_METHODS
+            for method in route.methods
+        }
 
         # Only the selected routes, and the exact registered objects — no
         # copied handlers and no rest of the API surface.
@@ -383,6 +397,11 @@ class TestRouteReuse:
         for key, route in mounted_users.items():
             assert route is user_originals[key]
             assert route.endpoint is user_originals[key].endpoint
+
+        assert set(mounted_roles) == set(roles_originals)
+        for key, route in mounted_roles.items():
+            assert route is roles_originals[key]
+            assert route.endpoint is roles_originals[key].endpoint
 
         # The shared ``/api/tables/{table_id}`` path must not drag in its
         # GET/PATCH metadata siblings.
@@ -572,6 +591,25 @@ class TestRouteReuse:
             | set(EVENT_ROUTE_METHODS)
             | set(FORM_ROUTE_METHODS)
             | set(ORGANIZATION_ROUTE_METHODS)
+        )
+
+    def test_role_route_selection_is_exact(self):
+        """Gate C5e mounts only the nine role facade (path, method) pairs."""
+        assert ROLES_ROUTE_METHODS == {
+            "/api/roles": frozenset({"GET", "POST"}),
+            "/api/roles/{role_id}": frozenset({"GET", "PATCH", "DELETE"}),
+            "/api/roles/{role_id}/users": frozenset({"GET", "POST"}),
+            "/api/roles/{role_id}/forms": frozenset({"GET", "POST"}),
+        }
+        assert set(ROLES_ROUTE_METHODS).isdisjoint(
+            SDK_ROUTE_PATHS
+            | set(WORKFLOW_ROUTE_METHODS)
+            | set(EXECUTION_ROUTE_METHODS)
+            | set(AGENT_RUN_ROUTE_METHODS)
+            | set(EVENT_ROUTE_METHODS)
+            | set(FORM_ROUTE_METHODS)
+            | set(ORGANIZATION_ROUTE_METHODS)
+            | set(USER_ROUTE_METHODS)
         )
 
     @pytest.mark.asyncio
@@ -2631,3 +2669,182 @@ class TestEngineLocalOrganizationsUsersFallback:
             await users_mod.users.list()
         with pytest.raises(httpx.ConnectError):
             await users_mod.users.get(str(uuid4()))
+
+
+class TestSocketRoles:
+    """Gate C5e: the socket serves the real role routes."""
+
+    @pytest.mark.asyncio
+    async def test_role_facade_over_socket(self, async_session_factory):
+        from sqlalchemy import delete
+        from uuid import UUID
+
+        from src.models.enums import FormAccessLevel
+        from src.models.orm.forms import Form as FormModel
+        from src.models.orm.users import Role as RoleModel
+        from src.models.orm.users import User as UserModel
+
+        stem = f"wsdk-role-{uuid4().hex[:8]}"
+        headers = {"Authorization": f"Bearer {_engine_token()}"}
+
+        # Roles validate their assignment targets, so seed a committed user
+        # and form for the parent-served routes to find over their own session.
+        async with async_session_factory() as seed:
+            user = UserModel(
+                email=f"{stem}@example.com",
+                name="Socket Role User",
+                is_active=True,
+                is_superuser=True,
+            )
+            form = FormModel(
+                name=f"{stem}-form",
+                access_level=FormAccessLevel.AUTHENTICATED,
+                organization_id=None,
+                is_active=True,
+                created_by="worker-sdk-http-test",
+            )
+            seed.add_all([user, form])
+            await seed.commit()
+            user_id, form_id = str(user.id), str(form.id)
+
+        role_id: str | None = None
+        server = WorkerSdkHttpServer()
+        await server.start()
+        try:
+            async with _socket_client(server) as client:
+                created = await client.post(
+                    "/api/roles",
+                    json={"name": stem, "description": "socket", "is_active": True},
+                    headers=headers,
+                )
+                assert created.status_code == 201, created.text
+                role_id = created.json()["id"]
+                assert created.json()["name"] == stem
+
+                detail = await client.get(f"/api/roles/{role_id}", headers=headers)
+                assert detail.status_code == 200, detail.text
+                assert detail.json()["description"] == "socket"
+
+                listed = await client.get("/api/roles", headers=headers)
+                assert listed.status_code == 200, listed.text
+                assert role_id in {r["id"] for r in listed.json()}
+
+                updated = await client.patch(
+                    f"/api/roles/{role_id}",
+                    json={"description": "socket-renamed"},
+                    headers=headers,
+                )
+                assert updated.status_code == 200, updated.text
+                assert updated.json()["description"] == "socket-renamed"
+
+                assigned_users = await client.post(
+                    f"/api/roles/{role_id}/users",
+                    json={"user_ids": [user_id]},
+                    headers=headers,
+                )
+                assert assigned_users.status_code == 204, assigned_users.text
+                users_out = await client.get(
+                    f"/api/roles/{role_id}/users", headers=headers
+                )
+                assert users_out.status_code == 200, users_out.text
+                assert users_out.json()["user_ids"] == [user_id]
+
+                assigned_forms = await client.post(
+                    f"/api/roles/{role_id}/forms",
+                    json={"form_ids": [form_id]},
+                    headers=headers,
+                )
+                assert assigned_forms.status_code == 204, assigned_forms.text
+                forms_out = await client.get(
+                    f"/api/roles/{role_id}/forms", headers=headers
+                )
+                assert forms_out.status_code == 200, forms_out.text
+                assert forms_out.json()["form_ids"] == [form_id]
+
+                malformed_assign = await client.post(
+                    f"/api/roles/{role_id}/users",
+                    json={"user_ids": []},
+                    headers=headers,
+                )
+                assert malformed_assign.status_code == 422, malformed_assign.text
+
+                malformed_id = await client.get(
+                    "/api/roles/not-a-uuid", headers=headers
+                )
+                assert malformed_id.status_code == 422, malformed_id.text
+
+                deleted = await client.delete(
+                    f"/api/roles/{role_id}", headers=headers
+                )
+                assert deleted.status_code == 204, deleted.text
+                role_id = None
+
+                missing = await client.get(
+                    f"/api/roles/{uuid4()}", headers=headers
+                )
+                assert missing.status_code == 404, missing.text
+        finally:
+            await server.stop()
+            async with async_session_factory() as cleanup:
+                if role_id is not None:
+                    await cleanup.execute(
+                        delete(RoleModel).where(RoleModel.id == UUID(role_id))
+                    )
+                await cleanup.execute(
+                    delete(FormModel).where(FormModel.name == f"{stem}-form")
+                )
+                await cleanup.execute(
+                    delete(UserModel).where(
+                        UserModel.email == f"{stem}@example.com"
+                    )
+                )
+                await cleanup.commit()
+
+    @pytest.mark.asyncio
+    async def test_roles_require_auth_over_socket(self):
+        server = WorkerSdkHttpServer()
+        await server.start()
+        try:
+            async with _socket_client(server) as client:
+                missing_list = await client.get("/api/roles")
+                missing_create = await client.post(
+                    "/api/roles", json={"name": "nope"}
+                )
+                invalid_get = await client.get(
+                    f"/api/roles/{uuid4()}",
+                    headers={"Authorization": "Bearer not-a-token"},
+                )
+            assert missing_list.status_code == 401, missing_list.text
+            assert missing_create.status_code == 401, missing_create.text
+            assert invalid_get.status_code == 401, invalid_get.text
+        finally:
+            await server.stop()
+
+
+class TestEngineLocalRolesFallback:
+    """A failed role socket request never replays over the network API."""
+
+    @pytest.mark.asyncio
+    async def test_roles_local_failure_does_not_fall_back(self, monkeypatch):
+        import importlib
+
+        import bifrost.client as client_module
+
+        roles_mod = importlib.import_module("bifrost.roles")
+
+        # Prove no network fallback, not how long the transient backoff runs:
+        # collapse the retry schedule so each request makes one local attempt.
+        monkeypatch.setattr(client_module, "SDK_RETRY_BACKOFF_SECONDS", ())
+
+        missing_socket = os.path.join(
+            "/tmp", f"bifrost-missing-{uuid4().hex}.sock"
+        )
+        _install_engine_socket(missing_socket)
+        _set_client(BifrostClient("http://dead-api", "token"))
+
+        with pytest.raises(httpx.ConnectError):
+            await roles_mod.roles.list()
+        with pytest.raises(httpx.ConnectError):
+            await roles_mod.roles.get(str(uuid4()))
+        with pytest.raises(httpx.ConnectError):
+            await roles_mod.roles.create("offline-role")

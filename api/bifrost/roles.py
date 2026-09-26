@@ -2,7 +2,9 @@
 bifrost/roles.py - Roles management SDK
 
 Provides Python API for role operations (CRUD + user/form assignments).
-Engine children use the parent-local roles service; external callers use HTTP.
+
+Inside an engine child these operations go through the worker's private Unix
+socket (the parent serves the real HTTP endpoints); external callers use HTTP.
 """
 
 from __future__ import annotations
@@ -48,18 +50,9 @@ class roles:
             ...     description="Can manage customer data"
             ... )
         """
-        from ._local_transport import get as _get_local_transport
-
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: the parent creates through the shared
-            # roles service over the dedicated channel. Error mapping
-            # matches the HTTP path below; a local attempt never falls
-            # back to HTTP.
-            data = await transport.call_roles_create(name, description)
-            return Role.model_validate(data)
         client = get_client()
-        response = await client.post(
+        response = await client.engine_request(
+            "POST",
             "/api/roles",
             json={
                 "name": name,
@@ -90,25 +83,8 @@ class roles:
             >>> role = await roles.get("role-123")
             >>> print(role.name)
         """
-        from ._local_transport import get as _get_local_transport
-
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: the parent reads through the shared
-            # roles service over the dedicated channel. Error mapping
-            # matches the HTTP path below; a local attempt never falls
-            # back to HTTP.
-            from .client import BifrostAPIError
-
-            try:
-                data = await transport.call_roles_get(role_id)
-            except BifrostAPIError as e:
-                if e.response.status_code == 404:
-                    raise ValueError(f"Role not found: {role_id}") from None
-                raise
-            return Role.model_validate(data)
         client = get_client()
-        response = await client.get(f"/api/roles/{role_id}")
+        response = await client.engine_request("GET", f"/api/roles/{role_id}")
         if response.status_code == 404:
             raise ValueError(f"Role not found: {role_id}")
         raise_for_status_with_detail(response)
@@ -131,18 +107,8 @@ class roles:
             >>> for role in all_roles:
             ...     print(f"{role.name}: {role.description}")
         """
-        from ._local_transport import get as _get_local_transport
-
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: the parent lists through the shared
-            # roles service over the dedicated channel (route defaults,
-            # like the unfiltered HTTP call). A local attempt never
-            # falls back to HTTP.
-            items = await transport.call_roles_list()
-            return [Role.model_validate(role) for role in items]
         client = get_client()
-        response = await client.get("/api/roles")
+        response = await client.engine_request("GET", "/api/roles")
         raise_for_status_with_detail(response)
         data = response.json()
         return [Role.model_validate(role) for role in data]
@@ -173,25 +139,10 @@ class roles:
             ...     description="Updated description"
             ... )
         """
-        from ._local_transport import get as _get_local_transport
-
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: the parent updates through the shared
-            # roles service over the dedicated channel. Error mapping
-            # matches the HTTP path below; a local attempt never falls
-            # back to HTTP.
-            from .client import BifrostAPIError
-
-            try:
-                data = await transport.call_roles_update(role_id, dict(updates))
-            except BifrostAPIError as e:
-                if e.response.status_code == 404:
-                    raise ValueError(f"Role not found: {role_id}") from None
-                raise
-            return Role.model_validate(data)
         client = get_client()
-        response = await client.patch(f"/api/roles/{role_id}", json=updates)
+        response = await client.engine_request(
+            "PATCH", f"/api/roles/{role_id}", json=updates
+        )
         if response.status_code == 404:
             raise ValueError(f"Role not found: {role_id}")
         raise_for_status_with_detail(response)
@@ -216,25 +167,8 @@ class roles:
             >>> from bifrost import roles
             >>> await roles.delete("role-123")
         """
-        from ._local_transport import get as _get_local_transport
-
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: the parent deletes through the shared
-            # roles service over the dedicated channel. Error mapping
-            # matches the HTTP path below; a local attempt never falls
-            # back to HTTP.
-            from .client import BifrostAPIError
-
-            try:
-                await transport.call_roles_delete(role_id)
-            except BifrostAPIError as e:
-                if e.response.status_code == 404:
-                    raise ValueError(f"Role not found: {role_id}") from None
-                raise
-            return None
         client = get_client()
-        response = await client.delete(f"/api/roles/{role_id}")
+        response = await client.engine_request("DELETE", f"/api/roles/{role_id}")
         if response.status_code == 404:
             raise ValueError(f"Role not found: {role_id}")
         raise_for_status_with_detail(response)
@@ -260,24 +194,10 @@ class roles:
             >>> for user_id in user_ids:
             ...     print(user_id)
         """
-        from ._local_transport import get as _get_local_transport
-
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: the parent reads through the shared
-            # roles service over the dedicated channel. An unknown role
-            # is an empty list, never a 404 — like HTTP. A local attempt
-            # never falls back to HTTP.
-            from .client import BifrostAPIError
-
-            try:
-                return await transport.call_roles_list_users(role_id)
-            except BifrostAPIError as e:
-                if e.response.status_code == 404:
-                    raise ValueError(f"Role not found: {role_id}") from None
-                raise
         client = get_client()
-        response = await client.get(f"/api/roles/{role_id}/users")
+        response = await client.engine_request(
+            "GET", f"/api/roles/{role_id}/users"
+        )
         if response.status_code == 404:
             raise ValueError(f"Role not found: {role_id}")
         raise_for_status_with_detail(response)
@@ -305,24 +225,10 @@ class roles:
             >>> for form_id in form_ids:
             ...     print(form_id)
         """
-        from ._local_transport import get as _get_local_transport
-
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: the parent reads through the shared
-            # roles service over the dedicated channel. An unknown role
-            # is an empty list, never a 404 — like HTTP. A local attempt
-            # never falls back to HTTP.
-            from .client import BifrostAPIError
-
-            try:
-                return await transport.call_roles_list_forms(role_id)
-            except BifrostAPIError as e:
-                if e.response.status_code == 404:
-                    raise ValueError(f"Role not found: {role_id}") from None
-                raise
         client = get_client()
-        response = await client.get(f"/api/roles/{role_id}/forms")
+        response = await client.engine_request(
+            "GET", f"/api/roles/{role_id}/forms"
+        )
         if response.status_code == 404:
             raise ValueError(f"Role not found: {role_id}")
         raise_for_status_with_detail(response)
@@ -349,25 +255,9 @@ class roles:
             >>> from bifrost import roles
             >>> await roles.assign_users("role-123", ["user-1", "user-2"])
         """
-        from ._local_transport import get as _get_local_transport
-
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: the parent assigns through the shared
-            # roles service over the dedicated channel. Error mapping
-            # matches the HTTP path below; a local attempt never falls
-            # back to HTTP.
-            from .client import BifrostAPIError
-
-            try:
-                await transport.call_roles_assign_users(role_id, list(user_ids))
-            except BifrostAPIError as e:
-                if e.response.status_code == 404:
-                    raise ValueError(f"Role not found: {role_id}") from None
-                raise
-            return None
         client = get_client()
-        response = await client.post(
+        response = await client.engine_request(
+            "POST",
             f"/api/roles/{role_id}/users",
             json={"user_ids": user_ids}
         )
@@ -395,25 +285,9 @@ class roles:
             >>> from bifrost import roles
             >>> await roles.assign_forms("role-123", ["form-1", "form-2"])
         """
-        from ._local_transport import get as _get_local_transport
-
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: the parent assigns through the shared
-            # roles service over the dedicated channel. Error mapping
-            # matches the HTTP path below; a local attempt never falls
-            # back to HTTP.
-            from .client import BifrostAPIError
-
-            try:
-                await transport.call_roles_assign_forms(role_id, list(form_ids))
-            except BifrostAPIError as e:
-                if e.response.status_code == 404:
-                    raise ValueError(f"Role not found: {role_id}") from None
-                raise
-            return None
         client = get_client()
-        response = await client.post(
+        response = await client.engine_request(
+            "POST",
             f"/api/roles/{role_id}/forms",
             json={"form_ids": form_ids}
         )
