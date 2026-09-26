@@ -12,9 +12,10 @@ Covers the acceptance surface that does not need a forked child:
   service org confinement) and never trusts child actor/org claims;
 - the service-token org boundary: a service principal cannot read
   another org's artifacts while the engine principal bypasses;
-- the child transport performs real round trips over a dedicated channel
-  with zero HTTP requests, safe concurrent calls, timeout/EOF handling,
-  bounded frames, chunked large payloads, and no silent HTTP fallback.
+- the migrated facade (Gate C4b) rides the shared
+  ``BifrostClient.engine_request`` transport and never touches the
+  dedicated channel: paths, bodies, response parsing, and error mapping
+  stay identical to the HTTP endpoints, with no silent HTTP fallback.
 """
 
 import asyncio
@@ -649,10 +650,11 @@ class TestChildTransport:
             await asyncio.to_thread(resp_conn.send_bytes, json.dumps(response).encode())
 
     @pytest.mark.asyncio
-    async def test_all_four_ops_round_trip_without_http(self):
-        import base64 as _b64
+    async def test_all_four_ops_ride_engine_request_not_channel(self):
+        import httpx
 
         from bifrost import _local_transport as lt
+        from bifrost import artifacts as artifacts_mod
 
         req_recv, req_send, resp_recv, resp_send = self._pair()
         lt.install(req_send, resp_recv)
@@ -663,41 +665,29 @@ class TestChildTransport:
             "content_type": MD_TYPE,
             "size_bytes": len(MD_BYTES),
         }
-        handlers = {
-            "artifacts.write": lambda f: {
-                "v": 1, "id": f["id"], "ok": True, "result": ref,
-            },
-            "artifacts.read": lambda f: {
-                "v": 1, "id": f["id"], "ok": True,
-                "result": {
-                    "content": _b64.b64encode(MD_BYTES).decode("ascii"),
-                    "content_type": MD_TYPE,
-                },
-            },
-            "artifacts.list": lambda f: {
-                "v": 1, "id": f["id"], "ok": True, "result": {"items": [ref]},
-            },
-            "artifacts.get_download_url": lambda f: {
-                "v": 1, "id": f["id"], "ok": True,
-                "result": {"url": "https://artifacts.local.test/x?sig=test"},
-            },
-        }
-        pump = asyncio.create_task(self._pump_ops(req_recv, resp_send, handlers))
+        client = MagicMock()
+        client.engine_request = AsyncMock(side_effect=[
+            httpx.Response(200, json=ref),
+            httpx.Response(200, content=MD_BYTES),
+            httpx.Response(200, json=[ref]),
+            httpx.Response(
+                200, json={"url": "https://artifacts.local.test/x?sig=test"}
+            ),
+        ])
         try:
-            from bifrost import artifacts as artifacts_mod
             from bifrost._context import set_execution_context
             from src.sdk.context import ExecutionContext
 
+            workspace_id = uuid4()
             ctx = ExecutionContext(
                 user_id="u1", email="e@e.com", name="T", scope="org-1",
                 organization=None, is_platform_admin=False,
                 is_function_key=False, execution_id="exec-1",
-                artifact_workspace_id=str(uuid4()),
+                artifact_workspace_id=str(workspace_id),
             )
             set_execution_context(ctx)
             try:
-                with patch("bifrost.artifacts.get_client") as get_client:
-                    get_client.side_effect = AssertionError("HTTP must not be used")
+                with patch("bifrost.artifacts.get_client", return_value=client):
                     written = await artifacts_mod.write(
                         "Workflow Notes.md", MD_BYTES, content_type=MD_TYPE
                     )
@@ -712,39 +702,51 @@ class TestChildTransport:
                 from bifrost._context import clear_execution_context
 
                 clear_execution_context()
-            await pump
         finally:
             lt.clear()
             self._close_all((req_recv, req_send, resp_recv, resp_send))
 
+        # The migrated facade never reads a channel frame: every call rode the
+        # shared client's engine-local entry point with the HTTP path/body.
+        calls = client.engine_request.await_args_list
+        assert [(call.args[0], call.args[1]) for call in calls] == [
+            ("POST", "/api/sdk/artifacts"),
+            ("GET", f"/api/sdk/artifacts/{ref['id']}/content"),
+            ("GET", "/api/sdk/artifacts"),
+            ("GET", f"/api/sdk/artifacts/{ref['id']}/download-url"),
+        ]
+        assert calls[0].kwargs["params"]["workspace_id"] == str(workspace_id)
+
     @pytest.mark.asyncio
-    async def test_read_dict_ref_and_error_never_falls_back_to_http(self):
-        import base64 as _b64
+    async def test_read_dict_ref_and_error_surface_without_channel(self):
+        import httpx
 
         from bifrost import _local_transport as lt
+        from bifrost import artifacts as artifacts_mod
         from bifrost.client import BifrostAPIError
 
         req_recv, req_send, resp_recv, resp_send = self._pair()
         lt.install(req_send, resp_recv)
-        handlers = {
-            "artifacts.read": lambda f: {
-                "v": 1, "id": f["id"], "ok": True,
-                "result": {
-                    "content": _b64.b64encode(b"raw-bytes").decode("ascii"),
-                    "content_type": MD_TYPE,
-                },
-            },
-            "artifacts.get_download_url": lambda f: {
-                "v": 1, "id": f["id"], "ok": False,
-                "status": 404, "detail": "Artifact not found.",
-            },
+        ref = {
+            "type": "bifrost_artifact",
+            "id": str(uuid4()),
+            "filename": "Notes.md",
+            "content_type": MD_TYPE,
+            "size_bytes": 9,
         }
-        pump = asyncio.create_task(self._pump_ops(req_recv, resp_send, handlers))
+        client = MagicMock()
+        client.engine_request = AsyncMock(side_effect=[
+            httpx.Response(200, content=b"raw-bytes"),
+            httpx.Response(
+                404,
+                json={"detail": "Artifact not found."},
+                request=httpx.Request(
+                    "GET", "http://api/api/sdk/artifacts/x/download-url"
+                ),
+            ),
+        ])
         try:
-            from bifrost import artifacts as artifacts_mod
-
-            with patch("bifrost.artifacts.get_client") as get_client:
-                get_client.side_effect = AssertionError("HTTP must not be used")
+            with patch("bifrost.artifacts.get_client", return_value=client):
                 data = await artifacts_mod.read(
                     {
                         "type": "bifrost_artifact",
@@ -756,41 +758,27 @@ class TestChildTransport:
                 )
                 assert data == b"raw-bytes"
                 with pytest.raises(BifrostAPIError):
-                    await artifacts_mod.get_download_url(
-                        {
-                            "type": "bifrost_artifact",
-                            "id": str(uuid4()),
-                            "filename": "Notes.md",
-                            "content_type": MD_TYPE,
-                            "size_bytes": 9,
-                        }
-                    )
-            await pump
+                    await artifacts_mod.get_download_url(ref)
         finally:
             lt.clear()
             self._close_all((req_recv, req_send, resp_recv, resp_send))
+        assert client.engine_request.await_count == 2
 
     @pytest.mark.asyncio
-    async def test_concurrent_calls_share_one_channel(self):
+    async def test_concurrent_calls_share_the_engine_request_client(self):
+        import httpx
+
         from bifrost import _local_transport as lt
+        from bifrost import artifacts as artifacts_mod
 
         req_recv, req_send, resp_recv, resp_send = self._pair()
         lt.install(req_send, resp_recv)
         count = 20
-
-        async def _pump():
-            for _ in range(count):
-                raw = await asyncio.to_thread(req_recv.recv_bytes, MAX_FRAME_BYTES + 1)
-                frame = json.loads(raw.decode("utf-8"))
-                response = {
-                    "v": 1, "id": frame["id"], "ok": True,
-                    "result": {"items": []},
-                }
-                await asyncio.to_thread(resp_send.send_bytes, json.dumps(response).encode())
-
-        pump = asyncio.create_task(_pump())
+        client = MagicMock()
+        client.engine_request = AsyncMock(
+            side_effect=[httpx.Response(200, json=[]) for _ in range(count)]
+        )
         try:
-            from bifrost import artifacts as artifacts_mod
             from bifrost._context import clear_execution_context, set_execution_context
             from src.sdk.context import ExecutionContext
 
@@ -802,18 +790,17 @@ class TestChildTransport:
             )
             set_execution_context(ctx)
             try:
-                with patch("bifrost.artifacts.get_client") as get_client:
-                    get_client.side_effect = AssertionError("HTTP must not be used")
+                with patch("bifrost.artifacts.get_client", return_value=client):
                     results = await asyncio.gather(
                         *[artifacts_mod.list() for _ in range(count)]
                     )
                 assert all(items == [] for items in results)
             finally:
                 clear_execution_context()
-            await pump
         finally:
             lt.clear()
             self._close_all((req_recv, req_send, resp_recv, resp_send))
+        assert client.engine_request.await_count == count
 
     @pytest.mark.asyncio
     async def test_timeout_breaks_channel_without_fallback(self):
@@ -886,6 +873,8 @@ class TestChildTransport:
 
 @pytest.mark.asyncio
 class TestChunkedTransfer:
+    """Large artifact payloads ride engine_request without frame ceilings."""
+
     def _pair(self):
         req_recv, req_send = multiprocessing.Pipe(duplex=False)
         resp_recv, resp_send = multiprocessing.Pipe(duplex=False)
@@ -896,112 +885,44 @@ class TestChunkedTransfer:
             with contextlib.suppress(Exception):
                 conn.close()
 
-    async def test_large_read_round_trip_over_pipe(self, db_session, storage):
-        """A >64KiB artifact reads locally byte-identical via chunked frames."""
-        from bifrost import _local_transport as lt
-        from src.services.execution.sdk_local_dispatch import dispatch_frames
+    def _client(self, responses):
+        client = MagicMock()
+        client.engine_request = AsyncMock(side_effect=responses)
+        return client
 
-        org = await _seed_org(db_session)
-        await _seed_system_user(db_session)
-        user_row = await _seed_user(db_session, org_id=org.id)
-        user = _user(user_row.id, org_id=org.id)
-        principal = _principal(org.id, is_platform_admin=True)
+    async def test_large_bytes_round_trip_through_engine_request(self):
+        import httpx
+
+        from bifrost import _local_transport as lt
+        from bifrost import artifacts as artifacts_mod
+
         big = b"# Big\n\n" + b"lorem ipsum dolor sit amet\n" * 5000
         assert len(big) > 100_000
-        ref = await _http_write(
-            db_session, user=user, filename="Big.md", content=big,
-            content_type=MD_TYPE,
+        ref = {
+            "type": "bifrost_artifact",
+            "id": str(uuid4()),
+            "filename": "Big.md",
+            "content_type": MD_TYPE,
+            "size_bytes": len(big),
+        }
+        req_recv, req_send, resp_recv, resp_send = self._pair()
+        lt.install(req_send, resp_recv)
+        client = self._client([
+            httpx.Response(200, json=ref),
+            httpx.Response(200, content=big),
+        ])
+        try:
+            with patch("bifrost.artifacts.get_client", return_value=client):
+                written = await artifacts_mod.write(
+                    "Big.md", big, content_type=MD_TYPE
+                )
+                data = await artifacts_mod.read(written)
+        finally:
+            lt.clear()
+            self._close_all((req_recv, req_send, resp_recv, resp_send))
+        assert data == big
+        assert written.size_bytes == len(big)
+        assert (
+            client.engine_request.await_args_list[0].kwargs["files"]["file"][1]
+            == big
         )
-
-        req_recv, req_send, resp_recv, resp_send = self._pair()
-        lt.install(req_send, resp_recv)
-
-        async def _pump():
-            raw = await asyncio.to_thread(req_recv.recv_bytes, MAX_FRAME_BYTES + 1)
-            request = json.loads(raw.decode("utf-8"))
-            frames = await dispatch_frames(
-                lambda: _db_factory(db_session), principal, request
-            )
-            count = 0
-            for frame in frames:
-                count += 1
-                encoded = json.dumps(frame, separators=(",", ":")).encode()
-                assert len(encoded) <= MAX_FRAME_BYTES
-                await asyncio.to_thread(resp_send.send_bytes, encoded)
-            assert count > 1
-
-        pump = asyncio.create_task(_pump())
-        try:
-            from bifrost import artifacts as artifacts_mod
-
-            with patch("bifrost.artifacts.get_client") as get_client:
-                get_client.side_effect = AssertionError("HTTP must not be used")
-                data = await artifacts_mod.read(ref.model_dump(mode="json"))
-            assert data == big
-            await asyncio.wait_for(pump, timeout=15.0)
-        finally:
-            lt.clear()
-            self._close_all((req_recv, req_send, resp_recv, resp_send))
-
-    async def test_large_write_round_trip_over_pipe(self, db_session, storage):
-        """A >64KiB write rides chunked request frames and persists bytes."""
-        from bifrost import _local_transport as lt
-        from src.services.execution.sdk_local_dispatch import dispatch_frames
-
-        org = await _seed_org(db_session)
-        await _seed_system_user(db_session)
-        principal = _principal(org.id)
-        workspace_id = uuid4()
-        big = b"# Big Write\n\n" + b"row data here\n" * 5000
-        assert len(big) > 64 * 1024
-
-        req_recv, req_send, resp_recv, resp_send = self._pair()
-        lt.install(req_send, resp_recv)
-
-        async def _pump():
-            from src.services.execution.sdk_local_dispatch import _reassemble_request
-
-            raw = await asyncio.to_thread(req_recv.recv_bytes, MAX_FRAME_BYTES + 1)
-            header = json.loads(raw.decode("utf-8"))
-            assert header.get("chunked") is True
-            request = await _reassemble_request(
-                header,
-                lambda: asyncio.to_thread(req_recv.recv_bytes, MAX_FRAME_BYTES + 1),
-            )
-            frames = await dispatch_frames(
-                lambda: _db_factory(db_session), principal, request
-            )
-            for frame in frames:
-                encoded = json.dumps(frame, separators=(",", ":")).encode()
-                assert len(encoded) <= MAX_FRAME_BYTES
-                await asyncio.to_thread(resp_send.send_bytes, encoded)
-
-        pump = asyncio.create_task(_pump())
-        try:
-            from bifrost import artifacts as artifacts_mod
-            from bifrost._context import clear_execution_context, set_execution_context
-            from src.sdk.context import ExecutionContext
-
-            ctx = ExecutionContext(
-                user_id="u1", email="e@e.com", name="T", scope="org-1",
-                organization=None, is_platform_admin=False,
-                is_function_key=False, execution_id="exec-1",
-                artifact_workspace_id=str(workspace_id),
-            )
-            set_execution_context(ctx)
-            try:
-                with patch("bifrost.artifacts.get_client") as get_client:
-                    get_client.side_effect = AssertionError("HTTP must not be used")
-                    ref = await artifacts_mod.write(
-                        "Big Write.md", big, content_type=MD_TYPE
-                    )
-                assert ref.size_bytes == len(big)
-            finally:
-                clear_execution_context()
-            await asyncio.wait_for(pump, timeout=15.0)
-        finally:
-            lt.clear()
-            self._close_all((req_recv, req_send, resp_recv, resp_send))
-
-        stored = storage.objects
-        assert any(content == big for content in stored.values())

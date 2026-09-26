@@ -14,12 +14,6 @@ from typing import Any, Literal
 from ._context import _execution_context
 from .client import get_client, raise_for_status_with_detail
 from .models import ArtifactRef
-from ._local_transport import (
-    ARTIFACT_IMAGE_LOCAL_TIMEOUT_SECONDS,
-    ARTIFACT_RENDER_LOCAL_TIMEOUT_SECONDS,
-    LocalTransportError,
-    get as _get_local_transport,
-)
 
 
 def _workspace_params() -> dict[str, str]:
@@ -39,9 +33,7 @@ def _video_job_artifact_or_raise(job: dict[str, Any]) -> ArtifactRef | None:
 
     Returns the reference when the job succeeded, None while the job
     is still running, and raises the historical ``RuntimeError`` for
-    failed/cancelled/requires_action jobs. Shared by the HTTP and
-    engine-local polling loops so both transports agree by
-    construction.
+    failed/cancelled/requires_action jobs.
     """
     status = str(job.get("status") or "")
     if status == "succeeded":
@@ -71,7 +63,15 @@ def _video_job_artifact_or_raise(job: dict[str, Any]) -> ArtifactRef | None:
 
 
 class artifacts:
-    """Create, read, and share generated files from workflows."""
+    """Create, read, and share generated files from workflows.
+
+    Every operation sends the ordinary HTTP request through the shared
+    ``BifrostClient``: over the worker's private Unix socket when the
+    engine injected one, and over the network API otherwise. The worker
+    parent owns the pooled database and protected storage/provider
+    credentials; an engine child holds neither, and a local attempt never
+    falls back to the network API after a failure.
+    """
 
     @staticmethod
     async def _render(
@@ -79,7 +79,9 @@ class artifacts:
         payload: dict[str, Any],
     ) -> ArtifactRef:
         client = get_client()
-        response = await client.post(endpoint, json=payload, params=_workspace_params())
+        response = await client.engine_request(
+            "POST", endpoint, json=payload, params=_workspace_params()
+        )
         raise_for_status_with_detail(response)
         return ArtifactRef.model_validate(response.json())
 
@@ -90,29 +92,9 @@ class artifacts:
         *,
         content_type: str,
     ) -> ArtifactRef:
-        """Store validated workflow-produced bytes behind an opaque reference.
-
-        Inside an engine child this stores through the parent over the
-        dedicated local transport (same service as the HTTP endpoint);
-        elsewhere it calls the SDK API endpoint.
-        """
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: the parent validates and stores through
-            # the shared artifact service over the dedicated channel. The
-            # workspace id is the caller's own (like the HTTP query
-            # param); user, organization, and capability come from the
-            # parent's dispatch context, never from child frames. A local
-            # attempt never falls back to HTTP.
-            params = _workspace_params()
-            result = await transport.call_artifacts_write(
-                filename,
-                content_type,
-                content,
-                params.get("workspace_id"),
-            )
-            return ArtifactRef.model_validate(result)
-        response = await get_client().post(
+        """Store validated workflow-produced bytes behind an opaque reference."""
+        response = await get_client().engine_request(
+            "POST",
             "/api/sdk/artifacts",
             files={"file": (filename, content, content_type)},
             params=_workspace_params(),
@@ -130,27 +112,7 @@ class artifacts:
         subtitle: str | None = None,
         page_size: Literal["letter", "a4"] = "letter",
     ) -> ArtifactRef:
-        """Create a flowing PDF or DOCX document and return its reference.
-
-        Inside an engine child this renders through the parent over the
-        dedicated local transport (same service as the HTTP endpoint);
-        elsewhere it calls the SDK API endpoint. A local attempt never
-        falls back to HTTP.
-        """
-        transport = _get_local_transport()
-        if transport is not None:
-            params = _workspace_params()
-            result = await transport.call_artifacts_create_document(
-                filename,
-                format,
-                title,
-                subtitle,
-                sections,
-                page_size,
-                params.get("workspace_id"),
-                timeout=ARTIFACT_RENDER_LOCAL_TIMEOUT_SECONDS,
-            )
-            return ArtifactRef.model_validate(result)
+        """Create a flowing PDF or DOCX document and return its reference."""
         return await artifacts._render(
             "/api/sdk/artifacts/document",
             {
@@ -169,23 +131,7 @@ class artifacts:
         *,
         sheets: list[dict[str, Any]],
     ) -> ArtifactRef:
-        """Create a styled XLSX workbook and return its reference.
-
-        Inside an engine child this renders through the parent over the
-        dedicated local transport (same service as the HTTP endpoint);
-        elsewhere it calls the SDK API endpoint. A local attempt never
-        falls back to HTTP.
-        """
-        transport = _get_local_transport()
-        if transport is not None:
-            params = _workspace_params()
-            result = await transport.call_artifacts_create_spreadsheet(
-                filename,
-                sheets,
-                params.get("workspace_id"),
-                timeout=ARTIFACT_RENDER_LOCAL_TIMEOUT_SECONDS,
-            )
-            return ArtifactRef.model_validate(result)
+        """Create a styled XLSX workbook and return its reference."""
         return await artifacts._render(
             "/api/sdk/artifacts/spreadsheet",
             {"filename": filename, "sheets": sheets},
@@ -198,24 +144,7 @@ class artifacts:
         format: Literal["csv", "html", "markdown", "text", "json"],
         content: str,
     ) -> ArtifactRef:
-        """Create a text-family artifact and return its reference.
-
-        Inside an engine child this renders through the parent over the
-        dedicated local transport (same service as the HTTP endpoint);
-        elsewhere it calls the SDK API endpoint. A local attempt never
-        falls back to HTTP.
-        """
-        transport = _get_local_transport()
-        if transport is not None:
-            params = _workspace_params()
-            result = await transport.call_artifacts_create_text(
-                filename,
-                format,
-                content,
-                params.get("workspace_id"),
-                timeout=ARTIFACT_RENDER_LOCAL_TIMEOUT_SECONDS,
-            )
-            return ArtifactRef.model_validate(result)
+        """Create a text-family artifact and return its reference."""
         return await artifacts._render(
             "/api/sdk/artifacts/text",
             {"filename": filename, "format": format, "content": content},
@@ -227,23 +156,7 @@ class artifacts:
         *,
         prompt: str,
     ) -> ArtifactRef:
-        """Generate an image with the configured image model.
-
-        Inside an engine child this generates through the parent over
-        the dedicated local transport (same service as the HTTP
-        endpoint); elsewhere it calls the SDK API endpoint. A local
-        attempt never falls back to HTTP.
-        """
-        transport = _get_local_transport()
-        if transport is not None:
-            params = _workspace_params()
-            result = await transport.call_artifacts_create_image(
-                filename,
-                prompt,
-                params.get("workspace_id"),
-                timeout=ARTIFACT_IMAGE_LOCAL_TIMEOUT_SECONDS,
-            )
-            return ArtifactRef.model_validate(result)
+        """Generate an image with the configured image model."""
         return await artifacts._render(
             "/api/sdk/artifacts/image",
             {"filename": filename, "prompt": prompt},
@@ -259,51 +172,18 @@ class artifacts:
     ) -> ArtifactRef:
         """Generate a video through a durable platform job and return its reference.
 
-        Inside an engine child this enqueues through the parent over the
-        dedicated local transport (same service as the HTTP endpoint) and
-        polls that SDK video job over the same channel; elsewhere it
-        calls the SDK API endpoint. A local attempt never falls back to
-        HTTP.
+        Video generation is asynchronous: this enqueues the durable
+        ``sdk.video_generation`` platform job and then polls its status
+        through the same shared transport until the job reaches a terminal
+        state or ``timeout_seconds`` elapses.
         """
         if timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be greater than zero.")
         if poll_interval_seconds <= 0:
             raise ValueError("poll_interval_seconds must be greater than zero.")
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: the parent validates the same
-            # VideoArtifactSpec and runs the same
-            # notification/commit/refresh/publish sequence over the
-            # dedicated channel. The workspace id is the caller's own
-            # (like the HTTP query param); user, organization, and
-            # execution identity come from the parent's dispatch
-            # context, never from child frames. Each poll runs on a
-            # short parent session, so child polling holds no DB
-            # connection. A local attempt never falls back to HTTP.
-            params = _workspace_params()
-            accepted = await transport.call_artifacts_create_video(
-                filename,
-                prompt,
-                params.get("workspace_id"),
-            )
-            raw_job_id = accepted.get("job_id")
-            if not isinstance(raw_job_id, str) or not raw_job_id:
-                raise LocalTransportError(
-                    "malformed local SDK result; channel closed"
-                )
-            job_id = raw_job_id
-            deadline = time.monotonic() + timeout_seconds
-            while time.monotonic() < deadline:
-                job = await transport.call_artifacts_video_status(job_id)
-                ref = _video_job_artifact_or_raise(job)
-                if ref is not None:
-                    return ref
-                await asyncio.sleep(poll_interval_seconds)
-            raise TimeoutError(
-                f"Video generation is still running as platform job {job_id}."
-            )
         client = get_client()
-        response = await client.post(
+        response = await client.engine_request(
+            "POST",
             "/api/sdk/artifacts/video",
             json={
                 "filename": filename,
@@ -315,7 +195,9 @@ class artifacts:
         job_id = str(response.json()["job_id"])
         deadline = time.monotonic() + timeout_seconds
         while time.monotonic() < deadline:
-            status_response = await client.get(f"/api/platform-jobs/{job_id}")
+            status_response = await client.engine_request(
+                "GET", f"/api/platform-jobs/{job_id}"
+            )
             raise_for_status_with_detail(status_response)
             ref = _video_job_artifact_or_raise(status_response.json())
             if ref is not None:
@@ -327,68 +209,34 @@ class artifacts:
 
     @staticmethod
     async def read(ref: ArtifactRef | dict[str, Any]) -> bytes:
-        """Read an ArtifactRef received as workflow or MCP tool input.
-
-        Inside an engine child this reads through the parent over the
-        dedicated local transport (same service as the HTTP endpoint);
-        elsewhere it calls the SDK API endpoint.
-        """
+        """Read an ArtifactRef received as workflow or MCP tool input."""
         artifact = ref if isinstance(ref, ArtifactRef) else ArtifactRef.model_validate(ref)
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: the parent enforces caller scope through
-            # the shared artifact service over the dedicated channel. A
-            # local attempt never falls back to HTTP.
-            import base64
-
-            result = await transport.call_artifacts_read(artifact.id)
-            return base64.b64decode(result["content"].encode("ascii"))
-        response = await get_client().get(f"/api/sdk/artifacts/{artifact.id}/content")
+        response = await get_client().engine_request(
+            "GET", f"/api/sdk/artifacts/{artifact.id}/content"
+        )
         raise_for_status_with_detail(response)
         return response.content
 
     @staticmethod
     async def list() -> list[ArtifactRef]:
-        """List the latest files available in the active run workspace.
-
-        Inside an engine child this lists through the parent over the
-        dedicated local transport (same service as the HTTP endpoint);
-        elsewhere it calls the SDK API endpoint.
-        """
+        """List the latest files available in the active run workspace."""
         params = _workspace_params()
         if not params:
             raise RuntimeError(
                 "artifacts.list() requires an active workflow or agent execution."
             )
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: the parent lists through the shared
-            # artifact service over the dedicated channel. A local attempt
-            # never falls back to HTTP.
-            result = await transport.call_artifacts_list(params["workspace_id"])
-            return [ArtifactRef.model_validate(item) for item in result.get("items", [])]
-        response = await get_client().get("/api/sdk/artifacts", params=params)
+        response = await get_client().engine_request(
+            "GET", "/api/sdk/artifacts", params=params
+        )
         raise_for_status_with_detail(response)
         return [ArtifactRef.model_validate(item) for item in response.json()]
 
     @staticmethod
     async def get_download_url(ref: ArtifactRef | dict[str, Any]) -> str:
-        """Create a short-lived download URL for an authorized ArtifactRef.
-
-        Inside an engine child this mints through the parent over the
-        dedicated local transport (same service as the HTTP endpoint);
-        elsewhere it calls the SDK API endpoint.
-        """
+        """Create a short-lived download URL for an authorized ArtifactRef."""
         artifact = ref if isinstance(ref, ArtifactRef) else ArtifactRef.model_validate(ref)
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: the parent mints through the shared
-            # artifact service over the dedicated channel. A local attempt
-            # never falls back to HTTP.
-            result = await transport.call_artifacts_get_download_url(artifact.id)
-            return str(result["url"])
-        response = await get_client().get(
-            f"/api/sdk/artifacts/{artifact.id}/download-url"
+        response = await get_client().engine_request(
+            "GET", f"/api/sdk/artifacts/{artifact.id}/download-url"
         )
         raise_for_status_with_detail(response)
         return str(response.json()["url"])

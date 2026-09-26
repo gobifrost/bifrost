@@ -17,10 +17,12 @@ facade to the shared client transport, Gate C2 added the six integrations
 routes, Gate C3a added the table-definition routes (create/list) and the
 document reads (get/query/count), Gate C3b adds the table mutations and
 batch writes (insert/upsert/update/delete_document/batch/batch-delete plus
-the auto-create POST /api/tables helper), and Gate C4a adds the files
-facade routes (read/write/list/delete/stat/exists/signed-url/search).
-Streams and other domains stay on their existing channel path until their
-own Gate C slice migrates them.
+the auto-create POST /api/tables helper), Gate C4a adds the files facade
+routes (read/write/list/delete/stat/exists/signed-url/search), and Gate
+C4b adds the artifact facade routes plus the durable platform-job status
+route that ``artifacts.create_video`` polls. Streams and other domains
+stay on their existing channel path until their own Gate C slice migrates
+them.
 
 ``import fastapi``/``uvicorn`` happen inside the functions so the worker
 entry closure stays free of those heavyweights at import time (see
@@ -124,14 +126,39 @@ FILES_ROUTE_PATHS: frozenset[str] = frozenset(
     }
 )
 
-# Every route this worker-local app serves from the cli SDK router. Other SDK
-# domains keep their existing channel path until their Gate C slice migrates
-# them.
+# Gate C4b: the existing artifact facade routes, selected from the cli SDK
+# router by path AND method because ``/api/sdk/artifacts`` carries both GET
+# (list) and POST (write). They carry the ordinary ``CurrentUser`` auth, the
+# shared artifact services, and the worker's initialized DB engine; the
+# child needs no storage/provider credential.
+ARTIFACT_ROUTE_METHODS: dict[str, frozenset[str]] = {
+    "/api/sdk/artifacts": frozenset({"GET", "POST"}),
+    "/api/sdk/artifacts/document": frozenset({"POST"}),
+    "/api/sdk/artifacts/spreadsheet": frozenset({"POST"}),
+    "/api/sdk/artifacts/text": frozenset({"POST"}),
+    "/api/sdk/artifacts/image": frozenset({"POST"}),
+    "/api/sdk/artifacts/video": frozenset({"POST"}),
+    "/api/sdk/artifacts/{artifact_id}/content": frozenset({"GET"}),
+    "/api/sdk/artifacts/{artifact_id}/download-url": frozenset({"GET"}),
+}
+ARTIFACT_ROUTE_PATHS: frozenset[str] = frozenset(ARTIFACT_ROUTE_METHODS)
+
+# Gate C4b: ``artifacts.create_video`` polls its durable platform job over
+# the same socket. Mount only the single-job GET from the real
+# ``src.routers.platform_jobs`` router; the list and cancel siblings stay
+# on the API.
+PLATFORM_JOB_ROUTE_METHODS: dict[str, frozenset[str]] = {
+    "/api/platform-jobs/{job_id}": frozenset({"GET"}),
+}
+
+# Every route path this worker-local app serves from the cli SDK router.
+# Other SDK domains keep their existing channel path until their Gate C
+# slice migrates them.
 SDK_ROUTE_PATHS: frozenset[str] = (
     CONFIG_ROUTE_PATHS
     | INTEGRATION_ROUTE_PATHS
     | TABLE_SDK_ROUTE_PATHS
-    | FILES_ROUTE_PATHS
+    | ARTIFACT_ROUTE_PATHS
 )
 
 
@@ -146,6 +173,7 @@ def build_worker_sdk_app() -> Any:
 
     from src.routers.cli import router as sdk_router
     from src.routers.files import router as files_router
+    from src.routers.platform_jobs import router as platform_jobs_router
     from src.routers.tables import router as tables_router
 
     app = FastAPI(
@@ -154,14 +182,30 @@ def build_worker_sdk_app() -> Any:
         redoc_url=None,
         openapi_url=None,
     )
+    # The config, integrations, and table-definition facade paths are unique,
+    # so they are selected by exact path. Artifact routes are selected by
+    # (path, method) because ``/api/sdk/artifacts`` is both GET and POST.
+    cli_path_only = (
+        CONFIG_ROUTE_PATHS | INTEGRATION_ROUTE_PATHS | TABLE_SDK_ROUTE_PATHS
+    )
     selected = 0
     for route in sdk_router.routes:
-        if getattr(route, "path", None) in SDK_ROUTE_PATHS:
+        path = getattr(route, "path", None)
+        if path in cli_path_only:
             # Reuse the exact registered APIRoute (endpoint, dependencies,
             # response model) — never a re-created or copied handler.
             app.router.routes.append(route)
             selected += 1
-    expected = len(SDK_ROUTE_PATHS)
+        elif path in ARTIFACT_ROUTE_METHODS:
+            methods = getattr(route, "methods", None) or frozenset()
+            if methods & ARTIFACT_ROUTE_METHODS[path]:
+                app.router.routes.append(route)
+                selected += 1
+    # Each wanted method is one registered APIRoute, so the expected count is
+    # the total number of (path, method) pairs for artifacts.
+    expected = len(cli_path_only) + sum(
+        len(methods) for methods in ARTIFACT_ROUTE_METHODS.values()
+    )
 
     # Files facade routes are selected by exact path from the files router.
     # Their path strings are unique, so no method filter is needed.
@@ -169,6 +213,9 @@ def build_worker_sdk_app() -> Any:
         if getattr(route, "path", None) in FILES_ROUTE_PATHS:
             app.router.routes.append(route)
             selected += 1
+    # Files paths are unique (one route each), so the expected count is simply
+    # the number of paths.
+    expected += len(FILES_ROUTE_PATHS)
 
     # Tables REST routes are selected by (path, method) so a shared path like
     # ``/api/tables/{table_id}`` does not drag in its unrelated GET/PATCH
@@ -183,6 +230,20 @@ def build_worker_sdk_app() -> Any:
     # Each wanted method is one registered APIRoute, so the expected count is
     # the total number of (path, method) pairs, not the number of paths.
     expected += sum(len(methods) for methods in TABLE_ROUTE_METHODS.values())
+
+    # The durable platform-job status route ``artifacts.create_video`` polls
+    # is mounted as the exact registered object, like every other route.
+    for route in platform_jobs_router.routes:
+        wanted = PLATFORM_JOB_ROUTE_METHODS.get(
+            getattr(route, "path", None), frozenset()
+        )
+        methods = getattr(route, "methods", None) or frozenset()
+        if wanted and methods & wanted:
+            app.router.routes.append(route)
+            selected += 1
+    expected += sum(
+        len(methods) for methods in PLATFORM_JOB_ROUTE_METHODS.values()
+    )
 
     if selected != expected:
         raise RuntimeError(

@@ -1,7 +1,7 @@
-"""Gate A/C1/C2/C3a/C3b/C4a: real forked children reach the worker socket.
+"""Gate A/C1/C2/C3a/C3b/C4a/C4b: real forked children reach the worker socket.
 
 This is the end-to-end proof behind Gate A and the config, integrations,
-table, and files slices of Gate C. A real ``TemplateProcess`` forks a
+table, files, and artifact slices of Gate C. A real ``TemplateProcess`` forks a
 one-shot child and injects the worker's Unix socket path exactly as the pool
 does. The test process serves the **real** SDK routes on that socket via
 uvicorn, against the real database engine. The child's network API is dead by
@@ -1035,6 +1035,145 @@ async def test_forked_child_files_over_worker_socket(monkeypatch):
         # Cleanup: every written file is gone.
         assert result["gone"] is False
         assert result["gone_big"] is False
+
+        _wait_for_pid_to_die(child_pid)
+    finally:
+        with contextlib.suppress(Exception):
+            template.shutdown()
+        await server.stop()
+
+
+def _artifacts_script(*, filename: str, text_name: str) -> str:
+    source = f'''import base64 as _b64
+import os
+import sys
+from bifrost import artifacts
+from bifrost.client import get_engine_socket_path
+
+_md = b"# Fork Notes\\n\\nReady for review.\\n"
+_ref = await artifacts.write({filename!r}, _md, content_type="text/markdown")
+_back = await artifacts.read(_ref)
+_listed = await artifacts.list()
+_url = await artifacts.get_download_url(_ref)
+
+_doc = await artifacts.create_document(
+    "fork-brief", format="pdf", title="Fork Brief",
+    sections=[{{"heading": "Summary", "paragraphs": ["Ready"]}}],
+)
+_xlsx = await artifacts.create_spreadsheet(
+    "fork-report",
+    sheets=[{{"name": "Data", "columns": ["A"], "rows": [["1"]]}}],
+)
+_text = await artifacts.create_text(
+    {text_name!r}, format="markdown", content="# Fork text",
+)
+
+# A realistic ~1 MiB payload round-trips through the same socket with no
+# base64 channel wrapper and no frame-size ceiling.
+_big = b"# Big\\n\\n" + b"row data here\\n" * 80_000
+_big_ref = await artifacts.write("fork-big.md", _big, content_type="text/markdown")
+_big_back = await artifacts.read(_big_ref)
+
+result = {{
+    "socket_path": get_engine_socket_path(),
+    "used_socket": get_engine_socket_path() is not None,
+    "had_db_url": (
+        "BIFROST_DATABASE_URL" in os.environ
+        or "BIFROST_DATABASE_URL_SYNC" in os.environ
+    ),
+    "had_sqlalchemy": "sqlalchemy" in sys.modules,
+    "had_s3": any(k.startswith("BIFROST_S3_") for k in os.environ),
+    "ref_id": str(_ref.id),
+    "back_ok": _back == _md,
+    "listed_has": any(str(item.id) == str(_ref.id) for item in _listed),
+    "url_ok": isinstance(_url, str) and _url.startswith("http"),
+    "doc_type": _doc.content_type,
+    "xlsx_type": _xlsx.content_type,
+    "text_type": _text.content_type,
+    "big_len": len(_big_back),
+}}
+'''
+    return base64.b64encode(source.encode("utf-8")).decode("utf-8")
+
+
+@pytest.mark.asyncio
+async def test_forked_child_artifacts_over_worker_socket(monkeypatch):
+    """Gate C4b: every artifact facade route is served over the worker socket.
+
+    A real child forks with the worker's Unix socket injected and a dead
+    network API. It writes, reads, lists, and presigns an artifact, renders a
+    PDF/XLSX/text artifact, and round-trips a ~1 MiB payload. This fork
+    installs only the worker socket, not the dedicated channel. Success with
+    no DB, SQLAlchemy, or S3 credential proves the shared client carried every
+    call to the parent-served routes, where the worker owns protected storage.
+    """
+    from src.core.security import mint_engine_token
+
+    tag = uuid4().hex[:8]
+
+    # Any attempt to reach the network API fails loudly; the socket must
+    # serve every call.
+    monkeypatch.setenv("BIFROST_API_URL", "http://127.0.0.1:9")
+
+    engine_token, _ = mint_engine_token(
+        execution_id="gate-c4b-fork",
+        solution_id=None,
+        global_repo_access=True,
+        timeout_seconds=120,
+    )
+
+    server = WorkerSdkHttpServer()
+    await server.start()
+    assert server.socket_path is not None
+
+    template = TemplateProcess()
+    template.start()
+    try:
+        child_pid, work_queue, result_queue = template.fork(
+            worker_id="wsdk-artifacts-fork",
+            sdk_socket_path=server.socket_path,
+        )
+        try:
+            context = _context_for(
+                _artifacts_script(
+                    filename=f"fork-notes-{tag}.md",
+                    text_name=f"fork-text-{tag}",
+                ),
+                engine_token,
+                organization=None,
+                is_platform_admin=False,
+            )
+            # A valid workspace id: the artifact routes validate it as a UUID.
+            context["artifact_workspace_id"] = str(uuid4())
+            work_queue.put(("exec-wsdk-artifacts", context))
+            envelope = await asyncio.to_thread(result_queue.get, True, 90.0)
+        finally:
+            work_queue.close()
+            result_queue.close()
+
+        assert envelope["success"] is True, envelope
+        result = envelope["result"]
+        # Transport proof: socket injected, network API dead, and the child
+        # holds no DB, SQLAlchemy, or S3 credential — the parent route owns
+        # protected storage and provider credentials.
+        assert result["used_socket"] is True
+        assert result["socket_path"] == server.socket_path
+        assert result["had_db_url"] is False
+        assert result["had_sqlalchemy"] is False
+        assert result["had_s3"] is False
+        # Core round trip: write returns an opaque ref that reads back exactly,
+        # lists in its workspace, and presigns a download URL.
+        assert result["back_ok"] is True
+        assert result["listed_has"] is True
+        assert result["url_ok"] is True
+        # The trusted renderers produced the expected content types.
+        assert result["doc_type"] == "application/pdf"
+        assert result["xlsx_type"] == (
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        assert result["text_type"] == "text/markdown"
+        # ~1 MiB payload round-trips intact.
+        assert result["big_len"] > 1_000_000
 
         _wait_for_pid_to_die(child_pid)
     finally:

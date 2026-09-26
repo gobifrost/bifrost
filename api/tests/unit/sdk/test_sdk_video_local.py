@@ -407,11 +407,8 @@ class TestStatusParity:
 
 
 @pytest.mark.asyncio
-class TestFacadeLocal:
-    async def _install(self, monkeypatch, transport):
-        import bifrost._local_transport as lt
-
-        monkeypatch.setattr(lt, "_installed", transport)
+class TestFacadeEngineRequest:
+    """``create_video`` enqueues and polls through the shared client."""
 
     @staticmethod
     def _module():
@@ -419,30 +416,33 @@ class TestFacadeLocal:
 
         return importlib.import_module("bifrost.artifacts")
 
-    async def test_success_without_any_http_request(self, monkeypatch) -> None:
-        module = self._module()
+    @staticmethod
+    def _response(payload, status=200):
+        import httpx
 
+        return httpx.Response(
+            status,
+            json=payload,
+            request=httpx.Request("GET", "http://api/api/platform-jobs/job"),
+        )
+
+    async def test_success_polls_status_over_engine_request(self, monkeypatch):
+        module = self._module()
+        accepted = {
+            "job_id": "job-1",
+            "notification_id": None,
+            "status": "queued",
+            "reused": False,
+        }
         statuses = [
             _job_dict(status="running", phase="Rendering"),
-            _job_dict(
-                status="succeeded", result={"artifact": _artifact_payload()}
-            ),
+            _job_dict(status="succeeded", result={"artifact": _artifact_payload()}),
         ]
-        transport = MagicMock()
-        transport.call_artifacts_create_video = AsyncMock(
-            return_value={
-                "job_id": "job-1",
-                "notification_id": None,
-                "status": "queued",
-                "reused": False,
-            }
-        )
-        transport.call_artifacts_video_status = AsyncMock(side_effect=statuses)
-        await self._install(monkeypatch, transport)
-
         client = MagicMock()
-        client.post = AsyncMock()
-        client.get = AsyncMock()
+        client.engine_request = AsyncMock(
+            side_effect=[self._response(accepted)]
+            + [self._response(job) for job in statuses]
+        )
         monkeypatch.setattr(module, "get_client", lambda: client)
 
         ref = await module.artifacts.create_video(
@@ -450,19 +450,19 @@ class TestFacadeLocal:
         )
         assert ref.id == "artifact-video"
         assert ref.filename == "Launch Loop.mp4"
-        transport.call_artifacts_create_video.assert_awaited_once_with(
-            "launch-loop", "A launch loop", None
-        )
-        assert transport.call_artifacts_video_status.await_count == 2
-        transport.call_artifacts_video_status.assert_awaited_with("job-1")
-        client.post.assert_not_awaited()
-        client.get.assert_not_awaited()
+        calls = client.engine_request.await_args_list
+        assert [(call.args[0], call.args[1]) for call in calls] == [
+            ("POST", "/api/sdk/artifacts/video"),
+            ("GET", "/api/platform-jobs/job-1"),
+            ("GET", "/api/platform-jobs/job-1"),
+        ]
+        assert calls[0].kwargs["json"] == {
+            "filename": "launch-loop",
+            "prompt": "A launch loop",
+        }
 
-    async def test_terminal_failures_match_http_messages(
-        self, monkeypatch
-    ) -> None:
+    async def test_terminal_failures_match_http_messages(self, monkeypatch):
         module = self._module()
-
         cases = [
             (
                 _job_dict(status="failed", error={"message": "provider down"}),
@@ -483,15 +483,15 @@ class TestFacadeLocal:
             ),
         ]
         for job, match in cases:
-            transport = MagicMock()
-            transport.call_artifacts_create_video = AsyncMock(
-                return_value={"job_id": "job-1", "status": "queued", "reused": False}
-            )
-            transport.call_artifacts_video_status = AsyncMock(return_value=job)
-            await self._install(monkeypatch, transport)
             client = MagicMock()
-            client.post = AsyncMock()
-            client.get = AsyncMock()
+            client.engine_request = AsyncMock(
+                side_effect=[
+                    self._response(
+                        {"job_id": "job-1", "status": "queued", "reused": False}
+                    ),
+                    self._response(job),
+                ]
+            )
             monkeypatch.setattr(module, "get_client", lambda: client)
             with pytest.raises(RuntimeError, match=match):
                 await module.artifacts.create_video(
@@ -499,25 +499,20 @@ class TestFacadeLocal:
                     prompt="A launch loop",
                     poll_interval_seconds=0.001,
                 )
-            client.post.assert_not_awaited()
-            client.get.assert_not_awaited()
+            assert client.engine_request.await_count == 2
 
-    async def test_timeout_names_the_job_and_never_touches_http(
-        self, monkeypatch
-    ) -> None:
+    async def test_timeout_names_the_job(self, monkeypatch):
         module = self._module()
 
-        transport = MagicMock()
-        transport.call_artifacts_create_video = AsyncMock(
-            return_value={"job_id": "job-9", "status": "queued", "reused": False}
-        )
-        transport.call_artifacts_video_status = AsyncMock(
-            return_value=_job_dict(job_id="job-9", status="running")
-        )
-        await self._install(monkeypatch, transport)
+        def _side_effect(method, path, **kwargs):
+            if method == "POST":
+                return self._response(
+                    {"job_id": "job-9", "status": "queued", "reused": False}
+                )
+            return self._response(_job_dict(job_id="job-9", status="running"))
+
         client = MagicMock()
-        client.post = AsyncMock()
-        client.get = AsyncMock()
+        client.engine_request = AsyncMock(side_effect=_side_effect)
         monkeypatch.setattr(module, "get_client", lambda: client)
 
         with pytest.raises(TimeoutError, match="platform job job-9"):
@@ -527,107 +522,70 @@ class TestFacadeLocal:
                 timeout_seconds=0.05,
                 poll_interval_seconds=0.001,
             )
-        assert transport.call_artifacts_video_status.await_count >= 1
-        client.post.assert_not_awaited()
-        client.get.assert_not_awaited()
+        assert client.engine_request.await_count >= 2
 
-    async def test_enqueue_failure_never_falls_back_to_http(
-        self, monkeypatch
-    ) -> None:
+    async def test_enqueue_transport_error_does_not_fall_back(self, monkeypatch):
+        import httpx
+
         module = self._module()
-        from bifrost._local_transport import LocalTransportClosed
-
-        transport = MagicMock()
-        transport.call_artifacts_create_video = AsyncMock(
-            side_effect=LocalTransportClosed("parent gone")
-        )
-        await self._install(monkeypatch, transport)
         client = MagicMock()
-        client.post = AsyncMock()
+        client.engine_request = AsyncMock(
+            side_effect=httpx.ConnectError("parent gone")
+        )
         monkeypatch.setattr(module, "get_client", lambda: client)
 
-        with pytest.raises(LocalTransportClosed):
+        with pytest.raises(httpx.ConnectError):
             await module.artifacts.create_video("launch-loop", prompt="A launch loop")
-        client.post.assert_not_awaited()
+        assert client.engine_request.await_count == 1
 
-    async def test_status_transport_error_propagates_without_http(
-        self, monkeypatch
-    ) -> None:
+    async def test_status_transport_error_propagates(self, monkeypatch):
+        import httpx
+
         module = self._module()
-        from bifrost._local_transport import LocalTransportClosed
-
-        transport = MagicMock()
-        transport.call_artifacts_create_video = AsyncMock(
-            return_value={"job_id": "job-1", "status": "queued", "reused": False}
-        )
-        transport.call_artifacts_video_status = AsyncMock(
-            side_effect=LocalTransportClosed("parent gone")
-        )
-        await self._install(monkeypatch, transport)
         client = MagicMock()
-        client.get = AsyncMock()
+        client.engine_request = AsyncMock(
+            side_effect=[
+                self._response(
+                    {"job_id": "job-1", "status": "queued", "reused": False}
+                ),
+                httpx.ConnectError("parent gone"),
+            ]
+        )
         monkeypatch.setattr(module, "get_client", lambda: client)
 
-        with pytest.raises(LocalTransportClosed):
+        with pytest.raises(httpx.ConnectError):
             await module.artifacts.create_video(
                 "launch-loop", prompt="A launch loop", poll_interval_seconds=0.001
             )
-        client.get.assert_not_awaited()
 
-    async def test_malformed_accepted_is_a_transport_error(
-        self, monkeypatch
-    ) -> None:
-        module = self._module()
-        from bifrost._local_transport import LocalTransportError
-
-        transport = MagicMock()
-        transport.call_artifacts_create_video = AsyncMock(return_value={"nope": True})
-        await self._install(monkeypatch, transport)
-        client = MagicMock()
-        client.post = AsyncMock()
-        monkeypatch.setattr(module, "get_client", lambda: client)
-
-        with pytest.raises(LocalTransportError):
-            await module.artifacts.create_video("launch-loop", prompt="A launch loop")
-        client.post.assert_not_awaited()
-
-    async def test_ai_create_video_inherits_the_local_path(
-        self, monkeypatch
-    ) -> None:
+    async def test_ai_create_video_inherits_the_transport(self, monkeypatch):
         import bifrost.ai as ai_module
         artifacts_module = self._module()
 
-        transport = MagicMock()
-        transport.call_artifacts_create_video = AsyncMock(
-            return_value={"job_id": "job-2", "status": "queued", "reused": False}
-        )
-        transport.call_artifacts_video_status = AsyncMock(
-            return_value=_job_dict(
-                job_id="job-2",
-                status="succeeded",
-                result={"artifact": _artifact_payload("artifact-ai-video")},
-            )
-        )
-        await self._install(monkeypatch, transport)
         client = MagicMock()
-        client.post = AsyncMock()
-        client.get = AsyncMock()
+        client.engine_request = AsyncMock(
+            side_effect=[
+                self._response(
+                    {"job_id": "job-2", "status": "queued", "reused": False}
+                ),
+                self._response(
+                    _job_dict(
+                        job_id="job-2",
+                        status="succeeded",
+                        result={"artifact": _artifact_payload("artifact-ai-video")},
+                    )
+                ),
+            ]
+        )
         monkeypatch.setattr(artifacts_module, "get_client", lambda: client)
 
         ref = await ai_module.ai.create_video(
             "An orbital sunrise", poll_interval_seconds=0.001
         )
         assert ref.id == "artifact-ai-video"
-        client.post.assert_not_awaited()
-        client.get.assert_not_awaited()
 
-    async def test_validation_survives_transport_selection(
-        self, monkeypatch
-    ) -> None:
+    async def test_validation_happens_before_transport(self):
         module = self._module()
-
-        module = self._module()
-        await self._install(monkeypatch, MagicMock())
         with pytest.raises(ValueError, match="timeout_seconds"):
             await module.artifacts.create_video(
                 "launch-loop", prompt="A launch loop", timeout_seconds=0
@@ -731,38 +689,41 @@ class TestChildTransportRoundtrip:
 
 @pytest.mark.asyncio
 class TestExternalHttpUnchanged:
-    async def test_no_transport_keeps_http_enqueue_and_poll(
+    async def test_engine_request_enqueues_and_polls(
         self, monkeypatch
     ) -> None:
         import importlib
 
         import bifrost._local_transport as lt
         module = importlib.import_module("bifrost.artifacts")
-        from unittest.mock import MagicMock as _MagicMock
 
         monkeypatch.setattr(lt, "_installed", None)
-        accepted = _MagicMock()
+        accepted = MagicMock()
         accepted.json.return_value = {"job_id": "job-1", "status": "queued"}
-        completed = _MagicMock()
+        completed = MagicMock()
         completed.json.return_value = _job_dict(
             job_id="job-1",
             status="succeeded",
             result={"artifact": _artifact_payload()},
         )
-        client = _MagicMock()
-        client.post = AsyncMock(return_value=accepted)
-        client.get = AsyncMock(return_value=completed)
+        client = MagicMock()
+        client.engine_request = AsyncMock(side_effect=[accepted, completed])
         monkeypatch.setattr(module, "get_client", lambda: client)
         monkeypatch.setattr(
-            module, "raise_for_status_with_detail", _MagicMock()
+            module, "raise_for_status_with_detail", MagicMock()
         )
 
         ref = await module.artifacts.create_video(
             "launch-loop", prompt="A launch loop", poll_interval_seconds=0.001
         )
         assert ref.id == "artifact-video"
-        client.post.assert_awaited_once()
-        client.get.assert_awaited_once_with("/api/platform-jobs/job-1")
+        assert [
+            (call.args[0], call.args[1])
+            for call in client.engine_request.await_args_list
+        ] == [
+            ("POST", "/api/sdk/artifacts/video"),
+            ("GET", "/api/platform-jobs/job-1"),
+        ]
 
     async def test_shared_terminal_mapping_covers_both_paths(self) -> None:
         from bifrost.artifacts import _video_job_artifact_or_raise

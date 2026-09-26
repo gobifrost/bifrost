@@ -28,9 +28,12 @@ from bifrost.client import (
     get_engine_socket_path,
 )
 from src.services.execution.worker_sdk_http import (
+    ARTIFACT_ROUTE_METHODS,
+    ARTIFACT_ROUTE_PATHS,
     CONFIG_ROUTE_PATHS,
     FILES_ROUTE_PATHS,
     INTEGRATION_ROUTE_PATHS,
+    PLATFORM_JOB_ROUTE_METHODS,
     SDK_ROUTE_PATHS,
     TABLE_ROUTE_METHODS,
     TABLE_SDK_ROUTE_PATHS,
@@ -142,15 +145,31 @@ class TestRouteReuse:
 
         from src.routers.cli import router as sdk_router
         from src.routers.files import router as files_router
+        from src.routers.platform_jobs import router as platform_jobs_router
         from src.routers.tables import router as tables_router
 
-        cli_paths = SDK_ROUTE_PATHS - FILES_ROUTE_PATHS
+        cli_path_only = (
+            CONFIG_ROUTE_PATHS | INTEGRATION_ROUTE_PATHS | TABLE_SDK_ROUTE_PATHS
+        )
         cli_originals = {
             route.path: route
             for route in sdk_router.routes
-            if getattr(route, "path", None) in cli_paths
+            if getattr(route, "path", None) in cli_path_only
         }
-        assert set(cli_originals) == cli_paths
+        assert set(cli_originals) == cli_path_only
+
+        artifact_originals = {
+            (route.path, method): route
+            for route in sdk_router.routes
+            if getattr(route, "path", None) in ARTIFACT_ROUTE_METHODS
+            for method in (getattr(route, "methods", None) or set())
+            & ARTIFACT_ROUTE_METHODS[route.path]
+        }
+        assert set(artifact_originals) == {
+            (path, method)
+            for path, methods in ARTIFACT_ROUTE_METHODS.items()
+            for method in methods
+        }
 
         files_originals = {
             route.path: route
@@ -166,10 +185,23 @@ class TestRouteReuse:
             for method in (getattr(route, "methods", None) or set()) & wanted
         }
 
+        platform_job_originals = {
+            (route.path, method): route
+            for route in platform_jobs_router.routes
+            if (wanted := PLATFORM_JOB_ROUTE_METHODS.get(getattr(route, "path", None)))
+            for method in (getattr(route, "methods", None) or set()) & wanted
+        }
+
         app = build_worker_sdk_app()
         mounted = [route for route in app.router.routes if isinstance(route, APIRoute)]
         mounted_cli = {
-            route.path: route for route in mounted if route.path in cli_paths
+            route.path: route for route in mounted if route.path in cli_path_only
+        }
+        mounted_artifacts = {
+            (route.path, method): route
+            for route in mounted
+            if route.path in ARTIFACT_ROUTE_METHODS
+            for method in route.methods
         }
         mounted_files = {
             route.path: route for route in mounted if route.path in FILES_ROUTE_PATHS
@@ -180,13 +212,24 @@ class TestRouteReuse:
             if route.path in TABLE_ROUTE_METHODS
             for method in route.methods
         }
+        mounted_platform_jobs = {
+            (route.path, method): route
+            for route in mounted
+            if route.path in PLATFORM_JOB_ROUTE_METHODS
+            for method in route.methods
+        }
 
         # Only the selected routes, and the exact registered objects — no
         # copied handlers and no rest of the API surface.
-        assert set(mounted_cli) == cli_paths
+        assert set(mounted_cli) == cli_path_only
         for path, route in mounted_cli.items():
             assert route is cli_originals[path]
             assert route.endpoint is cli_originals[path].endpoint
+
+        assert set(mounted_artifacts) == set(artifact_originals)
+        for key, route in mounted_artifacts.items():
+            assert route is artifact_originals[key]
+            assert route.endpoint is artifact_originals[key].endpoint
 
         assert set(mounted_files) == FILES_ROUTE_PATHS
         for path, route in mounted_files.items():
@@ -198,6 +241,11 @@ class TestRouteReuse:
             assert route is tables_originals[key]
             assert route.endpoint is tables_originals[key].endpoint
 
+        assert set(mounted_platform_jobs) == set(platform_job_originals)
+        for key, route in mounted_platform_jobs.items():
+            assert route is platform_job_originals[key]
+            assert route.endpoint is platform_job_originals[key].endpoint
+
         # The shared ``/api/tables/{table_id}`` path must not drag in its
         # GET/PATCH metadata siblings.
         assert {
@@ -205,6 +253,32 @@ class TestRouteReuse:
             for (path, method) in mounted_tables
             if path == "/api/tables/{table_id}"
         } == {"DELETE"}
+        # Only the single-job status GET is mounted from the platform-jobs
+        # router; the list and cancel sibling routes stay on the API.
+        assert set(mounted_platform_jobs) == {("/api/platform-jobs/{job_id}", "GET")}
+
+    def test_artifact_route_selection_is_exact(self):
+        """Gate C4b mounts the artifact routes and the platform-job GET."""
+        assert ARTIFACT_ROUTE_METHODS == {
+            "/api/sdk/artifacts": frozenset({"GET", "POST"}),
+            "/api/sdk/artifacts/document": frozenset({"POST"}),
+            "/api/sdk/artifacts/spreadsheet": frozenset({"POST"}),
+            "/api/sdk/artifacts/text": frozenset({"POST"}),
+            "/api/sdk/artifacts/image": frozenset({"POST"}),
+            "/api/sdk/artifacts/video": frozenset({"POST"}),
+            "/api/sdk/artifacts/{artifact_id}/content": frozenset({"GET"}),
+            "/api/sdk/artifacts/{artifact_id}/download-url": frozenset({"GET"}),
+        }
+        assert ARTIFACT_ROUTE_PATHS == frozenset(ARTIFACT_ROUTE_METHODS)
+        assert PLATFORM_JOB_ROUTE_METHODS == {
+            "/api/platform-jobs/{job_id}": frozenset({"GET"}),
+        }
+        assert ARTIFACT_ROUTE_PATHS.isdisjoint(
+            CONFIG_ROUTE_PATHS
+            | INTEGRATION_ROUTE_PATHS
+            | TABLE_SDK_ROUTE_PATHS
+            | FILES_ROUTE_PATHS
+        )
 
     def test_files_route_selection_is_exact(self):
         """Gate C4a mounts the eight files facade routes as real objects."""
@@ -221,7 +295,10 @@ class TestRouteReuse:
             }
         )
         assert FILES_ROUTE_PATHS.isdisjoint(
-            CONFIG_ROUTE_PATHS | INTEGRATION_ROUTE_PATHS | TABLE_SDK_ROUTE_PATHS
+            CONFIG_ROUTE_PATHS
+            | INTEGRATION_ROUTE_PATHS
+            | TABLE_SDK_ROUTE_PATHS
+            | ARTIFACT_ROUTE_PATHS
         )
 
     def test_integration_route_selection_is_exact(self):
@@ -231,7 +308,7 @@ class TestRouteReuse:
             == CONFIG_ROUTE_PATHS
             | INTEGRATION_ROUTE_PATHS
             | TABLE_SDK_ROUTE_PATHS
-            | FILES_ROUTE_PATHS
+            | ARTIFACT_ROUTE_PATHS
         )
         assert len(INTEGRATION_ROUTE_PATHS) == 6
         assert all(
@@ -1056,3 +1133,87 @@ class TestEngineLocalFilesFallback:
             await files.list("")
         with pytest.raises(httpx.ConnectError):
             await files.read_bytes("a.bin")
+
+
+class TestSocketArtifacts:
+    """Gate C4b: the socket serves the real artifact and platform-job routes."""
+
+    @pytest.mark.asyncio
+    async def test_malformed_artifact_body_is_422_over_socket(self):
+        headers = {"Authorization": f"Bearer {_engine_token()}"}
+        server = WorkerSdkHttpServer()
+        await server.start()
+        try:
+            async with _socket_client(server) as client:
+                text = await client.post(
+                    "/api/sdk/artifacts/text", json={}, headers=headers
+                )
+                document = await client.post(
+                    "/api/sdk/artifacts/document", json={}, headers=headers
+                )
+            assert text.status_code == 422, text.text
+            assert document.status_code == 422, document.text
+        finally:
+            await server.stop()
+
+    @pytest.mark.asyncio
+    async def test_list_without_workspace_is_422_over_socket(self):
+        headers = {"Authorization": f"Bearer {_engine_token()}"}
+        server = WorkerSdkHttpServer()
+        await server.start()
+        try:
+            async with _socket_client(server) as client:
+                response = await client.get("/api/sdk/artifacts", headers=headers)
+            assert response.status_code == 422, response.text
+        finally:
+            await server.stop()
+
+    @pytest.mark.asyncio
+    async def test_missing_platform_job_is_404_over_socket(self):
+        headers = {"Authorization": f"Bearer {_engine_token()}"}
+        server = WorkerSdkHttpServer()
+        await server.start()
+        try:
+            async with _socket_client(server) as client:
+                response = await client.get(
+                    f"/api/platform-jobs/{uuid4()}", headers=headers
+                )
+            assert response.status_code == 404, response.text
+        finally:
+            await server.stop()
+
+
+class TestEngineLocalArtifactsFallback:
+    """A failed artifact socket request never replays over the network API."""
+
+    @pytest.mark.asyncio
+    async def test_artifact_local_failure_does_not_fall_back_to_network(self):
+        from bifrost.artifacts import artifacts
+
+        missing_socket = os.path.join(
+            "/tmp", f"bifrost-missing-{uuid4().hex}.sock"
+        )
+        _install_engine_socket(missing_socket)
+        _set_client(BifrostClient("http://dead-api", "token"))
+
+        ref = {
+            "type": "bifrost_artifact",
+            "id": str(uuid4()),
+            "filename": "note.md",
+            "content_type": "text/markdown",
+            "size_bytes": 1,
+        }
+        with pytest.raises(httpx.ConnectError):
+            await artifacts.write("note.md", b"x", content_type="text/markdown")
+        with pytest.raises(httpx.ConnectError):
+            await artifacts.read(ref)
+        with pytest.raises(httpx.ConnectError):
+            await artifacts.get_download_url(ref)
+        with pytest.raises(httpx.ConnectError):
+            await artifacts.create_text(
+                "note", format="markdown", content="# note"
+            )
+        # ``create_video`` fails at enqueue with the transport error — never a
+        # made-up channel deadline.
+        with pytest.raises(httpx.ConnectError):
+            await artifacts.create_video("launch", prompt="A launch video")
