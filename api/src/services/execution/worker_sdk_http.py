@@ -1,4 +1,4 @@
-"""Worker-local HTTP surface for the engine SDK (Gate A proof).
+"""Worker-local HTTP surface for the engine SDK.
 
 The worker parent owns pooled PostgreSQL and protected credentials; execution
 children own neither. This module lets the worker parent serve a small set of
@@ -11,6 +11,11 @@ them unchanged, so the endpoint functions, auth dependency (ordinary engine
 bearer token), request/response DTOs, shared services, status codes, and the
 worker's already-initialized database engine are all the API's. No full API
 app is started and no handler or service is copied.
+
+Gate A proved the approach with the config routes; Gate C1 wired the config
+facade to the shared client transport, and Gate C2 adds the six integrations
+routes. Streams, tables, and other domains stay on their existing channel
+path until their own Gate C slice migrates them.
 
 ``import fastapi``/``uvicorn`` happen inside the functions so the worker
 entry closure stays free of those heavyweights at import time (see
@@ -36,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 # The existing SDK-facing config routes served on the socket. Selected by
 # path from the real router; the endpoint objects are reused as-is. Gate A
-# mounts the whole config facade; Gate C1 wires all four methods
+# mounts the whole config facade; Gate C1 wired all four methods
 # (get/set/list/delete) to the shared client transport.
 CONFIG_ROUTE_PATHS: frozenset[str] = frozenset(
     {
@@ -47,9 +52,28 @@ CONFIG_ROUTE_PATHS: frozenset[str] = frozenset(
     }
 )
 
+# Gate C2: the six existing integrations facade routes
+# (get/list_mappings/get_mapping/upsert_mapping/delete_mapping plus the
+# OAuth refresh used by ``OAuthCredentials.refresh``). Mounted by identity
+# from the same router, exactly like the config routes.
+INTEGRATION_ROUTE_PATHS: frozenset[str] = frozenset(
+    {
+        "/api/sdk/integrations/get",
+        "/api/sdk/integrations/list_mappings",
+        "/api/sdk/integrations/get_mapping",
+        "/api/sdk/integrations/upsert_mapping",
+        "/api/sdk/integrations/delete_mapping",
+        "/api/sdk/integrations/refresh_token",
+    }
+)
+
+# Every route this worker-local app serves. Other SDK domains keep their
+# existing channel path until their Gate C slice migrates them.
+SDK_ROUTE_PATHS: frozenset[str] = CONFIG_ROUTE_PATHS | INTEGRATION_ROUTE_PATHS
+
 
 def build_worker_sdk_app() -> Any:
-    """Build a minimal ASGI app mounting only the existing config routes.
+    """Build a minimal ASGI app mounting only the existing SDK routes.
 
     Fails loudly if the router no longer exposes every expected path: a
     silently incomplete mount would leave engine SDK calls falling through
@@ -67,15 +91,15 @@ def build_worker_sdk_app() -> Any:
     )
     selected = 0
     for route in sdk_router.routes:
-        if getattr(route, "path", None) in CONFIG_ROUTE_PATHS:
+        if getattr(route, "path", None) in SDK_ROUTE_PATHS:
             # Reuse the exact registered APIRoute (endpoint, dependencies,
             # response model) — never a re-created or copied handler.
             app.router.routes.append(route)
             selected += 1
-    if selected != len(CONFIG_ROUTE_PATHS):
+    if selected != len(SDK_ROUTE_PATHS):
         raise RuntimeError(
-            "worker-local SDK app could not mount every config route "
-            f"({selected}/{len(CONFIG_ROUTE_PATHS)}); route selection is stale"
+            "worker-local SDK app could not mount every SDK route "
+            f"({selected}/{len(SDK_ROUTE_PATHS)}); route selection is stale"
         )
     return app
 

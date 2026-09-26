@@ -10,20 +10,21 @@ Covers the acceptance surface that does not need a forked child:
   handler (the handler delegates to it);
 - the parent dispatcher calls that same service with a parent-derived
   actor and maps scope/service failures to HTTP-style statuses;
-- the child transport performs real mutation/refresh round trips over a
-  dedicated channel with zero HTTP requests, secret registration, and
-  the same public error shapes as the HTTP facades (``RuntimeError``
-  for upsert/refresh) without HTTP fallback.
+- the facade sends mutations and ``OAuthCredentials.refresh`` through
+  ``BifrostClient.engine_request`` with the same public error mapping as
+  the network path; the shared client owns transport selection, secret
+  registration, and the no-failure-replay contract. The real socket round
+  trips live in ``tests/unit/services/test_worker_sdk_http.py`` and
+  ``tests/unit/execution/test_worker_sdk_http_fork.py``.
 """
 
-import asyncio
 import contextlib
 import json
-import multiprocessing
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
+import httpx
 import pytest
 
 from src.models.contracts.cli import (
@@ -812,30 +813,22 @@ class TestRefreshParity:
         ) == own_provider
 
 
-class TestChildTransportMutations:
-    async def _pump(self, req_conn, resp_conn, handler, count=1):
-        for _ in range(count):
-            raw = await asyncio.to_thread(req_conn.recv_bytes, 65537)
-            frame = json.loads(raw.decode("utf-8"))
-            response = handler(frame)
-            await asyncio.to_thread(resp_conn.send_bytes, json.dumps(response).encode())
 
-    def _pair(self):
-        req_recv, req_send = multiprocessing.Pipe(duplex=False)
-        resp_recv, resp_send = multiprocessing.Pipe(duplex=False)
-        return req_recv, req_send, resp_recv, resp_send
+class TestFacadeEngineRequestMutations:
+    """upsert/delete/refresh ride ``BifrostClient.engine_request``.
 
-    def _close_all(self, conns):
-        for conn in conns:
-            with contextlib.suppress(Exception):
-                conn.close()
+    The shared client owns transport selection (worker socket vs network)
+    and the no-failure-replay contract; the facade keeps its HTTP-shaped
+    ``RuntimeError`` mapping for upsert/refresh. The dedicated-channel round
+    trips these tests used to drive were replaced by the real socket round
+    trips in ``tests/unit/services/test_worker_sdk_http.py`` and
+    ``tests/unit/execution/test_worker_sdk_http_fork.py``.
+    """
 
     @pytest.mark.asyncio
-    async def test_upsert_and_delete_round_trip_without_http(self):
-        from bifrost import _local_transport as lt
+    async def test_upsert_and_delete_use_engine_request(self):
+        from bifrost.integrations import integrations
 
-        req_recv, req_send, resp_recv, resp_send = self._pair()
-        lt.install(req_send, resp_recv)
         item = {
             "id": "mid", "integration_id": "iid", "organization_id": "oid",
             "entity_id": "ent-1", "entity_name": None, "oauth_token_id": None,
@@ -843,143 +836,131 @@ class TestChildTransportMutations:
             "created_at": "2026-01-01T00:00:00",
             "updated_at": "2026-01-01T00:00:00",
         }
-        handlers = {
-            "integrations.upsert_mapping": lambda f: {
-                "v": 1, "id": f["id"], "ok": True, "result": item,
-            },
-            "integrations.delete_mapping": lambda f: {
-                "v": 1, "id": f["id"], "ok": True,
-                "result": {"deleted": True},
-            },
-        }
+        client = AsyncMock()
+        client.engine_request = AsyncMock(
+            side_effect=[
+                httpx.Response(
+                    200, json=item,
+                    request=httpx.Request(
+                        "POST",
+                        "http://api/api/sdk/integrations/upsert_mapping",
+                    ),
+                ),
+                httpx.Response(
+                    200, json={"deleted": True},
+                    request=httpx.Request(
+                        "POST",
+                        "http://api/api/sdk/integrations/delete_mapping",
+                    ),
+                ),
+            ]
+        )
+        with patch("bifrost.integrations.get_client", return_value=client):
+            mapping = await integrations.upsert_mapping(
+                "P", scope="oid", entity_id="ent-1",
+                config={"region": "eu"},
+            )
+            deleted = await integrations.delete_mapping("P", scope="oid")
 
-        async def _pump_ops():
-            for _ in range(len(handlers)):
-                raw = await asyncio.to_thread(req_recv.recv_bytes, 65537)
-                frame = json.loads(raw.decode("utf-8"))
-                assert "solution" not in frame, frame
-                response = handlers[frame["op"]](frame)
-                await asyncio.to_thread(resp_send.send_bytes, json.dumps(response).encode())
-
-        pump = asyncio.create_task(_pump_ops())
-        try:
-            from bifrost.integrations import integrations
-
-            with patch("bifrost.integrations.get_client") as get_client:
-                get_client.side_effect = AssertionError("HTTP must not be used")
-                mapping = await integrations.upsert_mapping(
-                    "P", scope="oid", entity_id="ent-1",
-                    config={"region": "eu"},
-                )
-                assert mapping.entity_id == "ent-1"
-                assert mapping.config == {"region": "eu"}
-                assert await integrations.delete_mapping("P", scope="oid") is True
-            await pump
-        finally:
-            lt.clear()
-            self._close_all((req_recv, req_send, resp_recv, resp_send))
+        assert mapping.entity_id == "ent-1"
+        assert mapping.config == {"region": "eu"}
+        assert deleted is True
+        assert [
+            call.args[1] for call in client.engine_request.await_args_list
+        ] == [
+            "/api/sdk/integrations/upsert_mapping",
+            "/api/sdk/integrations/delete_mapping",
+        ]
 
     @pytest.mark.asyncio
-    async def test_upsert_local_error_matches_http_runtime_error(self):
-        from bifrost import _local_transport as lt
+    async def test_upsert_error_maps_to_runtime_error(self):
+        from bifrost.integrations import integrations
 
-        req_recv, req_send, resp_recv, resp_send = self._pair()
-        lt.install(req_send, resp_recv)
-        pump = asyncio.create_task(
-            self._pump(
-                req_recv, resp_send,
-                lambda f: {"v": 1, "id": f["id"], "ok": False,
-                           "status": 404, "detail": "Integration 'P' not found"},
+        client = AsyncMock()
+        client.engine_request = AsyncMock(
+            return_value=httpx.Response(
+                404,
+                json={"detail": "Integration 'P' not found"},
+                request=httpx.Request(
+                    "POST", "http://api/api/sdk/integrations/upsert_mapping"
+                ),
             )
         )
-        try:
-            from bifrost.integrations import integrations
-
-            with patch("bifrost.integrations.get_client") as get_client:
-                get_client.side_effect = AssertionError("HTTP must not be used")
-                with pytest.raises(RuntimeError, match="Failed to upsert mapping"):
-                    await integrations.upsert_mapping(
-                        "P", scope="oid", entity_id="ent-1"
-                    )
-            await pump
-        finally:
-            lt.clear()
-            self._close_all((req_recv, req_send, resp_recv, resp_send))
+        with patch("bifrost.integrations.get_client", return_value=client):
+            with pytest.raises(RuntimeError, match="Failed to upsert mapping"):
+                await integrations.upsert_mapping(
+                    "P", scope="oid", entity_id="ent-1"
+                )
+        assert client.engine_request.await_count == 1
 
     @pytest.mark.asyncio
-    async def test_refresh_round_trip_registers_secret_without_http(self):
-        from bifrost import _local_transport as lt
+    async def test_refresh_registers_secret_through_engine_request(self):
         from bifrost._context import (
             clear_execution_context,
             set_execution_context,
         )
+        from bifrost.models import OAuthCredentials
         from src.sdk.context import ExecutionContext
 
-        req_recv, req_send, resp_recv, resp_send = self._pair()
-        lt.install(req_send, resp_recv)
         ctx = ExecutionContext(
             user_id="u1", email="e@e.com", name="T", scope="org-1",
             organization=None, is_platform_admin=False,
             is_function_key=False, execution_id="exec-1",
         )
         set_execution_context(ctx)
-        pump = asyncio.create_task(
-            self._pump(
-                req_recv, resp_send,
-                lambda f: {"v": 1, "id": f["id"], "ok": True,
-                           "result": {"access_token": "fresh-tok-live",
-                                      "expires_at": None}},
-            )
-        )
         try:
-            from bifrost.models import OAuthCredentials
-
+            client = AsyncMock()
+            client.engine_request = AsyncMock(
+                return_value=httpx.Response(
+                    200,
+                    json={"access_token": "fresh-tok-live", "expires_at": None},
+                    request=httpx.Request(
+                        "POST",
+                        "http://api/api/sdk/integrations/refresh_token",
+                    ),
+                )
+            )
             creds = OAuthCredentials(
                 connection_name="P", client_id="cid", client_secret=None,
                 authorization_url=None, token_url=None, scopes=[],
                 access_token="stale", refresh_token="ref",
                 expires_at=None,
             )
-            with patch("bifrost.client.get_client") as get_client:
-                get_client.side_effect = AssertionError("HTTP must not be used")
+            with patch("bifrost.client.get_client", return_value=client):
                 out = await creds.refresh()
+
             assert out is creds
             assert creds.access_token == "fresh-tok-live"
             assert "fresh-tok-live" in ctx._collect_secret_values()
-            await pump
+            client.engine_request.assert_awaited_once_with(
+                "POST",
+                "/api/sdk/integrations/refresh_token",
+                json={"connection_name": "P"},
+            )
         finally:
-            lt.clear()
             clear_execution_context()
-            self._close_all((req_recv, req_send, resp_recv, resp_send))
 
     @pytest.mark.asyncio
-    async def test_refresh_local_error_matches_http_runtime_error(self):
-        from bifrost import _local_transport as lt
+    async def test_refresh_error_maps_to_runtime_error(self):
+        from bifrost.models import OAuthCredentials
 
-        req_recv, req_send, resp_recv, resp_send = self._pair()
-        lt.install(req_send, resp_recv)
-        pump = asyncio.create_task(
-            self._pump(
-                req_recv, resp_send,
-                lambda f: {"v": 1, "id": f["id"], "ok": False,
-                           "status": 502, "detail": "provider down"},
-                count=1,
+        client = AsyncMock()
+        client.engine_request = AsyncMock(
+            return_value=httpx.Response(
+                502,
+                json={"detail": "provider down"},
+                request=httpx.Request(
+                    "POST", "http://api/api/sdk/integrations/refresh_token"
+                ),
             )
         )
-        try:
-            from bifrost.models import OAuthCredentials
-
-            creds = OAuthCredentials(
-                connection_name="P", client_id="cid", client_secret=None,
-                authorization_url=None, token_url=None, scopes=[],
-                access_token="stale", refresh_token="ref",
-                expires_at=None,
-            )
-            with patch("bifrost.client.get_client") as get_client:
-                get_client.side_effect = AssertionError("HTTP must not be used")
-                with pytest.raises(RuntimeError, match="Token refresh failed"):
-                    await creds.refresh()
-            await pump
-        finally:
-            lt.clear()
-            self._close_all((req_recv, req_send, resp_recv, resp_send))
+        creds = OAuthCredentials(
+            connection_name="P", client_id="cid", client_secret=None,
+            authorization_url=None, token_url=None, scopes=[],
+            access_token="stale", refresh_token="ref",
+            expires_at=None,
+        )
+        with patch("bifrost.client.get_client", return_value=client):
+            with pytest.raises(RuntimeError, match="Token refresh failed"):
+                await creds.refresh()
+        assert client.engine_request.await_count == 1

@@ -11,7 +11,6 @@ from __future__ import annotations
 from .client import get_client, raise_for_status_with_detail
 from .models import IntegrationData, IntegrationMappingResponse
 from ._context import resolve_scope, _execution_context
-from ._local_transport import get as _get_local_transport
 
 
 def _current_context():
@@ -56,9 +55,11 @@ class integrations:
         """
         Get integration configuration for an organization.
 
-        Inside an engine child this resolves through the parent over the
-        dedicated local transport (same service as the HTTP endpoint);
-        elsewhere it calls the SDK API endpoint.
+        Sends the ordinary HTTP request through the shared ``BifrostClient``:
+        over the worker's private Unix socket when the engine injected one,
+        and over the network API otherwise. Same path, body, bearer token,
+        and error handling as every other SDK request; a local failure raises
+        and never falls back to the network API.
 
         Returns the integration data including entity ID, configuration,
         and full OAuth details with decrypted credentials.
@@ -112,20 +113,6 @@ class integrations:
             ... )
         """
         effective_scope = resolve_scope(scope)
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: the parent resolves this through the shared
-            # integrations service over the dedicated channel — the same
-            # service the HTTP endpoint calls. The Solution install id is
-            # NOT sent: the parent derives it from its own dispatch context,
-            # so a child can never forge another install's declared
-            # connection. A local attempt never falls back to HTTP.
-            result = await transport.call_integrations_get(
-                name, effective_scope, oauth_scope
-            )
-            if result is None:
-                return None
-            return _parse_integration_data(result)
         client = get_client()
         request_data = {"name": name, "scope": effective_scope}
         if oauth_scope:
@@ -137,7 +124,8 @@ class integrations:
         solution_id = getattr(ctx, "solution_id", None) if ctx is not None else None
         if solution_id:
             request_data["solution"] = str(solution_id)
-        response = await client.post(
+        response = await client.engine_request(
+            "POST",
             "/api/sdk/integrations/get",
             json=request_data,
             retry_transient=True,
@@ -159,9 +147,10 @@ class integrations:
         """
         List mappings for an integration in the resolved scope.
 
-        Inside an engine child this lists through the parent over the
-        dedicated local transport (same service as the HTTP endpoint);
-        elsewhere it calls the SDK API endpoint.
+        Sends the ordinary HTTP request through the shared ``BifrostClient``:
+        over the worker's private Unix socket when the engine injected one,
+        and over the network API otherwise. A local failure raises and never
+        falls back to the network API.
 
         Under the workflow execution model the API authenticates the engine
         sentinel (``is_superuser=True``), so the API-side C2 gate never
@@ -192,18 +181,9 @@ class integrations:
             ...         tenant_id = mapping.entity_id
         """
         effective_scope = resolve_scope(scope)
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: never falls back to HTTP.
-            json_result = await transport.call_integrations_list_mappings(
-                name, effective_scope
-            )
-            if json_result is None:
-                return None
-            items = json_result.get("items", [])
-            return [IntegrationMappingResponse.model_validate(item) for item in items]
         client = get_client()
-        response = await client.post(
+        response = await client.engine_request(
+            "POST",
             "/api/sdk/integrations/list_mappings",
             json={"name": name, "scope": effective_scope},
             retry_transient=True,
@@ -229,9 +209,10 @@ class integrations:
         """
         Get a specific mapping by organization scope or entity ID.
 
-        Inside an engine child this resolves through the parent over the
-        dedicated local transport (same service as the HTTP endpoint);
-        elsewhere it calls the SDK API endpoint.
+        Sends the ordinary HTTP request through the shared ``BifrostClient``:
+        over the worker's private Unix socket when the engine injected one,
+        and over the network API otherwise. A local failure raises and never
+        falls back to the network API.
 
         Args:
             name: Integration name
@@ -261,17 +242,9 @@ class integrations:
             >>> mapping = await integrations.get_mapping("HaloPSA", entity_id="tenant-456")
         """
         effective_scope = resolve_scope(scope)
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: never falls back to HTTP.
-            result = await transport.call_integrations_get_mapping(
-                name, effective_scope, entity_id
-            )
-            if result is None:
-                return None
-            return IntegrationMappingResponse.model_validate(result)
         client = get_client()
-        response = await client.post(
+        response = await client.engine_request(
+            "POST",
             "/api/sdk/integrations/get_mapping",
             json={"name": name, "scope": effective_scope, "entity_id": entity_id},
             retry_transient=True,
@@ -296,9 +269,12 @@ class integrations:
         """
         Create or update a mapping for an organization.
 
-        Inside an engine child this writes through the parent over the
-        dedicated local transport (same service as the HTTP endpoint);
-        elsewhere it calls the SDK API endpoint.
+        Sends the ordinary HTTP request through the shared ``BifrostClient``:
+        over the worker's private Unix socket when the engine injected one,
+        and over the network API otherwise. Same ``RuntimeError`` mapping on
+        a non-200 as the network path. A local attempt never falls back to
+        HTTP — failures raise loudly (a write may already have committed, so
+        a retry could double-apply).
 
         If a mapping already exists for the org, updates it.
         Otherwise creates a new mapping.
@@ -331,31 +307,9 @@ class integrations:
         # The SDK-side ``resolve_scope`` is what enforces "this workflow's
         # actual caller is allowed to mutate that org's mapping."
         effective_scope = resolve_scope(scope)
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: the parent applies the same mutation
-            # service over the dedicated channel. A local attempt never
-            # falls back to HTTP — failures raise loudly below (a write
-            # may already have committed, so a retry over HTTP could
-            # double-apply). Error mapping matches the HTTP path below.
-            from .client import BifrostAPIError
-
-            try:
-                result = await transport.call_integrations_upsert_mapping(
-                    name, effective_scope, entity_id, entity_name, config
-                )
-            except BifrostAPIError as e:
-                status = e.response.status_code
-                try:
-                    detail = e.response.text
-                except Exception:
-                    detail = str(e)
-                raise RuntimeError(
-                    f"Failed to upsert mapping: {status} - {detail}"
-                ) from None
-            return IntegrationMappingResponse.model_validate(result)
         client = get_client()
-        response = await client.post(
+        response = await client.engine_request(
+            "POST",
             "/api/sdk/integrations/upsert_mapping",
             json={
                 "name": name,
@@ -377,9 +331,10 @@ class integrations:
         """
         Delete a mapping for an organization.
 
-        Inside an engine child this deletes through the parent over the
-        dedicated local transport (same service as the HTTP endpoint);
-        elsewhere it calls the SDK API endpoint.
+        Sends the ordinary HTTP request through the shared ``BifrostClient``:
+        over the worker's private Unix socket when the engine injected one,
+        and over the network API otherwise. A local failure raises and never
+        falls back to the network API.
 
         Args:
             name: Integration name
@@ -395,15 +350,9 @@ class integrations:
         # See upsert_mapping above for why the SDK-side resolve is the
         # real security boundary under engine-sentinel auth.
         effective_scope = resolve_scope(scope)
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: never falls back to HTTP.
-            result = await transport.call_integrations_delete_mapping(
-                name, effective_scope
-            )
-            return bool(result.get("deleted", False))
         client = get_client()
-        response = await client.post(
+        response = await client.engine_request(
+            "POST",
             "/api/sdk/integrations/delete_mapping",
             json={"name": name, "scope": effective_scope},
         )

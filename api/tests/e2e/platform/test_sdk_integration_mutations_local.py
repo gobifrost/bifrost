@@ -5,16 +5,20 @@ Exercises the full path — workflow code in a forked worker child calling
 the three stage-2c operations — against the same seeded integration the
 external HTTP endpoint serves:
 
-- the workflow hard-disables fixed-operation HTTP in-engine (both
-  ``bifrost.integrations.get_client`` and ``bifrost.client.get_client``
-  raise if touched) and records that the local transport is installed,
-  so success proves zero API requests for the migrated operations;
+- the workflow records that the worker injected its engine socket, so the
+  fixed operations ride the shared client's worker-local HTTP transport;
 - upsert create/update round-trips through the parent service with the
   merged-config echo, delete commits, and a missing-provider refresh
   fails loudly with the HTTP-shaped ``RuntimeError`` (refresh success
-  persistence is covered by unit tests with a mocked provider HTTP
-  call — no real OAuth provider exists in the test stack);
+  persistence is covered by unit and forked-child socket tests with a
+  mocked provider HTTP call — no real OAuth provider exists in the test
+  stack);
 - the same committed state is verified over external HTTP afterwards.
+
+The zero-HTTP proof for the migrated operations lives in the unit and
+forked-child socket tests (``test_worker_sdk_http.py``,
+``test_worker_sdk_http_fork.py``), where the child's network API is
+unreachable yet the integration calls succeed over the worker socket.
 """
 
 import uuid
@@ -71,58 +75,43 @@ from bifrost import workflow, integrations
 
 @workflow(name="{name}", description="Stage 2c local integrations mutations E2E")
 async def {name}():
-    import importlib
-    _integ = importlib.import_module("bifrost.integrations")
-    _client_mod = importlib.import_module("bifrost.client")
-    from bifrost._local_transport import get as _get_transport
+    from bifrost.client import get_engine_socket_path
     from bifrost.models import OAuthCredentials
-    used_local = _get_transport() is not None
+    used_socket = get_engine_socket_path() is not None
 
-    def _dead(*args, **kwargs):
-        raise AssertionError(
-            "fixed-operation HTTP must not be used in the engine path"
-        )
-    _orig_integ = _integ.get_client
-    _orig_client = _client_mod.get_client
-    _integ.get_client = _dead
-    _client_mod.get_client = _dead
+    created = await integrations.upsert_mapping(
+        "{integ_name}", scope="{org1["id"]}", entity_id="{entity}",
+        entity_name="Live", config={{"region": "eu-live"}},
+    )
+    updated = await integrations.upsert_mapping(
+        "{integ_name}", scope="{org1["id"]}", entity_id="{entity}-2",
+        config={{"region": "ap-live"}},
+    )
+    mapping = await integrations.get_mapping("{integ_name}")
+    creds = OAuthCredentials(
+        connection_name="{missing_prov}", client_id=None,
+        client_secret=None, authorization_url=None, token_url=None,
+        scopes=[], access_token=None, refresh_token=None,
+        expires_at=None,
+    )
     try:
-        created = await integrations.upsert_mapping(
-            "{integ_name}", scope="{org1["id"]}", entity_id="{entity}",
-            entity_name="Live", config={{"region": "eu-live"}},
+        await creds.refresh()
+        refresh_out = "UNEXPECTED-SUCCESS"
+    except Exception as e:
+        refresh_out = f"{{type(e).__name__}}: {{e}}"
+    try:
+        await integrations.upsert_mapping(
+            "{integ_name}", scope="{org2["id"]}", entity_id="x"
         )
-        updated = await integrations.upsert_mapping(
-            "{integ_name}", scope="{org1["id"]}", entity_id="{entity}-2",
-            config={{"region": "ap-live"}},
-        )
-        mapping = await integrations.get_mapping("{integ_name}")
-        creds = OAuthCredentials(
-            connection_name="{missing_prov}", client_id=None,
-            client_secret=None, authorization_url=None, token_url=None,
-            scopes=[], access_token=None, refresh_token=None,
-            expires_at=None,
-        )
-        try:
-            await creds.refresh()
-            refresh_out = "UNEXPECTED-SUCCESS"
-        except Exception as e:
-            refresh_out = f"{{type(e).__name__}}: {{e}}"
-        try:
-            await integrations.upsert_mapping(
-                "{integ_name}", scope="{org2["id"]}", entity_id="x"
-            )
-            cross_org = "LEAKED"
-        except Exception as e:
-            cross_org = f"denied: {{type(e).__name__}}"
-        deleted = await integrations.delete_mapping(
-            "{integ_name}", scope="{org1["id"]}"
-        )
-        after = await integrations.get_mapping("{integ_name}")
-    finally:
-        _integ.get_client = _orig_integ
-        _client_mod.get_client = _orig_client
+        cross_org = "LEAKED"
+    except Exception as e:
+        cross_org = f"denied: {{type(e).__name__}}"
+    deleted = await integrations.delete_mapping(
+        "{integ_name}", scope="{org1["id"]}"
+    )
+    after = await integrations.get_mapping("{integ_name}")
     return {{
-        "used_local": used_local,
+        "used_socket": used_socket,
         "created_entity": created.entity_id,
         "created_region": created.config.get("region"),
         "updated_entity": updated.entity_id,
@@ -169,9 +158,9 @@ class TestSdkIntegrationMutationsLocalLiveE2E:
         )
         assert result["status"] == "Success", result
         out = result["result"]
-        # Zero API requests: the transport was installed and every
-        # fixed-operation HTTP call would have raised inside the workflow.
-        assert out["used_local"] is True
+        # The worker injected its engine socket, so the fixed operations ran
+        # over the shared client's worker-local transport.
+        assert out["used_socket"] is True
         assert out["created_entity"] == live_mut_keys["entity"]
         assert out["created_region"] == "eu-live"
         assert out["updated_entity"] == live_mut_keys["entity"] + "-2"

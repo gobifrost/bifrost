@@ -108,7 +108,12 @@ def _script_for(key: str) -> str:
     return base64.b64encode(source.encode("utf-8")).decode("utf-8")
 
 
-def _context_for(code_b64: str, engine_token: str) -> dict[str, Any]:
+def _context_for(
+    code_b64: str,
+    engine_token: str,
+    organization: dict[str, Any] | None = None,
+    is_platform_admin: bool = True,
+) -> dict[str, Any]:
     return {
         "execution_id": f"wsdk-fork-{uuid4().hex[:8]}",
         "name": "worker-sdk-http-fork-test",
@@ -119,13 +124,13 @@ def _context_for(code_b64: str, engine_token: str) -> dict[str, Any]:
             "email": "engine@bifrost.internal",
             "name": "Bifrost Engine",
         },
-        "organization": None,
+        "organization": organization,
         "tags": [],
         "timeout_seconds": 120,
         "cache_ttl_seconds": 0,
         "transient": True,
         "no_cache": True,
-        "is_platform_admin": True,
+        "is_platform_admin": is_platform_admin,
         "engine_token": engine_token,
     }
 
@@ -199,3 +204,393 @@ async def test_forked_child_config_crud_over_worker_socket(
         with contextlib.suppress(Exception):
             template.shutdown()
         await server.stop()
+
+
+def _refresh_outcome(access: str) -> dict[str, Any]:
+    """A successful provider-refresh outcome, as the shared primitive returns."""
+    from datetime import datetime, timezone
+
+    from src.core.security import encrypt_secret
+
+    return {
+        "success": True,
+        "access_token": access,
+        "encrypted_access_token": encrypt_secret(access).encode(),
+        "encrypted_refresh_token": encrypt_secret("fresh-refresh").encode(),
+        "refresh_token": "fresh-refresh",
+        "expires_at": datetime(2030, 1, 1, tzinfo=timezone.utc),
+    }
+
+
+async def _seed_committed_integration(async_session_factory) -> dict[str, Any]:
+    """Seed a committed org-bound integration + mapping + global OAuth provider.
+
+    The worker socket opens its own session from the worker's global engine,
+    so every row must be committed (not the rolled-back ``db_session``). The
+    provider is global and ``client_credentials``: the engine sentinel caller
+    has no org, so ``refresh()`` (which passes no scope) resolves to the
+    global tier.
+    """
+    from src.core.security import encrypt_secret
+    from src.models.enums import ConfigType as ConfigTypeEnum
+    from src.models.orm import Config as ConfigModel
+    from src.models.orm.integrations import (
+        Integration as IntegrationModel,
+    )
+    from src.models.orm.integrations import (
+        IntegrationConfigSchema as SchemaModel,
+    )
+    from src.models.orm.integrations import (
+        IntegrationMapping as MappingModel,
+    )
+    from src.models.orm.oauth import OAuthProvider
+    from src.models.orm.organizations import Organization as OrganizationModel
+
+    tag = uuid4().hex[:8]
+    async with async_session_factory() as session:
+        org = OrganizationModel(
+            name=f"wsdk-fork-org-{tag}",
+            is_active=True,
+            is_provider=False,
+            created_by="worker-sdk-http-fork-test",
+        )
+        other = OrganizationModel(
+            name=f"wsdk-fork-other-{tag}",
+            is_active=True,
+            is_provider=False,
+            created_by="worker-sdk-http-fork-test",
+        )
+        session.add_all([org, other])
+        await session.flush()
+        org_id = org.id
+        other_id = other.id
+
+        name = f"wsdk-fork-integ-{tag}"
+        integration = IntegrationModel(name=name)
+        session.add(integration)
+        await session.flush()
+        integration_id = integration.id
+
+        entity = f"fork-entity-{tag}"
+        session.add(
+            SchemaModel(
+                integration_id=integration.id,
+                key="api_key",
+                type="secret",
+                position=0,
+            )
+        )
+        session.add_all(
+            [
+                ConfigModel(
+                    key="region",
+                    value={"value": "us-default"},
+                    config_type=ConfigTypeEnum.STRING,
+                    organization_id=None,
+                    integration_id=integration.id,
+                    updated_by="worker-sdk-http-fork-test",
+                ),
+                ConfigModel(
+                    key="api_key",
+                    value={"value": encrypt_secret("global-secret-canary")},
+                    config_type=ConfigTypeEnum.SECRET,
+                    organization_id=None,
+                    integration_id=integration.id,
+                    updated_by="worker-sdk-http-fork-test",
+                ),
+                ConfigModel(
+                    key="region",
+                    value={"value": "eu-fork"},
+                    config_type=ConfigTypeEnum.STRING,
+                    organization_id=org.id,
+                    integration_id=integration.id,
+                    updated_by="worker-sdk-http-fork-test",
+                ),
+                MappingModel(
+                    integration_id=integration.id,
+                    organization_id=org.id,
+                    entity_id=entity,
+                    entity_name=f"entity-{tag}",
+                ),
+            ]
+        )
+
+        provider_name = f"wsdk-fork-prov-{tag}"
+        session.add(
+            OAuthProvider(
+                provider_name=provider_name,
+                client_id="fork-client",
+                encrypted_client_secret=encrypt_secret("fork-secret").encode(),
+                oauth_flow_type="client_credentials",
+                token_url="https://example.com/token",
+                token_url_defaults={},
+                scopes=["read"],
+                integration_id=integration.id,
+                organization_id=None,
+            )
+        )
+        await session.commit()
+
+    return {
+        "org_id": str(org_id),
+        "other_org_id": str(other_id),
+        "integration_id": integration_id,
+        "name": name,
+        "entity": entity,
+        "provider_name": provider_name,
+        "missing_provider": f"wsdk-fork-missing-{tag}",
+    }
+
+
+async def _cleanup_committed_integration(async_session_factory, seed) -> None:
+    from sqlalchemy import delete, or_, select
+
+    from src.models.orm import Config as ConfigModel
+    from src.models.orm.integrations import (
+        Integration as IntegrationModel,
+    )
+    from src.models.orm.integrations import (
+        IntegrationConfigSchema as SchemaModel,
+    )
+    from src.models.orm.integrations import (
+        IntegrationMapping as MappingModel,
+    )
+    from src.models.orm.oauth import OAuthProvider, OAuthToken
+    from src.models.orm.organizations import Organization as OrganizationModel
+
+    integration_id = seed["integration_id"]
+    org_ids = [seed["org_id"], seed["other_org_id"]]
+    async with async_session_factory() as session:
+        provider_ids = (
+            await session.execute(
+                select(OAuthProvider.id).where(
+                    OAuthProvider.integration_id == integration_id
+                )
+            )
+        ).scalars().all()
+        if provider_ids:
+            await session.execute(
+                delete(OAuthToken).where(
+                    OAuthToken.provider_id.in_(provider_ids)
+                )
+            )
+        await session.execute(
+            delete(OAuthProvider).where(
+                OAuthProvider.integration_id == integration_id
+            )
+        )
+        await session.execute(
+            delete(ConfigModel).where(
+                or_(
+                    ConfigModel.integration_id == integration_id,
+                    ConfigModel.organization_id.in_(org_ids),
+                )
+            )
+        )
+        await session.execute(
+            delete(MappingModel).where(
+                MappingModel.integration_id == integration_id
+            )
+        )
+        await session.execute(
+            delete(SchemaModel).where(
+                SchemaModel.integration_id == integration_id
+            )
+        )
+        await session.execute(
+            delete(IntegrationModel).where(IntegrationModel.id == integration_id)
+        )
+        await session.execute(
+            delete(OrganizationModel).where(OrganizationModel.id.in_(org_ids))
+        )
+        await session.commit()
+
+
+def _integrations_script(
+    *,
+    name: str,
+    org: str,
+    other_org: str,
+    entity: str,
+    provider: str,
+    missing_provider: str,
+    access: str,
+) -> str:
+    source = f'''import os, sys
+from bifrost import integrations
+from bifrost.models import OAuthCredentials
+from bifrost._context import get_execution_context
+from bifrost.client import get_engine_socket_path
+
+data = await integrations.get({name!r})
+mappings = await integrations.list_mappings({name!r})
+mapping = await integrations.get_mapping({name!r})
+
+creds = OAuthCredentials(
+    connection_name={provider!r}, client_id=None, client_secret=None,
+    authorization_url=None, token_url=None, scopes=[],
+    access_token=None, refresh_token=None, expires_at=None,
+)
+await creds.refresh()
+_registered = get_execution_context()._collect_secret_values()
+
+missing = OAuthCredentials(
+    connection_name={missing_provider!r}, client_id=None, client_secret=None,
+    authorization_url=None, token_url=None, scopes=[],
+    access_token=None, refresh_token=None, expires_at=None,
+)
+try:
+    await missing.refresh()
+    missing_out = "UNEXPECTED-SUCCESS"
+except Exception as e:
+    missing_out = f"{{type(e).__name__}}: {{e}}"
+
+created = await integrations.upsert_mapping(
+    {name!r}, scope={org!r}, entity_id={entity!r} + "-new",
+    entity_name="Fork Entity", config={{"region": "ap-fork"}},
+)
+deleted = await integrations.delete_mapping({name!r}, scope={org!r})
+after = await integrations.get_mapping({name!r})
+
+try:
+    await integrations.get({name!r}, scope={other_org!r})
+    cross_org = "LEAKED"
+except Exception as e:
+    cross_org = f"denied: {{type(e).__name__}}"
+
+result = {{
+    "socket_path": get_engine_socket_path(),
+    "used_socket": get_engine_socket_path() is not None,
+    "had_db_url": (
+        "BIFROST_DATABASE_URL" in os.environ
+        or "BIFROST_DATABASE_URL_SYNC" in os.environ
+    ),
+    "had_sqlalchemy": "sqlalchemy" in sys.modules,
+    "entity_id": data.entity_id,
+    "region": data.config.get("region"),
+    "secret_ok": data.config.get("api_key") == "global-secret-canary",
+    "secret_keys": data.config_secret_keys,
+    "list_count": len(mappings),
+    "list_entity": mappings[0].entity_id,
+    "mapping_entity": mapping.entity_id,
+    "refresh_ok": creds.access_token == {access!r},
+    "refresh_registered": {access!r} in _registered,
+    "missing_refresh": missing_out,
+    "created_entity": created.entity_id,
+    "created_region": created.config.get("region"),
+    "deleted": deleted,
+    "after": after,
+    "cross_org": cross_org,
+}}
+'''
+    return base64.b64encode(source.encode("utf-8")).decode("utf-8")
+
+
+@pytest.mark.asyncio
+async def test_forked_child_integrations_over_worker_socket(
+    async_session_factory, monkeypatch
+):
+    """All six integrations methods reach the real routes over the socket.
+
+    A real child forks with the worker's Unix socket injected and a dead
+    network API. It reads (get/list_mappings/get_mapping), refreshes an OAuth
+    token, mutates (upsert/delete), and probes a cross-org scope. Success with
+    no DB credential proves the socket carried every call to the parent-served
+    routes with the same scope, secret, and error behavior as the network API.
+    """
+    from src.core.security import mint_engine_token
+
+    seed = await _seed_committed_integration(async_session_factory)
+    access = "fresh-fork-access"
+
+    # Any attempt to reach the network API fails loudly; the socket must
+    # serve every call.
+    monkeypatch.setenv("BIFROST_API_URL", "http://127.0.0.1:9")
+
+    engine_token, _ = mint_engine_token(
+        execution_id="gate-c2-fork",
+        solution_id=None,
+        global_repo_access=True,
+        timeout_seconds=120,
+    )
+    organization = {"id": seed["org_id"], "name": "Fork Org"}
+
+    server = WorkerSdkHttpServer()
+    await server.start()
+    assert server.socket_path is not None
+
+    template = TemplateProcess()
+    template.start()
+    try:
+        with (
+            patch(
+                "src.services.oauth_provider.refresh_oauth_token_http",
+                new=AsyncMock(return_value=_refresh_outcome(access)),
+            ) as refresh_http,
+        ):
+            child_pid, work_queue, result_queue = template.fork(
+                worker_id="wsdk-integ-fork",
+                sdk_socket_path=server.socket_path,
+            )
+            try:
+                work_queue.put(
+                    (
+                        "exec-wsdk-integ",
+                        _context_for(
+                            _integrations_script(
+                                name=seed["name"],
+                                org=seed["org_id"],
+                                other_org=seed["other_org_id"],
+                                entity=seed["entity"],
+                                provider=seed["provider_name"],
+                                missing_provider=seed["missing_provider"],
+                                access=access,
+                            ),
+                            engine_token,
+                            organization,
+                            is_platform_admin=False,
+                        ),
+                    )
+                )
+                envelope = await asyncio.to_thread(result_queue.get, True, 90.0)
+            finally:
+                work_queue.close()
+                result_queue.close()
+
+        assert envelope["success"] is True, envelope
+        result = envelope["result"]
+        # Transport proof: socket injected, network API dead, no DB credential.
+        assert result["used_socket"] is True
+        assert result["socket_path"] == server.socket_path
+        assert result["had_db_url"] is False
+        assert result["had_sqlalchemy"] is False
+        # Reads carry the org mapping, merged config, and decrypted secret.
+        assert result["entity_id"] == seed["entity"]
+        assert result["region"] == "eu-fork"
+        assert result["secret_ok"] is True
+        assert result["secret_keys"] == ["api_key"]
+        assert result["list_count"] == 1
+        assert result["list_entity"] == seed["entity"]
+        assert result["mapping_entity"] == seed["entity"]
+        # OAuth refresh persisted a fresh token and registered it as a secret.
+        assert result["refresh_ok"] is True
+        assert result["refresh_registered"] is True
+        refresh_http.assert_awaited_once()
+        # Error mapping: a missing provider surfaces the HTTP-shaped failure.
+        assert str(result["missing_refresh"]).startswith(
+            "RuntimeError: Token refresh failed: 404"
+        ), result
+        # Mutations: upsert echoes the merged write, delete removes it.
+        assert result["created_entity"] == seed["entity"] + "-new"
+        assert result["created_region"] == "ap-fork"
+        assert result["deleted"] is True
+        assert result["after"] is None
+        # Scope: a cross-org override by a non-bypass caller is denied.
+        assert str(result["cross_org"]).startswith("denied"), result
+
+        _wait_for_pid_to_die(child_pid)
+    finally:
+        with contextlib.suppress(Exception):
+            template.shutdown()
+        await server.stop()
+        await _cleanup_committed_integration(async_session_factory, seed)

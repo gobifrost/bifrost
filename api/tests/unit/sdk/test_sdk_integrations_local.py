@@ -9,18 +9,19 @@ Covers the acceptance surface that does not need a forked child:
 - the parent dispatcher calls that same service with a parent-derived
   principal (including the trusted Solution id) and maps scope/declared
   failures to HTTP-style statuses;
-- the child transport performs real integrations round trips over a
-  dedicated channel with zero HTTP requests, secret registration, error
-  mapping without HTTP fallback, and missing-entity nulls.
+- the facade sends fixed operations through ``BifrostClient.engine_request``,
+  so the shared client owns transport selection, error mapping, and the
+  no-failure-replay contract. The real socket round trips live in
+  ``tests/unit/services/test_worker_sdk_http.py`` and
+  ``tests/unit/execution/test_worker_sdk_http_fork.py``.
 """
 
-import asyncio
 import contextlib
 import json
-import multiprocessing
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
+import httpx
 import pytest
 
 from src.models.contracts.cli import (
@@ -706,193 +707,148 @@ class TestGetMappingParity:
         assert local["status"] == 403
 
 
-class TestChildTransport:
-    async def _pump(self, req_conn, resp_conn, handler, count=1):
-        for _ in range(count):
-            raw = await asyncio.to_thread(req_conn.recv_bytes, 65537)
-            frame = json.loads(raw.decode("utf-8"))
-            response = handler(frame)
-            await asyncio.to_thread(resp_conn.send_bytes, json.dumps(response).encode())
+class TestFacadeEngineRequest:
+    """The facade sends fixed operations through ``BifrostClient.engine_request``.
 
-    def _pair(self):
-        req_recv, req_send = multiprocessing.Pipe(duplex=False)
-        resp_recv, resp_send = multiprocessing.Pipe(duplex=False)
-        return req_recv, req_send, resp_recv, resp_send
-
-    def _close_all(self, conns):
-        for conn in conns:
-            with contextlib.suppress(Exception):
-                conn.close()
+    The shared client owns transport selection (worker socket vs network),
+    retry, error mapping, and the no-failure-replay contract; the facade only
+    shapes the HTTP request. The dedicated-channel round trips these tests
+    used to drive were replaced by the real socket round trips in
+    ``tests/unit/services/test_worker_sdk_http.py`` and
+    ``tests/unit/execution/test_worker_sdk_http_fork.py``.
+    """
 
     @pytest.mark.asyncio
-    async def test_get_round_trip_registers_secrets_without_http(self):
-        from bifrost import _local_transport as lt
+    async def test_get_uses_engine_request_with_scope_and_solution(self):
         from bifrost._context import (
             clear_execution_context,
             set_execution_context,
         )
-        from src.sdk.context import ExecutionContext
+        from bifrost.integrations import integrations
+        from src.sdk.context import ExecutionContext, Organization
 
-        req_recv, req_send, resp_recv, resp_send = self._pair()
-        lt.install(req_send, resp_recv)
         ctx = ExecutionContext(
             user_id="u1", email="e@e.com", name="T", scope="org-1",
-            organization=None, is_platform_admin=False,
-            is_function_key=False, execution_id="exec-1",
+            organization=Organization(id="org-1", name="Org One"),
+            is_platform_admin=False, is_function_key=False,
+            execution_id="exec-1", solution_id="sol-9",
         )
         set_execution_context(ctx)
-        payload = {
-            "integration_id": "iid",
-            "entity_id": "tenant-1",
-            "entity_name": None,
-            "config": {"api_key": "shh-value"},
-            "oauth": {
-                "connection_name": "P",
-                "client_id": "cid",
-                "client_secret": "csec",
-                "authorization_url": None,
-                "token_url": None,
-                "scopes": [],
-                "access_token": "tok-live",
-                "refresh_token": "ref-live",
-                "expires_at": None,
-            },
-            "config_secret_keys": ["api_key"],
-        }
-        pump = asyncio.create_task(
-            self._pump(
-                req_recv, resp_send,
-                lambda f: {"v": 1, "id": f["id"], "ok": True, "result": payload},
-            )
-        )
         try:
-            from bifrost.integrations import integrations
-
-            with patch("bifrost.integrations.get_client") as get_client:
-                get_client.side_effect = AssertionError("HTTP must not be used")
+            response = httpx.Response(
+                200,
+                json={
+                    "integration_id": "iid",
+                    "entity_id": "tenant-1",
+                    "entity_name": None,
+                    "config": {"api_key": "shh-value"},
+                    "oauth": None,
+                    "config_secret_keys": ["api_key"],
+                },
+                request=httpx.Request(
+                    "POST", "http://api/api/sdk/integrations/get"
+                ),
+            )
+            client = AsyncMock()
+            client.engine_request = AsyncMock(return_value=response)
+            with patch("bifrost.integrations.get_client", return_value=client):
                 data = await integrations.get("P")
+
+            assert data is not None
             assert data.entity_id == "tenant-1"
-            assert data.oauth.access_token == "tok-live"
-            secrets = ctx._collect_secret_values()
-            assert "tok-live" in secrets
-            assert "ref-live" in secrets
-            assert "csec" in secrets
-            assert "shh-value" in secrets
-            # The Solution id is parent-derived: the child never sends it.
-            await pump
+            assert "shh-value" in ctx._collect_secret_values()
+            client.engine_request.assert_awaited_once_with(
+                "POST",
+                "/api/sdk/integrations/get",
+                json={"name": "P", "scope": "org-1", "solution": "sol-9"},
+                retry_transient=True,
+            )
         finally:
-            lt.clear()
             clear_execution_context()
-            self._close_all((req_recv, req_send, resp_recv, resp_send))
 
     @pytest.mark.asyncio
-    async def test_list_and_get_mapping_round_trip_without_http(self):
-        from bifrost import _local_transport as lt
+    async def test_mapping_reads_use_engine_request(self):
+        from bifrost.integrations import integrations
 
-        req_recv, req_send, resp_recv, resp_send = self._pair()
-        lt.install(req_send, resp_recv)
         item = {
             "id": "mid", "integration_id": "iid", "organization_id": "oid",
             "entity_id": "ent-1", "entity_name": None, "oauth_token_id": None,
             "config": {}, "created_at": "2026-01-01T00:00:00",
             "updated_at": "2026-01-01T00:00:00",
         }
-        handlers = {
-            "integrations.list_mappings": lambda f: {
-                "v": 1, "id": f["id"], "ok": True,
-                "result": {"items": [item]},
-            },
-            "integrations.get_mapping": lambda f: {
-                "v": 1, "id": f["id"], "ok": True, "result": item,
-            },
-        }
+        client = AsyncMock()
+        client.engine_request = AsyncMock(
+            side_effect=[
+                httpx.Response(
+                    200,
+                    json={"items": [item]},
+                    request=httpx.Request(
+                        "POST",
+                        "http://api/api/sdk/integrations/list_mappings",
+                    ),
+                ),
+                httpx.Response(
+                    200,
+                    json=item,
+                    request=httpx.Request(
+                        "POST", "http://api/api/sdk/integrations/get_mapping"
+                    ),
+                ),
+            ]
+        )
+        with patch("bifrost.integrations.get_client", return_value=client):
+            mappings = await integrations.list_mappings("P")
+            mapping = await integrations.get_mapping("P")
 
-        async def _pump_ops():
-            for _ in range(len(handlers)):
-                raw = await asyncio.to_thread(req_recv.recv_bytes, 65537)
-                frame = json.loads(raw.decode("utf-8"))
-                assert "solution" not in frame, frame
-                response = handlers[frame["op"]](frame)
-                await asyncio.to_thread(resp_send.send_bytes, json.dumps(response).encode())
-
-        pump = asyncio.create_task(_pump_ops())
-        try:
-            from bifrost.integrations import integrations
-
-            with patch("bifrost.integrations.get_client") as get_client:
-                get_client.side_effect = AssertionError("HTTP must not be used")
-                mappings = await integrations.list_mappings("P")
-                assert mappings is not None
-                assert [m.entity_id for m in mappings] == ["ent-1"]
-                mapping = await integrations.get_mapping("P")
-                assert mapping is not None
-                assert mapping.entity_id == "ent-1"
-            await pump
-        finally:
-            lt.clear()
-            self._close_all((req_recv, req_send, resp_recv, resp_send))
+        assert mappings is not None
+        assert [m.entity_id for m in mappings] == ["ent-1"]
+        assert mapping is not None
+        assert mapping.entity_id == "ent-1"
+        assert [
+            call.args[1] for call in client.engine_request.await_args_list
+        ] == [
+            "/api/sdk/integrations/list_mappings",
+            "/api/sdk/integrations/get_mapping",
+        ]
 
     @pytest.mark.asyncio
-    async def test_missing_returns_none_without_http(self):
-        from bifrost import _local_transport as lt
+    async def test_missing_returns_none_through_engine_request(self):
+        from bifrost.integrations import integrations
 
-        req_recv, req_send, resp_recv, resp_send = self._pair()
-        lt.install(req_send, resp_recv)
-        pump = asyncio.create_task(
-            self._pump(
-                req_recv, resp_send,
-                lambda f: {"v": 1, "id": f["id"], "ok": True, "result": None},
-                count=3,
+        client = AsyncMock()
+        client.engine_request = AsyncMock(
+            return_value=httpx.Response(
+                200,
+                content=b"null",
+                headers={"content-type": "application/json"},
+                request=httpx.Request(
+                    "POST", "http://api/api/sdk/integrations/get"
+                ),
             )
         )
-        try:
-            from bifrost.integrations import integrations
-
-            with patch("bifrost.integrations.get_client") as get_client:
-                get_client.side_effect = AssertionError("HTTP must not be used")
-                assert await integrations.get("Missing") is None
-                assert await integrations.list_mappings("Missing") is None
-                assert await integrations.get_mapping("Missing") is None
-            await pump
-        finally:
-            lt.clear()
-            self._close_all((req_recv, req_send, resp_recv, resp_send))
+        with patch("bifrost.integrations.get_client", return_value=client):
+            assert await integrations.get("Missing") is None
+            assert await integrations.list_mappings("Missing") is None
+            assert await integrations.get_mapping("Missing") is None
+        assert client.engine_request.await_count == 3
 
     @pytest.mark.asyncio
-    async def test_local_error_never_falls_back_to_http(self):
-        from bifrost import _local_transport as lt
-        from bifrost.client import BifrostAPIError, BifrostAuthorizationError
+    async def test_error_response_surfaces_without_replay(self):
+        from bifrost.client import BifrostAPIError
+        from bifrost.integrations import integrations
 
-        req_recv, req_send, resp_recv, resp_send = self._pair()
-        lt.install(req_send, resp_recv)
-
-        seen = []
-
-        async def _pump_statuses():
-            for status in (403, 424):
-                raw = await asyncio.to_thread(req_recv.recv_bytes, 65537)
-                frame = json.loads(raw.decode("utf-8"))
-                seen.append(frame["op"])
-                await asyncio.to_thread(
-                    resp_send.send_bytes,
-                    json.dumps(
-                        {"v": 1, "id": frame["id"], "ok": False,
-                         "status": status, "detail": "denied"}
-                    ).encode(),
-                )
-
-        pump = asyncio.create_task(_pump_statuses())
-        try:
-            from bifrost.integrations import integrations
-
-            with patch("bifrost.integrations.get_client") as get_client:
-                get_client.side_effect = AssertionError("HTTP must not be used")
-                with pytest.raises(BifrostAuthorizationError):
-                    await integrations.get("P")
-                with pytest.raises(BifrostAPIError):
-                    await integrations.get("P")
-            await pump
-            assert seen == ["integrations.get", "integrations.get"]
-        finally:
-            lt.clear()
-            self._close_all((req_recv, req_send, resp_recv, resp_send))
+        client = AsyncMock()
+        client.engine_request = AsyncMock(
+            return_value=httpx.Response(
+                424,
+                json={"detail": "declared connection missing"},
+                request=httpx.Request(
+                    "POST", "http://api/api/sdk/integrations/get"
+                ),
+            )
+        )
+        with patch("bifrost.integrations.get_client", return_value=client):
+            with pytest.raises(BifrostAPIError):
+                await integrations.get("P")
+        # One attempt: a local failure is never replayed over another path.
+        assert client.engine_request.await_count == 1

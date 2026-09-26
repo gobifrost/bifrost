@@ -222,6 +222,11 @@ class OAuthCredentials(BaseModel):
         Updates access_token and expires_at in-place and persists
         the new token to the database.
 
+        Sends the ordinary HTTP request through the shared ``BifrostClient``:
+        over the worker's private Unix socket when the engine injected one,
+        and over the network API otherwise. A local failure raises and never
+        falls back to the network API. Error mapping matches the network path.
+
         Returns:
             self (for chaining)
 
@@ -232,38 +237,10 @@ class OAuthCredentials(BaseModel):
         """
         from .client import get_client
         from ._context import register_secret
-        from ._local_transport import get as _get_local_transport
-
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: the parent refreshes through the shared
-            # OAuth service over the dedicated channel — the same service
-            # the HTTP endpoint calls. The call passes no scope, so the
-            # parent resolves the caller's own scope. A local attempt
-            # never falls back to HTTP. Error mapping matches the HTTP
-            # path below.
-            from .client import BifrostAPIError
-
-            try:
-                data = await transport.call_integrations_refresh_token(
-                    self.connection_name
-                )
-            except BifrostAPIError as e:
-                status = e.response.status_code
-                try:
-                    detail = e.response.text
-                except Exception:
-                    detail = str(e)
-                raise RuntimeError(
-                    f"Token refresh failed: {status} - {detail}"
-                ) from None
-            self.access_token = data["access_token"]
-            self.expires_at = data.get("expires_at")
-            register_secret(self.access_token)
-            return self
 
         client = get_client()
-        response = await client.post(
+        response = await client.engine_request(
+            "POST",
             "/api/sdk/integrations/refresh_token",
             json={"connection_name": self.connection_name},
         )

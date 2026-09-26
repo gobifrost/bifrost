@@ -29,6 +29,8 @@ from bifrost.client import (
 )
 from src.services.execution.worker_sdk_http import (
     CONFIG_ROUTE_PATHS,
+    INTEGRATION_ROUTE_PATHS,
+    SDK_ROUTE_PATHS,
     WorkerSdkHttpServer,
     build_worker_sdk_app,
 )
@@ -132,7 +134,7 @@ def _socket_client(server: WorkerSdkHttpServer) -> httpx.AsyncClient:
 class TestRouteReuse:
     """The worker app mounts the real router's route objects unchanged."""
 
-    def test_build_app_mounts_real_config_routes_by_identity(self):
+    def test_build_app_mounts_real_sdk_routes_by_identity(self):
         from fastapi.routing import APIRoute
 
         from src.routers.cli import router as sdk_router
@@ -140,9 +142,9 @@ class TestRouteReuse:
         originals = {
             route.path: route
             for route in sdk_router.routes
-            if getattr(route, "path", None) in CONFIG_ROUTE_PATHS
+            if getattr(route, "path", None) in SDK_ROUTE_PATHS
         }
-        assert set(originals) == CONFIG_ROUTE_PATHS
+        assert set(originals) == SDK_ROUTE_PATHS
 
         app = build_worker_sdk_app()
         mounted = {
@@ -152,10 +154,19 @@ class TestRouteReuse:
         }
         # Only the selected routes, and the exact registered objects — no
         # copied handlers and no rest of the API surface.
-        assert set(mounted) == CONFIG_ROUTE_PATHS
+        assert set(mounted) == SDK_ROUTE_PATHS
         for path, route in mounted.items():
             assert route is originals[path]
             assert route.endpoint is originals[path].endpoint
+
+    def test_integration_route_selection_is_exact(self):
+        """The six integrations routes are mounted as their real objects."""
+        assert SDK_ROUTE_PATHS == CONFIG_ROUTE_PATHS | INTEGRATION_ROUTE_PATHS
+        assert len(INTEGRATION_ROUTE_PATHS) == 6
+        assert all(
+            path.startswith("/api/sdk/integrations/")
+            for path in INTEGRATION_ROUTE_PATHS
+        )
 
     @pytest.mark.asyncio
     async def test_unknown_route_is_404(self):

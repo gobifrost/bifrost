@@ -5,11 +5,15 @@ the three read operations — against the same seeded integration the
 external HTTP endpoint serves, proving parity (org mapping, merged
 config, entity-ID lookup, missing-entity nulls, denial) end to end:
 
-- the workflow hard-disables integrations HTTP in-engine (``get_client``
-  raises if touched) and records that the local transport is installed,
-  so success proves zero API requests for the migrated operations;
+- the workflow records that the worker injected its engine socket, so the
+  fixed operations ride the shared client's worker-local HTTP transport;
 - the same values served over external HTTP ``/api/sdk/integrations/*``
   match, including the cross-org denial.
+
+The zero-HTTP proof for the migrated operations lives in the unit and
+forked-child socket tests (``test_worker_sdk_http.py``,
+``test_worker_sdk_http_fork.py``), where the child's network API is
+unreachable yet the integration calls succeed over the worker socket.
 """
 
 import uuid
@@ -77,36 +81,25 @@ from bifrost import workflow, integrations
 
 @workflow(name="{name}", description="Stage 2b local integrations reads E2E")
 async def {name}():
-    import importlib
-    _integ = importlib.import_module("bifrost.integrations")
-    from bifrost._local_transport import get as _get_transport
-    used_local = _get_transport() is not None
+    from bifrost.client import get_engine_socket_path
+    used_socket = get_engine_socket_path() is not None
 
-    def _dead(*args, **kwargs):
-        raise AssertionError(
-            "fixed-operation HTTP must not be used in the engine path"
-        )
-    _orig = _integ.get_client
-    _integ.get_client = _dead
+    data = await integrations.get("{integ_name}")
+    mappings = await integrations.list_mappings("{integ_name}")
+    mapping = await integrations.get_mapping("{integ_name}")
+    by_entity = await integrations.get_mapping(
+        "{integ_name}", entity_id="{entity}"
+    )
+    missing_get = await integrations.get("{missing}")
+    missing_list = await integrations.list_mappings("{missing}")
+    missing_gm = await integrations.get_mapping("{missing}")
     try:
-        data = await integrations.get("{integ_name}")
-        mappings = await integrations.list_mappings("{integ_name}")
-        mapping = await integrations.get_mapping("{integ_name}")
-        by_entity = await integrations.get_mapping(
-            "{integ_name}", entity_id="{entity}"
-        )
-        missing_get = await integrations.get("{missing}")
-        missing_list = await integrations.list_mappings("{missing}")
-        missing_gm = await integrations.get_mapping("{missing}")
-        try:
-            await integrations.get("{integ_name}", scope="{org2["id"]}")
-            cross_org = "LEAKED"
-        except Exception as e:
-            cross_org = f"denied: {{type(e).__name__}}"
-    finally:
-        _integ.get_client = _orig
+        await integrations.get("{integ_name}", scope="{org2["id"]}")
+        cross_org = "LEAKED"
+    except Exception as e:
+        cross_org = f"denied: {{type(e).__name__}}"
     return {{
-        "used_local": used_local,
+        "used_socket": used_socket,
         "entity_id": data.entity_id,
         "region": data.config.get("region"),
         "oauth_none": data.oauth is None,
@@ -154,9 +147,9 @@ class TestSdkIntegrationsLocalLiveE2E:
         )
         assert result["status"] == "Success", result
         out = result["result"]
-        # Zero API requests: the transport was installed and every
-        # fixed-operation HTTP call would have raised inside the workflow.
-        assert out["used_local"] is True
+        # The worker injected its engine socket, so the fixed operations ran
+        # over the shared client's worker-local transport.
+        assert out["used_socket"] is True
         assert out["entity_id"] == live_integ_keys["entity"]
         assert out["region"] == "eu-live"
         assert out["oauth_none"] is True
