@@ -12,6 +12,7 @@ from typing import Any
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
+from src.core.auth import CurrentSuperuser
 from src.core.log_safety import log_safe
 from src.core.database import get_db
 from src.models.orm.platform_jobs import PlatformJob
@@ -54,6 +55,8 @@ class JobStatusResponse(BaseModel):
 async def get_job_status(
     job_id: str,
     db: AsyncSession = Depends(get_db),
+    *,
+    _user: CurrentSuperuser,
 ) -> JobStatusResponse:
     """
     Get the status of a job by ID.

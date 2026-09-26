@@ -1,6 +1,8 @@
 """Tests for job status endpoint with preview data."""
 from uuid import uuid4
 
+from src.core.principal import UserPrincipal
+
 import pytest
 
 from src.models.orm.platform_jobs import PlatformJob
@@ -61,7 +63,10 @@ async def test_platform_jobs_use_safe_legacy_statuses(
     db_session.add(job)
     await db_session.flush()
 
-    response = await get_job_status(str(job.id), db_session)
+    admin = UserPrincipal(
+        user_id=uuid4(), email="admin@example.com", organization_id=None, is_superuser=True
+    )
+    response = await get_job_status(str(job.id), db_session, _user=admin)
 
     assert response.status == legacy_status
     assert response.message == job.phase

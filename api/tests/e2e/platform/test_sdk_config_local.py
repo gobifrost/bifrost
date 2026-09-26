@@ -146,9 +146,15 @@ class TestSdkConfigLocalE2E:
         assert str(out["cross_org"]).startswith("denied"), out
 
     def test_external_http_serves_same_values(
-        self, e2e_client, org1_user, local_keys, local_configs
+        self, e2e_client, org1_service_headers, local_keys, local_configs
     ):
-        """External SDK callers still use HTTP and see identical values."""
+        """External SDK callers still use HTTP and see identical values.
+
+        ``/api/sdk/config/get`` is gated to execution credentials and bypass
+        principals, so this drives the HTTP parity check through an
+        org1-scoped execution credential rather than a normal user's own
+        login token.
+        """
         for key, expected in [
             (local_keys["string"], "hello-local"),
             (local_keys["int"], 42),
@@ -157,7 +163,7 @@ class TestSdkConfigLocalE2E:
         ]:
             resp = e2e_client.post(
                 "/api/sdk/config/get",
-                headers=org1_user.headers,
+                headers=org1_service_headers,
                 json={"key": key},
             )
             assert resp.status_code == 200, resp.text
@@ -166,7 +172,7 @@ class TestSdkConfigLocalE2E:
 
         missing = e2e_client.post(
             "/api/sdk/config/get",
-            headers=org1_user.headers,
+            headers=org1_service_headers,
             json={"key": local_keys["missing"]},
         )
         assert missing.status_code == 200
@@ -246,7 +252,12 @@ async def {name}():
 
 class TestSdkConfigMutationLiveE2E:
     def test_workflow_mutations_commit_and_match_http(
-        self, e2e_client, org1_user, live_mutation_workflow, live_mutation_keys
+        self,
+        e2e_client,
+        org1_user,
+        org1_service_headers,
+        live_mutation_workflow,
+        live_mutation_keys,
     ):
         result = execute_workflow_sync(
             e2e_client,
@@ -264,10 +275,13 @@ class TestSdkConfigMutationLiveE2E:
         assert out["d1_again"] is False
         assert out["missing"] == "gone"
 
-        # Committed state verified over external HTTP (parity).
+        # Committed state verified over external HTTP (parity). ``config/*``
+        # is gated to execution credentials and bypass principals, so this
+        # goes through an org1-scoped execution credential rather than
+        # org1_user's own login token.
         big = e2e_client.post(
             "/api/sdk/config/get",
-            headers=org1_user.headers,
+            headers=org1_service_headers,
             json={"key": live_mutation_keys["big"]},
         )
         assert big.status_code == 200, big.text
@@ -275,7 +289,7 @@ class TestSdkConfigMutationLiveE2E:
 
         secret = e2e_client.post(
             "/api/sdk/config/get",
-            headers=org1_user.headers,
+            headers=org1_service_headers,
             json={"key": live_mutation_keys["secret"]},
         )
         assert secret.status_code == 200, secret.text
@@ -283,7 +297,7 @@ class TestSdkConfigMutationLiveE2E:
 
         listed = e2e_client.post(
             "/api/sdk/config/list",
-            headers=org1_user.headers,
+            headers=org1_service_headers,
             json={},
         )
         assert listed.status_code == 200, listed.text
@@ -294,7 +308,7 @@ class TestSdkConfigMutationLiveE2E:
 
         gone = e2e_client.post(
             "/api/sdk/config/get",
-            headers=org1_user.headers,
+            headers=org1_service_headers,
             json={"key": live_mutation_keys["small"]},
         )
         assert gone.status_code == 200
@@ -307,7 +321,7 @@ class TestSdkConfigMutationLiveE2E:
         ):
             resp = e2e_client.post(
                 "/api/sdk/config/delete",
-                headers=org1_user.headers,
+                headers=org1_service_headers,
                 json={"key": key},
             )
             assert resp.status_code == 200, resp.text

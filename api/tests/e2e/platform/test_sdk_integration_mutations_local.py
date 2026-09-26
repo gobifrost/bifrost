@@ -148,7 +148,13 @@ async def {name}():
 
 class TestSdkIntegrationMutationsLocalLiveE2E:
     def test_workflow_mutations_match_http(
-        self, e2e_client, org1, org1_user, live_mut_workflow, live_mut_keys
+        self,
+        e2e_client,
+        org1,
+        org1_user,
+        org1_service_headers,
+        live_mut_workflow,
+        live_mut_keys,
     ):
         result = execute_workflow_sync(
             e2e_client,
@@ -175,11 +181,14 @@ class TestSdkIntegrationMutationsLocalLiveE2E:
         assert out["after"] is None
 
         # Committed state verified over external HTTP (parity): the delete
-        # committed, so the mapping is gone there too.
+        # committed, so the mapping is gone there too. ``integrations/*`` is
+        # gated to execution credentials and bypass principals, so this goes
+        # through an org1-scoped execution credential rather than
+        # org1_user's own login token.
         name = live_mut_keys["name"]
         gm = e2e_client.post(
             "/api/sdk/integrations/get_mapping",
-            headers=org1_user.headers,
+            headers=org1_service_headers,
             json={"name": name},
         )
         assert gm.status_code == 200, gm.text
@@ -188,7 +197,7 @@ class TestSdkIntegrationMutationsLocalLiveE2E:
         # External HTTP upsert/delete still work after the stage.
         up = e2e_client.post(
             "/api/sdk/integrations/upsert_mapping",
-            headers=org1_user.headers,
+            headers=org1_service_headers,
             json={
                 "name": name,
                 "scope": org1["id"],
@@ -202,7 +211,7 @@ class TestSdkIntegrationMutationsLocalLiveE2E:
 
         rm = e2e_client.post(
             "/api/sdk/integrations/delete_mapping",
-            headers=org1_user.headers,
+            headers=org1_service_headers,
             json={"name": name, "scope": org1["id"]},
         )
         assert rm.status_code == 200, rm.text

@@ -137,7 +137,12 @@ async def {name}():
 
 class TestSdkIntegrationsLocalLiveE2E:
     def test_workflow_reads_match_http(
-        self, e2e_client, org1_user, live_integ_workflow, live_integ_keys
+        self,
+        e2e_client,
+        org1_user,
+        org1_service_headers,
+        live_integ_workflow,
+        live_integ_keys,
     ):
         result = execute_workflow_sync(
             e2e_client,
@@ -163,10 +168,13 @@ class TestSdkIntegrationsLocalLiveE2E:
         assert str(out["cross_org"]).startswith("denied"), out
 
         # Committed state verified over external HTTP (parity).
+        # ``integrations/*`` is gated to execution credentials and bypass
+        # principals, so this goes through an org1-scoped execution
+        # credential rather than org1_user's own login token.
         name = live_integ_keys["name"]
         get = e2e_client.post(
             "/api/sdk/integrations/get",
-            headers=org1_user.headers,
+            headers=org1_service_headers,
             json={"name": name},
         )
         assert get.status_code == 200, get.text
@@ -175,7 +183,7 @@ class TestSdkIntegrationsLocalLiveE2E:
 
         listed = e2e_client.post(
             "/api/sdk/integrations/list_mappings",
-            headers=org1_user.headers,
+            headers=org1_service_headers,
             json={"name": name},
         )
         assert listed.status_code == 200, listed.text
@@ -183,7 +191,7 @@ class TestSdkIntegrationsLocalLiveE2E:
 
         gm = e2e_client.post(
             "/api/sdk/integrations/get_mapping",
-            headers=org1_user.headers,
+            headers=org1_service_headers,
             json={"name": name},
         )
         assert gm.status_code == 200, gm.text

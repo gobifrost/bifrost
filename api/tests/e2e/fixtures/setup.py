@@ -469,3 +469,37 @@ def refresh_user_tokens(e2e_client: httpx.Client):
         return _login_user(e2e_client, user)
 
     return _refresh
+
+
+def _org_service_headers(org_id: str) -> dict[str, str]:
+    """Bearer headers for an org-scoped execution credential.
+
+    The token is not a superuser. The SDK secret routes admit only execution
+    credentials and bypass principals, so tests of the resolver's regular-org
+    rules (scope, cascade, isolation) use a service token rather than a normal
+    user's own login token.
+    """
+    from uuid import uuid4
+
+    from src.core.security import mint_service_token
+
+    token, _ = mint_service_token(
+        service_id=str(uuid4()),
+        attempt_id=str(uuid4()),
+        organization_id=org_id,
+        solution_id=None,
+        global_repo_access=True,
+    )
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture
+def org1_service_headers(org1: dict) -> dict[str, str]:
+    """Org1-scoped execution credential headers."""
+    return _org_service_headers(org1["id"])
+
+
+@pytest.fixture
+def org2_service_headers(org2: dict) -> dict[str, str]:
+    """Org2-scoped execution credential headers."""
+    return _org_service_headers(org2["id"])
