@@ -1,20 +1,22 @@
-"""Stage 1 E2E: ``config.get`` through the real worker pool.
+"""Gate C1 E2E: config CRUD through the real worker pool.
 
 Exercises the full path — workflow code in a forked worker child calling
-``config.get`` — against the same seeded values the external HTTP endpoint
-serves, proving parity (scope, cascade, typed coercion, secret decryption,
-null/default, error mapping) end to end:
+``config.get/set/list/delete`` — against the same seeded values the external
+HTTP endpoint serves, proving parity (scope, cascade, typed coercion, secret
+decryption/redaction, null/default, error mapping) end to end:
 
 - one-shot workflow reads typed values, a missing key with default, and a
   secret (checked in-workflow, since the engine redacts secrets from
   outputs);
-- the same values served over external HTTP ``/api/sdk/config/get`` match;
+- a second workflow mutates through set/list/delete and commits;
+- the same values served over external HTTP ``/api/sdk/config/*`` match;
 - a cross-org scope override attempted by a non-bypass caller surfaces a
   denial instead of data.
 
-The zero-HTTP proof for the migrated operation lives in the unit/fork
-tests (``test_sdk_config_local.py``, ``test_sdk_local_fork.py``), where the
-child's HTTP route is hard-disabled yet ``config.get`` succeeds.
+The zero-HTTP proof for the migrated operations lives in the unit and
+forked-child socket tests (``test_worker_sdk_http.py``,
+``test_worker_sdk_http_fork.py``), where the child's network API is
+unreachable yet the config calls succeed over the worker socket.
 """
 
 import uuid
@@ -186,10 +188,10 @@ def live_mutation_keys():
 def live_mutation_workflow(e2e_client, platform_admin, org1, live_mutation_keys):
     """Workflow exercising set/get/list/delete through the live worker.
 
-    The workflow hard-disables fixed-operation HTTP in-engine (``get_client``
-    raises if touched) and records that the local transport is installed, so
-    success proves zero API requests for the migrated operations. The
-    test then verifies the committed state over external HTTP.
+    The engine child reaches config over the worker's injected socket (the
+    shared client transport); the zero-HTTP proof lives in the unit and
+    forked-child socket tests. This test proves the live worker path commits
+    and that external HTTP serves the same state.
     """
     name = f"e2e_sdk_local_mut_{live_mutation_keys['tag']}"
     path = f"{name}.py"
@@ -201,31 +203,16 @@ from bifrost import workflow, config
 
 @workflow(name="{name}", description="Stage 2a local config mutation E2E")
 async def {name}():
-    import importlib
-    _cfg = importlib.import_module("bifrost.config")
-    from bifrost._local_transport import get as _get_transport
-    used_local = _get_transport() is not None
-
-    def _dead(*args, **kwargs):
-        raise AssertionError(
-            "fixed-operation HTTP must not be used in the engine path"
-        )
-    _orig = _cfg.get_client
-    _cfg.get_client = _dead
-    try:
-        await config.set("{k_small}", "small-live")
-        await config.set("{k_secret}", "live-secret", is_secret=True)
-        await config.set("{k_big}", "z" * 5000)
-        v_small = await config.get("{k_small}")
-        v_big = await config.get("{k_big}")
-        listed = await config.list()
-        d1 = await config.delete("{k_small}")
-        d1_again = await config.delete("{k_small}")
-        missing = await config.get("{k_small}", default="gone")
-    finally:
-        _cfg.get_client = _orig
+    await config.set("{k_small}", "small-live")
+    await config.set("{k_secret}", "live-secret", is_secret=True)
+    await config.set("{k_big}", "z" * 5000)
+    v_small = await config.get("{k_small}")
+    v_big = await config.get("{k_big}")
+    listed = await config.list()
+    d1 = await config.delete("{k_small}")
+    d1_again = await config.delete("{k_small}")
+    missing = await config.get("{k_small}", default="gone")
     return {{
-        "used_local": used_local,
         "v_small": v_small,
         "big_len": len(v_big),
         "listed_small": listed["{k_small}"],
@@ -269,9 +256,6 @@ class TestSdkConfigMutationLiveE2E:
         )
         assert result["status"] == "Success", result
         out = result["result"]
-        # Zero API requests: the transport was installed and every
-        # fixed-operation HTTP call would have raised inside the workflow.
-        assert out["used_local"] is True
         assert out["v_small"] == "small-live"
         assert out["big_len"] == 5000
         assert out["listed_small"] == "small-live"

@@ -1,4 +1,4 @@
-"""Stage 1: HTTP/local parity for ``config.get`` plus child transport behavior.
+"""Gate C1: config facade parity plus channel framing behavior.
 
 Covers the acceptance surface that does not need a forked child:
 
@@ -7,9 +7,14 @@ Covers the acceptance surface that does not need a forked child:
   coercion exactly like the HTTP handler (the handler delegates to it);
 - the parent dispatcher calls that same service with a parent-derived
   principal and maps scope/key failures to HTTP-style statuses;
-- the child transport performs real ``config.get`` round trips over a
-  dedicated channel with zero HTTP requests, safe concurrent calls,
-  timeout/EOF handling, bounded frames, and no silent HTTP fallback.
+- the shared client entry point the facade now uses (``engine_request``)
+  parses null/missing values and surfaces errors instead of swallowing them;
+- the legacy channel framing still fails closed on timeout, cancellation,
+  and EOF, with bounded frames and no silent HTTP fallback.
+
+The real forked-child socket round trip lives in
+``tests/unit/execution/test_worker_sdk_http_fork.py``; the live-worker
+parity E2E lives in ``tests/e2e/platform/test_sdk_config_local.py``.
 """
 
 import asyncio
@@ -304,13 +309,6 @@ class TestHttpLocalParity:
 
 
 class TestChildTransport:
-    async def _pump(self, req_conn, resp_conn, handler, count=1):
-        for _ in range(count):
-            raw = await asyncio.to_thread(req_conn.recv_bytes, MAX_FRAME_BYTES + 1)
-            frame = json.loads(raw.decode("utf-8"))
-            response = handler(frame)
-            await asyncio.to_thread(resp_conn.send_bytes, json.dumps(response).encode())
-
     def _pair(self):
         # req: child writes, parent reads. resp: parent writes, child reads.
         req_recv, req_send = multiprocessing.Pipe(duplex=False)
@@ -318,131 +316,49 @@ class TestChildTransport:
         return req_recv, req_send, resp_recv, resp_send
 
     @pytest.mark.asyncio
-    async def test_round_trip_without_http(self):
-        from bifrost import _local_transport as lt
-        from bifrost._context import (
-            clear_execution_context,
-            set_execution_context,
-        )
-        from src.sdk.context import ExecutionContext
-
-        req_recv, req_send, resp_recv, resp_send = self._pair()
-        lt.install(req_send, resp_recv)
-        ctx = ExecutionContext(
-            user_id="u1", email="e@e.com", name="T", scope="org-1",
-            organization=None, is_platform_admin=False,
-            is_function_key=False, execution_id="exec-1",
-        )
-        set_execution_context(ctx)
-        pump = asyncio.create_task(
-            self._pump(
-                req_recv, resp_send,
-                lambda f: {
-                    "v": 1, "id": f["id"], "ok": True,
-                    "result": {"key": f["key"], "value": "v-secret", "config_type": "secret"},
-                },
-            )
-        )
-        try:
-            from bifrost.config import config
-
-            with patch("bifrost.config.get_client") as get_client:
-                get_client.side_effect = AssertionError("HTTP must not be used")
-                value = await config.get("my_key")
-            assert value == "v-secret"
-            assert "v-secret" in ctx._collect_secret_values()
-            await pump
-        finally:
-            lt.clear()
-            clear_execution_context()
-            for conn in (req_recv, req_send, resp_recv, resp_send):
-                with contextlib.suppress(Exception):
-                    conn.close()
-
-    @pytest.mark.asyncio
     async def test_missing_key_returns_default(self):
-        from bifrost import _local_transport as lt
+        """A 200 null body from the config route yields the caller's default."""
+        import httpx
 
-        req_recv, req_send, resp_recv, resp_send = self._pair()
-        lt.install(req_send, resp_recv)
-        pump = asyncio.create_task(
-            self._pump(
-                req_recv, resp_send,
-                lambda f: {"v": 1, "id": f["id"], "ok": True, "result": None},
-            )
+        from bifrost.config import config
+
+        response = httpx.Response(
+            200,
+            content=b"null",
+            request=httpx.Request("POST", "http://api/api/sdk/config/get"),
         )
-        try:
-            from bifrost.config import config
-
-            with patch("bifrost.config.get_client") as get_client:
-                get_client.side_effect = AssertionError("HTTP must not be used")
-                assert await config.get("absent", default="dflt") == "dflt"
-            await pump
-        finally:
-            lt.clear()
-            for conn in (req_recv, req_send, resp_recv, resp_send):
-                with contextlib.suppress(Exception):
-                    conn.close()
+        client = AsyncMock()
+        client.engine_request = AsyncMock(return_value=response)
+        with patch("bifrost.config.get_client", return_value=client):
+            assert (
+                await config.get("absent", default="dflt", scope="global")
+                == "dflt"
+            )
+        client.engine_request.assert_awaited_once_with(
+            "POST",
+            "/api/sdk/config/get",
+            json={"key": "absent", "scope": "global"},
+        )
 
     @pytest.mark.asyncio
-    async def test_local_error_never_falls_back_to_http(self):
-        from bifrost import _local_transport as lt
+    async def test_error_surfaces_instead_of_default(self):
+        """A 403 from the config route raises; it is not masked by the default."""
+        import httpx
+
         from bifrost.client import BifrostAuthorizationError
+        from bifrost.config import config
 
-        req_recv, req_send, resp_recv, resp_send = self._pair()
-        lt.install(req_send, resp_recv)
-        pump = asyncio.create_task(
-            self._pump(
-                req_recv, resp_send,
-                lambda f: {"v": 1, "id": f["id"], "ok": False, "status": 403, "detail": "denied"},
-            )
+        response = httpx.Response(
+            403,
+            json={"detail": "denied"},
+            request=httpx.Request("POST", "http://api/api/sdk/config/get"),
         )
-        try:
-            from bifrost.config import config
-
-            with patch("bifrost.config.get_client") as get_client:
-                get_client.side_effect = AssertionError("HTTP must not be used")
-                with pytest.raises(BifrostAuthorizationError):
-                    await config.get("k")
-            await pump
-        finally:
-            lt.clear()
-            for conn in (req_recv, req_send, resp_recv, resp_send):
-                with contextlib.suppress(Exception):
-                    conn.close()
-
-    @pytest.mark.asyncio
-    async def test_concurrent_calls_share_one_channel(self):
-        from bifrost import _local_transport as lt
-
-        req_recv, req_send, resp_recv, resp_send = self._pair()
-        lt.install(req_send, resp_recv)
-        count = 20
-        pump = asyncio.create_task(
-            self._pump(
-                req_recv, resp_send,
-                lambda f: {
-                    "v": 1, "id": f["id"], "ok": True,
-                    "result": {"key": f["key"], "value": f"value-{f['key']}", "config_type": "string"},
-                },
-                count=count,
-            )
-        )
-        try:
-            from bifrost.config import config
-
-            with patch("bifrost.config.get_client") as get_client:
-                get_client.side_effect = AssertionError("HTTP must not be used")
-                values = await asyncio.gather(
-                    *[config.get(f"k-{i}") for i in range(count)]
-                )
-            assert values == [f"value-k-{i}" for i in range(count)]
-            await pump
-        finally:
-            lt.clear()
-            for conn in (req_recv, req_send, resp_recv, resp_send):
-                with contextlib.suppress(Exception):
-                    conn.close()
+        client = AsyncMock()
+        client.engine_request = AsyncMock(return_value=response)
+        with patch("bifrost.config.get_client", return_value=client):
+            with pytest.raises(BifrostAuthorizationError):
+                await config.get("k", default="dflt", scope="global")
+        client.engine_request.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_timeout_breaks_channel_without_fallback(self):
@@ -662,80 +578,6 @@ class TestChunkedTransfer:
             pump.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await pump
-            self._close_all((req_recv, req_send, resp_recv, resp_send))
-
-    async def test_large_value_round_trip_over_pipe(self, db_session):
-        """One contract: a >64KiB value resolves locally, byte-identical."""
-        from bifrost import _local_transport as lt
-        from src.services.execution.sdk_local_dispatch import dispatch_frames
-
-        tag = uuid4().hex[:8]
-        big = "y" * 100_000
-        await _seed_config(db_session, key=f"big-{tag}", value=big)
-        req_recv, req_send, resp_recv, resp_send = self._pair()
-        lt.install(req_send, resp_recv)
-        principal = _principal(is_platform_admin=True)
-
-        async def _pump():
-            raw = await asyncio.to_thread(req_recv.recv_bytes, MAX_FRAME_BYTES + 1)
-            request = json.loads(raw.decode("utf-8"))
-            with _no_cache():
-                frames = await dispatch_frames(
-                    lambda: _db_factory(db_session), principal, request
-                )
-                count = 0
-                for frame in frames:
-                    count += 1
-                    encoded = json.dumps(frame, separators=(",", ":")).encode()
-                    assert len(encoded) <= MAX_FRAME_BYTES
-                    await asyncio.to_thread(resp_send.send_bytes, encoded)
-                assert count > 1
-
-        pump = asyncio.create_task(_pump())
-        try:
-            from bifrost.config import config
-
-            with patch("bifrost.config.get_client") as get_client:
-                get_client.side_effect = AssertionError("HTTP must not be used")
-                value = await config.get(f"big-{tag}", scope="global")
-            assert value == big
-            await asyncio.wait_for(pump, timeout=15.0)
-        finally:
-            lt.clear()
-            self._close_all((req_recv, req_send, resp_recv, resp_send))
-
-    async def test_inconsistent_chunk_header_breaks_channel(self):
-        """One contract: a lying parts claim fails fast without hanging."""
-        from bifrost import _local_transport as lt
-        from bifrost._local_transport import LocalTransportError
-
-        req_recv, req_send, resp_recv, resp_send = self._pair()
-        lt.install(req_send, resp_recv)
-
-        async def _lying_pump():
-            raw = await asyncio.to_thread(req_recv.recv_bytes, MAX_FRAME_BYTES + 1)
-            request = json.loads(raw.decode("utf-8"))
-            lie = {
-                "v": 1,
-                "id": request["id"],
-                "ok": True,
-                "chunked": True,
-                "total": 100,
-                "parts": 50,
-            }
-            await asyncio.to_thread(resp_send.send_bytes, json.dumps(lie).encode())
-
-        pump = asyncio.create_task(_lying_pump())
-        try:
-            from bifrost.config import config
-
-            with pytest.raises(LocalTransportError, match="chunk header"):
-                await config.get("k")
-            with pytest.raises(LocalTransportError):
-                await config.get("k")
-            await asyncio.wait_for(pump, timeout=15.0)
-        finally:
-            lt.clear()
             self._close_all((req_recv, req_send, resp_recv, resp_send))
 
     async def test_cancel_preserves_cancelled_error(self):
@@ -1321,146 +1163,65 @@ class TestChildTransportMutations:
             with contextlib.suppress(Exception):
                 conn.close()
 
-    async def _pump_ops(self, req_conn, resp_conn, handlers):
-        for _ in range(len(handlers)):
-            raw = await asyncio.to_thread(req_conn.recv_bytes, MAX_FRAME_BYTES + 1)
-            frame = json.loads(raw.decode("utf-8"))
-            response = handlers[frame["op"]](frame)
-            await asyncio.to_thread(resp_conn.send_bytes, json.dumps(response).encode())
-
     @pytest.mark.asyncio
-    async def test_set_list_delete_round_trip_without_http(self):
-        from bifrost import _local_transport as lt
+    async def test_set_list_delete_use_shared_client_transport(self):
+        """The facade routes set/list/delete through the shared client."""
+        import httpx
 
-        req_recv, req_send, resp_recv, resp_send = self._pair()
-        lt.install(req_send, resp_recv)
-        handlers = {
-            "config.set": lambda f: {"v": 1, "id": f["id"], "ok": True, "result": None},
-            "config.list": lambda f: {
-                "v": 1, "id": f["id"], "ok": True, "result": {"a": 1},
-            },
-            "config.delete": lambda f: {"v": 1, "id": f["id"], "ok": True, "result": True},
-        }
-        pump = asyncio.create_task(
-            self._pump_ops(req_recv, resp_send, handlers)
+        from bifrost.config import config
+
+        set_response = httpx.Response(
+            204,
+            request=httpx.Request("POST", "http://api/api/sdk/config/set"),
         )
-        try:
-            from bifrost.config import config
-
-            with patch("bifrost.config.get_client") as get_client:
-                get_client.side_effect = AssertionError("HTTP must not be used")
-                assert await config.set("k", {"n": 1}) is None
-                listed = await config.list()
-                assert listed["a"] == 1
-                assert listed.a == 1
-                assert await config.delete("k") is True
-            await pump
-        finally:
-            lt.clear()
-            self._close_all((req_recv, req_send, resp_recv, resp_send))
+        list_response = httpx.Response(
+            200,
+            json={"a": 1},
+            request=httpx.Request("POST", "http://api/api/sdk/config/list"),
+        )
+        delete_response = httpx.Response(
+            200,
+            json=True,
+            request=httpx.Request("POST", "http://api/api/sdk/config/delete"),
+        )
+        client = AsyncMock()
+        client.engine_request = AsyncMock(
+            side_effect=[set_response, list_response, delete_response]
+        )
+        with patch("bifrost.config.get_client", return_value=client):
+            assert await config.set("k", {"n": 1}, scope="global") is None
+            listed = await config.list(scope="global")
+            assert listed["a"] == 1
+            assert listed.a == 1
+            assert await config.delete("k", scope="global") is True
+        assert [
+            (call.args[0], call.args[1])
+            for call in client.engine_request.await_args_list
+        ] == [
+            ("POST", "/api/sdk/config/set"),
+            ("POST", "/api/sdk/config/list"),
+            ("POST", "/api/sdk/config/delete"),
+        ]
 
     @pytest.mark.asyncio
-    async def test_set_error_never_falls_back_to_http(self):
-        from bifrost import _local_transport as lt
+    async def test_set_error_surfaces(self):
+        """A denied set raises through the shared client; no fallback replay."""
+        import httpx
+
         from bifrost.client import BifrostAuthorizationError
+        from bifrost.config import config
 
-        req_recv, req_send, resp_recv, resp_send = self._pair()
-        lt.install(req_send, resp_recv)
-        pump = asyncio.create_task(
-            self._pump_ops(
-                req_recv,
-                resp_send,
-                {
-                    "config.set": lambda f: {
-                        "v": 1, "id": f["id"], "ok": False,
-                        "status": 403, "detail": "denied",
-                    },
-                },
-            )
+        response = httpx.Response(
+            403,
+            json={"detail": "denied"},
+            request=httpx.Request("POST", "http://api/api/sdk/config/set"),
         )
-        try:
-            from bifrost.config import config
-
-            with patch("bifrost.config.get_client") as get_client:
-                get_client.side_effect = AssertionError("HTTP must not be used")
-                with pytest.raises(BifrostAuthorizationError):
-                    await config.set("k", "v")
-            await pump
-        finally:
-            lt.clear()
-            self._close_all((req_recv, req_send, resp_recv, resp_send))
-
-    @pytest.mark.asyncio
-    async def test_large_set_request_chunks_over_pipe(self, db_session):
-        """A >64KiB set value reaches the parent via chunked request frames."""
-        from bifrost import _local_transport as lt
-        from src.services.execution.sdk_local_dispatch import serve_channel
-
-        tag = uuid4().hex[:8]
-        key = f"big-{tag}"
-        big = {"blob": "w" * 100_000}
-        req_recv, req_send, resp_recv, resp_send = self._pair()
-        lt.install(req_send, resp_recv)
-        principal = _principal(is_platform_admin=True)
-
-        async def _pump():
-            with _no_cache():
-                return await serve_channel(
-                    recv_conn=req_recv,
-                    send_conn=resp_send,
-                    session_factory=lambda: _db_factory(db_session),
-                    principal=principal,
-                )
-
-        pump = asyncio.create_task(_pump())
-        try:
-            from bifrost.config import config
-
-            with patch("bifrost.config.get_client") as get_client:
-                get_client.side_effect = AssertionError("HTTP must not be used")
-                await config.set(key, big)
-                value = await config.get(key, scope="global")
-            assert value == big
-            pump.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await pump
-        finally:
-            lt.clear()
-            self._close_all((req_recv, req_send, resp_recv, resp_send))
-
-    @pytest.mark.asyncio
-    async def test_lying_response_chunk_header_breaks_channel(self):
-        from bifrost import _local_transport as lt
-        from bifrost._local_transport import LocalTransportError
-
-        req_recv, req_send, resp_recv, resp_send = self._pair()
-        lt.install(req_send, resp_recv)
-
-        async def _lying_pump():
-            raw = await asyncio.to_thread(req_recv.recv_bytes, MAX_FRAME_BYTES + 1)
-            request = json.loads(raw.decode("utf-8"))
-            lie = {
-                "v": 1,
-                "id": request["id"],
-                "ok": True,
-                "chunked": True,
-                "total": 100,
-                "parts": 50,
-            }
-            await asyncio.to_thread(resp_send.send_bytes, json.dumps(lie).encode())
-
-        pump = asyncio.create_task(_lying_pump())
-        try:
-            from bifrost.config import config
-
-            with pytest.raises(LocalTransportError, match="chunk header"):
-                await config.list()
-            with pytest.raises(LocalTransportError):
-                await config.delete("k")
-            await asyncio.wait_for(pump, timeout=15.0)
-        finally:
-            lt.clear()
-            self._close_all((req_recv, req_send, resp_recv, resp_send))
+        client = AsyncMock()
+        client.engine_request = AsyncMock(return_value=response)
+        with patch("bifrost.config.get_client", return_value=client):
+            with pytest.raises(BifrostAuthorizationError):
+                await config.set("k", "v", scope="global")
+        client.engine_request.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_set_timeout_breaks_channel_without_fallback(self):

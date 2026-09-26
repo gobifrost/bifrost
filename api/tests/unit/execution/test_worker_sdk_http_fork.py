@@ -1,14 +1,16 @@
-"""Gate A: a real forked child reaches config.get over the worker socket.
+"""Gate A/C1: a real forked child reaches config CRUD over the worker socket.
 
-This is the end-to-end proof behind Gate A. A real ``TemplateProcess`` forks
-a one-shot child and injects the worker's Unix socket path exactly as the
-pool does. The test process serves the **real** ``/api/sdk/config/get``
-route on that socket via uvicorn, against the real database engine. The
-child's network API is dead by environment, and it receives no database or
-provider credentials, so a correct value proves:
+This is the end-to-end proof behind Gate A and the config slice of Gate C. A
+real ``TemplateProcess`` forks a one-shot child and injects the worker's Unix
+socket path exactly as the pool does. The test process serves the **real**
+``/api/sdk/config/get|set|list|delete`` routes on that socket via uvicorn,
+against the real database engine. The child's network API is dead by
+environment, and it receives no database or provider credentials, so a correct
+value proves:
 
-- the existing route is reused (not copied) and resolves the value;
-- the child used the socket transport, not the network API;
+- the existing routes are reused (not copied) and resolve the value;
+- the child used the socket transport, not the network API (zero
+  API-container requests: ``BIFROST_API_URL`` points at a dead port);
 - the parent owns DB access; the child holds no DB credential.
 
 Marked ``slow`` like the other real-fork tests: template boot costs seconds.
@@ -85,9 +87,16 @@ def _script_for(key: str) -> str:
         "import os, sys\n"
         "from bifrost import config\n"
         "from bifrost.client import get_engine_socket_path\n"
-        f"_value = await config.get({key!r})\n"
+        f"await config.set({key!r}, 'fork-set-value')\n"
+        f"_get = await config.get({key!r})\n"
+        "_list = await config.list()\n"
+        f"_deleted = await config.delete({key!r})\n"
+        f"_after = await config.get({key!r}, default='missing')\n"
         "result = {\n"
-        "    'value': _value,\n"
+        "    'value': _get,\n"
+        f"    'listed': _list.data.get({key!r}),\n"
+        "    'deleted': _deleted,\n"
+        "    'after_delete': _after,\n"
         "    'socket_path': get_engine_socket_path(),\n"
         "    'had_db_url': (\n"
         "        'BIFROST_DATABASE_URL' in os.environ\n"
@@ -132,7 +141,7 @@ def _wait_for_pid_to_die(pid: int, timeout: float = 10.0) -> None:
 
 
 @pytest.mark.asyncio
-async def test_forked_child_config_get_over_worker_socket(
+async def test_forked_child_config_crud_over_worker_socket(
     committed_config, monkeypatch
 ):
     from src.core.security import mint_engine_token
@@ -177,7 +186,10 @@ async def test_forked_child_config_get_over_worker_socket(
 
         assert envelope["success"] is True, envelope
         result = envelope["result"]
-        assert result["value"] == "fork-socket-value"
+        assert result["value"] == "fork-set-value"
+        assert result["listed"] == "fork-set-value"
+        assert result["deleted"] is True
+        assert result["after_delete"] == "missing"
         assert result["socket_path"] == server.socket_path
         assert result["had_db_url"] is False
         assert result["had_sqlalchemy"] is False

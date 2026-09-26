@@ -302,6 +302,211 @@ class TestSocketServesConfigRoute:
             await server.stop()
 
 
+class TestSocketConfigContracts:
+    """The socket carries the same config contracts as the network API.
+
+    ``TestSocketServesConfigRoute`` covers ``config.get``; these cover the
+    mutation operations and the secret/missing/scope/validation contracts the
+    facade now sends over the shared client transport for all four methods.
+    """
+
+    @pytest.mark.asyncio
+    async def test_secret_set_get_list_over_socket(self):
+        key = f"wsdk-secret-{uuid4().hex[:8]}"
+        headers = {"Authorization": f"Bearer {_engine_token()}"}
+        server = WorkerSdkHttpServer()
+        await server.start()
+        try:
+            with _no_cache():
+                async with _socket_client(server) as client:
+                    set_response = await client.post(
+                        "/api/sdk/config/set",
+                        json={
+                            "key": key,
+                            "value": "top-secret",
+                            "is_secret": True,
+                            "scope": "global",
+                        },
+                        headers=headers,
+                    )
+                    get_response = await client.post(
+                        "/api/sdk/config/get",
+                        json={"key": key, "scope": "global"},
+                        headers=headers,
+                    )
+                    list_response = await client.post(
+                        "/api/sdk/config/list",
+                        json={"scope": "global"},
+                        headers=headers,
+                    )
+                    delete_response = await client.post(
+                        "/api/sdk/config/delete",
+                        json={"key": key, "scope": "global"},
+                        headers=headers,
+                    )
+            assert set_response.status_code == 204, set_response.text
+            assert get_response.status_code == 200, get_response.text
+            payload = get_response.json()
+            assert payload["value"] == "top-secret"
+            assert payload["config_type"] == "secret"
+            assert list_response.status_code == 200, list_response.text
+            assert list_response.json()[key] == "[SECRET]"
+            assert delete_response.status_code == 200, delete_response.text
+            assert delete_response.json() is True
+        finally:
+            await server.stop()
+
+    @pytest.mark.asyncio
+    async def test_scope_rules_match_for_mutations(self, async_session_factory):
+        """A non-superuser may mutate its own org but not another."""
+        from sqlalchemy import delete
+
+        from src.core.security import create_access_token
+        from src.models.orm.config import Config as ConfigModel
+        from src.models.orm.organizations import Organization as OrganizationModel
+
+        async with async_session_factory() as session:
+            org_a_row = OrganizationModel(
+                name=f"wsdk-scope-a-{uuid4().hex[:8]}",
+                is_active=True,
+                is_provider=False,
+                created_by="worker-sdk-http-test",
+            )
+            org_b_row = OrganizationModel(
+                name=f"wsdk-scope-b-{uuid4().hex[:8]}",
+                is_active=True,
+                is_provider=False,
+                created_by="worker-sdk-http-test",
+            )
+            session.add_all([org_a_row, org_b_row])
+            await session.commit()
+            org_a, org_b = org_a_row.id, org_b_row.id
+
+        token = create_access_token(
+            {
+                "sub": str(uuid4()),
+                "email": "user@example.com",
+                "name": "User",
+                "org_id": str(org_a),
+            }
+        )
+        headers = {"Authorization": f"Bearer {token}"}
+        key = f"wsdk-scope-{uuid4().hex[:8]}"
+        server = WorkerSdkHttpServer()
+        await server.start()
+        try:
+            with _no_cache():
+                async with _socket_client(server) as client:
+                    own_set = await client.post(
+                        "/api/sdk/config/set",
+                        json={
+                            "key": key,
+                            "value": "own",
+                            "is_secret": False,
+                            "scope": str(org_a),
+                        },
+                        headers=headers,
+                    )
+                    denied_set = await client.post(
+                        "/api/sdk/config/set",
+                        json={
+                            "key": key,
+                            "value": "other",
+                            "is_secret": False,
+                            "scope": str(org_b),
+                        },
+                        headers=headers,
+                    )
+                    denied_list = await client.post(
+                        "/api/sdk/config/list",
+                        json={"scope": str(org_b)},
+                        headers=headers,
+                    )
+                    denied_delete = await client.post(
+                        "/api/sdk/config/delete",
+                        json={"key": key, "scope": str(org_b)},
+                        headers=headers,
+                    )
+                    cleanup = await client.post(
+                        "/api/sdk/config/delete",
+                        json={"key": key, "scope": str(org_a)},
+                        headers=headers,
+                    )
+            assert own_set.status_code == 204, own_set.text
+            assert denied_set.status_code == 403, denied_set.text
+            assert denied_list.status_code == 403, denied_list.text
+            assert denied_delete.status_code == 403, denied_delete.text
+            assert cleanup.status_code == 200, cleanup.text
+            assert cleanup.json() is True
+        finally:
+            await server.stop()
+            async with async_session_factory() as session:
+                await session.execute(
+                    delete(ConfigModel).where(ConfigModel.key == key)
+                )
+                await session.execute(
+                    delete(OrganizationModel).where(
+                        OrganizationModel.id.in_([org_a, org_b])
+                    )
+                )
+                await session.commit()
+
+    @pytest.mark.asyncio
+    async def test_malformed_scope_is_422_over_socket(self):
+        headers = {"Authorization": f"Bearer {_engine_token()}"}
+        server = WorkerSdkHttpServer()
+        await server.start()
+        try:
+            with _no_cache():
+                async with _socket_client(server) as client:
+                    set_response = await client.post(
+                        "/api/sdk/config/set",
+                        json={
+                            "key": "k",
+                            "value": 1,
+                            "is_secret": False,
+                            "scope": "not-a-uuid",
+                        },
+                        headers=headers,
+                    )
+                    list_response = await client.post(
+                        "/api/sdk/config/list",
+                        json={"scope": "not-a-uuid"},
+                        headers=headers,
+                    )
+                    delete_response = await client.post(
+                        "/api/sdk/config/delete",
+                        json={"key": "k", "scope": "not-a-uuid"},
+                        headers=headers,
+                    )
+            assert set_response.status_code == 422, set_response.text
+            assert list_response.status_code == 422, list_response.text
+            assert delete_response.status_code == 422, delete_response.text
+        finally:
+            await server.stop()
+
+    @pytest.mark.asyncio
+    async def test_delete_missing_key_returns_false_over_socket(self):
+        headers = {"Authorization": f"Bearer {_engine_token()}"}
+        server = WorkerSdkHttpServer()
+        await server.start()
+        try:
+            with _no_cache():
+                async with _socket_client(server) as client:
+                    response = await client.post(
+                        "/api/sdk/config/delete",
+                        json={
+                            "key": f"absent-{uuid4().hex[:8]}",
+                            "scope": "global",
+                        },
+                        headers=headers,
+                    )
+            assert response.status_code == 200, response.text
+            assert response.json() is False
+        finally:
+            await server.stop()
+
+
 class TestEngineLocalTransportSelection:
     """The shared BifrostClient owns one engine-local transport choice.
 
@@ -489,6 +694,98 @@ class TestEngineLocalTransportSelection:
         )
 
     @pytest.mark.asyncio
+    async def test_external_config_mutations_use_network_path(self):
+        """Outside an engine the same shared-client entry point is the network."""
+        from bifrost import config as bifrost_config
+
+        assert get_engine_socket_path() is None
+        set_response = httpx.Response(
+            204,
+            request=httpx.Request("POST", "http://api/api/sdk/config/set"),
+        )
+        list_response = httpx.Response(
+            200,
+            json={"a": 1},
+            request=httpx.Request("POST", "http://api/api/sdk/config/list"),
+        )
+        delete_response = httpx.Response(
+            200,
+            json=True,
+            request=httpx.Request("POST", "http://api/api/sdk/config/delete"),
+        )
+        client = MagicMock()
+        client.engine_request = AsyncMock(
+            side_effect=[set_response, list_response, delete_response]
+        )
+        with patch("bifrost.config.get_client", return_value=client):
+            await bifrost_config.set("k", "v", scope="global")
+            listed = await bifrost_config.list(scope="global")
+            deleted = await bifrost_config.delete("k", scope="global")
+
+        assert listed["a"] == 1
+        assert deleted is True
+        assert [
+            (call.args[0], call.args[1])
+            for call in client.engine_request.await_args_list
+        ] == [
+            ("POST", "/api/sdk/config/set"),
+            ("POST", "/api/sdk/config/list"),
+            ("POST", "/api/sdk/config/delete"),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_config_set_get_list_delete_over_socket(self):
+        """All four config methods ride the injected socket, no network API."""
+        from bifrost import config as bifrost_config
+
+        key = f"wsdk-crud-{uuid4().hex[:8]}"
+        server = WorkerSdkHttpServer()
+        await server.start()
+        try:
+            _install_engine_socket(server.socket_path)  # type: ignore[arg-type]
+            client = BifrostClient("http://dead-api", _engine_token())
+            _set_client(client)
+            with _no_cache():
+                await bifrost_config.set(key, "socket-crud", scope="global")
+                assert (
+                    await bifrost_config.get(key, scope="global")
+                    == "socket-crud"
+                )
+                listed = await bifrost_config.list(scope="global")
+                assert listed[key] == "socket-crud"
+                assert (
+                    await bifrost_config.delete(key, scope="global") is True
+                )
+                assert (
+                    await bifrost_config.get(
+                        key, default="gone", scope="global"
+                    )
+                    == "gone"
+                )
+        finally:
+            await server.stop()
+
+    @pytest.mark.asyncio
+    async def test_large_config_value_over_socket(self):
+        """A large value round-trips over HTTP without a channel wrapper."""
+        from bifrost import config as bifrost_config
+
+        key = f"wsdk-large-{uuid4().hex[:8]}"
+        big = {"blob": "y" * 100_000}
+        server = WorkerSdkHttpServer()
+        await server.start()
+        try:
+            _install_engine_socket(server.socket_path)  # type: ignore[arg-type]
+            client = BifrostClient("http://dead-api", _engine_token())
+            _set_client(client)
+            with _no_cache():
+                await bifrost_config.set(key, big, scope="global")
+                assert await bifrost_config.get(key, scope="global") == big
+                assert await bifrost_config.delete(key, scope="global") is True
+        finally:
+            await server.stop()
+
+    @pytest.mark.asyncio
     async def test_local_failure_does_not_fall_back_to_network(self):
         from bifrost import config as bifrost_config
 
@@ -502,3 +799,9 @@ class TestEngineLocalTransportSelection:
 
         with pytest.raises(httpx.ConnectError):
             await bifrost_config.get("k", scope="global")
+        with pytest.raises(httpx.ConnectError):
+            await bifrost_config.set("k", "v", scope="global")
+        with pytest.raises(httpx.ConnectError):
+            await bifrost_config.list(scope="global")
+        with pytest.raises(httpx.ConnectError):
+            await bifrost_config.delete("k", scope="global")

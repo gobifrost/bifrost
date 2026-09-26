@@ -12,12 +12,10 @@ from typing import Any
 
 from .client import (
     get_client,
-    get_engine_socket_path,
     raise_for_status_with_detail,
 )
 from .models import ConfigData
 from ._context import resolve_scope
-from ._local_transport import get as _get_local_transport
 
 
 class config:
@@ -39,11 +37,11 @@ class config:
         """
         Get configuration value with automatic secret decryption.
 
-        Inside an engine child this sends the ordinary HTTP request over the
-        worker's private Unix socket (the client's shared transport) when the
-        engine injected one, otherwise it uses the older local channel, and
-        elsewhere it calls the SDK API endpoint over the network. Every path
-        reaches the same service.
+        Sends the ordinary HTTP request through the shared ``BifrostClient``:
+        over the worker's private Unix socket when the engine injected one,
+        and over the network API otherwise. Same path, body, bearer token,
+        timeout, and error handling as every other SDK request; a local
+        failure raises and never falls back to the network API.
 
         Args:
             key: Configuration key
@@ -70,32 +68,22 @@ class config:
             >>> org_setting = await config.get("key", scope="org-uuid-here")
         """
         effective_scope = resolve_scope(scope)
-        transport = _get_local_transport()
-        if transport is not None and get_engine_socket_path() is None:
-            # Older local channel, still used for the SDK methods not yet
-            # migrated to the socket (config.set/list/delete, etc.) and for
-            # engine children whose worker does not serve a socket. Checked
-            # before the client is used, so the local path never needs
-            # credentials and never falls back to HTTP — failures raise loudly.
-            result = await transport.call_config_get(key, effective_scope)
-        else:
-            # Engine-local path: the shared BifrostClient sends the ordinary
-            # HTTP request over the worker's private Unix socket when the
-            # engine injected one, and over the network otherwise. Same path,
-            # body, bearer token, timeout, and error handling as every other
-            # SDK request; a local failure raises and never falls back to the
-            # network API.
-            client = get_client()
-            response = await client.engine_request(
-                "POST",
-                "/api/sdk/config/get",
-                json={"key": key, "scope": effective_scope},
-            )
-            # A missing key comes back as 200 with a null body; anything else
-            # (permission denied, server error, transport) must surface, not
-            # be silently collapsed into the caller's default.
-            raise_for_status_with_detail(response)
-            result = response.json()
+        # The shared BifrostClient sends the ordinary HTTP request over the
+        # worker's private Unix socket when the engine injected one, and over
+        # the network otherwise. Same path, body, bearer token, timeout, and
+        # error handling as every other SDK request; a local failure raises
+        # and never falls back to the network API.
+        client = get_client()
+        response = await client.engine_request(
+            "POST",
+            "/api/sdk/config/get",
+            json={"key": key, "scope": effective_scope},
+        )
+        # A missing key comes back as 200 with a null body; anything else
+        # (permission denied, server error, transport) must surface, not
+        # be silently collapsed into the caller's default.
+        raise_for_status_with_detail(response)
+        result = response.json()
 
         if result is None:
             return default
@@ -115,10 +103,11 @@ class config:
         """
         Set configuration value.
 
-        Inside an engine child this stores through the parent over the
-        dedicated local transport (same service as the HTTP endpoint);
-        elsewhere it calls the SDK API endpoint to store configuration
-        (writes directly to database).
+        Sends the ordinary HTTP request through the shared ``BifrostClient``:
+        over the worker's private Unix socket when the engine injected one,
+        and over the network API otherwise. A local failure raises and never
+        falls back to the network API (a write may already have committed, so
+        a retry could double-apply).
 
         Args:
             key: Configuration key
@@ -139,22 +128,16 @@ class config:
             >>> await config.set("org_setting", "value", scope="org-uuid-here")
         """
         effective_scope = resolve_scope(scope)
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: never falls back to HTTP — failures raise
-            # loudly below (a write may already have committed, so a retry
-            # over HTTP could double-apply).
-            await transport.call_config_set(key, value, is_secret, effective_scope)
-            return
         client = get_client()
-        response = await client.post(
+        response = await client.engine_request(
+            "POST",
             "/api/sdk/config/set",
             json={
                 "key": key,
                 "value": value,
                 "is_secret": is_secret,
                 "scope": effective_scope,
-            }
+            },
         )
         raise_for_status_with_detail(response)
 
@@ -163,9 +146,10 @@ class config:
         """
         List configuration key-value pairs.
 
-        Inside an engine child this lists through the parent over the
-        dedicated local transport (same service as the HTTP endpoint);
-        elsewhere it calls the SDK API endpoint.
+        Sends the ordinary HTTP request through the shared ``BifrostClient``:
+        over the worker's private Unix socket when the engine injected one,
+        and over the network API otherwise. A local failure raises and never
+        falls back to the network API.
 
         Note: Secret values are redacted as "[SECRET]".
 
@@ -194,15 +178,11 @@ class config:
             >>> org_cfg = await config.list(scope="org-uuid-here")
         """
         effective_scope = resolve_scope(scope)
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: never falls back to HTTP.
-            result = await transport.call_config_list(effective_scope)
-            return ConfigData.model_validate({"data": result})
         client = get_client()
-        response = await client.post(
+        response = await client.engine_request(
+            "POST",
             "/api/sdk/config/list",
-            json={"scope": effective_scope}
+            json={"scope": effective_scope},
         )
         raise_for_status_with_detail(response)
         return ConfigData.model_validate({"data": response.json()})
@@ -212,10 +192,10 @@ class config:
         """
         Delete configuration value.
 
-        Inside an engine child this deletes through the parent over the
-        dedicated local transport (same service as the HTTP endpoint);
-        elsewhere it calls the SDK API endpoint to delete configuration
-        (deletes directly from database).
+        Sends the ordinary HTTP request through the shared ``BifrostClient``:
+        over the worker's private Unix socket when the engine injected one,
+        and over the network API otherwise. A local failure raises and never
+        falls back to the network API.
 
         Args:
             key: Configuration key
@@ -236,15 +216,11 @@ class config:
             >>> await config.delete("old_api_url")
         """
         effective_scope = resolve_scope(scope)
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: never falls back to HTTP — failures raise
-            # loudly below.
-            return await transport.call_config_delete(key, effective_scope)
         client = get_client()
-        response = await client.post(
+        response = await client.engine_request(
+            "POST",
             "/api/sdk/config/delete",
-            json={"key": key, "scope": effective_scope}
+            json={"key": key, "scope": effective_scope},
         )
         raise_for_status_with_detail(response)
         return response.json()

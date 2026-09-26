@@ -1,9 +1,10 @@
-"""Opt-in, live-worker comparison of config SDK HTTP and local transports.
+"""Opt-in, live-worker comparison of config SDK network and socket transports.
 
 Run with ``./test.sh tests/performance/test_sdk_config_transport.py -s -v``.
 Both paths execute in the same forked workflow child against the same shared
-config service. The HTTP path is selected explicitly to represent the old SDK.
-Latency numbers are diagnostic, never a CI threshold.
+config service through the shared client: network HTTP when the injected
+worker socket is cleared, worker-local HTTP when it is installed. Latency
+numbers are diagnostic, never a CI threshold.
 """
 
 import json
@@ -38,21 +39,40 @@ async def {name}():
     import statistics
     import time
 
-    cfg = importlib.import_module("bifrost.config")
-    original_transport = cfg._get_local_transport
-    original_client = cfg.get_client
-    assert original_transport() is not None, "engine local transport is missing"
-    http_calls = 0
+    importlib.import_module("bifrost.config")
+    from bifrost.client import (
+        BifrostClient,
+        _clear_engine_socket,
+        _install_engine_socket,
+        get_engine_socket_path,
+    )
 
-    def counted_client():
-        nonlocal http_calls
-        http_calls += 1
-        return original_client()
+    socket_path = get_engine_socket_path()
+    assert socket_path is not None, "engine socket transport is missing"
 
-    cfg.get_client = counted_client
+    counters = {{"api": 0, "socket": 0}}
+
+    def set_mode(mode):
+        # "http" clears the injected transport so the shared client falls back
+        # to the network API; "local" restores the worker socket.
+        if mode == "local":
+            _install_engine_socket(socket_path)
+        else:
+            _clear_engine_socket()
+
+    original_async_http_for = BifrostClient._async_http_for
+
+    def counted_async_http_for(self, *, engine_local):
+        if engine_local and get_engine_socket_path() is not None:
+            counters["socket"] += 1
+        else:
+            counters["api"] += 1
+        return original_async_http_for(self, engine_local=engine_local)
+
+    BifrostClient._async_http_for = counted_async_http_for
     results = {{"http": {{op: [] for op in ("set", "get", "list", "delete")}},
                "local": {{op: [] for op in ("set", "get", "list", "delete")}}}}
-    measured_calls = {{"http": 0, "local": 0}}
+    measured_calls = {{"http": dict(counters), "local": dict(counters)}}
 
     async def one_cycle(mode, record):
         async def timed(op, action):
@@ -71,16 +91,17 @@ async def {name}():
     try:
         # Counterbalanced order limits drift from cache warming and host load.
         for mode in ("http", "local", "local", "http"):
-            cfg._get_local_transport = (lambda: None) if mode == "http" else original_transport
+            set_mode(mode)
             for _ in range(5):
                 await one_cycle(mode, False)
-            before = http_calls
+            before = dict(counters)
             for _ in range(30):
                 await one_cycle(mode, True)
-            measured_calls[mode] += http_calls - before
+            measured_calls[mode]["api"] += counters["api"] - before["api"]
+            measured_calls[mode]["socket"] += counters["socket"] - before["socket"]
     finally:
-        cfg._get_local_transport = original_transport
-        cfg.get_client = original_client
+        BifrostClient._async_http_for = original_async_http_for
+        _install_engine_socket(socket_path)
 
     def summarize(samples):
         ordered = sorted(samples)
@@ -94,7 +115,7 @@ async def {name}():
     return {{
         "latency": {{mode: {{op: summarize(samples) for op, samples in ops.items()}}
                     for mode, ops in results.items()}},
-        "http_requests": measured_calls,
+        "requests": measured_calls,
     }}
 '''
 
@@ -115,7 +136,10 @@ async def {name}():
             )
             assert result["status"] == "Success", result
             measurements = result["result"]
-            assert measurements["http_requests"] == {"http": 240, "local": 0}
+            assert measurements["requests"] == {
+                "http": {"api": 240, "socket": 0},
+                "local": {"api": 0, "socket": 240},
+            }
             for mode in ("http", "local"):
                 for operation in ("set", "get", "list", "delete"):
                     assert measurements["latency"][mode][operation]["count"] == 60

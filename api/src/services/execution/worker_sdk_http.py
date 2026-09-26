@@ -36,8 +36,8 @@ logger = logging.getLogger(__name__)
 
 # The existing SDK-facing config routes served on the socket. Selected by
 # path from the real router; the endpoint objects are reused as-is. Gate A
-# mounts the whole config facade even though only ``config.get`` is wired to
-# the child transport yet.
+# mounts the whole config facade; Gate C1 wires all four methods
+# (get/set/list/delete) to the shared client transport.
 CONFIG_ROUTE_PATHS: frozenset[str] = frozenset(
     {
         "/api/sdk/config/get",
