@@ -296,12 +296,22 @@ SDK_ROUTE_PATHS: frozenset[str] = (
 def build_worker_sdk_app() -> Any:
     """Build a minimal ASGI app mounting only the existing SDK routes.
 
+    Shares the main app's global exception handlers and request-context
+    middleware so socket calls error and audit exactly like HTTP. No CORS,
+    CSRF, EmbedScope, or body-limit middleware is installed: this socket
+    carries engine bearer tokens only — no browser, no embed tokens, and no
+    uploads on the mounted routes.
+
     Fails loudly if the router no longer exposes every expected path: a
     silently incomplete mount would leave engine SDK calls falling through
     to HTTP without the proof noticing.
     """
     from fastapi import FastAPI
 
+    from src.core.app_wiring import (
+        install_request_context_middleware,
+        register_exception_handlers,
+    )
     from src.routers.agent_runs import router as agent_runs_router
     from src.routers.cli import router as sdk_router
     from src.routers.events import router as events_router
@@ -322,6 +332,10 @@ def build_worker_sdk_app() -> Any:
         redoc_url=None,
         openapi_url=None,
     )
+    # Same global error mapping and audit/request-context attribution as the
+    # main API app, so a socket call is indistinguishable from the HTTP one.
+    register_exception_handlers(app)
+    install_request_context_middleware(app)
     # The config, integrations, table-definition, and knowledge facade paths
     # are unique, so they are selected by exact path. Artifact, AI, and
     # context routes are selected by (path, method) because

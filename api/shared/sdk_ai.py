@@ -185,6 +185,15 @@ async def complete_sdk_ai(
         client = await get_llm_client(session, profile_name=profile)
     except ValueError as e:
         raise SdkAIError(503, str(e)) from None
+    except Exception as e:
+        # Resolving the client failed (provider/config wiring): sanitize the
+        # response and log the stack for operators.
+        logger.exception(
+            "CLI AI complete failed resolving LLM client: %s", log_safe(e)
+        )
+        raise SdkAIError(
+            500, "AI completion failed. See server logs for details."
+        ) from None
 
     # Release the checked-out DB connection before provider latency. The
     # session stays usable: usage attribution below reacquires a
