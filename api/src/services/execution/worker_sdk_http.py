@@ -23,9 +23,11 @@ the artifact facade routes plus the durable platform-job status route that
 ``artifacts.create_video`` polls, Gate C4c adds the knowledge facade
 routes (store/store-many/search/delete/get/delete_namespace/list_namespaces),
 Gate C5a adds the workflow facade routes
-(list/execute/cancel) and execution-history routes (list/get), and Gate C5b
-adds the SDK agent-run routes (enqueue/get). Streams and other domains stay
-on their existing channel path until their own Gate C slice migrates them.
+(list/execute/cancel) and execution-history routes (list/get), Gate C5b
+adds the SDK agent-run routes (enqueue/get), and Gate C5c adds the topic
+emit route (``events.emit``) plus the form read routes (``forms.list`` /
+``forms.get``). Streams and other domains stay on their existing channel
+path until their own Gate C slice migrates them.
 
 ``import fastapi``/``uvicorn`` happen inside the functions so the worker
 entry closure stays free of those heavyweights at import time (see
@@ -202,6 +204,22 @@ AGENT_RUN_ROUTE_METHODS: dict[str, frozenset[str]] = {
     "/api/agent-runs/{run_id}": frozenset({"GET"}),
 }
 
+# Gate C5c: the SDK event route, selected from ``src.routers.events`` by path
+# AND method. ``/api/events/emit`` is the only events route the SDK calls; the
+# source/subscription/event CRUD routes stay on the API.
+EVENT_ROUTE_METHODS: dict[str, frozenset[str]] = {
+    "/api/events/emit": frozenset({"POST"}),
+}
+
+# Gate C5c: the SDK form read routes, selected from ``src.routers.forms`` by
+# path AND method. ``/api/forms`` is the list route and ``/api/forms/{form_id}``
+# is the detail GET; the form mutation/publication/runtime/logo siblings and the
+# ``/{form_id}/...`` child paths stay on the API.
+FORM_ROUTE_METHODS: dict[str, frozenset[str]] = {
+    "/api/forms": frozenset({"GET"}),
+    "/api/forms/{form_id}": frozenset({"GET"}),
+}
+
 # Every route path this worker-local app serves from the cli SDK router.
 # Other SDK domains keep their existing channel path until their Gate C
 # slice migrates them.
@@ -225,8 +243,10 @@ def build_worker_sdk_app() -> Any:
 
     from src.routers.agent_runs import router as agent_runs_router
     from src.routers.cli import router as sdk_router
+    from src.routers.events import router as events_router
     from src.routers.executions import router as executions_router
     from src.routers.files import router as files_router
+    from src.routers.forms import router as forms_router
     from src.routers.platform_jobs import router as platform_jobs_router
     from src.routers.tables import router as tables_router
     from src.routers.workflows import router as workflows_router
@@ -346,6 +366,35 @@ def build_worker_sdk_app() -> Any:
             selected += 1
     expected += sum(
         len(methods) for methods in AGENT_RUN_ROUTE_METHODS.values()
+    )
+
+    # The SDK event and form facade routes are selected by (path, method) from
+    # their real routers. The events router also carries the source/
+    # subscription/event CRUD paths; the forms router carries mutations, the
+    # publication/runtime/logo routes, and ``/{form_id}/...`` child paths. Only
+    # the emit POST and the two form reads are mounted.
+    for route in events_router.routes:
+        wanted = EVENT_ROUTE_METHODS.get(
+            getattr(route, "path", None), frozenset()
+        )
+        methods = getattr(route, "methods", None) or frozenset()
+        if wanted and methods & wanted:
+            app.router.routes.append(route)
+            selected += 1
+    expected += sum(
+        len(methods) for methods in EVENT_ROUTE_METHODS.values()
+    )
+
+    for route in forms_router.routes:
+        wanted = FORM_ROUTE_METHODS.get(
+            getattr(route, "path", None), frozenset()
+        )
+        methods = getattr(route, "methods", None) or frozenset()
+        if wanted and methods & wanted:
+            app.router.routes.append(route)
+            selected += 1
+    expected += sum(
+        len(methods) for methods in FORM_ROUTE_METHODS.values()
     )
 
     if selected != expected:

@@ -4,13 +4,12 @@ Exercises the full path — workflow code in a forked worker child calling
 the fixed ``bifrost.events.emit`` — proving parity with the external
 HTTP API:
 
-- the workflow hard-disables fixed-operation HTTP in-engine
-  (``bifrost.events.get_client`` raises if touched) and records that
-  the local transport is installed, so success proves zero API
-  requests for the migrated operation (in particular, no HTTP call to
-  ``/events/emit``);
-- the emit round-trips inside the workflow through the parent-local
-  ``shared.event_emission`` service (event id + subscriber count);
+- the workflow records that the engine injected the worker's private socket,
+  so the migrated call rode the shared client transport rather than the
+  network API (the zero-HTTP proof lives in the unit and forked-child socket
+  tests, where the child's network API is dead);
+- the emit round-trips inside the workflow through the real ``/api/events/emit``
+  route served on that socket (event id + subscriber count);
 - the committed event row is verified over external HTTP.
 """
 
@@ -58,36 +57,28 @@ def live_events_workflow(
 ):
     """Workflow exercising events.emit through the live worker.
 
-    The workflow hard-disables fixed-operation HTTP in-engine and records
-    that the local transport is installed, so success proves zero API
-    requests for the migrated operation. The test then verifies the
-    committed event row over external HTTP.
+    The workflow records that the engine injected the worker's private
+    socket, so the migrated call rode the shared client transport (the
+    zero-HTTP proof lives in the unit and forked-child socket tests, where
+    the child's network API is dead). The test then verifies the committed
+    event row over external HTTP.
     """
     name = f"e2e_sdk_local_events_{live_events_keys['tag']}"
     path = f"{name}.py"
     topic = live_events_keys["topic"]
     content = f'''"""Local events.emit E2E workflow."""
 from bifrost import events, workflow
+from bifrost.client import get_engine_socket_path
 
 @workflow(name="{name}", description="Local events.emit E2E")
 async def {name}():
-    import importlib
-    _emod = importlib.import_module("bifrost.events")
-    from bifrost._local_transport import get as _get_transport
-    used_local = _get_transport() is not None
-
-    def _dead(*args, **kwargs):
-        raise AssertionError(
-            "fixed-operation HTTP must not be used in the engine path"
-        )
-    _orig = _emod.get_client
-    _emod.get_client = _dead
-    try:
-        result = await events.emit("{topic}", {{"ping": "local"}})
-    finally:
-        _emod.get_client = _orig
+    # The engine injected its private socket; the zero-HTTP proof lives in
+    # the unit and forked-child socket tests where the child's network API
+    # is dead by environment.
+    used_socket = get_engine_socket_path() is not None
+    result = await events.emit("{topic}", {{"ping": "local"}})
     return {{
-        "used_local": used_local,
+        "used_socket": used_socket,
         "event_id": result["event_id"],
         "subscribers_notified": result["subscribers_notified"],
     }}
@@ -131,10 +122,10 @@ class TestSdkEventsLocalLiveE2E:
         )
         assert result["status"] == "Success", result
         out = result["result"]
-        # Zero API requests: the transport was installed and every
-        # fixed-operation HTTP call (including /events/emit) would have
-        # raised inside the workflow.
-        assert out["used_local"] is True
+        # The worker injected its private socket, so the migrated call rode
+        # the shared client transport (zero-HTTP proof is in the unit and
+        # forked-child tests).
+        assert out["used_socket"] is True
         assert out["subscribers_notified"] == 0
 
         event_id = out["event_id"]

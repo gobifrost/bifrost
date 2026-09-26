@@ -13,19 +13,21 @@ Covers the acceptance surface that does not need a forked child:
   asserted on both allowlists, and cross-channel requests rejected);
 - a synchronous context call completes while an async SDK request is
   held open on the other channel (separate pipes/locks — no deadlock);
-- the SDK facades map local results to the public surface
-  (``FormPublic`` list, ``ValueError``/``PermissionError`` on get,
-  cached ``BifrostClient.context`` with its ``user``/``organization``/
-  ``default_parameters`` views) and preserve HTTP-shaped errors;
-- external callers (no transport) keep the HTTP path unchanged.
+- the migrated forms facade rides ``BifrostClient.engine_request`` with the
+  exact HTTP paths, mapping results to the public surface (``FormPublic``
+  list, ``ValueError``/``PermissionError`` on get) and preserving
+  HTTP-shaped errors, while the context facade keeps its cached
+  ``BifrostClient.context`` (with ``user``/``organization``/
+  ``default_parameters`` views) on the import channel;
+- external callers (no injected socket) keep the HTTP path unchanged.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import httpx
 import multiprocessing
-import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -614,120 +616,24 @@ class TestDualChannelFormsContextConcurrency:
 
 
 @pytest.mark.asyncio
-class TestFormsFacadeLocalMapping:
-    def _install_fake_transport(self, monkeypatch, fake):
-        import bifrost._local_transport as local_transport
+class TestFormsFacadeEngineRequest:
+    """Gate C5c: the migrated forms facade rides ``engine_request``.
 
-        monkeypatch.setattr(local_transport, "_installed", fake)
+    ``list`` reads ``GET /api/forms`` and validates the list into
+    ``FormPublic``; ``get`` reads ``GET /api/forms/{id}`` and maps 404/403 to
+    the same public exceptions as the HTTP path — no dedicated-channel frames
+    and no silent network fallback.
+    """
 
-        def _dead(*args, **kwargs):
-            raise AssertionError("HTTP must not be used in the engine path")
+    def _client(self, *responses):
+        client = MagicMock()
+        client.engine_request = AsyncMock(side_effect=responses)
+        return client
 
-        monkeypatch.setattr(sys.modules["bifrost.forms"], "get_client", _dead)
-
-    async def test_list_uses_local(self, monkeypatch):
-        from bifrost.forms import forms
-
-        form_id = str(uuid4())
-
-        class FakeTransport:
-            async def call_forms_list(self, **kwargs):
-                assert kwargs == {}
-                return [
-                    {
-                        "id": form_id,
-                        "name": "local-form",
-                        "confirmation_markdown": "Thanks",
-                        "workflow_id": None,
-                        "launch_workflow_id": None,
-                        "default_launch_params": None,
-                        "allowed_query_params": None,
-                        "form_schema": None,
-                        "access_level": "authenticated",
-                        "organization_id": None,
-                        "role_ids": [],
-                        "is_active": True,
-                        "created_at": None,
-                        "updated_at": None,
-                    }
-                ]
-
-        self._install_fake_transport(monkeypatch, FakeTransport())
-        result = await forms.list()
-
-        assert [f.name for f in result] == ["local-form"]
-        assert result[0].id == form_id
-
-    async def test_get_uses_local(self, monkeypatch):
-        from bifrost.forms import forms
-
-        form_id = str(uuid4())
-
-        class FakeTransport:
-            async def call_forms_get(self, fid):
-                assert fid == form_id
-                return {
-                    "id": form_id,
-                    "name": "local-detail",
-                    "confirmation_markdown": "Thanks",
-                    "workflow_id": None,
-                    "launch_workflow_id": None,
-                    "default_launch_params": None,
-                    "allowed_query_params": None,
-                    "form_schema": None,
-                    "access_level": "authenticated",
-                    "organization_id": None,
-                    "role_ids": [],
-                    "is_active": True,
-                    "created_at": None,
-                    "updated_at": None,
-                }
-
-        self._install_fake_transport(monkeypatch, FakeTransport())
-        detail = await forms.get(form_id)
-
-        assert detail.id == form_id
-        assert detail.name == "local-detail"
-
-    async def test_local_errors_preserve_public_mapping(self, monkeypatch):
-        from bifrost._local_transport import raise_for_local_status
-        from bifrost.client import BifrostAPIError
-        from bifrost.forms import forms
-
-        class FailGet:
-            status = 404
-
-            async def call_forms_get(self, fid):
-                raise_for_local_status(self.status, "denied", OP_FORMS_GET)
-
-        for status, expected in ((404, ValueError), (403, PermissionError)):
-            FailGet.status = status
-            self._install_fake_transport(monkeypatch, FailGet())
-            with pytest.raises(expected):
-                await forms.get(str(uuid4()))
-
-        class FailGetOther:
-            async def call_forms_get(self, fid):
-                raise_for_local_status(500, "boom", OP_FORMS_GET)
-
-        self._install_fake_transport(monkeypatch, FailGetOther())
-        with pytest.raises(BifrostAPIError):
-            await forms.get(str(uuid4()))
-
-    async def test_external_callers_keep_http(self, monkeypatch):
-        import bifrost._local_transport as local_transport
-        from bifrost.forms import forms
-
-        monkeypatch.setattr(local_transport, "_installed", None)
-
-        list_response = MagicMock()
-        list_response.status_code = 200
-        list_response.json = lambda: []
-        get_response = MagicMock()
-        get_response.status_code = 200
-        get_response.json = lambda: {
-            "id": str(uuid4()),
-            "name": "http-form",
+    def _form_body(self, form_id):
+        return {
+            "id": form_id,
+            "name": "engine-form",
             "confirmation_markdown": "Thanks",
             "workflow_id": None,
             "launch_workflow_id": None,
@@ -741,14 +647,65 @@ class TestFormsFacadeLocalMapping:
             "created_at": None,
             "updated_at": None,
         }
-        fake = MagicMock()
-        fake.get = AsyncMock(side_effect=[list_response, get_response])
-        monkeypatch.setattr(sys.modules["bifrost.forms"], "get_client", lambda: fake)
 
-        assert await forms.list() == []
-        detail = await forms.get(str(uuid4()))
-        assert detail.name == "http-form"
-        assert fake.get.await_count == 2
+    async def test_list_reads_exact_path_and_parses_models(self):
+        from bifrost.forms import forms
+
+        form_id = str(uuid4())
+        client = self._client(
+            httpx.Response(200, json=[self._form_body(form_id)])
+        )
+        with patch("bifrost.forms.get_client", return_value=client):
+            result = await forms.list()
+
+        assert [f.name for f in result] == ["engine-form"]
+        assert result[0].id == form_id
+        call = client.engine_request.await_args
+        assert call.args == ("GET", "/api/forms")
+        assert call.kwargs == {}
+
+    async def test_get_reads_exact_path_and_parses_model(self):
+        from bifrost.forms import forms
+
+        form_id = str(uuid4())
+        client = self._client(
+            httpx.Response(200, json=self._form_body(form_id))
+        )
+        with patch("bifrost.forms.get_client", return_value=client):
+            detail = await forms.get(form_id)
+
+        assert detail.id == form_id
+        assert detail.name == "engine-form"
+        assert client.engine_request.await_args.args == (
+            "GET",
+            f"/api/forms/{form_id}",
+        )
+
+    async def test_get_maps_404_and_403_to_public_errors(self):
+        from bifrost.forms import forms
+
+        request = httpx.Request("GET", "http://engine/api/forms/x")
+        for status, exc_type in ((404, ValueError), (403, PermissionError)):
+            client = self._client(
+                httpx.Response(status, json={"detail": "no"}, request=request)
+            )
+            with patch("bifrost.forms.get_client", return_value=client):
+                with pytest.raises(exc_type):
+                    await forms.get(str(uuid4()))
+
+    async def test_list_error_statuses_surface(self):
+        from bifrost.client import BifrostAPIError
+        from bifrost.forms import forms
+
+        request = httpx.Request("GET", "http://engine/api/forms")
+        for status in (401, 403, 500):
+            client = self._client(
+                httpx.Response(status, json={"detail": "denied"}, request=request)
+            )
+            with patch("bifrost.forms.get_client", return_value=client):
+                with pytest.raises(BifrostAPIError) as exc_info:
+                    await forms.list()
+            assert exc_info.value.response.status_code == status
 
 
 @pytest.mark.asyncio

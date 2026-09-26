@@ -2,7 +2,9 @@
 bifrost/forms.py - Forms SDK
 
 Provides Python API for form operations (read-only).
-Engine children use the parent-local form service; external callers use HTTP.
+
+Inside an engine child these reads go through the worker's private Unix
+socket (the parent serves the real HTTP endpoints); external callers use HTTP.
 """
 
 from __future__ import annotations
@@ -50,20 +52,8 @@ class forms:
             >>> for form in all_forms:
             ...     print(f"{form.id}: {form.name}")
         """
-        from ._local_transport import get as _get_local_transport
-
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: the parent lists through the shared
-            # form service over the dedicated channel. The frame carries
-            # no fields (the SDK exposes no scope filter — the parent
-            # applies the route defaults, like the unfiltered HTTP
-            # call). A local attempt never falls back to HTTP — failures
-            # raise loudly below.
-            items = await transport.call_forms_list()
-            return [FormPublic.model_validate(form) for form in items]
         client = get_client()
-        response = await client.get("/api/forms")
+        response = await client.engine_request("GET", "/api/forms")
         raise_for_status_with_detail(response)
         data = response.json()
         return [FormPublic.model_validate(form) for form in data]
@@ -102,29 +92,8 @@ class forms:
             >>> form = await forms.get("form-123")
             >>> print(form.name)
         """
-        from ._local_transport import get as _get_local_transport
-
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: the parent reads through the shared
-            # form service over the dedicated channel. Error mapping
-            # matches the HTTP path below; a local attempt never falls
-            # back to HTTP.
-            from .client import BifrostAPIError
-
-            try:
-                data = await transport.call_forms_get(form_id)
-            except BifrostAPIError as e:
-                if e.response.status_code == 404:
-                    raise ValueError(f"Form not found: {form_id}") from None
-                if e.response.status_code == 403:
-                    raise PermissionError(
-                        f"Access denied to form: {form_id}"
-                    ) from None
-                raise
-            return FormPublic.model_validate(data)
         client = get_client()
-        response = await client.get(f"/api/forms/{form_id}")
+        response = await client.engine_request("GET", f"/api/forms/{form_id}")
         if response.status_code == 404:
             raise ValueError(f"Form not found: {form_id}")
         elif response.status_code == 403:

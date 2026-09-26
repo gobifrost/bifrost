@@ -32,8 +32,10 @@ from src.services.execution.worker_sdk_http import (
     ARTIFACT_ROUTE_METHODS,
     ARTIFACT_ROUTE_PATHS,
     CONFIG_ROUTE_PATHS,
+    EVENT_ROUTE_METHODS,
     EXECUTION_ROUTE_METHODS,
     FILES_ROUTE_PATHS,
+    FORM_ROUTE_METHODS,
     INTEGRATION_ROUTE_PATHS,
     KNOWLEDGE_ROUTE_PATHS,
     PLATFORM_JOB_ROUTE_METHODS,
@@ -149,8 +151,10 @@ class TestRouteReuse:
 
         from src.routers.agent_runs import router as agent_runs_router
         from src.routers.cli import router as sdk_router
+        from src.routers.events import router as events_router
         from src.routers.executions import router as executions_router
         from src.routers.files import router as files_router
+        from src.routers.forms import router as forms_router
         from src.routers.platform_jobs import router as platform_jobs_router
         from src.routers.tables import router as tables_router
         from src.routers.workflows import router as workflows_router
@@ -220,6 +224,18 @@ class TestRouteReuse:
             if (wanted := AGENT_RUN_ROUTE_METHODS.get(getattr(route, "path", None)))
             for method in (getattr(route, "methods", None) or set()) & wanted
         }
+        event_originals = {
+            (route.path, method): route
+            for route in events_router.routes
+            if (wanted := EVENT_ROUTE_METHODS.get(getattr(route, "path", None)))
+            for method in (getattr(route, "methods", None) or set()) & wanted
+        }
+        form_originals = {
+            (route.path, method): route
+            for route in forms_router.routes
+            if (wanted := FORM_ROUTE_METHODS.get(getattr(route, "path", None)))
+            for method in (getattr(route, "methods", None) or set()) & wanted
+        }
 
         app = build_worker_sdk_app()
         mounted = [route for route in app.router.routes if isinstance(route, APIRoute)]
@@ -265,6 +281,18 @@ class TestRouteReuse:
             if route.path in AGENT_RUN_ROUTE_METHODS
             for method in route.methods
         }
+        mounted_events = {
+            (route.path, method): route
+            for route in mounted
+            if route.path in EVENT_ROUTE_METHODS
+            for method in route.methods
+        }
+        mounted_forms = {
+            (route.path, method): route
+            for route in mounted
+            if route.path in FORM_ROUTE_METHODS
+            for method in route.methods
+        }
 
         # Only the selected routes, and the exact registered objects — no
         # copied handlers and no rest of the API surface.
@@ -307,6 +335,16 @@ class TestRouteReuse:
         for key, route in mounted_agent_runs.items():
             assert route is agent_run_originals[key]
             assert route.endpoint is agent_run_originals[key].endpoint
+
+        assert set(mounted_events) == set(event_originals)
+        for key, route in mounted_events.items():
+            assert route is event_originals[key]
+            assert route.endpoint is event_originals[key].endpoint
+
+        assert set(mounted_forms) == set(form_originals)
+        for key, route in mounted_forms.items():
+            assert route is form_originals[key]
+            assert route.endpoint is form_originals[key].endpoint
 
         # The shared ``/api/tables/{table_id}`` path must not drag in its
         # GET/PATCH metadata siblings.
@@ -445,6 +483,29 @@ class TestRouteReuse:
             SDK_ROUTE_PATHS
             | set(WORKFLOW_ROUTE_METHODS)
             | set(EXECUTION_ROUTE_METHODS)
+        )
+
+    def test_event_and_form_route_selection_is_exact(self):
+        """Gate C5c mounts only the emit POST and the two form GET reads."""
+        assert EVENT_ROUTE_METHODS == {
+            "/api/events/emit": frozenset({"POST"}),
+        }
+        assert FORM_ROUTE_METHODS == {
+            "/api/forms": frozenset({"GET"}),
+            "/api/forms/{form_id}": frozenset({"GET"}),
+        }
+        assert set(EVENT_ROUTE_METHODS).isdisjoint(
+            SDK_ROUTE_PATHS
+            | set(WORKFLOW_ROUTE_METHODS)
+            | set(EXECUTION_ROUTE_METHODS)
+            | set(AGENT_RUN_ROUTE_METHODS)
+        )
+        assert set(FORM_ROUTE_METHODS).isdisjoint(
+            SDK_ROUTE_PATHS
+            | set(WORKFLOW_ROUTE_METHODS)
+            | set(EXECUTION_ROUTE_METHODS)
+            | set(AGENT_RUN_ROUTE_METHODS)
+            | set(EVENT_ROUTE_METHODS)
         )
 
     @pytest.mark.asyncio
@@ -1980,3 +2041,309 @@ class TestEngineLocalAgentsFallback:
             await agents_mod.agents.enqueue("A")
         with pytest.raises(httpx.ConnectError):
             await agents_mod.agents.get_run(str(uuid4()))
+
+
+class TestSocketEventsForms:
+    """Gate C5c: the socket serves the real event/form routes with their DTOs."""
+
+    @pytest.mark.asyncio
+    async def test_events_emit_over_socket_reaches_real_route(self):
+        event_id = uuid4()
+        topic = f"wsdk.events.{uuid4().hex[:8]}"
+        headers = {"Authorization": f"Bearer {_engine_token()}"}
+        server = WorkerSdkHttpServer()
+        await server.start()
+        try:
+            async with _socket_client(server) as client:
+                # The route, auth, DTO validation, and shared service run for
+                # real; only the durable emitter leaf is stubbed so the unit
+                # lane does not commit an event.
+                with patch(
+                    "src.services.events.emit_event",
+                    new=AsyncMock(return_value=(event_id, 2)),
+                ) as durable:
+                    response = await client.post(
+                        "/api/events/emit",
+                        json={"topic": topic, "data": {"k": "v"}, "scope": None},
+                        headers=headers,
+                    )
+            assert response.status_code == 200, response.text
+            assert response.json() == {
+                "event_id": str(event_id),
+                "subscribers_notified": 2,
+            }
+            durable.assert_awaited_once()
+            assert durable.call_args.args[0] == topic
+        finally:
+            await server.stop()
+
+    @pytest.mark.asyncio
+    async def test_events_emit_over_socket_stamps_scope_and_gates_solution(
+        self, async_session_factory
+    ):
+        """Scope rides the body; an unknown/sealed Solution is a 404.
+
+        Proves the socket route preserves the HTTP precedence: authorization
+        (engine superuser) then topic validation then scope parsing then
+        Solution resolution + inbound gate, with the durable emitter leaf
+        stubbed so the unit lane commits no event.
+        """
+        from src.models.orm.organizations import Organization as OrganizationModel
+
+        event_id = uuid4()
+        topic = f"wsdk.events.scope.{uuid4().hex[:8]}"
+        headers = {"Authorization": f"Bearer {_engine_token()}"}
+
+        async with async_session_factory() as session:
+            org = OrganizationModel(
+                name=f"wsdk-events-org-{uuid4().hex[:8]}",
+                is_active=True,
+                is_provider=False,
+                created_by="worker-sdk-http-test",
+            )
+            session.add(org)
+            await session.commit()
+            org_id = org.id
+
+        server = WorkerSdkHttpServer()
+        await server.start()
+        try:
+            async with _socket_client(server) as client:
+                with patch(
+                    "src.services.events.emit_event",
+                    new=AsyncMock(return_value=(event_id, 0)),
+                ) as durable:
+                    scoped = await client.post(
+                        "/api/events/emit",
+                        json={
+                            "topic": topic,
+                            "data": {"k": "v"},
+                            "scope": str(org_id),
+                        },
+                        headers=headers,
+                    )
+                    unknown_solution = await client.post(
+                        "/api/events/emit",
+                        json={
+                            "topic": topic,
+                            "data": {},
+                            "scope": str(org_id),
+                            "solution": str(uuid4()),
+                        },
+                        headers=headers,
+                    )
+                    malformed_scope = await client.post(
+                        "/api/events/emit",
+                        json={"topic": topic, "data": {}, "scope": "nope"},
+                        headers=headers,
+                    )
+                    invalid_topic = await client.post(
+                        "/api/events/emit",
+                        json={"topic": "NODOT", "data": {}, "scope": None},
+                        headers=headers,
+                    )
+            assert scoped.status_code == 200, scoped.text
+            assert durable.call_args.kwargs["organization_id"] == org_id
+            assert durable.call_args.kwargs["solution_id"] is None
+            # Unknown Solution resolves to None → 404, before the emit.
+            assert unknown_solution.status_code == 404, unknown_solution.text
+            # Malformed scope and invalid topic are 400/400 like the HTTP path.
+            assert malformed_scope.status_code == 400, malformed_scope.text
+            assert invalid_topic.status_code == 400, invalid_topic.text
+            assert durable.await_count == 1
+        finally:
+            await server.stop()
+            from sqlalchemy import delete
+
+            async with async_session_factory() as session:
+                await session.execute(
+                    delete(OrganizationModel).where(
+                        OrganizationModel.id == org_id
+                    )
+                )
+                await session.commit()
+
+    @pytest.mark.asyncio
+    async def test_forms_list_and_get_over_socket(self, async_session_factory):
+        from sqlalchemy import delete
+
+        from src.models.enums import FormAccessLevel
+        from src.models.orm.forms import Form as FormModel
+        from src.models.orm.organizations import Organization as OrganizationModel
+
+        stem = f"wsdk-form-{uuid4().hex[:8]}"
+        async with async_session_factory() as session:
+            org = OrganizationModel(
+                name=f"{stem}-org",
+                is_active=True,
+                is_provider=False,
+                created_by="worker-sdk-http-test",
+            )
+            session.add(org)
+            await session.flush()
+            form = FormModel(
+                name=stem,
+                access_level=FormAccessLevel.AUTHENTICATED,
+                organization_id=org.id,
+                is_active=True,
+                created_by="worker-sdk-http-test",
+            )
+            session.add(form)
+            await session.commit()
+            org_id, form_id = org.id, form.id
+
+        headers = {"Authorization": f"Bearer {_engine_token()}"}
+        server = WorkerSdkHttpServer()
+        await server.start()
+        try:
+            async with _socket_client(server) as client:
+                listed = await client.get("/api/forms", headers=headers)
+                detail = await client.get(f"/api/forms/{form_id}", headers=headers)
+                missing = await client.get(f"/api/forms/{uuid4()}", headers=headers)
+                malformed = await client.get("/api/forms/not-a-uuid", headers=headers)
+                # The detail route's ``/{form_id}/logo`` sibling is not mounted.
+                sibling = await client.get(
+                    f"/api/forms/{form_id}/logo", headers=headers
+                )
+            assert listed.status_code == 200, listed.text
+            names = {f["name"] for f in listed.json()}
+            assert stem in names
+            assert detail.status_code == 200, detail.text
+            assert detail.json()["id"] == str(form_id)
+            assert detail.json()["name"] == stem
+            assert missing.status_code == 404, missing.text
+            assert malformed.status_code == 422, malformed.text
+            assert sibling.status_code == 404, sibling.text
+        finally:
+            await server.stop()
+            async with async_session_factory() as session:
+                await session.execute(
+                    delete(FormModel).where(FormModel.id == form_id)
+                )
+                await session.execute(
+                    delete(OrganizationModel).where(
+                        OrganizationModel.id == org_id
+                    )
+                )
+                await session.commit()
+
+    @pytest.mark.asyncio
+    async def test_events_and_forms_require_auth_over_socket(self):
+        server = WorkerSdkHttpServer()
+        await server.start()
+        try:
+            async with _socket_client(server) as client:
+                missing_emit = await client.post(
+                    "/api/events/emit",
+                    json={"topic": "wsdk.a.b", "data": {}},
+                )
+                invalid_emit = await client.post(
+                    "/api/events/emit",
+                    json={"topic": "wsdk.a.b", "data": {}},
+                    headers={"Authorization": "Bearer not-a-token"},
+                )
+                missing_list = await client.get("/api/forms")
+                invalid_get = await client.get(
+                    f"/api/forms/{uuid4()}",
+                    headers={"Authorization": "Bearer not-a-token"},
+                )
+            assert missing_emit.status_code == 401, missing_emit.text
+            assert invalid_emit.status_code == 401, invalid_emit.text
+            assert missing_list.status_code == 401, missing_list.text
+            assert invalid_get.status_code == 401, invalid_get.text
+        finally:
+            await server.stop()
+
+    @pytest.mark.asyncio
+    async def test_forms_cross_org_get_is_403_over_socket(
+        self, async_session_factory
+    ):
+        from sqlalchemy import delete
+
+        from src.core.security import create_access_token
+        from src.models.enums import FormAccessLevel
+        from src.models.orm.forms import Form as FormModel
+        from src.models.orm.organizations import Organization as OrganizationModel
+
+        stem = f"wsdk-form-foreign-{uuid4().hex[:8]}"
+        async with async_session_factory() as session:
+            org = OrganizationModel(
+                name=f"{stem}-org",
+                is_active=True,
+                is_provider=False,
+                created_by="worker-sdk-http-test",
+            )
+            session.add(org)
+            await session.flush()
+            form = FormModel(
+                name=stem,
+                access_level=FormAccessLevel.AUTHENTICATED,
+                organization_id=org.id,
+                is_active=True,
+                created_by="worker-sdk-http-test",
+            )
+            session.add(form)
+            await session.commit()
+            org_id, form_id = org.id, form.id
+
+        token = create_access_token(
+            {
+                "sub": str(uuid4()),
+                "email": "other@example.com",
+                "name": "Other",
+                "org_id": str(uuid4()),
+            }
+        )
+        server = WorkerSdkHttpServer()
+        await server.start()
+        try:
+            async with _socket_client(server) as client:
+                response = await client.get(
+                    f"/api/forms/{form_id}",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+            assert response.status_code == 403, response.text
+        finally:
+            await server.stop()
+            async with async_session_factory() as session:
+                await session.execute(
+                    delete(FormModel).where(FormModel.id == form_id)
+                )
+                await session.execute(
+                    delete(OrganizationModel).where(
+                        OrganizationModel.id == org_id
+                    )
+                )
+                await session.commit()
+
+
+class TestEngineLocalEventsFormsFallback:
+    """A failed event/form socket request never replays over the network API."""
+
+    @pytest.mark.asyncio
+    async def test_events_forms_local_failure_does_not_fall_back(
+        self, monkeypatch
+    ):
+        import importlib
+
+        import bifrost.client as client_module
+
+        events_mod = importlib.import_module("bifrost.events")
+        forms_mod = importlib.import_module("bifrost.forms")
+
+        # Prove no network fallback, not how long the transient backoff runs:
+        # collapse the retry schedule so each request makes one local attempt.
+        monkeypatch.setattr(client_module, "SDK_RETRY_BACKOFF_SECONDS", ())
+
+        missing_socket = os.path.join(
+            "/tmp", f"bifrost-missing-{uuid4().hex}.sock"
+        )
+        _install_engine_socket(missing_socket)
+        _set_client(BifrostClient("http://dead-api", "token"))
+
+        with pytest.raises(httpx.ConnectError):
+            await events_mod.events.emit("a.b", {})
+        with pytest.raises(httpx.ConnectError):
+            await forms_mod.forms.list()
+        with pytest.raises(httpx.ConnectError):
+            await forms_mod.forms.get(str(uuid4()))

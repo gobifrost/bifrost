@@ -1,7 +1,7 @@
-"""Gate A/C1/C2/C3a/C3b/C4a/C4b: real forked children reach the worker socket.
+"""Gate A/C1/C2/C3a/C3b/C4a/C4b/C5c: real forked children reach the worker socket.
 
 This is the end-to-end proof behind Gate A and the config, integrations,
-table, files, and artifact slices of Gate C. A real ``TemplateProcess`` forks a
+table, files, artifact, and event/form slices of Gate C. A real ``TemplateProcess`` forks a
 one-shot child and injects the worker's Unix socket path exactly as the pool
 does. The test process serves the **real** SDK routes on that socket via
 uvicorn, against the real database engine. The child's network API is dead by
@@ -1180,3 +1180,203 @@ async def test_forked_child_artifacts_over_worker_socket(monkeypatch):
         with contextlib.suppress(Exception):
             template.shutdown()
         await server.stop()
+
+
+async def _seed_committed_event_source(async_session_factory, topic: str) -> str:
+    """Seed a committed topic source so ``events.emit`` materializes a row.
+
+    The worker socket opens its own session from the worker's global engine,
+    so the source must be committed (not the rolled-back ``db_session``).
+    """
+    from src.models.enums import EventSourceType
+    from src.models.orm.events import EventSource
+
+    async with async_session_factory() as session:
+        source = EventSource(
+            name=f"wsdk-fork-topic-{uuid4().hex[:8]}",
+            source_type=EventSourceType.TOPIC,
+            event_type=topic,
+            created_by="worker-sdk-http-fork-test",
+        )
+        session.add(source)
+        await session.commit()
+        return str(source.id)
+
+
+async def _cleanup_committed_event_source(
+    async_session_factory, source_id: str
+) -> None:
+    from sqlalchemy import delete
+
+    from src.models.orm.events import Event, EventSource
+
+    async with async_session_factory() as session:
+        await session.execute(
+            delete(Event).where(Event.event_source_id == source_id)
+        )
+        await session.execute(
+            delete(EventSource).where(EventSource.id == source_id)
+        )
+        await session.commit()
+
+
+def _events_forms_script(*, topic: str, form_name: str, form_id: str) -> str:
+    source = f'''import os, sys
+from bifrost import events, forms
+from bifrost.client import get_engine_socket_path
+
+_socket = get_engine_socket_path()
+
+_emitted = await events.emit({topic!r}, {{"ping": "fork"}})
+
+_listed = await forms.list()
+_saw = any(f.name == {form_name!r} for f in _listed)
+_detail = await forms.get({form_id!r})
+try:
+    await forms.get("00000000-0000-0000-0000-000000000000")
+    _missing = "LEAKED"
+except ValueError:
+    _missing = "ValueError"
+except Exception as e:
+    _missing = f"{{type(e).__name__}}"
+
+result = {{
+    "used_socket": _socket is not None,
+    "socket_path": _socket,
+    "had_db_url": (
+        "BIFROST_DATABASE_URL" in os.environ
+        or "BIFROST_DATABASE_URL_SYNC" in os.environ
+    ),
+    "had_sqlalchemy": "sqlalchemy" in sys.modules,
+    "event_id": _emitted["event_id"],
+    "subscribers_notified": _emitted["subscribers_notified"],
+    "saw_form": _saw,
+    "detail_id": _detail.id,
+    "detail_name": _detail.name,
+    "missing": _missing,
+}}
+'''
+    return base64.b64encode(source.encode("utf-8")).decode("utf-8")
+
+
+@pytest.mark.asyncio
+async def test_forked_child_events_and_forms_over_worker_socket(
+    async_session_factory, monkeypatch
+):
+    """Gate C5c: events.emit and forms reads reach the real routes over the socket.
+
+    A real child forks with the worker's Unix socket injected and a dead
+    network API. It emits a topic event (with a committed source so a row is
+    materialized), lists forms, reads a seeded form, and maps a missing form to
+    ``ValueError``. This fork installs only the worker socket, not the
+    dedicated channel. Success with no DB credential proves the shared client
+    carried every call to the parent-served routes.
+    """
+    from src.core.security import mint_engine_token
+    from src.models.enums import FormAccessLevel
+    from src.models.orm.forms import Form as FormModel
+
+    tag = uuid4().hex[:8]
+    topic = f"wsdk.fork.{tag}"
+    form_name = f"wsdk-fork-form-{tag}"
+    source_id = await _seed_committed_event_source(async_session_factory, topic)
+
+    async with async_session_factory() as session:
+        form = FormModel(
+            name=form_name,
+            access_level=FormAccessLevel.AUTHENTICATED,
+            organization_id=None,
+            is_active=True,
+            created_by="worker-sdk-http-fork-test",
+        )
+        session.add(form)
+        await session.commit()
+        form_id = str(form.id)
+
+    # Any attempt to reach the network API fails loudly; the socket must
+    # serve every call.
+    monkeypatch.setenv("BIFROST_API_URL", "http://127.0.0.1:9")
+
+    engine_token, _ = mint_engine_token(
+        execution_id="gate-c5c-fork",
+        solution_id=None,
+        global_repo_access=True,
+        timeout_seconds=120,
+    )
+
+    server = WorkerSdkHttpServer()
+    await server.start()
+    assert server.socket_path is not None
+
+    template = TemplateProcess()
+    template.start()
+    try:
+        child_pid, work_queue, result_queue = template.fork(
+            worker_id="wsdk-events-forms-fork",
+            sdk_socket_path=server.socket_path,
+        )
+        try:
+            work_queue.put(
+                (
+                    "exec-wsdk-events-forms",
+                    _context_for(
+                        _events_forms_script(
+                            topic=topic, form_name=form_name, form_id=form_id
+                        ),
+                        engine_token,
+                        organization=None,
+                        is_platform_admin=False,
+                    ),
+                )
+            )
+            envelope = await asyncio.to_thread(result_queue.get, True, 90.0)
+        finally:
+            work_queue.close()
+            result_queue.close()
+
+        assert envelope["success"] is True, envelope
+        result = envelope["result"]
+        # Transport proof: socket injected, network API dead, no DB credential.
+        assert result["used_socket"] is True
+        assert result["socket_path"] == server.socket_path
+        assert result["had_db_url"] is False
+        assert result["had_sqlalchemy"] is False
+        # Emit reached the real route (event id + subscriber count) and the
+        # committed row is re-read over the parent's own session.
+        assert result["event_id"]
+        assert result["subscribers_notified"] == 0
+        from sqlalchemy import select
+
+        from src.models.orm.events import Event as EventModel
+
+        async with async_session_factory() as session:
+            committed = (
+                await session.execute(
+                    select(EventModel).where(
+                        EventModel.id == result["event_id"]
+                    )
+                )
+            ).scalar_one_or_none()
+        assert committed is not None, "emitted event was not committed"
+        assert committed.event_type == topic
+        assert committed.data == {"ping": "fork"}
+        # Forms reads: list sees the seeded form, detail round-trips, and a
+        # missing id maps to ``ValueError`` like the HTTP path.
+        assert result["saw_form"] is True
+        assert result["detail_id"] == form_id
+        assert result["detail_name"] == form_name
+        assert result["missing"] == "ValueError"
+
+        _wait_for_pid_to_die(child_pid)
+    finally:
+        with contextlib.suppress(Exception):
+            template.shutdown()
+        await server.stop()
+        from sqlalchemy import delete
+
+        async with async_session_factory() as session:
+            await session.execute(
+                delete(FormModel).where(FormModel.id == form_id)
+            )
+            await session.commit()
+        await _cleanup_committed_event_source(async_session_factory, source_id)

@@ -16,9 +16,9 @@ Covers the acceptance surface that does not need a forked child:
   claims are never read — the parent-verified own Solution id (or
   None) replaces ``caller_solution`` before the service call;
 - the durable emit runs once per request (no retry);
-- the SDK facade maps local results to the public surface and never
-  falls back to HTTP after a failed local call;
-- external callers (no transport) keep the HTTP path unchanged.
+- the SDK facade rides ``BifrostClient.engine_request`` with the exact HTTP
+  body/path and never falls back to the network API after a failed local call;
+- external callers (no injected socket) keep the HTTP path unchanged.
 """
 
 from __future__ import annotations
@@ -427,133 +427,89 @@ async def test_open_solution_emits_with_target(db_session):
 # =============================================================================
 
 
-def _local_error(status, detail="denied"):
-    from bifrost.client import raise_for_status_with_detail
-
-    request = httpx.Request("POST", "local://sdk/events/emit")
-    response = httpx.Response(status, json={"detail": detail}, request=request)
-    try:
-        raise_for_status_with_detail(response)
-    except Exception as e:  # noqa: BLE001 - re-raised below by the fake
-        return e
-    raise AssertionError("unreachable")
-
-
 @pytest.mark.asyncio
-async def test_facade_calls_local_transport_without_http():
-    from bifrost.events import events as events_facade
+class TestEngineRequestFacade:
+    """Gate C5c: the migrated events facade rides ``engine_request``.
 
-    body = {"event_id": str(uuid4()), "subscribers_notified": 2}
-    transport = AsyncMock()
-    transport.call_events_emit.return_value = body
-    with (
-        patch("bifrost._local_transport.get", return_value=transport),
-        patch(
-            "bifrost.events.get_client",
-            side_effect=AssertionError("HTTP fallback is forbidden"),
-        ),
-    ):
-        result = await events_facade.emit("acme.deal_won", {"amount": 5})
-    assert result == body
-    transport.call_events_emit.assert_awaited_once_with(
-        "acme.deal_won", {"amount": 5}, None, None
-    )
+    ``emit`` posts the exact HTTP body, keeps the shared client's default
+    timeout with no override, and errors surface as the same public
+    exceptions as the HTTP path — with no dedicated-channel frames and no
+    silent HTTP fallback.
+    """
 
+    def _client(self, *responses):
+        client = AsyncMock()
+        client.engine_request = AsyncMock(side_effect=responses)
+        return client
 
-@pytest.mark.asyncio
-async def test_facade_passes_scope_and_solution_to_transport():
-    from bifrost._context import clear_execution_context, set_execution_context
-    from bifrost._execution_context import ExecutionContext, Organization
-    from bifrost.events import events as events_facade
+    async def test_emit_posts_exact_body_and_returns_dict(self):
+        from bifrost.events import events as events_facade
 
-    org_id = str(uuid4())
-    solution_id = str(uuid4())
-    org = Organization(id=org_id, name="Org")
-    ctx = ExecutionContext(
-        user_id="u",
-        email="u@example.com",
-        name="User",
-        scope=org_id,
-        organization=org,
-        is_platform_admin=True,
-        is_function_key=False,
-        execution_id="exec",
-        solution_id=solution_id,
-    )
-    set_execution_context(ctx)
-    try:
+        body = {"event_id": str(uuid4()), "subscribers_notified": 2}
+        client = self._client(
+            httpx.Response(200, json=body, request=httpx.Request("POST", "http://x"))
+        )
+        with (
+            patch("bifrost.events.get_client", return_value=client),
+            patch("bifrost.events.resolve_scope", return_value=None),
+            patch("bifrost.events.get_effective_solution", return_value=None),
+            patch("bifrost.events.get_caller_solution", return_value=None),
+        ):
+            result = await events_facade.emit("a.b", {"k": "v"})
+
+        assert result == body
+        call = client.engine_request.await_args
+        assert call.args == ("POST", "/api/events/emit")
+        assert call.kwargs["json"] == {
+            "topic": "a.b",
+            "data": {"k": "v"},
+            "scope": None,
+        }
+        assert "timeout" not in call.kwargs
+
+    async def test_emit_includes_scope_solution_and_caller(self):
+        from bifrost.events import events as events_facade
+
         body = {"event_id": str(uuid4()), "subscribers_notified": 0}
-        transport = AsyncMock()
-        transport.call_events_emit.return_value = body
-        with patch("bifrost._local_transport.get", return_value=transport):
+        org_id = str(uuid4())
+        solution_id = str(uuid4())
+        caller_id = str(uuid4())
+        client = self._client(
+            httpx.Response(200, json=body, request=httpx.Request("POST", "http://x"))
+        )
+        with (
+            patch("bifrost.events.get_client", return_value=client),
+            patch("bifrost.events.resolve_scope", return_value=org_id),
+            patch("bifrost.events.get_effective_solution", return_value=solution_id),
+            patch("bifrost.events.get_caller_solution", return_value=caller_id),
+        ):
             result = await events_facade.emit(
                 "a.b", {}, scope=org_id, solution=solution_id
             )
-    finally:
-        clear_execution_context()
-    assert result == body
-    transport.call_events_emit.assert_awaited_once_with(
-        "a.b", {}, org_id, solution_id
-    )
 
+        assert result == body
+        assert client.engine_request.await_args.kwargs["json"] == {
+            "topic": "a.b",
+            "data": {},
+            "scope": org_id,
+            "solution": solution_id,
+            "caller_solution": caller_id,
+        }
 
-@pytest.mark.asyncio
-async def test_facade_never_falls_back_to_http():
-    """A failed local call raises loudly instead of retrying over HTTP."""
-    from bifrost._local_transport import LocalTransportClosed
-    from bifrost.events import events as events_facade
+    async def test_emit_error_statuses_surface_without_channel(self):
+        from bifrost.client import BifrostAuthorizationError, BifrostAPIError
+        from bifrost.events import events as events_facade
 
-    transport = AsyncMock()
-    transport.call_events_emit.side_effect = LocalTransportClosed("closed")
-    with (
-        patch("bifrost._local_transport.get", return_value=transport),
-        patch(
-            "bifrost.events.get_client",
-            side_effect=AssertionError("HTTP fallback is forbidden"),
-        ),
-    ):
-        with pytest.raises(LocalTransportClosed):
-            await events_facade.emit("a.b", {})
-
-
-@pytest.mark.asyncio
-async def test_facade_propagates_local_403_like_http():
-    """Local 403s surface as authorization errors — no silent mapping."""
-    from bifrost.client import BifrostAuthorizationError
-    from bifrost.events import events as events_facade
-
-    transport = AsyncMock()
-    transport.call_events_emit.side_effect = _local_error(
-        403, "Services may only emit into their own organization"
-    )
-    with patch("bifrost._local_transport.get", return_value=transport):
-        with pytest.raises(BifrostAuthorizationError):
-            await events_facade.emit("a.b", {})
-
-
-@pytest.mark.asyncio
-async def test_external_http_path_unchanged():
-    """Without a transport the facade keeps the HTTP calls."""
-    from bifrost.events import events as events_facade
-
-    body = {"event_id": str(uuid4()), "subscribers_notified": 1}
-
-    def _response(status, payload):
-        request = httpx.Request("POST", "http://test.local/api/events/emit")
-        return httpx.Response(status, json=payload, request=request)
-
-    client = AsyncMock()
-    client.post.return_value = _response(200, body)
-    with (
-        patch("bifrost._local_transport.get", return_value=None),
-        patch("bifrost.events.get_client", return_value=client),
-        patch("bifrost.events.resolve_scope", return_value=None),
-        patch("bifrost.events.get_effective_solution", return_value=None),
-        patch("bifrost.events.get_caller_solution", return_value=None),
-    ):
-        result = await events_facade.emit("a.b", {"k": "v"})
-    assert result == body
-    client.post.assert_awaited_once_with(
-        "/api/events/emit",
-        json={"topic": "a.b", "data": {"k": "v"}, "scope": None},
-    )
+        request = httpx.Request("POST", "http://engine/api/events/emit")
+        for status, exc_type in (
+            (400, BifrostAPIError),
+            (403, BifrostAuthorizationError),
+            (500, BifrostAPIError),
+        ):
+            client = self._client(
+                httpx.Response(status, json={"detail": "denied"}, request=request)
+            )
+            with patch("bifrost.events.get_client", return_value=client):
+                with pytest.raises(exc_type) as exc_info:
+                    await events_facade.emit("a.b", {})
+            assert exc_info.value.response.status_code == status
