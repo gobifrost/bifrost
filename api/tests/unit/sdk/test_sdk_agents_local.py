@@ -1,25 +1,28 @@
 """Engine-local transport for ``bifrost.agents.enqueue`` / ``get_run``.
 
-Covers the acceptance surface that does not need a forked child:
+Gate C5b moved the facade onto ``BifrostClient.engine_request`` (worker Unix
+socket in an engine child, network API otherwise) and off the legacy
+dedicated channel. This file covers the acceptance surface that does not need
+a forked child:
 
-- the parent dispatcher calls the shared ``shared.sdk_agent_runs``
-  service with a parent-derived actor (engine superuser vs service
-  non-superuser — never child fields) and maps unknown-agent 404,
-  inactive-Solution 409, paused bodies, hidden-run 404, and malformed
-  frames to HTTP-style statuses;
-- the child transport performs real enqueue/get_run round trips with
-  zero HTTP requests and no silent HTTP fallback;
-- the SDK facade maps local results to the public models/errors
+- the legacy parent dispatcher still calls the shared
+  ``shared.sdk_agent_runs`` service with a parent-derived actor (engine
+  superuser vs service non-superuser — never child fields) and maps
+  unknown-agent 404, inactive-Solution 409, paused bodies, hidden-run 404,
+  and malformed frames to HTTP-style statuses;
+- the migrated SDK facade rides ``engine_request`` with the exact HTTP
+  path/body, mapping results to the public models/errors
   (``AgentRunHandle``, ``AgentRun``, ``AgentPausedError``,
-  ``ValueError``/``PermissionError``) and preserves ``run``/``wait``
-  timeout and pending semantics;
-- external callers (no transport) keep the HTTP path unchanged.
+  ``ValueError``/``PermissionError``) and preserving ``run``/``wait``
+  timeout, workflow-deadline, polling, and cancellation semantics;
+- a failed local request raises and never falls back to the network API.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import importlib as _importlib
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -31,6 +34,22 @@ from bifrost._local_transport import OP_AGENTS_ENQUEUE, OP_AGENTS_GET_RUN
 @contextlib.asynccontextmanager
 async def _db_factory(db_session):
     yield db_session
+
+
+def _agent_run_body(run_id, status="completed", output=None):
+    body = {
+        "id": run_id,
+        "agent_id": str(uuid4()),
+        "trigger_type": "api",
+        "status": status,
+        "iterations_used": 0,
+        "tokens_used": 0,
+        "metadata": {},
+        "created_at": "2026-09-01T12:00:00+00:00",
+    }
+    if output is not None:
+        body["output"] = output
+    return body
 
 
 def _context_data(org_id=None, **kwargs):
@@ -472,294 +491,211 @@ class TestGetRunDispatch:
 
 
 @pytest.mark.asyncio
-class TestFacadeLocalMapping:
-    async def test_enqueue_paused_maps_to_typed_error_without_http(self):
-        import importlib as _importlib
-        agents_mod = _importlib.import_module("bifrost.agents")
+class TestEngineRequestFacade:
+    """Gate C5b: the migrated agent facade rides ``engine_request``.
 
-        async def _dead_client(*args, **kwargs):
-            raise AssertionError("HTTP must not be used in the engine path")
+    ``enqueue`` posts the exact HTTP body, ``get_run`` reads the exact HTTP
+    detail path, both keep the shared client's default timeout with no
+    override, and errors surface as the same public exceptions as the HTTP
+    path — with no dedicated-channel frames and no silent HTTP fallback.
+    """
 
-        paused_body = {
-            "status": "paused",
-            "accepted": False,
-            "message": "Agent 'P' is paused. Request not processed.",
-            "agent_id": str(uuid4()),
-        }
+    def _client(self, responses):
+        client = MagicMock()
+        client.engine_request = AsyncMock(side_effect=responses)
+        return client
 
-        class _FakeTransport:
-            async def call_agents_enqueue(self, *args, **kwargs):
-                return paused_body
+    async def test_enqueue_posts_exact_body_and_returns_handle(self):
+        import httpx
 
-            async def call_agents_get_run(self, *args, **kwargs):
-                raise AssertionError("unexpected get_run")
-
-        with (
-            patch.object(agents_mod, "get_client", new=_dead_client),
-            patch(
-                "bifrost._local_transport.get", return_value=_FakeTransport()
-            ),
-        ):
-            with pytest.raises(agents_mod.AgentPausedError) as exc_info:
-                await agents_mod.agents.enqueue("P")
-
-        assert exc_info.value.agent_id == paused_body["agent_id"]
-
-    async def test_enqueue_success_maps_to_handle_without_http(self):
-        import importlib as _importlib
         agents_mod = _importlib.import_module("bifrost.agents")
         from bifrost.models import AgentRunHandle
 
         run_id = str(uuid4())
-
-        async def _dead_client(*args, **kwargs):
-            raise AssertionError("HTTP must not be used in the engine path")
-
-        class _FakeTransport:
-            async def call_agents_enqueue(self, agent_name, input, output_schema):
-                assert agent_name == "Local Agent"
-                assert input == {"a": 1}
-                return {"run_id": run_id, "status": "queued"}
-
-            async def call_agents_get_run(self, *args, **kwargs):
-                raise AssertionError("unexpected get_run")
-
-        with (
-            patch.object(agents_mod, "get_client", new=_dead_client),
-            patch(
-                "bifrost._local_transport.get", return_value=_FakeTransport()
-            ),
-        ):
+        client = self._client(
+            [httpx.Response(202, json={"run_id": run_id, "status": "queued"})]
+        )
+        with patch.object(agents_mod, "get_client", return_value=client):
             handle = await agents_mod.agents.enqueue(
-                "Local Agent", {"a": 1}
+                "Local Agent", {"a": 1}, output_schema={"type": "object"}
             )
 
         assert isinstance(handle, AgentRunHandle)
         assert handle.run_id == run_id
+        call = client.engine_request.await_args
+        assert call.args == ("POST", "/api/agent-runs/enqueue")
+        assert call.kwargs["json"] == {
+            "agent_name": "Local Agent",
+            "input": {"a": 1},
+            "output_schema": {"type": "object"},
+        }
+        assert "timeout" not in call.kwargs
 
-    async def test_get_run_404_maps_to_value_error_without_http(self):
-        import importlib as _importlib
+    async def test_enqueue_paused_maps_to_typed_error(self):
+        import httpx
+
         agents_mod = _importlib.import_module("bifrost.agents")
-        from bifrost._local_transport import raise_for_local_status
 
-        async def _dead_client(*args, **kwargs):
-            raise AssertionError("HTTP must not be used in the engine path")
+        agent_id = str(uuid4())
+        client = self._client(
+            [
+                httpx.Response(
+                    200,
+                    json={
+                        "status": "paused",
+                        "accepted": False,
+                        "message": "Agent 'P' is paused. Request not processed.",
+                        "agent_id": agent_id,
+                    },
+                )
+            ]
+        )
+        with patch.object(agents_mod, "get_client", return_value=client):
+            with pytest.raises(agents_mod.AgentPausedError) as exc_info:
+                await agents_mod.agents.enqueue("P")
 
-        class _FakeTransport:
-            async def call_agents_enqueue(self, *args, **kwargs):
-                raise AssertionError("unexpected enqueue")
+        assert exc_info.value.agent_id == agent_id
 
-            async def call_agents_get_run(self, run_id):
-                raise_for_local_status(404, "not found", OP_AGENTS_GET_RUN)
+    async def test_get_run_reads_exact_path_and_returns_model(self):
+        import httpx
 
-        with (
-            patch.object(agents_mod, "get_client", new=_dead_client),
-            patch(
-                "bifrost._local_transport.get", return_value=_FakeTransport()
-            ),
-        ):
-            with pytest.raises(ValueError, match="not found"):
-                await agents_mod.agents.get_run(str(uuid4()))
-
-    async def test_get_run_403_maps_to_permission_error_without_http(self):
-        import importlib as _importlib
         agents_mod = _importlib.import_module("bifrost.agents")
-        from bifrost._local_transport import raise_for_local_status
+        from bifrost.models import AgentRun
 
-        async def _dead_client(*args, **kwargs):
-            raise AssertionError("HTTP must not be used in the engine path")
+        run_id = str(uuid4())
+        client = self._client(
+            [httpx.Response(200, json=_agent_run_body(run_id))]
+        )
+        with patch.object(agents_mod, "get_client", return_value=client):
+            run = await agents_mod.agents.get_run(run_id)
 
-        class _FakeTransport:
-            async def call_agents_enqueue(self, *args, **kwargs):
-                raise AssertionError("unexpected enqueue")
+        assert isinstance(run, AgentRun)
+        call = client.engine_request.await_args
+        assert call.args == ("GET", f"/api/agent-runs/{run_id}")
+        assert call.kwargs == {}
 
-            async def call_agents_get_run(self, run_id):
-                raise_for_local_status(403, "denied", OP_AGENTS_GET_RUN)
+    async def test_get_run_404_and_403_map_to_public_errors(self):
+        import httpx
 
-        with (
-            patch.object(agents_mod, "get_client", new=_dead_client),
-            patch(
-                "bifrost._local_transport.get", return_value=_FakeTransport()
-            ),
-        ):
-            with pytest.raises(PermissionError, match="Access denied"):
-                await agents_mod.agents.get_run(str(uuid4()))
+        agents_mod = _importlib.import_module("bifrost.agents")
 
-    async def test_run_composes_local_enqueue_and_wait(self):
-        import importlib as _importlib
+        request = httpx.Request("GET", "http://engine/api/agent-runs/x")
+        for status, exc_type in ((404, ValueError), (403, PermissionError)):
+            client = self._client(
+                [httpx.Response(status, json={"detail": "no"}, request=request)]
+            )
+            with patch.object(agents_mod, "get_client", return_value=client):
+                with pytest.raises(exc_type):
+                    await agents_mod.agents.get_run(str(uuid4()))
+
+    async def test_enqueue_error_statuses_surface_without_channel(self):
+        import httpx
+
+        from bifrost.client import BifrostAPIError
+
+        agents_mod = _importlib.import_module("bifrost.agents")
+        request = httpx.Request("POST", "http://engine/api/agent-runs/enqueue")
+        for status in (400, 409, 500):
+            client = self._client(
+                [httpx.Response(status, json={"detail": "denied"}, request=request)]
+            )
+            with patch.object(agents_mod, "get_client", return_value=client):
+                with pytest.raises(BifrostAPIError) as exc_info:
+                    await agents_mod.agents.enqueue("A")
+            assert exc_info.value.response.status_code == status
+
+    async def test_run_composes_enqueue_and_wait(self):
+        import httpx
+
         agents_mod = _importlib.import_module("bifrost.agents")
 
         run_id = str(uuid4())
-        calls = {"enqueues": 0, "gets": 0}
-
-        async def _dead_client(*args, **kwargs):
-            raise AssertionError("HTTP must not be used in the engine path")
-
-        class _FakeTransport:
-            async def call_agents_enqueue(self, *args, **kwargs):
-                calls["enqueues"] += 1
-                return {"run_id": run_id, "status": "queued"}
-
-            async def call_agents_get_run(self, rid):
-                calls["gets"] += 1
-                assert rid == run_id
-                return {
-                    "id": run_id,
-                    "agent_id": str(uuid4()),
-                    "trigger_type": "api",
-                    "status": "completed",
-                    "output": {"text": "done"},
-                    "iterations_used": 0,
-                    "tokens_used": 0,
-                    "metadata": {},
-                    "created_at": "2026-09-01T12:00:00+00:00",
-                }
-
+        client = self._client(
+            [
+                httpx.Response(202, json={"run_id": run_id, "status": "queued"}),
+                httpx.Response(
+                    200,
+                    json=_agent_run_body(
+                        run_id, status="completed", output={"text": "done"}
+                    ),
+                ),
+            ]
+        )
         with (
-            patch.object(agents_mod, "get_client", new=_dead_client),
-            patch(
-                "bifrost._local_transport.get", return_value=_FakeTransport()
-            ),
+            patch.object(agents_mod, "get_client", return_value=client),
             patch("asyncio.sleep", new=AsyncMock()),
         ):
             result = await agents_mod.agents.run("Local Agent", timeout=5.0)
 
         assert result == "done"
-        assert calls["enqueues"] == 1
-        assert calls["gets"] >= 1
+        assert client.engine_request.await_count == 2
 
-    async def test_wait_timeout_preserves_pending_semantics_locally(self):
-        import importlib as _importlib
+    async def test_wait_timeout_returns_pending_without_reading(self):
         agents_mod = _importlib.import_module("bifrost.agents")
         from bifrost.models import AgentRunPending
 
         run_id = str(uuid4())
-
-        async def _dead_client(*args, **kwargs):
-            raise AssertionError("HTTP must not be used in the engine path")
-
-        class _FakeTransport:
-            async def call_agents_enqueue(self, *args, **kwargs):
-                raise AssertionError("unexpected enqueue")
-
-            async def call_agents_get_run(self, rid):
-                return {
-                    "id": run_id,
-                    "agent_id": str(uuid4()),
-                    "trigger_type": "api",
-                    "status": "running",
-                    "iterations_used": 0,
-                    "tokens_used": 0,
-                    "metadata": {},
-                    "created_at": "2026-09-01T12:00:00+00:00",
-                }
-
-        with (
-            patch.object(agents_mod, "get_client", new=_dead_client),
-            patch(
-                "bifrost._local_transport.get", return_value=_FakeTransport()
-            ),
-        ):
+        client = self._client([])
+        with patch.object(agents_mod, "get_client", return_value=client):
             pending = await agents_mod.agents.wait(run_id, timeout=0.0)
 
         assert isinstance(pending, AgentRunPending)
         assert pending.run_id == run_id
         assert pending.reason == "wait_timeout"
         assert pending.last_known_status is None
+        client.engine_request.assert_not_awaited()
 
-    async def test_wait_deadline_does_not_cancel_local_status_read(self):
-        import importlib as _importlib
+    async def test_wait_short_timeout_cancels_socket_read(self):
+        """A short wait timeout cancels the in-flight HTTPX status read.
+
+        The removed dedicated channel had to let a timed-out read finish so
+        its response could not poison the next call; ordinary HTTPX request
+        cancellation makes that workaround unnecessary.
+        """
+        agents_mod = _importlib.import_module("bifrost.agents")
+        from bifrost.models import AgentRunPending
+
+        run_id = str(uuid4())
+        cancelled = asyncio.Event()
+
+        async def _slow_read(*args, **kwargs):
+            try:
+                await asyncio.sleep(30)
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+        client = MagicMock()
+        client.engine_request = AsyncMock(side_effect=_slow_read)
+        with patch.object(agents_mod, "get_client", return_value=client):
+            pending = await agents_mod.agents.wait(run_id, timeout=0.05)
+
+        assert isinstance(pending, AgentRunPending)
+        assert pending.reason == "wait_timeout"
+        assert cancelled.is_set(), "the socket read must be cancelled"
+
+    async def test_wait_respects_workflow_deadline(self):
+        from types import SimpleNamespace
+        from datetime import datetime, timedelta, timezone
 
         agents_mod = _importlib.import_module("bifrost.agents")
         from bifrost.models import AgentRunPending
 
         run_id = str(uuid4())
-        release = asyncio.Event()
+        client = self._client([])
+        token = agents_mod._execution_context.set(
+            SimpleNamespace(
+                workflow_deadline=datetime.now(timezone.utc) + timedelta(seconds=5),
+                workflow_timeout_seconds=60,
+            )
+        )
+        try:
+            with patch.object(agents_mod, "get_client", return_value=client):
+                pending = await agents_mod.agents.wait(run_id)
+        finally:
+            agents_mod._execution_context.reset(token)
 
-        class _FakeTransport:
-            def __init__(self):
-                self.calls = 0
-                self.broken = False
-                self.first_task = None
-
-            async def call_agents_get_run(self, rid):
-                assert rid == run_id
-                assert not self.broken, "later SDK calls must keep working"
-                self.calls += 1
-                if self.calls == 1:
-                    self.first_task = asyncio.current_task()
-                    try:
-                        await release.wait()
-                    except asyncio.CancelledError:
-                        self.broken = True
-                        raise
-                return {
-                    "id": run_id,
-                    "agent_id": str(uuid4()),
-                    "trigger_type": "api",
-                    "status": "running",
-                    "iterations_used": 0,
-                    "tokens_used": 0,
-                    "metadata": {},
-                    "created_at": "2026-09-01T12:00:00+00:00",
-                }
-
-        transport = _FakeTransport()
-        with (
-            patch("bifrost._local_transport.get", return_value=transport),
-            patch.object(
-                agents_mod,
-                "get_client",
-                side_effect=AssertionError("HTTP must not be used in the engine path"),
-            ),
-        ):
-            pending = await agents_mod.agents.wait(run_id, timeout=0.05)
-            assert isinstance(pending, AgentRunPending)
-            assert pending.reason == "wait_timeout"
-            assert transport.first_task is not None
-            release.set()
-            await asyncio.wait_for(transport.first_task, timeout=1.0)
-            assert (await agents_mod.agents.get_run(run_id)).status == "running"
-        assert transport.calls == 2
-        assert not transport.broken
-
-    async def test_external_http_path_unchanged(self):
-        import importlib as _importlib
-        agents_mod = _importlib.import_module("bifrost.agents")
-        from bifrost.models import AgentRun, AgentRunHandle
-
-        run_id = str(uuid4())
-        response = MagicMock()
-        response.json.return_value = {"run_id": run_id, "status": "queued"}
-
-        client = MagicMock()
-        client.post = AsyncMock(return_value=response)
-
-        get_response = MagicMock()
-        get_response.status_code = 200
-        get_response.json.return_value = {
-            "id": run_id,
-            "agent_id": str(uuid4()),
-            "trigger_type": "api",
-            "status": "completed",
-            "output": {"text": "done"},
-            "iterations_used": 0,
-            "tokens_used": 0,
-            "metadata": {},
-            "created_at": "2026-09-01T12:00:00+00:00",
-        }
-        client.get = AsyncMock(return_value=get_response)
-
-        with (
-            patch(
-                "bifrost._local_transport.get", return_value=None
-            ),
-            patch.object(agents_mod, "get_client", return_value=client),
-        ):
-            handle = await agents_mod.agents.enqueue("Ext Agent")
-            assert isinstance(handle, AgentRunHandle)
-            run = await agents_mod.agents.get_run(run_id)
-            assert isinstance(run, AgentRun)
-
-        client.post.assert_awaited_once()
-        client.get.assert_awaited_once()
+        assert isinstance(pending, AgentRunPending)
+        assert pending.run_id == run_id
+        assert pending.reason == "workflow_deadline"
+        client.engine_request.assert_not_awaited()

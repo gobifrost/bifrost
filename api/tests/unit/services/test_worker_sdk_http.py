@@ -28,6 +28,7 @@ from bifrost.client import (
     get_engine_socket_path,
 )
 from src.services.execution.worker_sdk_http import (
+    AGENT_RUN_ROUTE_METHODS,
     ARTIFACT_ROUTE_METHODS,
     ARTIFACT_ROUTE_PATHS,
     CONFIG_ROUTE_PATHS,
@@ -146,6 +147,7 @@ class TestRouteReuse:
     def test_build_app_mounts_real_sdk_routes_by_identity(self):
         from fastapi.routing import APIRoute
 
+        from src.routers.agent_runs import router as agent_runs_router
         from src.routers.cli import router as sdk_router
         from src.routers.executions import router as executions_router
         from src.routers.files import router as files_router
@@ -212,6 +214,12 @@ class TestRouteReuse:
             if (wanted := EXECUTION_ROUTE_METHODS.get(getattr(route, "path", None)))
             for method in (getattr(route, "methods", None) or set()) & wanted
         }
+        agent_run_originals = {
+            (route.path, method): route
+            for route in agent_runs_router.routes
+            if (wanted := AGENT_RUN_ROUTE_METHODS.get(getattr(route, "path", None)))
+            for method in (getattr(route, "methods", None) or set()) & wanted
+        }
 
         app = build_worker_sdk_app()
         mounted = [route for route in app.router.routes if isinstance(route, APIRoute)]
@@ -251,6 +259,12 @@ class TestRouteReuse:
             if route.path in EXECUTION_ROUTE_METHODS
             for method in route.methods
         }
+        mounted_agent_runs = {
+            (route.path, method): route
+            for route in mounted
+            if route.path in AGENT_RUN_ROUTE_METHODS
+            for method in route.methods
+        }
 
         # Only the selected routes, and the exact registered objects — no
         # copied handlers and no rest of the API surface.
@@ -288,6 +302,11 @@ class TestRouteReuse:
         for key, route in mounted_executions.items():
             assert route is executions_originals[key]
             assert route.endpoint is executions_originals[key].endpoint
+
+        assert set(mounted_agent_runs) == set(agent_run_originals)
+        for key, route in mounted_agent_runs.items():
+            assert route is agent_run_originals[key]
+            assert route.endpoint is agent_run_originals[key].endpoint
 
         # The shared ``/api/tables/{table_id}`` path must not drag in its
         # GET/PATCH metadata siblings.
@@ -415,6 +434,18 @@ class TestRouteReuse:
         assert set(WORKFLOW_ROUTE_METHODS).isdisjoint(EXECUTION_ROUTE_METHODS)
         assert set(EXECUTION_ROUTE_METHODS).isdisjoint(SDK_ROUTE_PATHS)
         assert set(WORKFLOW_ROUTE_METHODS).isdisjoint(SDK_ROUTE_PATHS)
+
+    def test_agent_run_route_selection_is_exact(self):
+        """Gate C5b mounts only the enqueue POST and the detail GET."""
+        assert AGENT_RUN_ROUTE_METHODS == {
+            "/api/agent-runs/enqueue": frozenset({"POST"}),
+            "/api/agent-runs/{run_id}": frozenset({"GET"}),
+        }
+        assert set(AGENT_RUN_ROUTE_METHODS).isdisjoint(
+            SDK_ROUTE_PATHS
+            | set(WORKFLOW_ROUTE_METHODS)
+            | set(EXECUTION_ROUTE_METHODS)
+        )
 
     @pytest.mark.asyncio
     async def test_unknown_route_is_404(self):
@@ -1681,3 +1712,271 @@ class TestEngineLocalWorkflowExecutionFallback:
             await executions.list()
         with pytest.raises(httpx.ConnectError):
             await executions.get(str(uuid4()))
+
+
+class TestSocketAgentRuns:
+    """Gate C5b: the socket serves the real SDK agent-run routes."""
+
+    @pytest.mark.asyncio
+    async def test_enqueue_over_socket_reaches_real_route(
+        self, async_session_factory
+    ):
+        from sqlalchemy import delete
+
+        from src.models.orm.agents import Agent as AgentModel
+
+        agent_name = f"wsdk-agent-{uuid4().hex[:8]}"
+        async with async_session_factory() as session:
+            agent = AgentModel(
+                name=agent_name,
+                system_prompt="Socket test agent.",
+                is_active=True,
+                created_by="worker-sdk-http-test",
+            )
+            session.add(agent)
+            await session.commit()
+            agent_id = agent.id
+
+        run_id = str(uuid4())
+        headers = {"Authorization": f"Bearer {_engine_token()}"}
+        server = WorkerSdkHttpServer()
+        await server.start()
+        try:
+            # The route, auth, DTO validation, and shared service run for real;
+            # only the broker-publishing leaf is stubbed so the unit lane does
+            # not hand a run to a worker.
+            with patch(
+                "src.services.execution.agent_run_service.enqueue_agent_run",
+                new=AsyncMock(return_value=run_id),
+            ) as mock_enqueue:
+                async with _socket_client(server) as client:
+                    response = await client.post(
+                        "/api/agent-runs/enqueue",
+                        json={
+                            "agent_name": agent_name,
+                            "input": {"ticket_id": 1},
+                        },
+                        headers=headers,
+                    )
+            assert response.status_code == 202, response.text
+            assert response.json() == {"run_id": run_id, "status": "queued"}
+            assert mock_enqueue.await_count == 1
+            kwargs = mock_enqueue.call_args.kwargs
+            assert kwargs["agent_id"] == str(agent_id)
+            assert kwargs["trigger_type"] == "api"
+            assert kwargs["input_data"] == {"ticket_id": 1}
+            assert kwargs["sync"] is False
+        finally:
+            await server.stop()
+            async with async_session_factory() as session:
+                await session.execute(
+                    delete(AgentModel).where(AgentModel.id == agent_id)
+                )
+                await session.commit()
+
+    @pytest.mark.asyncio
+    async def test_live_read_over_socket_returns_detail(
+        self, async_session_factory
+    ):
+        from sqlalchemy import delete, select
+
+        from src.models.orm.agent_runs import AgentRun as AgentRunModel
+        from src.models.orm.agents import Agent as AgentModel
+
+        stem = f"wsdk-read-{uuid4().hex[:8]}"
+        agent_name = f"{stem}-agent"
+        async with async_session_factory() as session:
+            agent = AgentModel(
+                name=agent_name,
+                system_prompt="Socket read agent.",
+                is_active=True,
+                created_by="worker-sdk-http-test",
+            )
+            session.add(agent)
+            await session.flush()
+            run = AgentRunModel(
+                agent_id=agent.id,
+                trigger_type="api",
+                status="completed",
+            )
+            session.add(run)
+            await session.commit()
+            agent_id, run_id = agent.id, run.id
+
+        server = WorkerSdkHttpServer()
+        await server.start()
+        try:
+            async with _socket_client(server) as client:
+                response = await client.get(
+                    f"/api/agent-runs/{run_id}",
+                    headers={"Authorization": f"Bearer {_engine_token()}"},
+                )
+            assert response.status_code == 200, response.text
+            payload = response.json()
+            assert payload["id"] == str(run_id)
+            assert payload["agent_name"] == agent_name
+            assert payload["status"] == "completed"
+
+            # The row is durable and visible to an independent session.
+            async with async_session_factory() as check:
+                row = (
+                    await check.execute(
+                        select(AgentRunModel).where(AgentRunModel.id == run_id)
+                    )
+                ).scalar_one_or_none()
+            assert row is not None
+        finally:
+            await server.stop()
+            async with async_session_factory() as session:
+                await session.execute(
+                    delete(AgentRunModel).where(AgentRunModel.id == run_id)
+                )
+                await session.execute(
+                    delete(AgentModel).where(AgentModel.id == agent_id)
+                )
+                await session.commit()
+
+    @pytest.mark.asyncio
+    async def test_missing_run_and_agent_are_404_over_socket(self):
+        headers = {"Authorization": f"Bearer {_engine_token()}"}
+        server = WorkerSdkHttpServer()
+        await server.start()
+        try:
+            async with _socket_client(server) as client:
+                missing_run = await client.get(
+                    f"/api/agent-runs/{uuid4()}", headers=headers
+                )
+                missing_agent = await client.post(
+                    "/api/agent-runs/enqueue",
+                    json={"agent_name": f"absent-{uuid4().hex[:8]}"},
+                    headers=headers,
+                )
+            assert missing_run.status_code == 404, missing_run.text
+            assert missing_agent.status_code == 404, missing_agent.text
+        finally:
+            await server.stop()
+
+    @pytest.mark.asyncio
+    async def test_malformed_bodies_are_422_over_socket(self):
+        headers = {"Authorization": f"Bearer {_engine_token()}"}
+        server = WorkerSdkHttpServer()
+        await server.start()
+        try:
+            async with _socket_client(server) as client:
+                malformed_id = await client.get(
+                    "/api/agent-runs/not-a-uuid", headers=headers
+                )
+                malformed_body = await client.post(
+                    "/api/agent-runs/enqueue", json={}, headers=headers
+                )
+            assert malformed_id.status_code == 422, malformed_id.text
+            assert malformed_body.status_code == 422, malformed_body.text
+        finally:
+            await server.stop()
+
+    @pytest.mark.asyncio
+    async def test_auth_and_visibility_denied_over_socket(
+        self, async_session_factory
+    ):
+        from sqlalchemy import delete
+
+        from src.core.security import create_access_token
+        from src.models.orm.agent_runs import AgentRun as AgentRunModel
+        from src.models.orm.agents import Agent as AgentModel
+        from src.models.orm.organizations import Organization as OrganizationModel
+
+        async with async_session_factory() as session:
+            org = OrganizationModel(
+                name=f"wsdk-agent-org-{uuid4().hex[:8]}",
+                is_active=True,
+                is_provider=False,
+                created_by="worker-sdk-http-test",
+            )
+            session.add(org)
+            await session.flush()
+            agent = AgentModel(
+                name=f"wsdk-hidden-{uuid4().hex[:8]}",
+                system_prompt="Hidden agent.",
+                is_active=True,
+                created_by="worker-sdk-http-test",
+            )
+            session.add(agent)
+            await session.flush()
+            run = AgentRunModel(
+                agent_id=agent.id,
+                trigger_type="api",
+                status="completed",
+                org_id=org.id,
+            )
+            session.add(run)
+            await session.commit()
+            org_id, agent_id, run_id = org.id, agent.id, run.id
+
+        # A non-superuser outside the run's org must not see it.
+        other_token = create_access_token(
+            {
+                "sub": str(uuid4()),
+                "email": "other@example.com",
+                "name": "Other",
+                "org_id": str(uuid4()),
+            }
+        )
+        server = WorkerSdkHttpServer()
+        await server.start()
+        try:
+            async with _socket_client(server) as client:
+                missing_auth = await client.get(f"/api/agent-runs/{run_id}")
+                invalid_auth = await client.post(
+                    "/api/agent-runs/enqueue",
+                    json={"agent_name": "x"},
+                    headers={"Authorization": "Bearer not-a-token"},
+                )
+                hidden = await client.get(
+                    f"/api/agent-runs/{run_id}",
+                    headers={"Authorization": f"Bearer {other_token}"},
+                )
+            assert missing_auth.status_code == 401, missing_auth.text
+            assert invalid_auth.status_code == 401, invalid_auth.text
+            assert hidden.status_code == 404, hidden.text
+        finally:
+            await server.stop()
+            async with async_session_factory() as session:
+                await session.execute(
+                    delete(AgentRunModel).where(AgentRunModel.id == run_id)
+                )
+                await session.execute(
+                    delete(AgentModel).where(AgentModel.id == agent_id)
+                )
+                await session.execute(
+                    delete(OrganizationModel).where(
+                        OrganizationModel.id == org_id
+                    )
+                )
+                await session.commit()
+
+
+class TestEngineLocalAgentsFallback:
+    """A failed agent socket request never replays over the network API."""
+
+    @pytest.mark.asyncio
+    async def test_agents_local_failure_does_not_fall_back(self, monkeypatch):
+        import importlib
+
+        import bifrost.client as client_module
+
+        agents_mod = importlib.import_module("bifrost.agents")
+
+        # Prove no network fallback, not how long the transient backoff runs:
+        # collapse the retry schedule so each request makes one local attempt.
+        monkeypatch.setattr(client_module, "SDK_RETRY_BACKOFF_SECONDS", ())
+
+        missing_socket = os.path.join(
+            "/tmp", f"bifrost-missing-{uuid4().hex}.sock"
+        )
+        _install_engine_socket(missing_socket)
+        _set_client(BifrostClient("http://dead-api", "token"))
+
+        with pytest.raises(httpx.ConnectError):
+            await agents_mod.agents.enqueue("A")
+        with pytest.raises(httpx.ConnectError):
+            await agents_mod.agents.get_run(str(uuid4()))

@@ -1,8 +1,14 @@
-"""Bifrost SDK — Agent invocation from workflows."""
+"""Bifrost SDK — Agent invocation from workflows.
+
+``enqueue`` and ``get_run`` send the ordinary HTTP request through the
+shared ``BifrostClient``: over the worker's private Unix socket when the
+engine injected one, and over the network API otherwise. The worker parent
+owns the pooled database and the queue; an engine child holds neither, and a
+local attempt never falls back to the network API.
+"""
 from __future__ import annotations
 
 import json
-import logging
 import asyncio
 import time
 from datetime import datetime, timezone
@@ -11,8 +17,6 @@ from typing import Any, Literal
 from ._context import _execution_context
 from .client import get_client, raise_for_status_with_detail
 from .models import AgentRun, AgentRunHandle, AgentRunPending
-
-logger = logging.getLogger(__name__)
 
 
 def _poll_interval(elapsed_seconds: float) -> float:
@@ -25,14 +29,6 @@ def _poll_interval(elapsed_seconds: float) -> float:
 
 def _workflow_return_margin(timeout_seconds: int) -> float:
     return min(30.0, max(5.0, timeout_seconds * 0.15))
-
-
-def _observe_finished_status(task: asyncio.Task[AgentRun]) -> None:
-    """Retrieve the result of a status read that outlived its caller's wait."""
-    if not task.cancelled():
-        error = task.exception()
-        if error is not None:
-            logger.debug("Agent status read finished after wait ended: %s", type(error).__name__)
 
 
 class AgentPausedError(Exception):
@@ -59,26 +55,9 @@ class agents:
         output_schema: dict[str, Any] | None = None,
     ) -> AgentRunHandle:
         """Queue an agent and return as soon as the run is accepted."""
-        from ._local_transport import get as _get_local_transport
-
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: the parent queues through the shared
-            # agent-run service over the dedicated channel. A local
-            # attempt never falls back to HTTP — failures raise loudly
-            # below (a queued run may already exist, so a retry over
-            # HTTP could double-enqueue).
-            data = await transport.call_agents_enqueue(
-                agent_name, input or {}, output_schema,
-            )
-            if isinstance(data, dict) and data.get("status") == "paused":
-                raise AgentPausedError(
-                    data.get("message") or f"Agent '{agent_name}' is paused.",
-                    agent_id=data.get("agent_id"),
-                )
-            return AgentRunHandle.model_validate(data)
         client = get_client()
-        response = await client.post(
+        response = await client.engine_request(
+            "POST",
             "/api/agent-runs/enqueue",
             json={
                 "agent_name": agent_name,
@@ -100,29 +79,8 @@ class agents:
     @staticmethod
     async def get_run(run_id: str) -> AgentRun:
         """Get the current status and result for an agent run."""
-        from ._local_transport import get as _get_local_transport
-
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: the parent reads through the shared
-            # agent-run service over the dedicated channel. Error mapping
-            # matches the HTTP path below; a local attempt never falls
-            # back to HTTP.
-            from .client import BifrostAPIError
-
-            try:
-                data = await transport.call_agents_get_run(run_id)
-            except BifrostAPIError as e:
-                if e.response.status_code == 404:
-                    raise ValueError(f"Agent run not found: {run_id}") from None
-                if e.response.status_code == 403:
-                    raise PermissionError(
-                        f"Access denied to agent run: {run_id}"
-                    ) from None
-                raise
-            return AgentRun.model_validate(data)
         client = get_client()
-        response = await client.get(f"/api/agent-runs/{run_id}")
+        response = await client.engine_request("GET", f"/api/agent-runs/{run_id}")
         if response.status_code == 404:
             raise ValueError(f"Agent run not found: {run_id}")
         if response.status_code == 403:
@@ -187,9 +145,6 @@ class agents:
         if workflow_deadline is not None and workflow_deadline.tzinfo is None:
             raise ValueError("workflow_deadline must include a timezone")
 
-        from ._local_transport import get as _get_local_transport
-
-        local_transport = _get_local_transport()
         last_status: Literal["queued", "running", "cancelling"] | None = None
         while True:
             remaining: float | None = None
@@ -212,24 +167,13 @@ class agents:
             try:
                 if remaining is None:
                     run = await agents.get_run(run_id)
-                elif local_transport is not None:
-                    # A wait deadline is not a transport failure. Let the
-                    # in-flight read finish so its response cannot poison the
-                    # next local SDK call; only the caller stops waiting.
-                    status_task = asyncio.create_task(agents.get_run(run_id))
-                    try:
-                        done, _ = await asyncio.wait({status_task}, timeout=remaining)
-                    except asyncio.CancelledError:
-                        status_task.cancel()
-                        raise
-                    if not done:
-                        status_task.add_done_callback(_observe_finished_status)
-                        return AgentRunPending(
-                            run_id=run_id, last_known_status=last_status, reason=reason,
-                        )
-                    run = status_task.result()
                 else:
-                    run = await asyncio.wait_for(agents.get_run(run_id), timeout=remaining)
+                    # Ordinary HTTPX request cancellation: cancelling the
+                    # in-flight socket read is safe, unlike the removed
+                    # dedicated-channel transport whose pipes desynchronized.
+                    run = await asyncio.wait_for(
+                        agents.get_run(run_id), timeout=remaining
+                    )
             except asyncio.TimeoutError:
                 return AgentRunPending(
                     run_id=run_id, last_known_status=last_status, reason=reason,
