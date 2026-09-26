@@ -14,6 +14,7 @@ from fastmcp.tools import ToolResult
 from sqlalchemy import select
 from sqlalchemy.orm import joinedload
 
+from shared.scope_resolver import has_scope_bypass
 from src.services.mcp_server.tool_result import error_result, success_result
 from src.services.mcp_server.tools.db import get_tool_db
 
@@ -41,6 +42,31 @@ def _source_in_scope(context: Any, source_org_id: UUID | None) -> bool:
     if source_org_id is not None:
         return source_org_id == ctx_org
     return True
+
+
+def _source_write_in_scope(context: Any, source_org_id: UUID | None) -> bool:
+    """Whether the MCP caller may MUTATE an event source's own fields.
+
+    Used only by ``update_event_source`` / ``delete_event_source`` — the
+    source entity itself (name, is_active, cron_expression, etc). Unlike
+    ``_source_in_scope`` (used for reads, and for subscription create/
+    update/delete — subscribing a workflow onto a source is deliberately
+    open to any org, including global sources, since sources are shared
+    infrastructure), a global source (``source_org_id is None``) is
+    bypass-only for mutating the SOURCE — the caller must be a platform
+    admin or a provider-org member (``has_scope_bypass``). An org-owned
+    source may only be mutated by a caller in that same org, or a bypass
+    caller.
+    """
+    if has_scope_bypass(
+        is_platform_admin=getattr(context, "is_platform_admin", False),
+        is_provider_org=getattr(context, "is_provider_org", False),
+    ):
+        return True
+    ctx_org = getattr(context, "org_id", None)
+    if isinstance(ctx_org, str) and ctx_org:
+        ctx_org = UUID(ctx_org)
+    return source_org_id is not None and source_org_id == ctx_org
 
 
 async def _reject_service_target(db: Any, workflow_id: str) -> ToolResult | None:
@@ -202,10 +228,15 @@ async def create_event_source(
         user_email = getattr(context, "user_email", "") or getattr(context, "email", "mcp")
 
         async with get_tool_db(context) as db:
-            # Org scoping (EXT-1 NEW-2): a non-admin caller may only create
+            # Org scoping (EXT-1 NEW-2): a non-bypass caller may only create
             # sources in their OWN org — never a caller-supplied foreign org or
-            # global. A platform admin may target any org (or global).
-            if getattr(context, "is_platform_admin", False):
+            # global. A bypass caller (platform admin or provider-org member)
+            # may target any org (or global).
+            is_bypass = has_scope_bypass(
+                is_platform_admin=getattr(context, "is_platform_admin", False),
+                is_provider_org=getattr(context, "is_provider_org", False),
+            )
+            if is_bypass:
                 org_uuid = UUID(organization_id) if organization_id else None
             else:
                 ctx_org = getattr(context, "org_id", None)
@@ -237,12 +268,12 @@ async def create_event_source(
                     )
                 )
                 # Exact-scope existence check for the create TARGET (not a read
-                # cascade). org_uuid is None only when a platform admin targets
-                # global — non-admins were forced to their own org above, so the
-                # global arm is admin-only.
+                # cascade). org_uuid is None only when a bypass caller targets
+                # global — non-bypass callers were forced to their own org
+                # above, so the global arm is bypass-only.
                 if org_uuid:
                     query = query.where(EventSource.organization_id == org_uuid)
-                elif getattr(context, "is_platform_admin", False):
+                elif is_bypass:
                     query = query.where(EventSource.organization_id.is_(None))
                 else:
                     # Unreachable (non-admins have a forced org), defensive.
@@ -506,7 +537,7 @@ async def update_event_source(
             # Org gate (EXT-1 NEW-2): a by-id touch must respect the caller's
             # scope — 404-style denial for out-of-scope sources (don't reveal
             # existence cross-org / global-to-external).
-            if not _source_in_scope(context, source.organization_id):
+            if not _source_write_in_scope(context, source.organization_id):
                 return error_result(f"Event source not found: {source_id}")
 
             # Update basic fields
@@ -589,7 +620,7 @@ async def delete_event_source(
             # Org gate (EXT-1 NEW-2): a by-id touch must respect the caller's
             # scope — 404-style denial for out-of-scope sources (don't reveal
             # existence cross-org / global-to-external).
-            if not _source_in_scope(context, source.organization_id):
+            if not _source_write_in_scope(context, source.organization_id):
                 return error_result(f"Event source not found: {source_id}")
 
             # Unsubscribe webhooks

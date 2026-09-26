@@ -11,9 +11,11 @@ Note: `get_app_schema` provides a concise platform overview and component index.
 
 import logging
 from typing import Any
+from uuid import UUID
 
 from fastmcp.tools import ToolResult
 
+from shared.scope_resolver import has_scope_bypass
 from src.core.pubsub import publish_app_draft_update
 from src.services.mcp_server.tool_result import error_result, success_result
 from src.services.mcp_server.tools._http_bridge import call_rest
@@ -21,6 +23,41 @@ from src.services.mcp_server.tools._org_scope import apply_mcp_org_scope
 from src.services.mcp_server.tools.db import get_tool_db
 
 logger = logging.getLogger(__name__)
+
+
+def _write_scope_bypass(context: Any) -> bool:
+    return has_scope_bypass(
+        is_platform_admin=getattr(context, "is_platform_admin", False),
+        is_provider_org=getattr(context, "is_provider_org", False),
+    )
+
+
+def _caller_org_id(context: Any) -> UUID | None:
+    org_id = getattr(context, "org_id", None)
+    if isinstance(org_id, UUID):
+        return org_id
+    if isinstance(org_id, str) and org_id:
+        return UUID(org_id)
+    return None
+
+
+def _app_write_denied(context: Any, app: Any) -> bool:
+    """Whether the caller lacks write scope for ``app``.
+
+    Write scope is scope bypass (platform admin or provider-org member) or
+    the app belonging to the caller's own organization. A global app
+    (``organization_id is None``) can only be written by a bypass caller.
+    """
+    if _write_scope_bypass(context):
+        return False
+    return app.organization_id is None or app.organization_id != _caller_org_id(context)
+
+
+# Sentinel: a path did not resolve to any owning entity (App or Workflow).
+# Distinct from an owner whose organization_id is None (a global entity) —
+# an unresolved path is bypass-only, same as a global one, but for a
+# different reason (there's nothing to check ownership of).
+_NO_OWNING_ENTITY = object()
 
 
 def _pick_slug_row(rows: list[Any], org_id: Any) -> Any | None:
@@ -353,6 +390,14 @@ async def update_app(
             app = result.scalar_one_or_none()
 
             if not app:
+                return error_result(f"Application not found: {app_id}")
+
+            # Writing requires scope bypass or that the app belongs to the
+            # caller's own org — the same rule the REST router enforces via
+            # get_application_for_write_or_404. Report the same not-found
+            # message as the lookup above so a caller can't distinguish "no
+            # write access" from "doesn't exist".
+            if _app_write_denied(context, app):
                 return error_result(f"Application not found: {app_id}")
 
             # Solution-managed apps are read-only (criterion 6) — refuse before
@@ -821,6 +866,7 @@ async def push_files(
 
     from src.models.orm.applications import Application
     from src.models.orm.file_index import FileIndex
+    from src.models.orm.workflows import Workflow
     from src.services.app_storage import AppStorageService
     from src.services.file_storage import FileStorageService
     from src.services.solutions.guard import (
@@ -853,6 +899,80 @@ async def push_files(
                     SOLUTION_MANAGED_MESSAGE,
                     {"blocked_paths": blocked},
                 )
+
+            # Resolve the delete-sweep's target paths (if any) BEFORE any
+            # write, so the write-scope check below covers them too and a
+            # denial rejects the whole batch atomically — no partial writes.
+            delete_prefix_paths: set[str] = set()
+            if delete_missing_prefix:
+                sweep_prefix = delete_missing_prefix
+                if not sweep_prefix.endswith("/"):
+                    sweep_prefix += "/"
+                # The delete-sweep is a separate write path from the files-key
+                # guard above: an empty/partial `files` dict slips past the
+                # key check, but the sweep would still delete _repo files
+                # under `sweep_prefix`. Refuse if the sweep would touch ANY
+                # solution-managed app's files — in either direction: the
+                # delete prefix is under a managed prefix (delete
+                # "apps/managed/sub"), OR contains/equals one (delete
+                # "apps/" which would sweep "apps/managed/...").
+                if any(
+                    sweep_prefix.startswith(managed) or managed.startswith(sweep_prefix)
+                    for managed in managed_prefixes
+                ):
+                    return error_result(
+                        SOLUTION_MANAGED_MESSAGE,
+                        {"blocked_delete_prefix": delete_missing_prefix},
+                    )
+                existing_files = await db.execute(
+                    select(FileIndex.path).where(FileIndex.path.startswith(sweep_prefix))
+                )
+                existing_paths = {row[0] for row in existing_files.all()}
+                delete_prefix_paths = existing_paths - set(files.keys())
+
+            # Write scope: a non-bypass caller may only write or delete a
+            # path that maps to an owning entity (Application or Workflow)
+            # in their own organization. A path with no owning entity, or
+            # one owned by another org / global, is denied. Reject the
+            # WHOLE batch if ANY path fails — never a partial write.
+            if not _write_scope_bypass(context):
+                caller_org_id = _caller_org_id(context)
+                app_prefixes = [
+                    (app_obj.repo_path.rstrip("/") + "/", app_obj.organization_id)
+                    for app_obj in all_apps
+                    if app_obj.repo_path
+                ]
+                workflow_org_cache: dict[str, Any] = {}
+                denied: list[str] = []
+                for repo_path in sorted(set(files.keys()) | delete_prefix_paths):
+                    owner_org_id: Any = _NO_OWNING_ENTITY
+                    for app_prefix, org_id in app_prefixes:
+                        if repo_path.startswith(app_prefix):
+                            owner_org_id = org_id
+                            break
+                    if owner_org_id is _NO_OWNING_ENTITY and repo_path.endswith(".py"):
+                        if repo_path not in workflow_org_cache:
+                            wf_result = await db.execute(
+                                select(Workflow.organization_id)
+                                .where(Workflow.path == repo_path)
+                                .limit(1)
+                            )
+                            wf_row = wf_result.first()
+                            workflow_org_cache[repo_path] = (
+                                wf_row[0] if wf_row is not None else _NO_OWNING_ENTITY
+                            )
+                        owner_org_id = workflow_org_cache[repo_path]
+                    if (
+                        owner_org_id is _NO_OWNING_ENTITY
+                        or owner_org_id is None
+                        or owner_org_id != caller_org_id
+                    ):
+                        denied.append(repo_path)
+                if denied:
+                    return error_result(
+                        "You don't have permission to write one or more of these paths.",
+                        {"denied_paths": denied},
+                    )
 
             file_storage = FileStorageService(db)
             created = 0
@@ -890,30 +1010,11 @@ async def push_files(
                     push_errors.append(f"{repo_path}: {str(e)}")
 
             if delete_missing_prefix:
-                prefix = delete_missing_prefix
-                if not prefix.endswith("/"):
-                    prefix += "/"
-                # The delete-sweep is a separate write path from the files-key
-                # guard above: an empty/partial `files` dict slips past the key
-                # check, but the sweep would still delete _repo files under
-                # `prefix`. Refuse if the sweep would touch ANY solution-managed
-                # app's files — in either direction: the delete prefix is under a
-                # managed prefix (delete "apps/managed/sub"), OR contains/equals
-                # one (delete "apps/" which would sweep "apps/managed/...").
-                if any(
-                    prefix.startswith(managed) or managed.startswith(prefix)
-                    for managed in managed_prefixes
-                ):
-                    return error_result(
-                        SOLUTION_MANAGED_MESSAGE,
-                        {"blocked_delete_prefix": delete_missing_prefix},
-                    )
-                existing_files = await db.execute(
-                    select(FileIndex.path).where(FileIndex.path.startswith(prefix))
-                )
-                existing_paths = {row[0] for row in existing_files.all()}
-                push_paths = set(files.keys())
-                for path_to_delete in existing_paths - push_paths:
+                # The solution-managed guard and the target-path set were
+                # already resolved above (delete_prefix_paths) so the
+                # write-scope check could cover them before any write
+                # happened.
+                for path_to_delete in delete_prefix_paths:
                     try:
                         await file_storage.delete_file(path_to_delete)
                         deleted += 1
@@ -1118,6 +1219,11 @@ async def update_app_dependencies(
             result = await db.execute(query)
             app = result.scalar_one_or_none()
             if not app:
+                return error_result(f"Application not found: {app_id}")
+
+            # Writing requires scope bypass or that the app belongs to the
+            # caller's own org (see _app_write_denied).
+            if _app_write_denied(context, app):
                 return error_result(f"Application not found: {app_id}")
 
             # Solution-managed apps are read-only (criterion 6) — refuse before

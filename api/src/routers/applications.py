@@ -26,6 +26,7 @@ from pydantic import BaseModel
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 
+from shared.scope_resolver import has_scope_bypass
 from src.core.auth import Context, CurrentSuperuser, CurrentUser
 from src.core.log_safety import log_safe
 from src.core.org_filter import resolve_org_filter
@@ -427,6 +428,36 @@ async def get_application_by_id_or_404(
         )
 
 
+async def get_application_for_write_or_404(
+    ctx: Context,
+    app_id: UUID,
+) -> Application:
+    """Get application by UUID, enforcing write scope.
+
+    Read access is resolved exactly as ``get_application_by_id_or_404``
+    (unchanged). Mutating an application additionally requires scope bypass
+    (platform admin or provider-org member) or that the application belongs
+    to the caller's own organization. A global application
+    (``organization_id is None``) can only be mutated by a bypass caller.
+
+    Raises the identical 404 the read helper uses, so a caller cannot tell
+    "exists but no write access" apart from "does not exist".
+    """
+    application = await get_application_by_id_or_404(ctx, app_id)
+    is_bypass = has_scope_bypass(
+        is_platform_admin=ctx.user.is_platform_admin,
+        is_provider_org=ctx.user.is_provider_org,
+    )
+    if is_bypass:
+        return application
+    if application.organization_id is not None and application.organization_id == ctx.org_id:
+        return application
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=f"Application '{app_id}' not found",
+    )
+
+
 # =============================================================================
 # CRUD Endpoints
 # =============================================================================
@@ -638,6 +669,7 @@ async def update_application(
 ) -> ApplicationPublic:
     """Update application metadata and access control by ID."""
     await assert_entity_id_not_solution_managed(ctx.db, Application, app_id)
+    await get_application_for_write_or_404(ctx, app_id)
     repo = ApplicationRepository(
         ctx.db,
         ctx.org_id,
@@ -695,7 +727,7 @@ async def delete_application(
 ) -> None:
     """Delete an application by ID."""
     await assert_entity_id_not_solution_managed(ctx.db, Application, app_id)
-    application = await get_application_by_id_or_404(ctx, app_id)
+    application = await get_application_for_write_or_404(ctx, app_id)
     active_deployment_id = application.active_deployment_id
     repo = ApplicationRepository(
         ctx.db,
@@ -798,7 +830,7 @@ async def save_draft(
         is_superuser=user.is_platform_admin,
         is_external=user.is_external,
     )
-    app = await get_application_by_id_or_404(ctx, app_id)
+    app = await get_application_for_write_or_404(ctx, app_id)
     if app.repo_path is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -1037,7 +1069,7 @@ async def publish_application(
     """
     # Publishing a solution-managed app is a deploy-owned action.
     await assert_entity_id_not_solution_managed(ctx.db, Application, app_id)
-    application = await get_application_by_id_or_404(ctx, app_id)
+    application = await get_application_for_write_or_404(ctx, app_id)
     if application.app_model == "standalone_v2":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -1114,7 +1146,7 @@ async def replace_application_endpoint(
     """
     # Repointing a solution-managed app's source is a deploy-owned action.
     await assert_entity_id_not_solution_managed(ctx.db, Application, app_id)
-    app = await get_application_by_id_or_404(ctx, app_id)
+    app = await get_application_for_write_or_404(ctx, app_id)
     if app.app_model == "standalone_v2":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -1168,6 +1200,8 @@ async def swap_application_slugs(
     # Slug is a deploy-owned property for solution-managed apps — refuse both.
     await assert_entity_id_not_solution_managed(ctx.db, Application, data.app_a)
     await assert_entity_id_not_solution_managed(ctx.db, Application, data.app_b)
+    await get_application_for_write_or_404(ctx, data.app_a)
+    await get_application_for_write_or_404(ctx, data.app_b)
     repo = ApplicationRepository(
         ctx.db,
         ctx.org_id,
@@ -1448,7 +1482,7 @@ async def rollback_application(
         is_superuser=user.is_platform_admin,
         is_external=user.is_external,
     )
-    application = await get_application_by_id_or_404(ctx, app_id)
+    application = await get_application_for_write_or_404(ctx, app_id)
 
     try:
         await repo.rollback_to_version(application, data.version_id)
@@ -1483,7 +1517,7 @@ async def upload_application_logo(
     Requires the same permissions as updating the application.
     """
     await assert_entity_id_not_solution_managed(ctx.db, Application, app_id)
-    application = await get_application_by_id_or_404(ctx, app_id)
+    application = await get_application_for_write_or_404(ctx, app_id)
 
     content = await file.read()
     try:
@@ -1568,7 +1602,7 @@ async def delete_application_logo(
     ctx: Context,
 ) -> Response:
     await assert_entity_id_not_solution_managed(ctx.db, Application, app_id)
-    application = await get_application_by_id_or_404(ctx, app_id)
+    application = await get_application_for_write_or_404(ctx, app_id)
     application.logo_data = None
     application.logo_content_type = None
     application.logo_thumbnail_data = None

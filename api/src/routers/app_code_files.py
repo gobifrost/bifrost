@@ -25,6 +25,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Path, status
 
+from shared.scope_resolver import has_scope_bypass
 from src.core.auth import Context, CurrentUser
 from src.core.exceptions import AccessDeniedError
 from src.core.log_safety import log_safe
@@ -263,6 +264,36 @@ async def get_application_or_404(ctx: Context, app_id: UUID) -> Application:
         )
 
 
+async def get_application_for_write_or_404(ctx: Context, app_id: UUID) -> Application:
+    """Get application by UUID, enforcing write scope.
+
+    Read access (including the embed-token binding above) resolves exactly
+    as ``get_application_or_404``. Writing to an application's files
+    additionally requires scope bypass (platform admin or provider-org
+    member) or that the application belongs to the caller's own
+    organization. A global application (``organization_id is None``) can
+    only be written by a bypass caller. An embed principal has no
+    organization and no bypass flags, so it can never satisfy this rule —
+    embed tokens only ever get read access to app files.
+
+    Raises the identical 404 the read helper uses, so a caller cannot tell
+    "exists but no write access" apart from "does not exist".
+    """
+    app = await get_application_or_404(ctx, app_id)
+    is_bypass = has_scope_bypass(
+        is_platform_admin=ctx.user.is_platform_admin,
+        is_provider_org=ctx.user.is_provider_org,
+    )
+    if is_bypass:
+        return app
+    if app.organization_id is not None and app.organization_id == ctx.org_id:
+        return app
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=f"Application '{app_id}' not found",
+    )
+
+
 class FileMode(str, Enum):
     draft = "draft"
     live = "live"
@@ -415,7 +446,7 @@ async def write_app_file(
     Validates the path, then writes via FileStorageService (which handles
     S3 _repo/ storage, file_index update, pubsub, and preview sync).
     """
-    app = await get_application_or_404(ctx, app_id)
+    app = await get_application_for_write_or_404(ctx, app_id)
     # Solution-managed app source is read-only on the platform — only deploy
     # may write it. The before_flush backstop can't see this: it writes to S3 +
     # file_index, never dirtying the Application ORM row. (criterion 6)
@@ -465,7 +496,7 @@ async def delete_app_file(
     Deletes via FileStorageService (which handles S3 _repo/ deletion,
     file_index cleanup, pubsub, and preview sync).
     """
-    app = await get_application_or_404(ctx, app_id)
+    app = await get_application_for_write_or_404(ctx, app_id)
     # Read-only for solution-managed apps (S3 delete bypasses the ORM backstop).
     await assert_entity_id_not_solution_managed(ctx.db, Application, app_id)
     prefix = _server_source_prefix(app)
@@ -907,7 +938,7 @@ async def put_dependencies(
 
     Validates every package name and version, enforces the max-dependency limit.
     """
-    app = await get_application_or_404(ctx, app_id)
+    app = await get_application_for_write_or_404(ctx, app_id)
     # Dependencies are solution-owned metadata — read-only for managed apps.
     await assert_entity_id_not_solution_managed(ctx.db, Application, app_id)
 

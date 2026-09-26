@@ -748,7 +748,7 @@ class TestDeleteContent:
 
     @pytest.mark.asyncio
     async def test_delete_workflow_with_org_filter(self, org_user_context):
-        """Should delete a file for org-scoped users."""
+        """Should delete a file for org-scoped users who own the workflow."""
         from src.services.mcp_server.tools.code_editor import delete_content
 
         with patch("src.services.mcp_server.tools.code_editor.RepoStorage") as mock_repo_cls:
@@ -759,6 +759,15 @@ class TestDeleteContent:
             with patch("src.services.mcp_server.tools.code_editor.get_tool_db") as mock_db:
                 mock_session = AsyncMock()
                 mock_db.return_value.__aenter__.return_value = mock_session
+
+                # Write-scope check: resolve_repo_path_owner_org looks up the
+                # owning Workflow's organization_id. Report it as this org
+                # user's own org so the write-scope gate allows the delete.
+                owner_result = MagicMock()
+                owner_result.first = MagicMock(
+                    return_value=(org_user_context.org_id,)
+                )
+                mock_session.execute = AsyncMock(return_value=owner_result)
 
                 with patch(
                     "src.services.mcp_server.tools.code_editor.FileStorageService"

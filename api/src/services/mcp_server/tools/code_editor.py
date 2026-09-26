@@ -38,6 +38,26 @@ from src.services.mcp_server.tool_result import (
     format_grep_matches,
     success_result,
 )
+from src.services.mcp_server.tools._org_scope import (
+    mcp_caller_org_id,
+    mcp_write_scope_bypass,
+    resolve_repo_path_owner_org,
+    write_scope_denied,
+)
+
+
+async def _check_write_scope(context: Any, db: Any, path: str) -> str | None:
+    """Return an error message if ``context`` may not write ``path``, else None.
+
+    A non-bypass caller may only write a path that maps to an owning entity
+    (Application or Workflow) in their own organization.
+    """
+    if mcp_write_scope_bypass(context):
+        return None
+    owner_org_id = await resolve_repo_path_owner_org(db, path)
+    if write_scope_denied(owner_org_id, mcp_caller_org_id(context)):
+        return f"File not found: {path}"
+    return None
 
 
 def _format_deactivation_result(
@@ -214,6 +234,15 @@ async def _replace_workspace_file(
         WorkspaceWriteResult with created status and any pending deactivations
     """
     async with get_tool_db(context) as db:
+        # Write scope: a non-bypass caller may only write a path that maps
+        # to an owning entity (Application or Workflow) in their own
+        # organization. Applied here so both patch_content and
+        # replace_content — which both funnel through this helper — get the
+        # same check.
+        denial = await _check_write_scope(context, db, path)
+        if denial is not None:
+            raise PermissionError(denial)
+
         service = FileStorageService(db)
 
         # Check if file exists to determine created status
@@ -701,6 +730,13 @@ async def delete_content(
             repo = RepoStorage()
             if not await repo.exists(path):
                 return error_result(f"File not found: {path}")
+
+            # Write scope: a non-bypass caller may only delete a path that
+            # maps to an owning entity (Application or Workflow) in their
+            # own organization.
+            denial = await _check_write_scope(context, db, path)
+            if denial is not None:
+                return error_result(denial)
 
             # Use FileStorageService.delete_file() for all deletions
             # It handles: S3 cleanup, file_index cleanup, app pubsub,

@@ -444,6 +444,8 @@ async def update_agent(
     from sqlalchemy import delete, select
     from sqlalchemy.orm import selectinload
 
+    from shared.scope_resolver import has_scope_bypass
+    from src.models.enums import AgentAccessLevel
     from src.models.orm import Agent, AgentDelegation, AgentTool, AIModelProfile, Workflow
 
     logger.info(f"MCP update_agent called: agent_id={agent_id}")
@@ -501,14 +503,40 @@ async def update_agent(
             if is_solution_managed(agent):
                 return error_result(SOLUTION_MANAGED_MESSAGE)
 
-            # Check access for non-admins
-            if not context.is_platform_admin:
-                if agent.organization_id:
-                    if context.org_id and str(agent.organization_id) != str(context.org_id):
-                        return error_result("You don't have permission to update this agent.")
-                # Global agents can only be updated by admins
-                if agent.organization_id is None:
-                    return error_result("Only platform admins can update global agents.")
+            # Check access for non-bypass callers. Mirrors the REST rule in
+            # routers/agents.py::update_agent (owner_user_id == caller AND
+            # access_level == PRIVATE), rather than an organization_id
+            # comparison — a non-bypass caller may never edit a role-based
+            # or global agent, only their own private one.
+            is_bypass = has_scope_bypass(
+                is_platform_admin=bool(context.is_platform_admin),
+                is_provider_org=bool(getattr(context, "is_provider_org", False)),
+            )
+            if not is_bypass:
+                # Budget fields gate: only bypass callers can set per-agent
+                # budgets. Checked before the ownership check so the
+                # response is the same whether the caller owns the agent or
+                # not (no information leak about ownership).
+                if llm_max_tokens is not None:
+                    return error_result(
+                        "Budget fields (llm_max_tokens) can only be set by platform administrators"
+                    )
+
+                caller_id = getattr(context, "user_id", None)
+                if (
+                    caller_id is None
+                    or agent.owner_user_id is None
+                    or str(agent.owner_user_id) != str(caller_id)
+                    or agent.access_level != AgentAccessLevel.PRIVATE
+                ):
+                    return error_result("You can only edit your own private agents")
+
+                # Non-owners-with-access-but-not-bypass cannot manage these
+                # privileged fields via this tool; drop them silently rather
+                # than error, matching REST's behavior for the same fields.
+                system_tools = None
+                knowledge_sources = None
+                delegated_agent_ids = None
 
             updates_made = []
 
