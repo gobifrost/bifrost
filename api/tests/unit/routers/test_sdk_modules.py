@@ -32,6 +32,27 @@ def _admin_user() -> UserPrincipal:
     )
 
 
+def _service_user() -> UserPrincipal:
+    """Non-superuser system sentinel: the ``mint_service_token`` shape."""
+    return UserPrincipal(
+        user_id=SYSTEM_USER_UUID,
+        email="service-aaaaaaaaaaaa@bifrost.internal",
+        organization_id="22222222-2222-4222-8222-222222222222",
+        is_superuser=False,
+        service_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        service_attempt_id="11111111-1111-4111-8111-111111111111",
+    )
+
+
+def _ordinary_user() -> UserPrincipal:
+    return UserPrincipal(
+        user_id="33333333-3333-3333-3333-333333333333",
+        email="user@gobifrost.com",
+        organization_id="22222222-2222-4222-8222-222222222222",
+        is_superuser=False,
+    )
+
+
 def _request_with_bearer(token: str = "signed-token") -> MagicMock:
     request = MagicMock()
     request.headers = {"authorization": f"Bearer {token}"}
@@ -202,6 +223,62 @@ async def test_resolver_maps_invalid_solution_id_to_400():
         )
     assert exc.value.status_code == 400
     assert exc.value.detail == "Invalid solution_id"
+
+
+# --- Router: caller gate (admin or system sentinel) ---
+
+
+async def test_module_source_caller_admits_admin_and_system_sentinel():
+    from src.routers.sdk_modules import _module_source_caller
+
+    admin = _admin_user()
+    service = _service_user()
+    engine = _system_user()
+    assert await _module_source_caller(admin) is admin
+    assert await _module_source_caller(service) is service
+    assert await _module_source_caller(engine) is engine
+
+
+async def test_module_source_caller_rejects_ordinary_user():
+    from src.routers.sdk_modules import _module_source_caller
+
+    with pytest.raises(HTTPException) as exc:
+        await _module_source_caller(_ordinary_user())
+    assert exc.value.status_code == 403
+    assert exc.value.detail == "Superuser privileges required"
+
+
+async def test_service_principal_fetches_its_repo_module_over_socket():
+    """A service child cold-loading its own module must not need superuser.
+
+    ``mint_service_token`` clears the superuser bit but keeps the sentinel
+    subject and signed execution claims; the module route admits it and
+    ``_engine_module_scope`` derives the scope from those claims.
+    """
+    from src.routers.sdk_modules import fetch_module
+
+    path = "workflows/e2e_svc_tables.py"
+    with (
+        patch(
+            "src.routers.sdk_modules.decode_token",
+            return_value={
+                "engine_execution_id": "attempt-1",
+                "engine_solution_id": None,
+                "engine_global_repo_access": False,
+            },
+        ),
+        patch(
+            f"{SERVICE}.get_module",
+            new_callable=AsyncMock,
+            return_value={"content": "X = 1", "path": path, "hash": "h"},
+        ),
+    ):
+        response = await fetch_module(
+            path=path,
+            request=_request_with_bearer(),
+            user=_service_user(),
+        )
+    assert response.status_code == 200
 
 
 # --- Router: direct fetch scope rules ---

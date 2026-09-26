@@ -30,13 +30,34 @@ from shared.sdk_modules import (
     resolve_module_name,
     validate_solution_id,
 )
-from src.core.auth import get_current_superuser
+from src.core.auth import get_current_active_user, get_current_superuser
 from src.core.constants import SYSTEM_USER_UUID
 from src.core.principal import UserPrincipal
 from src.core.requirements_cache import get_requirements
 from src.core.security import decode_token
 
 router = APIRouter(prefix="/api/sdk", tags=["SDK Internals"])
+
+
+async def _module_source_caller(
+    user: Annotated[UserPrincipal, Depends(get_current_active_user)],
+) -> UserPrincipal:
+    """Admit platform admins and system execution identities.
+
+    Human platform admins keep the query-parameter diagnostics path. Engine
+    and service tokens authenticate as the system-user sentinel but are not
+    superusers — the renewable service credential deliberately clears the
+    superuser bit — so a service child cold-loading its own module over the
+    worker socket must pass this gate too. ``_engine_module_scope`` then
+    validates the signed ``engine_execution_id`` claims and derives the
+    authoritative source scope; ordinary users are rejected outright.
+    """
+    if user.is_superuser or user.user_id == SYSTEM_USER_UUID:
+        return user
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Superuser privileges required",
+    )
 
 
 def _engine_module_scope(
@@ -84,7 +105,7 @@ def _engine_module_scope(
 async def fetch_module(
     path: str,
     request: Request,
-    user: Annotated[UserPrincipal, Depends(get_current_superuser)],
+    user: Annotated[UserPrincipal, Depends(_module_source_caller)],
 ) -> JSONResponse:
     """
     Fetch a workspace module by path.
@@ -116,7 +137,7 @@ async def fetch_module(
 @router.get("/modules-resolve")
 async def resolve_module(
     request: Request,
-    user: Annotated[UserPrincipal, Depends(get_current_superuser)],
+    user: Annotated[UserPrincipal, Depends(_module_source_caller)],
     name: str,
     solution_id: str | None = None,
     global_repo_access: bool = False,
