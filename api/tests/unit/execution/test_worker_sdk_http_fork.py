@@ -1,11 +1,12 @@
-"""Gate A/C1/C2/C3a: real forked children reach the worker socket.
+"""Gate A/C1/C2/C3a/C3b/C4a: real forked children reach the worker socket.
 
-This is the end-to-end proof behind Gate A and the config, integrations, and
-table slices of Gate C. A real ``TemplateProcess`` forks a one-shot child and
-injects the worker's Unix socket path exactly as the pool does. The test
-process serves the **real** SDK routes on that socket via uvicorn, against the
-real database engine. The child's network API is dead by environment, and it
-receives no database or provider credentials, so a correct value proves:
+This is the end-to-end proof behind Gate A and the config, integrations,
+table, and files slices of Gate C. A real ``TemplateProcess`` forks a
+one-shot child and injects the worker's Unix socket path exactly as the pool
+does. The test process serves the **real** SDK routes on that socket via
+uvicorn, against the real database engine. The child's network API is dead by
+environment, and it receives no database, S3, or provider credentials, so a
+correct value proves:
 
 - the existing routes are reused (not copied) and resolve the value;
 - the child used the socket transport, not the network API (zero
@@ -886,3 +887,157 @@ async def test_forked_child_tables_over_worker_socket(
             template.shutdown()
         await server.stop()
         await _cleanup_committed_org(async_session_factory, org_id)
+
+
+def _files_script(*, prefix: str) -> str:
+    source = f'''import base64 as _b64
+import os
+import sys
+from bifrost import files
+from bifrost.client import get_engine_socket_path
+
+_note = {prefix!r} + "/note.txt"
+_blob = {prefix!r} + "/blob.bin"
+
+await files.write(_note, "forked-hello")
+await files.write_bytes(_blob, b"\\x00\\x01forked")
+_text = await files.read(_note)
+_raw = await files.read_bytes(_blob)
+_exists = await files.exists(_note)
+_missing = await files.exists(_note + ".gone")
+_stat = await files.stat(_note)
+_listed = await files.list({prefix!r})
+_signed = await files.get_signed_url(
+    _blob, method="GET", location="workspace",
+    content_type="application/octet-stream")
+_hits = await files.search("forked-hello")
+
+# A realistic 2 MiB binary payload round-trips over the same socket with no
+# base64 channel wrapper and no frame-size ceiling.
+_big = {prefix!r} + "/big.bin"
+_payload = bytes((i * 7) % 256 for i in range(2 * 1024 * 1024))
+await files.write_bytes(_big, _payload)
+_big_len = len(await files.read_bytes(_big))
+
+await files.delete(_note)
+await files.delete(_blob)
+await files.delete(_big)
+_gone = await files.exists(_note)
+_gone_big = await files.exists(_big)
+
+result = {{
+    "socket_path": get_engine_socket_path(),
+    "used_socket": get_engine_socket_path() is not None,
+    "had_db_url": (
+        "BIFROST_DATABASE_URL" in os.environ
+        or "BIFROST_DATABASE_URL_SYNC" in os.environ
+    ),
+    "had_sqlalchemy": "sqlalchemy" in sys.modules,
+    "had_s3": any(k.startswith("BIFROST_S3_") for k in os.environ),
+    "text": _text,
+    "raw": _b64.b64encode(_raw).decode(),
+    "exists": _exists,
+    "missing": _missing,
+    "stat_exists": _stat["exists"],
+    "listed": sorted(_listed),
+    "signed_path": _signed["path"],
+    "search_keys": sorted(_hits.keys()),
+    "big_len": _big_len,
+    "gone": _gone,
+    "gone_big": _gone_big,
+}}
+'''
+    return base64.b64encode(source.encode("utf-8")).decode("utf-8")
+
+
+@pytest.mark.asyncio
+async def test_forked_child_files_over_worker_socket(monkeypatch):
+    """Gate C4a: every files facade route is served over the worker socket.
+
+    A real child forks with the worker's Unix socket injected and a dead
+    network API. It writes and reads text and binary files (including a
+    realistic 2 MiB payload), lists, stats, probes existence, presigns a
+    download URL, searches, and deletes. This fork installs only the worker
+    socket, not the dedicated channel. Success with no DB, SQLAlchemy, or S3
+    credential proves the shared client carried every call to the
+    parent-served routes, where the worker owns the protected storage.
+    """
+    from src.core.security import mint_engine_token
+
+    tag = uuid4().hex[:8]
+    prefix = f"sdk-files-fork-{tag}"
+
+    # Any attempt to reach the network API fails loudly; the socket must
+    # serve every call.
+    monkeypatch.setenv("BIFROST_API_URL", "http://127.0.0.1:9")
+
+    engine_token, _ = mint_engine_token(
+        execution_id="gate-c4a-fork",
+        solution_id=None,
+        global_repo_access=True,
+        timeout_seconds=120,
+    )
+
+    server = WorkerSdkHttpServer()
+    await server.start()
+    assert server.socket_path is not None
+
+    template = TemplateProcess()
+    template.start()
+    try:
+        child_pid, work_queue, result_queue = template.fork(
+            worker_id="wsdk-files-fork",
+            sdk_socket_path=server.socket_path,
+        )
+        try:
+            work_queue.put(
+                (
+                    "exec-wsdk-files",
+                    _context_for(
+                        _files_script(prefix=prefix),
+                        engine_token,
+                        organization=None,
+                        is_platform_admin=False,
+                    ),
+                )
+            )
+            envelope = await asyncio.to_thread(result_queue.get, True, 90.0)
+        finally:
+            work_queue.close()
+            result_queue.close()
+
+        assert envelope["success"] is True, envelope
+        result = envelope["result"]
+        # Transport proof: socket injected, network API dead, and the child
+        # holds no DB, SQLAlchemy, or S3 credential — the parent route owns
+        # protected storage.
+        assert result["used_socket"] is True
+        assert result["socket_path"] == server.socket_path
+        assert result["had_db_url"] is False
+        assert result["had_sqlalchemy"] is False
+        assert result["had_s3"] is False
+        # Text/binary encoding parity with the HTTP routes.
+        assert result["text"] == "forked-hello"
+        assert base64.b64decode(result["raw"]) == b"\x00\x01forked"
+        assert result["exists"] is True
+        assert result["missing"] is False
+        assert result["stat_exists"] is True
+        assert result["listed"] == sorted(
+            [f"{prefix}/blob.bin", f"{prefix}/note.txt"]
+        )
+        assert result["signed_path"].endswith("blob.bin")
+        assert set(result["search_keys"]) == {
+            "query", "total_matches", "files_searched", "results",
+            "truncated", "search_time_ms",
+        }
+        # 2 MiB binary payload round-trips intact.
+        assert result["big_len"] == 2 * 1024 * 1024
+        # Cleanup: every written file is gone.
+        assert result["gone"] is False
+        assert result["gone_big"] is False
+
+        _wait_for_pid_to_die(child_pid)
+    finally:
+        with contextlib.suppress(Exception):
+            template.shutdown()
+        await server.stop()

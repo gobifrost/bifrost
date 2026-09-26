@@ -1,7 +1,6 @@
 """Engine-local transport for ``bifrost.files``.
 
-Covers the acceptance surface that does not need a forked child, plus one
-real forked child:
+Covers the acceptance surface that does not need a forked child:
 
 - the parent dispatcher calls the exact shared services
   (``shared.sdk_files`` + ``src.services.editor.search.search_files_db``)
@@ -13,21 +12,20 @@ real forked child:
   service non-superuser — never the initiating user's admin flag), keeps
   the service's statuses, ignores forged child install/actor claims, and
   serves each request on one short session;
-- the child transport performs real file round trips for all ten facade
-  methods with zero HTTP requests, maps errors without HTTP fallback, and
-  moves bytes over bounded chunked frames in both directions;
-- a real ``TemplateProcess`` fork proves the worker-process path with API
-  HTTP disabled.
+- the migrated facade rides the shared ``BifrostClient.engine_request``
+  transport (Gate C4a) and never touches the dedicated channel, preserving
+  binary/upload encoding, request bodies, and public error mapping.
+
+The real forked-child proof over the worker socket lives in
+``tests/unit/execution/test_worker_sdk_http_fork.py``.
 """
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import contextlib
-import json
 import multiprocessing
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -934,7 +932,17 @@ class TestFilesDispatchSessionsAndChunking:
             assert len(raw) <= MAX_FRAME_BYTES
 
 
-class TestFilesChildTransport:
+
+class TestFilesSharedClientTransport:
+    """Gate C4a: the migrated facade rides the shared client, not the channel.
+
+    Every fixed files method now goes through
+    ``BifrostClient.engine_request`` (the worker Unix socket inside an engine
+    child, the network API elsewhere). A pipe transport is installed and every
+    migrated call must ignore it; text/base64 encoding, request paths and
+    bodies, and public error mapping stay identical to the HTTP endpoints.
+    """
+
     def _pair(self):
         req_recv, req_send = multiprocessing.Pipe(duplex=False)
         resp_recv, resp_send = multiprocessing.Pipe(duplex=False)
@@ -945,353 +953,156 @@ class TestFilesChildTransport:
             with contextlib.suppress(Exception):
                 conn.close()
 
-    async def _pump(self, req_conn, resp_conn, handler, count=1):
-        for _ in range(count):
-            raw = await asyncio.to_thread(req_conn.recv_bytes, 65537)
-            frame = json.loads(raw.decode("utf-8"))
-            response = handler(frame)
-            await asyncio.to_thread(resp_conn.send_bytes, json.dumps(response).encode())
+    def _client(self, responses):
+        client = MagicMock()
+        client.engine_request = AsyncMock(side_effect=responses)
+        return client
 
-    @pytest.mark.asyncio
-    async def test_all_ten_methods_round_trip_without_http(self):
-        from bifrost import _local_transport as lt
-
-        req_recv, req_send, resp_recv, resp_send = self._pair()
-        lt.install(req_send, resp_recv)
-        seen: dict[str, dict] = {}
-        stat_doc = {
+    @staticmethod
+    def _stat_doc():
+        return {
             "path": "a.txt", "exists": True, "version": "sha256:abc",
             "size": 5, "last_modified": None, "updated_by": "t",
         }
-        search_doc = {
+
+    @staticmethod
+    def _search_doc():
+        return {
             "query": "TODO", "total_matches": 1, "files_searched": 2,
             "results": [], "truncated": False, "search_time_ms": 3,
         }
 
-        def _handler(frame):
-            seen[frame["op"]] = frame
-            # The caller's install identity is parent-owned: the child
-            # never sends caller_solution, app_id, or user claims.
-            assert "caller_solution" not in frame, frame
-            assert "app_id" not in frame, frame
-            assert "user" not in frame, frame
-            op = frame["op"]
-            if op == "files.read":
-                body = "aGVsbG8=" if frame["binary"] else "hello"
-                return {
-                    "v": 1, "id": frame["id"], "ok": True,
-                    "result": {"content": body, "binary": frame["binary"]},
-                }
-            if op == "files.write":
-                return {"v": 1, "id": frame["id"], "ok": True, "result": None}
-            if op == "files.list":
-                return {
-                    "v": 1, "id": frame["id"], "ok": True,
-                    "result": {"files": ["a.txt"]},
-                }
-            if op == "files.delete":
-                return {"v": 1, "id": frame["id"], "ok": True, "result": None}
-            if op == "files.exists":
-                return {"v": 1, "id": frame["id"], "ok": True, "result": True}
-            if op == "files.stat":
-                return {
-                    "v": 1, "id": frame["id"], "ok": True, "result": stat_doc,
-                }
-            if op == "files.signed_url":
-                return {
-                    "v": 1, "id": frame["id"], "ok": True,
-                    "result": {
-                        "url": "https://s3/x", "path": "k",
-                        "expires_in": frame["expires_in"],
-                    },
-                }
-            if op == "files.search":
-                return {
-                    "v": 1, "id": frame["id"], "ok": True,
-                    "result": search_doc,
-                }
-            raise AssertionError(op)
-
-        pump = asyncio.create_task(
-            self._pump(req_recv, resp_send, _handler, count=10)
-        )
-        try:
-            from bifrost._context import (
-                clear_execution_context,
-                set_execution_context,
-            )
-            from bifrost.files import files
-            from src.sdk.context import ExecutionContext
-
-            ctx = ExecutionContext(
-                user_id="u1", email="e@e.com", name="T", scope="org-1",
-                organization=None, is_platform_admin=False,
-                is_function_key=False, execution_id="exec-1",
-            )
-            set_execution_context(ctx)
-            try:
-                with patch("bifrost.files.get_client") as get_client:
-                    get_client.side_effect = AssertionError("HTTP must not be used")
-                    assert await files.read("a.txt") == "hello"
-                    assert await files.read_bytes("a.bin") == b"hello"
-                    await files.write("a.txt", "hello")
-                    await files.write_bytes("a.bin", b"hello")
-                    assert await files.list("") == ["a.txt"]
-                    await files.delete("a.txt")
-                    assert await files.exists("a.txt") is True
-                    assert await files.stat("a.txt") == stat_doc
-                    signed = await files.get_signed_url("a.txt")
-                    assert signed["url"] == "https://s3/x"
-                    assert signed["expires_in"] == 600
-                    hits = await files.search("TODO")
-                    assert hits["total_matches"] == 1
-            finally:
-                clear_execution_context()
-            await pump
-        finally:
-            lt.clear()
-            self._close_all((req_recv, req_send, resp_recv, resp_send))
-        assert set(seen) == {
-            "files.read", "files.write", "files.list", "files.delete",
-            "files.exists", "files.stat", "files.signed_url",
-            "files.search",
-        }
-        # read_bytes rides files.read with binary=true; write_bytes rides
-        # files.write with binary=true and base64 content.
-        assert seen["files.read"]["binary"] in (True, False)
-        assert seen["files.search"]["query"] == "TODO"
-
     @pytest.mark.asyncio
-    async def test_local_errors_raise_without_http_fallback(self):
+    async def test_all_methods_use_shared_client_not_channel(self):
+        import httpx
+
         from bifrost import _local_transport as lt
-        from bifrost.client import BifrostAPIError, BifrostAuthorizationError
+        from bifrost.files import files
 
         req_recv, req_send, resp_recv, resp_send = self._pair()
         lt.install(req_send, resp_recv)
-        seen: list[str] = []
-
-        async def _pump_statuses():
-            for status in (404, 403, 409, 500):
-                raw = await asyncio.to_thread(req_recv.recv_bytes, 65537)
-                frame = json.loads(raw.decode("utf-8"))
-                seen.append(frame["op"])
-                await asyncio.to_thread(
-                    resp_send.send_bytes,
-                    json.dumps(
-                        {"v": 1, "id": frame["id"], "ok": False,
-                         "status": status, "detail": "denied"}
-                    ).encode(),
-                )
-
-        pump = asyncio.create_task(_pump_statuses())
+        stat_doc = self._stat_doc()
+        search_doc = self._search_doc()
+        client = self._client([
+            httpx.Response(200, json={"content": "hello", "binary": False}),
+            httpx.Response(
+                200,
+                json={
+                    "content": base64.b64encode(b"hello").decode(),
+                    "binary": True,
+                },
+            ),
+            httpx.Response(204),
+            httpx.Response(204),
+            httpx.Response(200, json={"files": ["a.txt"]}),
+            httpx.Response(204),
+            httpx.Response(200, json={"exists": True}),
+            httpx.Response(200, json=stat_doc),
+            httpx.Response(
+                200,
+                json={"url": "https://s3/x", "path": "k", "expires_in": 600},
+            ),
+            httpx.Response(200, json=search_doc),
+        ])
         try:
-            from bifrost.files import files
+            with patch("bifrost.files.get_client", return_value=client):
+                assert await files.read("a.txt") == "hello"
+                assert await files.read_bytes("a.bin") == b"hello"
+                await files.write("a.txt", "hello")
+                await files.write_bytes("a.bin", b"hello")
+                assert await files.list("") == ["a.txt"]
+                await files.delete("a.txt")
+                assert await files.exists("a.txt") is True
+                assert await files.stat("a.txt") == stat_doc
+                signed = await files.get_signed_url("a.txt")
+                assert signed["url"] == "https://s3/x"
+                assert signed["expires_in"] == 600
+                hits = await files.search("TODO")
+                assert hits["total_matches"] == 1
+        finally:
+            lt.clear()
+            self._close_all((req_recv, req_send, resp_recv, resp_send))
 
-            with patch("bifrost.files.get_client") as get_client:
-                get_client.side_effect = AssertionError("HTTP must not be used")
+        # The migrated facade never reads a channel frame: every call went
+        # through the shared client's engine-local entry point.
+        calls = client.engine_request.await_args_list
+        assert [(call.args[0], call.args[1]) for call in calls] == [
+            ("POST", "/api/files/read"),
+            ("POST", "/api/files/read"),
+            ("POST", "/api/files/write"),
+            ("POST", "/api/files/write"),
+            ("POST", "/api/files/list"),
+            ("POST", "/api/files/delete"),
+            ("POST", "/api/files/exists"),
+            ("POST", "/api/files/stat"),
+            ("POST", "/api/files/signed-url"),
+            ("POST", "/api/files/search"),
+        ]
+        # read_bytes rides files.read with binary=true; write_bytes rides
+        # files.write with binary=true and base64 content.
+        assert calls[0].kwargs["json"]["binary"] is False
+        assert calls[1].kwargs["json"]["binary"] is True
+        assert calls[3].kwargs["json"]["binary"] is True
+        assert calls[3].kwargs["json"]["content"] == base64.b64encode(
+            b"hello"
+        ).decode()
+        assert calls[9].kwargs["json"]["query"] == "TODO"
+
+    @pytest.mark.asyncio
+    async def test_large_binary_roundtrip_through_engine_request(self):
+        import httpx
+
+        from bifrost import _local_transport as lt
+        from bifrost.files import files
+
+        req_recv, req_send, resp_recv, resp_send = self._pair()
+        lt.install(req_send, resp_recv)
+        payload = bytes((i * 7) % 256 for i in range(2 * 1024 * 1024))
+        encoded = base64.b64encode(payload).decode()
+        client = self._client([
+            httpx.Response(204),
+            httpx.Response(200, json={"content": encoded, "binary": True}),
+        ])
+        try:
+            with patch("bifrost.files.get_client", return_value=client):
+                await files.write_bytes("big.bin", payload)
+                assert await files.read_bytes("big.bin") == payload
+        finally:
+            lt.clear()
+            self._close_all((req_recv, req_send, resp_recv, resp_send))
+        assert client.engine_request.await_args_list[0].kwargs["json"][
+            "content"
+        ] == encoded
+
+    @pytest.mark.asyncio
+    async def test_error_status_surfaces_without_channel(self):
+        import httpx
+
+        from bifrost import _local_transport as lt
+        from bifrost.client import BifrostAPIError, BifrostAuthorizationError
+        from bifrost.files import files
+
+        req_recv, req_send, resp_recv, resp_send = self._pair()
+        lt.install(req_send, resp_recv)
+        client = self._client([
+            httpx.Response(
+                404,
+                json={"detail": "not found"},
+                request=httpx.Request("POST", "http://api/api/files/read"),
+            ),
+            httpx.Response(
+                403,
+                json={"detail": "denied"},
+                request=httpx.Request("POST", "http://api/api/files/write"),
+            ),
+        ])
+        try:
+            with patch("bifrost.files.get_client", return_value=client):
                 with pytest.raises(BifrostAPIError):
                     await files.read("ghost.txt")
                 with pytest.raises(BifrostAuthorizationError):
                     await files.write("a.txt", "x")
-                with pytest.raises(BifrostAPIError):
-                    await files.delete("a.txt")
-                with pytest.raises(Exception):
-                    await files.list("")
-            await pump
-            assert seen == [
-                "files.read", "files.write", "files.delete", "files.list",
-            ]
+            assert client.engine_request.await_count == 2
         finally:
             lt.clear()
             self._close_all((req_recv, req_send, resp_recv, resp_send))
-
-    @pytest.mark.asyncio
-    async def test_chunked_bytes_round_trip_over_pipes(
-        self, db_session, monkeypatch
-    ):
-        """Bytes ride bounded chunked frames in both directions end to end."""
-        import base64 as _b64
-
-        from bifrost import _local_transport as lt
-        from src.services.execution.sdk_local_dispatch import serve_channel
-
-        org = await _seed_org(db_session)
-        scope = str(org.id)
-        store = _DictBackend()
-        _mock_backend(monkeypatch, store)
-        _mock_tiers(monkeypatch, [_tier(scope, org.id)])
-        _mock_storage(monkeypatch)
-        _mock_publish(monkeypatch)
-        _allow_policy(monkeypatch)
-        principal = _engine_principal(org.id)
-
-        req_recv, req_send, resp_recv, resp_send = self._pair()
-        lt.install(req_send, resp_recv)
-        pump = asyncio.create_task(
-            serve_channel(
-                recv_conn=req_recv,
-                send_conn=resp_send,
-                session_factory=lambda: _db_factory(db_session),
-                principal=principal,
-            )
-        )
-        try:
-            from bifrost.files import files
-
-            payload = bytes((i * 7) % 256 for i in range(200_000))
-            with patch("bifrost.files.get_client") as get_client:
-                get_client.side_effect = AssertionError("HTTP must not be used")
-                # Chunked request: the 200KB base64 body exceeds one frame.
-                await files.write_bytes(
-                    "big.bin", payload, location=LOCATION, scope=scope
-                )
-                # Chunked response: the stored bytes come back in parts.
-                assert await files.read_bytes(
-                    "big.bin", location=LOCATION, scope=scope
-                ) == payload
-                assert _b64.b64encode(store.files[("big.bin", scope)]).decode() == (
-                    _b64.b64encode(payload).decode()
-                )
-            pump.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await pump
-        finally:
-            lt.clear()
-            self._close_all((req_recv, req_send, resp_recv, resp_send))
-
-
-@pytest.mark.slow
-@pytest.mark.asyncio
-class TestFilesForkedTransport:
-    async def test_forked_child_files_roundtrip_without_http(
-        self, db_session, monkeypatch
-    ):
-        """A real forked child runs all ten methods with HTTP disabled."""
-        import base64 as _b64
-        import os
-        import time
-
-        from src.services.execution.sdk_local_dispatch import (
-            LocalDispatchPrincipal,
-            serve_channel,
-        )
-        from src.services.execution.template_process import TemplateProcess
-
-        tag = uuid4().hex[:8]
-        prefix = f"sdk-files-fork-{tag}"
-        monkeypatch.setenv("BIFROST_API_URL", "http://127.0.0.1:9")
-
-        source = (
-            "import base64 as _b64\n"
-            "from bifrost import files\n"
-            f"_p = {prefix!r} + '/note.txt'\n"
-            f"_b = {prefix!r} + '/blob.bin'\n"
-            "await files.write(_p, 'forked-hello')\n"
-            "await files.write_bytes(_b, b'\\x00\\x01forked')\n"
-            "_text = await files.read(_p)\n"
-            "_raw = await files.read_bytes(_b)\n"
-            "_exists = await files.exists(_p)\n"
-            "_missing = await files.exists(_p + '.gone')\n"
-            "_stat = await files.stat(_p)\n"
-            "_listed = await files.list(" + repr(prefix) + ")\n"
-            "_signed = await files.get_signed_url(\n"
-            "    _b, method='GET', location='workspace',\n"
-            "    content_type='application/octet-stream')\n"
-            "_hits = await files.search('forked-hello')\n"
-            "await files.delete(_p)\n"
-            "await files.delete(_b)\n"
-            "_gone = await files.exists(_p)\n"
-            "result = {\n"
-            "    'text': _text,\n"
-            "    'raw': _b64.b64encode(_raw).decode(),\n"
-            "    'exists': _exists,\n"
-            "    'missing': _missing,\n"
-            "    'stat_exists': _stat['exists'],\n"
-            "    'listed': sorted(_listed),\n"
-            "    'signed_path': _signed['path'],\n"
-            "    'search_keys': sorted(_hits.keys()),\n"
-            "    'gone': _gone,\n"
-            "    'had_db_url': (\n"
-            "        'BIFROST_DATABASE_URL' in __import__('os').environ\n"
-            "        or 'BIFROST_DATABASE_URL_SYNC' in __import__('os').environ\n"
-            "    ),\n"
-            "}\n"
-        )
-        code = _b64.b64encode(source.encode("utf-8")).decode("utf-8")
-        context = {
-            "execution_id": f"fork-files-{tag}",
-            "name": "sdk-files-fork-test",
-            "code": code,
-            "parameters": {},
-            "caller": {
-                "user_id": "fork-test-user",
-                "email": "fork@test.local",
-                "name": "Fork Test",
-            },
-            "organization": None,
-            "tags": [],
-            "timeout_seconds": 180,
-            "cache_ttl_seconds": 0,
-            "transient": True,
-            "no_cache": True,
-            "is_platform_admin": False,
-            "engine_token": "fork-test-dead-token",
-        }
-
-        @contextlib.asynccontextmanager
-        async def _factory():
-            yield db_session
-
-        template = TemplateProcess()
-        template.start()
-        pump = None
-        conns = []
-        try:
-            child_pid, work_queue, result_queue, sdk_req, sdk_resp = (
-                template.fork(worker_id="sdk-files-fork", with_sdk=True)
-            )
-            conns = [sdk_req, sdk_resp]
-            pump = asyncio.create_task(
-                serve_channel(
-                    recv_conn=sdk_req,
-                    send_conn=sdk_resp,
-                    session_factory=lambda: _factory(),
-                    principal=LocalDispatchPrincipal(caller_org_id=None),
-                )
-            )
-            work_queue.put((f"exec-fork-files-{tag}", context))
-            envelope = await asyncio.to_thread(result_queue.get, True, 180.0)
-            assert envelope["success"] is True, envelope
-            result = envelope["result"]
-            assert result["text"] == "forked-hello"
-            assert _b64.b64decode(result["raw"]) == b"\x00\x01forked"
-            assert result["exists"] is True
-            assert result["missing"] is False
-            assert result["stat_exists"] is True
-            assert result["listed"] == sorted([f"{prefix}/blob.bin", f"{prefix}/note.txt"])
-            assert result["signed_path"].endswith("blob.bin")
-            assert set(result["search_keys"]) == {
-                "query", "total_matches", "files_searched", "results",
-                "truncated", "search_time_ms",
-            }
-            assert result["gone"] is False
-            assert result["had_db_url"] is False
-
-            deadline = time.monotonic() + 10.0
-            while time.monotonic() < deadline:
-                try:
-                    os.kill(child_pid, 0)
-                    time.sleep(0.05)
-                except OSError:
-                    break
-            assert await asyncio.wait_for(pump, timeout=15.0) == "eof"
-            pump = None
-        finally:
-            if pump is not None:
-                pump.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await pump
-            for conn in conns:
-                with contextlib.suppress(Exception):
-                    conn.close()
-            template.shutdown()

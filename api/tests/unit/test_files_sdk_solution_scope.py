@@ -61,7 +61,7 @@ def capture_file_sdk_urls(monkeypatch):
             return None
 
     class FakeClient:
-        async def post(self, url, json=None):
+        async def engine_request(self, method, url, json=None):
             captured_urls.append(url)
             return FakeResponse()
 
@@ -138,7 +138,7 @@ async def test_file_sdk_forwards_signed_url_expiration(monkeypatch):
             }
 
     class FakeClient:
-        async def post(self, url, json=None):
+        async def engine_request(self, method, url, json=None):
             captured_json.update(json or {})
             return FakeResponse()
 

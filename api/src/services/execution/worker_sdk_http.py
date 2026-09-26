@@ -14,12 +14,13 @@ app is started and no handler or service is copied.
 
 Gate A proved the approach with the config routes; Gate C1 wired the config
 facade to the shared client transport, Gate C2 added the six integrations
-routes, Gate C3a added the table-definition routes (create/list/delete)
-and the document reads (get/query/count), and Gate C3b adds the table
-mutations and batch writes (insert/upsert/update/delete_document/batch/
-batch-delete plus the auto-create POST /api/tables helper). Streams and
-other domains stay on their existing channel path until their own Gate C
-slice migrates them.
+routes, Gate C3a added the table-definition routes (create/list) and the
+document reads (get/query/count), Gate C3b adds the table mutations and
+batch writes (insert/upsert/update/delete_document/batch/batch-delete plus
+the auto-create POST /api/tables helper), and Gate C4a adds the files
+facade routes (read/write/list/delete/stat/exists/signed-url/search).
+Streams and other domains stay on their existing channel path until their
+own Gate C slice migrates them.
 
 ``import fastapi``/``uvicorn`` happen inside the functions so the worker
 entry closure stays free of those heavyweights at import time (see
@@ -105,11 +106,32 @@ TABLE_ROUTE_METHODS: dict[str, frozenset[str]] = {
     "/api/tables/{table_id}/documents/batch-delete": frozenset({"POST"}),
 }
 
+# Gate C4a: the existing files facade routes. All eight live in
+# ``src.routers.files`` (path-selected exactly, like the config and
+# integrations routes). They carry the ordinary ``CurrentActiveUser``
+# auth, the shared ``shared.sdk_files`` service, and the worker's
+# initialized DB engine; the child needs no S3 credential.
+FILES_ROUTE_PATHS: frozenset[str] = frozenset(
+    {
+        "/api/files/read",
+        "/api/files/write",
+        "/api/files/list",
+        "/api/files/delete",
+        "/api/files/stat",
+        "/api/files/exists",
+        "/api/files/signed-url",
+        "/api/files/search",
+    }
+)
+
 # Every route this worker-local app serves from the cli SDK router. Other SDK
 # domains keep their existing channel path until their Gate C slice migrates
 # them.
 SDK_ROUTE_PATHS: frozenset[str] = (
-    CONFIG_ROUTE_PATHS | INTEGRATION_ROUTE_PATHS | TABLE_SDK_ROUTE_PATHS
+    CONFIG_ROUTE_PATHS
+    | INTEGRATION_ROUTE_PATHS
+    | TABLE_SDK_ROUTE_PATHS
+    | FILES_ROUTE_PATHS
 )
 
 
@@ -123,6 +145,7 @@ def build_worker_sdk_app() -> Any:
     from fastapi import FastAPI
 
     from src.routers.cli import router as sdk_router
+    from src.routers.files import router as files_router
     from src.routers.tables import router as tables_router
 
     app = FastAPI(
@@ -139,6 +162,13 @@ def build_worker_sdk_app() -> Any:
             app.router.routes.append(route)
             selected += 1
     expected = len(SDK_ROUTE_PATHS)
+
+    # Files facade routes are selected by exact path from the files router.
+    # Their path strings are unique, so no method filter is needed.
+    for route in files_router.routes:
+        if getattr(route, "path", None) in FILES_ROUTE_PATHS:
+            app.router.routes.append(route)
+            selected += 1
 
     # Tables REST routes are selected by (path, method) so a shared path like
     # ``/api/tables/{table_id}`` does not drag in its unrelated GET/PATCH

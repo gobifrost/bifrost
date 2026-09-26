@@ -30,7 +30,8 @@ def _fake_response(body: dict) -> httpx.Response:
 async def test_search_posts_to_endpoint_with_defaults() -> None:
     captured: dict = {}
 
-    async def capturing_post(path, json=None):  # type: ignore[no-untyped-def]
+    async def capturing_request(method, path, json=None):  # type: ignore[no-untyped-def]
+        captured["method"] = method
         captured["path"] = path
         captured["body"] = json
         return _fake_response({
@@ -52,11 +53,12 @@ async def test_search_posts_to_endpoint_with_defaults() -> None:
         })
 
     client = mock.AsyncMock()
-    client.post = capturing_post
+    client.engine_request = capturing_request
 
     with mock.patch("bifrost.files.get_client", return_value=client):
         result = await files.search("needle")
 
+    assert captured["method"] == "POST"
     assert captured["path"] == "/api/files/search"
     assert captured["body"]["query"] == "needle"
     assert captured["body"]["case_sensitive"] is False
@@ -71,7 +73,7 @@ async def test_search_posts_to_endpoint_with_defaults() -> None:
 async def test_search_passes_through_options() -> None:
     captured: dict = {}
 
-    async def capturing_post(path, json=None):  # type: ignore[no-untyped-def]
+    async def capturing_request(method, path, json=None):  # type: ignore[no-untyped-def]
         captured["body"] = json
         return _fake_response({
             "query": "x",
@@ -83,7 +85,7 @@ async def test_search_passes_through_options() -> None:
         })
 
     client = mock.AsyncMock()
-    client.post = capturing_post
+    client.engine_request = capturing_request
 
     with mock.patch("bifrost.files.get_client", return_value=client):
         await files.search(

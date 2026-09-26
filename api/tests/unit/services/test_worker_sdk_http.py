@@ -29,6 +29,7 @@ from bifrost.client import (
 )
 from src.services.execution.worker_sdk_http import (
     CONFIG_ROUTE_PATHS,
+    FILES_ROUTE_PATHS,
     INTEGRATION_ROUTE_PATHS,
     SDK_ROUTE_PATHS,
     TABLE_ROUTE_METHODS,
@@ -140,14 +141,23 @@ class TestRouteReuse:
         from fastapi.routing import APIRoute
 
         from src.routers.cli import router as sdk_router
+        from src.routers.files import router as files_router
         from src.routers.tables import router as tables_router
 
+        cli_paths = SDK_ROUTE_PATHS - FILES_ROUTE_PATHS
         cli_originals = {
             route.path: route
             for route in sdk_router.routes
-            if getattr(route, "path", None) in SDK_ROUTE_PATHS
+            if getattr(route, "path", None) in cli_paths
         }
-        assert set(cli_originals) == SDK_ROUTE_PATHS
+        assert set(cli_originals) == cli_paths
+
+        files_originals = {
+            route.path: route
+            for route in files_router.routes
+            if getattr(route, "path", None) in FILES_ROUTE_PATHS
+        }
+        assert set(files_originals) == FILES_ROUTE_PATHS
 
         tables_originals = {
             (route.path, method): route
@@ -159,7 +169,10 @@ class TestRouteReuse:
         app = build_worker_sdk_app()
         mounted = [route for route in app.router.routes if isinstance(route, APIRoute)]
         mounted_cli = {
-            route.path: route for route in mounted if route.path in SDK_ROUTE_PATHS
+            route.path: route for route in mounted if route.path in cli_paths
+        }
+        mounted_files = {
+            route.path: route for route in mounted if route.path in FILES_ROUTE_PATHS
         }
         mounted_tables = {
             (route.path, method): route
@@ -170,10 +183,15 @@ class TestRouteReuse:
 
         # Only the selected routes, and the exact registered objects — no
         # copied handlers and no rest of the API surface.
-        assert set(mounted_cli) == SDK_ROUTE_PATHS
+        assert set(mounted_cli) == cli_paths
         for path, route in mounted_cli.items():
             assert route is cli_originals[path]
             assert route.endpoint is cli_originals[path].endpoint
+
+        assert set(mounted_files) == FILES_ROUTE_PATHS
+        for path, route in mounted_files.items():
+            assert route is files_originals[path]
+            assert route.endpoint is files_originals[path].endpoint
 
         assert set(mounted_tables) == set(tables_originals)
         for key, route in mounted_tables.items():
@@ -188,11 +206,32 @@ class TestRouteReuse:
             if path == "/api/tables/{table_id}"
         } == {"DELETE"}
 
+    def test_files_route_selection_is_exact(self):
+        """Gate C4a mounts the eight files facade routes as real objects."""
+        assert FILES_ROUTE_PATHS == frozenset(
+            {
+                "/api/files/read",
+                "/api/files/write",
+                "/api/files/list",
+                "/api/files/delete",
+                "/api/files/stat",
+                "/api/files/exists",
+                "/api/files/signed-url",
+                "/api/files/search",
+            }
+        )
+        assert FILES_ROUTE_PATHS.isdisjoint(
+            CONFIG_ROUTE_PATHS | INTEGRATION_ROUTE_PATHS | TABLE_SDK_ROUTE_PATHS
+        )
+
     def test_integration_route_selection_is_exact(self):
         """The six integrations routes are mounted as their real objects."""
         assert (
             SDK_ROUTE_PATHS
-            == CONFIG_ROUTE_PATHS | INTEGRATION_ROUTE_PATHS | TABLE_SDK_ROUTE_PATHS
+            == CONFIG_ROUTE_PATHS
+            | INTEGRATION_ROUTE_PATHS
+            | TABLE_SDK_ROUTE_PATHS
+            | FILES_ROUTE_PATHS
         )
         assert len(INTEGRATION_ROUTE_PATHS) == 6
         assert all(
@@ -946,3 +985,74 @@ class TestEngineLocalTransportSelection:
             await bifrost_config.list(scope="global")
         with pytest.raises(httpx.ConnectError):
             await bifrost_config.delete("k", scope="global")
+
+
+class TestSocketFiles:
+    """Gate C4a: the socket serves the real files routes with their DTOs."""
+
+    @pytest.mark.asyncio
+    async def test_malformed_file_body_is_422_over_socket(self):
+        headers = {"Authorization": f"Bearer {_engine_token()}"}
+        server = WorkerSdkHttpServer()
+        await server.start()
+        try:
+            async with _socket_client(server) as client:
+                # Missing required path and an invalid mode must both be
+                # rejected by the routes' real DTOs, not a copied validator.
+                stat = await client.post(
+                    "/api/files/stat", json={}, headers=headers
+                )
+                read = await client.post(
+                    "/api/files/read",
+                    json={"path": "x.txt", "mode": "ftp"},
+                    headers=headers,
+                )
+            assert stat.status_code == 422, stat.text
+            assert read.status_code == 422, read.text
+        finally:
+            await server.stop()
+
+    @pytest.mark.asyncio
+    async def test_missing_workspace_read_is_404_over_socket(self):
+        headers = {"Authorization": f"Bearer {_engine_token()}"}
+        server = WorkerSdkHttpServer()
+        await server.start()
+        try:
+            async with _socket_client(server) as client:
+                response = await client.post(
+                    "/api/files/read",
+                    json={
+                        "path": f"wsdk-missing-{uuid4().hex}/nope.txt",
+                        "location": "workspace",
+                        "mode": "cloud",
+                        "binary": False,
+                        "scope": None,
+                    },
+                    headers=headers,
+                )
+            assert response.status_code == 404, response.text
+        finally:
+            await server.stop()
+
+
+class TestEngineLocalFilesFallback:
+    """A failed files socket request never replays over the network API."""
+
+    @pytest.mark.asyncio
+    async def test_files_local_failure_does_not_fall_back_to_network(self):
+        from bifrost.files import files
+
+        missing_socket = os.path.join(
+            "/tmp", f"bifrost-missing-{uuid4().hex}.sock"
+        )
+        _install_engine_socket(missing_socket)
+        _set_client(BifrostClient("http://dead-api", "token"))
+
+        with pytest.raises(httpx.ConnectError):
+            await files.read("a.txt")
+        with pytest.raises(httpx.ConnectError):
+            await files.write("a.txt", "x")
+        with pytest.raises(httpx.ConnectError):
+            await files.list("")
+        with pytest.raises(httpx.ConnectError):
+            await files.read_bytes("a.bin")
