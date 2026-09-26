@@ -71,6 +71,22 @@ pass — those need a second look before their domain's R1b PR, not just before 
    additionally carries a same-day self-correction (`3564d350c`) — whoever ships `configs.get`
    should port the corrected version directly, not replay the transient bug and then the fix.
 
+## The 6 operations R1a dropped: what each would need to land
+
+R1a's catalog only declares operations whose REST endpoint already exists on main. These 6
+were excluded for that reason. None is a rename or a decorator add — each needs the actual
+endpoint (and, for two of them, a design decision) before it can re-enter the catalog. Detail
+for each lives in its domain section below; this is the consolidated "what's missing" view.
+
+| Operation | Reference endpoint | What's missing on main | What it would take to land | Detail |
+|---|---|---|---|---|
+| `workflows.get` | `GET /api/workflows/{workflow_id}` | No GET-by-id route for a single Workflow at all — main has PATCH/DELETE on that path but no GET. | New router handler using `WorkflowRepository.get(id=...)` (tenant/role/Solution-visibility cascade), a catalog entry, a decorator, and a REST e2e test. No auth decision beyond "same visibility as `list_workflows` post-fix" (see workflows (c).2 below) — should land together with that visibility question, not before it. | [workflows](#workflows-8799f4c06) |
+| `events.subscriptions.get` | `GET /api/events/sources/{source_id}/subscriptions/{subscription_id}` | No GET-by-id route for a single Event Subscription — only list/create/update/delete exist. | New `CurrentSuperuser`-gated handler, 404 on missing source/subscription, catalog entry + decorator + test. Pure new capability, same admin-only gate as siblings — no new authorization decision. | [events](#events-605a45724) |
+| `knowledge.search` | `POST /api/knowledge/search` | Main's knowledge router lives at `/api/knowledge-sources` with no search endpoint at all; the reference branch's `/api/knowledge` router doesn't exist on main. | Not just a missing endpoint — a new router, a new agent-knowledge-boundary authorization model, and agent-executor wiring (see knowledge (c) below). This is product/design work, not a port; needs its own decision from Jack before scoping an endpoint add. | [knowledge](#knowledge-e6810d6ed) |
+| `policy.rules.get` | `GET /api/policy-rules/{domain}/{name}` | No GET-by-name route — only PUT/DELETE/`.../usages` exist; the CLI `get` leaf currently lists everything and filters client-side. | New handler backed by a new public `PolicyRuleService.get()` (delegates to the existing private `_get`), same `CurrentSuperuser` gate as siblings, catalog entry + decorator + test. One design note to carry over: solution-managed rules would be readable (not just writable-blocked) through this path — a "read wider than write" default worth confirming, not assuming. | [policy_rules](#policy_rules-2b1803831) |
+| `configs.get` | `GET /api/config/{config_id}` | No GET-by-id route — `bifrost configs get`, MCP `get_config`, and the secret check inside `bifrost configs delete` all currently fetch the whole list and filter client-side. | New handler, same `CurrentSuperuser` gate as siblings, catalog entry + decorator + test — **plus port the already-known fix from `3564d350c`**: don't apply the name-cascade org filter to the ID lookup (`OrgScopedRepository.get()` deliberately doesn't cascade ID lookups), or a platform admin will get a 404 reading a config their sibling PUT/DELETE routes let them write. | [configs](#configs-0ce412d71) |
+| `workspace.files.patch` | `POST /api/files/patch` | No `/api/files/patch` route at all — this is a new conflict-safe unique-string-edit primitive, not a rename of an existing one. | New handler with new 404/409(version_conflict)/409(string_not_found)/400(binary) logic, catalog entry + decorator + test. Independent of this, two *existing* workspace-file endpoints (`write`, `delete`) are also missing the new solution-managed-write guard found in workspace_files (c).1 below — worth landing together since both are "workspace file endpoints bypass the ORM flush guard" fixes. | [workspace_files](#workspace_files-11fe6f128) |
+
 ---
 
 ## agents (7aa8f5a7e)
