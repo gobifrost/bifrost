@@ -1,21 +1,21 @@
 """Stage 3a E2E: ``tables.get/query/count`` via live worker and live service.
 
 Exercises the full path — workflow code in a forked worker child calling
-the three table reads — against the same seeded table the external HTTP
-endpoints serve, proving parity (filters, pagination, missing-entity
-results) end to end:
+the table definitions and reads — against the same tables the external
+HTTP endpoints serve, proving parity (filters, pagination, create/list/
+delete, missing-entity results) end to end:
 
-- the workflow hard-disables table fixed-operation HTTP in-engine
-  (``get_client`` raises if touched) and records that the local transport
-  is installed, so success proves zero API requests for the migrated
-  operations;
+- the workflow records that the engine injected the worker's private
+  socket, so the migrated calls rode the shared client transport rather
+  than the network API (the zero-HTTP proof lives in the unit and
+  forked-child socket tests, where the child's network API is dead);
 - the same values served over external HTTP match.
 
 A second, service-identity path registers a live ``@service`` doing the
-same reads with HTTP disabled: its token identity differs (system-user
-non-superuser, org-confined), so the default admin-bypass table reads as
-empty/denied locally — proving the parent dispatches service table calls
-under the service token, not the initiating user's admin flag.
+same reads: its token identity differs (system-user non-superuser,
+org-confined), so the default admin-bypass table reads as empty/denied —
+proving the parent dispatches service table calls under the service
+token, not the initiating user's admin flag.
 """
 
 from __future__ import annotations
@@ -82,37 +82,29 @@ def live_tables_workflow(
     path = f"{name}.py"
     table = live_table_keys["table"]
     missing = live_table_keys["missing_table"]
-    content = f'''"""Stage 3a local table reads E2E workflow."""
+    created_name = f"slive_new_{live_table_keys['tag']}"
+    content = f'''"""Stage 3a local table definitions/reads E2E workflow."""
 from bifrost import workflow, tables
+from bifrost.client import get_engine_socket_path
 
 @workflow(name="{name}", description="Stage 3a local table reads E2E")
 async def {name}():
-    import importlib
-    _tab = importlib.import_module("bifrost.tables")
-    from bifrost._local_transport import get as _get_transport
-    used_local = _get_transport() is not None
-
-    def _dead(*args, **kwargs):
-        raise AssertionError(
-            "fixed-operation HTTP must not be used in the engine path"
-        )
-    _orig = _tab.get_client
-    _tab.get_client = _dead
-    try:
-        doc = await tables.get("{table}", "row-a")
-        filtered = await tables.query(
-            "{table}", where={{"status": "active"}},
-            order_by="n", order_dir="desc", limit=1,
-        )
-        total = await tables.count("{table}")
-        active_total = await tables.count("{table}", where={{"status": "active"}})
-        missing_doc = await tables.get("{table}", "row-missing")
-        missing_query = await tables.query("{missing}")
-        missing_count = await tables.count("{missing}")
-    finally:
-        _tab.get_client = _orig
+    used_socket = get_engine_socket_path() is not None
+    doc = await tables.get("{table}", "row-a")
+    filtered = await tables.query(
+        "{table}", where={{"status": "active"}},
+        order_by="n", order_dir="desc", limit=1,
+    )
+    total = await tables.count("{table}")
+    active_total = await tables.count("{table}", where={{"status": "active"}})
+    missing_doc = await tables.get("{table}", "row-missing")
+    missing_query = await tables.query("{missing}")
+    missing_count = await tables.count("{missing}")
+    created = await tables.create("{created_name}", description="stage 3a")
+    listed_names = [t.name for t in await tables.list()]
+    deleted = await tables.delete(created.id)
     return {{
-        "used_local": used_local,
+        "used_socket": used_socket,
         "doc_id": doc.id,
         "doc_n": doc.data.get("n"),
         "filtered_ids": [d.id for d in filtered.documents],
@@ -123,6 +115,9 @@ async def {name}():
         "missing_docs": missing_query.documents,
         "missing_total": missing_query.total,
         "missing_count": missing_count,
+        "created_id": created.id,
+        "created_listed": "{created_name}" in listed_names,
+        "deleted": deleted,
     }}
 '''
     registered = write_and_register(
@@ -160,9 +155,10 @@ class TestSdkTablesLocalLiveE2E:
         )
         assert result["status"] == "Success", result
         out = result["result"]
-        # Zero API requests: the transport was installed and every
-        # fixed-operation HTTP call would have raised inside the workflow.
-        assert out["used_local"] is True
+        # The worker injected its private socket, so the migrated calls rode
+        # the shared client transport (zero-HTTP proof is in the unit and
+        # forked-child tests).
+        assert out["used_socket"] is True
         assert out["doc_id"] == "row-a"
         assert out["doc_n"] == 1
         assert out["filtered_ids"] == ["row-c"]
@@ -173,6 +169,17 @@ class TestSdkTablesLocalLiveE2E:
         assert out["missing_docs"] == []
         assert out["missing_total"] == 0
         assert out["missing_count"] == 0
+        # Definitions: create/list/delete round-trip through the live worker.
+        assert out["created_id"]
+        assert out["created_listed"] is True
+        assert out["deleted"] is True
+
+        # The delete committed: the created table is gone over external HTTP.
+        gone = e2e_client.get(
+            f"/api/tables/{out['created_id']}",
+            headers=platform_admin.headers,
+        )
+        assert gone.status_code == 404, gone.text
 
         # Committed state verified over external HTTP (parity).
         table_id = live_table["table_id"]
@@ -213,31 +220,20 @@ from bifrost import service, tables
 async def {function_name}() -> None:
     """Read the seeded table with HTTP disabled, log the outcome, park."""
     await service.ready()
-    import importlib
-    _tab = importlib.import_module("bifrost.tables")
-    from bifrost._local_transport import get as _get_transport
-    used_local = _get_transport() is not None
+    from bifrost.client import get_engine_socket_path
+    used_socket = get_engine_socket_path() is not None
 
-    def _dead(*args, **kwargs):
-        raise AssertionError(
-            "fixed-operation HTTP must not be used in the engine path"
-        )
-    _orig = _tab.get_client
-    _tab.get_client = _dead
+    queried = await tables.query("{table}")
     try:
-        queried = await tables.query("{table}")
-        try:
-            await tables.get("{table}", "row-a")
-            get_result = "LEAKED"
-        except Exception as e:
-            get_result = type(e).__name__
-        counted = await tables.count("{table}")
-    finally:
-        _tab.get_client = _orig
+        await tables.get("{table}", "row-a")
+        get_result = "LEAKED"
+    except Exception as e:
+        get_result = type(e).__name__
+    counted = await tables.count("{table}")
     logging.getLogger(__name__).info(
         "TABLES_LOCAL %s",
         json.dumps({{
-            "used_local": used_local,
+            "used_socket": used_socket,
             "query_total": queried.total,
             "query_docs": len(queried.documents),
             "get_result": get_result,
@@ -334,7 +330,7 @@ class TestSdkTablesLocalLiveService:
                 break
             await asyncio.sleep(2.0)
         assert payload is not None, "service never logged its table outcome"
-        assert payload["used_local"] is True
+        assert payload["used_socket"] is True
         assert payload["query_total"] == 0
         assert payload["query_docs"] == 0
         assert payload["get_result"] == "BifrostAuthorizationError"

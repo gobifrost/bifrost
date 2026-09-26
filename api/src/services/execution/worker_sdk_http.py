@@ -13,9 +13,10 @@ worker's already-initialized database engine are all the API's. No full API
 app is started and no handler or service is copied.
 
 Gate A proved the approach with the config routes; Gate C1 wired the config
-facade to the shared client transport, and Gate C2 adds the six integrations
-routes. Streams, tables, and other domains stay on their existing channel
-path until their own Gate C slice migrates them.
+facade to the shared client transport, Gate C2 added the six integrations
+routes, and Gate C3a adds the table-definition routes (create/list/delete)
+and the document reads (get/query/count). Streams and other domains stay on
+their existing channel path until their own Gate C slice migrates them.
 
 ``import fastapi``/``uvicorn`` happen inside the functions so the worker
 entry closure stays free of those heavyweights at import time (see
@@ -67,9 +68,35 @@ INTEGRATION_ROUTE_PATHS: frozenset[str] = frozenset(
     }
 )
 
-# Every route this worker-local app serves. Other SDK domains keep their
-# existing channel path until their Gate C slice migrates them.
-SDK_ROUTE_PATHS: frozenset[str] = CONFIG_ROUTE_PATHS | INTEGRATION_ROUTE_PATHS
+# Gate C3a: the table-definition facade routes (create/list) selected from
+# the cli SDK router, exactly like config and integrations. Delete rides the
+# tables REST router below, which is where DELETE /api/tables/{table_id}
+# lives.
+TABLE_SDK_ROUTE_PATHS: frozenset[str] = frozenset(
+    {
+        "/api/sdk/tables/create",
+        "/api/sdk/tables/list",
+    }
+)
+
+# Gate C3a: table-definition delete plus the document reads served by the
+# tables REST router. Keyed by path AND the exact methods needed, because
+# ``/api/tables/{table_id}`` is also a GET/PATCH metadata route we must not
+# accidentally mount. The shared ``BifrostClient.engine_request`` calls each
+# one with the ordinary verb.
+TABLE_ROUTE_METHODS: dict[str, frozenset[str]] = {
+    "/api/tables/{table_id}": frozenset({"DELETE"}),
+    "/api/tables/{table_id}/documents/count": frozenset({"GET"}),
+    "/api/tables/{table_id}/documents/{doc_id}": frozenset({"GET"}),
+    "/api/tables/{table_id}/documents/query": frozenset({"POST"}),
+}
+
+# Every route this worker-local app serves from the cli SDK router. Other SDK
+# domains keep their existing channel path until their Gate C slice migrates
+# them.
+SDK_ROUTE_PATHS: frozenset[str] = (
+    CONFIG_ROUTE_PATHS | INTEGRATION_ROUTE_PATHS | TABLE_SDK_ROUTE_PATHS
+)
 
 
 def build_worker_sdk_app() -> Any:
@@ -82,6 +109,7 @@ def build_worker_sdk_app() -> Any:
     from fastapi import FastAPI
 
     from src.routers.cli import router as sdk_router
+    from src.routers.tables import router as tables_router
 
     app = FastAPI(
         title="Bifrost worker-local engine SDK",
@@ -96,10 +124,24 @@ def build_worker_sdk_app() -> Any:
             # response model) — never a re-created or copied handler.
             app.router.routes.append(route)
             selected += 1
-    if selected != len(SDK_ROUTE_PATHS):
+    expected = len(SDK_ROUTE_PATHS)
+
+    # Tables REST routes are selected by (path, method) so a shared path like
+    # ``/api/tables/{table_id}`` does not drag in its unrelated GET/PATCH
+    # siblings. Router order is preserved, so ``/documents/count`` is
+    # registered before ``/documents/{doc_id}`` exactly as in the API.
+    for route in tables_router.routes:
+        wanted = TABLE_ROUTE_METHODS.get(getattr(route, "path", None), frozenset())
+        methods = getattr(route, "methods", None) or frozenset()
+        if wanted and methods & wanted:
+            app.router.routes.append(route)
+            selected += 1
+    expected += len(TABLE_ROUTE_METHODS)
+
+    if selected != expected:
         raise RuntimeError(
             "worker-local SDK app could not mount every SDK route "
-            f"({selected}/{len(SDK_ROUTE_PATHS)}); route selection is stale"
+            f"({selected}/{expected}); route selection is stale"
         )
     return app
 

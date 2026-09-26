@@ -211,7 +211,7 @@ async def test_tables_query_forwards_document_id_pagination_and_skip_count(monke
         "offset": 0,
     }
     client = MagicMock()
-    client.post = AsyncMock(return_value=response)
+    client.engine_request = AsyncMock(return_value=response)
     monkeypatch.setattr(module, "get_client", lambda: client)
     monkeypatch.setattr(module, "raise_for_status_with_detail", MagicMock())
 
@@ -226,7 +226,8 @@ async def test_tables_query_forwards_document_id_pagination_and_skip_count(monke
     )
 
     assert result.total == -1
-    client.post.assert_awaited_once_with(
+    client.engine_request.assert_awaited_once_with(
+        "POST",
         "/api/tables/inventory/documents/query?scope=global",
         json={
             "where": None,

@@ -2,11 +2,20 @@
 Tables SDK for Bifrost.
 
 Provides Python API for table and document management (CRUD operations).
-Outside an engine child all operations go through HTTP API endpoints;
-inside an engine child the fixed operations ride the dedicated local
-transport to the parent (same shared services, same results) with no
-HTTP requests and no database connection in the child. A local attempt
-never falls back to HTTP.
+
+Every call rides the shared ``BifrostClient``: over the worker's private
+Unix socket when the engine injected one, and over the network API
+otherwise. Same path, body, bearer token, timeout, and error handling on
+both transports; a local failure raises and never falls back to the
+network API.
+
+As of Gate C3a the table-definition methods (``create``/``list``/``delete``)
+and the document reads (``get``/``query``/``count``) use those ordinary
+HTTP routes. The remaining table mutations
+(``insert``/``upsert``/``update``/``delete_document``/``batch``/
+``bulk_upsert``) still ride the dedicated local transport until their own
+Gate C slice migrates them.
+
 All methods are async and must be awaited.
 """
 
@@ -120,11 +129,12 @@ class tables:
     Table and document management operations.
 
     Allows workflows to create tables and store/query documents.
-    Outside an engine child all operations go through HTTP API endpoints;
-    inside an engine child the fixed operations resolve through the parent
-    over the dedicated local transport (same resolution + shared services
-    as the HTTP endpoints) with no HTTP requests and no database
-    connection in the child. A local attempt never falls back to HTTP.
+    Every operation goes through the ordinary HTTP API endpoints, carried
+    by the shared ``BifrostClient`` over the worker's private Unix socket
+    inside an engine child and over the network otherwise. The remaining
+    write operations additionally use the dedicated local transport until
+    their own migration; either way a local attempt never falls back to
+    HTTP.
 
     All methods are async - await is required.
 
@@ -188,18 +198,12 @@ class tables:
                 "Solution executions cannot create tables at runtime; declare tables in the solution manifest"
             )
         effective_scope = resolve_scope(scope)
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: the parent validates the same
-            # ``SDKTableCreateRequest`` DTO and runs the shared metadata
-            # service over the dedicated channel. A local attempt never
-            # falls back to HTTP.
-            result = await transport.call_tables_create(
-                name, description, table_schema, effective_scope,
-            )
-            return TableInfo.model_validate(result)
+        # The shared BifrostClient carries this over the worker's private
+        # Unix socket when the engine injected one, and over the network
+        # otherwise. A local attempt never falls back to HTTP.
         client = get_client()
-        response = await client.post(
+        response = await client.engine_request(
+            "POST",
             "/api/sdk/tables/create",
             json={
                 "name": name,
@@ -207,7 +211,7 @@ class tables:
                 "table_schema": table_schema,
                 "scope": effective_scope,
                 "app": app,
-            }
+            },
         )
         raise_for_status_with_detail(response)
         return TableInfo.model_validate(response.json())
@@ -239,22 +243,17 @@ class tables:
             >>> app_tables = await tables.list(app="app-uuid")
         """
         effective_scope = resolve_scope(scope)
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: the parent runs the shared metadata
-            # service over the dedicated channel. A local attempt never
-            # falls back to HTTP.
-            return [
-                TableInfo.model_validate(t)
-                for t in await transport.call_tables_list(effective_scope)
-            ]
+        # The shared BifrostClient carries this over the worker's private
+        # Unix socket when the engine injected one, and over the network
+        # otherwise. A local attempt never falls back to HTTP.
         client = get_client()
-        response = await client.post(
+        response = await client.engine_request(
+            "POST",
             "/api/sdk/tables/list",
             json={
                 "scope": effective_scope,
                 "app": app,
-            }
+            },
         )
         raise_for_status_with_detail(response)
         return [TableInfo.model_validate(t) for t in response.json()]
@@ -280,16 +279,13 @@ class tables:
             >>> from bifrost import tables
             >>> await tables.delete("table-uuid-here")
         """
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: the parent runs the shared metadata
-            # service over the dedicated channel (a missing table raises,
-            # like the HTTP path). A local attempt never falls back to
-            # HTTP.
-            await transport.call_tables_delete(table_id)
-            return True
+        # The shared BifrostClient carries this over the worker's private
+        # Unix socket when the engine injected one, and over the network
+        # otherwise (a missing table raises, like before). A local attempt
+        # never falls back to HTTP.
         client = get_client()
-        response = await client.delete(
+        response = await client.engine_request(
+            "DELETE",
             f"/api/tables/{table_id}",
         )
         raise_for_status_with_detail(response)
@@ -458,14 +454,16 @@ class tables:
         """
         Get a document by ID.
 
-        Inside an engine child this resolves through the parent over the
-        dedicated local transport (same resolution + read service as the
-        HTTP endpoint); elsewhere it calls the REST endpoint.
+        Rides the shared client's engine-local transport inside an engine
+        child and the network API elsewhere; the endpoint applies the same
+        resolution and read policy either way.
 
         Args:
             table: Table name or UUID.
             doc_id: Document ID.
             scope: Organization scope.
+            solution: Target solution install (UUID or slug/name) in the
+                resolved scope. Unset → own install or _repo/. Per-call only.
 
         Returns:
             DocumentData if found, None if not found.
@@ -474,27 +472,13 @@ class tables:
             >>> doc = await tables.get("customers", "acme-001")
         """
         effective_scope = resolve_scope(scope)
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: the parent resolves the table and enforces
-            # the read policy over the dedicated channel — the same shared
-            # service the HTTP endpoint calls. The per-call ``solution``
-            # target rides the frame; the caller's own install identity
-            # stays parent-owned. A local attempt never falls back to HTTP.
-            from .client import BifrostAPIError
-
-            try:
-                result = await transport.call_tables_get(
-                    table, doc_id, effective_scope,
-                    get_effective_solution(solution),
-                )
-            except BifrostAPIError as e:
-                if e.response.status_code == 404:
-                    return None
-                raise
-            return DocumentData.model_validate(result)
+        # The shared BifrostClient carries this over the worker's private
+        # Unix socket when the engine injected one, and over the network
+        # otherwise; the endpoint applies the same read policy either way.
+        # A local attempt never falls back to HTTP.
         client = get_client()
-        response = await client.get(
+        response = await client.engine_request(
+            "GET",
             f"/api/tables/{table}/documents/{doc_id}{_scope_query(effective_scope, solution)}",
         )
         if response.status_code == 404:
@@ -997,40 +981,14 @@ class tables:
             >>> results = await tables.query("customers", where={"status": "active"})
         """
         effective_scope = resolve_scope(scope)
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: the parent validates the same
-            # ``DocumentQuery`` DTO and runs the shared read service over
-            # the dedicated channel. A local attempt never falls back to
-            # HTTP.
-            from .client import BifrostAPIError
-
-            try:
-                result = await transport.call_tables_query(
-                    table,
-                    {
-                        "where": where,
-                        "order_by": order_by,
-                        "order_dir": order_dir,
-                        "limit": limit,
-                        "offset": offset,
-                        "after_document_id": after_document_id,
-                        "document_id_prefix": document_id_prefix,
-                        "skip_count": skip_count,
-                        "document_ids": document_ids,
-                    },
-                    effective_scope,
-                    get_effective_solution(solution),
-                )
-            except BifrostAPIError as e:
-                if e.response.status_code == 404:
-                    return DocumentList(
-                        documents=[], total=0, limit=limit, offset=offset
-                    )
-                raise
-            return DocumentList.model_validate(result)
+        # The shared BifrostClient carries this over the worker's private
+        # Unix socket when the engine injected one, and over the network
+        # otherwise. The endpoint validates the same ``DocumentQuery`` DTO
+        # and runs the same read service. A local attempt never falls back
+        # to HTTP.
         client = get_client()
-        response = await client.post(
+        response = await client.engine_request(
+            "POST",
             f"/api/tables/{table}/documents/query{_scope_query(effective_scope, solution)}",
             json={
                 "where": where,
@@ -1073,29 +1031,15 @@ class tables:
             >>> active = await tables.count("customers", where={"status": "active"})
         """
         effective_scope = resolve_scope(scope)
-        transport = _get_local_transport()
-        if transport is not None and where is None:
-            # Engine-local path for the unfiltered count: the parent runs
-            # the shared count service over the dedicated channel. A local
-            # attempt never falls back to HTTP. Filtered counts compose
-            # through the public ``tables.query(limit=1)`` below (which
-            # itself rides the local transport), exactly like the HTTP path.
-            from .client import BifrostAPIError
-
-            try:
-                result = await transport.call_tables_count(
-                    table, effective_scope,
-                    get_effective_solution(None),
-                )
-            except BifrostAPIError as e:
-                if e.response.status_code == 404:
-                    return 0
-                raise
-            return int(result["count"])
         if where is None:
-            client = get_client()
             # Unfiltered count: hit GET /count which avoids row scanning.
-            response = await client.get(
+            # The shared BifrostClient carries this over the worker's
+            # private Unix socket when the engine injected one, and over
+            # the network otherwise. A local attempt never falls back to
+            # HTTP.
+            client = get_client()
+            response = await client.engine_request(
+                "GET",
                 f"/api/tables/{table}/documents/count{_scope_query(effective_scope)}",
             )
             if response.status_code == 404:
@@ -1104,7 +1048,9 @@ class tables:
             return response.json()["count"]
 
         # Filtered count: REST /count doesn't accept where, so fall back to
-        # query with limit=1 (the response carries the matched total).
+        # query with limit=1 (the response carries the matched total). The
+        # query itself rides the shared client transport, exactly like the
+        # HTTP path.
         result = await tables.query(
             table=table, where=where, limit=1, scope=scope,
         )

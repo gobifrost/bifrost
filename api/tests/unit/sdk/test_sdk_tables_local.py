@@ -9,14 +9,19 @@ Covers the acceptance surface that does not need a forked child:
   superuser vs service non-superuser — never the initiating user's admin
   flag), keeps the service's 404/403 statuses, ignores forged child
   install claims, and serves each request on one short session;
-- the child transport performs real table round trips with zero HTTP
-  requests, maps 404s to the facade's method-specific results without HTTP
-  fallback, and composes filtered counts through ``tables.query``.
+- the migrated facade methods (``get/query/count``) ride the shared
+  ``BifrostClient.engine_request`` transport and never touch the dedicated
+  channel, map 404s to the facade's method-specific results, and compose
+  filtered counts through ``tables.query``.
+
+The ``sdk_local_dispatch`` parity classes still exercise the parent
+dispatcher directly; the facade no longer calls it for these reads (see
+Gate C3a), but the shared service it delegates to is the same one the HTTP
+routes run.
 """
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import contextlib
 import json
@@ -917,7 +922,16 @@ def _resp(payload):
     return DocumentListResponse.model_validate(payload)
 
 
-class TestChildTransport:
+class TestSharedClientTransport:
+    """Gate C3a: the migrated reads ride the shared client, not the channel.
+
+    ``tables.get/query/count`` now go through
+    ``BifrostClient.engine_request`` (the worker Unix socket inside an engine
+    child, the network API elsewhere). A pipe transport is installed and
+    every migrated call must ignore it; the extracted document, 404, and
+    error mapping stays identical to the HTTP endpoints.
+    """
+
     def _pair(self):
         req_recv, req_send = multiprocessing.Pipe(duplex=False)
         resp_recv, resp_send = multiprocessing.Pipe(duplex=False)
@@ -928,16 +942,24 @@ class TestChildTransport:
             with contextlib.suppress(Exception):
                 conn.close()
 
-    async def _pump(self, req_conn, resp_conn, handler, count=1):
-        for _ in range(count):
-            raw = await asyncio.to_thread(req_conn.recv_bytes, 65537)
-            frame = json.loads(raw.decode("utf-8"))
-            response = handler(frame)
-            await asyncio.to_thread(resp_conn.send_bytes, json.dumps(response).encode())
+    def _client(self, responses):
+        from unittest.mock import AsyncMock, MagicMock
+
+        client = MagicMock()
+        client.engine_request = AsyncMock(side_effect=responses)
+        return client
 
     @pytest.mark.asyncio
-    async def test_get_query_count_round_trip_without_http(self):
+    async def test_get_query_count_use_shared_client_not_channel(self):
+        import httpx
+
         from bifrost import _local_transport as lt
+        from bifrost._context import (
+            clear_execution_context,
+            set_execution_context,
+        )
+        from bifrost.tables import tables
+        from src.sdk.context import ExecutionContext
 
         req_recv, req_send, resp_recv, resp_send = self._pair()
         lt.install(req_send, resp_recv)
@@ -948,129 +970,110 @@ class TestChildTransport:
             "updated_at": "2026-01-01T00:00:00+00:00",
             "created_by": "t", "updated_by": "t",
         }
-        seen = {}
-
-        def _handler(frame):
-            seen[frame["op"]] = frame
-            # The caller's install identity is parent-owned: the child
-            # never sends caller_solution, app_id, or user claims.
-            assert "caller_solution" not in frame, frame
-            assert "app_id" not in frame, frame
-            assert "user" not in frame, frame
-            if frame["op"] == "tables.get":
-                return {"v": 1, "id": frame["id"], "ok": True, "result": doc}
-            if frame["op"] == "tables.query":
-                return {"v": 1, "id": frame["id"], "ok": True, "result": {
-                    "table_id": table_id, "documents": [doc],
-                    "total": 1, "limit": 100, "offset": 0,
-                }}
-            if frame["op"] == "tables.count":
-                return {"v": 1, "id": frame["id"], "ok": True,
-                        "result": {"count": 7}}
-            raise AssertionError(frame["op"])
-
-        pump = asyncio.create_task(self._pump(req_recv, resp_send, _handler, count=4))
+        document_list = {
+            "table_id": table_id, "documents": [doc],
+            "total": 1, "limit": 100, "offset": 0,
+        }
+        client = self._client([
+            httpx.Response(200, json=doc),
+            httpx.Response(200, json=document_list),
+            httpx.Response(200, json={"count": 7}),
+            httpx.Response(200, json=document_list),
+        ])
         try:
-            from bifrost._context import (
-                clear_execution_context,
-                set_execution_context,
+            set_execution_context(
+                ExecutionContext(
+                    user_id="u1", email="e@e.com", name="T", scope="org-1",
+                    organization=None, is_platform_admin=False,
+                    is_function_key=False, execution_id="exec-1",
+                )
             )
-            from bifrost.tables import tables
-            from src.sdk.context import ExecutionContext
-
-            ctx = ExecutionContext(
-                user_id="u1", email="e@e.com", name="T", scope="org-1",
-                organization=None, is_platform_admin=False,
-                is_function_key=False, execution_id="exec-1",
-            )
-            set_execution_context(ctx)
             try:
-                with patch("bifrost.tables.get_client") as get_client:
-                    get_client.side_effect = AssertionError("HTTP must not be used")
+                with patch("bifrost.tables.get_client", return_value=client):
                     got = await tables.get("t", "d1")
                     assert got is not None and got.id == "d1"
                     queried = await tables.query("t", where={"v": 1})
                     assert queried.total == 1
                     assert [d.id for d in queried.documents] == ["d1"]
                     assert await tables.count("t") == 7
-                    filtered = await tables.count("t", where={"v": 1})
-                    assert filtered == 1
+                    assert await tables.count("t", where={"v": 1}) == 1
             finally:
                 clear_execution_context()
-            await pump
         finally:
             lt.clear()
             self._close_all((req_recv, req_send, resp_recv, resp_send))
-        # The filtered count composes through the public query op — there is
-        # no filtered-count operation on the wire.
-        assert seen["tables.get"]["table"] == "t"
-        assert seen["tables.get"]["doc_id"] == "d1"
-        assert seen["tables.query"]["query"]["where"] == {"v": 1}
-        assert seen["tables.query"]["query"]["limit"] == 1
-        assert seen["tables.count"]["table"] == "t"
+        # The migrated reads never read a channel frame: every call went
+        # through the shared client's engine-local entry point.
+        assert [
+            (call.args[0], call.args[1])
+            for call in client.engine_request.await_args_list
+        ] == [
+            ("GET", "/api/tables/t/documents/d1"),
+            ("POST", "/api/tables/t/documents/query"),
+            ("GET", "/api/tables/t/documents/count"),
+            ("POST", "/api/tables/t/documents/query"),
+        ]
+        # Filtered count composes through query(limit=1): no count frame.
+        assert (
+            client.engine_request.await_args_list[3].kwargs["json"]["limit"] == 1
+        )
 
     @pytest.mark.asyncio
     async def test_local_404_maps_to_method_results_without_http(self):
+        import httpx
+
         from bifrost import _local_transport as lt
+        from bifrost.tables import tables
 
         req_recv, req_send, resp_recv, resp_send = self._pair()
         lt.install(req_send, resp_recv)
-        pump = asyncio.create_task(
-            self._pump(
-                req_recv, resp_send,
-                lambda f: {"v": 1, "id": f["id"], "ok": False,
-                           "status": 404, "detail": "not found"},
-                count=3,
-            )
-        )
+        client = self._client([
+            httpx.Response(404, json={"detail": "not found"}),
+            httpx.Response(404, json={"detail": "not found"}),
+            httpx.Response(404, json={"detail": "not found"}),
+        ])
         try:
-            from bifrost.tables import tables
-
-            with patch("bifrost.tables.get_client") as get_client:
-                get_client.side_effect = AssertionError("HTTP must not be used")
+            with patch("bifrost.tables.get_client", return_value=client):
                 assert await tables.get("ghost", "d1") is None
                 queried = await tables.query("ghost")
                 assert queried.documents == [] and queried.total == 0
                 assert await tables.count("ghost") == 0
-            await pump
+            assert client.engine_request.await_count == 3
         finally:
             lt.clear()
             self._close_all((req_recv, req_send, resp_recv, resp_send))
 
     @pytest.mark.asyncio
-    async def test_local_error_never_falls_back_to_http(self):
+    async def test_error_status_surfaces_without_channel(self):
+        import httpx
+
         from bifrost import _local_transport as lt
-        from bifrost.client import BifrostAuthorizationError
+        from bifrost.client import BifrostAPIError, BifrostAuthorizationError
+        from bifrost.tables import tables
 
         req_recv, req_send, resp_recv, resp_send = self._pair()
         lt.install(req_send, resp_recv)
-        seen = []
-
-        async def _pump_statuses():
-            for status in (403, 500):
-                raw = await asyncio.to_thread(req_recv.recv_bytes, 65537)
-                frame = json.loads(raw.decode("utf-8"))
-                seen.append(frame["op"])
-                await asyncio.to_thread(
-                    resp_send.send_bytes,
-                    json.dumps(
-                        {"v": 1, "id": frame["id"], "ok": False,
-                         "status": status, "detail": "denied"}
-                    ).encode(),
-                )
-
-        pump = asyncio.create_task(_pump_statuses())
+        client = self._client([
+            httpx.Response(
+                403, json={"detail": "denied"},
+                request=httpx.Request(
+                    "GET", "http://api/api/tables/t/documents/d1"
+                ),
+            ),
+            httpx.Response(
+                500, json={"detail": "boom"},
+                request=httpx.Request(
+                    "POST", "http://api/api/tables/t/documents/query"
+                ),
+            ),
+        ])
         try:
-            from bifrost.tables import tables
-
-            with patch("bifrost.tables.get_client") as get_client:
-                get_client.side_effect = AssertionError("HTTP must not be used")
+            with patch("bifrost.tables.get_client", return_value=client):
                 with pytest.raises(BifrostAuthorizationError):
                     await tables.get("t", "d1")
-                with pytest.raises(Exception):
+                with pytest.raises(BifrostAPIError):
                     await tables.query("t")
-            await pump
-            assert seen == ["tables.get", "tables.query"]
+            assert client.engine_request.await_count == 2
         finally:
             lt.clear()
             self._close_all((req_recv, req_send, resp_recv, resp_send))

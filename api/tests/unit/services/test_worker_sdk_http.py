@@ -31,6 +31,8 @@ from src.services.execution.worker_sdk_http import (
     CONFIG_ROUTE_PATHS,
     INTEGRATION_ROUTE_PATHS,
     SDK_ROUTE_PATHS,
+    TABLE_ROUTE_METHODS,
+    TABLE_SDK_ROUTE_PATHS,
     WorkerSdkHttpServer,
     build_worker_sdk_app,
 )
@@ -138,35 +140,77 @@ class TestRouteReuse:
         from fastapi.routing import APIRoute
 
         from src.routers.cli import router as sdk_router
+        from src.routers.tables import router as tables_router
 
-        originals = {
+        cli_originals = {
             route.path: route
             for route in sdk_router.routes
             if getattr(route, "path", None) in SDK_ROUTE_PATHS
         }
-        assert set(originals) == SDK_ROUTE_PATHS
+        assert set(cli_originals) == SDK_ROUTE_PATHS
+
+        tables_originals = {
+            (route.path, method): route
+            for route in tables_router.routes
+            if (wanted := TABLE_ROUTE_METHODS.get(getattr(route, "path", None)))
+            for method in (getattr(route, "methods", None) or set()) & wanted
+        }
 
         app = build_worker_sdk_app()
-        mounted = {
-            route.path: route
-            for route in app.router.routes
-            if isinstance(route, APIRoute)
+        mounted = [route for route in app.router.routes if isinstance(route, APIRoute)]
+        mounted_cli = {
+            route.path: route for route in mounted if route.path in SDK_ROUTE_PATHS
         }
+        mounted_tables = {
+            (route.path, method): route
+            for route in mounted
+            if route.path in TABLE_ROUTE_METHODS
+            for method in route.methods
+        }
+
         # Only the selected routes, and the exact registered objects — no
         # copied handlers and no rest of the API surface.
-        assert set(mounted) == SDK_ROUTE_PATHS
-        for path, route in mounted.items():
-            assert route is originals[path]
-            assert route.endpoint is originals[path].endpoint
+        assert set(mounted_cli) == SDK_ROUTE_PATHS
+        for path, route in mounted_cli.items():
+            assert route is cli_originals[path]
+            assert route.endpoint is cli_originals[path].endpoint
+
+        assert set(mounted_tables) == set(tables_originals)
+        for key, route in mounted_tables.items():
+            assert route is tables_originals[key]
+            assert route.endpoint is tables_originals[key].endpoint
+
+        # The shared ``/api/tables/{table_id}`` path must not drag in its
+        # GET/PATCH metadata siblings.
+        assert {
+            method
+            for (path, method) in mounted_tables
+            if path == "/api/tables/{table_id}"
+        } == {"DELETE"}
 
     def test_integration_route_selection_is_exact(self):
         """The six integrations routes are mounted as their real objects."""
-        assert SDK_ROUTE_PATHS == CONFIG_ROUTE_PATHS | INTEGRATION_ROUTE_PATHS
+        assert (
+            SDK_ROUTE_PATHS
+            == CONFIG_ROUTE_PATHS | INTEGRATION_ROUTE_PATHS | TABLE_SDK_ROUTE_PATHS
+        )
         assert len(INTEGRATION_ROUTE_PATHS) == 6
         assert all(
             path.startswith("/api/sdk/integrations/")
             for path in INTEGRATION_ROUTE_PATHS
         )
+
+    def test_table_route_selection_is_exact(self):
+        """Gate C3a mounts the two facade paths and four REST (path, method)s."""
+        assert TABLE_SDK_ROUTE_PATHS == frozenset(
+            {"/api/sdk/tables/create", "/api/sdk/tables/list"}
+        )
+        assert TABLE_ROUTE_METHODS == {
+            "/api/tables/{table_id}": frozenset({"DELETE"}),
+            "/api/tables/{table_id}/documents/count": frozenset({"GET"}),
+            "/api/tables/{table_id}/documents/{doc_id}": frozenset({"GET"}),
+            "/api/tables/{table_id}/documents/query": frozenset({"POST"}),
+        }
 
     @pytest.mark.asyncio
     async def test_unknown_route_is_404(self):

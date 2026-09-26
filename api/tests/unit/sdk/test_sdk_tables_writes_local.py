@@ -1132,31 +1132,25 @@ class TestChildTransportWrites:
         )
 
     @pytest.mark.asyncio
-    async def test_create_list_delete_round_trip_without_http(self):
+    async def test_create_list_delete_use_shared_client_not_channel(self):
+        from unittest.mock import AsyncMock, MagicMock
+
         from bifrost import _local_transport as lt
 
         req_recv, req_send, resp_recv, resp_send = self._pair()
         lt.install(req_send, resp_recv)
         info = _table_info("t")
-        seen = {}
 
         def _handler(frame):
-            seen[frame["op"]] = frame
-            # The caller's install identity is parent-owned: the child
-            # never sends caller_solution, app_id, or user claims.
-            assert "caller_solution" not in frame, frame
-            assert "app_id" not in frame, frame
-            assert "user" not in frame, frame
-            if frame["op"] == "tables.create":
-                return {"v": 1, "id": frame["id"], "ok": True, "result": info}
-            if frame["op"] == "tables.list":
-                return {"v": 1, "id": frame["id"], "ok": True,
-                        "result": {"items": [info]}}
-            if frame["op"] == "tables.delete":
-                return {"v": 1, "id": frame["id"], "ok": True, "result": True}
-            raise AssertionError(frame["op"])
+            raise AssertionError(f"channel must not be used: {frame['op']}")
 
-        pump = asyncio.create_task(self._pump(req_recv, resp_send, _handler, count=3))
+        client = MagicMock()
+        client.engine_request = AsyncMock(side_effect=[
+            MagicMock(status_code=200, json=lambda: dict(info)),
+            MagicMock(status_code=200, json=lambda: [dict(info)]),
+            MagicMock(status_code=204),
+        ])
+        pump = asyncio.create_task(self._pump(req_recv, resp_send, _handler, count=1))
         try:
             from bifrost._context import (
                 clear_execution_context,
@@ -1166,8 +1160,7 @@ class TestChildTransportWrites:
 
             set_execution_context(self._ctx())
             try:
-                with patch("bifrost.tables.get_client") as get_client:
-                    get_client.side_effect = AssertionError("HTTP must not be used")
+                with patch("bifrost.tables.get_client", return_value=client):
                     created = await tables.create("t")
                     assert created.id == info["id"]
                     listed = await tables.list()
@@ -1175,12 +1168,23 @@ class TestChildTransportWrites:
                     assert await tables.delete(info["id"]) is True
             finally:
                 clear_execution_context()
-            await pump
         finally:
+            pump.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await pump
             lt.clear()
             self._close_all((req_recv, req_send, resp_recv, resp_send))
-        assert set(seen) == {"tables.create", "tables.list", "tables.delete"}
-        assert seen["tables.create"]["name"] == "t"
+        # The migrated definition methods never read a channel frame: each
+        # call went through the shared client's engine-local entry point.
+        assert [
+            (call.args[0], call.args[1])
+            for call in client.engine_request.await_args_list
+        ] == [
+            ("POST", "/api/sdk/tables/create"),
+            ("POST", "/api/sdk/tables/list"),
+            ("DELETE", f"/api/tables/{info['id']}"),
+        ]
+        assert client.engine_request.await_args_list[0].kwargs["json"]["name"] == "t"
 
     @pytest.mark.asyncio
     async def test_insert_auto_creates_once_without_http(self):

@@ -1,12 +1,11 @@
-"""Gate A/C1: a real forked child reaches config CRUD over the worker socket.
+"""Gate A/C1/C2/C3a: real forked children reach the worker socket.
 
-This is the end-to-end proof behind Gate A and the config slice of Gate C. A
-real ``TemplateProcess`` forks a one-shot child and injects the worker's Unix
-socket path exactly as the pool does. The test process serves the **real**
-``/api/sdk/config/get|set|list|delete`` routes on that socket via uvicorn,
-against the real database engine. The child's network API is dead by
-environment, and it receives no database or provider credentials, so a correct
-value proves:
+This is the end-to-end proof behind Gate A and the config, integrations, and
+table slices of Gate C. A real ``TemplateProcess`` forks a one-shot child and
+injects the worker's Unix socket path exactly as the pool does. The test
+process serves the **real** SDK routes on that socket via uvicorn, against the
+real database engine. The child's network API is dead by environment, and it
+receives no database or provider credentials, so a correct value proves:
 
 - the existing routes are reused (not copied) and resolve the value;
 - the child used the socket transport, not the network API (zero
@@ -594,3 +593,191 @@ async def test_forked_child_integrations_over_worker_socket(
             template.shutdown()
         await server.stop()
         await _cleanup_committed_integration(async_session_factory, seed)
+
+
+async def _seed_committed_org(async_session_factory) -> str:
+    """Seed a committed organization the forked child scopes tables to.
+
+    The worker socket opens its own session from the worker's global engine,
+    so the org must be committed (not the rolled-back ``db_session``).
+    """
+    from src.models.orm.organizations import Organization as OrganizationModel
+
+    async with async_session_factory() as session:
+        org = OrganizationModel(
+            name=f"wsdk-fork-tables-org-{uuid4().hex[:8]}",
+            is_active=True,
+            is_provider=False,
+            created_by="worker-sdk-http-fork-test",
+        )
+        session.add(org)
+        await session.commit()
+        org_id = str(org.id)
+    return org_id
+
+
+async def _cleanup_committed_org(async_session_factory, org_id: str) -> None:
+    from sqlalchemy import delete
+
+    from src.models.orm.organizations import Organization as OrganizationModel
+
+    async with async_session_factory() as session:
+        await session.execute(
+            delete(OrganizationModel).where(OrganizationModel.id == org_id)
+        )
+        await session.commit()
+
+
+def _table_script(*, scope: str, table_name: str, missing_name: str) -> str:
+    source = f'''import os, sys
+from bifrost import tables
+from bifrost.client import get_engine_socket_path
+
+_socket = get_engine_socket_path()
+
+_created = await tables.create({table_name!r}, description="fork-table")
+_listed_names = [t.name for t in await tables.list(scope={scope!r})]
+_listed_scope = [t.name for t in await tables.list()]
+_dup = ""
+try:
+    await tables.create({table_name!r})
+    _dup = "UNEXPECTED-SUCCESS"
+except Exception as e:
+    _dup = f"{{type(e).__name__}}:{{e.response.status_code}}"
+
+from bifrost import _local_transport as _lt
+_transport = _lt.get()
+_installed = _transport is not None
+_channel = "installed" if _installed else "absent"
+
+_missing_query = await tables.query({missing_name!r}, scope={scope!r})
+_missing_count = await tables.count({missing_name!r}, scope={scope!r})
+_deleted = await tables.delete(_created.id)
+_after_delete = await tables.list(scope={scope!r})
+
+result = {{
+    "used_socket": _socket is not None,
+    "socket_path": _socket,
+    "had_db_url": (
+        "BIFROST_DATABASE_URL" in os.environ
+        or "BIFROST_DATABASE_URL_SYNC" in os.environ
+    ),
+    "had_sqlalchemy": "sqlalchemy" in sys.modules,
+    "created_id": _created.id,
+    "created_name": _created.name,
+    "created_scope": _created.organization_id,
+    "listed_names": _listed_names,
+    "listed_default_scope": _listed_scope,
+    "dup": _dup,
+    "channel_installed": _installed,
+    "channel_get": _channel,
+    "missing_total": _missing_query.total,
+    "missing_docs": _missing_query.documents,
+    "missing_count": _missing_count,
+    "deleted": _deleted,
+    "after_delete": _after_delete,
+}}
+'''
+    return base64.b64encode(source.encode("utf-8")).decode("utf-8")
+
+
+@pytest.mark.asyncio
+async def test_forked_child_tables_over_worker_socket(
+    async_session_factory, monkeypatch
+):
+    """Gate C3a: table definitions/reads reach the real routes over the socket.
+
+    A real child forks with the worker's Unix socket injected and a dead
+    network API. It creates/lists/deletes table definitions and reads
+    documents. This fork installs only the worker socket, not the dedicated
+    channel. Success with no DB credential proves the shared client carried
+    every call to the parent-served routes over the socket, with the same
+    scope, 404, and delete semantics as the network API.
+    """
+    from src.core.security import mint_engine_token
+
+    org_id = await _seed_committed_org(async_session_factory)
+    tag = uuid4().hex[:8]
+    table_name = f"forktbl_{tag}"
+    missing_name = f"forkmissing_{tag}"
+
+    # Any attempt to reach the network API fails loudly; the socket must
+    # serve every call.
+    monkeypatch.setenv("BIFROST_API_URL", "http://127.0.0.1:9")
+
+    engine_token, _ = mint_engine_token(
+        execution_id="gate-c3a-fork",
+        solution_id=None,
+        global_repo_access=True,
+        timeout_seconds=120,
+    )
+    organization = {"id": org_id, "name": "Fork Tables Org"}
+
+    server = WorkerSdkHttpServer()
+    await server.start()
+    assert server.socket_path is not None
+
+    template = TemplateProcess()
+    template.start()
+    try:
+        child_pid, work_queue, result_queue = template.fork(
+            worker_id="wsdk-tables-fork",
+            sdk_socket_path=server.socket_path,
+        )
+        try:
+            work_queue.put(
+                (
+                    "exec-wsdk-tables",
+                    _context_for(
+                        _table_script(
+                            scope=org_id,
+                            table_name=table_name,
+                            missing_name=missing_name,
+                        ),
+                        engine_token,
+                        organization,
+                        is_platform_admin=False,
+                    ),
+                )
+            )
+            envelope = await asyncio.to_thread(result_queue.get, True, 90.0)
+        finally:
+            work_queue.close()
+            result_queue.close()
+
+        assert envelope["success"] is True, envelope
+        result = envelope["result"]
+        # Transport proof: socket injected, network API dead, no DB credential.
+        assert result["used_socket"] is True
+        assert result["socket_path"] == server.socket_path
+        assert result["had_db_url"] is False
+        assert result["had_sqlalchemy"] is False
+        # Definitions: create persists the requested org scope, list sees it,
+        # a duplicate is a 409.
+        assert result["created_id"]
+        assert result["created_name"] == table_name
+        assert result["created_scope"] == org_id
+        assert result["listed_names"] == [table_name]
+        assert result["listed_default_scope"] == [table_name]
+        assert result["dup"].startswith("BifrostAPIError:409"), result
+        # This fork injects only the worker socket, not the dedicated
+        # channel: the migrated table operations ride the socket rather
+        # than the old pipe.
+        assert result["channel_installed"] is False
+        assert result["channel_get"] == "absent"
+        # Reads: a missing table maps to an empty query and a zero count on
+        # both transports (the SDK-level 404 mapping), matching the network
+        # API contract rather than surfacing the route's 404.
+        assert result["missing_total"] == 0
+        assert result["missing_docs"] == []
+        assert result["missing_count"] == 0
+        # Delete commits.
+        assert result["deleted"] is True
+        assert result["after_delete"] == []
+
+        _wait_for_pid_to_die(child_pid)
+    finally:
+        with contextlib.suppress(Exception):
+            template.shutdown()
+        await server.stop()
+        await _cleanup_committed_org(async_session_factory, org_id)
