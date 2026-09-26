@@ -1,8 +1,14 @@
-"""Bifrost SDK — Agent invocation from workflows."""
+"""Bifrost SDK — Agent invocation from workflows.
+
+``enqueue`` and ``get_run`` send the ordinary HTTP request through the
+shared ``BifrostClient``: over the worker's private Unix socket when the
+engine injected one, and over the network API otherwise. The worker parent
+owns the pooled database and the queue; an engine child holds neither, and a
+local attempt never falls back to the network API.
+"""
 from __future__ import annotations
 
 import json
-import logging
 import asyncio
 import time
 from datetime import datetime, timezone
@@ -11,8 +17,6 @@ from typing import Any, Literal
 from ._context import _execution_context
 from .client import get_client, raise_for_status_with_detail
 from .models import AgentRun, AgentRunHandle, AgentRunPending
-
-logger = logging.getLogger(__name__)
 
 
 def _poll_interval(elapsed_seconds: float) -> float:
@@ -52,7 +56,8 @@ class agents:
     ) -> AgentRunHandle:
         """Queue an agent and return as soon as the run is accepted."""
         client = get_client()
-        response = await client.post(
+        response = await client.engine_request(
+            "POST",
             "/api/agent-runs/enqueue",
             json={
                 "agent_name": agent_name,
@@ -75,7 +80,7 @@ class agents:
     async def get_run(run_id: str) -> AgentRun:
         """Get the current status and result for an agent run."""
         client = get_client()
-        response = await client.get(f"/api/agent-runs/{run_id}")
+        response = await client.engine_request("GET", f"/api/agent-runs/{run_id}")
         if response.status_code == 404:
             raise ValueError(f"Agent run not found: {run_id}")
         if response.status_code == 403:
@@ -163,7 +168,12 @@ class agents:
                 if remaining is None:
                     run = await agents.get_run(run_id)
                 else:
-                    run = await asyncio.wait_for(agents.get_run(run_id), timeout=remaining)
+                    # Ordinary HTTPX request cancellation: cancelling the
+                    # in-flight socket read is safe, unlike the removed
+                    # dedicated-channel transport whose pipes desynchronized.
+                    run = await asyncio.wait_for(
+                        agents.get_run(run_id), timeout=remaining
+                    )
             except asyncio.TimeoutError:
                 return AgentRunPending(
                     run_id=run_id, last_known_status=last_status, reason=reason,

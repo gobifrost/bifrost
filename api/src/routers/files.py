@@ -14,19 +14,17 @@ import hashlib
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Literal, TypeVar, cast
+from typing import Literal
 from urllib.parse import unquote
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.auth import Context, CurrentActiveUser, CurrentSuperuser
-from src.core.org_filter import resolve_target_org
 from src.core.principal import UserPrincipal
-from src.core.log_safety import log_safe
 from src.models.contracts.files import (
     FilePullRequest,
     FilePullResponse,
@@ -50,11 +48,24 @@ from src.models import (
     SearchResponse,
     WorkflowIdConflict,
 )
-from src.services.audit import emit_file_policy_deny
 from src.services.editor.search import search_files_db
-from src.services.file_backend import get_backend
 from src.services.file_storage import FileStorageService
 from shared.role_cache import get_user_roles
+from shared.file_access import (
+    FileCaller,
+    FileServiceError,
+    authorize_file_policy as _authorize_file_policy,
+    ctx_solution_id as _ctx_solution_id,
+    deny_file_policy as _deny_file_policy,
+    file_org_id as _file_org_id,
+    filter_listed_paths as _filter_listed_paths,
+    install_org_id as _install_org_id,
+    lock_file_mutation as _lock_file_mutation,
+    require_declared_solution_file_location as _require_declared_solution_file_location,
+    require_file_policy as _require_file_policy,
+    resolve_effective_scope as _resolve_effective_scope,
+    tiers_for_backend_mode as _tiers_for_backend_mode,
+)
 
 # Watch session TTL — must be > CLI heartbeat interval (WATCH_HEARTBEAT_SECONDS in bifrost.cli)
 WATCH_SESSION_TTL_SECONDS = 120
@@ -62,8 +73,6 @@ WATCH_SESSION_TTL_SECONDS = 120
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/files", tags=["Files"])
-_USE_CONTEXT_SOLUTION_ID = object()
-_T = TypeVar("_T")
 
 
 # =============================================================================
@@ -269,79 +278,10 @@ class FilePolicyAccessTestResponse(BaseModel):
 # =============================================================================
 
 
-def _file_org_id(ctx: Context, location: str, requested_scope: str | None) -> UUID | None:
-    """Resolve the target org for a file operation — the SAME rule the Tables
-    SDK uses (`resolve_target_org`): a non-superuser is pinned to their own org
-    and the requested `scope` is ignored (so they can never address another
-    org's tree); a superuser honors `scope` (`None` → their context org,
-    `"global"` → None, a UUID → that org). `workspace` is the one unscoped
-    location (shared codebase), so it always resolves to None/global.
-
-    NOTE: for any location with an active solution context, use
-    `_resolve_effective_scope` instead — it returns the install UUID as the
-    storage scope, which is NOT an org UUID.
-
-    Returns the policy/DB org key: `UUID` for an org, `None` for global.
-    """
-    if location == "workspace":
-        return None
-    return resolve_target_org(ctx.user, requested_scope, ctx.org_id)
-
-
-def _storage_scope(org_id: UUID | None) -> str | None:
-    """The path segment `resolve_s3_key` writes under: the org UUID for an
-    org-scoped file, the literal `"global"` for a global file (so global files
-    get their own `{location}/global/` tree rather than colliding at the root).
-    `workspace` callers pass this through unused (that location is unscoped)."""
-    return str(org_id) if org_id is not None else "global"
-
-
-def _resolve_effective_scope(
-    ctx: Context, location: str, requested_scope: str | None
-) -> str | None:
-    """Return the storage-scope string for use in `resolve_s3_key` and policy
-    evaluation, with solution-context taking priority over every other signal
-    (including a superuser's explicit `requested_scope`).
-
-    - ``ctx.solution_id`` → ``str(install_id)``
-      (H6: ctx.solution_id wins over requested_scope, even for superusers).
-    - All other cases → ``_storage_scope(_file_org_id(ctx, location, requested_scope))``.
-    """
-    if ctx.solution_id is not None:
-        if location == "workspace":
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="workspace is not available in solution file context",
-            )
-        return str(ctx.solution_id)
-    return _storage_scope(_file_org_id(ctx, location, requested_scope))
-
-
-def _ctx_solution_id(ctx: Context, location: str) -> UUID | None:
-    """Return the install UUID from context when present. Used to forward
-    solution_id to policy and metadata helpers so the solution-tier policy
-    cascade (Task 3) and the C2 metadata column are both correct. Canonical
-    parse lives in services/solution_scope.py."""
-    from src.services.solution_scope import parse_ctx_solution_id
-
-    return parse_ctx_solution_id(ctx)
-
-
-async def _install_org_id(ctx: Context, solution_id: UUID | None) -> UUID | None:
-    """Look up the Solution install's ``organization_id`` from the DB.
-
-    Used when recording file metadata for solution writes (C2): the install's
-    org must be stored in ``FileMetadata.organization_id``, not ``ctx.org_id``
-    which may be None for platform-admin callers.  Returns ``ctx.org_id`` as
-    fallback if the install row is not found.
-    """
-    if solution_id is None:
-        return ctx.org_id
-    from src.models.orm.solutions import Solution as SolutionORM
-    row = (await ctx.db.execute(
-        select(SolutionORM).where(SolutionORM.id == solution_id)
-    )).scalar_one_or_none()
-    return row.organization_id if row is not None else ctx.org_id
+# `_file_org_id`, `_storage_scope`, `_resolve_effective_scope`,
+# `_ctx_solution_id`, and `_install_org_id` live in `shared.file_access`
+# (imported as module aliases above) so the HTTP router and the shared SDK
+# service share one implementation.
 
 
 def _organization_id_for_policy(location: str, scope: str | None) -> UUID | None:
@@ -378,217 +318,12 @@ _SOLUTION_POLICY_READONLY = (
 )
 
 
-async def _authorize_file_policy(
-    ctx: Context,
-    *,
-    action: str,
-    location: str,
-    scope: str | None,
-    path: str,
-    content_type: str | None = None,
-    solution_id: UUID | None = None,
-    organization_id: UUID | None | object = _USE_CONTEXT_SOLUTION_ID,
-) -> bool:
-    """Evaluate file policy access. `scope` is the storage-scope string the
-    caller already derived via `_resolve_effective_scope` (a UUID string,
-    install-id string, or `"global"`), so a non-superuser can never reach
-    another org's tree here. `solution_id` is forwarded to the policy service
-    so Task 3's own-solution cascade can resolve correctly.
-
-    For solution-context requests, `scope` is the install UUID string (not an
-    org UUID), so we derive `organization_id` from the install and forward
-    `solution_id` separately rather than coercing the install UUID into org.
-
-    `workspace` is the shared platform codebase: it is superuser-only and never
-    carries file policies. Policy evaluation default-denies when no policy row
-    exists, which would 403 a superuser running `bifrost sync`/`watch` against
-    the normal (unconfigured) workspace, so we short-circuit to a plain
-    superuser check here rather than consulting the policy service."""
-    from src.services.file_policy_service import FilePolicyService
-
-    if location == "workspace":
-        return ctx.user.is_superuser
-
-    # Past this point location is never "workspace" (handled above).
-    policy_organization_id: UUID | None = None
-    resolved_solution_id = solution_id
-    if organization_id is not _USE_CONTEXT_SOLUTION_ID:
-        policy_organization_id = cast(UUID | None, organization_id)
-    else:
-        if scope is None:
-            return False
-        if resolved_solution_id is not None:
-            # scope == str(install_id) — look up the install's org from DB so
-            # the policy check uses the install's scope (not the caller's JWT
-            # org, which may be None for a platform admin making test calls).
-            policy_organization_id = await _install_org_id(ctx, resolved_solution_id)
-        elif scope == "global":
-            policy_organization_id = None
-        else:
-            try:
-                policy_organization_id = UUID(scope)
-            except ValueError:
-                return False
-
-    policy_action = {
-        "exists": "read",
-        "signed_get": "read",
-        "signed_put": "write",
-    }.get(action, action)
-
-    service = FilePolicyService(ctx.db)
-    return await service.is_allowed(
-        cast(FileAction, policy_action),
-        organization_id=policy_organization_id,
-        location=location,
-        path=path,
-        user=ctx.user,
-        solution_id=resolved_solution_id,
-    )
-
-
-async def _deny_file_policy(
-    ctx: Context,
-    *,
-    action: str,
-    location: str,
-    path: str,
-    scope: str | None = None,
-    solution_id: UUID | None = None,
-) -> None:
-    """Record a `policy.deny` audit row and raise 403. This is the single
-    choke point for every *final* file-policy denial (read or write) — call
-    it exactly once per request, at the point where the request is actually
-    being rejected, not at each per-tier/per-path `_authorize_file_policy`
-    probe along the way (those are non-final "is this tier usable" checks
-    and would over-count if audited individually).
-
-    Mirrors the tables.py pattern: emit then commit, because letting the
-    HTTPException propagate rolls back the request-scoped session and loses
-    the audit row.
-    """
-    await emit_file_policy_deny(
-        ctx.db,
-        policy_action=action,
-        location=location,
-        path=path,
-        scope=scope,
-        solution_id=solution_id,
-    )
-    await ctx.db.commit()
-    # A policy denial must identify its scope inputs (no user/token data —
-    # every field is caller-supplied or derived from it): a scope-loss bug
-    # reads as solution_id=null instead of a bare "Forbidden".
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail={
-            "message": "File policy denied",
-            "action": action,
-            "location": location,
-            "path": path,
-            "scope": scope,
-            "solution_id": str(solution_id) if solution_id else None,
-        },
-    )
-
-
-async def _require_file_policy(
-    ctx: Context,
-    *,
-    action: str,
-    location: str,
-    scope: str | None,
-    path: str,
-    content_type: str | None = None,
-    solution_id: UUID | None = None,
-    organization_id: UUID | None | object = _USE_CONTEXT_SOLUTION_ID,
-) -> None:
-    allowed = await _authorize_file_policy(
-        ctx,
-        action=action,
-        location=location,
-        scope=scope,
-        path=path,
-        content_type=content_type,
-        solution_id=solution_id,
-        organization_id=organization_id,
-    )
-    if not allowed:
-        await _deny_file_policy(
-            ctx,
-            action=action,
-            location=location,
-            path=path,
-            scope=scope,
-            solution_id=solution_id,
-        )
-
-
-async def _require_declared_solution_file_location(
-    ctx: Context,
-    *,
-    solution_id: UUID | None,
-    location: str,
-) -> None:
-    if solution_id is None:
-        return
-
-    from src.services.solution_scope import solution_declares_file_location
-
-    if not await solution_declares_file_location(ctx.db, solution_id, location):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"File location '{location}' not found",
-        )
-
-
-def _relative_list_path(path: str, *, location: str, scope: str | None) -> str:
-    if location == "workspace":
-        return path
-    from shared.file_paths import resolve_s3_key
-
-    try:
-        prefix = resolve_s3_key(location, scope, "")
-    except ValueError:
-        return path
-    return path[len(prefix):] if path.startswith(prefix) else path
-
-
-def _tiers_for_backend_mode(tiers: list[_T], mode: str) -> list[_T]:
-    if mode == "local":
-        return tiers[:1]
-    return tiers
-
-
-async def _filter_listed_paths(
-    ctx: Context,
-    *,
-    paths: list[str],
-    location: str,
-    scope: str | None,
-    action: str = "list",
-    solution_id: UUID | None | object = _USE_CONTEXT_SOLUTION_ID,
-    organization_id: UUID | None | object = _USE_CONTEXT_SOLUTION_ID,
-) -> list[str]:
-    resolved_solution_id = (
-        _ctx_solution_id(ctx, location)
-        if solution_id is _USE_CONTEXT_SOLUTION_ID
-        else cast(UUID | None, solution_id)
-    )
-    allowed_paths = []
-    for listed_path in paths:
-        policy_path = _relative_list_path(listed_path, location=location, scope=scope)
-        if await _authorize_file_policy(
-            ctx,
-            action=action,
-            location=location,
-            scope=scope,
-            path=policy_path,
-            solution_id=resolved_solution_id,
-            organization_id=organization_id,
-        ):
-            allowed_paths.append(listed_path)
-    return allowed_paths
+# `_authorize_file_policy`, `_deny_file_policy`, `_require_file_policy`,
+# `_require_declared_solution_file_location`, `_lock_file_mutation`,
+# `_tiers_for_backend_mode`, and `_filter_listed_paths` live in
+# `shared.file_access` (imported as module aliases above) so the HTTP router
+# and the shared SDK service share one implementation. They raise
+# `FileServiceError`; route handlers translate it to `HTTPException`.
 
 
 def _policy_public(row) -> FilePolicyPublic:
@@ -924,109 +659,25 @@ async def _build_signed_url(
     ctx: Context,
     db: AsyncSession,
 ) -> SignedUrlResponse:
-    """Policy-check and generate a single presigned URL."""
-    from shared.file_paths import resolve_s3_key
+    """Thin adapter: DTO in, shared signed-URL service, DTO out."""
+    from shared.sdk_files import sdk_signed_url
 
-    solution_id = _ctx_solution_id(ctx, request.location)
-    if request.method == "GET":
-        from src.services.solution_scope import file_read_tiers
-
-        try:
-            if request.location != "workspace":
-                await _require_declared_solution_file_location(
-                    ctx,
-                    solution_id=solution_id,
-                    location=request.location,
-                )
-            tiers = await file_read_tiers(db, ctx, request.location, request.scope)
-            if len(tiers) == 1:
-                tier = tiers[0]
-                s3_path = resolve_s3_key(request.location, tier.scope, request.path)
-                await _require_file_policy(
-                    ctx,
-                    action="signed_get",
-                    location=request.location,
-                    scope=tier.scope,
-                    path=request.path,
-                    solution_id=tier.solution_id,
-                    organization_id=tier.organization_id,
-                )
-            else:
-                backend = get_backend("cloud", db)
-                allowed_path: str | None = None
-                for tier in tiers:
-                    s3_path = resolve_s3_key(request.location, tier.scope, request.path)
-                    if not await _authorize_file_policy(
-                        ctx,
-                        action="signed_get",
-                        location=request.location,
-                        scope=tier.scope,
-                        path=request.path,
-                        solution_id=tier.solution_id,
-                        organization_id=tier.organization_id,
-                    ):
-                        continue
-                    allowed_path = allowed_path or s3_path
-                    if await backend.exists(
-                        request.path,
-                        request.location,
-                        scope=tier.scope,
-                    ):
-                        allowed_path = s3_path
-                        break
-                if allowed_path is None:
-                    await _deny_file_policy(
-                        ctx,
-                        action="signed_get",
-                        location=request.location,
-                        path=request.path,
-                        scope=request.scope,
-                        solution_id=solution_id,
-                    )
-                s3_path = allowed_path
-        except HTTPException:
-            raise
-        except ValueError as e:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
-    else:
-        effective_scope = _resolve_effective_scope(ctx, request.location, request.scope)
-        await _require_declared_solution_file_location(
-            ctx,
-            solution_id=solution_id,
-            location=request.location,
-        )
-        try:
-            s3_path = resolve_s3_key(request.location, effective_scope, request.path)
-        except ValueError as e:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
-        await _require_file_policy(
-            ctx,
-            action="signed_put",
-            location=request.location,
-            scope=effective_scope,
+    try:
+        result = await sdk_signed_url(
+            FileCaller.from_context(ctx),
             path=request.path,
-            content_type=request.content_type,
-            solution_id=solution_id,
-        )
-
-    file_storage = FileStorageService(db)
-
-    if request.method == "PUT":
-        url = await file_storage.generate_presigned_upload_url(
-            path=s3_path,
+            location=request.location,
+            scope=request.scope,
+            method=request.method,
             content_type=request.content_type,
             expires_in=request.expires_in,
         )
-    else:
-        url = await file_storage.generate_presigned_download_url(
-            path=s3_path,
-            expires_in=request.expires_in,
-        )
-
+    except FileServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from e
     return SignedUrlResponse(
-        url=url,
-        path=s3_path,
-        expires_in=request.expires_in,
+        url=result.url,
+        path=result.path,
+        expires_in=result.expires_in,
     )
 
 
@@ -1038,22 +689,25 @@ async def _record_completed_signed_upload(
     """Record file metadata and publish changes after a browser PUT succeeds."""
     from shared.file_paths import resolve_s3_key
 
-    effective_scope = _resolve_effective_scope(ctx, request.location, request.scope)
-    solution_id = _ctx_solution_id(ctx, request.location)
-    await _require_declared_solution_file_location(
-        ctx,
-        solution_id=solution_id,
-        location=request.location,
-    )
-    await _require_file_policy(
-        ctx,
-        action="write",
-        location=request.location,
-        scope=effective_scope,
-        path=request.path,
-        content_type=request.content_type,
-        solution_id=solution_id,
-    )
+    try:
+        effective_scope = _resolve_effective_scope(ctx, request.location, request.scope)
+        solution_id = _ctx_solution_id(ctx, request.location)
+        await _require_declared_solution_file_location(
+            ctx,
+            solution_id=solution_id,
+            location=request.location,
+        )
+        await _require_file_policy(
+            ctx,
+            action="write",
+            location=request.location,
+            scope=effective_scope,
+            path=request.path,
+            content_type=request.content_type,
+            solution_id=solution_id,
+        )
+    except FileServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from e
     try:
         s3_path = resolve_s3_key(request.location, effective_scope, request.path)
     except ValueError as e:
@@ -1101,75 +755,22 @@ async def read_file(
     db: AsyncSession = Depends(get_db),
 ) -> FileReadResponse:
     """Read a file from a managed or custom location."""
+    from shared.sdk_files import sdk_read_file
+
     try:
-        from src.services.solution_scope import file_read_tiers
-
-        if request.location != "workspace":
-            await _require_declared_solution_file_location(
-                ctx,
-                solution_id=_ctx_solution_id(ctx, request.location),
-                location=request.location,
-            )
-        tiers = _tiers_for_backend_mode(
-            await file_read_tiers(db, ctx, request.location, request.scope),
-            request.mode,
+        result = await sdk_read_file(
+            FileCaller.from_context(ctx),
+            path=request.path,
+            location=request.location,
+            scope=request.scope,
+            mode=request.mode,
+            binary=request.binary,
         )
-        backend = get_backend(request.mode, db)
-        content: bytes | None = None
-        had_allowed_tier = False
-        for tier in tiers:
-            if not await _authorize_file_policy(
-                ctx,
-                action="exists",
-                location=request.location,
-                scope=tier.scope,
-                path=request.path,
-                solution_id=tier.solution_id,
-                organization_id=tier.organization_id,
-            ):
-                continue
-            had_allowed_tier = True
-            try:
-                content = await backend.read(
-                    request.path,
-                    request.location,
-                    scope=tier.scope,
-                )
-                break
-            except FileNotFoundError:
-                continue
-
-        if content is None:
-            if not had_allowed_tier:
-                await _deny_file_policy(
-                    ctx,
-                    action="read",
-                    location=request.location,
-                    path=request.path,
-                    scope=request.scope,
-                    solution_id=_ctx_solution_id(ctx, request.location),
-                )
-            raise FileNotFoundError(f"File not found: {request.path}")
-
-        if request.binary:
-            return FileReadResponse(content=base64.b64encode(content).decode(), binary=True)
-        return FileReadResponse(content=content.decode("utf-8"), binary=False)
-
-    except FileNotFoundError:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"File not found: {request.path}",
-        )
-    except UnicodeDecodeError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="File is binary. Use binary=true to read as base64.",
-        )
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
+    except FileServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from e
+    if request.binary:
+        return FileReadResponse(content=base64.b64encode(result.content).decode(), binary=True)
+    return FileReadResponse(content=result.content.decode("utf-8"), binary=False)
 
 
 @router.post("/write", status_code=status.HTTP_204_NO_CONTENT)
@@ -1180,126 +781,22 @@ async def write_file(
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Write a file to a managed or custom location."""
+    from shared.sdk_files import sdk_write_file
+
     try:
-        effective_scope = _resolve_effective_scope(ctx, request.location, request.scope)
-        solution_id = _ctx_solution_id(ctx, request.location)
-        await _require_declared_solution_file_location(
-            ctx,
-            solution_id=solution_id,
-            location=request.location,
-        )
-        await _require_file_policy(
-            ctx,
-            action="write",
-            location=request.location,
-            scope=effective_scope,
+        await sdk_write_file(
+            FileCaller.from_context(ctx),
             path=request.path,
-            solution_id=solution_id,
-        )
-        backend = get_backend(request.mode, db)
-
-        if request.create_only and request.expected_version is not None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="create_only and expected_version cannot be combined",
-            )
-        await _lock_file_mutation(
-            db,
+            content=request.content,
+            binary=request.binary,
             location=request.location,
-            scope=effective_scope,
-            path=request.path,
+            scope=request.scope,
+            mode=request.mode,
+            expected_version=request.expected_version,
+            create_only=request.create_only,
         )
-
-        current_stat = None
-        if request.create_only or request.expected_version is not None:
-            current_stat = await _get_file_stat(
-                db,
-                request.path,
-                request.location,
-                effective_scope,
-                request.mode,
-            )
-            if request.create_only and current_stat.exists:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail={
-                        "reason": "file_exists",
-                        "path": request.path,
-                        "message": "File already exists; read it before replacing it.",
-                        "current_version": current_stat.version,
-                        "current_last_modified": current_stat.last_modified,
-                        "current_updated_by": current_stat.updated_by,
-                    },
-                )
-            if request.expected_version is not None:
-                if not current_stat.exists:
-                    raise HTTPException(
-                        status_code=status.HTTP_409_CONFLICT,
-                        detail={
-                            "reason": "file_missing",
-                            "path": request.path,
-                            "expected_version": request.expected_version,
-                            "message": "File no longer exists.",
-                        },
-                    )
-                if current_stat.version != request.expected_version:
-                    raise HTTPException(
-                        status_code=status.HTTP_409_CONFLICT,
-                        detail={
-                            "reason": "version_conflict",
-                            "path": request.path,
-                            "expected_version": request.expected_version,
-                            "current_version": current_stat.version,
-                            "message": "File changed after it was read.",
-                            "current_last_modified": current_stat.last_modified,
-                            "current_updated_by": current_stat.updated_by,
-                        },
-                    )
-
-        if request.binary:
-            content = base64.b64decode(request.content)
-        else:
-            content = request.content.encode("utf-8")
-
-        updated_by = ctx.user.email if ctx.user else "system"
-        await backend.write(request.path, content, request.location, updated_by, scope=effective_scope)
-        if request.mode == "cloud":
-            from shared.file_paths import resolve_s3_key
-            from src.services.file_storage.s3_client import S3StorageClient
-            from src.core.pubsub import publish_file_change
-
-            s3_path = resolve_s3_key(request.location, effective_scope, request.path)
-            await FileStorageService(db).record_file_write_metadata(
-                location=request.location,
-                scope=effective_scope,
-                path=request.path,
-                s3_path=s3_path,
-                content_type=S3StorageClient.guess_content_type(request.path),
-                size_bytes=len(content),
-                sha256=hashlib.sha256(content).hexdigest(),
-                updated_by=updated_by,
-                user_id=str(ctx.user.user_id),
-                solution_id=solution_id,
-                org_id=await _install_org_id(ctx, solution_id),
-            )
-            # The yielded DB dependency commits after the response body is sent.
-            # Commit here so a successful write response and its notification
-            # never race ahead of durable metadata.
-            await db.commit()
-            await publish_file_change(
-                location=request.location,
-                scope=effective_scope,
-                path=request.path,
-                action="write",
-            )
-
-        logger.info(f"Wrote file: {log_safe(request.path)} ({len(content)} bytes, mode={log_safe(request.mode)}, location={log_safe(request.location)})")
-
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
+    except FileServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from e
 
 
 @router.post("/delete", status_code=status.HTTP_204_NO_CONTENT)
@@ -1310,146 +807,19 @@ async def delete_file(
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Delete a file from a managed or custom location."""
+    from shared.sdk_files import sdk_delete_file
+
     try:
-        effective_scope = _resolve_effective_scope(ctx, request.location, request.scope)
-        solution_id = _ctx_solution_id(ctx, request.location)
-        await _require_declared_solution_file_location(
-            ctx,
-            solution_id=solution_id,
-            location=request.location,
-        )
-        await _require_file_policy(
-            ctx,
-            action="delete",
-            location=request.location,
-            scope=effective_scope,
+        await sdk_delete_file(
+            FileCaller.from_context(ctx),
             path=request.path,
-            solution_id=solution_id,
-        )
-        backend = get_backend(request.mode, db)
-
-        await _lock_file_mutation(
-            db,
             location=request.location,
-            scope=effective_scope,
-            path=request.path,
+            scope=request.scope,
+            mode=request.mode,
+            expected_version=request.expected_version,
         )
-
-        if request.expected_version is not None:
-            current_stat = await _get_file_stat(
-                db,
-                request.path,
-                request.location,
-                effective_scope,
-                request.mode,
-            )
-            if not current_stat.exists:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail={
-                        "reason": "file_missing",
-                        "path": request.path,
-                        "expected_version": request.expected_version,
-                        "message": "File no longer exists.",
-                    },
-                )
-            if current_stat.version != request.expected_version:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail={
-                        "reason": "version_conflict",
-                        "path": request.path,
-                        "expected_version": request.expected_version,
-                        "current_version": current_stat.version,
-                        "message": "File changed after it was read.",
-                        "current_last_modified": current_stat.last_modified,
-                        "current_updated_by": current_stat.updated_by,
-                    },
-                )
-        await backend.delete(request.path, request.location, scope=effective_scope)
-        if request.mode == "cloud":
-            from src.core.pubsub import publish_file_change
-            from src.services.file_policy_service import FilePolicyService
-
-            await FilePolicyService(db).delete_metadata(
-                organization_id=await _install_org_id(ctx, solution_id),
-                location=request.location,
-                path=request.path,
-                solution_id=solution_id,
-            )
-            # Do not acknowledge or publish the deletion while its metadata is
-            # still visible to another transaction.
-            await db.commit()
-            await publish_file_change(
-                location=request.location,
-                scope=effective_scope,
-                path=request.path,
-                action="delete",
-            )
-
-        logger.info(f"Deleted file: {log_safe(request.path)} (mode={log_safe(request.mode)}, location={log_safe(request.location)})")
-
-    except FileNotFoundError:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"File not found: {request.path}",
-        )
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
-
-
-def _content_version(content: bytes) -> str:
-    return f"sha256:{hashlib.sha256(content).hexdigest()}"
-
-
-async def _lock_file_mutation(
-    db: AsyncSession,
-    *,
-    location: str,
-    scope: str | None,
-    path: str,
-) -> None:
-    """Serialize competing API mutations for one logical file path."""
-    lock_key = f"{location}:{scope or ''}:{path}"
-    await db.execute(
-        text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"),
-        {"lock_key": lock_key},
-    )
-
-
-async def _get_file_stat(
-    db: AsyncSession,
-    path: str,
-    location: str,
-    scope: str | None,
-    mode: str,
-) -> FileStatResponse:
-    """Load file metadata for conflict detection and stat output."""
-    try:
-        backend = get_backend(mode, db)
-        content = await backend.read(path, location, scope=scope)
-    except FileNotFoundError:
-        return FileStatResponse(path=path, exists=False)
-
-    meta = None
-    if location == "workspace" and mode == "cloud":
-        from src.models.orm.file_index import FileIndex
-
-        row = await db.execute(
-            select(FileIndex.updated_at, FileIndex.updated_by).where(FileIndex.path == path)
-        )
-        meta = row.first()
-    return FileStatResponse(
-        path=path,
-        exists=True,
-        version=_content_version(content),
-        size=len(content),
-        last_modified=meta.updated_at.isoformat() if meta and meta.updated_at else None,
-        updated_by=meta.updated_by if meta else None,
-    )
+    except FileServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from e
 
 
 @router.post("/list", response_model=FileListResponse)
@@ -1460,15 +830,34 @@ async def list_files_simple(
     db: AsyncSession = Depends(get_db),
 ) -> FileListResponse:
     """List files in a directory (simple SDK-focused endpoint)."""
-    try:
-        from src.services.solution_scope import file_read_tiers
+    # The workspace `include_metadata=True` branch stays in the router for
+    # now; the Python SDK never requests it.
+    if request.include_metadata and request.mode == "cloud" and request.location == "workspace":
+        return await _list_files_workspace_metadata(request, ctx, db)
+    from shared.sdk_files import sdk_list_files
 
-        if request.location != "workspace":
-            await _require_declared_solution_file_location(
-                ctx,
-                solution_id=_ctx_solution_id(ctx, request.location),
-                location=request.location,
-            )
+    try:
+        files = await sdk_list_files(
+            FileCaller.from_context(ctx),
+            directory=request.directory,
+            location=request.location,
+            scope=request.scope,
+            mode=request.mode,
+        )
+    except FileServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from e
+    return FileListResponse(files=files)
+
+
+async def _list_files_workspace_metadata(
+    request: FileListRequest,
+    ctx: Context,
+    db: AsyncSession,
+) -> FileListResponse:
+    """Workspace `include_metadata=True` listing via RepoStorage (router-only)."""
+    from src.services.solution_scope import file_read_tiers
+
+    try:
         tiers = _tiers_for_backend_mode(
             await file_read_tiers(db, ctx, request.location, request.scope),
             request.mode,
@@ -1485,109 +874,33 @@ async def list_files_simple(
             solution_id=primary_tier.solution_id,
             organization_id=primary_tier.organization_id,
         )
-        if request.include_metadata and request.mode == "cloud" and request.location == "workspace":
-            # Return ETags + last_modified via RepoStorage
-            from src.services.repo_storage import RepoStorage
+        # Return ETags + last_modified via RepoStorage
+        from src.services.repo_storage import RepoStorage
 
-            repo = RepoStorage()
-            s3_metadata = await repo.list_with_metadata(request.directory)
+        repo = RepoStorage()
+        s3_metadata = await repo.list_with_metadata(request.directory)
 
-            # Filter out .git/ objects
-            s3_metadata = {
-                path: meta for path, meta in s3_metadata.items()
-                if not path.startswith(".git/")
-            }
-            allowed_paths = set(
-                await _filter_listed_paths(
-                    ctx,
-                    paths=list(s3_metadata.keys()),
-                    location=request.location,
-                    scope=primary_tier.scope,
-                    action="list",
-                    solution_id=primary_tier.solution_id,
-                    organization_id=primary_tier.organization_id,
-                )
-            )
-            s3_metadata = {
-                path: meta for path, meta in s3_metadata.items()
-                if path in allowed_paths
-            }
-            if not directory_allowed and not s3_metadata:
-                await _deny_file_policy(
-                    ctx,
-                    action="list",
-                    location=request.location,
-                    path=request.directory,
-                    scope=request.scope,
-                    solution_id=primary_tier.solution_id,
-                )
-
-            # Look up updated_by from file_index
-            from src.models.orm.file_index import FileIndex
-            fi_result = await db.execute(
-                select(FileIndex.path, FileIndex.updated_by).where(
-                    FileIndex.path.in_(list(s3_metadata.keys()))
-                )
-            )
-            author_lookup = {row.path: row.updated_by for row in fi_result.all()}
-
-            return FileListResponse(
-                files=sorted(s3_metadata.keys()),
-                files_metadata=[
-                    FileListMetadataItem(
-                        path=path,
-                        etag=meta.etag,
-                        last_modified=meta.last_modified.isoformat(),
-                        updated_by=author_lookup.get(path),
-                    )
-                    for path, meta in sorted(s3_metadata.items())
-                ],
-            )
-
-        backend = get_backend(request.mode, db)
-        files: list[str] = []
-        seen: set[str] = set()
-        any_directory_allowed = directory_allowed
-        for index, tier in enumerate(tiers):
-            tier_directory_allowed = await _authorize_file_policy(
+        # Filter out .git/ objects
+        s3_metadata = {
+            path: meta for path, meta in s3_metadata.items()
+            if not path.startswith(".git/")
+        }
+        allowed_paths = set(
+            await _filter_listed_paths(
                 ctx,
-                action="list",
+                paths=list(s3_metadata.keys()),
                 location=request.location,
-                scope=tier.scope,
-                path=request.directory,
-                solution_id=tier.solution_id,
-                organization_id=tier.organization_id,
-            )
-            any_directory_allowed = any_directory_allowed or tier_directory_allowed
-            # The primary tier (index 0 — the caller's own scope) is always
-            # enumerated and filtered per-file, so a per-file policy (e.g. a
-            # creator-scoped list) can surface individual paths even when the
-            # directory isn't broadly listable. Fallback tiers (solution org/
-            # global cascade) are gated by their directory-level list policy:
-            # if the directory is denied for that tier, the whole tier is
-            # hidden rather than leaking its files through per-file grants.
-            if index > 0 and not tier_directory_allowed:
-                continue
-            tier_files = await backend.list(
-                request.directory,
-                request.location,
-                scope=tier.scope,
-            )
-            tier_files = await _filter_listed_paths(
-                ctx,
-                paths=sorted(tier_files),
-                location=request.location,
-                scope=tier.scope,
+                scope=primary_tier.scope,
                 action="list",
-                solution_id=tier.solution_id,
-                organization_id=tier.organization_id,
+                solution_id=primary_tier.solution_id,
+                organization_id=primary_tier.organization_id,
             )
-            for path in tier_files:
-                if path in seen:
-                    continue
-                seen.add(path)
-                files.append(path)
-        if not any_directory_allowed and not files:
+        )
+        s3_metadata = {
+            path: meta for path, meta in s3_metadata.items()
+            if path in allowed_paths
+        }
+        if not directory_allowed and not s3_metadata:
             await _deny_file_policy(
                 ctx,
                 action="list",
@@ -1596,8 +909,30 @@ async def list_files_simple(
                 scope=request.scope,
                 solution_id=primary_tier.solution_id,
             )
-        return FileListResponse(files=files)
 
+        # Look up updated_by from file_index
+        from src.models.orm.file_index import FileIndex
+        fi_result = await db.execute(
+            select(FileIndex.path, FileIndex.updated_by).where(
+                FileIndex.path.in_(list(s3_metadata.keys()))
+            )
+        )
+        author_lookup = {row.path: row.updated_by for row in fi_result.all()}
+
+        return FileListResponse(
+            files=sorted(s3_metadata.keys()),
+            files_metadata=[
+                FileListMetadataItem(
+                    path=path,
+                    etag=meta.etag,
+                    last_modified=meta.last_modified.isoformat(),
+                    updated_by=author_lookup.get(path),
+                )
+                for path, meta in sorted(s3_metadata.items())
+            ],
+        )
+    except FileServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from e
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1613,46 +948,19 @@ async def file_exists(
     db: AsyncSession = Depends(get_db),
 ) -> FileExistsResponse:
     """Check if a file exists."""
+    from shared.sdk_files import sdk_file_exists
+
     try:
-        from src.services.solution_scope import file_read_tiers
-
-        if request.location != "workspace":
-            await _require_declared_solution_file_location(
-                ctx,
-                solution_id=_ctx_solution_id(ctx, request.location),
-                location=request.location,
-            )
-        tiers = _tiers_for_backend_mode(
-            await file_read_tiers(db, ctx, request.location, request.scope),
-            request.mode,
+        exists = await sdk_file_exists(
+            FileCaller.from_context(ctx),
+            path=request.path,
+            location=request.location,
+            scope=request.scope,
+            mode=request.mode,
         )
-        backend = get_backend(request.mode, db)
-        for tier in tiers:
-            allowed = await _authorize_file_policy(
-                ctx,
-                action="read",
-                location=request.location,
-                scope=tier.scope,
-                path=request.path,
-                solution_id=tier.solution_id,
-                organization_id=tier.organization_id,
-            )
-            if not allowed:
-                continue
-            exists = await backend.exists(
-                request.path,
-                request.location,
-                scope=tier.scope,
-            )
-            if exists:
-                return FileExistsResponse(exists=True)
-        return FileExistsResponse(exists=False)
-
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
+    except FileServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from e
+    return FileExistsResponse(exists=exists)
 
 
 @router.post("/stat", response_model=FileStatResponse)
@@ -1663,47 +971,18 @@ async def file_stat(
     db: AsyncSession = Depends(get_db),
 ) -> FileStatResponse:
     """Return file metadata for guarded CLI workflows."""
+    from shared.sdk_files import sdk_file_stat
+
     try:
-        from src.services.solution_scope import file_read_tiers
-
-        if request.location != "workspace":
-            await _require_declared_solution_file_location(
-                ctx,
-                solution_id=_ctx_solution_id(ctx, request.location),
-                location=request.location,
-            )
-        tiers = _tiers_for_backend_mode(
-            await file_read_tiers(db, ctx, request.location, request.scope),
-            request.mode,
+        return await sdk_file_stat(
+            FileCaller.from_context(ctx),
+            path=request.path,
+            location=request.location,
+            scope=request.scope,
+            mode=request.mode,
         )
-        for tier in tiers:
-            allowed = await _authorize_file_policy(
-                ctx,
-                action="read",
-                location=request.location,
-                scope=tier.scope,
-                path=request.path,
-                solution_id=tier.solution_id,
-                organization_id=tier.organization_id,
-            )
-            if not allowed:
-                continue
-            stat = await _get_file_stat(
-                db,
-                request.path,
-                request.location,
-                tier.scope,
-                request.mode,
-            )
-            if stat.exists:
-                return stat
-        return FileStatResponse(path=request.path, exists=False)
-
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
+    except FileServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from e
 
 
 @router.post("/signed-url", response_model=SignedUrlResponse)

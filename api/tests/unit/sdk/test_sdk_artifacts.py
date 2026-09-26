@@ -30,7 +30,7 @@ async def test_create_document_returns_server_artifact_reference(monkeypatch) ->
         8,
     )
     client = MagicMock()
-    client.post = AsyncMock(return_value=response)
+    client.engine_request = AsyncMock(return_value=response)
     monkeypatch.setattr(module, "get_client", lambda: client)
     monkeypatch.setattr(module, "raise_for_status_with_detail", MagicMock())
 
@@ -44,7 +44,19 @@ async def test_create_document_returns_server_artifact_reference(monkeypatch) ->
     assert ref.type == "bifrost_artifact"
     assert ref.id == "artifact-1"
     assert ref.filename == "Brief.pdf"
-    client.post.assert_awaited_once()
+    client.engine_request.assert_awaited_once_with(
+        "POST",
+        "/api/sdk/artifacts/document",
+        json={
+            "filename": "brief",
+            "format": "pdf",
+            "title": "Brief",
+            "subtitle": None,
+            "sections": [{"heading": "Summary", "paragraphs": ["Ready"]}],
+            "page_size": "letter",
+        },
+        params={},
+    )
 
 
 @pytest.mark.asyncio
@@ -58,7 +70,7 @@ async def test_write_stores_workflow_bytes_as_an_artifact(monkeypatch) -> None:
         8,
     )
     client = MagicMock()
-    client.post = AsyncMock(return_value=response)
+    client.engine_request = AsyncMock(return_value=response)
     monkeypatch.setattr(module, "get_client", lambda: client)
     monkeypatch.setattr(module, "raise_for_status_with_detail", MagicMock())
 
@@ -69,7 +81,8 @@ async def test_write_stores_workflow_bytes_as_an_artifact(monkeypatch) -> None:
     )
 
     assert ref.id == "artifact-written"
-    client.post.assert_awaited_once_with(
+    client.engine_request.assert_awaited_once_with(
+        "POST",
         "/api/sdk/artifacts",
         files={"file": ("Processed Diagram.png", b"png-data", "image/png")},
         params={},
@@ -87,7 +100,7 @@ async def test_create_image_uses_media_endpoint(monkeypatch) -> None:
         3,
     )
     client = MagicMock()
-    client.post = AsyncMock(return_value=response)
+    client.engine_request = AsyncMock(return_value=response)
     monkeypatch.setattr(module, "get_client", lambda: client)
     monkeypatch.setattr(module, "raise_for_status_with_detail", MagicMock())
 
@@ -96,7 +109,8 @@ async def test_create_image_uses_media_endpoint(monkeypatch) -> None:
         prompt="A launch concept",
     )
 
-    client.post.assert_awaited_once_with(
+    client.engine_request.assert_awaited_once_with(
+        "POST",
         "/api/sdk/artifacts/image",
         json={"filename": "launch-concept", "prompt": "A launch concept"},
         params={},
@@ -123,8 +137,7 @@ async def test_create_video_waits_for_durable_artifact_result(monkeypatch) -> No
         },
     }
     client = MagicMock()
-    client.post = AsyncMock(return_value=accepted)
-    client.get = AsyncMock(return_value=completed)
+    client.engine_request = AsyncMock(side_effect=[accepted, completed])
     monkeypatch.setattr(module, "get_client", lambda: client)
     monkeypatch.setattr(module, "raise_for_status_with_detail", MagicMock())
 
@@ -134,12 +147,17 @@ async def test_create_video_waits_for_durable_artifact_result(monkeypatch) -> No
         poll_interval_seconds=0.001,
     )
 
-    client.post.assert_awaited_once_with(
-        "/api/sdk/artifacts/video",
-        json={"filename": "launch-loop", "prompt": "A launch loop"},
-        params={},
-    )
-    client.get.assert_awaited_once_with("/api/platform-jobs/job-1")
+    assert [
+        (call.args[0], call.args[1])
+        for call in client.engine_request.await_args_list
+    ] == [
+        ("POST", "/api/sdk/artifacts/video"),
+        ("GET", "/api/platform-jobs/job-1"),
+    ]
+    assert client.engine_request.await_args_list[0].kwargs["json"] == {
+        "filename": "launch-loop",
+        "prompt": "A launch loop",
+    }
     assert ref.id == "artifact-video"
 
 
@@ -155,8 +173,7 @@ async def test_create_video_stops_when_its_job_requires_action(monkeypatch) -> N
         "result": {"requires_action": "confirm_deletes"},
     }
     client = MagicMock()
-    client.post = AsyncMock(return_value=accepted)
-    client.get = AsyncMock(return_value=requires_action)
+    client.engine_request = AsyncMock(side_effect=[accepted, requires_action])
     monkeypatch.setattr(module, "get_client", lambda: client)
     monkeypatch.setattr(module, "raise_for_status_with_detail", MagicMock())
 
@@ -173,7 +190,7 @@ async def test_read_resolves_opaque_artifact_id(monkeypatch) -> None:
     module = importlib.import_module("bifrost.artifacts")
     response = MagicMock(content=b"workbook")
     client = MagicMock()
-    client.get = AsyncMock(return_value=response)
+    client.engine_request = AsyncMock(return_value=response)
     monkeypatch.setattr(module, "get_client", lambda: client)
     monkeypatch.setattr(module, "raise_for_status_with_detail", MagicMock())
 
@@ -187,7 +204,9 @@ async def test_read_resolves_opaque_artifact_id(monkeypatch) -> None:
     )
 
     assert data == b"workbook"
-    client.get.assert_awaited_once_with("/api/sdk/artifacts/artifact-workbook/content")
+    client.engine_request.assert_awaited_once_with(
+        "GET", "/api/sdk/artifacts/artifact-workbook/content"
+    )
 
 
 @pytest.mark.asyncio
@@ -198,7 +217,7 @@ async def test_list_uses_active_execution_workspace(monkeypatch) -> None:
         _artifact_payload("artifact-image", "Portrait.png", "image/png", 3)
     ]
     client = MagicMock()
-    client.get = AsyncMock(return_value=response)
+    client.engine_request = AsyncMock(return_value=response)
     monkeypatch.setattr(module, "get_client", lambda: client)
     monkeypatch.setattr(module, "raise_for_status_with_detail", MagicMock())
     context = MagicMock(artifact_workspace_id="workspace-1", execution_id="execution-1")
@@ -209,7 +228,8 @@ async def test_list_uses_active_execution_workspace(monkeypatch) -> None:
         module._execution_context.reset(token)
 
     assert refs[0].filename == "Portrait.png"
-    client.get.assert_awaited_once_with(
+    client.engine_request.assert_awaited_once_with(
+        "GET",
         "/api/sdk/artifacts",
         params={"workspace_id": "workspace-1", "execution_id": "execution-1"},
     )

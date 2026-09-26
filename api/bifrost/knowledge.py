@@ -1,10 +1,14 @@
 """
-Knowledge Store SDK for Bifrost - API-only implementation.
+Knowledge Store SDK for Bifrost.
 
 Provides Python API for semantic search and RAG (Retrieval Augmented Generation).
 Uses pgvector for vector similarity search with org-scoped namespaces.
 
-All operations go through HTTP API endpoints.
+Every fixed operation sends the ordinary HTTP request through the shared
+``BifrostClient``: over the worker's private Unix socket when the engine
+injected one, and over the network API otherwise. The worker parent owns the
+pooled database and protected embedding/provider credentials; an engine child
+holds neither, and a local attempt never falls back to the network API.
 All methods are async and must be awaited.
 
 Usage:
@@ -47,7 +51,12 @@ class knowledge:
     Provides semantic search and storage for RAG.
     Documents are scoped to organizations with global fallback.
 
-    All operations are performed via HTTP API endpoints.
+    Every operation sends the ordinary HTTP request through the shared
+    ``BifrostClient``: over the worker's private Unix socket when the engine
+    injected one, and over the network API otherwise. The worker parent owns
+    the pooled database and protected embedding/provider credentials; an
+    engine child holds neither, and a local attempt never falls back to the
+    network API after a failure.
     """
 
     @staticmethod
@@ -63,6 +72,11 @@ class knowledge:
         Store a document in the knowledge store.
 
         If key is provided and exists, updates the existing document (upsert).
+
+        Sends the ordinary HTTP request through the shared ``BifrostClient``:
+        over the worker's private Unix socket when the engine injected one,
+        and over the network API otherwise. A local failure raises and never
+        falls back to the network API.
 
         Args:
             content: Text content to store and embed
@@ -86,9 +100,10 @@ class knowledge:
             ...     metadata={"source": "handbook"}
             ... )
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
-        response = await client.post(
+        client = get_client()
+        response = await client.engine_request(
+            "POST",
             "/api/sdk/knowledge/store",
             json={
                 "content": content,
@@ -117,6 +132,12 @@ class knowledge:
         - key (optional): Key for upserts
         - metadata (optional): Metadata dict
 
+        Sends the ordinary HTTP request through the shared ``BifrostClient``:
+        over the worker's private Unix socket when the engine injected one,
+        and over the network API otherwise. A local failure raises and never
+        falls back to the network API, and the read timeout rides the request
+        so a large batch's embedding generation is not cut short.
+
         Args:
             documents: List of document dicts
             namespace: Namespace for all documents
@@ -137,9 +158,10 @@ class knowledge:
             ...     {"content": "Doc 2", "key": "doc-2", "metadata": {"type": "faq"}},
             ... ], namespace="faq")
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
-        response = await client.post(
+        client = get_client()
+        response = await client.engine_request(
+            "POST",
             "/api/sdk/knowledge/store-many",
             json={
                 "documents": documents,
@@ -167,6 +189,11 @@ class knowledge:
 
         Uses semantic similarity (vector search) to find relevant documents.
 
+        Sends the ordinary HTTP request through the shared ``BifrostClient``:
+        over the worker's private Unix socket when the engine injected one,
+        and over the network API otherwise. A local failure raises and never
+        falls back to the network API.
+
         Args:
             query: Search query (will be embedded)
             namespace: Namespace(s) to search
@@ -192,9 +219,10 @@ class knowledge:
             >>> for doc in results:
             ...     print(f"{doc.score:.2f}: {doc.content[:100]}")
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
-        response = await client.post(
+        client = get_client()
+        response = await client.engine_request(
+            "POST",
             "/api/sdk/knowledge/search",
             json={
                 "query": query,
@@ -223,6 +251,12 @@ class knowledge:
         """
         Delete a document by key.
 
+        Sends the ordinary HTTP request through the shared ``BifrostClient``:
+        over the worker's private Unix socket when the engine injected one,
+        and over the network API otherwise. A local failure raises and never
+        falls back to the network API (a delete may already have committed, so
+        a retry could not be trusted).
+
         Args:
             key: Document key
             namespace: Namespace
@@ -237,9 +271,10 @@ class knowledge:
         Example:
             >>> deleted = await knowledge.delete("ticket-123", namespace="tickets")
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
-        response = await client.post(
+        client = get_client()
+        response = await client.engine_request(
+            "POST",
             "/api/sdk/knowledge/delete",
             json={
                 "key": key,
@@ -259,6 +294,11 @@ class knowledge:
         """
         Delete all documents in a namespace.
 
+        Sends the ordinary HTTP request through the shared ``BifrostClient``:
+        over the worker's private Unix socket when the engine injected one,
+        and over the network API otherwise. A local failure raises and never
+        falls back to the network API.
+
         Args:
             namespace: Namespace to delete
             scope: Organization scope - can be:
@@ -273,12 +313,13 @@ class knowledge:
             >>> count = await knowledge.delete_namespace("old-data")
             >>> print(f"Deleted {count} documents")
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
+        client = get_client()
         params = {}
         if effective_scope:
             params["scope"] = effective_scope
-        response = await client.delete(
+        response = await client.engine_request(
+            "DELETE",
             f"/api/sdk/knowledge/namespace/{namespace}",
             params=params if params else None,
         )
@@ -292,6 +333,11 @@ class knowledge:
     ) -> list[NamespaceInfo]:
         """
         List available namespaces with document counts per scope.
+
+        Sends the ordinary HTTP request through the shared ``BifrostClient``:
+        over the worker's private Unix socket when the engine injected one,
+        and over the network API otherwise. A local failure raises and never
+        falls back to the network API.
 
         Args:
             scope: Organization scope - can be:
@@ -307,12 +353,13 @@ class knowledge:
             >>> for ns in namespaces:
             ...     print(f"{ns.namespace}: {ns.scopes['total']} docs")
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
+        client = get_client()
         params: dict[str, Any] = {"include_global": include_global}
         if effective_scope:
             params["scope"] = effective_scope
-        response = await client.get(
+        response = await client.engine_request(
+            "GET",
             "/api/sdk/knowledge/namespaces",
             params=params,
         )
@@ -332,6 +379,12 @@ class knowledge:
         """
         Get a document by key.
 
+        Sends the ordinary HTTP request through the shared ``BifrostClient``:
+        over the worker's private Unix socket when the engine injected one,
+        and over the network API otherwise. A miss (404) maps to None on both
+        transports, and a local failure raises without falling back to the
+        network API.
+
         Args:
             key: Document key
             namespace: Namespace
@@ -348,15 +401,16 @@ class knowledge:
             >>> if doc:
             ...     print(doc.content)
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
+        client = get_client()
         params: dict[str, Any] = {
             "key": key,
             "namespace": namespace,
         }
         if effective_scope:
             params["scope"] = effective_scope
-        response = await client.get(
+        response = await client.engine_request(
+            "GET",
             "/api/sdk/knowledge/get",
             params=params,
         )

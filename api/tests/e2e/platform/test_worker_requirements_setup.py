@@ -1,6 +1,5 @@
 """Real requirements helper installs a local wheel into an isolated user site."""
 
-import hashlib
 import json
 import os
 import subprocess
@@ -13,6 +12,7 @@ import pytest
 import redis
 
 from src.config import get_settings
+from src.core.module_cache_sync import _get_s3_client
 from src.services.execution.requirements_setup_result import RequirementsInstallResult
 
 
@@ -38,13 +38,19 @@ def test_requirements_helper_installs_package_visible_to_fresh_python(tmp_path, 
     isolated_url = urlunsplit(url._replace(path="/15"))
     client = redis.Redis.from_url(isolated_url)
     key = "bifrost:requirements:content"
+    storage = _get_s3_client()
+    assert storage is not None
+    bucket = os.environ["BIFROST_S3_BUCKET"]
+    object_key = "_repo/requirements.txt"
+    try:
+        original_object = storage.get_object(Bucket=bucket, Key=object_key)["Body"].read()
+    except storage.exceptions.NoSuchKey:
+        original_object = None
     original = client.get(key)
     original_ttl = client.pttl(key)
     try:
-        client.set(key, json.dumps({
-            "content": requirement,
-            "hash": hashlib.sha256(requirement.encode()).hexdigest(),
-        }))
+        storage.put_object(Bucket=bucket, Key=object_key, Body=requirement.encode())
+        client.delete(key)
         monkeypatch.setenv("BIFROST_REDIS_URL", isolated_url)
         monkeypatch.setenv("PYTHONUSERBASE", str(tmp_path / "user-site"))
         monkeypatch.setenv("PIP_USER", "1")
@@ -81,6 +87,10 @@ print(json.dumps({
         )
         assert probe.stdout.strip() == "installed-by-helper"
     finally:
+        if original_object is None:
+            storage.delete_object(Bucket=bucket, Key=object_key)
+        else:
+            storage.put_object(Bucket=bucket, Key=object_key, Body=original_object)
         if original is None:
             client.delete(key)
         elif original_ttl > 0:

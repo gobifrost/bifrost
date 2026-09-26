@@ -35,7 +35,7 @@ async def test_run_raises_agent_paused_error_on_paused_response(monkeypatch):
     mock_response.status_code = 200
 
     mock_client = MagicMock()
-    mock_client.post = AsyncMock(return_value=mock_response)
+    mock_client.engine_request = AsyncMock(return_value=mock_response)
 
     monkeypatch.setattr(mod, "get_client", lambda: mock_client)
 
@@ -57,7 +57,7 @@ async def test_run_returns_output_for_normal_completion(monkeypatch):
     mock_response.status_code = 200
 
     mock_client = MagicMock()
-    mock_client.post = AsyncMock(return_value=mock_response)
+    mock_client.engine_request = AsyncMock(return_value=mock_response)
 
     monkeypatch.setattr(mod, "get_client", lambda: mock_client)
     monkeypatch.setattr(

@@ -11,13 +11,11 @@ from urllib.parse import parse_qs, urlparse
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
-from sqlalchemy import case, exists, func, or_, select
+from sqlalchemy import select
 
 from src.config import get_settings
 from src.core.auth import CurrentSuperuser
 from src.core.db_deps import DbSession
-from src.core.log_safety import log_safe
-from src.core.org_filter import resolve_org_filter, OrgFilterType
 from src.services.audit import emit_audit
 from src.services.events import emit_event
 from src.services.user_invite_service import UserInviteService
@@ -34,10 +32,8 @@ from src.models import (
 )
 from src.models.contracts.user_invites import (
     CreateInviteResponse,
-    InviteStatus,
     SendInviteRequest,
 )
-from src.models.orm import UserInvite, UserOAuthAccount
 from src.core.constants import PROVIDER_ORG_ID
 
 logger = logging.getLogger(__name__)
@@ -80,106 +76,25 @@ async def list_users(
     Superusers can filter by scope or see all users.
     Note: Users are not org-scoped resources - they belong to one org.
     """
-    # Resolve organization filter based on user permissions
+    from shared.sdk_users import UserServiceError, list_users as list_users_service
+
     try:
-        filter_type, filter_org = resolve_org_filter(user, scope)
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(e),
+        items, total = await list_users_service(
+            db,
+            user,
+            type=type,
+            scope=scope,
+            include_inactive=include_inactive,
+            search=search,
+            sort_by=sort_by,
+            sort_direction=sort_direction,
+            limit=limit,
+            offset=offset,
         )
-
-    # Filter out system users - never visible in the UI
-    query = select(UserORM).where(
-        UserORM.is_system.is_(False),
-    )
-
-    # By default only show active users
-    if not include_inactive:
-        query = query.where(UserORM.is_active.is_(True))
-
-    if type:
-        if type.lower() == "platform":
-            query = query.where(UserORM.is_superuser.is_(True))
-        elif type.lower() == "org":
-            query = query.where(UserORM.is_superuser.is_(False))
-
-    # Apply org filter based on scope
-    # For users, GLOBAL_ONLY means users without an org (platform admins)
-    # ORG_ONLY and ORG_PLUS_GLOBAL filter to specific org
-    if filter_type == OrgFilterType.GLOBAL_ONLY:
-        query = query.where(UserORM.organization_id.is_(None))
-    elif filter_type == OrgFilterType.ORG_ONLY and filter_org is not None:
-        # Platform admin filtering to specific org - just that org's users
-        query = query.where(UserORM.organization_id == filter_org)
-    elif filter_type == OrgFilterType.ORG_PLUS_GLOBAL and filter_org is not None:
-        # Org user - their org's users only (users don't cascade like configs)
-        query = query.where(UserORM.organization_id == filter_org)
-    # ALL: no filter applied
-
-    if search and (term := search.strip()):
-        pattern = f"%{term}%"
-        query = query.where(
-            or_(UserORM.name.ilike(pattern), UserORM.email.ilike(pattern))
-        )
-
-    total = await db.scalar(
-        select(func.count()).select_from(query.order_by(None).subquery())
-    )
-    response.headers["X-Total-Count"] = str(total or 0)
-
-    active_account = or_(
-        UserORM.is_registered.is_(True),
-        exists(
-            select(UserOAuthAccount.id).where(UserOAuthAccount.user_id == UserORM.id)
-        ),
-    )
-    pending_invite = exists(
-        select(UserInvite.id).where(
-            UserInvite.user_id == UserORM.id,
-            UserInvite.revoked_at.is_(None),
-            UserInvite.expires_at >= datetime.now(timezone.utc),
-        )
-    )
-    expired_invite = exists(
-        select(UserInvite.id).where(
-            UserInvite.user_id == UserORM.id,
-            UserInvite.revoked_at.is_(None),
-            UserInvite.expires_at < datetime.now(timezone.utc),
-        )
-    )
-    status_order = case(
-        (active_account, 0),
-        (expired_invite, 1),
-        (pending_invite, 3),
-        else_=2,
-    )
-    sort_expression = {
-        "name": func.coalesce(UserORM.name, UserORM.email),
-        "email": UserORM.email,
-        "status": status_order,
-        "created": UserORM.created_at,
-        "last_login": UserORM.last_login,
-    }.get(sort_by or "email", UserORM.email)
-    if sort_direction == "desc":
-        sort_expression = sort_expression.desc()
-    else:
-        sort_expression = sort_expression.asc()
-    query = query.order_by(sort_expression, UserORM.id.asc())
-    if limit is not None:
-        query = query.offset(offset).limit(limit)
-
-    result = await db.execute(query)
-    users = result.scalars().all()
-
-    invite_svc = UserInviteService(db)
-    statuses = await invite_svc.statuses_for(list(users))
-    out: list[UserPublic] = []
-    for u in users:
-        public = UserPublic.model_validate(u)
-        public.invite_status = statuses[u.id]
-        out.append(public)
-    return out
+    except UserServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
+    response.headers["X-Total-Count"] = str(total)
+    return items
 
 
 @router.post(
@@ -195,52 +110,18 @@ async def create_user(
     db: DbSession,
 ) -> UserPublic:
     """Create a new user."""
-    now = datetime.now(timezone.utc)
+    from shared.sdk_users import create_user as create_user_service
 
-    new_user = UserORM(
+    return await create_user_service(
+        db,
         email=request.email,
         name=request.name,
-        hashed_password="",  # No password for admin-created users
         is_active=request.is_active,
         is_superuser=request.is_superuser,
         is_external=request.is_external,
-        is_verified=True,  # Trusted since created by admin
-        is_registered=False,  # User must complete registration to set password
         organization_id=request.organization_id,
-        created_at=now,
-        updated_at=now,
+        actor_user_id=user.user_id,
     )
-
-    db.add(new_user)
-    await db.flush()
-    await db.refresh(new_user)
-
-    logger.info(f"Created user {new_user.email} (id: {new_user.id})")
-    await emit_audit(
-        db,
-        "user.create",
-        resource_type="user",
-        resource_id=new_user.id,
-        details={
-            "email": new_user.email,
-            "is_superuser": new_user.is_superuser,
-            "organization_id": str(new_user.organization_id) if new_user.organization_id else None,
-        },
-    )
-
-    svc = UserInviteService(db)
-    raw_token, invite = await svc.create_or_replace(
-        user_id=new_user.id, created_by=user.user_id
-    )
-    invite_status = InviteStatus.PENDING
-    registration_url = (
-        f"{get_settings().public_url.rstrip('/')}/accept-invite?token={raw_token}"
-    )
-
-    response = UserPublic.model_validate(new_user)
-    response.invite_status = invite_status
-    response.registration_url = registration_url
-    return response
 
 
 @router.patch(
@@ -498,23 +379,12 @@ async def get_user(
     db: DbSession,
 ) -> UserPublic:
     """Get a specific user's details."""
-    # Try UUID first
+    from shared.sdk_users import UserServiceError, get_user as get_user_service
+
     try:
-        uuid_id = UUID(user_id)
-        result = await db.execute(select(UserORM).where(UserORM.id == uuid_id))
-    except ValueError:
-        # Fall back to email lookup
-        result = await db.execute(select(UserORM).where(UserORM.email == user_id))
-
-    db_user = result.scalar_one_or_none()
-
-    if not db_user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found",
-        )
-
-    return UserPublic.model_validate(db_user)
+        return await get_user_service(db, user_id=user_id)
+    except UserServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
 
 
 @router.patch(
@@ -530,65 +400,24 @@ async def update_user(
     db: DbSession,
 ) -> UserPublic:
     """Update a user."""
-    # Try UUID first
+    from shared.sdk_users import UserServiceError, update_user as update_user_service
+
     try:
-        uuid_id = UUID(user_id)
-        result = await db.execute(select(UserORM).where(UserORM.id == uuid_id))
-    except ValueError:
-        result = await db.execute(select(UserORM).where(UserORM.email == user_id))
-
-    db_user = result.scalar_one_or_none()
-
-    if not db_user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found",
+        return await update_user_service(
+            db,
+            user_id=user_id,
+            email=request.email,
+            name=request.name,
+            password=request.password,
+            is_active=request.is_active,
+            is_superuser=request.is_superuser,
+            is_verified=request.is_verified,
+            is_external=request.is_external,
+            mfa_enabled=request.mfa_enabled,
+            organization_id=request.organization_id,
         )
-
-    # Protect system user from modification
-    if db_user.is_system:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="System user cannot be modified",
-        )
-
-    if request.email is not None:
-        db_user.email = request.email
-    if request.name is not None:
-        db_user.name = request.name
-    if request.is_active is not None:
-        db_user.is_active = request.is_active
-    if request.is_superuser is not None:
-        db_user.is_superuser = request.is_superuser
-        if request.is_superuser:
-            # Promoting to platform admin - move to provider org
-            db_user.organization_id = PROVIDER_ORG_ID
-    if request.is_verified is not None:
-        db_user.is_verified = request.is_verified
-    if request.is_external is not None:
-        db_user.is_external = request.is_external
-    if request.mfa_enabled is not None:
-        db_user.mfa_enabled = request.mfa_enabled
-    if request.organization_id is not None:
-        db_user.organization_id = request.organization_id
-
-    db_user.updated_at = datetime.now(timezone.utc)
-
-    await db.flush()
-    await db.refresh(db_user)
-
-    logger.info(f"Updated user {log_safe(user_id)}")
-    changed_fields = [
-        k for k, v in request.model_dump(exclude_unset=True).items() if v is not None
-    ]
-    await emit_audit(
-        db,
-        "user.update",
-        resource_type="user",
-        resource_id=db_user.id,
-        details={"email": db_user.email, "changed_fields": changed_fields},
-    )
-    return UserPublic.model_validate(db_user)
+    except UserServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
 
 
 @router.delete(
@@ -603,46 +432,17 @@ async def delete_user(
     db: DbSession,
 ) -> None:
     """Permanently delete a user. User must be inactive first."""
-    # Users cannot delete themselves
-    if user_id == str(user.user_id) or user_id == user.email:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot delete yourself",
-        )
+    from shared.sdk_users import UserServiceError, delete_user as delete_user_service
 
-    # Try UUID first
     try:
-        uuid_id = UUID(user_id)
-        result = await db.execute(select(UserORM).where(UserORM.id == uuid_id))
-    except ValueError:
-        result = await db.execute(select(UserORM).where(UserORM.email == user_id))
-
-    db_user = result.scalar_one_or_none()
-
-    if not db_user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found",
+        await delete_user_service(
+            db,
+            user_id=user_id,
+            actor_user_id=user.user_id,
+            actor_email=user.email,
         )
-
-    if db_user.is_system:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="System user cannot be deleted",
-        )
-
-    deleted_id = db_user.id
-    deleted_email = db_user.email
-    await db.delete(db_user)
-    await db.flush()
-    logger.info(f"Permanently deleted user {log_safe(user_id)}")
-    await emit_audit(
-        db,
-        "user.delete",
-        resource_type="user",
-        resource_id=deleted_id,
-        details={"email": deleted_email},
-    )
+    except UserServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
 
 
 @router.get(

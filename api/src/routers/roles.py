@@ -12,24 +12,21 @@ from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
-from sqlalchemy import func, select, delete
+from sqlalchemy import select, delete
 
 from src.core.auth import CurrentSuperuser
 from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
 from src.services.solutions.guard import (
     assert_entity_id_not_solution_managed,
-    assert_role_not_bound_to_solution_managed,
 )
 from src.services.audit import emit_audit
 from src.models import (
-    Role as RoleORM,
     UserRole as UserRoleORM,
     FormRole as FormRoleORM,
     AgentRole as AgentRoleORM,
     Form as FormORM,
     User as UserORM,
-    Organization as OrganizationORM,
     Agent as AgentORM,
 )
 from src.models.orm.applications import Application as ApplicationORM
@@ -42,14 +39,12 @@ from src.models import (
     RolePublic,
     RoleUpdate,
     RoleUsersResponse,
-    RoleUserSummary,
     RoleFormsResponse,
     RoleAgentsResponse,
     RoleAppsResponse,
     RoleWorkflowsResponse,
     RoleKnowledgeResponse,
     RoleKnowledgeEntry,
-    RoleConsumerCounts,
     AssignUsersToRoleRequest,
     AssignFormsToRoleRequest,
     AssignAgentsToRoleRequest,
@@ -69,12 +64,10 @@ from src.models import (
 # because `invalidate_role` collides with the same-named function in
 # `src.core.cache.invalidation` (which clears the global roles list, a
 # different cache).
-from shared.role_cache import invalidate_role as invalidate_user_role_cache_for_role
 from shared.role_cache import invalidate_user as invalidate_user_role_cache
 
 # Import cache invalidation
 from src.core.cache import (
-    invalidate_role,
     invalidate_role_users,
     invalidate_role_forms,
 )
@@ -91,34 +84,6 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/roles", tags=["Roles"])
-
-
-async def _get_consumer_counts(
-    db: DbSession, role_ids: list[UUID]
-) -> dict[UUID, RoleConsumerCounts]:
-    counts_by_role = {role_id: RoleConsumerCounts() for role_id in role_ids}
-    if not counts_by_role:
-        return counts_by_role
-
-    aggregates: list[tuple[str, "object"]] = [
-        ("users", UserRoleORM),
-        ("forms", FormRoleORM),
-        ("agents", AgentRoleORM),
-        ("apps", AppRoleORM),
-        ("workflows", WorkflowRoleORM),
-        ("knowledge", KnowledgeNamespaceRoleORM),
-    ]
-    for field, orm in aggregates:
-        aggregate = await db.execute(
-            select(orm.role_id, func.count())  # type: ignore[attr-defined]
-            .where(orm.role_id.in_(counts_by_role))  # type: ignore[attr-defined]
-            .group_by(orm.role_id)  # type: ignore[attr-defined]
-        )
-        for role_id, count in aggregate.all():
-            entry = counts_by_role.get(role_id)
-            if entry is not None:
-                setattr(entry, field, int(count))
-    return counts_by_role
 
 
 @router.get(
@@ -143,37 +108,18 @@ async def list_roles(
     offset: int = Query(0, ge=0, description="Rows to skip when limit is set"),
 ) -> list[RolePublic]:
     """List all roles with inline consumer counts (users/forms/agents/apps/workflows/knowledge)."""
-    query = select(RoleORM)
-    if search and (term := search.strip()):
-        pattern = f"%{term}%"
-        query = query.where(
-            RoleORM.name.ilike(pattern) | RoleORM.description.ilike(pattern)
-        )
+    from shared.sdk_roles import list_roles as list_roles_service
 
-    total = await db.scalar(
-        select(func.count()).select_from(query.order_by(None).subquery())
+    items, total = await list_roles_service(
+        db,
+        search=search,
+        sort_by=sort_by,
+        sort_direction=sort_direction,
+        limit=limit,
+        offset=offset,
     )
-    response.headers["X-Total-Count"] = str(total or 0)
-
-    sort_expression = RoleORM.name if sort_by == "name" else RoleORM.created_at
-    if sort_direction == "desc":
-        sort_expression = sort_expression.desc()
-    else:
-        sort_expression = sort_expression.asc()
-    query = query.order_by(sort_expression, RoleORM.id.asc())
-    if limit is not None:
-        query = query.offset(offset).limit(limit)
-    result = await db.execute(query)
-    roles = result.scalars().all()
-
-    counts_by_role = await _get_consumer_counts(db, [role.id for role in roles])
-
-    out: list[RolePublic] = []
-    for r in roles:
-        public = RolePublic.model_validate(r)
-        public.consumer_counts = counts_by_role[r.id]
-        out.append(public)
-    return out
+    response.headers["X-Total-Count"] = str(total)
+    return items
 
 
 @router.post(
@@ -189,36 +135,18 @@ async def create_role(
     db: DbSession,
 ) -> RolePublic:
     """Create a new role."""
-    now = datetime.now(timezone.utc)
+    from shared.sdk_roles import RoleServiceError, create_role as create_role_service
 
-    role = RoleORM(
-        name=request.name,
-        description=request.description,
-        permissions=request.permissions or {},
-        created_by=user.email,
-        created_at=now,
-        updated_at=now,
-    )
-
-    db.add(role)
-    await db.flush()
-    await db.refresh(role)
-
-    logger.info(f"Created role {role.id}: {log_safe(role.name)}")
-
-    # Invalidate cache (roles are global, no org_id needed)
-    await invalidate_role(None, str(role.id))
-
-    await emit_audit(
-        db,
-        "role.create",
-        resource_type="role",
-        resource_id=role.id,
-        details={"name": role.name},
-    )
-    public = RolePublic.model_validate(role)
-    public.consumer_counts = (await _get_consumer_counts(db, [role.id]))[role.id]
-    return public
+    try:
+        return await create_role_service(
+            db,
+            name=request.name,
+            description=request.description,
+            permissions=request.permissions,
+            actor_email=user.email,
+        )
+    except RoleServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
 
 
 @router.get(
@@ -233,18 +161,12 @@ async def get_role(
     db: DbSession,
 ) -> RolePublic:
     """Get a role by ID."""
-    result = await db.execute(select(RoleORM).where(RoleORM.id == role_id))
-    role = result.scalar_one_or_none()
+    from shared.sdk_roles import RoleServiceError, get_role as get_role_service
 
-    if not role:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Role not found",
-        )
-
-    public = RolePublic.model_validate(role)
-    public.consumer_counts = (await _get_consumer_counts(db, [role.id]))[role.id]
-    return public
+    try:
+        return await get_role_service(db, role_id=role_id)
+    except RoleServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
 
 
 @router.patch(
@@ -260,47 +182,19 @@ async def update_role(
     db: DbSession,
 ) -> RolePublic:
     """Update a role."""
-    result = await db.execute(select(RoleORM).where(RoleORM.id == role_id))
-    role = result.scalar_one_or_none()
+    from shared.sdk_roles import RoleServiceError, update_role as update_role_service
 
-    if not role:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Role not found",
+    try:
+        return await update_role_service(
+            db,
+            role_id=role_id,
+            name=request.name,
+            description=request.description,
+            permissions=request.permissions,
+            actor_email=user.email,
         )
-
-    if request.name is not None:
-        role.name = request.name
-    if request.description is not None:
-        role.description = request.description
-    if request.permissions is not None:
-        role.permissions = request.permissions
-
-    role.updated_at = datetime.now(timezone.utc)
-
-    await db.flush()
-    await db.refresh(role)
-
-    logger.info(f"Updated role {log_safe(role_id)}")
-
-    # Invalidate cache (roles are global, no org_id needed)
-    await invalidate_role(None, str(role_id))
-
-    # Per-user role cache: a rename changes role_names for every user holding
-    # this role, so sweep all entries containing role_id.
-    await invalidate_user_role_cache_for_role(role_id)
-
-    changed_fields = [
-        k for k, v in request.model_dump(exclude_unset=True).items() if v is not None
-    ]
-    await emit_audit(
-        db,
-        "role.update",
-        resource_type="role",
-        resource_id=role.id,
-        details={"name": role.name, "changed_fields": changed_fields},
-    )
-    return RolePublic.model_validate(role)
+    except RoleServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
 
 
 # Keep PUT for backwards compatibility
@@ -333,38 +227,12 @@ async def delete_role(
     db: DbSession,
 ) -> None:
     """Delete a role."""
-    result = await db.execute(select(RoleORM).where(RoleORM.id == role_id))
-    role = result.scalar_one_or_none()
+    from shared.sdk_roles import RoleServiceError, delete_role as delete_role_service
 
-    if not role:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Role not found",
-        )
-
-    # A role assigned to a solution-managed entity has deploy-owned bindings;
-    # deleting it would cascade-strip them outside deploy (Codex R4). Refuse.
-    await assert_role_not_bound_to_solution_managed(db, role_id)
-
-    deleted_name = role.name
-    await db.delete(role)
-    await db.flush()
-    logger.info(f"Deleted role {log_safe(role_id)}")
-
-    # Invalidate cache (roles are global, no org_id needed)
-    await invalidate_role(None, str(role_id))
-
-    # Per-user role cache: deleting a role means every user holding it loses
-    # the membership; clear all entries containing role_id.
-    await invalidate_user_role_cache_for_role(role_id)
-
-    await emit_audit(
-        db,
-        "role.delete",
-        resource_type="role",
-        resource_id=role_id,
-        details={"name": deleted_name},
-    )
+    try:
+        await delete_role_service(db, role_id=role_id)
+    except RoleServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
 
 
 # =============================================================================
@@ -392,52 +260,14 @@ async def get_role_users(
     offset: int = Query(0, ge=0, description="Rows to skip when limit is set"),
 ) -> RoleUsersResponse:
     """Get users assigned to a role."""
-    query = (
-        select(
-            UserORM,
-            OrganizationORM.name,
-            OrganizationORM.is_provider,
-        )
-        .join(UserRoleORM, UserRoleORM.user_id == UserORM.id)
-        .outerjoin(OrganizationORM, OrganizationORM.id == UserORM.organization_id)
-        .where(
-            UserRoleORM.role_id == role_id,
-            UserORM.is_system.is_(False),
-        )
-    )
-    if search and (term := search.strip()):
-        pattern = f"%{term}%"
-        query = query.where(
-            UserORM.name.ilike(pattern) | UserORM.email.ilike(pattern)
-        )
+    from shared.sdk_roles import list_role_users as list_role_users_service
 
-    total = await db.scalar(
-        select(func.count()).select_from(query.order_by(None).subquery())
-    )
-    query = query.order_by(
-        func.coalesce(UserORM.name, UserORM.email), UserORM.email
-    )
-    if limit is not None:
-        query = query.offset(offset).limit(limit)
-
-    result = await db.execute(
-        query
-    )
-    users = [
-        RoleUserSummary(
-            id=assigned_user.id,
-            name=assigned_user.name,
-            email=assigned_user.email,
-            organization_id=assigned_user.organization_id,
-            organization_name=organization_name,
-            organization_is_provider=bool(organization_is_provider),
-        )
-        for assigned_user, organization_name, organization_is_provider in result.all()
-    ]
-    return RoleUsersResponse(
-        user_ids=[str(assigned_user.id) for assigned_user in users],
-        users=users,
-        total=total or 0,
+    return await list_role_users_service(
+        db,
+        role_id=role_id,
+        search=search,
+        limit=limit,
+        offset=offset,
     )
 
 
@@ -454,61 +284,20 @@ async def assign_users_to_role(
     db: DbSession,
 ) -> None:
     """Assign users to a role."""
-    now = datetime.now(timezone.utc)
-    # Track newly-assigned users so we can invalidate the per-user role cache.
-    # Skip users already assigned (no cache impact) and users that didn't resolve.
-    affected_user_ids: list[UUID] = []
-
-    for user_id_str in request.user_ids:
-        # Try to parse as UUID, otherwise lookup by email
-        try:
-            user_uuid = UUID(user_id_str)
-        except ValueError:
-            result = await db.execute(
-                select(UserORM.id).where(UserORM.email == user_id_str)
-            )
-            user_uuid = result.scalar_one_or_none()
-            if not user_uuid:
-                logger.warning(f"User {log_safe(user_id_str)} not found, skipping")
-                continue
-
-        # Check if already assigned
-        existing = await db.execute(
-            select(UserRoleORM).where(
-                UserRoleORM.user_id == user_uuid,
-                UserRoleORM.role_id == role_id,
-            )
-        )
-        if existing.scalar_one_or_none():
-            continue
-
-        user_role = UserRoleORM(
-            user_id=user_uuid,
-            role_id=role_id,
-            assigned_by=user.email,
-            assigned_at=now,
-        )
-        db.add(user_role)
-        affected_user_ids.append(user_uuid)
-
-    await db.flush()
-    logger.info(f"Assigned users to role {log_safe(role_id)}")
-
-    # Invalidate cache (roles are global, no org_id needed)
-    await invalidate_role_users(None, str(role_id))
-
-    # Per-user role cache: drop entries for each newly-assigned user so the
-    # next read sees the new role membership.
-    for affected in affected_user_ids:
-        await invalidate_user_role_cache(affected)
-
-    await emit_audit(
-        db,
-        "role.user_assigned",
-        resource_type="role",
-        resource_id=role_id,
-        details={"user_ids": request.user_ids},
+    from shared.sdk_roles import (
+        RoleServiceError,
+        assign_users_to_role as assign_users_to_role_service,
     )
+
+    try:
+        await assign_users_to_role_service(
+            db,
+            role_id=role_id,
+            user_ids=request.user_ids,
+            actor_email=user.email,
+        )
+    except RoleServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
 
 
 @router.delete(
@@ -583,11 +372,9 @@ async def get_role_forms(
     db: DbSession,
 ) -> RoleFormsResponse:
     """Get all forms assigned to a role."""
-    result = await db.execute(
-        select(FormRoleORM.form_id).where(FormRoleORM.role_id == role_id)
-    )
-    form_ids = [str(fid) for fid in result.scalars().all()]
-    return RoleFormsResponse(form_ids=form_ids)
+    from shared.sdk_roles import list_role_forms as list_role_forms_service
+
+    return await list_role_forms_service(db, role_id=role_id)
 
 
 @router.post(
@@ -603,46 +390,20 @@ async def assign_forms_to_role(
     db: DbSession,
 ) -> None:
     """Assign forms to a role."""
-    now = datetime.now(timezone.utc)
+    from shared.sdk_roles import (
+        RoleServiceError,
+        assign_forms_to_role as assign_forms_to_role_service,
+    )
 
-    for form_id_str in request.form_ids:
-        form_uuid = UUID(form_id_str)
-
-        # Verify form exists before creating assignment
-        form_result = await db.execute(
-            select(FormORM.id).where(FormORM.id == form_uuid)
-        )
-        if not form_result.scalar_one_or_none():
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Form with ID '{form_id_str}' not found",
-            )
-        # Role bindings are portable + solution-owned: locked for managed forms.
-        await assert_entity_id_not_solution_managed(db, FormORM, form_uuid)
-
-        # Check if already assigned
-        existing = await db.execute(
-            select(FormRoleORM).where(
-                FormRoleORM.form_id == form_uuid,
-                FormRoleORM.role_id == role_id,
-            )
-        )
-        if existing.scalar_one_or_none():
-            continue
-
-        form_role = FormRoleORM(
-            form_id=form_uuid,
+    try:
+        await assign_forms_to_role_service(
+            db,
             role_id=role_id,
-            assigned_by=user.email,
-            assigned_at=now,
+            form_ids=request.form_ids,
+            actor_email=user.email,
         )
-        db.add(form_role)
-
-    await db.flush()
-    logger.info(f"Assigned forms to role {log_safe(role_id)}")
-
-    # Invalidate cache (roles are global, no org_id needed)
-    await invalidate_role_forms(None, str(role_id))
+    except RoleServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
 
 
 @router.delete(

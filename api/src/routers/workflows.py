@@ -14,20 +14,16 @@ Organization Scoping:
 """
 
 import logging
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any
 from uuid import UUID
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import JSONResponse
-from sqlalchemy import delete, distinct, func, or_, select, union_all, update
-
-if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import delete, distinct, func, select
 
 # Import existing Pydantic models for API compatibility
-from src.models.enums import ExecutionStatus
 from src.models import (
     AssignRolesToWorkflowRequest,
     CompatibleReplacement,
@@ -47,7 +43,6 @@ from src.models import (
     WorkflowExecutionRequest,
     WorkflowExecutionResponse,
     WorkflowMetadata,
-    WorkflowParameter,
     WorkflowReference,
     WorkflowRolesResponse,
     WorkflowUpdateRequest,
@@ -61,11 +56,6 @@ from src.models.orm.forms import Form, FormField
 from src.models.orm.applications import Application
 from src.models.orm.agents import Agent, AgentTool
 from src.models.orm.users import Role
-from src.services.workflow_validation import _extract_relative_path
-from src.services.solution_scope import (
-    derive_execution_solution_scope,
-    solution_allows_global,
-)
 from src.services.solutions.guard import (
     assert_entity_id_not_solution_managed,
     assert_not_solution_managed,
@@ -74,8 +64,6 @@ from src.services.solutions.guard import (
 from src.core.auth import Context, CurrentActiveUser, CurrentSuperuser
 from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
-from src.core.pubsub import publish_execution_update, publish_history_update
-from src.core.cache import get_cached_data_provider
 
 logger = logging.getLogger(__name__)
 
@@ -87,75 +75,20 @@ router = APIRouter(prefix="/api/workflows", tags=["Workflows"])
 # =============================================================================
 
 
-def _should_publish_request_execution_update(status: ExecutionStatus) -> bool:
-    """The request owns initial state; the worker owns terminal fan-out."""
-    return status in (ExecutionStatus.PENDING, ExecutionStatus.RUNNING)
-
-
-def _is_uuid_workflow_ref(identifier: str) -> bool:
-    try:
-        UUID(identifier)
-    except ValueError:
-        return False
-    return True
-
-
 def _convert_workflow_orm_to_schema(
     workflow: WorkflowORM,
     used_by_count: int = 0,
     role_ids: list[UUID] | None = None,
 ) -> WorkflowMetadata:
-    """Convert ORM model to Pydantic schema for API response."""
-    from typing import Literal
-    from src.models.contracts.workflows import ExecutableType
+    """Convert ORM model to Pydantic schema for API response.
 
-    # Convert parameters from JSONB to WorkflowParameter objects
-    parameters = []
-    for param in workflow.parameters_schema or []:
-        if isinstance(param, dict):
-            parameters.append(WorkflowParameter(**param))
+    Thin alias over the shared service implementation so non-extracted
+    endpoints (e.g. update) share the single conversion.
+    """
+    from shared.sdk_execution_reads import convert_workflow_orm_to_schema
 
-    # Validate execution_mode - default to "sync" if invalid
-    raw_mode = workflow.execution_mode or "sync"
-    execution_mode: Literal["sync", "async"] = "async" if raw_mode == "async" else "sync"
-
-    # Convert string type to ExecutableType enum
-    workflow_type = ExecutableType(workflow.type or "workflow")
-
-    return WorkflowMetadata(
-        id=str(workflow.id),
-        name=workflow.name,
-        function_name=workflow.function_name,
-        display_name=workflow.display_name,
-        description=workflow.description if workflow.description else None,
-        category=workflow.category or "General",
-        tags=workflow.tags or [],
-        type=workflow_type,
-        organization_id=str(workflow.organization_id) if workflow.organization_id else None,
-        is_solution_managed=workflow.solution_id is not None,
-        solution_id=workflow.solution_id,
-        access_level=workflow.access_level or "role_based",
-        role_ids=[str(role_id) for role_id in (role_ids or [])],
-        parameters=parameters,
-        execution_mode=execution_mode,
-        timeout_seconds=workflow.timeout_seconds if workflow.timeout_seconds is not None else 1800,
-        retry_policy=None,
-        endpoint_enabled=workflow.endpoint_enabled or False,
-        allowed_methods=workflow.allowed_methods or ["POST"],
-        disable_global_key=workflow.disable_global_key or False,
-        public_endpoint=workflow.public_endpoint or False,
-        is_tool=workflow.type == "tool",  # Derive from type field
-        tool_description=workflow.tool_description,
-        # NOT `or 300` — 0 means "never cache" and `or` would clobber it.
-        cache_ttl_seconds=(
-            workflow.cache_ttl_seconds if workflow.cache_ttl_seconds is not None else 300
-        ),
-        time_saved=workflow.time_saved or 0,
-        value=float(workflow.value or 0.0),
-        used_by_count=used_by_count,
-        source_file_path=workflow.path,
-        relative_file_path=_extract_relative_path(workflow.path),
-        created_at=workflow.created_at,
+    return convert_workflow_orm_to_schema(
+        workflow, used_by_count=used_by_count, role_ids=role_ids
     )
 
 
@@ -195,18 +128,9 @@ def _extract_workflows_from_props(obj: Any, workflow_ids: set[str]) -> None:
 
 async def _get_workflow_role_ids(db: DbSession, workflow_ids: list[UUID]) -> dict[UUID, list[UUID]]:
     """Return assigned role IDs keyed by workflow ID for a workflow batch."""
-    if not workflow_ids:
-        return {}
+    from shared.sdk_execution_reads import get_workflow_role_ids
 
-    result = await db.execute(
-        select(WorkflowRole.workflow_id, WorkflowRole.role_id)
-        .where(WorkflowRole.workflow_id.in_(workflow_ids))
-        .order_by(WorkflowRole.workflow_id, WorkflowRole.role_id)
-    )
-    role_ids_by_workflow: dict[UUID, list[UUID]] = {}
-    for workflow_id, role_id in result.all():
-        role_ids_by_workflow.setdefault(workflow_id, []).append(role_id)
-    return role_ids_by_workflow
+    return await get_workflow_role_ids(db, workflow_ids)
 
 
 async def _get_form_workflow_ids(db: DbSession, form_id: UUID) -> set[UUID]:
@@ -218,42 +142,9 @@ async def _get_form_workflow_ids(db: DbSession, form_id: UUID) -> set[UUID]:
     - form.launch_workflow_id (startup/pre-execution workflow)
     - form_fields.data_provider_id (dynamic field data providers)
     """
-    from sqlalchemy.orm import selectinload
+    from shared.sdk_execution_reads import get_form_workflow_ids
 
-    result = await db.execute(
-        select(Form)
-        .options(selectinload(Form.fields))
-        .where(Form.id == form_id)
-    )
-    form = result.scalar_one_or_none()
-
-    if not form:
-        return set()
-
-    workflow_ids: set[UUID] = set()
-
-    # Main workflow
-    if form.workflow_id:
-        try:
-            workflow_ids.add(UUID(form.workflow_id))
-        except ValueError as e:
-            # Non-UUID portable ref (e.g. "path::func") — not a real workflow ID
-            logger.debug(f"form.workflow_id not a UUID, skipping: {e}")
-
-    # Launch workflow
-    if form.launch_workflow_id:
-        try:
-            workflow_ids.add(UUID(form.launch_workflow_id))
-        except ValueError as e:
-            # Non-UUID portable ref — not a real workflow ID
-            logger.debug(f"form.launch_workflow_id not a UUID, skipping: {e}")
-
-    # Data providers from fields
-    for field in form.fields:
-        if field.data_provider_id:
-            workflow_ids.add(field.data_provider_id)
-
-    return workflow_ids
+    return await get_form_workflow_ids(db, form_id)
 
 
 async def _get_app_workflow_ids(db: DbSession, app_id: UUID) -> set[UUID]:
@@ -262,51 +153,9 @@ async def _get_app_workflow_ids(db: DbSession, app_id: UUID) -> set[UUID]:
 
     Scans file_index for app source files and parses for workflow references.
     """
-    from src.models.orm.file_index import FileIndex
-    from src.models.orm.applications import Application
-    from src.models.orm.workflows import Workflow as WfORM
-    from src.services.app_dependencies import parse_dependencies
+    from shared.sdk_execution_reads import get_app_workflow_ids
 
-    # Get app
-    app_result = await db.execute(
-        select(Application).where(Application.id == app_id)
-    )
-    app = app_result.scalar_one_or_none()
-    if not app:
-        return set()
-
-    # Independently deployed V2 Apps have no server-side source tree. Their
-    # workflow references are resolved dynamically by the live SDK at runtime.
-    if app.repo_path is None:
-        return set()
-
-    # Scan file_index for source code
-    prefix = app.repo_prefix
-    fi_result = await db.execute(
-        select(FileIndex.content).where(
-            FileIndex.path.startswith(prefix),
-        )
-    )
-
-    # Collect all refs from all files
-    all_refs: set[str] = set()
-    for (content,) in fi_result.all():
-        if content:
-            all_refs.update(parse_dependencies(content))
-
-    if not all_refs:
-        return set()
-
-    # Resolve refs to workflow UUIDs
-    wf_result = await db.execute(
-        select(WfORM.id, WfORM.name).where(WfORM.is_active.is_(True))
-    )
-    matched: set[UUID] = set()
-    for wf_id, wf_name in wf_result.all():
-        if str(wf_id) in all_refs or wf_name in all_refs:
-            matched.add(wf_id)
-
-    return matched
+    return await get_app_workflow_ids(db, app_id)
 
 
 async def _compute_used_by_counts(db: DbSession, workflow_ids: list[UUID]) -> dict[UUID, int]:
@@ -321,51 +170,9 @@ async def _compute_used_by_counts(db: DbSession, workflow_ids: list[UUID]) -> di
 
     Returns a dict mapping workflow UUID -> count of referencing entities.
     """
-    # Build individual reference queries. Form.workflow_id/launch_workflow_id
-    # are String(255) while others are proper UUID columns, so cast form
-    # columns to UUID for a consistent union.
-    from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+    from shared.sdk_execution_reads import compute_used_by_counts
 
-    refs_form_wf = (
-        select(Form.workflow_id.cast(PG_UUID(as_uuid=True)).label("wf_id"))
-        .where(
-            Form.is_active == True,  # noqa: E712
-            Form.workflow_id.isnot(None),
-            func.length(Form.workflow_id) == 36,  # filter non-UUID strings (e.g. portable refs)
-        )
-    )
-    refs_form_launch = (
-        select(Form.launch_workflow_id.cast(PG_UUID(as_uuid=True)).label("wf_id"))
-        .where(
-            Form.is_active == True,  # noqa: E712
-            Form.launch_workflow_id.isnot(None),
-            func.length(Form.launch_workflow_id) == 36,  # filter non-UUID strings
-        )
-    )
-    refs_form_dp = (
-        select(FormField.data_provider_id.label("wf_id"))
-        .where(FormField.data_provider_id.isnot(None))
-    )
-    refs_agent = (
-        select(AgentTool.workflow_id.label("wf_id"))
-    )
-
-    # Union all reference sources and count per workflow
-    all_refs = union_all(
-        refs_form_wf, refs_form_launch, refs_form_dp, refs_agent
-    ).subquery("all_refs")
-
-    count_query = (
-        select(
-            all_refs.c.wf_id,
-            func.count().label("cnt"),
-        )
-        .where(all_refs.c.wf_id.in_(workflow_ids))
-        .group_by(all_refs.c.wf_id)
-    )
-
-    result = await db.execute(count_query)
-    return {row.wf_id: row.cnt for row in result.all()}
+    return await compute_used_by_counts(db, workflow_ids)
 
 
 # =============================================================================
@@ -425,104 +232,24 @@ async def list_workflows(
         filter_by_app: App UUID to filter workflows by.
         filter_by_agent: Agent UUID to filter workflows by.
     """
-    from src.core.org_filter import resolve_org_filter, OrgFilterType
+    from shared.sdk_execution_reads import SdkExecutionReadError, list_sdk_workflows
 
     try:
-        # Resolve organization filter using shared helper (consistent with forms)
-        try:
-            filter_type, filter_org = resolve_org_filter(user, scope)
-        except ValueError as e:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=str(e),
-            )
-
-        # Query active workflows from database
-        query = select(WorkflowORM).where(WorkflowORM.is_active.is_(True))
-
-        # Apply organization scope filter
-        if filter_type == OrgFilterType.ALL:
-            # Platform admin sees all - no org filter
-            pass
-        elif filter_type == OrgFilterType.GLOBAL_ONLY:
-            # Only global workflows (no organization)
-            query = query.where(WorkflowORM.organization_id.is_(None))
-        elif filter_type == OrgFilterType.ORG_ONLY:
-            # Only that org's workflows (platform admin filtering)
-            query = query.where(WorkflowORM.organization_id == filter_org)
-        elif filter_type == OrgFilterType.ORG_PLUS_GLOBAL:
-            # User's org + global (org users)
-            query = query.where(
-                or_(
-                    WorkflowORM.organization_id == filter_org,
-                    WorkflowORM.organization_id.is_(None),
-                )
-            )
-
-        # Filter by type
-        if type is not None:
-            query = query.where(WorkflowORM.type == type)
-        # Legacy support: is_tool=True maps to type="tool"
-        elif is_tool is not None:
-            if is_tool:
-                query = query.where(WorkflowORM.type == "tool")
-            else:
-                query = query.where(WorkflowORM.type != "tool")
-
-        # Apply entity filters by querying entities directly
-        if filter_by_form:
-            # Get workflow IDs used by this form (direct query)
-            workflow_ids = await _get_form_workflow_ids(db, filter_by_form)
-            if workflow_ids:
-                query = query.where(WorkflowORM.id.in_(workflow_ids))
-            else:
-                # No workflows found, return empty result
-                return []
-        elif filter_by_app:
-            # Get workflow IDs used by this app (query pages/components)
-            workflow_ids = await _get_app_workflow_ids(db, filter_by_app)
-            if workflow_ids:
-                query = query.where(WorkflowORM.id.in_(workflow_ids))
-            else:
-                # No workflows found, return empty result
-                return []
-        elif filter_by_agent:
-            # Get workflow IDs used by this agent (via agent_tools)
-            workflow_ids_subquery = select(AgentTool.workflow_id).where(
-                AgentTool.agent_id == filter_by_agent,
-            )
-            query = query.where(WorkflowORM.id.in_(workflow_ids_subquery))
-
-        result = await db.execute(query)
-        workflows = result.scalars().all()
-
-        # Batch-compute used_by_count for all workflows in a single query.
-        # Counts references from: forms (workflow_id, launch_workflow_id),
-        # form_fields (data_provider_id), and agent_tools.
-        workflow_ids = [w.id for w in workflows]
-        used_by_counts: dict[UUID, int] = {}
-        role_ids_by_workflow: dict[UUID, list[UUID]] = {}
-        if workflow_ids:
-            used_by_counts = await _compute_used_by_counts(db, workflow_ids)
-            role_ids_by_workflow = await _get_workflow_role_ids(db, workflow_ids)
-
-        # Convert ORM models to Pydantic schemas
-        workflow_list = []
-        for w in workflows:
-            try:
-                workflow_list.append(
-                    _convert_workflow_orm_to_schema(
-                        w,
-                        used_by_count=used_by_counts.get(w.id, 0),
-                        role_ids=role_ids_by_workflow.get(w.id, []),
-                    )
-                )
-            except Exception as e:
-                logger.error(f"Failed to convert workflow '{w.name}': {e}")
-
-        logger.info(f"Returning {len(workflow_list)} workflows (scope={log_safe(scope) or 'default'})")
-        return workflow_list
-
+        return await list_sdk_workflows(
+            db,
+            user,
+            type=type,
+            is_tool=is_tool,
+            scope=scope,
+            filter_by_form=filter_by_form,
+            filter_by_app=filter_by_app,
+            filter_by_agent=filter_by_agent,
+        )
+    except SdkExecutionReadError as e:
+        raise HTTPException(
+            status_code=e.status_code,
+            detail=e.detail,
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -714,50 +441,6 @@ async def get_workflow_usage_stats(
         )
 
 
-async def _insert_scheduled_execution(
-    *,
-    db: "AsyncSession",
-    workflow_id: UUID,
-    workflow_name: str,
-    parameters: dict,
-    scheduled_at: datetime,
-    organization_id: UUID | None,
-    executed_by: UUID,
-    executed_by_name: str,
-    form_id: UUID | None,
-    api_key_id: UUID | None,
-    is_platform_admin: bool,
-) -> UUID:
-    """Insert a SCHEDULED execution row.
-
-    Skips Redis/RabbitMQ — the deferred_execution_promoter job will publish
-    the row when scheduled_at matures.
-    """
-    from uuid import uuid4
-
-    from src.models.orm.executions import Execution
-
-    exec_id = uuid4()
-    db.add(
-        Execution(
-            id=exec_id,
-            workflow_id=workflow_id,
-            workflow_name=workflow_name,
-            status=ExecutionStatus.SCHEDULED,
-            parameters=parameters,
-            scheduled_at=scheduled_at,
-            organization_id=organization_id,
-            executed_by=executed_by,
-            executed_by_name=executed_by_name,
-            form_id=form_id,
-            api_key_id=api_key_id,
-            execution_context={"is_platform_admin": is_platform_admin},
-        )
-    )
-    await db.commit()
-    return exec_id
-
-
 @router.post(
     "/execute",
     response_model=WorkflowExecutionResponse,
@@ -780,368 +463,29 @@ async def execute_workflow(
       - User has access to an app using this workflow
       - Data provider is tied to an integration (any authenticated user)
     """
-    from uuid import uuid4
-    from src.sdk.context import ExecutionContext as SharedContext, Organization
-    from src.services.execution.service import (
-        get_workflow_for_execution,
-        run_workflow,
-        run_code,
-        WorkflowNotFoundError,
-        WorkflowLoadError,
-    )
-    from src.repositories import AccessDeniedError, WorkflowRepository
-    from src.core.org_filter import resolve_target_org
-
-    # Resolve org scope for workflow lookup — follows the same pattern as
-    # configs, tables, etc. Superusers can pass org_id to search that org;
-    # regular users always use their own org.
-    lookup_org_id = resolve_target_org(
-        user=user,
-        scope=request.org_id,
-        default_org_id=ctx.org_id,
+    from shared.sdk_workflow_execution import (
+        SdkWorkflowExecutionError,
+        execute_sdk_workflow,
     )
 
-    workflow_repo = WorkflowRepository(
-        session=db,
-        org_id=lookup_org_id,
-        user_id=ctx.user.user_id,
-        is_superuser=ctx.user.is_superuser,
-        # Embed principals carry is_external=True (OPEN-D: external-equivalent
-        # for the config/knowledge/table data gates), but workflow execution
-        # is the HMAC-pre-authorized app function-call channel — deliberately
-        # allowlisted by EmbedScopeMiddleware and execution-scoped by jti.
-        # Keep the pre-OPEN-D resolution semantics for embed sessions here.
-        is_external=ctx.user.is_external and not ctx.user.embed,
-    )
-
-    # A Solution caller's path::fn ref carries no install id (it can't know the
-    # per-install uuid5). Derive the install scope from the caller so a path ref
-    # resolves to THIS install's own workflow, not a sibling install's that
-    # shares the path (Codex #8 P1) nor the bare _repo/ one. solution_id (a
-    # form/agent) > form_id > app_id. A bad/foreign ref yields no scope.
-    # An explicitly denied/sealed target raises SolutionInboundDenied — 404
-    # WITHOUT shared fallback (a denied install must never execute a loose
-    # same-path workflow).
-    from src.services.solution_scope import SolutionInboundDenied
-
+    # Business orchestration lives in the shared service so the engine-local
+    # dispatcher can call the same function. SdkWorkflowExecutionError carries
+    # the historical status/detail; ValueError (malformed scope/UUID inputs)
+    # propagates to the global 422 handler, as before extraction.
     try:
-        solution_scope = await derive_execution_solution_scope(
+        return await execute_sdk_workflow(
             db,
-            ctx,
-            solution_id=request.solution_id,
-            form_id=request.form_id,
-            app_id=request.app_id,
-            target_org_id=lookup_org_id,
-            caller_solution_id=request.caller_solution_id,
+            user,
+            request,
+            caller_org_id=ctx.org_id,
+            context_solution_id=ctx.solution_id,
+            context_app_id=ctx.app_id,
+            context_caller_solution_id=ctx.caller_solution_id,
         )
-    except SolutionInboundDenied:
+    except SdkWorkflowExecutionError as e:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"message": f"Workflow '{request.workflow_id}' not found"},
-        ) from None
-    allow_shared_workflow = (
-        solution_scope is None
-        or await solution_allows_global(db, solution_scope)
-    )
-
-    # Look up workflow metadata for type checking (needed for data provider handling)
-    workflow = None
-    if request.workflow_id:
-        workflow = await workflow_repo.resolve(
-            request.workflow_id,
-            solution_scope=solution_scope,
-            allow_shared_fallback=allow_shared_workflow,
-        )
-        if not workflow:
-            # A resolution miss must identify its scope inputs: a dropped or
-            # wrong install scope reads as derived_solution_scope=null here
-            # instead of a mystery 404 (no user/token data — every field is
-            # caller-supplied or derived from it).
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail={
-                    "message": f"Workflow '{request.workflow_id}' not found",
-                    "workflow_ref": request.workflow_id,
-                    "context_solution_id": ctx.solution_id,
-                    "request_solution_id": request.solution_id,
-                    "request_form_id": request.form_id,
-                    "request_app_id": request.app_id,
-                    "derived_solution_scope": (
-                        str(solution_scope) if solution_scope else None
-                    ),
-                },
-            )
-
-    # Authorization check
-    if request.code:
-        # Inline code execution requires platform admin
-        if not ctx.user.is_superuser:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Inline code execution requires platform admin access",
-            )
-    elif request.workflow_id:
-        # UUID resolution already goes through repository.get(), including its
-        # org and role access checks. Portable name/path refs use specialized
-        # resolution and still need the explicit access assertion below.
-        assert workflow is not None  # guaranteed by resolve() + 404 above
-        if not _is_uuid_workflow_ref(request.workflow_id):
-            try:
-                await workflow_repo.can_access(id=workflow.id)
-            except AccessDeniedError:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Access denied to execute this workflow",
-                )
-    else:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Either workflow_id or code must be provided",
-        )
-
-    # Validate admin-only overrides (org_id, run_as)
-    if (request.org_id or request.run_as) and not ctx.user.is_superuser:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="org_id and run_as overrides require platform admin",
-        )
-
-    # Resolve run_as user if provided
-    exec_user_id = str(ctx.user.user_id)
-    exec_user_name = ctx.user.name or ctx.user.email or "Unknown"
-    exec_user_email = ctx.user.email or ""
-    exec_is_admin = ctx.user.is_superuser
-
-    if request.run_as:
-        from src.models.orm.users import User
-        run_as_result = await db.execute(
-            select(User).where(User.id == UUID(request.run_as))
-        )
-        run_as_user = run_as_result.scalar_one_or_none()
-        if not run_as_user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"run_as user '{request.run_as}' not found",
-            )
-        exec_user_id = str(run_as_user.id)
-        exec_user_name = run_as_user.name or run_as_user.email or "Unknown"
-        exec_user_email = run_as_user.email or ""
-        exec_is_admin = run_as_user.is_superuser
-        logger.info(f"Impersonating user: {exec_user_id} ({exec_user_email})")
-
-    # Determine execution org_id
-    # Priority order:
-    # 0. Explicit org_id override (admin only, checked above)
-    # 1. Org-scoped workflow: use workflow's organization_id (enforces workflow isolation)
-    # 2. Global workflow / inline code: use caller's org context (ctx.org_id).
-    #    Platform admins and provider-org members targeting a non-default
-    #    org must pass request.org_id explicitly per call.
-    if request.org_id:
-        execution_org_id = UUID(request.org_id)
-        logger.info(f"Using explicit org_id override: {execution_org_id}")
-    elif workflow and workflow.organization_id:
-        # Org-scoped workflow - execution MUST use workflow's org for data isolation
-        execution_org_id = workflow.organization_id
-        logger.info(f"Using workflow's organization: {execution_org_id}")
-    else:
-        execution_org_id = ctx.org_id
-
-    # Scheduled execution: normalize delay_seconds -> scheduled_at and insert row.
-    # The deferred_execution_promoter job will publish this row when it matures.
-    scheduled_at: datetime | None = request.scheduled_at
-    if request.delay_seconds is not None:
-        scheduled_at = datetime.now(timezone.utc) + timedelta(seconds=request.delay_seconds)
-
-    if scheduled_at is not None:
-        # Schedule-with-code is rejected by the contract validator; workflow must exist.
-        assert workflow is not None
-        exec_id = await _insert_scheduled_execution(
-            db=db,
-            workflow_id=workflow.id,
-            workflow_name=workflow.name,
-            parameters=request.input_data,
-            scheduled_at=scheduled_at,
-            organization_id=execution_org_id,
-            executed_by=UUID(exec_user_id),
-            executed_by_name=exec_user_name,
-            form_id=UUID(request.form_id) if request.form_id else None,
-            api_key_id=None,  # API-key-triggered scheduling not supported in v1
-            is_platform_admin=exec_is_admin,
-        )
-        return WorkflowExecutionResponse(
-            execution_id=str(exec_id),
-            workflow_id=str(workflow.id),
-            workflow_name=workflow.name,
-            status=ExecutionStatus.SCHEDULED,
-            scheduled_at=scheduled_at,
-        )
-
-    # Build shared context for execution.
-    #
-    # Only org_id is load-bearing here: at the enqueue boundary the context is
-    # reduced to scalars (org_id, user_id, is_platform_admin, ...) and stored in
-    # Redis — this Organization object is NOT serialized to the worker. The
-    # worker rehydrates the org (including is_provider) from org_id via
-    # OrganizationRepository.get_with_cache in the workflow_execution consumer.
-    # So leaving name/is_provider unset here is intentional, not a gap.
-    org = None
-    if execution_org_id:
-        org = Organization(id=str(execution_org_id), name="", is_active=True)
-
-    logger.info(
-        f"Building execution context: org_id={execution_org_id}, user={exec_user_id}, is_superuser={exec_is_admin}, scope={'GLOBAL' if not execution_org_id else str(execution_org_id)}"
-    )
-
-    shared_ctx = SharedContext(
-        user_id=exec_user_id,
-        name=exec_user_name,
-        email=exec_user_email,
-        scope=str(execution_org_id) if execution_org_id else "GLOBAL",
-        organization=org,
-        is_platform_admin=exec_is_admin,
-        is_function_key=False,
-        execution_id=str(uuid4()),
-    )
-
-    try:
-        if request.code:
-            # Execute inline code
-            result = await run_code(
-                context=shared_ctx,
-                code=request.code,
-                script_name=request.script_name or "inline_script",
-                input_data=request.input_data,
-                transient=request.transient,
-            )
-        elif workflow and workflow.type == "data_provider":
-            # Only short-circuit on the sync/transient hot path. A non-transient
-            # request (e.g. manual "Execute" from the workflows page) expects a
-            # tracked execution row to navigate to — returning a synthetic
-            # execution_id would 404 the history detail page.
-            if request.transient and workflow.cache_ttl_seconds > 0:
-                cached_result = await get_cached_data_provider(
-                    str(execution_org_id) if execution_org_id else None,
-                    workflow.name,
-                    request.input_data,
-                )
-                if cached_result:
-                    return WorkflowExecutionResponse(
-                        execution_id=shared_ctx.execution_id,
-                        workflow_id=str(workflow.id),
-                        workflow_name=workflow.name,
-                        status=ExecutionStatus.SUCCESS,
-                        result=cached_result.get("data"),
-                        duration_ms=0,
-                        is_transient=True,
-                    )
-
-            # Reuse one hardened dispatch snapshot for the queue boundary. It
-            # includes the active-Solution gate and global-repo policy, so the
-            # worker does not repeat this query after RabbitMQ delivery.
-            dispatch_metadata = await get_workflow_for_execution(
-                str(workflow.id),
-                db=db,
-            )
-
-            # Data providers always run sync (small payloads, no UI poll flow),
-            # but honor the caller's transient flag: dropdown-options pass
-            # transient=True for the fast path, the manual Execute page passes
-            # transient=False and expects a tracked execution row.
-            result = await run_workflow(
-                context=shared_ctx,
-                workflow_id=str(workflow.id),
-                input_data=request.input_data,
-                transient=request.transient,
-                sync=True,
-                dispatch_metadata=dispatch_metadata,
-            )
-            return WorkflowExecutionResponse(
-                execution_id=result.execution_id,
-                workflow_id=str(workflow.id),
-                workflow_name=workflow.name,
-                status=result.status,
-                result=result.result,
-                is_transient=request.transient,
-            )
-        elif workflow:
-            # Execute workflow by ID
-            dispatch_metadata = await get_workflow_for_execution(
-                str(workflow.id),
-                db=db,
-            )
-            result = await run_workflow(
-                context=shared_ctx,
-                workflow_id=str(workflow.id),
-                input_data=request.input_data,
-                form_id=request.form_id,
-                transient=request.transient,
-                sync=request.sync or False,
-                dispatch_metadata=dispatch_metadata,
-            )
-        else:
-            # This shouldn't happen due to earlier validation
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Either workflow_id or code must be provided",
-            )
-
-        # If the result already has a terminal status (sync mode), mark as transient
-        # so the frontend uses the inline result instead of waiting on WebSocket
-        if result.status and result.status not in (ExecutionStatus.PENDING, ExecutionStatus.RUNNING):
-            result.is_transient = True
-
-        # Publish only the immediate non-terminal state here. The worker pushes
-        # a sync result before publishing its terminal execution/history events,
-        # so repeating terminal fan-out in this request adds latency and emits
-        # duplicate WebSocket events.
-        if (
-            not request.transient
-            and result.execution_id
-            and _should_publish_request_execution_update(result.status)
-        ):
-            await publish_execution_update(
-                execution_id=result.execution_id,
-                status=result.status.value,
-                data={
-                    "result": result.result,
-                    "error": result.error,
-                    "duration_ms": result.duration_ms,
-                },
-            )
-            await publish_history_update(
-                execution_id=result.execution_id,
-                status=result.status.value,
-                executed_by=exec_user_id,
-                executed_by_name=exec_user_name or exec_user_email or "Unknown",
-                workflow_name=result.workflow_name or request.script_name or "inline_script",
-                org_id=execution_org_id,
-                started_at=result.started_at,
-                completed_at=result.completed_at,
-                duration_ms=result.duration_ms,
-            )
-
-        return result
-
-    except WorkflowNotFoundError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e),
-        )
-    except WorkflowLoadError as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e),
-        )
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
-    except Exception as e:
-        logger.error(f"Error executing workflow: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to execute workflow: {type(e).__name__}: {str(e)}",
+            status_code=e.status_code,
+            detail=e.detail,
         )
 
 
@@ -1170,62 +514,23 @@ async def cancel_scheduled_execution(
     caller (promoter, concurrent cancel) has already moved the row, we refetch
     and return 409 with the current status.
     """
-    from src.models.orm.executions import Execution
-
-    row = await db.get(Execution, execution_id)
-    if row is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Execution not found",
-        )
-
-    # Org-scoped access: row's org must match caller's org, unless admin.
-    if (
-        not ctx.user.is_superuser
-        and row.organization_id is not None
-        and row.organization_id != ctx.org_id
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied",
-        )
-
-    # Non-admin can only cancel their own scheduled rows.
-    if not ctx.user.is_superuser and row.executed_by != ctx.user.user_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only the submitter or an admin may cancel",
-        )
-
-    # Status-guarded UPDATE (wins or loses atomically vs. the promoter).
-    from sqlalchemy.engine import CursorResult
-
-    result = cast(
-        CursorResult,
-        await db.execute(
-            update(Execution)
-            .where(Execution.id == execution_id)
-            .where(Execution.status == ExecutionStatus.SCHEDULED)
-            .values(
-                status=ExecutionStatus.CANCELLED,
-                completed_at=datetime.now(timezone.utc),
-            )
-        ),
+    from shared.sdk_workflow_execution import (
+        SdkWorkflowExecutionError,
+        cancel_scheduled_sdk_execution,
     )
-    await db.commit()
 
-    if result.rowcount == 0:
-        # Another actor (promoter or concurrent cancel) changed status first.
-        await db.refresh(row)
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Execution is not Scheduled (current status: {row.status.value})",
+    try:
+        return await cancel_scheduled_sdk_execution(
+            db,
+            user,
+            execution_id,
+            caller_org_id=ctx.org_id,
         )
-
-    return {
-        "execution_id": str(execution_id),
-        "status": ExecutionStatus.CANCELLED.value,
-    }
+    except SdkWorkflowExecutionError as e:
+        raise HTTPException(
+            status_code=e.status_code,
+            detail=e.detail,
+        )
 
 
 @router.post(

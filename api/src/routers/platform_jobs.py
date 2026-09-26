@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import case, func, or_, select
 
 from src.core.auth import Context, CurrentUser
@@ -24,25 +24,20 @@ from src.services.platform_jobs import (
 router = APIRouter(prefix="/api/platform-jobs", tags=["Platform Jobs"])
 
 
-def _can_read(job: PlatformJob, user: CurrentUser) -> bool:
-    return (
-        user.is_platform_admin
-        or job.requested_by_user_id == str(user.user_id)
-    )
-
-
 async def _get_visible_job(
     ctx: Context,
     user: CurrentUser,
     job_id: UUID,
 ) -> PlatformJob:
-    job = await ctx.db.get(PlatformJob, job_id)
-    if job is None or not _can_read(job, user):
+    from shared.sdk_video import SdkVideoJobError, get_visible_platform_job
+
+    try:
+        return await get_visible_platform_job(ctx.db, user, job_id)
+    except SdkVideoJobError as exc:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Platform job not found",
-        )
-    return job
+            status_code=exc.status_code,
+            detail=exc.detail,
+        ) from exc
 
 
 @router.get(
@@ -114,7 +109,15 @@ async def get_platform_job_status(
     ctx: Context,
     user: CurrentUser,
 ) -> PlatformJobPublic:
-    return platform_job_to_public(await _get_visible_job(ctx, user, job_id))
+    from shared.sdk_video import SdkVideoJobError, get_platform_job_status as get_status
+
+    try:
+        return await get_status(ctx.db, user, job_id)
+    except SdkVideoJobError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail=exc.detail,
+        ) from exc
 
 
 @router.post(

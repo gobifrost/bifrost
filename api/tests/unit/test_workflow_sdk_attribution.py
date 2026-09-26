@@ -28,14 +28,14 @@ def fake_context():
 
 
 def _make_mock_client(response_data: dict) -> MagicMock:
-    """Return a mock httpx client whose .post() returns a fake response."""
+    """Return a mock client whose ``engine_request()`` returns a fake response."""
     mock_response = MagicMock()
     mock_response.status_code = 200
     mock_response.json.return_value = response_data
     mock_response.raise_for_status = MagicMock()
 
     mock_client = MagicMock()
-    mock_client.post = AsyncMock(return_value=mock_response)
+    mock_client.engine_request = AsyncMock(return_value=mock_response)
     return mock_client
 
 
@@ -58,8 +58,8 @@ async def test_insert_attributes_to_context_user(fake_context, monkeypatch):
 
     await tables_class.insert("t1", {"k": "v"})
 
-    mock_client.post.assert_called_once()
-    call_json = mock_client.post.call_args[1]["json"]
+    mock_client.engine_request.assert_called_once()
+    call_json = mock_client.engine_request.call_args[1]["json"]
     assert call_json["created_by"] == fake_context.user_id
 
 
@@ -83,6 +83,6 @@ async def test_insert_explicit_override(fake_context, monkeypatch):
 
     await tables_class.insert("t1", {"k": "v"}, created_by=other_user)
 
-    mock_client.post.assert_called_once()
-    call_json = mock_client.post.call_args[1]["json"]
+    mock_client.engine_request.assert_called_once()
+    call_json = mock_client.engine_request.call_args[1]["json"]
     assert call_json["created_by"] == other_user

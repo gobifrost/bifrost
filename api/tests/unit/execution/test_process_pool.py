@@ -312,6 +312,12 @@ class TestProcessPoolManagerStart:
                     # Expected — we just cancelled the task during cleanup
                     pass
 
+        # start() also boots the worker-local SDK socket server; stop it so
+        # the socket and its temporary directory do not leak across tests.
+        if pool._sdk_http is not None:
+            await pool._sdk_http.stop()
+            pool._sdk_http = None
+
     @pytest.mark.asyncio
     async def test_recycle_installs_before_template_restart(self):
         pool = ProcessPoolManager(max_workers=5)
@@ -1976,3 +1982,48 @@ class TestBurstRaceRegression:
             "waiter never woke — _notify_slot_free was skipped because "
             "cleanup aborted with KeyError"
         )
+
+
+# ---------------------------------------------------------------------------
+# Worker-local engine SDK socket injection (Gate A)
+# ---------------------------------------------------------------------------
+
+
+def _fork_reply(pid: int) -> tuple:
+    return (
+        pid,
+        MagicMock(),
+        MagicMock(),
+    )
+
+
+def test_fork_process_injects_worker_socket_path():
+    pool = ProcessPoolManager(max_workers=1)
+    template = MagicMock()
+    template.is_alive.return_value = True
+    template.fork.return_value = _fork_reply(4242)
+    pool._template = template
+    server = MagicMock()
+    server.socket_path = "/tmp/bifrost-engine.sock"
+    pool._sdk_http = server
+
+    handle = pool._fork_process()
+
+    assert handle.pid == 4242
+    assert template.fork.call_args.kwargs["sdk_socket_path"] == (
+        "/tmp/bifrost-engine.sock"
+    )
+
+
+def test_fork_process_without_socket_passes_none():
+    pool = ProcessPoolManager(max_workers=1)
+    template = MagicMock()
+    template.is_alive.return_value = True
+    template.fork.return_value = _fork_reply(4243)
+    pool._template = template
+    assert pool._sdk_http is None
+
+    handle = pool._fork_process()
+
+    assert handle.pid == 4243
+    assert template.fork.call_args.kwargs["sdk_socket_path"] is None

@@ -1,8 +1,10 @@
 """
-bifrost/roles.py - Roles management SDK (API-only)
+bifrost/roles.py - Roles management SDK
 
 Provides Python API for role operations (CRUD + user/form assignments).
-All operations go through HTTP API endpoints.
+
+Inside an engine child these operations go through the worker's private Unix
+socket (the parent serves the real HTTP endpoints); external callers use HTTP.
 """
 
 from __future__ import annotations
@@ -49,7 +51,8 @@ class roles:
             ... )
         """
         client = get_client()
-        response = await client.post(
+        response = await client.engine_request(
+            "POST",
             "/api/roles",
             json={
                 "name": name,
@@ -81,7 +84,7 @@ class roles:
             >>> print(role.name)
         """
         client = get_client()
-        response = await client.get(f"/api/roles/{role_id}")
+        response = await client.engine_request("GET", f"/api/roles/{role_id}")
         if response.status_code == 404:
             raise ValueError(f"Role not found: {role_id}")
         raise_for_status_with_detail(response)
@@ -105,7 +108,7 @@ class roles:
             ...     print(f"{role.name}: {role.description}")
         """
         client = get_client()
-        response = await client.get("/api/roles")
+        response = await client.engine_request("GET", "/api/roles")
         raise_for_status_with_detail(response)
         data = response.json()
         return [Role.model_validate(role) for role in data]
@@ -137,7 +140,9 @@ class roles:
             ... )
         """
         client = get_client()
-        response = await client.patch(f"/api/roles/{role_id}", json=updates)
+        response = await client.engine_request(
+            "PATCH", f"/api/roles/{role_id}", json=updates
+        )
         if response.status_code == 404:
             raise ValueError(f"Role not found: {role_id}")
         raise_for_status_with_detail(response)
@@ -163,7 +168,7 @@ class roles:
             >>> await roles.delete("role-123")
         """
         client = get_client()
-        response = await client.delete(f"/api/roles/{role_id}")
+        response = await client.engine_request("DELETE", f"/api/roles/{role_id}")
         if response.status_code == 404:
             raise ValueError(f"Role not found: {role_id}")
         raise_for_status_with_detail(response)
@@ -190,7 +195,9 @@ class roles:
             ...     print(user_id)
         """
         client = get_client()
-        response = await client.get(f"/api/roles/{role_id}/users")
+        response = await client.engine_request(
+            "GET", f"/api/roles/{role_id}/users"
+        )
         if response.status_code == 404:
             raise ValueError(f"Role not found: {role_id}")
         raise_for_status_with_detail(response)
@@ -219,7 +226,9 @@ class roles:
             ...     print(form_id)
         """
         client = get_client()
-        response = await client.get(f"/api/roles/{role_id}/forms")
+        response = await client.engine_request(
+            "GET", f"/api/roles/{role_id}/forms"
+        )
         if response.status_code == 404:
             raise ValueError(f"Role not found: {role_id}")
         raise_for_status_with_detail(response)
@@ -247,7 +256,8 @@ class roles:
             >>> await roles.assign_users("role-123", ["user-1", "user-2"])
         """
         client = get_client()
-        response = await client.post(
+        response = await client.engine_request(
+            "POST",
             f"/api/roles/{role_id}/users",
             json={"user_ids": user_ids}
         )
@@ -276,7 +286,8 @@ class roles:
             >>> await roles.assign_forms("role-123", ["form-1", "form-2"])
         """
         client = get_client()
-        response = await client.post(
+        response = await client.engine_request(
+            "POST",
             f"/api/roles/{role_id}/forms",
             json={"form_ids": form_ids}
         )

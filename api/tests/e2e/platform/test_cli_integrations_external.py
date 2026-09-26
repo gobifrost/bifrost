@@ -349,7 +349,7 @@ class TestExternalIntegrationsRefreshToken:
         # The provider is GLOBAL; an external's by-name cascade drops the global
         # tier → 404 (provider not found). It must NOT return a fresh global
         # access_token.
-        assert resp.status_code in (400, 404, 502), (
+        assert resp.status_code == 404, (
             f"external must not reach the global provider: "
             f"{resp.status_code} {resp.text}"
         )

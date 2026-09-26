@@ -43,11 +43,12 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from queue import Empty
-from typing import Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 import psutil
 import redis.asyncio as redis
 
+from shared.execution_context import validate_execution_context
 from src.config import get_settings
 from src.core.cache.keys import TTL_ACTIVE_EXECUTION, active_execution_key
 from src.core.redis_client import ActiveExecution
@@ -57,6 +58,9 @@ from src.services.execution.memory_monitor import get_cgroup_memory, has_suffici
 from src.services.execution.requirements_setup_result import RequirementsInstallResult
 from src.services.notification_service import get_notification_service
 from src.services.execution.template_process import TemplateProcess
+
+if TYPE_CHECKING:
+    from src.services.execution.worker_sdk_http import WorkerSdkHttpServer
 
 logger = logging.getLogger(__name__)
 
@@ -459,6 +463,11 @@ class ProcessPoolManager:
         # Template process for fork-based workers
         self._template: TemplateProcess | None = None
 
+        # Worker-local engine SDK HTTP server (Gate A). Serves the existing
+        # SDK routes on a private Unix socket; children send ordinary HTTP
+        # requests to it. None until start(), None again after stop().
+        self._sdk_http: WorkerSdkHttpServer | None = None
+
         # Serializes drain_and_restart_template so concurrent package
         # installs don't race — the second call waits for the first to
         # finish rather than trying to fork while the template is down.
@@ -645,6 +654,10 @@ class ProcessPoolManager:
         ensure the pool has been started (and therefore _start_template
         has completed) before invoking this method.
 
+        Each child receives the worker-local engine SDK Unix socket path
+        (when the pool serves one) and makes ordinary HTTP requests over it;
+        no SDK/import/stream channel descriptors are created or returned.
+
         Returns:
             ProcessHandle for the new forked worker. State starts at BUSY
             because every fork is claimed by the routing caller.
@@ -666,6 +679,9 @@ class ProcessPoolManager:
         child_pid, work_queue, result_queue = self._template.fork(
             worker_id=process_id,
             persistent=False,
+            sdk_socket_path=(
+                self._sdk_http.socket_path if self._sdk_http is not None else None
+            ),
         )
 
         handle = ProcessHandle(
@@ -714,6 +730,21 @@ class ProcessPoolManager:
 
         # Start template process (loads deps, ready to fork)
         await self._start_template()
+
+        # Start the worker-local engine SDK HTTP server before any fork so
+        # every child is handed the socket path. The worker parent owns the
+        # pooled DB engine and the protected credentials; children make
+        # ordinary HTTP requests over this private socket instead of the
+        # network API.
+        from src.services.execution.worker_sdk_http import WorkerSdkHttpServer
+
+        sdk_http = WorkerSdkHttpServer()
+        try:
+            await sdk_http.start()
+        except BaseException:
+            await sdk_http.stop()
+            raise
+        self._sdk_http = sdk_http
 
         # Register in Redis
         await self._register_worker()
@@ -782,6 +813,12 @@ class ProcessPoolManager:
         if self._template is not None:
             self._template.shutdown()
             self._template = None
+
+        # Stop serving the worker-local SDK socket and remove it. Children
+        # are already dead, so no request can be in flight.
+        if self._sdk_http is not None:
+            await self._sdk_http.stop()
+            self._sdk_http = None
 
         # Unregister from Redis
         await self._unregister_worker()
@@ -894,11 +931,18 @@ class ProcessPoolManager:
         diagnostics, then sent with the execution ID to the forked child over
         its private work pipe.
 
+        The parent-owned context identity is validated before any side
+        effect: a malformed identity fails the dispatch loudly instead of
+        forking a child.
+
         Args:
             execution_id: Unique identifier for the execution
             context: Execution context sent to the child and retained in Redis
             active_execution: Compact completion metadata retained by the parent
         """
+        # Fail closed before the Redis write or fork.
+        validate_execution_context(context)
+
         # Write context to Redis
         await self._write_context_to_redis(execution_id, context)
 
@@ -1021,6 +1065,9 @@ class ProcessPoolManager:
                 on its next tick).
             MemoryError: Memory pressure rejects the fork.
         """
+        # Fail closed before forking, as with executions.
+        validate_execution_context(context)
+
         settings = get_settings()
         if not has_sufficient_memory_cgroup(threshold=settings.memory_pressure_threshold):
             raise MemoryError(
@@ -1962,6 +2009,7 @@ class ProcessPoolManager:
         result: dict[str, Any],
     ) -> None:
         """Forward a service attempt outcome and free its service slot."""
+        self._unregister_result_reader(handle)
         callback_already_owned = handle.result_reported
         handle.result_reported = True
         handle.current_execution = None

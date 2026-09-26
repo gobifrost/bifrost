@@ -10,7 +10,6 @@ They are serialized to JSON on-the-fly for git sync operations.
 """
 
 import asyncio
-import base64
 import logging
 import json
 import re
@@ -28,7 +27,6 @@ from src.core.auth import Context, CurrentActiveUser, CurrentSuperuser
 from src.config import get_settings
 from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
-from src.core.org_filter import resolve_org_filter
 from src.core.rate_limit import RateLimiter, get_client_ip
 from src.models.enums import FormAccessLevel
 from src.repositories.forms import FormRepository
@@ -41,7 +39,6 @@ from src.models import Role as RoleORM
 from src.models import Workflow as WorkflowORM
 from src.models.orm.solutions import Solution
 from src.models import FormCreate, FormUpdate, FormPublic
-from src.models.contracts.forms import FormField, FormSchema
 from src.models import FileUploadRequest, FileUploadResponse, UploadedFileMetadata
 from src.models import FormStartupResponse
 from src.models.enums import ExecutionStatus
@@ -82,8 +79,15 @@ from shared.form_runtime import (
 )
 from shared.logo_processing import (
     LogoProcessingError,
-    is_logo_thumbnail_version,
     process_logo,
+)
+from shared.sdk_forms import (
+    SdkFormError,
+    attach_form_logo_fields,
+    check_form_access,
+    embed_can_access_form,
+    get_sdk_form,
+    list_sdk_forms,
 )
 
 # Import cache invalidation
@@ -101,40 +105,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/forms", tags=["Forms"])
 
-
-def _logo_data_url(data: bytes | None, content_type: str | None) -> str | None:
-    """Encode a binary logo as a data URL, or None if no logo is set."""
-    if not data:
-        return None
-    encoded = base64.b64encode(data).decode("ascii")
-    return f"data:{content_type or 'application/octet-stream'};base64,{encoded}"
-
-
-def _form_logo_url(form: FormORM) -> str | None:
-    """Return a logo URL without hiding legacy images during thumbnail backfill."""
-    if is_logo_thumbnail_version(form.logo_thumbnail_version):
-        return f"/api/forms/{form.id}/logo?v={form.logo_thumbnail_version}"
-    if form.logo_content_type:
-        return f"/api/forms/{form.id}/logo"
-    return None
-
-
-def _attach_form_logo_fields(form_public: FormPublic, form: FormORM, *, include_inline_logo: bool = False) -> FormPublic:
-    form_public.logo = (
-        _logo_data_url(
-            form.logo_thumbnail_data or form.logo_data,
-            form.logo_thumbnail_content_type or form.logo_content_type,
-        )
-        if include_inline_logo
-        else None
-    )
-    form_public.logo_url = _form_logo_url(form)
-    form_public.logo_version = (
-        form.logo_thumbnail_version
-        if is_logo_thumbnail_version(form.logo_thumbnail_version)
-        else None
-    )
-    return form_public
 
 _FORM_EMBED_LIMITERS = {
     "runtime": RateLimiter(max_requests=120, window_seconds=60),
@@ -332,65 +302,13 @@ async def list_forms(
     - Org users see: their org's forms + global forms (org_id IS NULL)
     - Access is further filtered by access_level (authenticated, role_based)
 
-    Uses the FormRepository which handles:
-    - Cascade scoping (org + global for org users)
-    - Role-based access control (for non-superusers)
+    Listing behavior lives in the shared service (``shared.sdk_forms``),
+    which a worker-local engine child can call with the same inputs.
     """
-    # Resolve organization filter based on user permissions
     try:
-        filter_type, filter_org = resolve_org_filter(ctx.user, scope)
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(e),
-        )
-
-    # Create repository with appropriate scope and user context
-    # For superusers: is_superuser=True bypasses role checks
-    # For org users: user_id enables role-based access filtering
-    repo = FormRepository(
-        session=db,
-        org_id=filter_org,
-        user_id=ctx.user.user_id if not ctx.user.is_superuser else None,
-        is_superuser=ctx.user.is_superuser,
-        is_external=ctx.user.is_external,
-    )
-
-    # Platform admins bypass access level filtering - they see all forms within org scope
-    if ctx.user.is_superuser:
-        # Use list_all_in_scope which skips role checks (appropriate for superusers)
-        # Pass filter_type to control org scoping behavior
-        forms = await repo.list_all_in_scope(filter_type=filter_type, active_only=False)
-        result = [
-            _attach_form_logo_fields(FormPublic.model_validate(f), f)
-            for f in forms
-        ]
-    else:
-        # For org users: repository handles cascade scoping + role-based access
-        # list_forms() applies both cascade scope and role checks automatically
-        forms = await repo.list_forms(active_only=True)
-        result = [
-            _attach_form_logo_fields(FormPublic.model_validate(f), f)
-            for f in forms
-        ]
-
-    # Compute dependency counts for each form
-    for form_public in result:
-        count = 0
-        if form_public.workflow_id and len(form_public.workflow_id) == 36:
-            count += 1
-        if form_public.launch_workflow_id and len(form_public.launch_workflow_id) == 36:
-            count += 1
-        if form_public.form_schema:
-            schema = form_public.form_schema
-            fields = schema.fields if isinstance(schema, FormSchema) else (schema or {}).get("fields", [])
-            for field in fields:
-                dp_id = field.data_provider_id if isinstance(field, FormField) else (field or {}).get("data_provider_id")
-                if dp_id:
-                    count += 1
-        form_public.dependency_count = count
-
-    return result
+        return await list_sdk_forms(db, ctx.user, scope=scope)
+    except SdkFormError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
 
 
 async def _replace_form_roles(
@@ -580,7 +498,7 @@ async def create_form(
         await invalidate_form(org_id, str(form.id))
 
     form.role_ids = await _load_form_role_ids(db, form.id)  # type: ignore[attr-defined]
-    return _attach_form_logo_fields(FormPublic.model_validate(form), form, include_inline_logo=True)
+    return attach_form_logo_fields(FormPublic.model_validate(form), form, include_inline_logo=True)
 
 
 @router.get(
@@ -828,72 +746,15 @@ async def get_form(
     ctx: Context,
     db: DbSession,
 ) -> FormPublic:
-    """Get a specific form by ID."""
-    # Use FormRepository for consistent query logic
-    # Note: We don't filter by org here - access control is done after fetch
-    repo = FormRepository(
-        session=db,
-        org_id=None,  # No org filtering for initial fetch
-        user_id=ctx.user.user_id if not ctx.user.is_superuser else None,
-        is_superuser=ctx.user.is_superuser,
-        is_external=ctx.user.is_external,
-    )
-    form = await repo.get_form(form_id)
+    """Get a specific form by ID.
 
-    if not form:
-        logger.warning(f"Form {log_safe(form_id)} not found in database")
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Form not found",
-        )
-
-    async def _to_public(orm_form: FormORM) -> FormPublic:
-        orm_form.role_ids = await _load_form_role_ids(db, orm_form.id)  # type: ignore[attr-defined]
-        return _attach_form_logo_fields(
-            FormPublic.model_validate(orm_form),
-            orm_form,
-            include_inline_logo=True,
-        )
-
-    # Platform admins see all forms.
-    if ctx.user.is_superuser:
-        return await _to_public(form)
-
-    # Embed users are HMAC-pre-authorized — but ONLY for the form their token
-    # is bound to (EXT-1 NEW-I). An unbound embed token must not read a
-    # cross-tenant form's schema/workflow ids/launch params.
-    if ctx.user.embed:
-        if _embed_can_access_form(ctx, form):
-            return await _to_public(form)
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Form not found",
-        )
-
-    # Non-admins can only see active forms
-    if not form.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Form not found",
-        )
-
-    # Single org+role+access_level gate — the same OrgScopedRepository gate
-    # the listing and execute paths use (handles cascade scope, role_based
-    # role checks, and external-user isolation in one place).
-    if not await _check_form_access(
-        db,
-        form,
-        ctx.user.user_id,
-        ctx.org_id,
-        ctx.user.is_superuser,
-        is_external=ctx.user.is_external,
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied to form",
-        )
-
-    return await _to_public(form)
+    Access behavior lives in the shared service (``shared.sdk_forms``),
+    which a worker-local engine child calls for the same inputs.
+    """
+    try:
+        return await get_sdk_form(db, ctx.user, form_id)
+    except SdkFormError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
 
 
 @router.patch(
@@ -1025,7 +886,7 @@ async def update_form(
         await invalidate_form(org_id, str(form_id))
 
     form.role_ids = await _load_form_role_ids(db, form_id)  # type: ignore[attr-defined]
-    return _attach_form_logo_fields(FormPublic.model_validate(form), form, include_inline_logo=True)
+    return attach_form_logo_fields(FormPublic.model_validate(form), form, include_inline_logo=True)
 
 
 # Keep PUT for backwards compatibility
@@ -1116,9 +977,9 @@ async def get_form_logo(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Logo not set")
 
     if ctx.user.embed:
-        if not _embed_can_access_form(ctx, form):
+        if not embed_can_access_form(ctx.user, form):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Logo not set")
-    elif not await _check_form_access(
+    elif not await check_form_access(
         db,
         form,
         ctx.user.user_id,
@@ -1252,66 +1113,6 @@ async def delete_form(
 # =============================================================================
 
 
-async def _check_form_access(
-    db: DbSession,
-    form: FormORM,
-    user_id: UUID,
-    user_org_id: UUID | None,
-    is_superuser: bool,
-    is_external: bool = False,
-) -> bool:
-    """
-    Check if user has access to execute a form.
-
-    Delegates to ``FormRepository.get(id=...)``, which is the single
-    org+role+access_level gate shared with the UI listing path and every
-    other org-scoped entity (workflows, agents, tables, etc.). Returning
-    None from the repo means "form doesn't exist OR caller doesn't have
-    access" — for an existing form (the caller already loaded it via raw
-    select), None definitively means "access denied".
-    """
-    from src.repositories.forms import FormRepository
-
-    repo = FormRepository(
-        db,
-        org_id=user_org_id,
-        user_id=user_id,
-        is_superuser=is_superuser,
-        is_external=is_external,
-    )
-    accessible = await repo.get(id=form.id)
-    return accessible is not None
-
-
-def _embed_can_access_form(ctx, form: FormORM) -> bool:
-    """Whether an EMBED principal is bound to THIS form (EXT-1 NEW-I).
-
-    An embed token is HMAC-pre-authorized for exactly ONE resource. Before this
-    gate, the embed short-circuits in get_form / execute_form /
-    execute_startup_workflow / generate_upload_url skipped access control for
-    ANY embed token regardless of which form the path named — so an embed token
-    minted for app A in org H could read AND EXECUTE any form in any other org
-    (cross-tenant workflow execution as sentinel in the victim's org). Mirrors
-    the app-binding pattern in applications.py / app_code_files.py.
-
-    Binding rules (the token must be bound to the form being touched):
-    - form-embed token (``form_id`` claim set): must match the path form
-      exactly — ``ctx.user.form_id == str(form.id)``.
-    - app-embed token (``app_id`` set, no ``form_id``): the form must live in
-      the embed's OWN org (the form's org equals the token's org — a concrete
-      org). A global form (org-id None) is never embed-reachable, and a
-      cross-org form is rejected. This is the safe minimum that kills the
-      cross-tenant exec even without a form->app FK.
-    - a token with neither claim is never form-bound.
-    """
-    if ctx.user.form_id is not None:
-        return ctx.user.form_id == str(form.id)
-    if ctx.user.app_id is not None:
-        form_org = getattr(form, "organization_id", None)
-        return form_org is not None and form_org == ctx.user.organization_id
-    return False
-
-
 async def _authorize_form_runtime(
     db: AsyncSession, ctx, form: FormORM
 ) -> FormPublicationORM | None:
@@ -1327,7 +1128,7 @@ async def _authorize_form_runtime(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Form unavailable",
                 )
-        if not _embed_can_access_form(ctx, form):
+        if not embed_can_access_form(ctx.user, form):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Form unavailable",
@@ -1354,7 +1155,7 @@ async def _authorize_form_runtime(
             return publication
         return None
 
-    if not await _check_form_access(
+    if not await check_form_access(
         db,
         form,
         ctx.user.user_id,
@@ -1549,11 +1350,11 @@ async def submit_form(
         scheduled_at = datetime.now(timezone.utc) + timedelta(seconds=request.delay_seconds)
 
     if scheduled_at is not None:
-        from src.routers.workflows import _insert_scheduled_execution
+        from shared.sdk_workflow_execution import insert_scheduled_execution
 
         workflow = _resolved_wf
 
-        exec_id = await _insert_scheduled_execution(
+        exec_id = await insert_scheduled_execution(
             db=db,
             workflow_id=workflow.id,
             workflow_name=workflow.name,

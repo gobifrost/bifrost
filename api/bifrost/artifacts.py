@@ -28,8 +28,50 @@ def _workspace_params() -> dict[str, str]:
     }
 
 
+def _video_job_artifact_or_raise(job: dict[str, Any]) -> ArtifactRef | None:
+    """Map one platform-job status dict to its terminal artifact.
+
+    Returns the reference when the job succeeded, None while the job
+    is still running, and raises the historical ``RuntimeError`` for
+    failed/cancelled/requires_action jobs.
+    """
+    status = str(job.get("status") or "")
+    if status == "succeeded":
+        result = job.get("result")
+        artifact = result.get("artifact") if isinstance(result, dict) else None
+        if not isinstance(artifact, dict):
+            raise RuntimeError("Video generation completed without an artifact.")
+        return ArtifactRef.model_validate(artifact)
+    if status in {"failed", "cancelled", "requires_action"}:
+        error = job.get("error")
+        message = error.get("message") if isinstance(error, dict) else None
+        result = job.get("result")
+        action = (
+            result.get("requires_action")
+            if isinstance(result, dict)
+            else None
+        )
+        if status == "requires_action":
+            follow_up = (
+                f" Required action: {action}."
+                if isinstance(action, str)
+                else " User action is required."
+            )
+            raise RuntimeError(f"Video generation requires action.{follow_up}")
+        raise RuntimeError(message or f"Video generation {status}.")
+    return None
+
+
 class artifacts:
-    """Create, read, and share generated files from workflows."""
+    """Create, read, and share generated files from workflows.
+
+    Every operation sends the ordinary HTTP request through the shared
+    ``BifrostClient``: over the worker's private Unix socket when the
+    engine injected one, and over the network API otherwise. The worker
+    parent owns the pooled database and protected storage/provider
+    credentials; an engine child holds neither, and a local attempt never
+    falls back to the network API after a failure.
+    """
 
     @staticmethod
     async def _render(
@@ -37,7 +79,9 @@ class artifacts:
         payload: dict[str, Any],
     ) -> ArtifactRef:
         client = get_client()
-        response = await client.post(endpoint, json=payload, params=_workspace_params())
+        response = await client.engine_request(
+            "POST", endpoint, json=payload, params=_workspace_params()
+        )
         raise_for_status_with_detail(response)
         return ArtifactRef.model_validate(response.json())
 
@@ -49,7 +93,8 @@ class artifacts:
         content_type: str,
     ) -> ArtifactRef:
         """Store validated workflow-produced bytes behind an opaque reference."""
-        response = await get_client().post(
+        response = await get_client().engine_request(
+            "POST",
             "/api/sdk/artifacts",
             files={"file": (filename, content, content_type)},
             params=_workspace_params(),
@@ -125,13 +170,20 @@ class artifacts:
         timeout_seconds: float = 1_800,
         poll_interval_seconds: float = 2,
     ) -> ArtifactRef:
-        """Generate a video through a durable platform job and return its reference."""
+        """Generate a video through a durable platform job and return its reference.
+
+        Video generation is asynchronous: this enqueues the durable
+        ``sdk.video_generation`` platform job and then polls its status
+        through the same shared transport until the job reaches a terminal
+        state or ``timeout_seconds`` elapses.
+        """
         if timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be greater than zero.")
         if poll_interval_seconds <= 0:
             raise ValueError("poll_interval_seconds must be greater than zero.")
         client = get_client()
-        response = await client.post(
+        response = await client.engine_request(
+            "POST",
             "/api/sdk/artifacts/video",
             json={
                 "filename": filename,
@@ -143,33 +195,13 @@ class artifacts:
         job_id = str(response.json()["job_id"])
         deadline = time.monotonic() + timeout_seconds
         while time.monotonic() < deadline:
-            status_response = await client.get(f"/api/platform-jobs/{job_id}")
+            status_response = await client.engine_request(
+                "GET", f"/api/platform-jobs/{job_id}"
+            )
             raise_for_status_with_detail(status_response)
-            job = status_response.json()
-            status = str(job.get("status") or "")
-            if status == "succeeded":
-                result = job.get("result")
-                artifact = result.get("artifact") if isinstance(result, dict) else None
-                if not isinstance(artifact, dict):
-                    raise RuntimeError("Video generation completed without an artifact.")
-                return ArtifactRef.model_validate(artifact)
-            if status in {"failed", "cancelled", "requires_action"}:
-                error = job.get("error")
-                message = error.get("message") if isinstance(error, dict) else None
-                result = job.get("result")
-                action = (
-                    result.get("requires_action")
-                    if isinstance(result, dict)
-                    else None
-                )
-                if status == "requires_action":
-                    follow_up = (
-                        f" Required action: {action}."
-                        if isinstance(action, str)
-                        else " User action is required."
-                    )
-                    raise RuntimeError(f"Video generation requires action.{follow_up}")
-                raise RuntimeError(message or f"Video generation {status}.")
+            ref = _video_job_artifact_or_raise(status_response.json())
+            if ref is not None:
+                return ref
             await asyncio.sleep(poll_interval_seconds)
         raise TimeoutError(
             f"Video generation is still running as platform job {job_id}."
@@ -179,7 +211,9 @@ class artifacts:
     async def read(ref: ArtifactRef | dict[str, Any]) -> bytes:
         """Read an ArtifactRef received as workflow or MCP tool input."""
         artifact = ref if isinstance(ref, ArtifactRef) else ArtifactRef.model_validate(ref)
-        response = await get_client().get(f"/api/sdk/artifacts/{artifact.id}/content")
+        response = await get_client().engine_request(
+            "GET", f"/api/sdk/artifacts/{artifact.id}/content"
+        )
         raise_for_status_with_detail(response)
         return response.content
 
@@ -191,7 +225,9 @@ class artifacts:
             raise RuntimeError(
                 "artifacts.list() requires an active workflow or agent execution."
             )
-        response = await get_client().get("/api/sdk/artifacts", params=params)
+        response = await get_client().engine_request(
+            "GET", "/api/sdk/artifacts", params=params
+        )
         raise_for_status_with_detail(response)
         return [ArtifactRef.model_validate(item) for item in response.json()]
 
@@ -199,8 +235,8 @@ class artifacts:
     async def get_download_url(ref: ArtifactRef | dict[str, Any]) -> str:
         """Create a short-lived download URL for an authorized ArtifactRef."""
         artifact = ref if isinstance(ref, ArtifactRef) else ArtifactRef.model_validate(ref)
-        response = await get_client().get(
-            f"/api/sdk/artifacts/{artifact.id}/download-url"
+        response = await get_client().engine_request(
+            "GET", f"/api/sdk/artifacts/{artifact.id}/download-url"
         )
         raise_for_status_with_detail(response)
         return str(response.json()["url"])

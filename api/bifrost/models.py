@@ -41,7 +41,7 @@ class UserPublic(BaseModel):
 
     id: str
     email: str
-    name: str
+    name: str | None
     is_active: bool
     is_superuser: bool
     is_verified: bool
@@ -50,6 +50,8 @@ class UserPublic(BaseModel):
     mfa_enabled: bool
     created_at: datetime | None
     updated_at: datetime | None
+    invite_status: str = "active"
+    registration_url: str | None = None
 
 
 class FormPublic(BaseModel):
@@ -57,7 +59,7 @@ class FormPublic(BaseModel):
 
     id: str
     name: str
-    description: str | None
+    description: str | None = None
     confirmation_markdown: str
     workflow_id: str | None
     launch_workflow_id: str | None
@@ -67,7 +69,7 @@ class FormPublic(BaseModel):
     access_level: str
     organization_id: str | None
     is_active: bool
-    file_path: str | None
+    file_path: str | None = None
     created_at: datetime | None
     updated_at: datetime | None
 
@@ -80,7 +82,7 @@ class WorkflowMetadata(BaseModel):
     description: str | None
     category: str | None
     tags: list[str]
-    parameters: dict
+    parameters: list[dict[str, Any]]
     execution_mode: str
     timeout_seconds: int | None
     retry_policy: dict | None
@@ -220,6 +222,11 @@ class OAuthCredentials(BaseModel):
         Updates access_token and expires_at in-place and persists
         the new token to the database.
 
+        Sends the ordinary HTTP request through the shared ``BifrostClient``:
+        over the worker's private Unix socket when the engine injected one,
+        and over the network API otherwise. A local failure raises and never
+        falls back to the network API. Error mapping matches the network path.
+
         Returns:
             self (for chaining)
 
@@ -232,7 +239,8 @@ class OAuthCredentials(BaseModel):
         from ._context import register_secret
 
         client = get_client()
-        response = await client.post(
+        response = await client.engine_request(
+            "POST",
             "/api/sdk/integrations/refresh_token",
             json={"connection_name": self.connection_name},
         )

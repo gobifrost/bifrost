@@ -321,7 +321,11 @@ def _template_main(
             persistent = cmd.get("persistent", False)
             work_recv: Connection = cmd["work_recv"]
             result_send: Connection = cmd["result_send"]
-            _handle_fork_request(pipe, worker_id, persistent, work_recv, result_send)
+            sdk_socket_path = cmd.get("sdk_socket_path")
+            _handle_fork_request(
+                pipe, worker_id, persistent, work_recv, result_send,
+                sdk_socket_path,
+            )
 
     logger.info("Template process exiting")
 
@@ -351,6 +355,7 @@ def _handle_fork_request(
     persistent: bool,
     work_recv: Connection,
     result_send: Connection,
+    sdk_socket_path: str | None = None,
 ) -> None:
     """
     Handle a fork request: fork and wire up pre-created pipe connections.
@@ -363,6 +368,11 @@ def _handle_fork_request(
     We fork, the child inherits them, we close them in the parent and
     reply with just the child_pid.
 
+    Engine SDK access does not travel on an inherited channel: the worker
+    parent serves the ordinary SDK HTTP routes on a private Unix socket and
+    passes its path through ``sdk_socket_path``. The work/result pipes remain
+    the only descriptors handed to the child at fork.
+
     Args:
         pipe: Control pipe to send response back to consumer.
         worker_id: ID to assign to the forked child worker.
@@ -370,22 +380,20 @@ def _handle_fork_request(
                     If False, child runs one execution and exits.
         work_recv: Read end of work pipe (child reads execution IDs from here).
         result_send: Write end of result pipe (child writes results here).
+        sdk_socket_path: Worker-local Unix socket the child should use for
+            engine SDK HTTP calls, or None when no socket is served.
     """
     child_pid = os.fork()
 
     if child_pid > 0:
         # ----- Parent (template) -----
         # Close the child-side connections — the child owns them now
-        try:
-            work_recv.close()
-        except (OSError, BrokenPipeError) as e:
-            # Already closed — ignore
-            logger.debug(f"parent: work_recv.close ignored: {e}")
-        try:
-            result_send.close()
-        except (OSError, BrokenPipeError) as e:
-            # Already closed — ignore
-            logger.debug(f"parent: result_send.close ignored: {e}")
+        for conn in (work_recv, result_send):
+            try:
+                conn.close()
+            except (OSError, BrokenPipeError) as e:
+                # Already closed — ignore
+                logger.debug(f"parent: work/result conn.close ignored: {e}")
 
         # Send child PID back to consumer
         pipe.send({
@@ -403,7 +411,10 @@ def _handle_fork_request(
             logger.debug(f"child: pipe.close ignored: {e}")
 
         # Run the worker function (this blocks until the child exits)
-        _run_forked_child(work_recv, result_send, worker_id, persistent)
+        _run_forked_child(
+            work_recv, result_send, worker_id, persistent,
+            sdk_socket_path=sdk_socket_path,
+        )
         os._exit(0)
 
 
@@ -412,22 +423,34 @@ def _run_forked_child(
     result_send: Connection,
     worker_id: str,
     persistent: bool,
+    sdk_socket_path: str | None = None,
 ) -> None:
     """
     Entry point for a forked child process.
 
     The child inherits all loaded modules from the template via COW and creates
-    its own event loop. Its execution context arrives on the private work pipe;
-    SDK/module access may still use network clients during the workflow.
+    its own event loop. Its execution context arrives on the private work pipe.
+    Engine SDK access uses ordinary HTTP over the worker-local Unix socket the
+    parent injects as ``sdk_socket_path``; the child never receives DB, S3, or
+    provider credentials.
 
     Communication uses raw Connection objects (Pipe ends) that were
     inherited via fork — no pickling required.
+
+    When the parent serves a socket (``sdk_socket_path`` is set), the
+    engine socket transport is installed before user code runs and cleared
+    afterwards. This is the explicit injection point: there is no
+    user-controlled flag, and outside this path the SDK uses the network HTTP
+    API.
 
     Args:
         work_recv: Read end of work pipe; receives ``(execution_id, context)``.
         result_send: Write end of result pipe; sends result dicts via .send().
         worker_id: Identifier for logging.
         persistent: If True, loop for multiple executions. If False, run once.
+        sdk_socket_path: Worker-local Unix socket for engine SDK HTTP calls,
+            injected only by the worker parent. When present the child sends
+            the ordinary HTTP request over it instead of the network API.
     """
     # Reconfigure logging for this child
     logging.basicConfig(
@@ -435,6 +458,14 @@ def _run_forked_child(
         format=f"[{worker_id}] %(levelname)s - %(message)s",
         force=True,
     )
+
+    # Engine start: install the worker-local SDK socket transport before any
+    # user code runs.
+    from bifrost.client import _clear_engine_socket, _install_engine_socket
+
+    if sdk_socket_path is not None:
+        _install_engine_socket(sdk_socket_path)
+        logger.info(f"Forked worker {worker_id} using engine-local SDK socket")
 
     # Setup signal handler for graceful shutdown
     shutdown_requested = False
@@ -547,6 +578,10 @@ def _run_forked_child(
             if not persistent:
                 break
 
+    # Engine teardown: drop the engine socket so a reused (persistent)
+    # child never serves the next execution on a stale socket.
+    _clear_engine_socket()
+
     logger.info(f"Worker {worker_id} exiting")
 
 
@@ -640,6 +675,8 @@ class TemplateProcess:
         self,
         worker_id: str = "worker",
         persistent: bool = False,
+        *,
+        sdk_socket_path: str | None = None,
     ) -> tuple[int, _SendQueue, _RecvQueue]:
         """
         Request the template to fork a new child worker.
@@ -649,13 +686,21 @@ class TemplateProcess:
         process, which passes them to the forked child via fork
         inheritance. The consumer keeps the parent-side ends.
 
+        Engine SDK access does not travel on a dedicated channel. When the
+        worker serves one, the child receives ``sdk_socket_path`` and makes
+        ordinary HTTP requests over that Unix socket instead of the network
+        API.
+
         Args:
             worker_id: Identifier for the new worker (for logging).
             persistent: If True, child loops for multiple executions.
                         If False (default), child runs one execution and exits.
+            sdk_socket_path: Worker-local Unix socket for engine SDK HTTP
+                calls, forwarded to the child at fork. None when the worker
+                serves no socket.
 
         Returns:
-            Tuple of (child_pid, work_queue, result_queue).
+            ``(child_pid, work_queue, result_queue)``.
             work_queue.put(execution_id) sends work to the child.
             result_queue.get() retrieves the result from the child.
 
@@ -679,13 +724,14 @@ class TemplateProcess:
                 "persistent": persistent,
                 "work_recv": work_recv,
                 "result_send": result_send,
+                "sdk_socket_path": sdk_socket_path,
             })
 
             # Close child-side connections on our end after sending
             work_recv.close()
             result_send.close()
 
-            # Wait for fork response (just child_pid now)
+            # Wait for fork response (just child_pid)
             if not self._pipe.poll(timeout=30):
                 raise RuntimeError("Template process did not respond to fork request within 30s")
 

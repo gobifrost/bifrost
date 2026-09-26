@@ -62,7 +62,6 @@ from src.repositories.events import (
 )
 from src.core.cache import get_shared_redis
 from src.config import get_settings
-from src.services.events import emit_event
 from src.services.events.registry import CURATED_TOPICS
 from src.services.events.validation import validate_topic
 from src.services.webhooks.registry import get_adapter_registry
@@ -1176,82 +1175,20 @@ async def emit_topic_event(
     user: CurrentActiveUser,
 ) -> EmitEventResponse:
     """Emit a topic event and return the event_id and subscriber count."""
-    from src.services.solution_scope import is_service_principal
+    from shared.event_emission import (
+        EventEmissionCaller,
+        EventEmissionError,
+        emit_topic_event as emit_topic_service,
+    )
 
-    service_caller = is_service_principal(user)
-    if not user.is_superuser and not service_caller:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to emit events",
-        )
+    caller = EventEmissionCaller.from_context(ctx, user)
     try:
-        validate_topic(request.topic)
-    except ValueError as exc:
+        return await emit_topic_service(caller, request)
+    except EventEmissionError as exc:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        )
-
-    organization_id: UUID | None = None
-    if request.scope and request.scope != "GLOBAL":
-        try:
-            organization_id = UUID(request.scope)
-        except ValueError:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid scope: must be a UUID or 'GLOBAL', got '{request.scope}'",
-            )
-    if service_caller:
-        # Services emit org-scoped only, into their own org: the token's
-        # organization is the confinement boundary (no GLOBAL, no cross-org).
-        if organization_id is None or organization_id != user.organization_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Services may only emit into their own organization",
-            )
-
-    solution_id: UUID | None = None
-    requested_solution = request.solution or ctx.solution_id
-    if requested_solution:
-        from src.services.solution_scope import (
-            check_inbound_allowed,
-            is_engine_user,
-            resolve_solution_ref,
-            resolve_trustworthy_caller,
-        )
-
-        solution_id = await resolve_solution_ref(
-            ctx.db, str(requested_solution), organization_id
-        )
-        if solution_id is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Solution not found",
-            )
-        caller = await resolve_trustworthy_caller(ctx.db, ctx)
-        if caller is None and request.caller_solution and is_engine_user(ctx.user):
-            try:
-                caller = UUID(str(request.caller_solution))
-            except ValueError:
-                caller = None
-        if not await check_inbound_allowed(ctx.db, solution_id, caller):
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Solution not found",
-            )
-
-    event_id, subscribers_notified = await emit_event(
-        request.topic,
-        request.data,
-        organization_id=organization_id,
-        solution_id=solution_id,
-        triggered_by=str(user.user_id),
-    )
-
-    return EmitEventResponse(
-        event_id=str(event_id),
-        subscribers_notified=subscribers_notified,
-    )
+            status_code=exc.status_code,
+            detail=exc.detail,
+        ) from exc
 
 
 @router.get(

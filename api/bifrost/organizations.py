@@ -3,7 +3,8 @@ Organization management SDK for Bifrost.
 
 Provides Python API for organization operations from workflows.
 
-All methods are async and must be awaited.
+Inside an engine child these operations go through the worker's private Unix
+socket (the parent serves the real HTTP endpoints); external callers use HTTP.
 """
 
 from __future__ import annotations
@@ -48,13 +49,14 @@ class organizations:
             >>> org = await organizations.create("Acme Corp", domain="acme.com")
         """
         client = get_client()
-        response = await client.post(
+        response = await client.engine_request(
+            "POST",
             "/api/organizations",
             json={
                 "name": name,
                 "domain": domain,
                 "is_active": is_active,
-            }
+            },
         )
         raise_for_status_with_detail(response)
         data = response.json()
@@ -80,7 +82,9 @@ class organizations:
             >>> print(org.name)
         """
         client = get_client()
-        response = await client.get(f"/api/organizations/{org_id}")
+        response = await client.engine_request(
+            "GET", f"/api/organizations/{org_id}"
+        )
         if response.status_code == 404:
             raise ValueError(f"Organization not found: {org_id}")
         raise_for_status_with_detail(response)
@@ -107,7 +111,7 @@ class organizations:
             ...     print(f"{org.name}: {org.domain}")
         """
         client = get_client()
-        response = await client.get("/api/organizations")
+        response = await client.engine_request("GET", "/api/organizations")
         raise_for_status_with_detail(response)
         data = response.json()
         return [Organization.model_validate(org) for org in data]
@@ -145,9 +149,10 @@ class organizations:
         if "is_active" in updates:
             update_payload["is_active"] = updates["is_active"]
 
-        response = await client._http.patch(
+        response = await client.engine_request(
+            "PATCH",
             f"/api/organizations/{org_id}",
-            json=update_payload
+            json=update_payload,
         )
         if response.status_code == 404:
             raise ValueError(f"Organization not found: {org_id}")
@@ -177,7 +182,9 @@ class organizations:
             >>> deleted = await organizations.delete("org-123")
         """
         client = get_client()
-        response = await client.delete(f"/api/organizations/{org_id}")
+        response = await client.engine_request(
+            "DELETE", f"/api/organizations/{org_id}"
+        )
         if response.status_code == 404:
             raise ValueError(f"Organization not found: {org_id}")
         raise_for_status_with_detail(response)

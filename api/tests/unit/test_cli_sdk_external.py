@@ -68,7 +68,7 @@ class TestCLIKnowledgeSearchExternal:
     async def _search(self, user, *, fallback=True):
         session = _session()
         with patch(
-            "src.services.embeddings.get_embedding_client",
+            "src.services.embeddings.factory.get_embedding_client",
             AsyncMock(return_value=_embedding_client()),
         ):
             await cli_knowledge_search(

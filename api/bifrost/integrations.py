@@ -12,9 +12,31 @@ from .client import get_client, raise_for_status_with_detail
 from .models import IntegrationData, IntegrationMappingResponse
 from ._context import resolve_scope, _execution_context
 
+
 def _current_context():
     """Return the active ExecutionContext, or None if not in a workflow execution."""
     return _execution_context.get()
+
+
+def _parse_integration_data(result: dict) -> IntegrationData:
+    """Validate one integration payload and register its secrets.
+
+    Shared by the HTTP and engine-local paths so decrypted OAuth tokens
+    and secret config values are scrubbed from outputs identically.
+    """
+    from ._context import register_secret
+
+    data = IntegrationData.model_validate(result)
+    if data.oauth is not None:
+        for secret_field in (data.oauth.access_token, data.oauth.refresh_token, data.oauth.client_secret):
+            if secret_field:
+                register_secret(secret_field)
+    if data.config_secret_keys:
+        for key in data.config_secret_keys:
+            val = data.config.get(key)
+            if val:
+                register_secret(str(val))
+    return data
 
 
 class integrations:
@@ -32,6 +54,12 @@ class integrations:
     ) -> IntegrationData | None:
         """
         Get integration configuration for an organization.
+
+        Sends the ordinary HTTP request through the shared ``BifrostClient``:
+        over the worker's private Unix socket when the engine injected one,
+        and over the network API otherwise. Same path, body, bearer token,
+        and error handling as every other SDK request; a local failure raises
+        and never falls back to the network API.
 
         Returns the integration data including entity ID, configuration,
         and full OAuth details with decrypted credentials.
@@ -84,8 +112,8 @@ class integrations:
             ...     oauth_scope="https://outlook.office365.com/.default"
             ... )
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
+        client = get_client()
         request_data = {"name": name, "scope": effective_scope}
         if oauth_scope:
             request_data["oauth_scope"] = oauth_scope
@@ -96,7 +124,8 @@ class integrations:
         solution_id = getattr(ctx, "solution_id", None) if ctx is not None else None
         if solution_id:
             request_data["solution"] = str(solution_id)
-        response = await client.post(
+        response = await client.engine_request(
+            "POST",
             "/api/sdk/integrations/get",
             json=request_data,
             retry_transient=True,
@@ -106,18 +135,7 @@ class integrations:
             result = response.json()
             if result is None:
                 return None
-            data = IntegrationData.model_validate(result)
-            from ._context import register_secret
-            if data.oauth is not None:
-                for secret_field in (data.oauth.access_token, data.oauth.refresh_token, data.oauth.client_secret):
-                    if secret_field:
-                        register_secret(secret_field)
-            if data.config_secret_keys:
-                for key in data.config_secret_keys:
-                    val = data.config.get(key)
-                    if val:
-                        register_secret(str(val))
-            return data
+            return _parse_integration_data(result)
         raise_for_status_with_detail(response)
         raise AssertionError("unreachable")
 
@@ -128,6 +146,11 @@ class integrations:
     ) -> list[IntegrationMappingResponse] | None:
         """
         List mappings for an integration in the resolved scope.
+
+        Sends the ordinary HTTP request through the shared ``BifrostClient``:
+        over the worker's private Unix socket when the engine injected one,
+        and over the network API otherwise. A local failure raises and never
+        falls back to the network API.
 
         Under the workflow execution model the API authenticates the engine
         sentinel (``is_superuser=True``), so the API-side C2 gate never
@@ -157,9 +180,10 @@ class integrations:
             ...         org_id = mapping.organization_id
             ...         tenant_id = mapping.entity_id
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
-        response = await client.post(
+        client = get_client()
+        response = await client.engine_request(
+            "POST",
             "/api/sdk/integrations/list_mappings",
             json={"name": name, "scope": effective_scope},
             retry_transient=True,
@@ -184,6 +208,11 @@ class integrations:
     ) -> IntegrationMappingResponse | None:
         """
         Get a specific mapping by organization scope or entity ID.
+
+        Sends the ordinary HTTP request through the shared ``BifrostClient``:
+        over the worker's private Unix socket when the engine injected one,
+        and over the network API otherwise. A local failure raises and never
+        falls back to the network API.
 
         Args:
             name: Integration name
@@ -212,9 +241,10 @@ class integrations:
             >>> # Get by entity_id
             >>> mapping = await integrations.get_mapping("HaloPSA", entity_id="tenant-456")
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
-        response = await client.post(
+        client = get_client()
+        response = await client.engine_request(
+            "POST",
             "/api/sdk/integrations/get_mapping",
             json={"name": name, "scope": effective_scope, "entity_id": entity_id},
             retry_transient=True,
@@ -238,6 +268,13 @@ class integrations:
     ) -> IntegrationMappingResponse:
         """
         Create or update a mapping for an organization.
+
+        Sends the ordinary HTTP request through the shared ``BifrostClient``:
+        over the worker's private Unix socket when the engine injected one,
+        and over the network API otherwise. Same ``RuntimeError`` mapping on
+        a non-200 as the network path. A local attempt never falls back to
+        HTTP — failures raise loudly (a write may already have committed, so
+        a retry could double-apply).
 
         If a mapping already exists for the org, updates it.
         Otherwise creates a new mapping.
@@ -265,13 +302,14 @@ class integrations:
             ...     config={"api_url": "https://customer-a.halopsa.com"}
             ... )
         """
-        client = get_client()
         # Resolve SDK-side: the workflow engine authenticates the API as
         # the sentinel superuser, so the API-side C2 gate ALWAYS passes.
         # The SDK-side ``resolve_scope`` is what enforces "this workflow's
         # actual caller is allowed to mutate that org's mapping."
         effective_scope = resolve_scope(scope)
-        response = await client.post(
+        client = get_client()
+        response = await client.engine_request(
+            "POST",
             "/api/sdk/integrations/upsert_mapping",
             json={
                 "name": name,
@@ -293,6 +331,11 @@ class integrations:
         """
         Delete a mapping for an organization.
 
+        Sends the ordinary HTTP request through the shared ``BifrostClient``:
+        over the worker's private Unix socket when the engine injected one,
+        and over the network API otherwise. A local failure raises and never
+        falls back to the network API.
+
         Args:
             name: Integration name
             scope: Organization ID (the org whose mapping to delete)
@@ -304,11 +347,12 @@ class integrations:
             >>> from bifrost import integrations
             >>> deleted = await integrations.delete_mapping("HaloPSA", scope="org-123")
         """
-        client = get_client()
         # See upsert_mapping above for why the SDK-side resolve is the
         # real security boundary under engine-sentinel auth.
         effective_scope = resolve_scope(scope)
-        response = await client.post(
+        client = get_client()
+        response = await client.engine_request(
+            "POST",
             "/api/sdk/integrations/delete_mapping",
             json={"name": name, "scope": effective_scope},
         )
