@@ -45,6 +45,7 @@ from src.services.execution.worker_sdk_http import (
     PLATFORM_JOB_ROUTE_METHODS,
     ROLES_ROUTE_METHODS,
     SDK_CONTEXT_ROUTE_METHODS,
+    SDK_MODULES_ROUTE_METHODS,
     SDK_ROUTE_PATHS,
     TABLE_ROUTE_METHODS,
     TABLE_SDK_ROUTE_PATHS,
@@ -165,6 +166,7 @@ class TestRouteReuse:
         from src.routers.organizations import router as organizations_router
         from src.routers.platform_jobs import router as platform_jobs_router
         from src.routers.roles import router as roles_router
+        from src.routers.sdk_modules import router as sdk_modules_router
         from src.routers.tables import router as tables_router
         from src.routers.users import router as users_router
         from src.routers.workflows import router as workflows_router
@@ -278,6 +280,13 @@ class TestRouteReuse:
             for method in (getattr(route, "methods", None) or set()) & wanted
         }
 
+        sdk_modules_originals = {
+            (route.path, method): route
+            for route in sdk_modules_router.routes
+            if (wanted := SDK_MODULES_ROUTE_METHODS.get(getattr(route, "path", None)))
+            for method in (getattr(route, "methods", None) or set()) & wanted
+        }
+
         app = build_worker_sdk_app()
         mounted = [route for route in app.router.routes if isinstance(route, APIRoute)]
         mounted_cli = {
@@ -358,6 +367,12 @@ class TestRouteReuse:
             if route.path in ROLES_ROUTE_METHODS
             for method in route.methods
         }
+        mounted_sdk_modules = {
+            (route.path, method): route
+            for route in mounted
+            if route.path in SDK_MODULES_ROUTE_METHODS
+            for method in route.methods
+        }
 
         # Only the selected routes, and the exact registered objects — no
         # copied handlers and no rest of the API surface.
@@ -430,6 +445,11 @@ class TestRouteReuse:
         for key, route in mounted_roles.items():
             assert route is roles_originals[key]
             assert route.endpoint is roles_originals[key].endpoint
+
+        assert set(mounted_sdk_modules) == set(sdk_modules_originals)
+        for key, route in mounted_sdk_modules.items():
+            assert route is sdk_modules_originals[key]
+            assert route.endpoint is sdk_modules_originals[key].endpoint
 
         # The shared ``/api/tables/{table_id}`` path must not drag in its
         # GET/PATCH metadata siblings.
@@ -657,6 +677,24 @@ class TestRouteReuse:
             | set(FORM_ROUTE_METHODS)
             | set(ORGANIZATION_ROUTE_METHODS)
             | set(USER_ROUTE_METHODS)
+        )
+
+    def test_sdk_module_route_selection_is_exact(self):
+        """Gate C5i mounts only the resolve GET and the greedy fetch GET."""
+        assert SDK_MODULES_ROUTE_METHODS == {
+            "/api/sdk/modules-resolve": frozenset({"GET"}),
+            "/api/sdk/modules/{path:path}": frozenset({"GET"}),
+        }
+        assert set(SDK_MODULES_ROUTE_METHODS).isdisjoint(
+            SDK_ROUTE_PATHS
+            | set(WORKFLOW_ROUTE_METHODS)
+            | set(EXECUTION_ROUTE_METHODS)
+            | set(AGENT_RUN_ROUTE_METHODS)
+            | set(EVENT_ROUTE_METHODS)
+            | set(FORM_ROUTE_METHODS)
+            | set(ORGANIZATION_ROUTE_METHODS)
+            | set(USER_ROUTE_METHODS)
+            | set(ROLES_ROUTE_METHODS)
         )
 
     @pytest.mark.asyncio

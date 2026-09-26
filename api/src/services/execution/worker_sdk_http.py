@@ -37,9 +37,13 @@ writes). Gate C5f adds the AI unary facade routes (``ai.complete`` POST and
 the network path. Gate C5h adds the SDK context bootstrap route
 (``GET /api/sdk/context``): the child's synchronous ``BifrostClient.context``
 property and async ``_fetch_context`` both read it through the shared
-``engine_request_sync`` / ``engine_request`` entry points. Other domains and
-legacy stream/channel operations stay on their existing channel path until
-their own Gate C slice migrates them.
+``engine_request_sync`` / ``engine_request`` entry points. Gate C5i adds the
+cold import-hook module routes (``GET /api/sdk/modules-resolve`` and
+``GET /api/sdk/modules/{path:path}``): the child's synchronous
+``resolve_module_sync`` / ``get_module_sync`` cold misses read them over the
+same socket through ``engine_request_sync``. Other domains and legacy
+stream/channel operations stay on their existing channel path until their own
+Gate C slice migrates them.
 
 ``import fastapi``/``uvicorn`` happen inside the functions so the worker
 entry closure stays free of those heavyweights at import time (see
@@ -290,6 +294,19 @@ SDK_CONTEXT_ROUTE_METHODS: dict[str, frozenset[str]] = {
     "/api/sdk/context": frozenset({"GET"}),
 }
 
+# Gate C5i: the SDK cold import-hook module routes, selected from
+# ``src.routers.sdk_modules`` by path AND method. ``modules-resolve`` resolves
+# one logical import name and ``modules/{path:path}`` fetches one candidate
+# storage path's source; both are the original APIRoute objects, so the
+# engine bearer-token auth, the signed per-execution Solution scope, the
+# Redis→S3 lookup, and the status mapping are the API's own. The dict order
+# registers the exact resolve path before the greedy module path.
+SDK_MODULES_ROUTE_METHODS: dict[str, frozenset[str]] = {
+    "/api/sdk/modules-resolve": frozenset({"GET"}),
+    "/api/sdk/modules/{path:path}": frozenset({"GET"}),
+}
+SDK_MODULES_ROUTE_PATHS: frozenset[str] = frozenset(SDK_MODULES_ROUTE_METHODS)
+
 # Every route path this worker-local app serves from the cli SDK router.
 # Other SDK domains keep their existing channel path until their Gate C
 # slice migrates them.
@@ -322,6 +339,7 @@ def build_worker_sdk_app() -> Any:
     from src.routers.organizations import router as organizations_router
     from src.routers.platform_jobs import router as platform_jobs_router
     from src.routers.roles import router as roles_router
+    from src.routers.sdk_modules import router as sdk_modules_router
     from src.routers.tables import router as tables_router
     from src.routers.users import router as users_router
     from src.routers.workflows import router as workflows_router
@@ -530,6 +548,22 @@ def build_worker_sdk_app() -> Any:
             selected += 1
     expected += sum(
         len(methods) for methods in ROLES_ROUTE_METHODS.values()
+    )
+
+    # The SDK cold import-hook module routes are selected by (path, method)
+    # from their real router. The greedy ``/api/sdk/modules/{path:path}``
+    # cannot shadow ``/api/sdk/modules-resolve``: its compiled prefix requires
+    # a slash directly after ``modules``, while the resolve path uses a hyphen.
+    for route in sdk_modules_router.routes:
+        wanted = SDK_MODULES_ROUTE_METHODS.get(
+            getattr(route, "path", None), frozenset()
+        )
+        methods = getattr(route, "methods", None) or frozenset()
+        if wanted and methods & wanted:
+            app.router.routes.append(route)
+            selected += 1
+    expected += sum(
+        len(methods) for methods in SDK_MODULES_ROUTE_METHODS.values()
     )
 
     if selected != expected:
