@@ -4,14 +4,14 @@ Single implementation used by both entry points:
 
 - the HTTP handlers (``api/src/routers/cli.py::cli_*_config``) serving
   external SDK/CLI callers, and
-- the engine-local dispatcher
-  (``api/src/services/execution/sdk_local_dispatch.py``) serving workflow
-  and ``@service`` children through the parent-side local transport.
+- the same handlers reached by workflow and ``@service`` children over
+  the worker-local engine socket
+  (``api/src/services/execution/worker_sdk_http.py``).
 
 Both paths share scope resolution input (an already-resolved ``org_id``),
 the global+org cascade, external-user behavior, secret handling, type
 coercion, audit attribution, and commit/cache ordering — so HTTP and
-local results are identical by construction.
+worker-local results are identical by construction.
 """
 
 from __future__ import annotations
@@ -44,8 +44,7 @@ class ScopeResolutionError(Exception):
     """SDK scope grammar/authorization failure with an HTTP-style status.
 
     Raised by :func:`resolve_sdk_scope` so the HTTP handler (422/403
-    ``HTTPException``) and the local dispatcher (``ok: false`` frames) can
-    map the same failure to their own transport.
+    ``HTTPException``) and callers reached over the worker-local engine socket read the same status/detail.
     """
 
     def __init__(self, status_code: int, detail: str) -> None:
@@ -76,7 +75,7 @@ async def resolve_sdk_scope(
         caller_org_id: The originating caller's organization.
         is_platform_admin: Whether the caller is a platform admin.
         is_provider_org: Known provider-org membership, when the caller
-            already resolved it (local dispatch from parent context). When
+            already resolved it (worker-local call from parent context). When
             None and a session is given, membership is looked up only when
             the requested scope actually needs a bypass check.
         session: Database session for the provider-org lookup (HTTP path).
@@ -103,8 +102,8 @@ async def resolve_sdk_scope(
                 f"scope must be 'global', a UUID, or null; got {scope!r}",
             ) from None
     else:
-        # Only reachable from local child frames (HTTP pydantic coerces
-        # scope to str | None first, 422ing anything else).
+        # Only reachable from a non-str, non-None scope (HTTP pydantic
+        # coerces scope to str | None first, 422ing anything else).
         raise ScopeResolutionError(
             422,
             f"scope must be 'global', a UUID, or null; got {scope!r}",
@@ -259,7 +258,7 @@ async def set_sdk_config_value(
     org_id: UUID | None,
     actor_email: str,
 ) -> None:
-    """Upsert one config value (HTTP handler and local dispatcher share this).
+    """Upsert one config value (HTTP handler and worker-local calls share this).
 
     Args:
         session: Short-lived parent/HTTP database session.

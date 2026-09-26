@@ -4,17 +4,16 @@ Single implementation used by both entry points:
 
 - the HTTP handlers (``api/src/routers/users.py``) serving SDK/CLI
   callers, and
-- the engine-local dispatcher
-  (``api/src/services/execution/sdk_local_dispatch.py``) serving
-  workflow children through the parent-side local transport.
+- the same handlers reached by workflow children over the worker-local
+  engine socket (``api/src/services/execution/worker_sdk_http.py``).
 
 Both paths share DTOs, query parameters, status/error precedence,
 pagination, invite creation, audit, role transitions, self/system
 protection, and transaction behavior. Each caller must enforce
-platform-admin authority before invoking these operations (HTTP keeps
-``CurrentSuperuser``; the local dispatcher enforces the
-token-equivalent superuser authority: ordinary workflow engine tokens
-pass even when the initiating user is not a platform admin, while
+platform-admin authority before invoking these operations (the HTTP
+handler keeps ``CurrentSuperuser``; over the engine socket that resolves
+to the token-equivalent superuser authority: ordinary workflow engine
+tokens pass even when the initiating user is not a platform admin, while
 supervised service tokens do not).
 
 Scope is the five SDK methods: ``list``, ``create``, ``get``,
@@ -61,8 +60,7 @@ class UserServiceError(Exception):
     """User operation failure with an HTTP-style status.
 
     Raised by the shared service so the HTTP handler (``HTTPException``)
-    and the future local dispatcher (``ok: false`` frames) can map the
-    same failure to their own transport.
+    and callers reached over the worker-local engine socket read the same status/detail.
     """
 
     def __init__(self, status_code: int, detail: str) -> None:

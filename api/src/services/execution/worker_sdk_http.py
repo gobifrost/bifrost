@@ -12,38 +12,13 @@ bearer token), request/response DTOs, shared services, status codes, and the
 worker's already-initialized database engine are all the API's. No full API
 app is started and no handler or service is copied.
 
-Gate A proved the approach with the config routes; Gate C1 wired the config
-facade to the shared client transport, Gate C2 added the six integrations
-routes, Gate C3a added the table-definition routes (create/list) and the
-document reads (get/query/count), Gate C3b adds the table mutations and
-batch writes (insert/upsert/update/delete_document/batch/batch-delete plus
-the auto-create POST /api/tables helper), Gate C4a adds the files facade
-routes (read/write/list/delete/stat/exists/signed-url/search), Gate C4b adds
-the artifact facade routes plus the durable platform-job status route that
-``artifacts.create_video`` polls, Gate C4c adds the knowledge facade
-routes (store/store-many/search/delete/get/delete_namespace/list_namespaces),
-Gate C5a adds the workflow facade routes
-(list/execute/cancel) and execution-history routes (list/get), Gate C5b
-adds the SDK agent-run routes (enqueue/get), and Gate C5c adds the topic
-emit route (``events.emit``) plus the form read routes (``forms.list`` /
-``forms.get``). Gate C5d adds the organization facade routes
-(create/get/list/update/delete) and the user facade routes
-(list/get/create/update/delete). Gate C5e adds the role facade routes
-(create/get/list/update/delete plus the user and form assignment reads and
-writes). Gate C5f adds the AI unary facade routes (``ai.complete`` POST and
-``ai.get_model_info`` GET). Gate C5g adds the AI streaming facade route
-(``ai.stream`` POST), served as the original SSE ``APIRoute``: the child's
-``ai.stream`` reads it over the socket with the same SSE parser it uses on
-the network path. Gate C5h adds the SDK context bootstrap route
-(``GET /api/sdk/context``): the child's synchronous ``BifrostClient.context``
-property and async ``_fetch_context`` both read it through the shared
-``engine_request_sync`` / ``engine_request`` entry points. Gate C5i adds the
-cold import-hook module routes (``GET /api/sdk/modules-resolve`` and
-``GET /api/sdk/modules/{path:path}``): the child's synchronous
-``resolve_module_sync`` / ``get_module_sync`` cold misses read them over the
-same socket through ``engine_request_sync``. Other domains and legacy
-stream/channel operations stay on their existing channel path until their own
-Gate C slice migrates them.
+The socket serves every SDK domain an engine child uses: config;
+integrations (including OAuth refresh); table definitions and table
+documents; files; artifacts plus the platform-job status that
+``artifacts.create_video`` polls; knowledge; workflows and execution reads;
+agent runs; events; forms; organizations; users; roles; AI unary and
+streaming; the SDK context bootstrap; and cold import-hook module
+resolution. There is no separate stream/channel path.
 
 ``import fastapi``/``uvicorn`` happen inside the functions so the worker
 entry closure stays free of those heavyweights at import time (see
@@ -68,9 +43,8 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # The existing SDK-facing config routes served on the socket. Selected by
-# path from the real router; the endpoint objects are reused as-is. Gate A
-# mounts the whole config facade; Gate C1 wired all four methods
-# (get/set/list/delete) to the shared client transport.
+# path from the real router; the endpoint objects are reused as-is. All four
+# methods (get/set/list/delete) run over the shared client transport.
 CONFIG_ROUTE_PATHS: frozenset[str] = frozenset(
     {
         "/api/sdk/config/get",
@@ -80,7 +54,7 @@ CONFIG_ROUTE_PATHS: frozenset[str] = frozenset(
     }
 )
 
-# Gate C2: the six existing integrations facade routes
+# The six existing integrations facade routes
 # (get/list_mappings/get_mapping/upsert_mapping/delete_mapping plus the
 # OAuth refresh used by ``OAuthCredentials.refresh``). Mounted by identity
 # from the same router, exactly like the config routes.
@@ -95,10 +69,9 @@ INTEGRATION_ROUTE_PATHS: frozenset[str] = frozenset(
     }
 )
 
-# Gate C3a: the table-definition facade routes (create/list) selected from
-# the cli SDK router, exactly like config and integrations. Delete rides the
-# tables REST router below, which is where DELETE /api/tables/{table_id}
-# lives.
+# The table-definition facade routes (create/list) selected from the cli
+# SDK router, exactly like config and integrations. Delete rides the tables
+# REST router below, which is where DELETE /api/tables/{table_id} lives.
 TABLE_SDK_ROUTE_PATHS: frozenset[str] = frozenset(
     {
         "/api/sdk/tables/create",
@@ -106,13 +79,12 @@ TABLE_SDK_ROUTE_PATHS: frozenset[str] = frozenset(
     }
 )
 
-# Gate C3a/C3b: the table-definition delete plus every document read and
-# write served by the tables REST router. Keyed by path AND the exact
-# methods needed, because ``/api/tables/{table_id}`` is also a GET/PATCH
-# metadata route and ``/api/tables/{table_id}/documents/{doc_id}`` carries
-# GET/PATCH/DELETE, and we must not accidentally mount an unrelated sibling.
-# The shared ``BifrostClient.engine_request`` calls each one with the
-# ordinary verb.
+# The table-definition delete plus every document read and write served by
+# the tables REST router. Keyed by path AND the exact methods needed,
+# because ``/api/tables/{table_id}`` is also a GET/PATCH metadata route and
+# ``/api/tables/{table_id}/documents/{doc_id}`` carries GET/PATCH/DELETE,
+# and we must not accidentally mount an unrelated sibling. The shared
+# ``BifrostClient.engine_request`` calls each one with the ordinary verb.
 TABLE_ROUTE_METHODS: dict[str, frozenset[str]] = {
     # Auto-create-on-insert (loose table ensure helper).
     "/api/tables": frozenset({"POST"}),
@@ -129,7 +101,7 @@ TABLE_ROUTE_METHODS: dict[str, frozenset[str]] = {
     "/api/tables/{table_id}/documents/batch-delete": frozenset({"POST"}),
 }
 
-# Gate C4a: the existing files facade routes. All eight live in
+# The existing files facade routes. All eight live in
 # ``src.routers.files`` (path-selected exactly, like the config and
 # integrations routes). They carry the ordinary ``CurrentActiveUser``
 # auth, the shared ``shared.sdk_files`` service, and the worker's
@@ -147,8 +119,8 @@ FILES_ROUTE_PATHS: frozenset[str] = frozenset(
     }
 )
 
-# Gate C4c: the existing knowledge facade routes, selected from the cli SDK
-# router by exact path (each path owns one method, so no method filter is
+# The existing knowledge facade routes, selected from the cli SDK router
+# by exact path (each path owns one method, so no method filter is
 # needed). They carry the ordinary ``CurrentUser`` auth, the shared
 # ``shared.sdk_knowledge`` service, and the worker's initialized DB engine;
 # embedding runs in the parent, so the child needs no provider credential.
@@ -164,9 +136,9 @@ KNOWLEDGE_ROUTE_PATHS: frozenset[str] = frozenset(
     }
 )
 
-# Gate C4b: the existing artifact facade routes, selected from the cli SDK
-# router by path AND method because ``/api/sdk/artifacts`` carries both GET
-# (list) and POST (write). They carry the ordinary ``CurrentUser`` auth, the
+# The existing artifact facade routes, selected from the cli SDK router by
+# path AND method because ``/api/sdk/artifacts`` carries both GET (list)
+# and POST (write). They carry the ordinary ``CurrentUser`` auth, the
 # shared artifact services, and the worker's initialized DB engine; the
 # child needs no storage/provider credential.
 ARTIFACT_ROUTE_METHODS: dict[str, frozenset[str]] = {
@@ -181,16 +153,16 @@ ARTIFACT_ROUTE_METHODS: dict[str, frozenset[str]] = {
 }
 ARTIFACT_ROUTE_PATHS: frozenset[str] = frozenset(ARTIFACT_ROUTE_METHODS)
 
-# Gate C4b: ``artifacts.create_video`` polls its durable platform job over
-# the same socket. Mount only the single-job GET from the real
+# ``artifacts.create_video`` polls its durable platform job over the same
+# socket. Mount only the single-job GET from the real
 # ``src.routers.platform_jobs`` router; the list and cancel siblings stay
 # on the API.
 PLATFORM_JOB_ROUTE_METHODS: dict[str, frozenset[str]] = {
     "/api/platform-jobs/{job_id}": frozenset({"GET"}),
 }
 
-# Gate C5a: the workflow facade routes, selected from ``src.routers.workflows``
-# by path AND method. They carry the ordinary ``CurrentSuperuser`` /
+# The workflow facade routes, selected from ``src.routers.workflows`` by
+# path AND method. They carry the ordinary ``CurrentSuperuser`` /
 # ``CurrentActiveUser`` auth, the ``Context`` execution context, the shared
 # ``shared.sdk_workflow_execution`` service, and the worker's initialized DB
 # engine and queue. ``workflows.get`` is not here — it delegates to the
@@ -201,7 +173,7 @@ WORKFLOW_ROUTE_METHODS: dict[str, frozenset[str]] = {
     "/api/workflows/executions/{execution_id}/cancel": frozenset({"POST"}),
 }
 
-# Gate C5a: the execution-history facade routes, selected from
+# The execution-history facade routes, selected from
 # ``src.routers.executions`` by path AND method. ``/api/executions`` is the
 # list route; ``/api/executions/{execution_id}`` is the detail route. Their
 # ``/logs``, ``/{execution_id}/result``, and ``/{execution_id}/variables``
@@ -211,7 +183,7 @@ EXECUTION_ROUTE_METHODS: dict[str, frozenset[str]] = {
     "/api/executions/{execution_id}": frozenset({"GET"}),
 }
 
-# Gate C5b: the SDK agent-run facade routes, selected from
+# The SDK agent-run facade routes, selected from
 # ``src.routers.agent_runs`` by path AND method. ``/api/agent-runs/{run_id}``
 # owns only the detail GET here; the rerun/cancel/verdict/flag siblings are
 # separate paths and stay on the API.
@@ -220,23 +192,23 @@ AGENT_RUN_ROUTE_METHODS: dict[str, frozenset[str]] = {
     "/api/agent-runs/{run_id}": frozenset({"GET"}),
 }
 
-# Gate C5c: the SDK event route, selected from ``src.routers.events`` by path
-# AND method. ``/api/events/emit`` is the only events route the SDK calls; the
+# The SDK event route, selected from ``src.routers.events`` by path AND
+# method. ``/api/events/emit`` is the only events route the SDK calls; the
 # source/subscription/event CRUD routes stay on the API.
 EVENT_ROUTE_METHODS: dict[str, frozenset[str]] = {
     "/api/events/emit": frozenset({"POST"}),
 }
 
-# Gate C5c: the SDK form read routes, selected from ``src.routers.forms`` by
-# path AND method. ``/api/forms`` is the list route and ``/api/forms/{form_id}``
-# is the detail GET; the form mutation/publication/runtime/logo siblings and the
+# The SDK form read routes, selected from ``src.routers.forms`` by path AND
+# method. ``/api/forms`` is the list route and ``/api/forms/{form_id}`` is
+# the detail GET; the form mutation/publication/runtime/logo siblings and the
 # ``/{form_id}/...`` child paths stay on the API.
 FORM_ROUTE_METHODS: dict[str, frozenset[str]] = {
     "/api/forms": frozenset({"GET"}),
     "/api/forms/{form_id}": frozenset({"GET"}),
 }
 
-# Gate C5d: the SDK organization facade routes, selected from
+# The SDK organization facade routes, selected from
 # ``src.routers.organizations`` by path AND method. The list and create share
 # ``/api/organizations``; the get/update/delete share
 # ``/api/organizations/{org_id}``. No sibling paths are mounted.
@@ -245,8 +217,8 @@ ORGANIZATION_ROUTE_METHODS: dict[str, frozenset[str]] = {
     "/api/organizations/{org_id}": frozenset({"GET", "PATCH", "DELETE"}),
 }
 
-# Gate C5d: the SDK user facade routes, selected from ``src.routers.users`` by
-# path AND method. The list and create share ``/api/users``; the
+# The SDK user facade routes, selected from ``src.routers.users`` by path
+# AND method. The list and create share ``/api/users``; the
 # get/update/delete share ``/api/users/{user_id}``. The bulk, roles, forms,
 # invite, and password siblings (including the ``/{user_id}/...`` child paths)
 # stay on the API.
@@ -255,8 +227,8 @@ USER_ROUTE_METHODS: dict[str, frozenset[str]] = {
     "/api/users/{user_id}": frozenset({"GET", "PATCH", "DELETE"}),
 }
 
-# Gate C5e: the SDK role facade routes, selected from ``src.routers.roles`` by
-# path AND method. The list and create share ``/api/roles``; the
+# The SDK role facade routes, selected from ``src.routers.roles`` by path
+# AND method. The list and create share ``/api/roles``; the
 # get/update/delete share ``/api/roles/{role_id}``; the user and form
 # assignment reads/writes share ``/api/roles/{role_id}/users`` and
 # ``/api/roles/{role_id}/forms``. The PUT compatibility alias, the per-id
@@ -269,12 +241,12 @@ ROLES_ROUTE_METHODS: dict[str, frozenset[str]] = {
     "/api/roles/{role_id}/forms": frozenset({"GET", "POST"}),
 }
 
-# Gate C5f/C5g: the SDK AI facade routes, selected from ``src.routers.cli``
-# by path AND method. ``/api/sdk/ai/complete`` is the POST completion,
+# The SDK AI facade routes, selected from ``src.routers.cli`` by path AND
+# method. ``/api/sdk/ai/complete`` is the POST completion,
 # ``/api/sdk/ai/info`` the GET model read, and ``/api/sdk/ai/stream`` the
-# POST SSE stream. All three are mounted as their exact registered APIRoute
-# objects, so the streaming behavior (status-before-headers, per-event SSE
-# frames, terminal ``[DONE]``) is the API's own.
+# POST SSE stream. All three are mounted as their exact registered
+# APIRoute objects, so the streaming behavior (status-before-headers,
+# per-event SSE frames, terminal ``[DONE]``) is the API's own.
 AI_ROUTE_METHODS: dict[str, frozenset[str]] = {
     "/api/sdk/ai/complete": frozenset({"POST"}),
     "/api/sdk/ai/info": frozenset({"GET"}),
@@ -282,7 +254,7 @@ AI_ROUTE_METHODS: dict[str, frozenset[str]] = {
 }
 AI_ROUTE_PATHS: frozenset[str] = frozenset(AI_ROUTE_METHODS)
 
-# Gate C5h: the SDK context bootstrap route, selected from
+# The SDK context bootstrap route, selected from
 # ``src.routers.cli`` by path AND method. ``/api/sdk/context`` is a unique
 # GET; the child's synchronous ``BifrostClient.context`` property and async
 # ``_fetch_context`` both read it through the shared ``engine_request_sync``
@@ -294,7 +266,7 @@ SDK_CONTEXT_ROUTE_METHODS: dict[str, frozenset[str]] = {
     "/api/sdk/context": frozenset({"GET"}),
 }
 
-# Gate C5i: the SDK cold import-hook module routes, selected from
+# The SDK cold import-hook module routes, selected from
 # ``src.routers.sdk_modules`` by path AND method. ``modules-resolve`` resolves
 # one logical import name and ``modules/{path:path}`` fetches one candidate
 # storage path's source; both are the original APIRoute objects, so the
@@ -308,8 +280,8 @@ SDK_MODULES_ROUTE_METHODS: dict[str, frozenset[str]] = {
 SDK_MODULES_ROUTE_PATHS: frozenset[str] = frozenset(SDK_MODULES_ROUTE_METHODS)
 
 # Every route path this worker-local app serves from the cli SDK router.
-# Other SDK domains keep their existing channel path until their Gate C
-# slice migrates them.
+# This is the complete SDK surface engine children use; there is no
+# separate stream/channel path.
 SDK_ROUTE_PATHS: frozenset[str] = (
     CONFIG_ROUTE_PATHS
     | INTEGRATION_ROUTE_PATHS

@@ -648,11 +648,6 @@ try:
 except Exception as e:
     _dup = f"{{type(e).__name__}}:{{e.response.status_code}}"
 
-from bifrost import _local_transport as _lt
-_transport = _lt.get()
-_installed = _transport is not None
-_channel = "installed" if _installed else "absent"
-
 _missing_query = await tables.query({missing_name!r}, scope={scope!r})
 _missing_count = await tables.count({missing_name!r}, scope={scope!r})
 
@@ -718,8 +713,6 @@ result = {{
     "listed_names": _listed_names,
     "listed_default_scope": _listed_scope,
     "dup": _dup,
-    "channel_installed": _installed,
-    "channel_get": _channel,
     "missing_total": _missing_query.total,
     "missing_docs": _missing_query.documents,
     "missing_count": _missing_count,
@@ -762,7 +755,7 @@ async def test_forked_child_tables_over_worker_socket(
     network API. It creates/lists/deletes table definitions, reads
     documents, performs every single/batch write (including auto-create),
     and pushes a realistic ~24 MiB batch. This fork installs only the worker
-    socket, not the dedicated channel. Success with no DB credential proves
+    socket. Success with no DB credential proves
     the shared client carried every call to the parent-served routes over
     the socket, with the same scope, 404, retry, and delete semantics as the
     network API.
@@ -835,11 +828,6 @@ async def test_forked_child_tables_over_worker_socket(
         assert result["listed_names"] == [table_name]
         assert result["listed_default_scope"] == [table_name]
         assert result["dup"].startswith("BifrostAPIError:409"), result
-        # This fork injects only the worker socket, not the dedicated
-        # channel: the migrated table operations ride the socket rather
-        # than the old pipe.
-        assert result["channel_installed"] is False
-        assert result["channel_get"] == "absent"
         # Reads: a missing table maps to an empty query and a zero count on
         # both transports (the SDK-level 404 mapping), matching the network
         # API contract rather than surfacing the route's 404.
@@ -958,7 +946,7 @@ async def test_forked_child_files_over_worker_socket(monkeypatch):
     network API. It writes and reads text and binary files (including a
     realistic 2 MiB payload), lists, stats, probes existence, presigns a
     download URL, searches, and deletes. This fork installs only the worker
-    socket, not the dedicated channel. Success with no DB, SQLAlchemy, or S3
+    socket. Success with no DB, SQLAlchemy, or S3
     credential proves the shared client carried every call to the
     parent-served routes, where the worker owns the protected storage.
     """
@@ -1103,7 +1091,7 @@ async def test_forked_child_artifacts_over_worker_socket(monkeypatch):
     A real child forks with the worker's Unix socket injected and a dead
     network API. It writes, reads, lists, and presigns an artifact, renders a
     PDF/XLSX/text artifact, and round-trips a ~1 MiB payload. This fork
-    installs only the worker socket, not the dedicated channel. Success with
+    installs only the worker socket. Success with
     no DB, SQLAlchemy, or S3 credential proves the shared client carried every
     call to the parent-served routes, where the worker owns protected storage.
     """
@@ -1268,9 +1256,9 @@ async def test_forked_child_events_and_forms_over_worker_socket(
     A real child forks with the worker's Unix socket injected and a dead
     network API. It emits a topic event (with a committed source so a row is
     materialized), lists forms, reads a seeded form, and maps a missing form to
-    ``ValueError``. This fork installs only the worker socket, not the
-    dedicated channel. Success with no DB credential proves the shared client
-    carried every call to the parent-served routes.
+    ``ValueError``. This fork installs only the worker socket. Success with
+    no DB credential proves the shared client carried every call to the
+    parent-served routes.
     """
     from src.core.security import mint_engine_token
     from src.models.enums import FormAccessLevel

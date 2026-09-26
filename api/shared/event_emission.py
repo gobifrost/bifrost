@@ -1,17 +1,18 @@
 """Shared application service for topic event emission (``bifrost.events.emit``).
 
 Single implementation of the fixed emission behavior used by the HTTP
-handler (``api/src/routers/events.py::emit_topic_event``) and the
-engine-local dispatcher. Both paths share authorization, topic
-validation, scope parsing, service-org confinement, target Solution
-resolution, the inbound gate, and trustworthy caller resolution — so HTTP
-and local results are identical by construction.
+handler (``api/src/routers/events.py::emit_topic_event``), reached both
+by external callers and by workflow children over the worker-local
+engine socket. All callers share authorization, topic validation, scope
+parsing, service-org confinement, target Solution resolution, the inbound
+gate, and trustworthy caller resolution — so results are identical by
+construction.
 
 All failures raise :class:`EventEmissionError` (transport-neutral); the
-HTTP adapter maps them to ``HTTPException`` and the local dispatcher
-maps them to ``ok: false`` frames.
+HTTP adapter maps them to ``HTTPException``, and worker-local calls read
+the same status/detail.
 
-Trust model (read carefully before wiring a local dispatcher):
+Trust model (read carefully):
 
 - The service takes a trusted explicit principal plus trusted context —
   :class:`EventEmissionCaller` — and a validated request
@@ -28,7 +29,7 @@ Trust model (read carefully before wiring a local dispatcher):
 - The constrained ``request.caller_solution`` case is preserved exactly:
   it is consulted only when the internally resolved caller is ``None``
   AND the principal is an engine user; malformed values resolve to
-  ``None``. A local dispatcher must therefore supply a token-equivalent
+  ``None``. A worker-local caller must therefore supply a token-equivalent
   principal carrying the engine claims (``engine_execution_id`` /
   ``engine_solution_id``) from verified parent metadata — never from child
   frame fields — for the bypass to apply. Child-supplied
@@ -55,8 +56,7 @@ class EventEmissionError(Exception):
     """Transport-neutral emission failure with an HTTP-style status.
 
     Raised by the shared service so the HTTP handler (``HTTPException``)
-    and the local dispatcher (``ok: false`` frames) can map the same
-    failure to their own transport. Status codes preserve the historical
+    and callers reached over the worker-local engine socket read the same status/detail. Status codes preserve the historical
     handler responses exactly: 403 for authorization/service-confinement,
     400 for topic/scope validation, 404 for unknown/sealed Solution
     targets.

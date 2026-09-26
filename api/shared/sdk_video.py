@@ -2,9 +2,9 @@
 
 Single implementation used by the HTTP handler
 (``api/src/routers/cli.py::sdk_generate_video_artifact``) serving
-external SDK callers. The engine parent-side dispatcher calls
-the same service with a parent-derived principal so HTTP and local
-results are identical by construction.
+external SDK callers and reached by workflow children over the
+worker-local engine socket with a parent-derived principal, so results
+are identical by construction.
 
 Covers the two fixed operations only:
 
@@ -21,17 +21,17 @@ ordering match the historical handler exactly. The HTTP adapter keeps
 transport-specific concerns only: the 202 status, the ``Location``
 header, and ``HTTPException`` mapping.
 
-Status visibility is shared by construction: HTTP and local callers use
-the same requester-visibility rule (owner requester or platform admin
-reads as present; anything else reads as missing) and the same
-``PlatformJobPublic`` serialization. The local entry point is fixed to
-SDK video jobs — it rejects other job types as missing — so this stage
-adds no generic local job API. Cancellation and the other
-platform-job routes keep their existing router behavior.
+Status visibility is shared by construction: HTTP and worker-local
+callers use the same requester-visibility rule (owner requester or
+platform admin reads as present; anything else reads as missing) and the
+same ``PlatformJobPublic`` serialization. The worker-local entry point is
+fixed to SDK video jobs — it rejects other job types as missing — so
+no generic job API is added. Cancellation and the other platform-job
+routes keep their existing router behavior.
 
 Parent-side only: imports SQLAlchemy sessions and ORM-backed services.
-A workflow child never imports this module (it stays DB-free behind the
-dedicated local channel).
+A workflow child never imports this module (it stays DB-free and reaches
+it over the engine socket).
 """
 
 from __future__ import annotations
@@ -56,8 +56,7 @@ class SdkVideoJobError(Exception):
     """SDK video job failure with an HTTP-style status.
 
     Raised by the shared service so the HTTP handler (``HTTPException``)
-    and the local dispatcher (``ok: false`` frames) can map the
-    same failure to their own transport. Currently 404 only (missing or
+    and callers reached over the worker-local engine socket read the same status/detail. Currently 404 only (missing or
     not visible job, or a non-video job on the fixed local status call),
     matching the historical status handler exactly.
     """
@@ -196,8 +195,8 @@ async def get_sdk_video_job_status(
 
     Shares the requester-visibility rule and ``PlatformJobPublic`` shape
     with the HTTP status endpoint. Rejects non-video job types as
-    missing so the local entry point stays fixed to SDK video status —
-    no generic local job API.
+    missing so the worker-local entry point stays fixed to SDK video status —
+    no generic job API.
     """
     from src.jobs.platform.video_generation import (
         SDK_VIDEO_GENERATION_DEFINITION,

@@ -9,7 +9,7 @@ that socket via uvicorn against the worker's global database engine. The
 parent owns the DB; the child's network API is dead by environment and it
 receives no database credentials. Envelope success therefore proves the
 migrated facades rode the shared client transport — zero API requests for the
-fixed calls, no dedicated channel frames, and no PostgreSQL in the child.
+fixed calls, and no PostgreSQL in the child.
 
 Marked ``slow`` like the other real-fork tests: template boot costs seconds.
 """
@@ -118,7 +118,6 @@ class TestForkedExecutionReadsSocket:
             "import asyncio, importlib, os, sys\n"
             "from bifrost import workflows, executions\n"
             "from bifrost.client import get_engine_socket_path\n"
-            "from bifrost import _local_transport as _lt\n"
             "_wf = importlib.import_module('bifrost.workflows')\n"
             "_ex = importlib.import_module('bifrost.executions')\n"
             "_wf_list = await workflows.list()\n"
@@ -139,7 +138,6 @@ class TestForkedExecutionReadsSocket:
             "    _missing = f'{type(_e).__name__}'\n"
             "result = {\n"
             "    'used_socket': get_engine_socket_path() is not None,\n"
-            "    'channel': 'installed' if _lt.get() is not None else 'absent',\n"
             "    'saw_workflow': _saw_workflow,\n"
             "    'named_count': len(_named),\n"
             "    'named_ids': sorted(_e.execution_id for _e in _named),\n"
@@ -195,7 +193,6 @@ class TestForkedExecutionReadsSocket:
             assert envelope["success"] is True, envelope
             result = envelope["result"]
             assert result["used_socket"] is True
-            assert result["channel"] == "absent"
             assert result["saw_workflow"] is True, result
             assert result["named_count"] == 3, result
             assert result["named_ids"] == sorted(exec_ids), result

@@ -5,29 +5,27 @@ Single implementation used by both entry points:
 - the HTTP handlers (``api/src/routers/cli.py::cli_ai_complete``,
   ``cli_ai_stream``, and ``cli_ai_info``) serving external SDK/CLI
   callers, and
-- the engine-local dispatcher
-  (``api/src/services/execution/sdk_stream_dispatch.py::ai_stream_source``)
-  serving workflow and ``@service`` children through the parent-side
-  local stream transport.
+- the same handlers reached by workflow and ``@service`` children over
+  the worker-local engine socket that the worker parent serves
+  (``api/src/services/execution/worker_sdk_http.py``).
 
 All paths share completion input handling (DTO-shaped messages, base64
 input-file decoding, user-message requirement), model/max-token selection,
 the provider fallback chain, response shaping, error mapping, and
 best-effort usage attribution. The existing HTTP stream endpoint keeps its
-historical default-profile selection; parent-local callers can select a
+historical default-profile selection; worker-local callers can select a
 profile through the shared service.
 
 ``complete`` and ``get_model_info`` are request/response calls.
 ``stream`` is a transport-neutral async generator yielding SSE-payload
 dicts (``{"content": ...}``, ``{"done": True, ...}``,
 ``{"error": ...}``); the HTTP handler serializes each payload to an SSE
-``data:`` line (appending the terminal ``[DONE]`` after the done
-payload) and the local stream source forwards the same payloads as
-stream-channel events.
+``data:`` line (appending the terminal ``[DONE]`` after the done payload)
+and the worker-local ``ai.stream`` route streams the same SSE frames.
 
 Parent-side only: imports SQLAlchemy sessions, the LLM factory, and the
 usage service. A workflow child never imports this module (it stays
-DB-free behind the dedicated local channel).
+DB-free and makes an HTTP call over the engine socket).
 """
 
 from __future__ import annotations
@@ -51,8 +49,7 @@ class SdkAIError(Exception):
     """SDK AI failure with an HTTP-style status.
 
     Raised by the shared service so the HTTP handler (``HTTPException``)
-    and the local dispatcher (``ok: false`` frames) can map the same
-    failure to their own transport. Statuses preserve the historical
+    and callers reached over the worker-local engine socket read the same status/detail. Statuses preserve the historical
     handler mapping: 503 for configuration/value failures, 401 for
     provider authentication errors, 404 for a missing model config on
     ``get_model_info``, and 500 (sanitized detail) for anything else.
@@ -262,7 +259,7 @@ async def complete_sdk_ai(
     except Exception as e:
         logger.warning(f"Failed to record AI usage: {log_safe(e)}")
         # A failed DB flush leaves the session in pending-rollback state.
-        # Both the HTTP dependency and the local dispatcher commit after this
+        # Both the HTTP dependency and worker-local calls commit after this
         # service returns, so reset the failed usage transaction here.
         await session.rollback()
 
@@ -335,8 +332,8 @@ async def stream_sdk_ai(
 ) -> AsyncGenerator[dict[str, Any], None]:
     """Stream one AI completion as transport-neutral event payloads.
 
-    Shared by the HTTP SSE handler and the engine-local stream source:
-    both consume the same payload dicts so deltas, the done
+    Shared by the HTTP SSE handler (reached over the worker-local engine
+    socket for workflows): both consume the same payload dicts so deltas, the done
     event, and error text are identical by construction. Payload shapes
     preserve the historical SSE contract:
 
@@ -375,7 +372,7 @@ async def stream_sdk_ai(
 
     Cancellation:
         When the consumer cancels before the done chunk (client
-        disconnect, local channel close), the provider stream is closed
+        disconnect, engine-socket close), the provider stream is closed
         and no partial usage is recorded — cancellation propagates
         without an error event.
     """
@@ -453,7 +450,7 @@ async def stream_sdk_ai(
 
 async def get_sdk_model_info(
     session: AsyncSession,
-    principal: UserPrincipal,  # noqa: ARG001 - trusted-caller gate for the future local path
+    principal: UserPrincipal,  # noqa: ARG001 - trusted-caller gate for the worker-local path
 ) -> dict[str, Any]:
     """Return the configured provider/model (shared by both transports).
 
@@ -461,8 +458,8 @@ async def get_sdk_model_info(
         session: Short-lived parent/HTTP database session (short read).
         principal: The auth-verified trusted principal. Unused beyond
             the gate — the model config is platform-wide — but required
-            so the future local dispatcher passes the same parent-derived
-            identity it passes to :func:`complete_sdk_ai`.
+            so worker-local callers pass the same parent-derived identity
+            they pass to :func:`complete_sdk_ai`.
 
     Returns:
         JSON-serializable dict with ``provider`` and ``model`` — the

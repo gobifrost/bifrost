@@ -11,10 +11,9 @@ worker's global database engine. Envelope success proves zero API requests
 for the migrated operations, and the parent re-reads the same rows and the
 same context payload over its own session.
 
-The child installs neither the legacy synchronous import transport nor the
-async SDK channel: context and forms both ride the socket, and a
-synchronous context read while async form calls are in flight proves the
-separate sync/async socket connections cannot deadlock.
+The child installs the worker's private Unix socket: context and forms both
+ride it, and a synchronous context read while async form calls are in flight
+proves the separate sync/async socket connections cannot deadlock.
 
 Marked ``slow`` like the other real-fork tests: template boot costs
 seconds. Run explicitly alongside the focused suite.
@@ -130,11 +129,7 @@ class TestForkedFormsContextTransport:
             "    get_client,",
             "    get_engine_socket_path,",
             ")",
-            "from bifrost._local_transport import get as _get_transport",
-            "from bifrost._import_transport import get as _get_import_transport",
             "_used_socket = get_engine_socket_path() is not None",
-            "_used_channel = _get_transport() is not None",
-            "_used_import = _get_import_transport() is not None",
             "try:",
             "    asyncio.get_running_loop()",
             "    _loop_running = True",
@@ -174,8 +169,6 @@ class TestForkedFormsContextTransport:
             "import os, sys",
             "result = {",
             "    'used_socket': _used_socket,",
-            "    'used_channel': _used_channel,",
-            "    'used_import': _used_import,",
             "    'loop_running': _loop_running,",
             "    'used_sync_socket': _used_sync_socket,",
             "    'used_async_socket': _used_async_socket,",
@@ -229,8 +222,6 @@ class TestForkedFormsContextTransport:
             assert envelope["success"] is True, envelope
             result = envelope["result"]
             assert result["used_socket"] is True, result
-            assert result["used_channel"] is False, result
-            assert result["used_import"] is False, result
             assert result["loop_running"] is True, result
             assert result["used_sync_socket"] is True, result
             assert result["used_async_socket"] is True, result

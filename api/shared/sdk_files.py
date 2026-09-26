@@ -1,16 +1,16 @@
 """Shared business service for cloud-mode SDK file operations.
 
 Single implementation used by the HTTP handlers
-(``api/src/routers/files.py``) serving external SDK callers. A future
-parent-side local dispatcher will call the same service with a
-parent-derived :class:`FileCaller` so HTTP and local results are identical
-by construction.
+(``api/src/routers/files.py``) serving external SDK callers and reached by
+workflow children over the worker-local engine socket with a
+parent-derived :class:`FileCaller` so results are identical by
+construction.
 
 Covers ``files.read``/``read_bytes``, ``files.list`` (without
 ``include_metadata``), ``files.exists``, ``files.stat``, ``files.write``,
 ``files.delete``, and signed-URL presigning (``PUT`` uploads and ``GET``
-downloads). Service extraction only: no local transport, SDK facade,
-dispatcher, binary framing, or parent principal work. The workspace
+downloads). Service extraction only: no SDK facade, binary framing, or
+parent principal work. The workspace
 ``include_metadata=True`` branch stays in the router (the Python SDK never
 requests it), as do ``/search`` (admin-only global text-index path) and
 browser ``/complete-upload``.

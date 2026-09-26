@@ -4,18 +4,18 @@ Single implementation for both entry points:
 
 - the HTTP handler (``api/src/routers/cli.py::get_dev_context``) serving
   external SDK/CLI callers bootstrapping an execution context, and
-- the engine-local dispatcher once context calls are wired through the
-  parent-side local transport.
+- the same handler reached by workflow children over the worker-local
+  engine socket.
 
 Both paths can share authenticated org input (an explicit trusted principal
 plus an optional org override) and the C2 gate — platform admins and
 provider-org members may target another org; everyone else resolves to
-their own auth-verified org — so HTTP and local results are identical by
+their own auth-verified org — so HTTP and worker-local results are identical by
 construction.
 
 Parent-side only: imports SQLAlchemy models. A workflow child never
-imports this module (it stays DB-free behind the dedicated local
-channel).
+imports this module (it stays DB-free and reaches it over the engine
+socket).
 """
 
 from __future__ import annotations
@@ -37,8 +37,7 @@ class SdkContextError(Exception):
     """SDK context failure with an HTTP-style status.
 
     Raised by the shared service so the HTTP handler (``HTTPException``)
-    and the local dispatcher (``ok: false`` frames) can map the same
-    failure to their own transport. Unauthorized cross-org targeting is
+    and callers reached over the worker-local engine socket read the same status/detail. Unauthorized cross-org targeting is
     403; a missing/inactive org is 404 — matching the historical handler
     responses exactly.
     """

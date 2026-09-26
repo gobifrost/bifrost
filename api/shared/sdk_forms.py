@@ -4,13 +4,13 @@ Single implementation for both entry points:
 
 - the HTTP handlers (``api/src/routers/forms.py::list_forms`` /
   ``get_form``) serving SDK/CLI callers (``api/bifrost/forms.py``), and
-- the engine-local dispatcher once form calls are wired through the
-  parent-side local transport.
+- the same handlers reached by workflow children over the worker-local
+  engine socket.
 
 Both paths can share scope resolution input (an explicit trusted principal),
 the superuser/org-user query split, the 404-before-403 error precedence,
 the embed binding gate, logo enrichment, and dependency counts — so HTTP
-and local results are identical by construction.
+and worker-local results are identical by construction.
 
 Only the SDK-consumed list/get operations live here. Form
 create/update/delete, publication, runtime, logo mutation, and submission
@@ -18,8 +18,8 @@ endpoints keep their router-level logic; the logo/access helpers they
 share moved here as the single source of truth.
 
 Parent-side only: imports SQLAlchemy repositories. A workflow child never
-imports this module (it stays DB-free behind the dedicated local
-channel).
+imports this module (it stays DB-free and reaches it over the engine
+socket).
 """
 
 from __future__ import annotations
@@ -48,8 +48,7 @@ class SdkFormError(Exception):
     """SDK form list/get failure with an HTTP-style status.
 
     Raised by the shared service so the HTTP handler (``HTTPException``)
-    and the local dispatcher (``ok: false`` frames) can map the same
-    failure to their own transport. Missing entities are 404, denied
+    and callers reached over the worker-local engine socket read the same status/detail. Missing entities are 404, denied
     access is 403, malformed scope is 422 — matching the historical
     handler responses exactly.
     """

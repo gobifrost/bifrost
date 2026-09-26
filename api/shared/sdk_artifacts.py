@@ -3,10 +3,9 @@
 Single implementation used by the HTTP handlers
 (``api/src/routers/cli.py::sdk_store_artifact``,
 ``sdk_list_artifacts``, ``sdk_read_artifact``,
-``sdk_artifact_download_url``) serving external SDK callers. A future
-engine parent-side dispatcher will call the same service with a
-parent-derived principal so HTTP and local results are identical by
-construction.
+``sdk_artifact_download_url``) serving external SDK callers and reached
+by workflow children over the worker-local engine socket with a
+parent-derived principal, so results are identical by construction.
 
 Covers the four fixed operations only:
 
@@ -41,8 +40,8 @@ handler keeps its exact shape. The HTTP adapter maps
 ``Response`` objects from the returned results.
 
 Parent-side only: imports SQLAlchemy sessions and ORM-backed services.
-A workflow child never imports this module (it stays DB-free behind the
-dedicated local channel).
+A workflow child never imports this module (it stays DB-free and reaches
+it over the engine socket).
 """
 
 from __future__ import annotations
@@ -61,8 +60,7 @@ class SdkArtifactError(Exception):
     """SDK artifact failure with an HTTP-style status.
 
     Raised by the shared service so the HTTP handler (``HTTPException``)
-    and a future local dispatcher (``ok: false`` frames) can map the
-    same failure to their own transport. Currently 404 (missing or
+    and callers reached over the worker-local engine socket read the same status/detail. Currently 404 (missing or
     out-of-scope artifact, matching the historical handler responses
     exactly) and 422 (document image path resolving to a non-image,
     matching the historical handler's explicit 422). Validation failures are ``ValueError`` and propagate

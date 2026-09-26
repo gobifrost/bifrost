@@ -8,8 +8,7 @@ that socket via uvicorn against the worker's global database engine. The
 parent owns the DB and the queue; the child's network API is dead by
 environment and it receives no database credentials. Envelope success
 therefore proves the migrated facade rode the shared client transport — zero
-API requests for the two operations, no dedicated channel frames, and no
-PostgreSQL in the child.
+API requests for the two operations, and no PostgreSQL in the child.
 
 Marked ``slow`` like the other real-fork tests: template boot costs seconds.
 """
@@ -95,7 +94,6 @@ class TestForkedAgentsSocket:
             "import os, sys\n"
             "from bifrost import agents\n"
             "from bifrost.client import get_engine_socket_path\n"
-            "from bifrost import _local_transport as _lt\n"
             f"_handle = await agents.enqueue({agent_name!r}, {{'ticket_id': 1}})\n"
             "_run = await agents.get_run(_handle.run_id)\n"
             "try:\n"
@@ -107,7 +105,6 @@ class TestForkedAgentsSocket:
             "    _missing = type(_e).__name__\n"
             "result = {\n"
             "    'used_socket': get_engine_socket_path() is not None,\n"
-            "    'channel': 'installed' if _lt.get() is not None else 'absent',\n"
             "    'run_id': _handle.run_id,\n"
             "    'handle_status': _handle.status,\n"
             "    'run_status': _run.status,\n"
@@ -160,7 +157,6 @@ class TestForkedAgentsSocket:
             assert envelope["success"] is True, envelope
             result = envelope["result"]
             assert result["used_socket"] is True
-            assert result["channel"] == "absent"
             assert result["handle_status"] == "queued", result
             assert isinstance(result["run_status"], str) and result["run_status"], result
             assert result["run_id_matches"] is True, result

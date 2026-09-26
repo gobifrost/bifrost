@@ -4,8 +4,8 @@ Single implementation used by both entry points:
 
 - the HTTP handlers (``api/src/routers/organizations.py``) serving SDK/CLI
   callers, and
-- a future engine-local dispatcher serving workflow children through
-  the parent-side local transport.
+- the same handlers reached by workflow children over the worker-local
+  engine socket.
 
 Both paths share DTOs, response fields, HTTP statuses/error precedence,
 sorting/filter defaults, audit attribution, and cache updates. Each caller
@@ -48,8 +48,7 @@ class OrganizationServiceError(Exception):
     """Organization operation failure with an HTTP-style status.
 
     Raised by the shared service so the HTTP handler (``HTTPException``)
-    and the future local dispatcher (``ok: false`` frames) can map the
-    same failure to their own transport.
+    and callers reached over the worker-local engine socket read the same status/detail.
     """
 
     def __init__(self, status_code: int, detail: str) -> None:
@@ -93,7 +92,7 @@ async def create_organization(
     settings: dict | None = None,
     actor_email: str,
 ) -> OrganizationPublic:
-    """Create an organization (shared by the HTTP handler and the local dispatcher)."""
+    """Create an organization (shared by the HTTP handler and worker-local calls)."""
     from src.models import Organization as OrganizationORM
     from src.models import OrganizationPublic
     from src.services.audit import emit_audit

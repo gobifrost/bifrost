@@ -9,7 +9,7 @@ socket via uvicorn against the worker's global database engine. The parent
 owns the DB and the queue; the child's network API is dead by environment and
 it receives no database credentials. Envelope success therefore proves the
 migrated facade rode the shared client transport — zero API requests for the
-mutations, no dedicated channel frames, and no PostgreSQL in the child.
+mutations, and no PostgreSQL in the child.
 
 Marked ``slow`` like the other real-fork tests: template boot costs seconds.
 """
@@ -98,7 +98,6 @@ class TestForkedWorkflowMutationsSocket:
             "import os, sys\n"
             "from bifrost import workflows\n"
             "from bifrost.client import get_engine_socket_path\n"
-            "from bifrost import _local_transport as _lt\n"
             f"_eid = await workflows.execute({wf_name!r}, {{'ticket_id': 1}}, delay_seconds=3600)\n"
             "await workflows.cancel(_eid)\n"
             "try:\n"
@@ -109,7 +108,6 @@ class TestForkedWorkflowMutationsSocket:
             "{getattr(getattr(_e, \"response\", None), \"status_code\", None)}'\n"
             "result = {\n"
             "    'used_socket': get_engine_socket_path() is not None,\n"
-            "    'channel': 'installed' if _lt.get() is not None else 'absent',\n"
             "    'execution_id': _eid,\n"
             "    'duplicate': _duplicate,\n"
             "    'had_db_url': (\n"
@@ -159,7 +157,6 @@ class TestForkedWorkflowMutationsSocket:
             assert envelope["success"] is True, envelope
             result = envelope["result"]
             assert result["used_socket"] is True
-            assert result["channel"] == "absent"
             assert isinstance(result["execution_id"], str), result
             # The duplicate cancel loses the guarded UPDATE and surfaces 409.
             assert result["duplicate"].endswith(":409"), result

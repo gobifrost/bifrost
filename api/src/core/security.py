@@ -421,7 +421,7 @@ ENGINE_SDK_ACTOR_EMAIL = "engine@bifrost.internal"
 """Effective SDK actor for workflow executions.
 
 HTTP workflow SDK requests authenticate with ``mint_engine_token()`` (this
-address); the engine-local dispatcher must attribute ``Config.updated_by``
+address); worker-local engine SDK calls must attribute ``Config.updated_by``
 to the same value — never to the initiating user's ``caller.email``.
 """
 
@@ -430,11 +430,11 @@ def service_sdk_actor_email(service_id: str) -> str:
     """Effective SDK actor email for one supervised service.
 
     Single helper shared by security token minting (``mint_service_token``,
-    the ``service_claim`` dispatch context) and the engine-local dispatcher
-    (``principal_from_context``), so HTTP and local ``Config.updated_by``
-    attribution agree by construction. ``service_id`` must be a UUID;
-    anything else raises ``ValueError`` so the caller fails closed instead
-    of attributing a write to a forged or blank value.
+    the ``service_claim`` dispatch context) and the execution-context
+    validator (``shared.execution_context``), so HTTP and worker-local
+    ``Config.updated_by`` attribution agree by construction. ``service_id``
+    must be a UUID; anything else raises ``ValueError`` so the caller fails
+    closed instead of attributing a write to a forged or blank value.
     """
     from uuid import UUID as _UUID
 

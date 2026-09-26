@@ -121,9 +121,7 @@ class TestForkedUsersSocket:
             "import os, sys",
             "from bifrost import users",
             "from bifrost.client import get_engine_socket_path",
-            "from bifrost._local_transport import get as _get_transport",
             "_used_socket = get_engine_socket_path() is not None",
-            "_used_channel = _get_transport() is not None",
             f"_created = await users.create({email!r}, 'Fork User', org_id={org_id!r})",
             "_user_id = _created.id",
             "_pending = _created.invite_status",
@@ -138,7 +136,6 @@ class TestForkedUsersSocket:
             "_gone = await users.get(_user_id)",
             "result = {",
             "    'used_socket': _used_socket,",
-            "    'used_channel': _used_channel,",
             "    'user_id': _user_id,",
             "    'pending': _pending,",
             "    'has_url': _has_url,",
@@ -184,7 +181,6 @@ class TestForkedUsersSocket:
             assert envelope["success"] is True, envelope
             result = envelope["result"]
             assert result["used_socket"] is True, result
-            assert result["used_channel"] is False, result
             assert result["pending"] == "pending", result
             assert result["has_url"] is True, result
             assert result["fetched_email"] == email, result
@@ -232,13 +228,10 @@ class TestForkedUsersSocket:
         lines = [
             "from bifrost import users",
             "from bifrost.client import get_engine_socket_path",
-            "from bifrost._local_transport import get as _get_transport",
             "_used_socket = get_engine_socket_path() is not None",
-            "_used_channel = _get_transport() is not None",
             "_listed = await users.list()",
             "result = {",
             "    'used_socket': _used_socket,",
-            "    'used_channel': _used_channel,",
             "    'listed': isinstance(_listed, list),",
             "}",
         ]
@@ -266,5 +259,4 @@ class TestForkedUsersSocket:
         assert envelope["success"] is True, envelope
         result = envelope["result"]
         assert result["used_socket"] is True, result
-        assert result["used_channel"] is False, result
         assert result["listed"] is True, result

@@ -243,7 +243,7 @@ async def get_dev_context(
     the same C2 rule the scope resolver applies elsewhere.
 
     Context behavior lives in the shared service (``shared.sdk_context``),
-    which the engine-local dispatcher can call with the same inputs.
+    which a worker-local engine child can call with the same inputs.
     """
     from shared.sdk_context import SdkContextError, get_sdk_context
 
@@ -489,7 +489,7 @@ async def sdk_integrations_get(
 
     Scope resolution and response construction live in the shared
     integrations service (``shared.sdk_integrations``), which the
-    engine-local dispatcher calls for the same inputs.
+    worker-local engine child calls for the same inputs.
     """
     from shared.sdk_config import ScopeResolutionError, resolve_sdk_scope
     from shared.sdk_integrations import (
@@ -550,7 +550,7 @@ async def sdk_integrations_list_mappings(
 
     Scope resolution and response construction live in the shared
     integrations service (``shared.sdk_integrations``), which the
-    engine-local dispatcher calls for the same inputs.
+    worker-local engine child calls for the same inputs.
     """
     from shared.sdk_config import ScopeResolutionError
     from shared.sdk_integrations import list_sdk_integration_mappings
@@ -592,7 +592,7 @@ async def sdk_integrations_get_mapping(
 
     Scope resolution and response construction live in the shared
     integrations service (``shared.sdk_integrations``), which the
-    engine-local dispatcher calls for the same inputs.
+    worker-local engine child calls for the same inputs.
     """
     from shared.sdk_config import ScopeResolutionError
     from shared.sdk_integrations import get_sdk_integration_mapping_dict
@@ -634,7 +634,7 @@ async def sdk_integrations_upsert_mapping(
     """Create or update an integration mapping for an organization via SDK.
 
     Mutation rules live in the shared integrations service
-    (``shared.sdk_integrations``), which the engine-local dispatcher calls
+    (``shared.sdk_integrations``), which the worker-local engine child calls
     for the same inputs.
     """
     from shared.sdk_config import ScopeResolutionError
@@ -684,7 +684,7 @@ async def sdk_integrations_delete_mapping(
     """Delete an integration mapping for an organization via SDK.
 
     Mutation rules live in the shared integrations service
-    (``shared.sdk_integrations``), which the engine-local dispatcher calls
+    (``shared.sdk_integrations``), which the worker-local engine child calls
     for the same inputs.
     """
     from shared.sdk_config import ScopeResolutionError
@@ -728,7 +728,7 @@ async def sdk_integrations_refresh_token(
     also benefit from the refreshed token.
 
     The refresh rules live in the shared integrations service
-    (``shared.sdk_integrations``), which the engine-local dispatcher calls
+    (``shared.sdk_integrations``), which a worker-local engine child calls
     for the same inputs. The HTTP refresh itself is delegated to the shared
     primitive :func:`src.services.oauth_provider.refresh_oauth_token_http`
     via that service; this handler only maps transport errors.
@@ -1703,7 +1703,7 @@ async def cli_ai_stream(
             model=request.model,
             # The established HTTP stream endpoint always selected the
             # platform default profile. Keep that SDK-visible behavior;
-            # parent-local callers may select a profile directly.
+            # worker-local callers may select a profile directly.
             execution_id=request.execution_id,
             resolved_org_id=resolved_org_id,
             input_files=request.input_files,

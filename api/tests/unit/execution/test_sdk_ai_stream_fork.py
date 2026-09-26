@@ -5,9 +5,8 @@ the child is forked with the worker's private Unix socket injected exactly
 as the pool does, then runs ``ai.stream`` through the full ``bifrost.ai``
 facade. The test process serves the **real** ``/api/sdk/ai/stream`` SSE
 route on that socket via uvicorn against the worker's global database
-engine, with the child's network API dead and the legacy stream channel
-absent. Success proves the migrated streaming call reached the
-parent-served route, not the old custom channel and not a network call.
+engine, with the child's network API dead. Success proves the migrated
+streaming call reached the parent-served route, not a network call.
 
 The provider is faked in the parent (no paid external API); no real key is
 used. The fake is keyed by the last user message so the same script serves
@@ -112,10 +111,8 @@ _AI_SOURCE = (
     "import os, sys\n"
     "from bifrost.ai import ai as ai_facade\n"
     "from bifrost.client import get_engine_socket_path\n"
-    "from bifrost._stream_transport import get as _get_stream_transport\n"
     "from bifrost.models import AIInputFile\n"
     "_used_socket = get_engine_socket_path() is not None\n"
-    "_used_channel = _get_stream_transport() is not None\n"
     "_probe = AIInputFile(\n"
     "    filename='blob.bin',\n"
     "    content_type='application/octet-stream',\n"
@@ -143,7 +140,6 @@ _AI_SOURCE = (
     "]\n"
     "result = {\n"
     "    'used_socket': _used_socket,\n"
-    "    'used_channel': _used_channel,\n"
     "    'first': _first,\n"
     "    'rest': _rest,\n"
     "    'second': _second,\n"
@@ -343,10 +339,9 @@ class TestForkedAIStream:
 
         assert envelope["success"] is True, envelope
         result = envelope["result"]
-        # The fixed-operation call rode the socket; the legacy channel is
-        # absent, and the child holds no DB credential.
+        # The fixed-operation call rode the socket; the child holds no DB
+        # credential.
         assert result["used_socket"] is True, result
-        assert result["used_channel"] is False, result
         assert result["had_db_url"] is False, result
         assert result["had_sqlalchemy"] is False, result
 

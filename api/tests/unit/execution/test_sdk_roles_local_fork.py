@@ -6,8 +6,8 @@ as the pool does, then runs the full fixed ``bifrost.roles`` facade —
 create, get, list, update, one assignment of each kind (users/forms), the
 assignment reads, and a missing-role error. The test process serves the
 **real** role routes on that socket via uvicorn against the worker's global
-database engine, with the child's network API dead and the legacy channel
-transport absent. Success proves every migrated call reached the
+database engine, with the child's network API dead. Success proves every
+migrated call reached the
 parent-served routes, and the parent re-reads the mutated rows over its own
 session to prove the real commit boundary (the socket route commits where
 the HTTP ``get_db`` dependency commits). A second fork with a non-admin
@@ -134,9 +134,7 @@ class TestForkedRolesSocket:
             "import os, sys",
             "from bifrost import roles",
             "from bifrost.client import get_engine_socket_path",
-            "from bifrost._local_transport import get as _get_transport",
             "_used_socket = get_engine_socket_path() is not None",
-            "_used_channel = _get_transport() is not None",
             f"_created = await roles.create({role_name!r}, description='fork')",
             "_role_id = _created.id",
             "_fetched = await roles.get(_role_id)",
@@ -156,7 +154,6 @@ class TestForkedRolesSocket:
             "    _missing = f'{type(_e).__name__}'",
             "result = {",
             "    'used_socket': _used_socket,",
-            "    'used_channel': _used_channel,",
             "    'role_id': _role_id,",
             "    'created_name': _created.name,",
             "    'fetched_name': _fetched.name,",
@@ -202,7 +199,6 @@ class TestForkedRolesSocket:
             assert envelope["success"] is True, envelope
             result = envelope["result"]
             assert result["used_socket"] is True, result
-            assert result["used_channel"] is False, result
             assert result["created_name"] == role_name, result
             assert result["fetched_name"] == role_name, result
             assert result["saw_in_list"] is True, result
@@ -279,13 +275,10 @@ class TestForkedRolesSocket:
         lines = [
             "from bifrost import roles",
             "from bifrost.client import get_engine_socket_path",
-            "from bifrost._local_transport import get as _get_transport",
             "_used_socket = get_engine_socket_path() is not None",
-            "_used_channel = _get_transport() is not None",
             "_listed = await roles.list()",
             "result = {",
             "    'used_socket': _used_socket,",
-            "    'used_channel': _used_channel,",
             "    'listed': isinstance(_listed, list),",
             "}",
         ]
@@ -313,5 +306,4 @@ class TestForkedRolesSocket:
         assert envelope["success"] is True, envelope
         result = envelope["result"]
         assert result["used_socket"] is True, result
-        assert result["used_channel"] is False, result
         assert result["listed"] is True, result

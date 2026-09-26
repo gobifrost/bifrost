@@ -1,8 +1,8 @@
 """Shared table document write service.
 
-HTTP handlers in ``src.routers.tables`` and the future engine-parent local
-dispatcher call the same functions here so mutation status, policy, commit,
-and publication behavior stay identical across transports.
+HTTP handlers in ``src.routers.tables`` — reached directly or by workflow
+children over the worker-local engine socket — call the same functions here
+so mutation status, policy, commit, and publication behavior stay identical.
 
 Table resolution (``shared.table_resolution.get_table_or_404``), the Solution
 write-target gate, and the batch explicit-scope exact-table gate stay outside
@@ -12,7 +12,7 @@ into this module.
 Errors are transport-neutral :class:`TableWriteError` subclasses carrying an
 HTTP-equivalent ``status_code`` plus the existing ``detail`` payload. Thin
 HTTP adapters catch them and raise ``HTTPException`` with the same status
-and detail; the future local dispatcher maps them to its own error shape.
+and detail; worker-local calls read the same status/detail.
 """
 
 from __future__ import annotations

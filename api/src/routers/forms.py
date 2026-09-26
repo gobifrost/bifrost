@@ -303,7 +303,7 @@ async def list_forms(
     - Access is further filtered by access_level (authenticated, role_based)
 
     Listing behavior lives in the shared service (``shared.sdk_forms``),
-    which the engine-local dispatcher can call with the same inputs.
+    which a worker-local engine child can call with the same inputs.
     """
     try:
         return await list_sdk_forms(db, ctx.user, scope=scope)
@@ -749,7 +749,7 @@ async def get_form(
     """Get a specific form by ID.
 
     Access behavior lives in the shared service (``shared.sdk_forms``),
-    which the engine-local dispatcher calls for the same inputs.
+    which a worker-local engine child calls for the same inputs.
     """
     try:
         return await get_sdk_form(db, ctx.user, form_id)

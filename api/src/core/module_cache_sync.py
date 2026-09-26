@@ -15,16 +15,15 @@ When a cache miss occurs, we fall back via one of these paths, tried in order:
    ``BifrostClient.engine_request_sync`` entry point. This path needs no
    child DB/S3 credentials and no shared pipe, and works while another async
    SDK call is in flight.
-2. Legacy engine-local import channel (children that predate the socket).
-3. API module-fetch endpoints over the network — preferred when
+2. API module-fetch endpoints over the network — preferred when
    BIFROST_API_URL is set and a credentials file is present.  This path does
    not require BIFROST_S3_* in the child env (Phase 2 hardening).
-4. Direct S3 access via botocore — legacy fallback, only active when
+3. Direct S3 access via botocore — legacy fallback, only active when
    BIFROST_S3_ACCESS_KEY/SECRET_KEY are set in the environment.
 
 Inside a forked engine child with the trusted engine socket injected, a cold
 resolve/fetch failure raises instead of falling back to the network API or S3
-(an installed socket proves a working local transport is expected).
+(an installed socket proves the engine socket is expected).
 
 Self-healing: on any successful fetch, the result is re-cached to Redis so
 subsequent calls on the same worker hit the fast path.
@@ -424,103 +423,6 @@ def _fetch_via_engine_socket(client: Any, storage_path: str) -> CachedModule | N
     return cast(CachedModule, dict(module))
 
 
-def _get_import_transport() -> Any | None:
-    """Return the installed engine-local import transport, if any.
-
-    Non-None only inside a forked engine child whose entrypoint installed
-    the dedicated import channel. Everywhere else (API processes, plain
-    workers, tests without a channel) this is None and the existing
-    HTTP/S3 fallbacks apply unchanged. The import is lazy so this module
-    stays importable before the SDK package loads.
-    """
-    try:
-        from bifrost._import_transport import get as _get_installed
-    except ModuleNotFoundError as e:
-        # Plain non-engine processes need no SDK package. Do not hide a
-        # broken import inside the SDK package: that would silently switch
-        # an installed engine child back to HTTP/S3.
-        if e.name in {"bifrost", "bifrost._import_transport"}:
-            return None
-        raise
-    return _get_installed()
-
-
-def _resolve_via_import_transport(name: str) -> ModuleResolution:
-    """Resolve one import name through the parent import channel.
-
-    Raises :class:`ModuleResolutionError` on any failure — a local attempt
-    never falls back to HTTP/S3.
-    """
-    from bifrost._import_transport import ImportServiceError, ImportTransportError
-
-    transport = _get_import_transport()
-    assert transport is not None
-    try:
-        data = transport.call_modules_resolve(name)
-    except (ImportServiceError, ImportTransportError) as e:
-        raise ModuleResolutionError(
-            f"Local module resolver failed for {name}: {e}"
-        ) from e
-    kind = data.get("kind")
-    if kind not in {"module", "package", "namespace", "not_found"}:
-        raise ModuleResolutionError(
-            f"Local module resolver returned invalid kind for {name}"
-        )
-    content = data.get("content")
-    if content is not None and not isinstance(content, str):
-        raise ModuleResolutionError(
-            f"Local module resolver returned invalid content for {name}"
-        )
-    module_hash = data.get("hash") or ""
-    if not isinstance(module_hash, str):
-        raise ModuleResolutionError(
-            f"Local module resolver returned invalid hash for {name}"
-        )
-    storage_path = data.get("storage_path")
-    if storage_path is not None and not isinstance(storage_path, str):
-        raise ModuleResolutionError(
-            f"Local module resolver returned invalid storage path for {name}"
-        )
-    return ModuleResolution(
-        kind=kind,
-        path=data.get("path") or name.replace(".", "/"),
-        content=content,
-        hash=module_hash,
-        storage_path=storage_path,
-    )
-
-
-def _fetch_via_import_transport(storage_path: str) -> CachedModule | None:
-    """Fetch one candidate's source through the parent import channel.
-
-    Returns None on a parent 404 (the caller advances to the next
-    candidate). Any other failure raises :class:`ModuleResolutionError` —
-    a local attempt never falls back to HTTP/S3.
-    """
-    from bifrost._import_transport import (
-        ImportNotFound,
-        ImportServiceError,
-        ImportTransportError,
-    )
-
-    transport = _get_import_transport()
-    assert transport is not None
-    try:
-        module = transport.call_modules_fetch(storage_path)
-    except ImportNotFound:
-        return None
-    except (ImportServiceError, ImportTransportError) as e:
-        raise ModuleResolutionError(
-            f"Local module fetch failed for {storage_path}: {e}"
-        ) from e
-    content = module.get("content")
-    if not isinstance(content, str):
-        raise ModuleResolutionError(
-            f"Local module fetch returned invalid content for {storage_path}"
-        )
-    return cast(CachedModule, dict(module))
-
-
 def _resolution_redis_key(name: str) -> str:
     ctx = get_solution_context()
     cache_key = module_resolution_cache_key(
@@ -644,13 +546,10 @@ def resolve_module_sync(name: str) -> ModuleResolution:
         # Inside a forked engine child with the trusted socket injected, the
         # parent serves the original modules-resolve route on that socket —
         # no API request, no shared pipe, and no HTTP/S3 fallback on failure.
-        # The legacy import channel serves children that predate the socket;
-        # everywhere else the existing API fallback applies unchanged.
+        # Everywhere else the existing API fallback applies unchanged.
         engine_client = _get_engine_client()
         if engine_client is not None:
             resolution = _resolve_via_engine_socket(engine_client, name)
-        elif _get_import_transport() is not None:
-            resolution = _resolve_via_import_transport(name)
         else:
             resolution = _fetch_module_resolution_from_api(name)
     if resolution is None:
@@ -764,10 +663,7 @@ def get_module_sync(path: str) -> CachedModule | None:
         parent-served original route GET /api/sdk/modules/<storage_path> over
         ``engine_request_sync`` (no pipe, no child DB/S3, no HTTP/S3 fallback;
         a 404 tries the next candidate)
-    2b. Inside a forked engine child with the legacy import channel installed:
-        the parent-local ``modules.fetch`` operation (no API request, no
-        HTTP/S3 fallback; a 404 tries the next candidate)
-    2c. Otherwise: API endpoint GET /api/sdk/modules/<storage_path>  —
+    2b. Otherwise: API endpoint GET /api/sdk/modules/<storage_path>  —
         preferred cold-cache fallback (no S3 env vars required; uses
         engine token from credentials file; the server performs the
         Redis→S3 lookup)
@@ -786,13 +682,9 @@ def get_module_sync(path: str) -> CachedModule | None:
         # parent serves the original modules/{path} route on that socket — no
         # API request, no shared pipe, no child DB/S3 connection, and no
         # HTTP/S3 fallback on failure. A route 404 advances to the next
-        # candidate; any other local failure raises. The legacy import channel
-        # serves children that predate the socket; everywhere else the
+        # candidate; any other local failure raises. Everywhere else the
         # existing API/S3 fallbacks apply unchanged.
         engine_client = _get_engine_client()
-        import_transport = (
-            _get_import_transport() if engine_client is None else None
-        )
 
         for storage_path in _candidate_storage_paths(path):
             key = f"{MODULE_KEY_PREFIX}{storage_path}"
@@ -813,18 +705,6 @@ def get_module_sync(path: str) -> CachedModule | None:
                     logger.warning(f"Failed to re-cache local module to Redis: {e}")
                 engine_module["storage_path"] = storage_path
                 return engine_module
-
-            if import_transport is not None:
-                local_module = _fetch_via_import_transport(storage_path)
-                if local_module is None:
-                    continue
-                try:
-                    client.setex(key, MODULE_CACHE_TTL, json.dumps(local_module))
-                    client.sadd(MODULE_INDEX_KEY, storage_path)
-                except redis.RedisError as e:
-                    logger.warning(f"Failed to re-cache local module to Redis: {e}")
-                local_module["storage_path"] = storage_path
-                return local_module
 
             # --- Cold-cache fallback 1: API endpoint ---
             api_module = _fetch_module_from_api(storage_path)

@@ -4,10 +4,10 @@ Exercises the full path — workflow code in a forked worker child calling
 the fixed ``bifrost.ai`` operations — proving parity with the external
 HTTP API without reaching a real provider (no paid external API):
 
-- the workflow hard-disables fixed-operation HTTP in-engine
-  (``bifrost.ai.get_client`` raises if touched) and records that the
-  local transport is installed, so success proves zero API requests for
-  the migrated operations;
+- the workflow records that the engine injected the worker's private
+  socket, so the migrated operations rode the shared client transport
+  rather than the network API (the zero-HTTP proof lives in the unit and
+  forked-child socket tests, where the child's network API is dead);
 - ``ai.complete`` with file inputs but no user message fails before any
   provider call on both transports (503 ``SdkAIError`` detail), and the
   local ``RuntimeError`` text matches the external HTTP detail exactly;
@@ -39,44 +39,32 @@ def live_ai_workflow(e2e_client, platform_admin, org1, live_ai_keys):
     path = f"{name}.py"
     content = f'''"""Local ai.complete/model_info E2E workflow."""
 from bifrost import workflow
+from bifrost.ai import ai
+from bifrost.client import get_engine_socket_path
+from bifrost.models import AIInputFile
 
 @workflow(name="{name}", description="Local ai E2E")
 async def {name}():
-    import importlib
-    from bifrost._local_transport import get as _get_transport
-    used_local = _get_transport() is not None
-
-    _amod = importlib.import_module("bifrost.ai")
-    def _dead(*args, **kwargs):
-        raise AssertionError(
-            "fixed-operation HTTP must not be used in the engine path"
-        )
-    _orig = _amod.get_client
-    _amod.get_client = _dead
+    used_socket = get_engine_socket_path() is not None
     try:
-        from bifrost.ai import ai
-        from bifrost.models import AIInputFile
-        try:
-            await ai.complete(
-                messages=[{{"role": "system", "content": "sys"}}],
-                files=[AIInputFile(
-                    filename="a.txt",
-                    content_type="text/plain",
-                    data=b"x",
-                )],
-            )
-            complete_error = None
-        except RuntimeError as e:
-            complete_error = str(e)
-        try:
-            info = await ai.get_model_info()
-            model_info = {{"ok": True, "body": info}}
-        except RuntimeError as e:
-            model_info = {{"ok": False, "error": str(e)}}
-    finally:
-        _amod.get_client = _orig
+        await ai.complete(
+            messages=[{{"role": "system", "content": "sys"}}],
+            files=[AIInputFile(
+                filename="a.txt",
+                content_type="text/plain",
+                data=b"x",
+            )],
+        )
+        complete_error = None
+    except RuntimeError as e:
+        complete_error = str(e)
+    try:
+        info = await ai.get_model_info()
+        model_info = {{"ok": True, "body": info}}
+    except RuntimeError as e:
+        model_info = {{"ok": False, "error": str(e)}}
     return {{
-        "used_local": used_local,
+        "used_socket": used_socket,
         "complete_error": complete_error,
         "model_info": model_info,
     }}
@@ -122,9 +110,10 @@ class TestSdkAILocalLiveE2E:
         )
         assert result["status"] == "Success", result
         out = result["result"]
-        # Zero API requests: the transport was installed and every
-        # fixed-operation HTTP call would have raised inside the workflow.
-        assert out["used_local"] is True
+        # The worker injected its private socket, so the migrated calls rode
+        # the shared client transport (zero-HTTP proof is in the unit and
+        # forked-child tests).
+        assert out["used_socket"] is True
 
         # The file-inputs/user-message rule fails before any provider
         # call: the local RuntimeError text must match the HTTP detail.

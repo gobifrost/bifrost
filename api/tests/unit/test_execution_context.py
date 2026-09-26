@@ -1,6 +1,10 @@
 import dataclasses
 from datetime import datetime, timezone
+from uuid import uuid4
 
+import pytest
+
+from shared.execution_context import ExecutionContextError, validate_execution_context
 from src.sdk.context import ExecutionContext, Organization, ROIContext
 
 
@@ -335,3 +339,71 @@ class TestCLIPlatformParity:
             assert org.name == "CLI Org"
         finally:
             clear_execution_context()
+
+
+class TestValidateExecutionContext:
+    """Fail-closed identity validation for parent-owned execution context.
+
+    A malformed identity must raise ``ExecutionContextError`` before any
+    dispatch side effect, never silently widen the child's scope.
+    """
+
+    def test_valid_plain_workflow(self):
+        validate_execution_context({"organization": {"id": str(uuid4())}})
+
+    def test_valid_global_workflow(self):
+        validate_execution_context({})
+
+    def test_valid_service_identity(self):
+        validate_execution_context(
+            {
+                "organization": {"id": str(uuid4())},
+                "service": {"service_id": str(uuid4())},
+            }
+        )
+
+    def test_valid_uuid_objects_accepted(self):
+        validate_execution_context(
+            {
+                "organization": {"id": uuid4()},
+                "solution_id": uuid4(),
+            }
+        )
+
+    def test_malformed_nonempty_organization_uuid(self):
+        with pytest.raises(ExecutionContextError):
+            validate_execution_context({"organization": {"id": "not-a-uuid"}})
+
+    def test_non_mapping_organization_fails_closed(self):
+        # A string has no ``.get``; the validator must raise the domain error
+        # instead of leaking ``AttributeError``.
+        with pytest.raises(ExecutionContextError):
+            validate_execution_context({"organization": "org-1"})
+
+    def test_non_mapping_organization_list_fails_closed(self):
+        with pytest.raises(ExecutionContextError):
+            validate_execution_context({"organization": ["org-1"]})
+
+    def test_malformed_service_identity(self):
+        with pytest.raises(ExecutionContextError):
+            validate_execution_context({"service": {"service_id": "not-a-uuid"}})
+
+    def test_non_mapping_service_identity_fails_closed(self):
+        with pytest.raises(ExecutionContextError):
+            validate_execution_context({"service": "service-1"})
+
+    def test_malformed_solution_id(self):
+        with pytest.raises(ExecutionContextError):
+            validate_execution_context({"solution_id": "not-a-uuid"})
+
+    def test_non_string_solution_id_fails_closed(self):
+        with pytest.raises(ExecutionContextError):
+            validate_execution_context({"solution_id": 42})
+
+    def test_non_boolean_global_repo_access(self):
+        with pytest.raises(ExecutionContextError):
+            validate_execution_context({"solution_global_repo_access": "yes"})
+
+    def test_int_global_repo_access_fails_closed(self):
+        with pytest.raises(ExecutionContextError):
+            validate_execution_context({"solution_global_repo_access": 1})

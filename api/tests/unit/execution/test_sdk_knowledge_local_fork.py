@@ -8,7 +8,7 @@ worker's global database engine. The parent owns the DB and the embedding
 provider; the child's network API is dead by environment and it receives no
 database or provider credentials. Envelope success therefore proves the
 migrated facade rode the shared client transport — zero API requests for the
-fixed calls, no dedicated channel frames, and no PostgreSQL in the child.
+fixed calls, and no PostgreSQL in the child.
 
 The embedding provider is stubbed in-process (the socket server shares this
 process) so the test makes no paid provider calls.
@@ -103,7 +103,6 @@ class TestForkedKnowledgeTransport:
             "import os, sys\n"
             "from bifrost import knowledge\n"
             "from bifrost.client import get_engine_socket_path\n"
-            "from bifrost import _local_transport as _lt\n"
             f"_id1 = await knowledge.store('The refund window is thirty days.', namespace={ns!r}, key='refund')\n"
             f"_id2 = await knowledge.store('Database indexes speed up queries.', namespace={ns!r}, key='db')\n"
             f"_got = await knowledge.get('refund', namespace={ns!r})\n"
@@ -121,7 +120,6 @@ class TestForkedKnowledgeTransport:
             "result = {\n"
             "    'used_socket': get_engine_socket_path() is not None,\n"
             "    'socket_path': get_engine_socket_path(),\n"
-            "    'channel': 'installed' if _lt.get() is not None else 'absent',\n"
             "    'ids_ok': bool(_id1) and bool(_id2) and _id1 != _id2,\n"
             "    'got_ok': _got is not None and 'thirty days' in _got.content,\n"
             "    'found_keys': sorted([d.key for d in _found]),\n"
@@ -176,11 +174,10 @@ class TestForkedKnowledgeTransport:
 
             assert envelope["success"] is True, envelope
             result = envelope["result"]
-            # Transport proof: socket injected, channel absent, network API
-            # dead, no DB or SQLAlchemy in the child.
+            # Transport proof: socket injected, network API dead, no DB or
+            # SQLAlchemy in the child.
             assert result["used_socket"] is True
             assert result["socket_path"] == server.socket_path
-            assert result["channel"] == "absent"
             assert result["had_db_url"] is False
             assert result["had_sqlalchemy"] is False
             # Facade parity for all seven methods.

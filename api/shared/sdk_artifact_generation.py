@@ -3,10 +3,9 @@
 Single implementation used by the HTTP handlers
 (``api/src/routers/cli.py::sdk_render_document_artifact``,
 ``sdk_render_spreadsheet_artifact``, ``sdk_render_text_artifact``,
-``sdk_generate_image_artifact``) serving external SDK callers. A future
-engine parent-side dispatcher will call the same service with a
-parent-derived principal so HTTP and local results are identical by
-construction.
+``sdk_generate_image_artifact``) serving external SDK callers and
+reached by workflow children over the worker-local engine socket with a
+parent-derived principal, so results are identical by construction.
 
 Covers the four generation operations only:
 
@@ -17,7 +16,7 @@ Covers the four generation operations only:
 
 Out of scope (unchanged): ``artifacts.write/read/list/get_download_url``
 (``shared.sdk_artifacts``), video generation/PlatformJob, AI routes, the
-public SDK, and the execution dispatcher.
+public SDK, and the worker-local engine socket.
 
 The caller passes an explicit trusted actor (the auth-verified
 ``UserPrincipal``) plus the DB session — never a FastAPI Request and
@@ -51,11 +50,11 @@ Transaction semantics (do not silently change):
   it, runs the provider HTTP with no session held via
   ``generate_image_with_config``, then stores and records usage on the
   caller's session. Store + usage share the caller's transaction until
-  the HTTP dependency (or later local dispatcher) commits.
+  the HTTP dependency commits.
 
 Parent-side only: imports SQLAlchemy sessions and ORM-backed services.
-A workflow child never imports this module (it stays DB-free behind the
-dedicated local channel).
+A workflow child never imports this module (it stays DB-free and reaches
+it over the engine socket).
 """
 
 from __future__ import annotations

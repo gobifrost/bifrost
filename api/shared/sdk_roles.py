@@ -4,8 +4,8 @@ Single implementation used by both entry points:
 
 - the HTTP handlers (``api/src/routers/roles.py``) serving SDK/CLI
   callers, and
-- the engine-local dispatcher serving workflow children through
-  the parent-side local transport.
+- the same handlers reached by workflow children over the worker-local
+  engine socket.
 
 Both paths can share DTOs, response fields, HTTP statuses/error precedence,
 side effects, audit attribution, cache invalidation, and assignment
@@ -53,8 +53,7 @@ class RoleServiceError(Exception):
     """Role operation failure with an HTTP-style status.
 
     Raised by the shared service so the HTTP handler (``HTTPException``)
-    and the local dispatcher (``ok: false`` frames) can map the
-    same failure to their own transport. Solution-managed 409s arrive as
+    and callers reached over the worker-local engine socket read the same status/detail. Solution-managed 409s arrive as
     the guard's own exception and propagate unchanged.
     """
 
@@ -111,7 +110,7 @@ async def create_role(
     permissions: dict | None,
     actor_email: str,
 ) -> RolePublic:
-    """Create a role (shared by the HTTP handler and the local dispatcher)."""
+    """Create a role (shared by the HTTP handler and worker-local calls)."""
     from src.models import Role as RoleORM
     from src.models import RolePublic
     from src.services.audit import emit_audit

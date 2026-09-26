@@ -1,27 +1,25 @@
 """Shared business service for SDK knowledge operations.
 
-Single implementation used by the HTTP handlers serving external SDK
-callers (``POST/GET /api/sdk/knowledge/*`` in ``api/src/routers/cli.py``)
-and the engine-local dispatcher serving workflow children through the
-parent-side local transport. External SDK callers keep HTTP.
+Single implementation used by the HTTP handlers serving SDK callers
+(``POST/GET /api/sdk/knowledge/*`` in ``api/src/routers/cli.py``), reached
+both by external SDK/CLI callers and by workflow children over the
+worker-local engine socket (``api/src/services/execution/worker_sdk_http.py``).
 
 All inputs are already-authoritative scalars: the HTTP edge denies direct
 external principals (``_deny_external_knowledge``) and resolves scope
-through ``_resolve_sdk_org_id`` before calling in. The local dispatcher
-passes the same resolved org UUID from parent-owned execution metadata
-(``principal_from_context`` + ``_resolve_frame_scope`` with the same
-engine versus supervised-service token authority as HTTP: workflows keep
-the engine-token snapshot, services re-check provider membership live).
+through ``_resolve_sdk_org_id`` before calling in. Worker-local calls arrive
+under the same engine-token / service-token authority as HTTP: workflows
+keep the engine-token snapshot, services re-check provider membership live.
 Child ``scope`` strings remain untrusted inputs validated by the shared
 scope rules. ``created_by`` is the engine sentinel UUID
 (``SYSTEM_USER_UUID`` — the ``mint_engine_token``/``mint_service_token``
 ``sub`` HTTP workflow/service calls authenticate as), never a child
-claim. No DB connection or API HTTP in the child, and no fallback to
-HTTP after local failure.
+claim. The child holds no DB connection; it reaches the parent over the
+engine socket, with no fallback to the network API on local failure.
 
 Transaction note (explicit): the historical single-session calls below
 (``store_*``/``search_*``) hold their session across embedding network
-I/O. The local dispatcher must NOT hold a pooled parent connection
+I/O. The service must NOT hold a pooled parent connection
 across that external work (a large ``store_many`` embeds for minutes),
 so it splits each embedding op into three phases — short session for
 the embedding-config read, off-connection embedding, short session for
@@ -34,9 +32,9 @@ commit per store call, no commit on reads, identical return values and
 
 All failures raise :class:`SDKKnowledgeError` (transport-neutral); the
 HTTP adapter maps them to ``HTTPException`` preserving the exact
-historical status and detail, and the local dispatcher maps them to
-``ok: false`` frames with the same status/detail (the Python facade
-maps that 404 to ``None``).
+historical status and detail, and worker-local calls read the same HTTP
+status/detail over the engine socket (the Python facade maps that 404 to
+``None``).
 """
 
 from __future__ import annotations
@@ -59,8 +57,7 @@ class SDKKnowledgeError(Exception):
     """SDK knowledge failure with an HTTP-style status.
 
     Raised by the shared service so the HTTP handler (``HTTPException``)
-    and the local dispatcher (``ok: false`` frames) can map the same
-    failure to their own transport.
+    and callers reached over the worker-local engine socket read the same status/detail.
     """
 
     def __init__(self, status_code: int, detail: str) -> None:

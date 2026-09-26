@@ -4,9 +4,8 @@ Single implementation for both entry points:
 
 - the HTTP handlers (``api/src/routers/workflows.py::execute_workflow``,
   ``api/src/routers/workflows.py::cancel_scheduled_execution``) serving
-  SDK callers (``api/bifrost/workflows.py``), and
-- the engine-local dispatcher once these mutations are wired through the
-  parent-side local transport.
+  SDK callers (``api/bifrost/workflows.py``), reached directly or by
+  workflow children over the worker-local engine socket.
 
 Both paths share the trusted-principal input (a server-built principal plus
 request-context fields — never anything built from user-supplied request
@@ -24,8 +23,8 @@ usage-stats, validation, registration, and orphan/role management keep
 their router-level logic.
 
 Parent-side only: imports SQLAlchemy repositories and execution services.
-A workflow child never imports this module (it stays DB-free behind the
-dedicated local channel).
+A workflow child never imports this module (it stays DB-free and reaches
+it over the engine socket).
 """
 
 from __future__ import annotations
@@ -52,8 +51,7 @@ class SdkWorkflowExecutionError(Exception):
     """SDK workflow execute/cancel failure with an HTTP-style status.
 
     Raised by the shared service so the HTTP handler (``HTTPException``)
-    and the local dispatcher (``ok: false`` frames) can map the same
-    failure to their own transport. ``detail`` may be a string or a dict,
+    and callers reached over the worker-local engine socket read the same status/detail. ``detail`` may be a string or a dict,
     matching the historical handler responses exactly.
     """
 

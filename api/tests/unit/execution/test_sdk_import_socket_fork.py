@@ -2,8 +2,7 @@
 
 Uses a real ``TemplateProcess`` (the same fork primitive the pool uses):
 the child has the worker's private Unix socket injected exactly as the pool
-does and installs neither the legacy synchronous import channel nor the async
-SDK channel. The parent serves the **real** ``GET /api/sdk/modules-resolve``
+does. The parent serves the **real** ``GET /api/sdk/modules-resolve``
 and ``GET /api/sdk/modules/{path:path}`` routes on that socket, and the child
 loads its entry workflow (cold fetch) plus a dynamic import (cold resolve)
 through ``engine_request_sync``. The child's network API is dead and its
@@ -13,8 +12,7 @@ child DB/S3 connections.
 
 The dynamic import runs on a worker thread while an async SDK call
 (``forms.list``) is in flight over the async socket connection, proving the
-separate sync/async engine connections cannot deadlock — the exact hazard
-that motivated the dedicated legacy import channel.
+separate sync/async engine connections cannot deadlock.
 
 Seeding is S3-only with unique paths (never through the Redis cache), so every
 first load is guaranteed cold in the child.
@@ -94,9 +92,7 @@ def _entry_source(function_name: str, dep_module: str) -> str:
         "    import os\n"
         "    import sys\n"
         "    from bifrost.client import get_engine_socket_path\n"
-        "    from bifrost._import_transport import get as _get_import_transport\n"
         "    _used_socket = get_engine_socket_path() is not None\n"
-        "    _used_import = _get_import_transport() is not None\n"
         # The deadlock probe: the async form call and the cold synchronous
         # import run concurrently, each on its own engine-local socket
         # connection (async HTTPX vs sync HTTPX). A single shared channel
@@ -108,7 +104,6 @@ def _entry_source(function_name: str, dep_module: str) -> str:
         "    return {\n"
         "        'value': _dep.VALUE,\n"
         "        'used_socket': _used_socket,\n"
-        "        'used_import': _used_import,\n"
         "        'form_count': len(_forms),\n"
         "        'had_db_url': (\n"
         "            'BIFROST_DATABASE_URL' in os.environ\n"
@@ -213,7 +208,6 @@ class TestForkedColdImportOverSocket:
             result = envelope["result"]
             assert result["value"] == f"socket-{tag}", result
             assert result["used_socket"] is True, result
-            assert result["used_import"] is False, result
             assert result["form_count"] >= 1, result
             assert result["had_db_url"] is False, result
             assert result["had_sqlalchemy"] is False, result

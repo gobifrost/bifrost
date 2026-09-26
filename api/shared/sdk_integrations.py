@@ -4,29 +4,28 @@ Single implementation used by both entry points:
 
 - the HTTP handlers (``api/src/routers/cli.py::sdk_integrations_*``) serving
   external SDK/CLI callers, and
-- the engine-local dispatcher
-  (``api/src/services/execution/sdk_local_dispatch.py``) serving workflow
-  and ``@service`` children through the parent-side local transport.
+- the same handlers reached by workflow and ``@service`` children over
+  the worker-local engine socket
+  (``api/src/services/execution/worker_sdk_http.py``).
 
 Both paths share authenticated scope input and resolve it after integration
 lookup, preserving the historical missing-name response. They also share the
 provider-bypass enumerate-all rule, entity-ID lookup boundaries, the
 declared-Solution 424, missing integration/mapping nulls, merged configs,
 external-user behavior, OAuth token cascade/decryption, and the optional
-scope-based token fetch — so HTTP and local results are identical by
+scope-based token fetch — so HTTP and worker-local results are identical by
 construction.
 
 Only the three read operations (``get``, ``list_mappings``, ``get_mapping``)
 plus the mapping mutations (``upsert_mapping``, ``delete_mapping``) and
 OAuth token refresh live here. The HTTP handlers
-(``api/src/routers/cli.py::sdk_integrations_*``) and the engine-local
-dispatcher (``api/src/services/execution/sdk_local_dispatch.py``) call
-these same functions, so HTTP and local results are identical by
-construction.
+(``api/src/routers/cli.py::sdk_integrations_*``) — whether reached by an
+external caller or by a child over the worker-local engine socket — call
+these same functions, so results are identical by construction.
 
 Parent-side only: imports SQLAlchemy repositories and the OAuth provider
-client. The child never imports this module (it stays DB-free behind the
-dedicated local channel).
+client. The child never imports this module (it stays DB-free and makes an
+HTTP call over the engine socket).
 """
 
 from __future__ import annotations
@@ -48,8 +47,7 @@ class IntegrationServiceError(Exception):
     """SDK integrations failure with an HTTP-style status.
 
     Raised by the shared service so the HTTP handler (``HTTPException``)
-    and the local dispatcher (``ok: false`` frames) can map the same
-    failure to their own transport. Currently only used for the
+    and callers reached over the worker-local engine socket read the same status/detail. Currently only used for the
     declared-Solution 424; scope failures arrive as ``ScopeResolutionError``
     from the shared scope resolver, and missing entities are ``None``.
     """
@@ -133,15 +131,15 @@ async def build_oauth_data(
     """Build the OAuth data dict from provider and token.
 
     The canonical builder shared by the HTTP handler (via the service
-    functions below) and the engine-local dispatcher. ``resolve_url_template``
+    functions below). ``resolve_url_template``
     and ``decrypt_secret`` are explicit parameters (not module imports) so
     unit tests can inject fakes; production callers pass the real
     implementations from ``src.services.oauth_provider`` and
     ``src.core.security``.
 
-    Returns a plain dict matching ``SDKIntegrationsOAuthData`` so both the
-    HTTP handler (which wraps it in the response model) and the local
-    transport (which needs JSON-serializable frames) share one builder.
+    Returns a plain dict matching ``SDKIntegrationsOAuthData`` so the HTTP
+    handler (which wraps it in the response model) and worker-local callers
+    (which need JSON-serializable values) share one builder.
 
     Args:
         provider: OAuth provider configuration
@@ -277,7 +275,7 @@ async def get_sdk_integration_dict(
         name: Integration name.
         org_id: Already-resolved effective scope (None for global).
         oauth_scope: Override OAuth scope for token request.
-        solution_id: Parent-derived Solution install id (local path) or the
+        solution_id: Parent-derived Solution install id (worker-local path) or the
             HTTP request's solution claim. When set and the named
             integration is missing but DECLARED by this solution, raises
             :class:`IntegrationServiceError` (424) instead of returning

@@ -1,4 +1,4 @@
-"""Transport-neutral file access helpers shared by HTTP and future callers.
+"""Transport-neutral file access helpers shared by the SDK file paths.
 
 Single implementation of the policy/scope plumbing used by the cloud-mode
 SDK file paths (``files.read``/``read_bytes``, ``files.list`` without
@@ -9,7 +9,7 @@ SDK file paths (``files.read``/``read_bytes``, ``files.list`` without
 
 Only transport-neutral failures are raised (:class:`FileServiceError` with
 an HTTP-style status). The HTTP adapter maps them to ``HTTPException``;
-a future local dispatcher maps them to ``ok: false`` frames.
+worker-local calls read the same status/detail.
 """
 
 from __future__ import annotations
@@ -36,8 +36,8 @@ class FileServiceError(Exception):
     """Transport-neutral file failure with an HTTP-style status.
 
     Raised by this module and by ``shared.sdk_files`` so the HTTP handler
-    (``HTTPException``) and a future local dispatcher (``ok: false`` frames)
-    can map the same failure to their own transport.
+    (``HTTPException``) maps the same failure to an HTTP response; worker-local
+    calls read the same status/detail.
     """
 
     def __init__(self, status_code: int, detail: Any) -> None:
@@ -53,11 +53,9 @@ class FileCaller:
     Carries the full token-derived ``UserPrincipal`` (role/claim state for
     file policies), the DB session, the execution org, the Solution
     target/caller IDs, and the app ID. Built by the HTTP adapter from its
-    authenticated context; a future parent caller constructs the
-    token-equivalent principal from trusted parent metadata. Never derive
-    authority from child-supplied fields. ``LocalDispatchPrincipal`` does
-    not carry enough role/claim state for file policies and must not be
-    used here.
+    authenticated context; engine children reach the same handler over the
+    worker-local engine socket, so authority is always derived from the
+    authenticated principal and never from child-supplied fields.
     """
 
     user: UserPrincipal

@@ -5,8 +5,8 @@ the child is forked with the worker's private Unix socket injected exactly
 as the pool does, then runs ``ai.complete`` and ``ai.get_model_info``
 through the full ``bifrost.ai`` facade. The test process serves the
 **real** AI routes on that socket via uvicorn against the worker's global
-database engine, with the child's network API dead and the legacy channel
-transport absent. Success proves the migrated calls reached the
+database engine, with the child's network API dead. Success proves the migrated calls
+reached the
 parent-served routes, and the parent re-reads the committed usage row over
 its own session to prove the real commit boundary (the socket route commits
 where the HTTP ``get_db`` dependency commits). The provider is faked in the
@@ -97,9 +97,7 @@ _AI_SOURCE = (
     "import os, sys\n"
     "from bifrost.ai import ai\n"
     "from bifrost.client import get_engine_socket_path\n"
-    "from bifrost._local_transport import get as _get_transport\n"
     "_used_socket = get_engine_socket_path() is not None\n"
-    "_used_channel = _get_transport() is not None\n"
     "_resp = await ai.complete(\n"
     "    'Hello', org_id=ORG_ID, profile='Reasoning', model='gpt-4o',\n"
     "    max_tokens=42, timeout=60.0,\n"
@@ -107,7 +105,6 @@ _AI_SOURCE = (
     "_info = await ai.get_model_info()\n"
     "result = {\n"
     "    'used_socket': _used_socket,\n"
-    "    'used_channel': _used_channel,\n"
     "    'content': _resp.content,\n"
     "    'model': _resp.model,\n"
     "    'input_tokens': _resp.input_tokens,\n"
@@ -211,7 +208,6 @@ class TestForkedAISocket:
             assert envelope["success"] is True, envelope
             result = envelope["result"]
             assert result["used_socket"] is True, result
-            assert result["used_channel"] is False, result
             assert result["content"] == "Forked hello"
             assert result["model"] == "gpt-4o"
             assert result["input_tokens"] == 7

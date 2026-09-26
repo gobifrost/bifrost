@@ -2,15 +2,14 @@
 
 Single implementation used by both entry points:
 
-- the HTTP handlers (``api/src/routers/sdk_modules.py``) serving worker
-  child processes over HTTP, and
-- a later parent-local import dispatcher serving workflow children
-  through the parent-side local transport.
+- the HTTP handlers (``api/src/routers/sdk_modules.py``), reached both by
+  external/API callers and by worker child processes over HTTP (the
+  worker-local engine socket).
 
 Both paths share import-name resolution (metadata cache hydration, scoped
 module/package/namespace probes, Solution-before-repo ordering, cache
 writes, per-key singleflight) and direct source-fetch path validation plus
-Solution-path access rules — so HTTP and local results are identical by
+Solution-path access rules — so HTTP and worker-local results are identical by
 construction.
 
 Parent-side only: imports the Redis-backed module cache and the S3-backed
@@ -61,8 +60,7 @@ class ModuleSourceError(Exception):
     """SDK module-source failure with an HTTP-style status.
 
     Raised by the shared service so the HTTP handler (``HTTPException``)
-    and the local dispatcher (``ok: false`` frames) can map the same
-    failure to their own transport.
+    and callers reached over the worker-local engine socket read the same status/detail.
     """
 
     def __init__(self, status_code: int, detail: str) -> None:

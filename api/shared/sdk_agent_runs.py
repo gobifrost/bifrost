@@ -7,13 +7,13 @@ Single implementation for both entry points:
   ``get_agent_run``) serving SDK callers (``api/bifrost/agents.py``
   ``enqueue`` / ``get_run`` — and through them the ``run`` (enqueue +
   wait) and ``wait`` (poll get_run) facades), and
-- the future engine-local parent dispatcher once agent calls are wired
-  through the parent-side local transport.
+- the same handlers reached by workflow children over the worker-local
+  engine socket.
 
 Both paths share the exact agent name lookup, the Solution active
 guard, the paused short-circuit, the run queue payload and actor
 attribution, the org scope, the run visibility rule, and the
-steps/usage/totals detail construction — so HTTP and local results are
+steps/usage/totals detail construction — so HTTP and worker-local results are
 identical by construction.
 
 Only the SDK-consumed ``enqueue`` / ``get_run`` operations live here.
@@ -21,8 +21,8 @@ Only the SDK-consumed ``enqueue`` / ``get_run`` operations live here.
 verdict, flag conversations, and dry-run keep their router-level logic.
 
 Parent-side only: imports SQLAlchemy models and Redis. A workflow child
-never imports this module (it stays DB-free behind the dedicated local
-channel).
+never imports this module (it stays DB-free and reaches it over the
+engine socket).
 
 The service takes an explicit trusted session, principal, and validated
 parameters — never a ``Request``, JWT, or raw child claims. HTTP
@@ -69,8 +69,7 @@ class SdkAgentRunError(Exception):
     """SDK agent run enqueue/get failure with an HTTP-style status.
 
     Raised by the shared service so the HTTP handler (``HTTPException``)
-    and the future local dispatcher (``ok: false`` frames) can map the
-    same failure to their own transport. Missing entities are 404, an
+    and callers reached over the worker-local engine socket read the same status/detail. Missing entities are 404, an
     inactive Solution is 409 — matching the historical handler responses
     exactly.
     """

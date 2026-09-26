@@ -6,14 +6,14 @@ Single implementation for both entry points:
   ``api/src/routers/executions.py::list_executions`` /
   ``get_execution``) serving SDK callers (``api/bifrost/workflows.py``,
   ``api/bifrost/executions.py``), and
-- the engine-local dispatcher once these reads are wired through the
-  parent-side local transport.
+- the same handlers reached by workflow children over the worker-local
+  engine socket.
 
 Both paths share scope resolution input (an explicit trusted principal),
 the superuser/org-user query split, workflow filters, used-by counts,
 execution history keyset and legacy cursor behavior, the pending
 execution fallback, status mapping, and response shape — so HTTP and
-local results are identical by construction.
+worker-local results are identical by construction.
 
 Only the three fixed SDK reads live here: ``workflows.list()``,
 ``executions.list()``, and ``executions.get()`` (which also serves
@@ -22,8 +22,8 @@ workflow mutations, usage-stats, logs listing, result/variables
 endpoints, and validation keep their router-level logic.
 
 Parent-side only: imports SQLAlchemy repositories. A workflow child never
-imports this module (it stays DB-free behind the dedicated local
-channel).
+imports this module (it stays DB-free and reaches it over the engine
+socket).
 """
 
 from __future__ import annotations
@@ -50,8 +50,7 @@ class SdkExecutionReadError(Exception):
     """SDK workflow/execution read failure with an HTTP-style status.
 
     Raised by the shared service so the HTTP handler (``HTTPException``)
-    and the local dispatcher (``ok: false`` frames) can map the same
-    failure to their own transport. Missing entities are 404, denied
+    and callers reached over the worker-local engine socket read the same status/detail. Missing entities are 404, denied
     access is 403, malformed scope is 400 (workflows list) or 422
     (executions list) — matching the historical handler responses
     exactly.

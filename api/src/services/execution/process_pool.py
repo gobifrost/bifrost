@@ -48,6 +48,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 import psutil
 import redis.asyncio as redis
 
+from shared.execution_context import validate_execution_context
 from src.config import get_settings
 from src.core.cache.keys import TTL_ACTIVE_EXECUTION, active_execution_key
 from src.core.redis_client import ActiveExecution
@@ -55,7 +56,6 @@ from src.models.contracts.notifications import NotificationCategory, Notificatio
 from src.services.execution.cpu_sampler import CPUSampler, get_clock_ticks
 from src.services.execution.memory_monitor import get_cgroup_memory, has_sufficient_memory_cgroup
 from src.services.execution.requirements_setup_result import RequirementsInstallResult
-from src.services.execution.sdk_local_dispatch import principal_from_context
 from src.services.notification_service import get_notification_service
 from src.services.execution.template_process import TemplateProcess
 
@@ -941,7 +941,7 @@ class ProcessPoolManager:
             active_execution: Compact completion metadata retained by the parent
         """
         # Fail closed before the Redis write or fork.
-        principal_from_context(context)
+        validate_execution_context(context)
 
         # Write context to Redis
         await self._write_context_to_redis(execution_id, context)
@@ -1066,7 +1066,7 @@ class ProcessPoolManager:
             MemoryError: Memory pressure rejects the fork.
         """
         # Fail closed before forking, as with executions.
-        principal_from_context(context)
+        validate_execution_context(context)
 
         settings = get_settings()
         if not has_sufficient_memory_cgroup(threshold=settings.memory_pressure_threshold):

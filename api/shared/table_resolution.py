@@ -2,28 +2,27 @@
 
 Table name/UUID resolution with the org gate, Solution install fallback, and
 inbound gate, shared by the HTTP router (``src.routers.tables``) and the
-engine SDK parent dispatcher (``src.services.execution.sdk_local_dispatch``)
-so both transports resolve the same table for the same caller.
+worker-local engine socket
+(``api/src/services/execution/worker_sdk_http.py``) so both entry points
+resolve the same table for the same caller.
 
 ``get_table_or_404`` moved here verbatim from the router; the router imports
 it. Resolution order is load-bearing — UUID lookup, org gate, own-install /
 name fallback, inbound gate — keep it in that order on both paths.
 
-Trust contract for the parent dispatcher: the resolution context carries
-``db``, ``user``, ``org_id``, ``app_id``, ``solution_id``, and
-``caller_solution_id``. HTTP supplies its existing request context. The parent
-builds a ``LocalTableContext`` from trusted execution/service metadata only:
-the ``user`` is a token-equivalent ``UserPrincipal`` (engine superuser or
-service non-superuser — never the initiating user's admin flag), ``solution_id``
-is the child-supplied per-call *target* (falling back to the parent-owned own
-install), and ``app_id``/``caller_solution_id`` stay parent-owned (None for
-engine children — never child frame claims).
+The resolution context carries ``db``, ``user``, ``org_id``, ``app_id``,
+``solution_id``, and ``caller_solution_id``. Both entry points build it from
+an authenticated request/execution context: the ``user`` is a token-equivalent
+``UserPrincipal`` (engine superuser or service non-superuser — never the
+initiating user's admin flag), ``solution_id`` is the per-call *target*
+(falling back to the caller's own install), and ``app_id``/
+``caller_solution_id`` stay server-owned (None for engine children — never
+child frame claims).
 """
 
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from typing import Protocol
 from uuid import UUID
 
@@ -44,10 +43,9 @@ logger = logging.getLogger(__name__)
 
 
 class TableResolutionContext(Protocol):
-    """Structural context for table resolution (HTTP or parent-local).
+    """Structural context for table resolution.
 
-    ``src.core.auth.ExecutionContext`` satisfies this structurally; the parent
-    dispatcher builds :class:`LocalTableContext`.
+    ``src.core.auth.ExecutionContext`` satisfies this structurally.
     """
 
     db: AsyncSession
@@ -56,29 +54,6 @@ class TableResolutionContext(Protocol):
     app_id: str | None
     solution_id: str | None
     caller_solution_id: str | None
-
-
-@dataclass
-class LocalTableContext:
-    """Parent-built resolution context for engine-local table reads.
-
-    Constructed per request from the parent-owned dispatch principal plus the
-    child frame's untrusted ``scope``/``solution`` target strings. ``user`` is
-    the token-equivalent principal (engine sentinel superuser for workflows,
-    org-scoped service identity for ``@service`` children); ``org_id`` is the
-    parent-owned caller org; ``solution_id`` is the per-call target install
-    ref (UUID or slug/name, resolved inside the target org downstream).
-    ``app_id`` and ``caller_solution_id`` are never taken from child frames —
-    engine children have no app header and attest their install through the
-    signed engine claims on ``user``.
-    """
-
-    db: AsyncSession
-    user: UserPrincipal
-    org_id: UUID | None
-    app_id: str | None = None
-    solution_id: str | None = None
-    caller_solution_id: str | None = None
 
 
 def resolve_target_org_safe(

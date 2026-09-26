@@ -4,11 +4,12 @@ Exercises the full path — workflow code in a forked worker child calling
 the fixed table operations — against tables the external HTTP endpoints
 serve, proving write parity end to end:
 
-- the workflow hard-disables table fixed-operation HTTP in-engine
-  (``get_client`` raises if touched) and records that the local
-  transport is installed, so success proves zero API requests for the
-  migrated operations — including the auto-create-on-insert retry, which
-  must ride the local ``tables.create`` operation, never HTTP;
+- the workflow records that the engine injected the worker's private
+  socket, so the migrated operations rode the shared client transport
+  rather than the network API — including the auto-create-on-insert retry,
+  which rides the engine-local ``tables.create`` operation, never HTTP
+  (the zero-HTTP proof lives in the unit and forked-child socket tests,
+  where the child's network API is dead);
 - at least one metadata mutation (``create``), one single document
   write (``insert``), and one batch write (``insert_batch``) commit
   state verified over external HTTP, alongside upsert/update/delete
@@ -52,41 +53,29 @@ def live_writes_workflow(e2e_client, platform_admin, org1, live_write_keys):
     auto_table = live_write_keys["auto_table"]
     content = f'''"""Stage 3b local table writes E2E workflow."""
 from bifrost import workflow, tables
+from bifrost.client import get_engine_socket_path
 
 @workflow(name="{name}", description="Stage 3b local table writes E2E")
 async def {name}():
-    import importlib
-    _tab = importlib.import_module("bifrost.tables")
-    from bifrost._local_transport import get as _get_transport
-    used_local = _get_transport() is not None
-
-    def _dead(*args, **kwargs):
-        raise AssertionError(
-            "fixed-operation HTTP must not be used in the engine path"
-        )
-    _orig = _tab.get_client
-    _tab.get_client = _dead
-    try:
-        created = await tables.create("{table}")
-        one = await tables.insert("{table}", {{"v": 1}}, id="w-1")
-        up = await tables.upsert("{table}", "w-1", {{"v": 2}})
-        batch = await tables.insert_batch("{table}", [
-            {{"id": "w-2", "data": {{"v": 3}}}},
-            {{"v": 4}},
-        ])
-        bulk = await tables.bulk_upsert("{table}", [
-            {{"id": "w-3", "data": {{"v": 5}}}},
-        ])
-        updated = await tables.update("{table}", "w-2", {{"extra": True}})
-        listed = await tables.list()
-        # Auto-create-on-insert through the local create operation.
-        auto = await tables.insert("{auto_table}", {{"v": 9}}, id="a-1")
-        removed = await tables.delete_document("{table}", "w-3")
-        batch_removed = await tables.delete_batch("{table}", ["w-1"])
-    finally:
-        _tab.get_client = _orig
+    used_socket = get_engine_socket_path() is not None
+    created = await tables.create("{table}")
+    one = await tables.insert("{table}", {{"v": 1}}, id="w-1")
+    up = await tables.upsert("{table}", "w-1", {{"v": 2}})
+    batch = await tables.insert_batch("{table}", [
+        {{"id": "w-2", "data": {{"v": 3}}}},
+        {{"v": 4}},
+    ])
+    bulk = await tables.bulk_upsert("{table}", [
+        {{"id": "w-3", "data": {{"v": 5}}}},
+    ])
+    updated = await tables.update("{table}", "w-2", {{"extra": True}})
+    listed = await tables.list()
+    # Auto-create-on-insert through the engine-local create operation.
+    auto = await tables.insert("{auto_table}", {{"v": 9}}, id="a-1")
+    removed = await tables.delete_document("{table}", "w-3")
+    batch_removed = await tables.delete_batch("{table}", ["w-1"])
     return {{
-        "used_local": used_local,
+        "used_socket": used_socket,
         "table_id": created.id,
         "one_id": one.id,
         "up_v": up.data.get("v"),
@@ -146,9 +135,10 @@ class TestSdkTableWritesLocalLiveE2E:
         )
         assert result["status"] == "Success", result
         out = result["result"]
-        # Zero API requests: the transport was installed and every
-        # fixed-operation HTTP call would have raised inside the workflow.
-        assert out["used_local"] is True
+        # The worker injected its private socket, so the migrated calls rode
+        # the shared client transport (zero-HTTP proof is in the unit and
+        # forked-child tests).
+        assert out["used_socket"] is True
         assert out["one_id"] == "w-1"
         assert out["up_v"] == 2
         assert out["batch_count"] == 2

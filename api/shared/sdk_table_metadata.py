@@ -7,16 +7,15 @@ callers:
   (``api/src/routers/cli.py``), and
 - ``DELETE /api/tables/{table_id}`` (``api/src/routers/tables.py``).
 
-The engine-local dispatcher will call the same service with
-parent-derived authority after the aggregate import-channel stage
-finishes; there is no local transport in this stage.
+The same service serves workflow children over the worker-local engine
+socket (``api/src/services/execution/worker_sdk_http.py``).
 
 All inputs are already-authoritative scalars: the HTTP edge resolves
 scope through the shared ``resolve_sdk_scope`` semantics, the Solution
 presence signal, and the caller identity (org, admin flag, external
 flag, actor email) from the auth-verified principal — never from child
-frame claims. A future local caller passes the same scalars from
-parent-owned execution/service metadata.
+frame claims. Worker-local calls resolve the same scalars from the same
+authenticated execution context.
 
 All failures raise :class:`SDKTableMetadataError` (transport-neutral);
 the HTTP adapter maps them to ``HTTPException`` preserving the exact
@@ -46,8 +45,7 @@ class SDKTableMetadataError(Exception):
     """SDK table-metadata failure with an HTTP-style status.
 
     Raised by the shared service so the HTTP handler (``HTTPException``)
-    and the local dispatcher (``ok: false`` frames) can map the same
-    failure to their own transport.
+    and callers reached over the worker-local engine socket read the same status/detail.
     """
 
     def __init__(self, status_code: int, detail: str) -> None:
