@@ -4,12 +4,12 @@ Exercises the full path — workflow code in a forked worker child calling
 the five fixed ``bifrost.organizations`` methods — proving parity with
 the external HTTP API:
 
-- the workflow hard-disables fixed-operation HTTP in-engine
-  (``bifrost.organizations.get_client`` raises if touched) and records
-  that the local transport is installed, so success proves zero API
-  requests for the migrated operations;
+- the workflow records that the engine injected the worker's private socket,
+  so the migrated calls rode the shared client transport rather than the
+  network API (the zero-HTTP proof lives in the unit and forked-child socket
+  tests, where the child's network API is dead);
 - create/get/list/update/delete round-trip inside the workflow through
-  the parent-local ``shared.sdk_organizations`` service;
+  the real user/organization routes served on that socket;
 - the committed state (renamed, then soft-disabled) is verified over
   external HTTP.
 """
@@ -35,42 +35,33 @@ def live_org_keys():
 def live_org_workflow(e2e_client, platform_admin, org1, live_org_keys):
     """Workflow exercising the organizations facade through the live worker.
 
-    The workflow hard-disables fixed-operation HTTP in-engine and records
-    that the local transport is installed, so success proves zero API
-    requests for the migrated operations. The test then verifies the
-    committed state over external HTTP.
+    The workflow records that the engine injected its private socket, so the
+    migrated calls rode the shared client transport rather than the network
+    API (the zero-HTTP proof lives in the unit and forked-child socket tests).
+    The test then verifies the committed state over external HTTP.
     """
     name = f"e2e_sdk_local_orgs_{live_org_keys['tag']}"
     path = f"{name}.py"
     base = live_org_keys["name"]
     content = f'''"""Local organizations E2E workflow."""
 from bifrost import workflow, organizations
+from bifrost.client import get_engine_socket_path
 
 @workflow(name="{name}", description="Local organizations E2E")
 async def {name}():
-    import importlib
-    _orgs = importlib.import_module("bifrost.organizations")
-    from bifrost._local_transport import get as _get_transport
-    used_local = _get_transport() is not None
-
-    def _dead(*args, **kwargs):
-        raise AssertionError(
-            "fixed-operation HTTP must not be used in the engine path"
-        )
-    _orig = _orgs.get_client
-    _orgs.get_client = _dead
-    try:
-        created = await organizations.create("{base}")
-        fetched = await organizations.get(created.id)
-        listed = await organizations.list()
-        updated = await organizations.update(created.id, name="{base}-renamed")
-        deleted = await organizations.delete(created.id)
-        refetched = await organizations.get(created.id)
-        relisted = await organizations.list()
-    finally:
-        _orgs.get_client = _orig
+    # The engine injected its private socket; the zero-HTTP proof lives in
+    # the unit and forked-child socket tests where the child's network API
+    # is dead by environment.
+    used_socket = get_engine_socket_path() is not None
+    created = await organizations.create("{base}")
+    fetched = await organizations.get(created.id)
+    listed = await organizations.list()
+    updated = await organizations.update(created.id, name="{base}-renamed")
+    deleted = await organizations.delete(created.id)
+    refetched = await organizations.get(created.id)
+    relisted = await organizations.list()
     return {{
-        "used_local": used_local,
+        "used_socket": used_socket,
         "created_id": created.id,
         "created_by": created.created_by,
         "fetched_name": fetched.name,
@@ -115,9 +106,10 @@ class TestSdkOrganizationsLocalLiveE2E:
         )
         assert result["status"] == "Success", result
         out = result["result"]
-        # Zero API requests: the transport was installed and every
-        # fixed-operation HTTP call would have raised inside the workflow.
-        assert out["used_local"] is True
+        # The engine injected its private socket, so every migrated call rode
+        # the shared client transport (zero-HTTP proof lives in the unit and
+        # forked-child socket tests).
+        assert out["used_socket"] is True
         # Non-admin initiator still gets engine superuser authority locally.
         assert out["created_by"] == "engine@bifrost.internal"
         assert out["fetched_name"] == live_org_keys["name"]

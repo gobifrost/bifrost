@@ -1,16 +1,17 @@
 """Engine-local users facade through a real forked worker.
 
 Uses a real ``TemplateProcess`` (the same fork primitive the pool uses):
-the child installs the engine-local transport at engine start, then runs
-the full fixed ``bifrost.users`` facade — create, get, scoped list
-(including a no-match scope), update, delete, and a missing-user read —
-with fixed-operation HTTP hard-disabled, while the parent serves the
-users ops from the shared ``sdk_users`` service. A second fork proves a
-workflow started by a non-admin still uses the engine superuser token.
-Service-token denial and forged child claims are covered by the
-dispatcher tests. The parent re-reads the mutated rows over a separate
-connection, proving the real commit boundary (the local session commits
-where the HTTP ``get_db`` dependency commits).
+the child is forked with the worker's private Unix socket injected exactly
+as the pool does, then runs the full fixed ``bifrost.users`` facade —
+create, get, scoped list (including a no-match scope), update, delete, and
+a missing-user read. The test process serves the **real** user routes on
+that socket via uvicorn against the worker's global database engine, with
+the child's network API dead and fixed-operation HTTP unavailable. Success
+proves every migrated call reached the parent-served routes, and the parent
+re-reads the mutated rows over its own session to prove the real commit
+boundary (the socket route commits where the HTTP ``get_db`` dependency
+commits). A second fork with a non-admin initiating context proves the
+socket authority comes from the engine token, never the child's claims.
 
 Marked ``slow`` like the other real-fork tests: template boot costs
 seconds. Run explicitly alongside the focused suite.
@@ -20,21 +21,14 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import contextlib
 import os
 import time
 from uuid import uuid4
 
 import pytest
 
-from src.services.execution.sdk_local_dispatch import (
-    SDK_CHANNEL_ALLOWED_OPS,
-    LocalDispatchPrincipal,
-    dispatch_frame,
-    principal_from_context,
-    serve_channel,
-)
 from src.services.execution.template_process import TemplateProcess
+from src.services.execution.worker_sdk_http import WorkerSdkHttpServer
 
 pytestmark = pytest.mark.slow
 
@@ -43,16 +37,21 @@ def _script_b64(source: str) -> str:
     return base64.b64encode(source.encode("utf-8")).decode("utf-8")
 
 
-def _context_for(code_b64: str, *, admin: bool) -> dict:
+def _context_for(
+    code_b64: str,
+    engine_token: str,
+    *,
+    is_platform_admin: bool,
+) -> dict:
     return {
         "execution_id": f"exec-users-fork-{uuid4().hex[:8]}",
         "name": "sdk-users-local-fork-test",
         "code": code_b64,
         "parameters": {},
         "caller": {
-            "user_id": "fork-test-user",
-            "email": "fork@example.com",
-            "name": "Fork Test",
+            "user_id": "00000000-0000-0000-0000-000000000001",
+            "email": "engine@bifrost.internal",
+            "name": "Bifrost Engine",
         },
         "organization": None,
         "tags": [],
@@ -60,14 +59,9 @@ def _context_for(code_b64: str, *, admin: bool) -> dict:
         "cache_ttl_seconds": 0,
         "transient": True,
         "no_cache": True,
-        "is_platform_admin": admin,
-        "engine_token": "fork-test-dead-token",
+        "is_platform_admin": is_platform_admin,
+        "engine_token": engine_token,
     }
-
-
-@contextlib.asynccontextmanager
-async def _factory(db_session):
-    yield db_session
 
 
 def _wait_for_pid_to_die(pid: int, timeout: float = 10.0) -> None:
@@ -80,82 +74,56 @@ def _wait_for_pid_to_die(pid: int, timeout: float = 10.0) -> None:
             return
 
 
-async def _run_fork(context, db_session):
-    """Boot one template child, pump its SDK channel, return its envelope."""
+async def _run_socket_fork(server: WorkerSdkHttpServer, context: dict) -> dict:
+    """Fork one child against the worker socket and return its envelope."""
     template = TemplateProcess()
     template.start()
-    sdk_pump = None
-    conns = []
     try:
-        (
-            child_pid,
-            work_queue,
-            result_queue,
-            sdk_req,
-            sdk_resp,
-        ) = template.fork(worker_id="sdk-users-fork", with_sdk=True)
-        conns = [sdk_req, sdk_resp]
-        principal = principal_from_context(context)
-        assert isinstance(principal, LocalDispatchPrincipal)
-        sdk_pump = asyncio.create_task(
-            serve_channel(
-                recv_conn=sdk_req,
-                send_conn=sdk_resp,
-                session_factory=lambda: _factory(db_session),
-                principal=principal,
-                allowed_ops=SDK_CHANNEL_ALLOWED_OPS,
-            )
+        child_pid, work_queue, result_queue = template.fork(
+            worker_id="sdk-users-fork",
+            sdk_socket_path=server.socket_path,
         )
-        work_queue.put(("exec-users-fork", context))
-        envelope = await asyncio.to_thread(result_queue.get, True, 120.0)
+        try:
+            work_queue.put(("exec-users-fork", context))
+            envelope = await asyncio.to_thread(result_queue.get, True, 120.0)
+        finally:
+            work_queue.close()
+            result_queue.close()
         _wait_for_pid_to_die(child_pid)
-        assert await asyncio.wait_for(sdk_pump, timeout=15.0) == "eof"
-        sdk_pump = None
         return envelope
     finally:
-        if sdk_pump is not None:
-            sdk_pump.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await sdk_pump
-        for conn in conns:
-            with contextlib.suppress(Exception):
-                conn.close()
         template.shutdown()
 
 
 @pytest.mark.asyncio
-class TestForkedUsersTransport:
-    async def test_crud_and_scoped_list_without_http(
-        self, db_session, async_session_factory, monkeypatch
+class TestForkedUsersSocket:
+    async def test_crud_and_scoped_list_over_socket(
+        self, async_session_factory, monkeypatch
     ):
-        """A real forked child runs the users facade with HTTP dead."""
+        """A real forked child runs the users facade on the worker socket."""
+        from src.core.security import mint_engine_token
         from src.models.orm.organizations import Organization as OrganizationModel
 
         stem = f"fork-users-{uuid4().hex[:8]}"
-        org = OrganizationModel(
-            name=f"{stem}-org",
-            is_active=True,
-            created_by="users-fork-test",
-        )
-        db_session.add(org)
-        await db_session.flush()
-        org_id = str(org.id)
-        # Commit seeds so the parent can verify the child's local writes
-        # over a separate connection (the real commit boundary).
-        await db_session.commit()
+        async with async_session_factory() as seed:
+            org = OrganizationModel(
+                name=f"{stem}-org",
+                is_active=True,
+                created_by="users-fork-test",
+            )
+            seed.add(org)
+            await seed.commit()
+            org_id = str(org.id)
         email = f"{stem}@example.com"
         no_match_scope = str(uuid4())
 
         lines = [
+            "import os, sys",
             "from bifrost import users",
+            "from bifrost.client import get_engine_socket_path",
             "from bifrost._local_transport import get as _get_transport",
-            "import bifrost.users as _umod",
-            "_used_local = _get_transport() is not None",
-            "def _dead(*args, **kwargs):",
-            "    raise AssertionError(",
-            "        'fixed-operation HTTP must not be used in the engine path'",
-            "    )",
-            "_umod.get_client = _dead",
+            "_used_socket = get_engine_socket_path() is not None",
+            "_used_channel = _get_transport() is not None",
             f"_created = await users.create({email!r}, 'Fork User', org_id={org_id!r})",
             "_user_id = _created.id",
             "_pending = _created.invite_status",
@@ -168,9 +136,9 @@ class TestForkedUsersTransport:
             "_missing = await users.get('ghost-nobody@example.com')",
             "_deleted = await users.delete(_user_id)",
             "_gone = await users.get(_user_id)",
-            "import os, sys",
             "result = {",
-            "    'used_local': _used_local,",
+            "    'used_socket': _used_socket,",
+            "    'used_channel': _used_channel,",
             "    'user_id': _user_id,",
             "    'pending': _pending,",
             "    'has_url': _has_url,",
@@ -188,17 +156,35 @@ class TestForkedUsersTransport:
             "    'had_sqlalchemy': 'sqlalchemy' in sys.modules,",
             "}",
         ]
-        context = _context_for(_script_b64("\n".join(lines) + "\n"), admin=True)
-        # Hard-disable HTTP for every forked child: any SDK call that
-        # reaches HTTP fails, so success proves the local transport
-        # served every migrated operation.
+        engine_token, _ = mint_engine_token(
+            execution_id="gate-c5d-users-fork",
+            solution_id=None,
+            global_repo_access=True,
+            timeout_seconds=120,
+        )
+        context = _context_for(
+            _script_b64("\n".join(lines) + "\n"),
+            engine_token,
+            is_platform_admin=True,
+        )
+        # Hard-disable HTTP for the forked child: any SDK call that reaches
+        # the network API fails with connection-refused, so success proves
+        # the socket served every migrated operation.
         monkeypatch.setenv("BIFROST_API_URL", "http://127.0.0.1:9")
 
+        server = WorkerSdkHttpServer()
+        await server.start()
+        assert server.socket_path is not None
         try:
-            envelope = await _run_fork(context, db_session)
+            envelope = await _run_socket_fork(server, context)
+        finally:
+            await server.stop()
+
+        try:
             assert envelope["success"] is True, envelope
             result = envelope["result"]
-            assert result["used_local"] is True, result
+            assert result["used_socket"] is True, result
+            assert result["used_channel"] is False, result
             assert result["pending"] == "pending", result
             assert result["has_url"] is True, result
             assert result["fetched_email"] == email, result
@@ -210,43 +196,23 @@ class TestForkedUsersTransport:
             assert result["gone"] is None, result
             assert result["had_db_url"] is False, result
             assert result["had_sqlalchemy"] is False, result
-            user_id = result["user_id"]
 
-            # The parent sees the committed state over a separate
-            # connection: the delete was really committed by the local
-            # dispatcher (not just flushed on the pump session).
+            # The parent sees the committed state over a separate connection:
+            # the delete was really committed by the socket route (not just
+            # flushed).
             from src.models import User as UserORM
 
             async with async_session_factory() as fresh:
-                gone = await fresh.get(UserORM, user_id)
+                gone = await fresh.get(UserORM, result["user_id"])
                 assert gone is None
-
-            # External HTTP behavior is unchanged: a scoped list over
-            # the parent dispatcher filters to the requested org.
-            principal = principal_from_context(context)
-            parent_list = await dispatch_frame(
-                lambda: _factory(db_session),
-                principal,
-                {
-                    "v": 1,
-                    "id": "fork-parity-list",
-                    "op": "users.list",
-                    "scope": org_id,
-                    "include_inactive": True,
-                },
-            )
-            assert parent_list["ok"] is True, parent_list
-            assert parent_list["result"]["total"] == 0
         finally:
             # Remove committed seeds so later tests see a clean slate.
+            from sqlalchemy import delete as sa_delete
+
+            from src.models import User as UserORM
+            from src.models.orm.organizations import Organization as OrganizationModel
+
             async with async_session_factory() as cleanup:
-                from sqlalchemy import delete as sa_delete
-
-                from src.models import User as UserORM
-                from src.models.orm.organizations import (
-                    Organization as OrganizationModel,
-                )
-
                 await cleanup.execute(
                     sa_delete(UserORM).where(UserORM.email == email)
                 )
@@ -257,30 +223,48 @@ class TestForkedUsersTransport:
                 )
                 await cleanup.commit()
 
-    async def test_non_admin_initiator_uses_engine_superuser_without_http(
-        self, db_session, monkeypatch
+    async def test_non_admin_initiator_uses_engine_superuser_over_socket(
+        self, async_session_factory, monkeypatch
     ):
-        """A workflow uses its engine superuser token regardless of initiator."""
+        """The socket authority is the engine token, not the child's claims."""
+        from src.core.security import mint_engine_token
+
         lines = [
             "from bifrost import users",
+            "from bifrost.client import get_engine_socket_path",
             "from bifrost._local_transport import get as _get_transport",
-            "import bifrost.users as _umod",
-            "_used_local = _get_transport() is not None",
-            "def _dead(*args, **kwargs):",
-            "    raise AssertionError(",
-            "        'fixed-operation HTTP must not be used in the engine path'",
-            "    )",
-            "_umod.get_client = _dead",
+            "_used_socket = get_engine_socket_path() is not None",
+            "_used_channel = _get_transport() is not None",
             "_listed = await users.list()",
-            "result = {'used_local': _used_local, 'listed': isinstance(_listed, list)}",
+            "result = {",
+            "    'used_socket': _used_socket,",
+            "    'used_channel': _used_channel,",
+            "    'listed': isinstance(_listed, list),",
+            "}",
         ]
+        engine_token, _ = mint_engine_token(
+            execution_id="gate-c5d-users-fork-nonadmin",
+            solution_id=None,
+            global_repo_access=True,
+            timeout_seconds=120,
+        )
         context = _context_for(
-            _script_b64("\n".join(lines) + "\n"), admin=False
+            _script_b64("\n".join(lines) + "\n"),
+            engine_token,
+            is_platform_admin=False,
         )
         monkeypatch.setenv("BIFROST_API_URL", "http://127.0.0.1:9")
 
-        envelope = await _run_fork(context, db_session)
+        server = WorkerSdkHttpServer()
+        await server.start()
+        assert server.socket_path is not None
+        try:
+            envelope = await _run_socket_fork(server, context)
+        finally:
+            await server.stop()
+
         assert envelope["success"] is True, envelope
         result = envelope["result"]
-        assert result["used_local"] is True, result
+        assert result["used_socket"] is True, result
+        assert result["used_channel"] is False, result
         assert result["listed"] is True, result

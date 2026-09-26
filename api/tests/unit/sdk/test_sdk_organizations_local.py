@@ -20,10 +20,10 @@ Covers the acceptance surface that does not need a forked child:
   deletion side effects (audit actor, cache updates/invalidation,
   provider-org protection, soft-disable) match HTTP;
 - child frame actor, org, and Solution claims can never grant access;
-- the SDK facades map local results to the public surface
-  (``Organization`` objects, ``ValueError`` on 404) and never fall back
-  to HTTP after a failed local call;
-- external callers (no transport) keep the HTTP path unchanged.
+- the SDK facades ride ``BifrostClient.engine_request`` with the exact
+  HTTP method/path/body and map statuses to the same public exceptions
+  (``Organization`` objects, ``ValueError`` on 404) with no network
+  fallback after a failed local call.
 """
 
 from __future__ import annotations
@@ -630,150 +630,94 @@ def _org_body(org_id=None, name="Facade Org"):
     }
 
 
-def _local_error(status, detail="denied"):
-    import httpx
-
-    from bifrost.client import raise_for_status_with_detail
-
-    request = httpx.Request("POST", "local://sdk/organizations/op")
-    response = httpx.Response(status, json={"detail": detail}, request=request)
-    try:
-        raise_for_status_with_detail(response)
-    except Exception as e:  # noqa: BLE001 - re-raised below by the fake
-        return e
-    raise AssertionError("unreachable")
+def _response(method, status, payload=None):
+    request = httpx.Request(method, "http://engine.local")
+    return httpx.Response(status, json=payload, request=request)
 
 
-@pytest.mark.asyncio
-async def test_facade_maps_local_results_and_404s():
-    from bifrost.organizations import organizations as organizations_facade
+class TestEngineRequestOrganizationsFacade:
+    """Gate C5d: the migrated organizations facade rides ``engine_request``.
 
-    body = _org_body()
-    transport = AsyncMock()
-    transport.call_organizations_create.return_value = body
-    transport.call_organizations_get.return_value = body
-    transport.call_organizations_list.return_value = [body]
-    transport.call_organizations_update.return_value = body
-    transport.call_organizations_delete.return_value = None
+    Each method sends the exact HTTP method/path/body the external path
+    used, so the socket-served and network calls stay identical; statuses
+    map to the same public exceptions with no silent fallback.
+    """
 
-    with patch("bifrost._local_transport.get", return_value=transport):
-        created = await organizations_facade.create(body["name"])
-        assert created.id == body["id"]
-        transport.call_organizations_create.assert_awaited_once_with(
-            body["name"], None, True
+    def _client(self, *responses):
+        client = AsyncMock()
+        client.engine_request = AsyncMock(side_effect=responses)
+        return client
+
+    @pytest.mark.asyncio
+    async def test_all_five_methods_use_exact_http_calls(self):
+        from bifrost.organizations import organizations as organizations_facade
+
+        body = _org_body()
+        client = self._client(
+            _response("POST", 201, body),
+            _response("GET", 200, body),
+            _response("GET", 200, [body]),
+            _response("PATCH", 200, body),
+            _response("DELETE", 204, None),
         )
+        with patch("bifrost.organizations.get_client", return_value=client):
+            created = await organizations_facade.create(
+                body["name"], domain="acme.com"
+            )
+            assert created.id == body["id"]
+            args, kwargs = client.engine_request.await_args_list[0]
+            assert args == ("POST", "/api/organizations")
+            assert kwargs["json"] == {
+                "name": body["name"],
+                "domain": "acme.com",
+                "is_active": True,
+            }
 
-        assert (await organizations_facade.get(body["id"])).id == body["id"]
-        transport.call_organizations_get.assert_awaited_once_with(body["id"])
+            assert (await organizations_facade.get(body["id"])).id == body["id"]
+            args, _ = client.engine_request.await_args_list[1]
+            assert args == ("GET", f"/api/organizations/{body['id']}")
 
-        listed = await organizations_facade.list()
-        assert [o.id for o in listed] == [body["id"]]
-        transport.call_organizations_list.assert_awaited_once_with()
+            listed = await organizations_facade.list()
+            assert [o.id for o in listed] == [body["id"]]
+            args, _ = client.engine_request.await_args_list[2]
+            assert args == ("GET", "/api/organizations")
 
-        updated = await organizations_facade.update(body["id"], name="New")
-        assert updated.id == body["id"]
-        transport.call_organizations_update.assert_awaited_once_with(
-            body["id"], {"name": "New"}
-        )
+            updated = await organizations_facade.update(body["id"], name="New")
+            assert updated.id == body["id"]
+            args, kwargs = client.engine_request.await_args_list[3]
+            assert args == ("PATCH", f"/api/organizations/{body['id']}")
+            assert kwargs["json"] == {"name": "New"}
 
-        assert await organizations_facade.delete(body["id"]) is True
-        transport.call_organizations_delete.assert_awaited_once_with(body["id"])
+            assert await organizations_facade.delete(body["id"]) is True
+            args, _ = client.engine_request.await_args_list[4]
+            assert args == ("DELETE", f"/api/organizations/{body['id']}")
 
-    for method, call in (
-        ("get", lambda m, rid: m.get(rid)),
-        ("update", lambda m, rid: m.update(rid, name="x")),
-        ("delete", lambda m, rid: m.delete(rid)),
-    ):
-        failing = AsyncMock()
-        getattr(failing, f"call_organizations_{method}").side_effect = _local_error(
-            404, "Organization not found"
-        )
-        with (
-            patch("bifrost._local_transport.get", return_value=failing),
-            pytest.raises(ValueError, match="Organization not found"),
+    @pytest.mark.asyncio
+    async def test_status_mapping_matches_http(self):
+        from bifrost.client import BifrostAPIError, BifrostAuthorizationError
+        from bifrost.organizations import organizations as organizations_facade
+
+        request = httpx.Request("GET", "http://engine.local/api/organizations/x")
+        for call in (
+            lambda m: m.get("missing"),
+            lambda m: m.update("missing", name="x"),
+            lambda m: m.delete("missing"),
         ):
-            await call(organizations_facade, str(uuid4()))
+            client = self._client(
+                httpx.Response(404, json={"detail": "x"}, request=request)
+            )
+            with patch("bifrost.organizations.get_client", return_value=client):
+                with pytest.raises(ValueError, match="Organization not found"):
+                    await call(organizations_facade)
 
-
-@pytest.mark.asyncio
-async def test_facade_never_falls_back_to_http():
-    """A failed local call raises loudly instead of retrying over HTTP."""
-    from bifrost._local_transport import LocalTransportClosed
-    from bifrost.organizations import organizations as organizations_facade
-
-    transport = AsyncMock()
-    transport.call_organizations_get.side_effect = LocalTransportClosed("closed")
-    with (
-        patch("bifrost._local_transport.get", return_value=transport),
-        patch(
-            "bifrost.organizations.get_client",
-            side_effect=AssertionError("HTTP fallback is forbidden"),
-        ),
-    ):
-        with pytest.raises(LocalTransportClosed):
-            await organizations_facade.get(str(uuid4()))
-
-
-@pytest.mark.asyncio
-async def test_facade_propagates_local_403_like_http():
-    """Local 403s surface as authorization errors — no silent mapping."""
-    from bifrost.client import BifrostAuthorizationError
-    from bifrost.organizations import organizations as organizations_facade
-
-    transport = AsyncMock()
-    transport.call_organizations_create.side_effect = _local_error(
-        403, "Superuser privileges required"
-    )
-    with patch("bifrost._local_transport.get", return_value=transport):
-        with pytest.raises(BifrostAuthorizationError):
-            await organizations_facade.create("denied")
-
-
-@pytest.mark.asyncio
-async def test_external_http_path_unchanged():
-    """Without a transport the facade keeps the HTTP calls."""
-    from bifrost.organizations import organizations as organizations_facade
-
-    body = _org_body()
-
-    def _response(method, status, payload=None):
-        request = httpx.Request(method, "http://test.local/api/organizations")
-        return httpx.Response(status, json=payload, request=request)
-
-    client = AsyncMock()
-    client.post.return_value = _response("POST", 201, body)
-    client.get.return_value = _response("GET", 200, body)
-
-    with (
-        patch("bifrost._local_transport.get", return_value=None),
-        patch("bifrost.organizations.get_client", return_value=client),
-    ):
-        created = await organizations_facade.create("Acme", domain="acme.com")
-        assert created.id == body["id"]
-        args, kwargs = client.post.await_args_list[0]
-        assert args[0] == "/api/organizations"
-        assert kwargs["json"] == {
-            "name": "Acme",
-            "domain": "acme.com",
-            "is_active": True,
-        }
-
-        assert (await organizations_facade.get(body["id"])).id == body["id"]
-
-        client.get.return_value = _response("GET", 200, [body])
-        listed = await organizations_facade.list()
-        assert [o.id for o in listed] == [body["id"]]
-
-        client._http.patch.return_value = _response("PATCH", 200, body)
-        updated = await organizations_facade.update(body["id"], name="N2")
-        assert updated.id == body["id"]
-        args, kwargs = client._http.patch.await_args_list[0]
-        assert args[0] == f"/api/organizations/{body['id']}"
-        assert kwargs["json"] == {"name": "N2"}
-
-        client.delete.return_value = _response("DELETE", 204, None)
-        assert await organizations_facade.delete(body["id"]) is True
-
-        client.get.return_value = _response("GET", 404, {"detail": "x"})
-        with pytest.raises(ValueError, match="Organization not found"):
-            await organizations_facade.get("missing")
+        # 403 (platform-admin gate) and 422 (DTO validation) surface as the
+        # same public exceptions as the external path.
+        client = self._client(
+            httpx.Response(403, json={"detail": "denied"}, request=request),
+            httpx.Response(422, json={"detail": "bad"}, request=request),
+        )
+        with patch("bifrost.organizations.get_client", return_value=client):
+            with pytest.raises(BifrostAuthorizationError):
+                await organizations_facade.create("denied")
+            with pytest.raises(BifrostAPIError):
+                await organizations_facade.list()

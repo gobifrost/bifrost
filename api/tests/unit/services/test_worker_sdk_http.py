@@ -38,10 +38,12 @@ from src.services.execution.worker_sdk_http import (
     FORM_ROUTE_METHODS,
     INTEGRATION_ROUTE_PATHS,
     KNOWLEDGE_ROUTE_PATHS,
+    ORGANIZATION_ROUTE_METHODS,
     PLATFORM_JOB_ROUTE_METHODS,
     SDK_ROUTE_PATHS,
     TABLE_ROUTE_METHODS,
     TABLE_SDK_ROUTE_PATHS,
+    USER_ROUTE_METHODS,
     WORKFLOW_ROUTE_METHODS,
     WorkerSdkHttpServer,
     build_worker_sdk_app,
@@ -155,8 +157,10 @@ class TestRouteReuse:
         from src.routers.executions import router as executions_router
         from src.routers.files import router as files_router
         from src.routers.forms import router as forms_router
+        from src.routers.organizations import router as organizations_router
         from src.routers.platform_jobs import router as platform_jobs_router
         from src.routers.tables import router as tables_router
+        from src.routers.users import router as users_router
         from src.routers.workflows import router as workflows_router
 
         cli_path_only = (
@@ -236,6 +240,18 @@ class TestRouteReuse:
             if (wanted := FORM_ROUTE_METHODS.get(getattr(route, "path", None)))
             for method in (getattr(route, "methods", None) or set()) & wanted
         }
+        organization_originals = {
+            (route.path, method): route
+            for route in organizations_router.routes
+            if (wanted := ORGANIZATION_ROUTE_METHODS.get(getattr(route, "path", None)))
+            for method in (getattr(route, "methods", None) or set()) & wanted
+        }
+        user_originals = {
+            (route.path, method): route
+            for route in users_router.routes
+            if (wanted := USER_ROUTE_METHODS.get(getattr(route, "path", None)))
+            for method in (getattr(route, "methods", None) or set()) & wanted
+        }
 
         app = build_worker_sdk_app()
         mounted = [route for route in app.router.routes if isinstance(route, APIRoute)]
@@ -293,6 +309,18 @@ class TestRouteReuse:
             if route.path in FORM_ROUTE_METHODS
             for method in route.methods
         }
+        mounted_organizations = {
+            (route.path, method): route
+            for route in mounted
+            if route.path in ORGANIZATION_ROUTE_METHODS
+            for method in route.methods
+        }
+        mounted_users = {
+            (route.path, method): route
+            for route in mounted
+            if route.path in USER_ROUTE_METHODS
+            for method in route.methods
+        }
 
         # Only the selected routes, and the exact registered objects — no
         # copied handlers and no rest of the API surface.
@@ -345,6 +373,16 @@ class TestRouteReuse:
         for key, route in mounted_forms.items():
             assert route is form_originals[key]
             assert route.endpoint is form_originals[key].endpoint
+
+        assert set(mounted_organizations) == set(organization_originals)
+        for key, route in mounted_organizations.items():
+            assert route is organization_originals[key]
+            assert route.endpoint is organization_originals[key].endpoint
+
+        assert set(mounted_users) == set(user_originals)
+        for key, route in mounted_users.items():
+            assert route is user_originals[key]
+            assert route.endpoint is user_originals[key].endpoint
 
         # The shared ``/api/tables/{table_id}`` path must not drag in its
         # GET/PATCH metadata siblings.
@@ -506,6 +544,34 @@ class TestRouteReuse:
             | set(EXECUTION_ROUTE_METHODS)
             | set(AGENT_RUN_ROUTE_METHODS)
             | set(EVENT_ROUTE_METHODS)
+        )
+
+    def test_organization_and_user_route_selection_is_exact(self):
+        """Gate C5d mounts only the five org and five user facade routes."""
+        assert ORGANIZATION_ROUTE_METHODS == {
+            "/api/organizations": frozenset({"GET", "POST"}),
+            "/api/organizations/{org_id}": frozenset({"GET", "PATCH", "DELETE"}),
+        }
+        assert USER_ROUTE_METHODS == {
+            "/api/users": frozenset({"GET", "POST"}),
+            "/api/users/{user_id}": frozenset({"GET", "PATCH", "DELETE"}),
+        }
+        assert set(ORGANIZATION_ROUTE_METHODS).isdisjoint(
+            SDK_ROUTE_PATHS
+            | set(WORKFLOW_ROUTE_METHODS)
+            | set(EXECUTION_ROUTE_METHODS)
+            | set(AGENT_RUN_ROUTE_METHODS)
+            | set(EVENT_ROUTE_METHODS)
+            | set(FORM_ROUTE_METHODS)
+        )
+        assert set(USER_ROUTE_METHODS).isdisjoint(
+            SDK_ROUTE_PATHS
+            | set(WORKFLOW_ROUTE_METHODS)
+            | set(EXECUTION_ROUTE_METHODS)
+            | set(AGENT_RUN_ROUTE_METHODS)
+            | set(EVENT_ROUTE_METHODS)
+            | set(FORM_ROUTE_METHODS)
+            | set(ORGANIZATION_ROUTE_METHODS)
         )
 
     @pytest.mark.asyncio
@@ -2347,3 +2413,221 @@ class TestEngineLocalEventsFormsFallback:
             await forms_mod.forms.list()
         with pytest.raises(httpx.ConnectError):
             await forms_mod.forms.get(str(uuid4()))
+
+
+class TestSocketOrganizationsUsers:
+    """Gate C5d: the socket serves the real organization/user routes."""
+
+    @pytest.mark.asyncio
+    async def test_organization_facade_over_socket(self, async_session_factory):
+        from src.models.orm.organizations import Organization as OrganizationModel
+
+        stem = f"wsdk-org-{uuid4().hex[:8]}"
+        headers = {"Authorization": f"Bearer {_engine_token()}"}
+        created_id: str | None = None
+        server = WorkerSdkHttpServer()
+        await server.start()
+        try:
+            async with _socket_client(server) as client:
+                created = await client.post(
+                    "/api/organizations",
+                    json={"name": stem, "domain": None, "is_active": True},
+                    headers=headers,
+                )
+                assert created.status_code == 201, created.text
+                created_id = created.json()["id"]
+
+                detail = await client.get(
+                    f"/api/organizations/{created_id}", headers=headers
+                )
+                assert detail.status_code == 200, detail.text
+                assert detail.json()["name"] == stem
+
+                listed = await client.get("/api/organizations", headers=headers)
+                assert listed.status_code == 200, listed.text
+                assert created_id in {o["id"] for o in listed.json()}
+
+                updated = await client.patch(
+                    f"/api/organizations/{created_id}",
+                    json={"name": f"{stem}-renamed"},
+                    headers=headers,
+                )
+                assert updated.status_code == 200, updated.text
+                assert updated.json()["name"] == f"{stem}-renamed"
+
+                deleted = await client.delete(
+                    f"/api/organizations/{created_id}", headers=headers
+                )
+                assert deleted.status_code == 204, deleted.text
+
+                # Soft delete: the detail still resolves, now inactive.
+                after = await client.get(
+                    f"/api/organizations/{created_id}", headers=headers
+                )
+                assert after.status_code == 200, after.text
+                assert after.json()["is_active"] is False
+
+                missing = await client.get(
+                    f"/api/organizations/{uuid4()}", headers=headers
+                )
+                assert missing.status_code == 404, missing.text
+                malformed = await client.get(
+                    "/api/organizations/not-a-uuid", headers=headers
+                )
+                assert malformed.status_code == 422, malformed.text
+        finally:
+            await server.stop()
+            if created_id is not None:
+                from sqlalchemy import delete
+                from uuid import UUID
+
+                async with async_session_factory() as session:
+                    await session.execute(
+                        delete(OrganizationModel).where(
+                            OrganizationModel.id == UUID(created_id)
+                        )
+                    )
+                    await session.commit()
+
+    @pytest.mark.asyncio
+    async def test_user_facade_over_socket(self, async_session_factory):
+        from sqlalchemy import delete
+
+        from src.models.orm.organizations import Organization as OrganizationModel
+        from src.models.orm.users import User as UserModel
+
+        stem = f"wsdk-user-{uuid4().hex[:8]}"
+        headers = {"Authorization": f"Bearer {_engine_token()}"}
+        user_id: str | None = None
+        org_id: str | None = None
+        server = WorkerSdkHttpServer()
+        await server.start()
+        try:
+            async with _socket_client(server) as client:
+                org = await client.post(
+                    "/api/organizations",
+                    json={"name": f"{stem}-org", "domain": None, "is_active": True},
+                    headers=headers,
+                )
+                assert org.status_code == 201, org.text
+                org_id = org.json()["id"]
+
+                created = await client.post(
+                    "/api/users",
+                    json={
+                        "email": f"{stem}@example.com",
+                        "name": "Socket User",
+                        "is_superuser": False,
+                        "is_active": True,
+                        "organization_id": org_id,
+                    },
+                    headers=headers,
+                )
+                assert created.status_code == 201, created.text
+                user_id = created.json()["id"]
+
+                detail = await client.get(f"/api/users/{user_id}", headers=headers)
+                assert detail.status_code == 200, detail.text
+                assert detail.json()["email"] == f"{stem}@example.com"
+
+                scoped = await client.get(
+                    "/api/users", params={"scope": org_id}, headers=headers
+                )
+                assert scoped.status_code == 200, scoped.text
+                assert user_id in {u["id"] for u in scoped.json()}
+
+                updated = await client.patch(
+                    f"/api/users/{user_id}",
+                    json={"name": "Socket Renamed"},
+                    headers=headers,
+                )
+                assert updated.status_code == 200, updated.text
+                assert updated.json()["name"] == "Socket Renamed"
+
+                malformed = await client.patch(
+                    f"/api/users/{user_id}",
+                    json={"is_active": "not-a-bool"},
+                    headers=headers,
+                )
+                assert malformed.status_code == 422, malformed.text
+
+                deleted = await client.delete(
+                    f"/api/users/{user_id}", headers=headers
+                )
+                assert deleted.status_code == 204, deleted.text
+                user_id = None
+
+                missing = await client.get(f"/api/users/{uuid4()}", headers=headers)
+                assert missing.status_code == 404, missing.text
+        finally:
+            await server.stop()
+            async with async_session_factory() as session:
+                from uuid import UUID
+
+                if user_id is not None:
+                    await session.execute(
+                        delete(UserModel).where(UserModel.id == UUID(user_id))
+                    )
+                if org_id is not None:
+                    await session.execute(
+                        delete(OrganizationModel).where(
+                            OrganizationModel.id == UUID(org_id)
+                        )
+                    )
+                await session.commit()
+
+    @pytest.mark.asyncio
+    async def test_organizations_and_users_require_auth_over_socket(self):
+        server = WorkerSdkHttpServer()
+        await server.start()
+        try:
+            async with _socket_client(server) as client:
+                missing_list = await client.get("/api/organizations")
+                missing_create = await client.post(
+                    "/api/organizations", json={"name": "nope"}
+                )
+                missing_user_list = await client.get("/api/users")
+                invalid_get = await client.get(
+                    f"/api/users/{uuid4()}",
+                    headers={"Authorization": "Bearer not-a-token"},
+                )
+            assert missing_list.status_code == 401, missing_list.text
+            assert missing_create.status_code == 401, missing_create.text
+            assert missing_user_list.status_code == 401, missing_user_list.text
+            assert invalid_get.status_code == 401, invalid_get.text
+        finally:
+            await server.stop()
+
+
+class TestEngineLocalOrganizationsUsersFallback:
+    """A failed org/user socket request never replays over the network API."""
+
+    @pytest.mark.asyncio
+    async def test_organizations_users_local_failure_does_not_fall_back(
+        self, monkeypatch
+    ):
+        import importlib
+
+        import bifrost.client as client_module
+
+        organizations_mod = importlib.import_module("bifrost.organizations")
+        users_mod = importlib.import_module("bifrost.users")
+
+        # Prove no network fallback, not how long the transient backoff runs:
+        # collapse the retry schedule so each request makes one local attempt.
+        monkeypatch.setattr(client_module, "SDK_RETRY_BACKOFF_SECONDS", ())
+
+        missing_socket = os.path.join(
+            "/tmp", f"bifrost-missing-{uuid4().hex}.sock"
+        )
+        _install_engine_socket(missing_socket)
+        _set_client(BifrostClient("http://dead-api", "token"))
+
+        with pytest.raises(httpx.ConnectError):
+            await organizations_mod.organizations.list()
+        with pytest.raises(httpx.ConnectError):
+            await organizations_mod.organizations.get(str(uuid4()))
+        with pytest.raises(httpx.ConnectError):
+            await users_mod.users.list()
+        with pytest.raises(httpx.ConnectError):
+            await users_mod.users.get(str(uuid4()))

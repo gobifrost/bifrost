@@ -26,8 +26,10 @@ Gate C5a adds the workflow facade routes
 (list/execute/cancel) and execution-history routes (list/get), Gate C5b
 adds the SDK agent-run routes (enqueue/get), and Gate C5c adds the topic
 emit route (``events.emit``) plus the form read routes (``forms.list`` /
-``forms.get``). Streams and other domains stay on their existing channel
-path until their own Gate C slice migrates them.
+``forms.get``). Gate C5d adds the organization facade routes
+(create/get/list/update/delete) and the user facade routes
+(list/get/create/update/delete). Streams and other domains stay on their
+existing channel path until their own Gate C slice migrates them.
 
 ``import fastapi``/``uvicorn`` happen inside the functions so the worker
 entry closure stays free of those heavyweights at import time (see
@@ -220,6 +222,25 @@ FORM_ROUTE_METHODS: dict[str, frozenset[str]] = {
     "/api/forms/{form_id}": frozenset({"GET"}),
 }
 
+# Gate C5d: the SDK organization facade routes, selected from
+# ``src.routers.organizations`` by path AND method. The list and create share
+# ``/api/organizations``; the get/update/delete share
+# ``/api/organizations/{org_id}``. No sibling paths are mounted.
+ORGANIZATION_ROUTE_METHODS: dict[str, frozenset[str]] = {
+    "/api/organizations": frozenset({"GET", "POST"}),
+    "/api/organizations/{org_id}": frozenset({"GET", "PATCH", "DELETE"}),
+}
+
+# Gate C5d: the SDK user facade routes, selected from ``src.routers.users`` by
+# path AND method. The list and create share ``/api/users``; the
+# get/update/delete share ``/api/users/{user_id}``. The bulk, roles, forms,
+# invite, and password siblings (including the ``/{user_id}/...`` child paths)
+# stay on the API.
+USER_ROUTE_METHODS: dict[str, frozenset[str]] = {
+    "/api/users": frozenset({"GET", "POST"}),
+    "/api/users/{user_id}": frozenset({"GET", "PATCH", "DELETE"}),
+}
+
 # Every route path this worker-local app serves from the cli SDK router.
 # Other SDK domains keep their existing channel path until their Gate C
 # slice migrates them.
@@ -247,8 +268,10 @@ def build_worker_sdk_app() -> Any:
     from src.routers.executions import router as executions_router
     from src.routers.files import router as files_router
     from src.routers.forms import router as forms_router
+    from src.routers.organizations import router as organizations_router
     from src.routers.platform_jobs import router as platform_jobs_router
     from src.routers.tables import router as tables_router
+    from src.routers.users import router as users_router
     from src.routers.workflows import router as workflows_router
 
     app = FastAPI(
@@ -395,6 +418,35 @@ def build_worker_sdk_app() -> Any:
             selected += 1
     expected += sum(
         len(methods) for methods in FORM_ROUTE_METHODS.values()
+    )
+
+    # The SDK organization and user facade routes are selected by
+    # (path, method) from their real routers. Both routers share one path
+    # across several methods, and the users router carries bulk/roles/forms/
+    # invite/password siblings (including ``/{user_id}/...`` child paths), so
+    # the exact method set matters.
+    for route in organizations_router.routes:
+        wanted = ORGANIZATION_ROUTE_METHODS.get(
+            getattr(route, "path", None), frozenset()
+        )
+        methods = getattr(route, "methods", None) or frozenset()
+        if wanted and methods & wanted:
+            app.router.routes.append(route)
+            selected += 1
+    expected += sum(
+        len(methods) for methods in ORGANIZATION_ROUTE_METHODS.values()
+    )
+
+    for route in users_router.routes:
+        wanted = USER_ROUTE_METHODS.get(
+            getattr(route, "path", None), frozenset()
+        )
+        methods = getattr(route, "methods", None) or frozenset()
+        if wanted and methods & wanted:
+            app.router.routes.append(route)
+            selected += 1
+    expected += sum(
+        len(methods) for methods in USER_ROUTE_METHODS.values()
     )
 
     if selected != expected:
