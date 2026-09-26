@@ -44,7 +44,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from queue import Empty
-from typing import Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 import psutil
 import redis.asyncio as redis
@@ -65,6 +65,9 @@ from src.services.execution.sdk_local_dispatch import (
 )
 from src.services.notification_service import get_notification_service
 from src.services.execution.template_process import TemplateProcess
+
+if TYPE_CHECKING:
+    from src.services.execution.worker_sdk_http import WorkerSdkHttpServer
 
 logger = logging.getLogger(__name__)
 
@@ -493,6 +496,11 @@ class ProcessPoolManager:
         # Template process for fork-based workers
         self._template: TemplateProcess | None = None
 
+        # Worker-local engine SDK HTTP server (Gate A). Serves the existing
+        # SDK routes on a private Unix socket; children send ordinary HTTP
+        # requests to it. None until start(), None again after stop().
+        self._sdk_http: WorkerSdkHttpServer | None = None
+
         # Serializes drain_and_restart_template so concurrent package
         # installs don't race — the second call waits for the first to
         # finish rather than trying to fork while the template is down.
@@ -727,6 +735,9 @@ class ProcessPoolManager:
             with_sdk=True,
             with_import=True,
             with_stream=True,
+            sdk_socket_path=(
+                self._sdk_http.socket_path if self._sdk_http is not None else None
+            ),
         )
 
         handle = ProcessHandle(
@@ -1019,6 +1030,21 @@ class ProcessPoolManager:
         # Start template process (loads deps, ready to fork)
         await self._start_template()
 
+        # Start the worker-local engine SDK HTTP server before any fork so
+        # every child is handed the socket path. The worker parent owns the
+        # pooled DB engine and the protected credentials; children make
+        # ordinary HTTP requests over this private socket instead of the
+        # network API.
+        from src.services.execution.worker_sdk_http import WorkerSdkHttpServer
+
+        sdk_http = WorkerSdkHttpServer()
+        try:
+            await sdk_http.start()
+        except BaseException:
+            await sdk_http.stop()
+            raise
+        self._sdk_http = sdk_http
+
         # Register in Redis
         await self._register_worker()
 
@@ -1102,6 +1128,12 @@ class ProcessPoolManager:
         if self._template is not None:
             self._template.shutdown()
             self._template = None
+
+        # Stop serving the worker-local SDK socket and remove it. Children
+        # are already dead, so no request can be in flight.
+        if self._sdk_http is not None:
+            await self._sdk_http.stop()
+            self._sdk_http = None
 
         # Unregister from Redis
         await self._unregister_worker()

@@ -10,7 +10,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from .client import get_client, raise_for_status_with_detail
+from .client import (
+    get_client,
+    get_engine_socket_path,
+    raise_for_status_with_detail,
+)
 from .models import ConfigData
 from ._context import resolve_scope
 from ._local_transport import get as _get_local_transport
@@ -35,9 +39,11 @@ class config:
         """
         Get configuration value with automatic secret decryption.
 
-        Inside an engine child this resolves through the parent over the
-        dedicated local transport (same service as the HTTP endpoint);
-        elsewhere it calls the SDK API endpoint.
+        Inside an engine child this sends the ordinary HTTP request over the
+        worker's private Unix socket (the client's shared transport) when the
+        engine injected one, otherwise it uses the older local channel, and
+        elsewhere it calls the SDK API endpoint over the network. Every path
+        reaches the same service.
 
         Args:
             key: Configuration key
@@ -65,31 +71,32 @@ class config:
         """
         effective_scope = resolve_scope(scope)
         transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: the parent resolves this through the shared
-            # config service over the dedicated channel. Checked before the
-            # client is used, so the local path never needs credentials and
-            # a local attempt never falls back to HTTP — failures raise
-            # loudly below.
+        if transport is not None and get_engine_socket_path() is None:
+            # Older local channel, still used for the SDK methods not yet
+            # migrated to the socket (config.set/list/delete, etc.) and for
+            # engine children whose worker does not serve a socket. Checked
+            # before the client is used, so the local path never needs
+            # credentials and never falls back to HTTP — failures raise loudly.
             result = await transport.call_config_get(key, effective_scope)
-            if result is None:
-                return default
-            value = result.get("value", default)
-            if result.get("config_type") == "secret" and isinstance(value, str):
-                from ._context import register_secret
-                register_secret(value)
-            return value
-        client = get_client()
-        response = await client.post(
-            "/api/sdk/config/get",
-            json={"key": key, "scope": effective_scope}
-        )
+        else:
+            # Engine-local path: the shared BifrostClient sends the ordinary
+            # HTTP request over the worker's private Unix socket when the
+            # engine injected one, and over the network otherwise. Same path,
+            # body, bearer token, timeout, and error handling as every other
+            # SDK request; a local failure raises and never falls back to the
+            # network API.
+            client = get_client()
+            response = await client.engine_request(
+                "POST",
+                "/api/sdk/config/get",
+                json={"key": key, "scope": effective_scope},
+            )
+            # A missing key comes back as 200 with a null body; anything else
+            # (permission denied, server error, transport) must surface, not
+            # be silently collapsed into the caller's default.
+            raise_for_status_with_detail(response)
+            result = response.json()
 
-        # A missing key comes back as 200 with a null body; anything else
-        # (permission denied, server error, transport) must surface, not be
-        # silently collapsed into the caller's default.
-        raise_for_status_with_detail(response)
-        result = response.json()
         if result is None:
             return default
         value = result.get("value", default)

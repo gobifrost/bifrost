@@ -327,9 +327,10 @@ def _template_main(
             with_sdk = bool(cmd.get("with_sdk", False))
             with_import = bool(cmd.get("with_import", False))
             with_stream = bool(cmd.get("with_stream", False))
+            sdk_socket_path = cmd.get("sdk_socket_path")
             _handle_fork_request(
                 pipe, worker_id, persistent, work_recv, result_send,
-                with_sdk, with_import, with_stream,
+                with_sdk, with_import, with_stream, sdk_socket_path,
             )
 
     logger.info("Template process exiting")
@@ -363,6 +364,7 @@ def _handle_fork_request(
     with_sdk: bool = False,
     with_import: bool = False,
     with_stream: bool = False,
+    sdk_socket_path: str | None = None,
 ) -> None:
     """
     Handle a fork request: fork and wire up pre-created pipe connections.
@@ -410,6 +412,8 @@ def _handle_fork_request(
         with_sdk: If True, create a dedicated local-SDK channel for the child.
         with_import: If True, create a dedicated local import channel.
         with_stream: If True, create a dedicated local stream channel.
+        sdk_socket_path: Worker-local Unix socket the child should use for
+            engine SDK HTTP calls, or None when no socket is served.
     """
     sdk_req_recv: Connection | None = None
     sdk_req_send: Connection | None = None
@@ -510,6 +514,7 @@ def _handle_fork_request(
             sdk_req_send=sdk_req_send, sdk_resp_recv=sdk_resp_recv,
             imp_req_send=imp_req_send, imp_resp_recv=imp_resp_recv,
             stream_req_send=stream_req_send, stream_resp_recv=stream_resp_recv,
+            sdk_socket_path=sdk_socket_path,
         )
         os._exit(0)
 
@@ -525,6 +530,7 @@ def _run_forked_child(
     imp_resp_recv: Connection | None = None,
     stream_req_send: Connection | None = None,
     stream_resp_recv: Connection | None = None,
+    sdk_socket_path: str | None = None,
 ) -> None:
     """
     Entry point for a forked child process.
@@ -568,6 +574,9 @@ def _run_forked_child(
         imp_resp_recv: Read end of the import response pipe (parent → child).
         stream_req_send: Write end of the stream request pipe (child → parent).
         stream_resp_recv: Read end of the stream response pipe (parent → child).
+        sdk_socket_path: Worker-local Unix socket for engine SDK HTTP calls,
+            injected only by the worker parent. When present the child sends
+            the ordinary HTTP request over it instead of the network API.
     """
     # Reconfigure logging for this child
     logging.basicConfig(
@@ -584,7 +593,11 @@ def _run_forked_child(
     from bifrost._import_transport import install as _install_import_transport
     from bifrost._stream_transport import clear as _clear_stream_transport
     from bifrost._stream_transport import install as _install_stream_transport
+    from bifrost.client import _clear_engine_socket, _install_engine_socket
 
+    if sdk_socket_path is not None:
+        _install_engine_socket(sdk_socket_path)
+        logger.info(f"Forked worker {worker_id} using engine-local SDK socket")
     if sdk_req_send is not None and sdk_resp_recv is not None:
         _install_local_transport(sdk_req_send, sdk_resp_recv)
         logger.info(f"Forked worker {worker_id} using engine-local SDK transport")
@@ -712,6 +725,7 @@ def _run_forked_child(
     _clear_local_transport()
     _clear_import_transport()
     _clear_stream_transport()
+    _clear_engine_socket()
     for _conn in (sdk_req_send, sdk_resp_recv, imp_req_send, imp_resp_recv,
                   stream_req_send, stream_resp_recv):
         if _conn is None:
@@ -817,6 +831,8 @@ class TemplateProcess:
         persistent: bool = False,
         with_sdk: Literal[False] = False,
         with_import: Literal[False] = False,
+        *,
+        sdk_socket_path: str | None = None,
     ) -> tuple[int, _SendQueue, _RecvQueue]:
         ...
 
@@ -827,6 +843,8 @@ class TemplateProcess:
         persistent: bool = False,
         with_sdk: Literal[True] = True,
         with_import: Literal[False] = False,
+        *,
+        sdk_socket_path: str | None = None,
     ) -> tuple[int, _SendQueue, _RecvQueue, Any, Any]:
         ...
 
@@ -837,6 +855,8 @@ class TemplateProcess:
         persistent: bool = False,
         with_sdk: Literal[False] = False,
         with_import: Literal[True] = True,
+        *,
+        sdk_socket_path: str | None = None,
     ) -> tuple[int, _SendQueue, _RecvQueue, Any, Any]:
         ...
 
@@ -847,6 +867,8 @@ class TemplateProcess:
         persistent: bool = False,
         with_sdk: bool = True,
         with_import: bool = True,
+        *,
+        sdk_socket_path: str | None = None,
     ) -> tuple[int, _SendQueue, _RecvQueue, Any, Any, Any, Any]:
         ...
 
@@ -858,6 +880,8 @@ class TemplateProcess:
         with_sdk: bool = True,
         with_import: bool = True,
         with_stream: Literal[True] = True,
+        *,
+        sdk_socket_path: str | None = None,
     ) -> tuple[int, _SendQueue, _RecvQueue, Any, Any, Any, Any, Any, Any]:
         ...
 
@@ -869,6 +893,8 @@ class TemplateProcess:
         with_sdk: Literal[False] = False,
         with_import: Literal[False] = False,
         with_stream: Literal[True] = True,
+        *,
+        sdk_socket_path: str | None = None,
     ) -> tuple[int, _SendQueue, _RecvQueue, Any, Any]:
         ...
 
@@ -879,6 +905,8 @@ class TemplateProcess:
         with_sdk: bool = False,
         with_import: bool = False,
         with_stream: bool = False,
+        *,
+        sdk_socket_path: str | None = None,
     ) -> (
         tuple[int, _SendQueue, _RecvQueue]
         | tuple[int, _SendQueue, _RecvQueue, Any, Any]
@@ -921,6 +949,9 @@ class TemplateProcess:
             with_sdk: If True, also wire a dedicated local-SDK channel.
             with_import: If True, also wire a dedicated local import channel.
             with_stream: If True, also wire a dedicated local stream channel.
+            sdk_socket_path: Worker-local Unix socket for engine SDK HTTP
+                calls, forwarded to the child at fork. None when the worker
+                serves no socket.
 
         Returns:
             ``(child_pid, work_queue, result_queue)``, or with ``with_sdk``
@@ -964,6 +995,7 @@ class TemplateProcess:
                 "with_sdk": with_sdk,
                 "with_import": with_import,
                 "with_stream": with_stream,
+                "sdk_socket_path": sdk_socket_path,
             })
 
             # Close child-side connections on our end after sending

@@ -36,6 +36,21 @@ logger = logging.getLogger(__name__)
 # Global client injection for platform mode
 _injected_client: Optional["BifrostClient"] = None
 
+# Trusted engine-local Unix-socket transport.
+#
+# The worker parent injects this path into each execution child over the
+# fork command. It is never developer-set and never read from configuration.
+# The client builds ordinary sync/async HTTPX clients against the socket and
+# exposes them through the single :meth:`BifrostClient.engine_request` entry
+# point; every other request keeps the network client. A local attempt never
+# falls back to the network API.
+_engine_socket_path: str | None = None
+
+# Placeholder authority for engine-local requests. The Unix-socket transport
+# ignores the host, but HTTPX needs an ``http`` base URL so it never attempts
+# a TLS handshake on the socket (which an ``https`` base URL would).
+_ENGINE_SOCKET_BASE_URL = "http://bifrost-engine"
+
 
 class BifrostAPIError(httpx.HTTPStatusError):
     """An authenticated Bifrost API request returned a non-success status."""
@@ -569,6 +584,16 @@ class BifrostClient:
             headers={"Authorization": f"Bearer {access_token}"},
             timeout=30.0,
         )
+        # Engine-local Unix-socket transport, built lazily from the trusted
+        # worker injection and kept separate from the network clients above.
+        # Only :meth:`engine_request` / :meth:`engine_request_sync` use these;
+        # the recorded socket path lets a client rebuild if the injection
+        # changes.
+        self._engine_http: httpx.AsyncClient | None = None
+        self._engine_http_loop: asyncio.AbstractEventLoop | None = None
+        self._engine_http_path: str | None = None
+        self._engine_sync_http: httpx.Client | None = None
+        self._engine_sync_http_path: str | None = None
         self._context: dict[str, Any] | None = None
 
     def _get_async_client(self) -> httpx.AsyncClient:
@@ -600,6 +625,84 @@ class BifrostClient:
             self._http_loop = current_loop
 
         return self._http
+
+    def _get_engine_async_client(self) -> httpx.AsyncClient:
+        """Async HTTPX client bound to the trusted worker Unix socket.
+
+        Built lazily and cached per event loop (and per injected socket path),
+        exactly like :meth:`_get_async_client`, so concurrent async SDK calls
+        and streaming share one connection pool instead of constructing a new
+        client per request. Raises when no socket is injected: an opted-in
+        local request never silently falls back to the network API.
+        """
+        socket_path = _engine_socket_path
+        if socket_path is None:
+            raise RuntimeError(
+                "engine socket transport is not installed; refusing to send "
+                "an engine-local request without the trusted worker injection"
+            )
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No running loop - create client anyway, it will bind when first used
+            current_loop = None
+        if (
+            self._engine_http is None
+            or self._engine_http_path != socket_path
+            or (current_loop is not None and self._engine_http_loop != current_loop)
+        ):
+            self._engine_http = httpx.AsyncClient(
+                base_url=_ENGINE_SOCKET_BASE_URL,
+                transport=httpx.AsyncHTTPTransport(uds=socket_path),
+                headers={"Authorization": f"Bearer {self._access_token}"},
+                timeout=30.0,
+            )
+            self._engine_http_loop = current_loop
+            self._engine_http_path = socket_path
+        return self._engine_http
+
+    def _get_engine_sync_client(self) -> httpx.Client:
+        """Synchronous HTTPX client bound to the trusted worker Unix socket.
+
+        Mirrors :meth:`_get_engine_async_client` for the sync SDK surface (cold
+        module import and client context reads). Raises when no socket is
+        injected so an opted-in local request never falls back to the network.
+        """
+        socket_path = _engine_socket_path
+        if socket_path is None:
+            raise RuntimeError(
+                "engine socket transport is not installed; refusing to send "
+                "an engine-local request without the trusted worker injection"
+            )
+        if self._engine_sync_http is None or self._engine_sync_http_path != socket_path:
+            if self._engine_sync_http is not None:
+                self._engine_sync_http.close()
+            self._engine_sync_http = httpx.Client(
+                base_url=_ENGINE_SOCKET_BASE_URL,
+                transport=httpx.HTTPTransport(uds=socket_path),
+                headers={"Authorization": f"Bearer {self._access_token}"},
+                timeout=30.0,
+            )
+            self._engine_sync_http_path = socket_path
+        return self._engine_sync_http
+
+    def _async_http_for(self, *, engine_local: bool) -> httpx.AsyncClient:
+        """Pick the network or engine-local async client for one request.
+
+        ``engine_local`` selects the trusted worker socket when one is
+        injected. With no injection this is not an engine child, so the normal
+        network client is correct; once injected, transport failures raise
+        instead of being replayed over the network.
+        """
+        if engine_local and _engine_socket_path is not None:
+            return self._get_engine_async_client()
+        return self._get_async_client()
+
+    def _sync_http_for(self, *, engine_local: bool) -> httpx.Client:
+        """Synchronous counterpart to :meth:`_async_http_for`."""
+        if engine_local and _engine_socket_path is not None:
+            return self._get_engine_sync_client()
+        return self._sync_http
 
     @classmethod
     def get_instance(
@@ -799,6 +902,16 @@ class BifrostClient:
         self._http = None
         self._http_loop = None
         self._sync_http.headers["Authorization"] = f"Bearer {access_token}"
+        # Engine-local clients carry the same bearer token; drop them rather
+        # than mutate so an in-flight local request cannot observe a
+        # half-updated header. They rebuild lazily from the new token.
+        self._engine_http = None
+        self._engine_http_loop = None
+        self._engine_http_path = None
+        if self._engine_sync_http is not None:
+            self._engine_sync_http.close()
+            self._engine_sync_http = None
+            self._engine_sync_http_path = None
 
     async def refresh_access_token(
         self, observed_access_token: str | None = None
@@ -828,24 +941,41 @@ class BifrostClient:
         return True
 
     def _request_with_refresh_sync(
-        self, method: str, path: str, **kwargs
+        self, method: str, path: str, *, engine_local: bool = False, **kwargs
     ) -> httpx.Response:
-        """Make a synchronous request, refreshing on 401 and retrying once."""
+        """Make a synchronous request, refreshing on 401 and retrying once.
+
+        ``engine_local=True`` sends the request over the trusted worker Unix
+        socket when one is injected. A local attempt never falls back to the
+        network API, and no network token refresh is attempted for it: the
+        child's engine token is handed to the process and is not refreshable
+        from the child.
+        """
         retry_transient = kwargs.pop("retry_transient", False)
+        use_engine = engine_local and _engine_socket_path is not None
 
         def _send() -> httpx.Response:
+            http = self._sync_http_for(engine_local=engine_local)
             observed_access_token = self._access_token
-            response = self._sync_http.request(method.upper(), path, **kwargs)
-            if response.status_code == 401 and self._refresh_and_update_sync(
-                observed_access_token
+            response = http.request(method.upper(), path, **kwargs)
+            if (
+                not use_engine
+                and response.status_code == 401
+                and self._refresh_and_update_sync(observed_access_token)
             ):
                 response = self._sync_http.request(method.upper(), path, **kwargs)
             return response
 
         return _send_sync_with_retry(method, _send, retry_transient=retry_transient)
 
-    async def _request_with_refresh(self, method: str, path: str, **kwargs) -> httpx.Response:
+    async def _request_with_refresh(
+        self, method: str, path: str, *, engine_local: bool = False, **kwargs
+    ) -> httpx.Response:
         """Make an HTTP request, refreshing token on 401 and retrying once.
+
+        ``engine_local=True`` sends the request over the trusted worker Unix
+        socket when one is injected (see
+        :meth:`_request_with_refresh_sync` for the no-fallback contract).
 
         Wrapped with :func:`_send_with_retry` so idempotent methods (or callers passing
         ``retry_transient=True``) retry transient 502/503/504 and transport errors during rolling API deploys. The 401-refresh-retry
@@ -853,18 +983,44 @@ class BifrostClient:
         the outer retry.
         """
         retry_transient = kwargs.pop("retry_transient", False)
+        use_engine = engine_local and _engine_socket_path is not None
 
         async def _send() -> httpx.Response:
-            http = self._get_async_client()
+            http = self._async_http_for(engine_local=engine_local)
             observed_access_token = self._access_token
             response = await getattr(http, method)(path, **kwargs)
-            if response.status_code == 401:
-                if await self._refresh_and_update(observed_access_token):
-                    http = self._get_async_client()
-                    response = await getattr(http, method)(path, **kwargs)
+            if (
+                not use_engine
+                and response.status_code == 401
+                and await self._refresh_and_update(observed_access_token)
+            ):
+                http = self._get_async_client()
+                response = await getattr(http, method)(path, **kwargs)
             return response
 
         return await _send_with_retry(method, _send, retry_transient=retry_transient)
+
+    async def engine_request(
+        self, method: str, path: str, **kwargs
+    ) -> httpx.Response:
+        """Send one request over the injected engine-local transport.
+
+        Single engine-local entry point for SDK facades: it resolves the
+        transport once (the worker Unix socket when the engine injected one,
+        the ordinary network client otherwise) and is otherwise identical to
+        :meth:`request` in retry, error, and public-exception behavior. A local
+        attempt never falls back to the network API and does not attempt a
+        network token refresh.
+        """
+        return await self._request_with_refresh(
+            method.lower(), path, engine_local=True, **kwargs
+        )
+
+    def engine_request_sync(self, method: str, path: str, **kwargs) -> httpx.Response:
+        """Synchronous counterpart to :meth:`engine_request`."""
+        return self._request_with_refresh_sync(
+            method, path, engine_local=True, **kwargs
+        )
 
     async def get(self, path: str, **kwargs) -> httpx.Response:
         """Make GET request."""
@@ -940,7 +1096,11 @@ class BifrostClient:
         """Close HTTP clients."""
         if self._http is not None:
             await self._http.aclose()
+        if self._engine_http is not None:
+            await self._engine_http.aclose()
         self._sync_http.close()
+        if self._engine_sync_http is not None:
+            self._engine_sync_http.close()
 
 
 def _set_client(client: BifrostClient) -> None:
@@ -999,3 +1159,25 @@ def has_credentials() -> bool:
     """
     creds = get_credentials()
     return creds is not None
+
+
+def _install_engine_socket(path: str) -> None:
+    """Install the trusted worker socket path for this child (engine start).
+
+    Called by the execution engine in the forked child before user code
+    runs. There is no user-facing flag: outside this injection the socket
+    transport is absent and the SDK uses its normal transport.
+    """
+    global _engine_socket_path
+    _engine_socket_path = path or None
+
+
+def _clear_engine_socket() -> None:
+    """Drop the injected worker socket path at engine teardown."""
+    global _engine_socket_path
+    _engine_socket_path = None
+
+
+def get_engine_socket_path() -> str | None:
+    """Return the injected worker socket path, or None when not injected."""
+    return _engine_socket_path
