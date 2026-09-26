@@ -4,19 +4,13 @@ Bifrost API - FastAPI Application
 Main entry point for the FastAPI application.
 """
 
-import asyncio
 import logging
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
-from fastapi import FastAPI, Request
-from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
-from pydantic import ValidationError as PydanticValidationError
-from sqlalchemy.exc import IntegrityError, NoResultFound, OperationalError
+from fastapi import FastAPI
 
 from src.config import get_settings
-from src.models.contracts.common import ErrorResponse
 from src.core.csrf import CSRFMiddleware
 from src.core.embed_middleware import EmbedScopeMiddleware
 from src.core.request_body_limit import RouteBodyLimitMiddleware
@@ -336,138 +330,11 @@ def create_app() -> FastAPI:
     # ==========================================================================
     # Global Exception Handlers
     # ==========================================================================
-    # These provide consistent error responses using the ErrorResponse model.
-    # Handlers are registered in order of specificity (most specific first).
+    # Shared with the worker-local engine SDK app so SDK calls over the
+    # worker's Unix socket map errors exactly like HTTP.
+    from src.core.app_wiring import register_exception_handlers
 
-    @app.exception_handler(RequestValidationError)
-    async def request_validation_handler(
-        request: Request, exc: RequestValidationError
-    ) -> JSONResponse:
-        """Request validation errors (bad input) → 422 with concise messages."""
-        messages = []
-        for err in exc.errors():
-            field = ".".join(str(p) for p in err["loc"] if p != "body")
-            messages.append(f"{field}: {err['msg']}")
-        return JSONResponse(
-            status_code=422,
-            content=ErrorResponse(
-                error="validation_error",
-                message="; ".join(messages),
-            ).model_dump(),
-        )
-
-    @app.exception_handler(PydanticValidationError)
-    async def pydantic_validation_handler(
-        request: Request, exc: PydanticValidationError
-    ) -> JSONResponse:
-        """Pydantic model validation errors → 422."""
-        errors = exc.errors()
-        # Extract field names and messages for user-friendly output
-        field_errors = {
-            ".".join(str(loc) for loc in e["loc"]): e["msg"] for e in errors
-        }
-        return JSONResponse(
-            status_code=422,
-            content=ErrorResponse(
-                error="validation_error",
-                message="Validation failed",
-                details={"fields": field_errors},
-            ).model_dump(),
-        )
-
-    @app.exception_handler(IntegrityError)
-    async def integrity_error_handler(
-        request: Request, exc: IntegrityError
-    ) -> JSONResponse:
-        """Database constraint violations → 409."""
-        detail = str(exc.orig) if exc.orig else str(exc)
-
-        if "unique" in detail.lower() or "duplicate" in detail.lower():
-            message = "Resource already exists"
-        elif "foreign key" in detail.lower():
-            message = "Referenced resource not found"
-        else:
-            message = "Database constraint violation"
-
-        logger.warning(f"IntegrityError: {detail}")
-        return JSONResponse(
-            status_code=409,
-            content=ErrorResponse(
-                error="conflict",
-                message=message,
-            ).model_dump(),
-        )
-
-    @app.exception_handler(NoResultFound)
-    async def no_result_handler(
-        request: Request, exc: NoResultFound
-    ) -> JSONResponse:
-        """Query returned no results → 404."""
-        return JSONResponse(
-            status_code=404,
-            content=ErrorResponse(
-                error="not_found",
-                message="Resource not found",
-            ).model_dump(),
-        )
-
-    @app.exception_handler(ValueError)
-    async def value_error_handler(
-        request: Request, exc: ValueError
-    ) -> JSONResponse:
-        """ValueError from validation → 422."""
-        return JSONResponse(
-            status_code=422,
-            content=ErrorResponse(
-                error="validation_error",
-                message=str(exc),
-            ).model_dump(),
-        )
-
-    @app.exception_handler(asyncio.TimeoutError)
-    async def timeout_handler(
-        request: Request, exc: asyncio.TimeoutError
-    ) -> JSONResponse:
-        """Timeout errors → 504."""
-        logger.warning(f"Timeout error on {request.method} {request.url.path}")
-        return JSONResponse(
-            status_code=504,
-            content=ErrorResponse(
-                error="timeout",
-                message="Operation timed out",
-            ).model_dump(),
-        )
-
-    @app.exception_handler(OperationalError)
-    async def operational_error_handler(
-        request: Request, exc: OperationalError
-    ) -> JSONResponse:
-        """Database connection issues → 503."""
-        logger.error(f"Database operational error: {exc}", exc_info=True)
-        return JSONResponse(
-            status_code=503,
-            content=ErrorResponse(
-                error="service_unavailable",
-                message="Service temporarily unavailable",
-            ).model_dump(),
-        )
-
-    @app.exception_handler(Exception)
-    async def generic_exception_handler(
-        request: Request, exc: Exception
-    ) -> JSONResponse:
-        """Catch-all for unhandled exceptions → 500 with safe message."""
-        logger.error(
-            f"Unhandled exception on {request.method} {request.url.path}: {exc}",
-            exc_info=True,
-        )
-        return JSONResponse(
-            status_code=500,
-            content=ErrorResponse(
-                error="internal_error",
-                message="An unexpected error occurred",
-            ).model_dump(),
-        )
+    register_exception_handlers(app)
 
     # ==========================================================================
     # Middleware
@@ -503,78 +370,11 @@ def create_app() -> FastAPI:
     # Restrict embed tokens to app-rendering endpoints only
     app.add_middleware(EmbedScopeMiddleware)
 
-    # Set request-scoped ContextVars for user attribution and session tracking
-    from src.core.request_context import RequestUser, set_request_user, set_request_session_id
-    from src.core.rate_limit import get_client_ip
-    from src.services.audit_context import ActorContext, set_actor, clear_actor
+    # Set request-scoped ContextVars for user attribution, session tracking,
+    # and the audit actor. Shared with the worker-local engine SDK app.
+    from src.core.app_wiring import install_request_context_middleware
 
-    @app.middleware("http")
-    async def request_context_middleware(request: Request, call_next):
-        # Set watch session ID from header
-        session_id = request.headers.get("x-bifrost-watch-session")
-        set_request_session_id(session_id)
-
-        # Parse token once; use for both request_user and audit actor contexts.
-        audit_user_id = None
-        audit_org_id = None
-        audit_email = None
-        audit_name = None
-        try:
-            from uuid import UUID as _UUID
-            from src.core.security import decode_token
-            token = None
-            auth_header = request.headers.get("authorization", "")
-            if auth_header.startswith("Bearer "):
-                token = auth_header[7:]
-            elif "access_token" in request.cookies:
-                token = request.cookies["access_token"]
-            if token:
-                payload = decode_token(token, expected_type="access")
-                if payload:
-                    user_id = payload.get("sub", "")
-                    user_name = payload.get("name") or payload.get("email") or user_id
-                    set_request_user(RequestUser(user_id=user_id, user_name=user_name))
-                    # Populate audit actor fields
-                    try:
-                        audit_user_id = _UUID(user_id) if user_id else None
-                    except ValueError:
-                        audit_user_id = None
-                    org_id_raw = payload.get("org_id")
-                    if org_id_raw:
-                        try:
-                            audit_org_id = _UUID(org_id_raw)
-                        except ValueError:
-                            audit_org_id = None
-                    audit_email = payload.get("email")
-                    audit_name = payload.get("name")
-            else:
-                set_request_user(None)
-        except Exception:
-            set_request_user(None)
-
-        # Always set audit actor context — for unauthenticated requests,
-        # user_id is None but IP/UA are still captured (so failed logins
-        # are recorded with network metadata).
-        actor_token = set_actor(
-            ActorContext(
-                user_id=audit_user_id,
-                organization_id=audit_org_id,
-                email=audit_email,
-                name=audit_name,
-                ip_address=get_client_ip(request),
-                user_agent=request.headers.get("user-agent"),
-                source="http",
-            )
-        )
-
-        try:
-            response = await call_next(request)
-        finally:
-            # Reset context after request
-            set_request_user(None)
-            set_request_session_id(None)
-            clear_actor(actor_token)
-        return response
+    install_request_context_middleware(app)
 
     # Register routers
     from src.routers.home import router as home_router

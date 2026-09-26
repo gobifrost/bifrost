@@ -4246,7 +4246,7 @@ export interface paths {
          *     the same C2 rule the scope resolver applies elsewhere.
          *
          *     Context behavior lives in the shared service (``shared.sdk_context``),
-         *     which the engine-local dispatcher can call with the same inputs.
+         *     which a worker-local engine child can call with the same inputs.
          */
         get: operations["get_dev_context_api_sdk_context_get"];
         put?: never;
@@ -4358,7 +4358,7 @@ export interface paths {
          *
          *     Scope resolution and response construction live in the shared
          *     integrations service (``shared.sdk_integrations``), which the
-         *     engine-local dispatcher calls for the same inputs.
+         *     worker-local engine child calls for the same inputs.
          */
         post: operations["sdk_integrations_get_api_sdk_integrations_get_post"];
         delete?: never;
@@ -4382,7 +4382,7 @@ export interface paths {
          *
          *     Scope resolution and response construction live in the shared
          *     integrations service (``shared.sdk_integrations``), which the
-         *     engine-local dispatcher calls for the same inputs.
+         *     worker-local engine child calls for the same inputs.
          */
         post: operations["sdk_integrations_list_mappings_api_sdk_integrations_list_mappings_post"];
         delete?: never;
@@ -4406,7 +4406,7 @@ export interface paths {
          *
          *     Scope resolution and response construction live in the shared
          *     integrations service (``shared.sdk_integrations``), which the
-         *     engine-local dispatcher calls for the same inputs.
+         *     worker-local engine child calls for the same inputs.
          */
         post: operations["sdk_integrations_get_mapping_api_sdk_integrations_get_mapping_post"];
         delete?: never;
@@ -4429,7 +4429,7 @@ export interface paths {
          * @description Create or update an integration mapping for an organization via SDK.
          *
          *     Mutation rules live in the shared integrations service
-         *     (``shared.sdk_integrations``), which the engine-local dispatcher calls
+         *     (``shared.sdk_integrations``), which the worker-local engine child calls
          *     for the same inputs.
          */
         post: operations["sdk_integrations_upsert_mapping_api_sdk_integrations_upsert_mapping_post"];
@@ -4453,7 +4453,7 @@ export interface paths {
          * @description Delete an integration mapping for an organization via SDK.
          *
          *     Mutation rules live in the shared integrations service
-         *     (``shared.sdk_integrations``), which the engine-local dispatcher calls
+         *     (``shared.sdk_integrations``), which the worker-local engine child calls
          *     for the same inputs.
          */
         post: operations["sdk_integrations_delete_mapping_api_sdk_integrations_delete_mapping_post"];
@@ -4483,7 +4483,7 @@ export interface paths {
          *     also benefit from the refreshed token.
          *
          *     The refresh rules live in the shared integrations service
-         *     (``shared.sdk_integrations``), which the engine-local dispatcher calls
+         *     (``shared.sdk_integrations``), which a worker-local engine child calls
          *     for the same inputs. The HTTP refresh itself is delegated to the shared
          *     primitive :func:`src.services.oauth_provider.refresh_oauth_token_http`
          *     via that service; this handler only maps transport errors.
@@ -13207,6 +13207,11 @@ export interface components {
              * @description Event source: 'http', 'sso_sync', 'scheduler', 'cli', ...
              */
             source: string;
+            /**
+             * Execution Id
+             * @description Workflow execution that produced the event, when supported
+             */
+            execution_id?: string | null;
             /** @description Who performed the action */
             actor: components["schemas"]["AuditLogActor"];
             /** Ip Address */
@@ -35268,6 +35273,8 @@ export interface operations {
                 outcome?: string | null;
                 /** @description Filter by acting user ID */
                 user_id?: string | null;
+                /** @description Filter by workflow execution ID */
+                execution_id?: string | null;
                 /** @description Start of time range (inclusive) */
                 start_date?: string | null;
                 /** @description End of time range (inclusive) */

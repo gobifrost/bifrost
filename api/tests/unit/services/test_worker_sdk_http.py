@@ -3254,3 +3254,115 @@ class TestEngineLocalAIFallback:
             await ai_facade.complete("offline")
         with pytest.raises(httpx.ConnectError):
             await ai_facade.get_model_info()
+
+
+class TestSocketErrorParityAndActorContext:
+    """The socket app shares the API's error mapping and actor attribution.
+
+    ``build_worker_sdk_app`` installs the same global exception handlers and
+    request-context middleware as the main API app, so a socket call errors
+    and audits identically to an HTTP one.
+    """
+
+    @pytest.mark.asyncio
+    async def test_global_exception_handlers_map_value_and_integrity_errors(
+        self,
+    ):
+        from sqlalchemy.exc import IntegrityError
+
+        app = build_worker_sdk_app()
+
+        @app.get("/__test__/value-error")
+        async def _value_error():
+            raise ValueError("boom")
+
+        @app.get("/__test__/integrity-error")
+        async def _integrity_error():
+            raise IntegrityError(
+                "INSERT INTO t (x) VALUES (1)",
+                {},
+                Exception("duplicate key value violates unique constraint"),
+            )
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://bifrost-engine"
+        ) as client:
+            value = await client.get("/__test__/value-error")
+            integrity = await client.get("/__test__/integrity-error")
+
+        assert value.status_code == 422, value.text
+        assert value.json() == {
+            "error": "validation_error",
+            "message": "boom",
+            "details": None,
+        }
+        assert integrity.status_code == 409, integrity.text
+        assert integrity.json() == {
+            "error": "conflict",
+            "message": "Resource already exists",
+            "details": None,
+        }
+
+    @pytest.mark.asyncio
+    async def test_request_context_attributes_engine_caller(self):
+        from src.core.security import mint_engine_token
+        from src.services.audit_context import current_actor
+
+        caller_id = uuid4()
+        org_id = uuid4()
+        execution_id = uuid4()
+        token, _ = mint_engine_token(
+            execution_id=str(execution_id),
+            solution_id=None,
+            global_repo_access=True,
+            timeout_seconds=300,
+            caller_user_id=str(caller_id),
+            caller_organization_id=str(org_id),
+            caller_email="caller@example.com",
+            caller_name="Caller Name",
+        )
+
+        app = build_worker_sdk_app()
+
+        @app.get("/__test__/actor")
+        async def _actor():
+            actor = current_actor()
+            assert actor is not None
+            return {
+                "user_id": str(actor.user_id) if actor.user_id else None,
+                "organization_id": (
+                    str(actor.organization_id) if actor.organization_id else None
+                ),
+                "email": actor.email,
+                "name": actor.name,
+                "source": actor.source,
+                "execution_id": (
+                    str(actor.execution_id) if actor.execution_id else None
+                ),
+                "ip_address": actor.ip_address,
+            }
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://bifrost-engine"
+        ) as client:
+            response = await client.get(
+                "/__test__/actor",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["source"] == "workflow"
+        assert body["user_id"] == str(caller_id)
+        assert body["organization_id"] == str(org_id)
+        assert body["email"] == "caller@example.com"
+        assert body["name"] == "Caller Name"
+        assert body["execution_id"] == str(execution_id)
+        # No client on an ASGI transport unless the test sets one; either way
+        # the actor must never carry the sentinel "unknown".
+        assert body["ip_address"] != "unknown"
+
+        # The actor is request-scoped and cleared once the response is done.
+        assert current_actor() is None

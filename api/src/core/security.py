@@ -516,6 +516,10 @@ def mint_engine_token(
     solution_id: str | None,
     global_repo_access: bool,
     timeout_seconds: int,
+    caller_user_id: str | None = None,
+    caller_organization_id: str | None = None,
+    caller_email: str | None = None,
+    caller_name: str | None = None,
 ) -> tuple[str, str]:
     """
     Mint a short-lived, execution-scoped engine token parent-side.
@@ -532,6 +536,11 @@ def mint_engine_token(
     minutes for startup and completion flushing; a workflow with no timeout
     (timeout_seconds=0) gets a 24h token, matching the engine's wait cap.
 
+    The optional ``caller_*`` arguments are emitted as ``engine_caller_*``
+    claims (omitted when ``None``). They are **audit attribution only**: they
+    never change ``sub``, ``is_superuser``, or any authorization decision,
+    and are read only by the audit actor builder.
+
     Returns:
         (token, expires_at_iso): JWT string and ISO-8601 expiry timestamp.
     """
@@ -546,6 +555,16 @@ def mint_engine_token(
         "engine_solution_id": solution_id,
         "engine_global_repo_access": bool(global_repo_access),
     }
+
+    caller_claims = {
+        "engine_caller_user_id": caller_user_id,
+        "engine_caller_org_id": caller_organization_id,
+        "engine_caller_email": caller_email,
+        "engine_caller_name": caller_name,
+    }
+    token_data.update(
+        {key: value for key, value in caller_claims.items() if value is not None}
+    )
 
     # timeout_seconds == 0 means "no timeout" everywhere else in the engine
     # (process_pool, execution_cleanup, and the 24h BLPOP cap in

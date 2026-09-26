@@ -17,18 +17,11 @@ scope rules. ``created_by`` is the engine sentinel UUID
 claim. The child holds no DB connection; it reaches the parent over the
 engine socket, with no fallback to the network API on local failure.
 
-Transaction note (explicit): the historical single-session calls below
-(``store_*``/``search_*``) hold their session across embedding network
-I/O. The service must NOT hold a pooled parent connection
-across that external work (a large ``store_many`` embeds for minutes),
-so it splits each embedding op into three phases — short session for
-the embedding-config read, off-connection embedding, short session for
-the vector/DB work — through the ``*_preembedded``/``*_with_embedding``
-helpers in this module. The observable contract is unchanged: a
-pre-commit embedding failure leaves no rows (the old code rolled back
-the flushed rows; the new code never opens the write transaction), one
-commit per store call, no commit on reads, identical return values and
-``SDKKnowledgeError`` statuses/details.
+Transaction note (explicit): the single-session calls below
+(``store_*``/``search_*``) acquire an embedder and repository on the
+caller's session and hold that session across embedding network I/O. The
+store calls commit exactly once; the reads do not commit; a pre-commit
+embedding failure rolls back and leaves no rows.
 
 All failures raise :class:`SDKKnowledgeError` (transport-neutral); the
 HTTP adapter maps them to ``HTTPException`` preserving the exact
@@ -441,177 +434,9 @@ __all__ = [
     "SDKKnowledgeError",
     "delete_knowledge_document",
     "delete_knowledge_namespace",
-    "embed_content_chunks",
-    "embed_query_text",
     "get_knowledge_document",
     "list_knowledge_namespaces",
-    "load_knowledge_embedder",
     "search_knowledge_documents",
-    "search_knowledge_with_embedding",
     "store_knowledge_document",
-    "store_knowledge_preembedded",
     "store_many_knowledge_documents",
-    "store_many_preembedded",
 ]
-
-
-async def load_knowledge_embedder(session: AsyncSession) -> Any:
-    """Phase 1 of the split local path: read embedding config on a short session.
-
-    Returns the configured embedder (holding only its config — no session
-    references), so the caller can close the session before the network
-    embedding work. ``ValueError`` (unconfigured embeddings) propagates
-    for the caller to map to 503, exactly like the single-session calls.
-    """
-    return await embeddings_factory_module.get_embedding_client(session)
-
-
-async def embed_content_chunks(
-    embedder: Any, content: str
-) -> tuple[list[str], list[list[float]]]:
-    """Phase 2 (off-connection): split content and embed every chunk.
-
-    Same chunking, batch shape check, and ``ValueError`` contract as
-    ``KnowledgeRepository.embed_chunks`` — no DB access, so the parent
-    holds no pooled connection across this external provider work.
-    """
-    return await knowledge_repo_module.KnowledgeRepository.embed_chunks(
-        content, embedder
-    )
-
-
-async def embed_query_text(embedder: Any, query: str) -> list[float]:
-    """Phase 2 (off-connection): embed one search query with no DB access."""
-    return await embedder.embed_single(query)
-
-
-async def store_knowledge_preembedded(
-    session: AsyncSession,
-    *,
-    chunks: list[str],
-    embeddings: list[list[float]],
-    namespace: str = "default",
-    key: str | None = None,
-    metadata: dict[str, Any] | None = None,
-    org_id: UUID | None,
-    created_by: UUID | None,
-) -> dict[str, Any]:
-    """Phase 3 (DB-only): persist pre-embedded chunks with one commit.
-
-    Same repository call, commit/rollback ordering, logging, return
-    value, and 500 mapping as :func:`store_knowledge_document` — minus
-    the embedding step (already done off-connection). ``ValueError``
-    here is a precomputed-shape bug and maps to 500, never 503.
-    """
-    try:
-        repo = knowledge_repo_module.KnowledgeRepository(session, org_id=org_id)
-        doc_ids = await repo.store_preembedded(
-            chunks,
-            embeddings,
-            namespace=namespace,
-            key=key,
-            metadata=metadata,
-            created_by=created_by,
-        )
-        doc_id = doc_ids[0]
-
-        await session.commit()
-
-        logger.info(
-            f"CLI knowledge store: namespace={log_safe(namespace)}, "
-            f"key={log_safe(key)}, doc_id={doc_id}"
-        )
-
-        return {"id": doc_id}
-    except Exception as e:
-        await session.rollback()
-        logger.error(f"CLI knowledge store failed: {log_safe(e)}")
-        raise SDKKnowledgeError(500, f"Knowledge store failed: {str(e)}") from None
-
-
-async def store_many_preembedded(
-    session: AsyncSession,
-    *,
-    items: list[dict[str, Any]],
-    namespace: str = "default",
-    org_id: UUID | None,
-    created_by: UUID | None,
-) -> dict[str, Any]:
-    """Phase 3 (DB-only): persist many pre-embedded documents, one commit.
-
-    ``items`` carries per-document ``chunks``/``embeddings``/``key``/
-    ``metadata`` (embedded off-connection, sequentially, with one
-    embedder — same order as :func:`store_many_knowledge_documents`).
-    One repository, sequential flushes, single commit after every
-    document; a failure before that commit rolls back all prior flushed
-    rows. Same return value and 500 mapping as the single-session call.
-    """
-    try:
-        repo = knowledge_repo_module.KnowledgeRepository(session, org_id=org_id)
-        doc_ids = []
-        for item in items:
-            inserted_ids = await repo.store_preembedded(
-                item["chunks"],
-                item["embeddings"],
-                namespace=namespace,
-                key=item.get("key"),
-                metadata=item.get("metadata"),
-                created_by=created_by,
-            )
-            doc_ids.append(inserted_ids[0])
-
-        await session.commit()
-
-        logger.info(
-            f"CLI knowledge store-many: namespace={log_safe(namespace)}, "
-            f"count={len(doc_ids)}"
-        )
-
-        return {"ids": doc_ids}
-    except Exception as e:
-        await session.rollback()
-        logger.error(f"CLI knowledge store-many failed: {log_safe(e)}")
-        raise SDKKnowledgeError(500, f"Knowledge store failed: {str(e)}") from None
-
-
-async def search_knowledge_with_embedding(
-    session: AsyncSession,
-    *,
-    query_embedding: list[float],
-    query_text: str,
-    namespace: list[str],
-    limit: int = 5,
-    min_score: float | None = None,
-    metadata_filter: dict[str, Any] | None = None,
-    fallback: bool = True,
-    org_id: UUID | None,
-) -> list[dict[str, Any]]:
-    """Phase 3 (DB-only): vector/lexical search with a precomputed embedding.
-
-    Same repository call, result shape, logging, and 500 mapping as
-    :func:`search_knowledge_documents` — minus the query-embedding step
-    (already done off-connection). No commit.
-    """
-    try:
-        repo = knowledge_repo_module.KnowledgeRepository(session, org_id=org_id)
-        results = await repo.search(
-            query_embedding=query_embedding,
-            namespace=namespace,
-            query_text=query_text,
-            limit=limit,
-            min_score=min_score,
-            metadata_filter=metadata_filter,
-            fallback=fallback,
-        )
-
-        logger.info(
-            f"CLI knowledge search: query={log_safe(query_text[:50])}..., "
-            f"results={len(results)}"
-        )
-
-        return [_search_result_dict(doc) for doc in results]
-    except SDKKnowledgeError:
-        raise
-    except Exception as e:
-        logger.error(f"CLI knowledge search failed: {log_safe(e)}")
-        raise SDKKnowledgeError(500, f"Knowledge search failed: {str(e)}") from None

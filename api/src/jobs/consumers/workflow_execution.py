@@ -982,6 +982,10 @@ class WorkflowExecutionConsumer(BaseConsumer):
                 solution_id=solution_id,
                 global_repo_access=solution_global_repo_access,
                 timeout_seconds=timeout_seconds,
+                caller_user_id=str(user_id) if user_id else None,
+                caller_organization_id=str(org_id) if org_id else None,
+                caller_email=user_email,
+                caller_name=user_name,
             )
 
             # Build context for worker process
