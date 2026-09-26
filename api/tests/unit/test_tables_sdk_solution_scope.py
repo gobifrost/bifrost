@@ -75,8 +75,9 @@ class FakeClient:
     def __init__(self) -> None:
         self.urls: list[str] = []
 
-    async def post(
+    async def engine_request(
         self,
+        method: str,
         url: str,
         json: dict[str, Any] | None = None,
         retry_transient: bool = False,

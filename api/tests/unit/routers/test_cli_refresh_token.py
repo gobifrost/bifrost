@@ -506,7 +506,7 @@ class TestRefreshTokenSDKModel:
         }
 
         mock_client = MagicMock()
-        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client.engine_request = AsyncMock(return_value=mock_response)
 
         with (
             patch("bifrost.client.get_client", return_value=mock_client),
@@ -517,7 +517,8 @@ class TestRefreshTokenSDKModel:
         assert result is creds  # returns self
         assert creds.access_token == "fresh-token"
         assert creds.expires_at == "2026-03-02T00:00:00+00:00"
-        mock_client.post.assert_called_once_with(
+        mock_client.engine_request.assert_called_once_with(
+            "POST",
             "/api/sdk/integrations/refresh_token",
             json={"connection_name": "Pax8"},
         )
@@ -547,7 +548,7 @@ class TestRefreshTokenSDKModel:
         }
 
         mock_client = MagicMock()
-        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client.engine_request = AsyncMock(return_value=mock_response)
 
         with (
             patch("bifrost.client.get_client", return_value=mock_client),
@@ -579,7 +580,7 @@ class TestRefreshTokenSDKModel:
         mock_response.text = "Token refresh failed: Bad credentials"
 
         mock_client = MagicMock()
-        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client.engine_request = AsyncMock(return_value=mock_response)
 
         with (
             patch("bifrost.client.get_client", return_value=mock_client),
