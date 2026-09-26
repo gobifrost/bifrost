@@ -1,8 +1,13 @@
 """
-bifrost/workflows.py - Workflows SDK (API-only)
+bifrost/workflows.py - Workflows SDK
 
 Provides Python API for workflow operations (list, get status, execute).
-All operations go through HTTP API endpoints.
+
+Every fixed operation sends the ordinary HTTP request through the shared
+``BifrostClient``: over the worker's private Unix socket when the engine
+injected one, and over the network API otherwise. The worker parent owns the
+pooled database and the queue; an engine child holds neither, and a local
+attempt never falls back to the network API.
 """
 
 from __future__ import annotations
@@ -59,18 +64,8 @@ class workflows:
             >>> for wf in wf_list:
             ...     print(f"{wf.name}: {wf.description}")
         """
-        from ._local_transport import get as _get_local_transport
-
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: the parent lists through the shared
-            # execution-reads service over the dedicated channel. A
-            # local attempt never falls back to HTTP — failures raise
-            # loudly below.
-            items = await transport.call_workflows_list()
-            return [WorkflowMetadata.model_validate(wf) for wf in items]
         client = get_client()
-        response = await client.get("/api/workflows")
+        response = await client.engine_request("GET", "/api/workflows")
         raise_for_status_with_detail(response)
         data = response.json()
         return [WorkflowMetadata.model_validate(wf) for wf in data]
@@ -134,7 +129,6 @@ class workflows:
             raise ValueError("'scheduled_at' must be timezone-aware")
 
         from ._context import get_caller_solution, get_default_scope, get_effective_solution
-        from ._local_transport import get as _get_local_transport
 
         # Auto-include org_id from execution context if not explicitly provided,
         # same as tables, config, etc.
@@ -143,29 +137,6 @@ class workflows:
 
         solution_id = get_effective_solution(solution)
         caller = get_caller_solution()
-
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: the parent enqueues through the shared
-            # workflow execution service over the dedicated channel. A
-            # local attempt never falls back to HTTP — failures raise
-            # loudly below (an enqueue may already have committed, so a
-            # retry over HTTP could double-enqueue).
-            data = await transport.call_workflows_execute(
-                workflow,
-                input_data or {},
-                org_id,
-                run_as,
-                solution_id,
-                scheduled_at.isoformat() if scheduled_at is not None else None,
-                delay_seconds,
-            )
-            execution_id = data.get("execution_id")
-            if not isinstance(execution_id, str) or not execution_id:
-                raise RuntimeError(
-                    "local workflows.execute returned no execution_id"
-                )
-            return execution_id
 
         client = get_client()
         payload: dict[str, Any] = {
@@ -185,7 +156,9 @@ class workflows:
             payload["scheduled_at"] = scheduled_at.isoformat()
         if delay_seconds is not None:
             payload["delay_seconds"] = delay_seconds
-        response = await client.post("/api/workflows/execute", json=payload)
+        response = await client.engine_request(
+            "POST", "/api/workflows/execute", json=payload
+        )
         raise_for_status_with_detail(response)
         return response.json()["execution_id"]
 
@@ -205,19 +178,9 @@ class workflows:
             >>> from bifrost import workflows
             >>> await workflows.cancel("exec-123")
         """
-        from ._local_transport import get as _get_local_transport
-
-        transport = _get_local_transport()
-        if transport is not None:
-            # Engine-local path: the parent cancels through the shared
-            # workflow execution service over the dedicated channel. A
-            # local attempt never falls back to HTTP — failures raise
-            # loudly below (a cancellation may already have committed).
-            await transport.call_workflows_cancel(execution_id)
-            return None
         client = get_client()
-        response = await client.post(
-            f"/api/workflows/executions/{execution_id}/cancel"
+        response = await client.engine_request(
+            "POST", f"/api/workflows/executions/{execution_id}/cancel"
         )
         raise_for_status_with_detail(response)
 

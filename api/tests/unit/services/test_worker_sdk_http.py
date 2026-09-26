@@ -31,6 +31,7 @@ from src.services.execution.worker_sdk_http import (
     ARTIFACT_ROUTE_METHODS,
     ARTIFACT_ROUTE_PATHS,
     CONFIG_ROUTE_PATHS,
+    EXECUTION_ROUTE_METHODS,
     FILES_ROUTE_PATHS,
     INTEGRATION_ROUTE_PATHS,
     KNOWLEDGE_ROUTE_PATHS,
@@ -38,6 +39,7 @@ from src.services.execution.worker_sdk_http import (
     SDK_ROUTE_PATHS,
     TABLE_ROUTE_METHODS,
     TABLE_SDK_ROUTE_PATHS,
+    WORKFLOW_ROUTE_METHODS,
     WorkerSdkHttpServer,
     build_worker_sdk_app,
 )
@@ -145,9 +147,11 @@ class TestRouteReuse:
         from fastapi.routing import APIRoute
 
         from src.routers.cli import router as sdk_router
+        from src.routers.executions import router as executions_router
         from src.routers.files import router as files_router
         from src.routers.platform_jobs import router as platform_jobs_router
         from src.routers.tables import router as tables_router
+        from src.routers.workflows import router as workflows_router
 
         cli_path_only = (
             CONFIG_ROUTE_PATHS
@@ -196,6 +200,19 @@ class TestRouteReuse:
             for method in (getattr(route, "methods", None) or set()) & wanted
         }
 
+        workflows_originals = {
+            (route.path, method): route
+            for route in workflows_router.routes
+            if (wanted := WORKFLOW_ROUTE_METHODS.get(getattr(route, "path", None)))
+            for method in (getattr(route, "methods", None) or set()) & wanted
+        }
+        executions_originals = {
+            (route.path, method): route
+            for route in executions_router.routes
+            if (wanted := EXECUTION_ROUTE_METHODS.get(getattr(route, "path", None)))
+            for method in (getattr(route, "methods", None) or set()) & wanted
+        }
+
         app = build_worker_sdk_app()
         mounted = [route for route in app.router.routes if isinstance(route, APIRoute)]
         mounted_cli = {
@@ -220,6 +237,18 @@ class TestRouteReuse:
             (route.path, method): route
             for route in mounted
             if route.path in PLATFORM_JOB_ROUTE_METHODS
+            for method in route.methods
+        }
+        mounted_workflows = {
+            (route.path, method): route
+            for route in mounted
+            if route.path in WORKFLOW_ROUTE_METHODS
+            for method in route.methods
+        }
+        mounted_executions = {
+            (route.path, method): route
+            for route in mounted
+            if route.path in EXECUTION_ROUTE_METHODS
             for method in route.methods
         }
 
@@ -249,6 +278,16 @@ class TestRouteReuse:
         for key, route in mounted_platform_jobs.items():
             assert route is platform_job_originals[key]
             assert route.endpoint is platform_job_originals[key].endpoint
+
+        assert set(mounted_workflows) == set(workflows_originals)
+        for key, route in mounted_workflows.items():
+            assert route is workflows_originals[key]
+            assert route.endpoint is workflows_originals[key].endpoint
+
+        assert set(mounted_executions) == set(executions_originals)
+        for key, route in mounted_executions.items():
+            assert route is executions_originals[key]
+            assert route.endpoint is executions_originals[key].endpoint
 
         # The shared ``/api/tables/{table_id}`` path must not drag in its
         # GET/PATCH metadata siblings.
@@ -361,6 +400,21 @@ class TestRouteReuse:
             "/api/tables/{table_id}/documents/batch": frozenset({"POST"}),
             "/api/tables/{table_id}/documents/batch-delete": frozenset({"POST"}),
         }
+
+    def test_workflow_and_execution_route_selection_is_exact(self):
+        """Gate C5a mounts the workflow/execution facade routes as real objects."""
+        assert WORKFLOW_ROUTE_METHODS == {
+            "/api/workflows": frozenset({"GET"}),
+            "/api/workflows/execute": frozenset({"POST"}),
+            "/api/workflows/executions/{execution_id}/cancel": frozenset({"POST"}),
+        }
+        assert EXECUTION_ROUTE_METHODS == {
+            "/api/executions": frozenset({"GET"}),
+            "/api/executions/{execution_id}": frozenset({"GET"}),
+        }
+        assert set(WORKFLOW_ROUTE_METHODS).isdisjoint(EXECUTION_ROUTE_METHODS)
+        assert set(EXECUTION_ROUTE_METHODS).isdisjoint(SDK_ROUTE_PATHS)
+        assert set(WORKFLOW_ROUTE_METHODS).isdisjoint(SDK_ROUTE_PATHS)
 
     @pytest.mark.asyncio
     async def test_unknown_route_is_404(self):
@@ -1422,3 +1476,208 @@ class TestEngineLocalKnowledgeFallback:
             await knowledge.list_namespaces()
         with pytest.raises(httpx.ConnectError):
             await knowledge.get("k", namespace="ns")
+
+
+class TestSocketWorkflowsAndExecutions:
+    """Gate C5a: the socket serves the real workflow/execution routes."""
+
+    @pytest.mark.asyncio
+    async def test_workflow_list_requires_superuser(self):
+        from src.core.security import create_access_token
+
+        caller = {
+            "Authorization": "Bearer "
+            + create_access_token(
+                {
+                    "sub": str(uuid4()),
+                    "email": "user@example.com",
+                    "name": "User",
+                    "org_id": str(uuid4()),
+                }
+            )
+        }
+        server = WorkerSdkHttpServer()
+        await server.start()
+        try:
+            async with _socket_client(server) as client:
+                denied = await client.get("/api/workflows", headers=caller)
+                allowed = await client.get(
+                    "/api/workflows",
+                    headers={"Authorization": f"Bearer {_engine_token()}"},
+                )
+            assert denied.status_code == 403, denied.text
+            assert allowed.status_code == 200, allowed.text
+            assert isinstance(allowed.json(), list)
+        finally:
+            await server.stop()
+
+    @pytest.mark.asyncio
+    async def test_execution_foreign_is_403_over_socket(self, async_session_factory):
+        from sqlalchemy import delete
+
+        from src.core.security import create_access_token
+        from src.models.enums import ExecutionStatus
+        from src.models.orm.executions import Execution as ExecutionModel
+        from src.models.orm.organizations import Organization as OrganizationModel
+        from src.models.orm.users import User as UserModel
+
+        owner_org = uuid4()
+        async with async_session_factory() as session:
+            org = OrganizationModel(
+                id=owner_org,
+                name=f"wsdk-exec-org-{uuid4().hex[:8]}",
+                is_active=True,
+                created_by="worker-sdk-http-test",
+            )
+            owner = UserModel(
+                email=f"wsdk-exec-owner-{uuid4().hex[:8]}@example.com",
+                name="Owner",
+                organization_id=owner_org,
+            )
+            session.add_all([org, owner])
+            await session.flush()
+            row = ExecutionModel(
+                workflow_name="wsdk-foreign-exec",
+                status=ExecutionStatus.SUCCESS,
+                parameters={},
+                executed_by=owner.id,
+                executed_by_name="Owner",
+                organization_id=owner_org,
+            )
+            session.add(row)
+            await session.commit()
+            exec_id, owner_id = row.id, owner.id
+
+        token = create_access_token(
+            {
+                "sub": str(uuid4()),
+                "email": "other@example.com",
+                "name": "Other",
+                "org_id": str(uuid4()),
+            }
+        )
+        server = WorkerSdkHttpServer()
+        await server.start()
+        try:
+            async with _socket_client(server) as client:
+                response = await client.get(
+                    f"/api/executions/{exec_id}",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+            assert response.status_code == 403, response.text
+        finally:
+            await server.stop()
+            async with async_session_factory() as session:
+                await session.execute(
+                    delete(ExecutionModel).where(ExecutionModel.id == exec_id)
+                )
+                await session.execute(
+                    delete(UserModel).where(UserModel.id == owner_id)
+                )
+                await session.execute(
+                    delete(OrganizationModel).where(
+                        OrganizationModel.id == owner_org
+                    )
+                )
+                await session.commit()
+
+    @pytest.mark.asyncio
+    async def test_execution_detail_missing_is_404_and_malformed_is_422(self):
+        headers = {"Authorization": f"Bearer {_engine_token()}"}
+        server = WorkerSdkHttpServer()
+        await server.start()
+        try:
+            async with _socket_client(server) as client:
+                missing = await client.get(
+                    f"/api/executions/{uuid4()}", headers=headers
+                )
+                malformed = await client.get(
+                    "/api/executions/not-a-uuid", headers=headers
+                )
+            assert missing.status_code == 404, missing.text
+            assert malformed.status_code == 422, malformed.text
+        finally:
+            await server.stop()
+
+    @pytest.mark.asyncio
+    async def test_execution_list_rejects_unknown_query_param(self):
+        headers = {"Authorization": f"Bearer {_engine_token()}"}
+        server = WorkerSdkHttpServer()
+        await server.start()
+        try:
+            async with _socket_client(server) as client:
+                response = await client.get(
+                    "/api/executions",
+                    params={"bogus": "1"},
+                    headers=headers,
+                )
+            assert response.status_code == 422, response.text
+        finally:
+            await server.stop()
+
+    @pytest.mark.asyncio
+    async def test_execute_malformed_body_is_422(self):
+        headers = {"Authorization": f"Bearer {_engine_token()}"}
+        server = WorkerSdkHttpServer()
+        await server.start()
+        try:
+            async with _socket_client(server) as client:
+                response = await client.post(
+                    "/api/workflows/execute", json={}, headers=headers
+                )
+            assert response.status_code == 422, response.text
+        finally:
+            await server.stop()
+
+    @pytest.mark.asyncio
+    async def test_cancel_missing_is_404_and_malformed_is_422(self):
+        headers = {"Authorization": f"Bearer {_engine_token()}"}
+        server = WorkerSdkHttpServer()
+        await server.start()
+        try:
+            async with _socket_client(server) as client:
+                missing = await client.post(
+                    f"/api/workflows/executions/{uuid4()}/cancel",
+                    headers=headers,
+                )
+                malformed = await client.post(
+                    "/api/workflows/executions/not-a-uuid/cancel",
+                    headers=headers,
+                )
+            assert missing.status_code == 404, missing.text
+            assert malformed.status_code == 422, malformed.text
+        finally:
+            await server.stop()
+
+
+class TestEngineLocalWorkflowExecutionFallback:
+    """A failed workflow/execution socket request never replays over the network."""
+
+    @pytest.mark.asyncio
+    async def test_workflow_execution_local_failure_does_not_fall_back(
+        self, monkeypatch, async_session_factory
+    ):
+        import bifrost.client as client_module
+        from bifrost.executions import executions
+        from bifrost.workflows import workflows
+
+        # Prove no network fallback, not how long the transient backoff runs:
+        # collapse the retry schedule so each request makes one local attempt.
+        monkeypatch.setattr(client_module, "SDK_RETRY_BACKOFF_SECONDS", ())
+
+        missing_socket = os.path.join(
+            "/tmp", f"bifrost-missing-{uuid4().hex}.sock"
+        )
+        _install_engine_socket(missing_socket)
+        _set_client(BifrostClient("http://dead-api", "token"))
+
+        with pytest.raises(httpx.ConnectError):
+            await workflows.list()
+        with pytest.raises(httpx.ConnectError):
+            await workflows.execute("wf", {"x": 1})
+        with pytest.raises(httpx.ConnectError):
+            await workflows.cancel(str(uuid4()))
+        with pytest.raises(httpx.ConnectError):
+            await executions.list()
+        with pytest.raises(httpx.ConnectError):
+            await executions.get(str(uuid4()))

@@ -10,17 +10,18 @@ Covers the acceptance surface that does not need a forked child:
   statuses;
 - the child transport performs real list/get round trips with zero HTTP
   requests and no silent HTTP fallback;
-- the SDK facades map local results to the public surface
-  (``WorkflowMetadata`` list, ``ExecutionList`` with continuation
-  token, ``ValueError``/``PermissionError`` on get) and preserve the
-  existing ``workflow_id``-wins and limit-clamp behavior;
-- external callers (no transport) keep the HTTP path unchanged.
+- the SDK facades ride the shared ``BifrostClient.engine_request``
+  transport (Gate C5a) with the exact HTTP verb/path/query, map results to
+  the public surface (``WorkflowMetadata`` list, ``ExecutionList`` with
+  continuation token, ``ValueError``/``PermissionError`` on get), preserve
+  the existing ``workflow_id``-wins and limit-clamp behavior, and keep
+  ``get_current_logs`` a direct Redis read;
+- external callers (no socket) keep the network HTTP path unchanged.
 """
 
 from __future__ import annotations
 
 import contextlib
-import sys
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -862,221 +863,216 @@ class TestExecutionsGetDispatch:
         assert local["result"] == expected.model_dump(mode="json")
 
 
-@pytest.mark.asyncio
-class TestFacadeLocalMapping:
-    def _install_fake_transport(self, monkeypatch, fake, module):
-        import bifrost._local_transport as local_transport
+class TestEngineRequestFacade:
+    """Gate C5a: the migrated workflow/execution facades ride ``engine_request``.
 
-        monkeypatch.setattr(local_transport, "_installed", fake)
+    Every fixed method sends its exact HTTP verb, path, body, and query
+    through the shared client entry point and parses the same response
+    shape — with no dedicated-channel frames, no explicit timeout override
+    (the shared client's default applies), and no silent HTTP fallback.
+    """
 
-        def _dead(*args, **kwargs):
-            raise AssertionError("HTTP must not be used in the engine path")
+    def _client(self, responses):
+        client = MagicMock()
+        client.engine_request = AsyncMock(side_effect=responses)
+        return client
 
-        monkeypatch.setattr(sys.modules[module], "get_client", _dead)
+    @pytest.mark.asyncio
+    async def test_workflows_list_rides_engine_request(self):
+        import httpx
 
-    async def test_workflows_list_uses_local(self, monkeypatch):
         from bifrost.workflows import workflows
 
-        class FakeTransport:
-            async def call_workflows_list(self, **kwargs):
-                assert kwargs == {}
-                return [
-                    {
-                        "id": str(uuid4()),
-                        "name": "local-wf",
-                        "description": None,
-                        "category": None,
-                        "tags": [],
-                        "parameters": [],
-                        "execution_mode": "sync",
-                        "timeout_seconds": 60,
-                        "retry_policy": None,
-                        "endpoint_enabled": False,
-                        "allowed_methods": None,
-                        "disable_global_key": False,
-                        "public_endpoint": False,
-                        "is_tool": False,
-                        "tool_description": None,
-                        "time_saved": None,
-                        "source_file_path": None,
-                        "relative_file_path": None,
-                    }
-                ]
-
-        self._install_fake_transport(monkeypatch, FakeTransport(), "bifrost.workflows")
-        result = await workflows.list()
+        meta = {
+            "id": str(uuid4()),
+            "name": "local-wf",
+            "description": None,
+            "category": None,
+            "tags": [],
+            "parameters": [],
+            "execution_mode": "sync",
+            "timeout_seconds": 1800,
+            "retry_policy": None,
+            "endpoint_enabled": False,
+            "allowed_methods": None,
+            "disable_global_key": False,
+            "public_endpoint": False,
+            "is_tool": False,
+            "tool_description": None,
+            "time_saved": None,
+            "source_file_path": None,
+            "relative_file_path": None,
+        }
+        client = self._client([httpx.Response(200, json=[meta])])
+        with patch("bifrost.workflows.get_client", return_value=client):
+            result = await workflows.list()
 
         assert [w.name for w in result] == ["local-wf"]
+        # timeout_seconds is preserved through the response model.
+        assert result[0].timeout_seconds == 1800
+        call = client.engine_request.await_args
+        assert call.args == ("GET", "/api/workflows")
+        assert call.kwargs == {}
 
-    async def test_executions_list_forwards_params_and_token(self, monkeypatch):
+    @pytest.mark.asyncio
+    async def test_executions_list_forwards_exact_query(self):
+        import httpx
+
         from bifrost.executions import executions
 
-        seen = {}
-
-        class FakeTransport:
-            async def call_executions_list(self, **kwargs):
-                seen.update(kwargs)
-                return {
+        client = self._client([
+            httpx.Response(
+                200,
+                json={
                     "executions": [_sdk_summary()],
                     "continuation_token": "tok-1",
-                }
+                },
+            )
+        ])
+        with patch("bifrost.executions.get_client", return_value=client):
+            result = await executions.list(
+                workflow_id=str(uuid4()),
+                workflow_name="ignored",
+                status="Success",
+                exclude_local=False,
+                limit=5000,
+                continuation_token="tok-0",
+            )
 
-        self._install_fake_transport(
-            monkeypatch, FakeTransport(), "bifrost.executions"
-        )
-        result = await executions.list(
-            workflow_id=str(uuid4()),
-            workflow_name="ignored",
-            status="Success",
-            exclude_local=False,
-            limit=5000,
-            continuation_token="tok-0",
-        )
-
-        assert seen["workflow_name"] is None
-        assert seen["status"] == "Success"
-        assert seen["exclude_local"] is False
-        assert seen["limit"] == 1000
-        assert seen["continuation_token"] == "tok-0"
         assert len(result) == 1
         assert result.continuation_token == "tok-1"
-        assert result[0].status == "Success"
+        call = client.engine_request.await_args
+        assert call.args == ("GET", "/api/executions")
+        params = call.kwargs["params"]
+        # workflow_id wins over workflow_name; limit clamps to 1000.
+        assert params["workflow_id"] is not None
+        assert "workflow_name" not in params
+        assert params["status"] == "Success"
+        assert params["exclude_local"] == "false"
+        assert params["limit"] == 1000
+        assert params["continuation_token"] == "tok-0"
+        assert "timeout" not in call.kwargs
 
-    async def test_executions_list_defaults(self, monkeypatch):
+    @pytest.mark.asyncio
+    async def test_executions_list_defaults(self):
+        import httpx
+
         from bifrost.executions import executions
 
-        seen = {}
+        client = self._client([
+            httpx.Response(
+                200, json={"executions": [], "continuation_token": None}
+            )
+        ])
+        with patch("bifrost.executions.get_client", return_value=client):
+            result = await executions.list()
 
-        class FakeTransport:
-            async def call_executions_list(self, **kwargs):
-                seen.update(kwargs)
-                return {"executions": [], "continuation_token": None}
+        assert result == [] and result.continuation_token is None
+        params = client.engine_request.await_args.kwargs["params"]
+        assert params == {"limit": 50}
 
-        self._install_fake_transport(
-            monkeypatch, FakeTransport(), "bifrost.executions"
-        )
-        result = await executions.list()
+    @pytest.mark.asyncio
+    async def test_executions_get_rides_engine_request(self):
+        import httpx
 
-        assert seen["exclude_local"] is None
-        assert seen["limit"] == 50
-        assert result == []
-        assert result.continuation_token is None
-
-    async def test_executions_get_uses_local(self, monkeypatch):
         from bifrost.executions import executions
 
         execution_id = str(uuid4())
-
-        class FakeTransport:
-            async def call_executions_get(self, exec_id):
-                assert exec_id == execution_id
-                return _sdk_summary(execution_id=execution_id)
-
-        self._install_fake_transport(
-            monkeypatch, FakeTransport(), "bifrost.executions"
-        )
-        detail = await executions.get(execution_id)
+        client = self._client([
+            httpx.Response(200, json=_sdk_summary(execution_id=execution_id))
+        ])
+        with patch("bifrost.executions.get_client", return_value=client):
+            detail = await executions.get(execution_id)
 
         assert detail.execution_id == execution_id
+        assert client.engine_request.await_args.args == (
+            "GET",
+            f"/api/executions/{execution_id}",
+        )
 
-    async def test_workflows_get_delegates_to_executions_get(self, monkeypatch):
+    @pytest.mark.asyncio
+    async def test_workflows_get_delegates_to_executions_get(self):
+        import httpx
+
         from bifrost.workflows import workflows
 
         execution_id = str(uuid4())
-
-        class FakeTransport:
-            async def call_executions_get(self, exec_id):
-                assert exec_id == execution_id
-                return _sdk_summary(execution_id=execution_id)
-
-        # workflows.get delegates to executions.get, so the executions
-        # transport (and its dead HTTP client) applies here too.
-        self._install_fake_transport(
-            monkeypatch, FakeTransport(), "bifrost.executions"
-        )
-        detail = await workflows.get(execution_id)
+        client = self._client([
+            httpx.Response(200, json=_sdk_summary(execution_id=execution_id))
+        ])
+        with patch("bifrost.executions.get_client", return_value=client):
+            detail = await workflows.get(execution_id)
 
         assert detail.execution_id == execution_id
+        assert client.engine_request.await_args.args == (
+            "GET",
+            f"/api/executions/{execution_id}",
+        )
 
-    async def test_local_errors_preserve_public_mapping(self, monkeypatch):
-        from bifrost._local_transport import raise_for_local_status
+    @pytest.mark.asyncio
+    async def test_get_error_mapping_matches_http(self):
+        import httpx
+
         from bifrost.client import BifrostAPIError
         from bifrost.executions import executions
-        from bifrost.workflows import workflows
 
-        class FailList:
-            async def call_workflows_list(self, **kwargs):
-                raise_for_local_status(403, "denied", OP_WORKFLOWS_LIST)
-
-            async def call_executions_list(self, **kwargs):
-                raise_for_local_status(422, "bad scope", OP_EXECUTIONS_LIST)
-
-        self._install_fake_transport(monkeypatch, FailList(), "bifrost.workflows")
-        with pytest.raises(BifrostAPIError) as exc_info:
-            await workflows.list()
-        assert exc_info.value.response.status_code == 403
-
-        self._install_fake_transport(monkeypatch, FailList(), "bifrost.executions")
-        with pytest.raises(BifrostAPIError) as exc_info:
-            await executions.list()
-        assert exc_info.value.response.status_code == 422
-
-        class FailGet:
-            async def call_executions_get(self, exec_id):
-                raise_for_local_status(self.status, "denied", OP_EXECUTIONS_GET)
-
+        request = httpx.Request("GET", "http://engine/api/executions/x")
         for status, expected in ((404, ValueError), (403, PermissionError)):
-            FailGet.status = status
-            self._install_fake_transport(
-                monkeypatch, FailGet(), "bifrost.executions"
-            )
-            with pytest.raises(expected):
+            client = self._client([
+                httpx.Response(status, json={"detail": "no"}, request=request)
+            ])
+            with patch("bifrost.executions.get_client", return_value=client):
+                with pytest.raises(expected):
+                    await executions.get(str(uuid4()))
+            assert client.engine_request.await_count == 1
+
+        client = self._client([
+            httpx.Response(500, json={"detail": "boom"}, request=request)
+        ])
+        with patch("bifrost.executions.get_client", return_value=client):
+            with pytest.raises(BifrostAPIError):
                 await executions.get(str(uuid4()))
 
-        class FailGetOther:
-            async def call_executions_get(self, exec_id):
-                raise_for_local_status(500, "boom", OP_EXECUTIONS_GET)
 
-        self._install_fake_transport(
-            monkeypatch, FailGetOther(), "bifrost.executions"
-        )
-        with pytest.raises(BifrostAPIError):
-            await executions.get(str(uuid4()))
+class TestCurrentLogsDirectPath:
+    """``get_current_logs`` stays a direct Redis read with no API transport."""
 
-    async def test_external_callers_keep_http(self, monkeypatch):
-        import bifrost._local_transport as local_transport
+    @pytest.mark.asyncio
+    async def test_reads_redis_without_engine_socket(self):
         from bifrost.executions import executions
-        from bifrost.workflows import workflows
 
-        monkeypatch.setattr(local_transport, "_installed", None)
+        entries = [
+            (
+                "1-0",
+                {
+                    "execution_id": "exec-1",
+                    "level": "INFO",
+                    "message": "hello",
+                    "metadata": '{"a": 1}',
+                    "timestamp": "2026-01-01T00:00:00+00:00",
+                },
+            )
+        ]
 
-        wf_response = MagicMock()
-        wf_response.status_code = 200
-        wf_response.json = lambda: []
-        wf_response.headers = {}
-        fake_wf = MagicMock()
-        fake_wf.get = AsyncMock(return_value=wf_response)
-        monkeypatch.setattr(
-            sys.modules["bifrost.workflows"], "get_client", lambda: fake_wf
+        class _FakeRedis:
+            async def xrange(self, key, min, count):
+                return entries
+
+        @contextlib.asynccontextmanager
+        async def _fake_get_redis():
+            yield _FakeRedis()
+
+        client = MagicMock()
+        client.engine_request = AsyncMock(
+            side_effect=AssertionError("get_current_logs must not call the API")
         )
-        assert await workflows.list() == []
-        fake_wf.get.assert_awaited_once_with("/api/workflows")
+        with (
+            patch("src.core.cache.get_redis", _fake_get_redis),
+            patch("bifrost.executions.get_client", return_value=client),
+        ):
+            logs = await executions.get_current_logs("exec-1")
 
-        list_response = MagicMock()
-        list_response.status_code = 200
-        list_response.json = lambda: {"executions": [], "continuation_token": None}
-        list_response.headers = {}
-        get_response = MagicMock()
-        get_response.status_code = 200
-        get_response.json = lambda: _sdk_summary()
-        get_response.headers = {}
-        fake_ex = MagicMock()
-        fake_ex.get = AsyncMock(side_effect=[list_response, get_response])
-        monkeypatch.setattr(
-            sys.modules["bifrost.executions"], "get_client", lambda: fake_ex
-        )
-        listed = await executions.list()
-        assert listed == []
-        assert listed.continuation_token is None
-        detail = await executions.get(str(uuid4()))
-        assert detail.workflow_name == "wf"
+        assert [log.message for log in logs] == ["hello"]
+        assert logs[0].level == "INFO"
+        assert logs[0].metadata == {"a": 1}
+        client.engine_request.assert_not_awaited()

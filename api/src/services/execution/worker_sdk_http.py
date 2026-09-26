@@ -20,9 +20,11 @@ batch writes (insert/upsert/update/delete_document/batch/batch-delete plus
 the auto-create POST /api/tables helper), Gate C4a adds the files facade
 routes (read/write/list/delete/stat/exists/signed-url/search), Gate C4b adds
 the artifact facade routes plus the durable platform-job status route that
-``artifacts.create_video`` polls, and Gate C4c adds the knowledge facade
-routes (store/store-many/search/delete/get/delete_namespace/list_namespaces).
-Streams and other domains stay on their existing channel path until their own
+``artifacts.create_video`` polls, Gate C4c adds the knowledge facade
+routes (store/store-many/search/delete/get/delete_namespace/list_namespaces),
+and Gate C5a adds the workflow facade routes
+(list/execute/cancel) and execution-history routes (list/get). Streams and
+other domains stay on their existing channel path until their own
 Gate C slice migrates them.
 
 ``import fastapi``/``uvicorn`` happen inside the functions so the worker
@@ -169,6 +171,28 @@ PLATFORM_JOB_ROUTE_METHODS: dict[str, frozenset[str]] = {
     "/api/platform-jobs/{job_id}": frozenset({"GET"}),
 }
 
+# Gate C5a: the workflow facade routes, selected from ``src.routers.workflows``
+# by path AND method. They carry the ordinary ``CurrentSuperuser`` /
+# ``CurrentActiveUser`` auth, the ``Context`` execution context, the shared
+# ``shared.sdk_workflow_execution`` service, and the worker's initialized DB
+# engine and queue. ``workflows.get`` is not here — it delegates to the
+# execution-detail route below.
+WORKFLOW_ROUTE_METHODS: dict[str, frozenset[str]] = {
+    "/api/workflows": frozenset({"GET"}),
+    "/api/workflows/execute": frozenset({"POST"}),
+    "/api/workflows/executions/{execution_id}/cancel": frozenset({"POST"}),
+}
+
+# Gate C5a: the execution-history facade routes, selected from
+# ``src.routers.executions`` by path AND method. ``/api/executions`` is the
+# list route; ``/api/executions/{execution_id}`` is the detail route. Their
+# ``/logs``, ``/{execution_id}/result``, and ``/{execution_id}/variables``
+# siblings stay on the API.
+EXECUTION_ROUTE_METHODS: dict[str, frozenset[str]] = {
+    "/api/executions": frozenset({"GET"}),
+    "/api/executions/{execution_id}": frozenset({"GET"}),
+}
+
 # Every route path this worker-local app serves from the cli SDK router.
 # Other SDK domains keep their existing channel path until their Gate C
 # slice migrates them.
@@ -191,9 +215,11 @@ def build_worker_sdk_app() -> Any:
     from fastapi import FastAPI
 
     from src.routers.cli import router as sdk_router
+    from src.routers.executions import router as executions_router
     from src.routers.files import router as files_router
     from src.routers.platform_jobs import router as platform_jobs_router
     from src.routers.tables import router as tables_router
+    from src.routers.workflows import router as workflows_router
 
     app = FastAPI(
         title="Bifrost worker-local engine SDK",
@@ -266,6 +292,34 @@ def build_worker_sdk_app() -> Any:
             selected += 1
     expected += sum(
         len(methods) for methods in PLATFORM_JOB_ROUTE_METHODS.values()
+    )
+
+    # Workflow and execution facade routes are selected by (path, method) from
+    # their real routers. The shared ``/api/executions/{execution_id}`` path
+    # has result/variables GET siblings, and the workflows router carries an
+    # unrelated ``/usage-stats`` GET, so the exact method set matters.
+    for route in workflows_router.routes:
+        wanted = WORKFLOW_ROUTE_METHODS.get(
+            getattr(route, "path", None), frozenset()
+        )
+        methods = getattr(route, "methods", None) or frozenset()
+        if wanted and methods & wanted:
+            app.router.routes.append(route)
+            selected += 1
+    expected += sum(
+        len(methods) for methods in WORKFLOW_ROUTE_METHODS.values()
+    )
+
+    for route in executions_router.routes:
+        wanted = EXECUTION_ROUTE_METHODS.get(
+            getattr(route, "path", None), frozenset()
+        )
+        methods = getattr(route, "methods", None) or frozenset()
+        if wanted and methods & wanted:
+            app.router.routes.append(route)
+            selected += 1
+    expected += sum(
+        len(methods) for methods in EXECUTION_ROUTE_METHODS.values()
     )
 
     if selected != expected:

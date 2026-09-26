@@ -41,7 +41,7 @@ async def test_list_uses_snake_case_filters_and_returns_continuation_token(monke
         "continuation_token": "token-2",
     }
     client = MagicMock()
-    client.get = AsyncMock(return_value=response)
+    client.engine_request = AsyncMock(return_value=response)
     monkeypatch.setattr(module, "get_client", lambda: client)
     monkeypatch.setattr(module, "raise_for_status_with_detail", MagicMock())
 
@@ -59,7 +59,8 @@ async def test_list_uses_snake_case_filters_and_returns_continuation_token(monke
     assert isinstance(result, list)
     assert [execution.execution_id for execution in result] == ["exec-1", "exec-2"]
     assert result.continuation_token == "token-2"
-    client.get.assert_awaited_once_with(
+    client.engine_request.assert_awaited_once_with(
+        "GET",
         "/api/executions",
         params={
             "workflow_id": "wf-123",
@@ -79,13 +80,14 @@ async def test_list_preserves_legacy_workflow_name_filter(monkeypatch):
     response = MagicMock()
     response.json.return_value = {"executions": [], "continuation_token": None}
     client = MagicMock()
-    client.get = AsyncMock(return_value=response)
+    client.engine_request = AsyncMock(return_value=response)
     monkeypatch.setattr(module, "get_client", lambda: client)
     monkeypatch.setattr(module, "raise_for_status_with_detail", MagicMock())
 
     await module.executions.list(workflow_name="legacy-name", limit=10)
 
-    client.get.assert_awaited_once_with(
+    client.engine_request.assert_awaited_once_with(
+        "GET",
         "/api/executions",
         params={"workflow_name": "legacy-name", "limit": 10},
     )

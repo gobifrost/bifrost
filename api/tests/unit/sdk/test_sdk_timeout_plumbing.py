@@ -177,3 +177,100 @@ async def test_knowledge_store_many_respects_explicit_timeout(monkeypatch):
 
     kwargs = mock_client.engine_request.call_args.kwargs
     assert kwargs.get("timeout") == 600.0
+
+
+@pytest.mark.asyncio
+async def test_workflow_and_execution_facades_send_no_per_call_timeout(monkeypatch):
+    """Migrated workflow/execution calls keep ``BifrostClient``'s default timeout.
+
+    The fixed HTTP calls used the client's 30s default; ``engine_request``
+    preserves that (both the socket and network clients carry the same 30s
+    timeout), with no per-call override.
+    """
+    from bifrost.executions import executions
+    from bifrost.workflows import workflows
+
+    wf_meta = {
+        "id": "11111111-1111-1111-1111-111111111111",
+        "name": "wf",
+        "description": None,
+        "category": None,
+        "tags": [],
+        "parameters": [],
+        "execution_mode": "sync",
+        "timeout_seconds": 1800,
+        "retry_policy": None,
+        "endpoint_enabled": False,
+        "allowed_methods": None,
+        "disable_global_key": False,
+        "public_endpoint": False,
+        "is_tool": False,
+        "tool_description": None,
+        "time_saved": None,
+        "source_file_path": None,
+        "relative_file_path": None,
+    }
+    summary = {
+        "execution_id": "22222222-2222-2222-2222-222222222222",
+        "workflow_name": "wf",
+        "org_id": None,
+        "form_id": None,
+        "executed_by": "u",
+        "executed_by_name": "U",
+        "status": "Success",
+        "result_type": None,
+        "error_message": None,
+        "duration_ms": None,
+        "started_at": None,
+        "completed_at": None,
+        "session_id": None,
+        "peak_memory_bytes": None,
+        "process_rss_bytes": None,
+        "cpu_total_seconds": None,
+    }
+
+    def _resp(body):
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.is_success = True
+        resp.json = lambda: body
+        resp.headers = {}
+        return resp
+
+    wf_client = MagicMock()
+    wf_client.engine_request = AsyncMock(return_value=_resp([wf_meta]))
+    monkeypatch.setattr(
+        sys.modules["bifrost.workflows"], "get_client", lambda: wf_client
+    )
+    await workflows.list()
+    assert "timeout" not in wf_client.engine_request.await_args.kwargs
+
+    ex_client = MagicMock()
+    ex_client.engine_request = AsyncMock(
+        side_effect=[
+            _resp({"executions": [summary], "continuation_token": None}),
+            _resp(summary),
+        ]
+    )
+    monkeypatch.setattr(
+        sys.modules["bifrost.executions"], "get_client", lambda: ex_client
+    )
+    await executions.list()
+    await executions.get(summary["execution_id"])
+    for call in ex_client.engine_request.await_args_list:
+        assert "timeout" not in call.kwargs
+
+    mut_client = MagicMock()
+    mut_client.engine_request = AsyncMock(
+        side_effect=[
+            _resp({"execution_id": "e1", "status": "Pending"}),
+            _resp({"execution_id": "e1", "status": "Cancelled"}),
+        ]
+    )
+    monkeypatch.setattr(
+        sys.modules["bifrost.workflows"], "get_client", lambda: mut_client
+    )
+    await workflows.execute("wf")
+    await workflows.cancel(summary["execution_id"])
+    for call in mut_client.engine_request.await_args_list:
+        assert "timeout" not in call.kwargs

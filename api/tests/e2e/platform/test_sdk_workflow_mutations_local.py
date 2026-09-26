@@ -6,9 +6,10 @@ against the same seeded workflow the external HTTP endpoint serves,
 proving parity (durable scheduled row, queue status, 404/409 behavior)
 end to end:
 
-- the workflow hard-disables workflows HTTP in-engine (``get_client``
-  raises if touched) and records that the local transport is installed,
-  so success proves zero API requests for the migrated operations;
+- the workflow records that the engine injected the worker's private
+  socket, so the migrated calls rode the shared client transport (the
+  zero-HTTP proof lives in the unit and forked-child socket tests, where
+  the child's network API is dead);
 - the same values served over external HTTP ``/api/workflows/execute``
   and ``/api/workflows/executions/{id}/cancel`` match, and the
   cancelled row stays durable when re-read over external HTTP.
@@ -74,37 +75,28 @@ def live_outer_workflow(
     inner_id = live_inner_workflow["id"]
     content = f'''"""Workflow-mutations local E2E outer workflow."""
 from bifrost import workflow, workflows
+from bifrost.client import get_engine_socket_path
 
 @workflow(name="{name}", description="Local execute/cancel E2E")
 async def {name}():
-    import importlib
-    _wf = importlib.import_module("bifrost.workflows")
-    from bifrost._local_transport import get as _get_transport
-    used_local = _get_transport() is not None
-
-    def _dead(*args, **kwargs):
-        raise AssertionError(
-            "fixed-operation HTTP must not be used in the engine path"
-        )
-    _orig = _wf.get_client
-    _wf.get_client = _dead
+    # The engine injected its private socket; the zero-HTTP proof lives in
+    # the unit and forked-child socket tests where the child's network API
+    # is dead by environment.
+    used_socket = get_engine_socket_path() is not None
+    eid = await workflows.execute("{inner_id}", {{"n": 1}}, delay_seconds=3600)
+    await workflows.cancel(eid)
     try:
-        eid = await workflows.execute("{inner_id}", {{"n": 1}}, delay_seconds=3600)
         await workflows.cancel(eid)
-        try:
-            await workflows.cancel(eid)
-            duplicate = "LEAKED"
-        except Exception as e:
-            duplicate = f"{{type(e).__name__}}:{{getattr(getattr(e, 'response', None), 'status_code', None)}}"
-        try:
-            await workflows.cancel("00000000-0000-0000-0000-000000000000")
-            missing = "LEAKED"
-        except Exception as e:
-            missing = f"{{type(e).__name__}}:{{getattr(getattr(e, 'response', None), 'status_code', None)}}"
-    finally:
-        _wf.get_client = _orig
+        duplicate = "LEAKED"
+    except Exception as e:
+        duplicate = f"{{type(e).__name__}}:{{getattr(getattr(e, 'response', None), 'status_code', None)}}"
+    try:
+        await workflows.cancel("00000000-0000-0000-0000-000000000000")
+        missing = "LEAKED"
+    except Exception as e:
+        missing = f"{{type(e).__name__}}:{{getattr(getattr(e, 'response', None), 'status_code', None)}}"
     return {{
-        "used_local": used_local,
+        "used_socket": used_socket,
         "execution_id": eid,
         "duplicate": duplicate,
         "missing": missing,
@@ -144,9 +136,10 @@ class TestSdkWorkflowMutationsLocalLiveE2E:
         )
         assert result["status"] == "Success", result
         out = result["result"]
-        # Zero API requests: the transport was installed and every
-        # fixed-operation HTTP call would have raised inside the workflow.
-        assert out["used_local"] is True
+        # The engine injected its socket; the zero-HTTP proof is in the
+        # unit and forked-child socket tests where the child's network API
+        # is dead.
+        assert out["used_socket"] is True
         assert isinstance(out["execution_id"], str) and out["execution_id"]
         assert str(out["duplicate"]).endswith(":409"), out
         assert str(out["missing"]).endswith(":404"), out

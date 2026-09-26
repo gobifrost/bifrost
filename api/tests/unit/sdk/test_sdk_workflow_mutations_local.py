@@ -10,16 +10,17 @@ Covers the acceptance surface that does not need a forked child:
   HTTP-style statuses;
 - the child transport performs real execute/cancel round trips with
   zero HTTP requests and no silent HTTP fallback;
-- the SDK facade maps local results to the public surface (execution-id
-  string, ``None`` on cancel) and preserves the existing exception
-  mapping and client-side ``scheduled_at``/``delay_seconds`` validation;
-- external callers (no transport) keep the HTTP path unchanged.
+- the SDK facade rides the shared ``BifrostClient.engine_request``
+  transport (Gate C5a), posting the exact HTTP execute/cancel paths and
+  bodies, mapping results to the public surface (execution-id string,
+  ``None`` on cancel), and preserving the existing exception mapping and
+  client-side ``scheduled_at``/``delay_seconds`` validation;
+- external callers (no socket) keep the network HTTP path unchanged.
 """
 
 from __future__ import annotations
 
 import contextlib
-import sys
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
@@ -669,52 +670,48 @@ class TestCancelDispatch:
         await _delete_execution(db_session, second_id)
 
 
-@pytest.mark.asyncio
-class TestFacadeLocalMapping:
-    def _install_fake_transport(self, monkeypatch, fake):
-        import bifrost._local_transport as local_transport
+class TestEngineRequestFacade:
+    """Gate C5a: the migrated workflow mutations ride ``engine_request``.
 
-        monkeypatch.setattr(local_transport, "_installed", fake)
+    ``execute`` posts the exact HTTP body (fire-and-forget ``sync=False``),
+    ``cancel`` posts the exact HTTP cancel path, both keep the shared
+    client's default timeout with no override, and errors surface as the
+    same public exceptions as the HTTP path — with no dedicated-channel
+    frames and no silent HTTP fallback.
+    """
 
-        def _dead(*args, **kwargs):
-            raise AssertionError("HTTP must not be used in the engine path")
+    def _client(self, responses):
+        client = MagicMock()
+        client.engine_request = AsyncMock(side_effect=responses)
+        return client
 
-        # NOTE: patch via sys.modules — the ``bifrost.workflows`` attribute
-        # on the package is the ``workflows`` facade class, not this module.
-        monkeypatch.setattr(sys.modules["bifrost.workflows"], "get_client", _dead)
+    @pytest.mark.asyncio
+    async def test_execute_posts_exact_body_and_returns_id(self):
+        import httpx
 
-    async def test_execute_uses_local_and_returns_execution_id(self, monkeypatch):
         from bifrost.workflows import workflows
 
-        seen = {}
+        client = self._client([
+            httpx.Response(200, json={"execution_id": "exec-http-1"})
+        ])
+        with patch("bifrost.workflows.get_client", return_value=client):
+            eid = await workflows.execute("workflows/child.py::main", {"x": 1})
 
-        class FakeTransport:
-            async def call_workflows_execute(self, *args, **kwargs):
-                seen["args"] = args
-                seen["kwargs"] = kwargs
-                return {
-                    "execution_id": "exec-local-1",
-                    "status": ExecutionStatus.PENDING.value,
-                }
+        assert eid == "exec-http-1"
+        call = client.engine_request.await_args
+        assert call.args == ("POST", "/api/workflows/execute")
+        assert call.kwargs["json"]["workflow_id"] == "workflows/child.py::main"
+        assert call.kwargs["json"]["input_data"] == {"x": 1}
+        assert call.kwargs["json"]["sync"] is False
+        assert "timeout" not in call.kwargs
 
-        self._install_fake_transport(monkeypatch, FakeTransport())
-        eid = await workflows.execute("workflows/child.py::main", {"x": 1})
+    @pytest.mark.asyncio
+    async def test_execute_forwards_scope_solution_and_schedule(self):
+        import httpx
 
-        assert eid == "exec-local-1"
-        assert seen["args"][0] == "workflows/child.py::main"
-        assert seen["args"][1] == {"x": 1}
-
-    async def test_execute_forwards_scope_solution_and_schedule(self, monkeypatch):
+        from bifrost._context import clear_execution_context, set_execution_context
         from bifrost._execution_context import ExecutionContext, Organization
-        from bifrost._context import set_execution_context, clear_execution_context
         from bifrost.workflows import workflows
-
-        seen = {}
-
-        class FakeTransport:
-            async def call_workflows_execute(self, *args, **kwargs):
-                seen["args"] = args
-                return {"execution_id": "exec-local-2"}
 
         org_id = str(uuid4())
         solution_id = str(uuid4())
@@ -730,77 +727,74 @@ class TestFacadeLocalMapping:
             solution_id=solution_id,
         )
         set_execution_context(ctx)
+        run_at = datetime.now(timezone.utc) + timedelta(hours=1)
+        client = self._client([
+            httpx.Response(200, json={"execution_id": "exec-http-2"})
+        ])
         try:
-            self._install_fake_transport(monkeypatch, FakeTransport())
-            run_at = datetime.now(timezone.utc) + timedelta(hours=1)
-            eid = await workflows.execute(
-                "wf",
-                {"x": 1},
-                run_as="22222222-2222-2222-2222-222222222222",
-                scheduled_at=run_at,
-            )
+            with patch("bifrost.workflows.get_client", return_value=client):
+                eid = await workflows.execute(
+                    "wf",
+                    {"x": 1},
+                    run_as="22222222-2222-2222-2222-222222222222",
+                    scheduled_at=run_at,
+                )
         finally:
             clear_execution_context()
 
-        assert eid == "exec-local-2"
-        # The requested target rides the frame; caller identity stays
-        # parent-owned. Remaining fields are the schedule and delay.
-        assert seen["args"][2] == org_id
-        assert seen["args"][3] == "22222222-2222-2222-2222-222222222222"
-        assert seen["args"][4] == solution_id
-        assert seen["args"][5] == run_at.isoformat()
-        assert seen["args"][6] is None
+        assert eid == "exec-http-2"
+        payload = client.engine_request.await_args.kwargs["json"]
+        assert payload["org_id"] == org_id
+        assert payload["solution_id"] == solution_id
+        assert payload["caller_solution_id"] == solution_id
+        assert payload["run_as"] == "22222222-2222-2222-2222-222222222222"
+        assert payload["scheduled_at"] == run_at.isoformat()
+        assert "delay_seconds" not in payload
 
-    async def test_execute_client_validation_runs_before_local(self, monkeypatch):
+    @pytest.mark.asyncio
+    async def test_execute_client_validation_runs_before_request(self):
         from bifrost.workflows import workflows
 
-        called = {"n": 0}
-
-        class FakeTransport:
-            async def call_workflows_execute(self, *args, **kwargs):
-                called["n"] += 1
-                return {"execution_id": "exec-never"}
-
-        self._install_fake_transport(monkeypatch, FakeTransport())
+        client = self._client([])
         run_at = datetime.now(timezone.utc) + timedelta(minutes=5)
-        with pytest.raises(ValueError, match="mutually exclusive"):
-            await workflows.execute("wf", scheduled_at=run_at, delay_seconds=60)
-        with pytest.raises(ValueError, match="timezone"):
-            await workflows.execute(
-                "wf", scheduled_at=datetime.now() + timedelta(minutes=5)
+        with patch("bifrost.workflows.get_client", return_value=client):
+            with pytest.raises(ValueError, match="mutually exclusive"):
+                await workflows.execute(
+                    "wf", scheduled_at=run_at, delay_seconds=60
+                )
+            with pytest.raises(ValueError, match="timezone"):
+                await workflows.execute(
+                    "wf", scheduled_at=datetime.now() + timedelta(minutes=5)
+                )
+        client.engine_request.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_cancel_posts_exact_path_and_returns_none(self):
+        import httpx
+
+        from bifrost.workflows import workflows
+
+        client = self._client([
+            httpx.Response(
+                200,
+                json={"execution_id": "exec-1", "status": "Cancelled"},
             )
-        assert called["n"] == 0
+        ])
+        with patch("bifrost.workflows.get_client", return_value=client):
+            assert await workflows.cancel("exec-1") is None
 
-    async def test_execute_missing_execution_id_raises(self, monkeypatch):
-        from bifrost.workflows import workflows
+        call = client.engine_request.await_args
+        assert call.args == ("POST", "/api/workflows/executions/exec-1/cancel")
+        assert call.kwargs == {}
 
-        class FakeTransport:
-            async def call_workflows_execute(self, *args, **kwargs):
-                return {"status": ExecutionStatus.PENDING.value}
+    @pytest.mark.asyncio
+    async def test_error_statuses_surface_without_channel(self):
+        import httpx
 
-        self._install_fake_transport(monkeypatch, FakeTransport())
-        with pytest.raises(RuntimeError, match="no execution_id"):
-            await workflows.execute("wf")
-
-    async def test_cancel_uses_local_and_returns_none(self, monkeypatch):
-        from bifrost.workflows import workflows
-
-        seen = {}
-
-        class FakeTransport:
-            async def call_workflows_cancel(self, execution_id):
-                seen["execution_id"] = execution_id
-                return {"execution_id": execution_id, "status": "Cancelled"}
-
-        self._install_fake_transport(monkeypatch, FakeTransport())
-        assert await workflows.cancel("exec-local-1") is None
-        assert seen["execution_id"] == "exec-local-1"
-
-    async def test_local_errors_preserve_http_statuses(self, monkeypatch):
         from bifrost.client import BifrostAPIError
-        from bifrost._local_transport import raise_for_local_status
         from bifrost.workflows import workflows
 
+        request = httpx.Request("POST", "http://engine/api/workflows/execute")
         for op, status in (
             ("execute", 404),
             ("execute", 403),
@@ -808,51 +802,13 @@ class TestFacadeLocalMapping:
             ("cancel", 403),
             ("cancel", 409),
         ):
-
-            class FakeTransport:
-                async def call_workflows_execute(self, *args, **kwargs):
-                    raise_for_local_status(status, "denied", OP_WORKFLOWS_EXECUTE)
-
-                async def call_workflows_cancel(self, execution_id):
-                    raise_for_local_status(status, "denied", OP_WORKFLOWS_CANCEL)
-
-            self._install_fake_transport(monkeypatch, FakeTransport())
-            with pytest.raises(BifrostAPIError) as exc_info:
-                if op == "execute":
-                    await workflows.execute("wf")
-                else:
-                    await workflows.cancel(str(uuid4()))
+            client = self._client([
+                httpx.Response(status, json={"detail": "denied"}, request=request)
+            ])
+            with patch("bifrost.workflows.get_client", return_value=client):
+                with pytest.raises(BifrostAPIError) as exc_info:
+                    if op == "execute":
+                        await workflows.execute("wf")
+                    else:
+                        await workflows.cancel(str(uuid4()))
             assert exc_info.value.response.status_code == status
-
-    async def test_external_caller_keeps_http(self, monkeypatch):
-        import bifrost._local_transport as local_transport
-        from bifrost.workflows import workflows
-
-        monkeypatch.setattr(local_transport, "_installed", None)
-        fake = MagicMock()
-        fake.post = AsyncMock(
-            return_value=_mock_post_response({"execution_id": "e-http"})
-        )
-        monkeypatch.setattr(
-            sys.modules["bifrost.workflows"], "get_client", lambda: fake
-        )
-
-        eid = await workflows.execute("wf", {"x": 1})
-        assert eid == "e-http"
-        payload = fake.post.await_args.kwargs["json"]
-        assert payload["workflow_id"] == "wf"
-        assert payload["input_data"] == {"x": 1}
-        assert payload["sync"] is False
-
-        fake.post = AsyncMock(return_value=_mock_post_response({"status": "Cancelled"}))
-        assert await workflows.cancel("exec-1") is None
-        url = fake.post.await_args.args[0]
-        assert url == "/api/workflows/executions/exec-1/cancel"
-
-
-def _mock_post_response(json_body: dict):
-    resp = MagicMock()
-    resp.status_code = 200
-    resp.json = lambda: json_body
-    resp.headers = {}
-    return resp

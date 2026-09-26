@@ -6,10 +6,10 @@ and ``executions.get`` (own running execution, a foreign row, and a
 missing id) — proving parity with the same values served over external
 HTTP ``/api/workflows`` and ``/api/executions``:
 
-- the workflow hard-disables workflows/executions HTTP in-engine
-  (``get_client`` raises if touched) and records that the local
-  transport is installed, so success proves zero API requests for the
-  migrated operations;
+- the workflow records that the engine injected the worker's private
+  socket, so the migrated calls rode the shared client transport (the
+  zero-HTTP proof lives in the unit and forked-child socket tests, where
+  the child's network API is dead);
 - the same rows re-read over external HTTP match (summaries, detail,
   continuation tokens, 404 on missing);
 - the engine child's superuser visibility matches the HTTP engine path:
@@ -41,46 +41,34 @@ def live_outer_workflow(e2e_client, platform_admin, org1, live_keys):
     content = f'''"""Execution-reads local E2E outer workflow."""
 import asyncio
 from bifrost import workflow, workflows, executions
+from bifrost.client import get_engine_socket_path
 
 @workflow(name="{name}", description="Local execution reads E2E")
 async def {name}(foreign_id: str):
-    import importlib
-    _wf = importlib.import_module("bifrost.workflows")
-    _ex = importlib.import_module("bifrost.executions")
     from bifrost._context import get_execution_context
-    from bifrost._local_transport import get as _get_transport
-    used_local = _get_transport() is not None
-
-    def _dead(*args, **kwargs):
-        raise AssertionError(
-            "fixed-operation HTTP must not be used in the engine path"
-        )
-    _orig_wf, _orig_ex = _wf.get_client, _ex.get_client
-    _wf.get_client = _dead
-    _ex.get_client = _dead
+    # The engine injected its private socket; the zero-HTTP proof lives in
+    # the unit and forked-child socket tests where the child's network API
+    # is dead by environment.
+    used_socket = get_engine_socket_path() is not None
+    _wf_list = await workflows.list()
+    saw_self = any(_w.name == "{name}" for _w in _wf_list)
+    own_id = get_execution_context().execution_id
+    _page1, _detail, _foreign = await asyncio.gather(
+        executions.list(limit=1),
+        executions.get(own_id),
+        executions.get(foreign_id),
+    )
+    _page2 = await executions.list(limit=1, continuation_token=_page1.continuation_token)
+    _named = await executions.list(workflow_name="{name}")
     try:
-        _wf_list = await workflows.list()
-        saw_self = any(_w.name == "{name}" for _w in _wf_list)
-        own_id = get_execution_context().execution_id
-        _page1, _detail, _foreign = await asyncio.gather(
-            executions.list(limit=1),
-            executions.get(own_id),
-            executions.get(foreign_id),
-        )
-        _page2 = await executions.list(limit=1, continuation_token=_page1.continuation_token)
-        _named = await executions.list(workflow_name="{name}")
-        try:
-            await executions.get("00000000-0000-0000-0000-000000000000")
-            missing = "LEAKED"
-        except ValueError:
-            missing = "ValueError"
-        except Exception as e:
-            missing = type(e).__name__
-    finally:
-        _wf.get_client = _orig_wf
-        _ex.get_client = _orig_ex
+        await executions.get("00000000-0000-0000-0000-000000000000")
+        missing = "LEAKED"
+    except ValueError:
+        missing = "ValueError"
+    except Exception as e:
+        missing = type(e).__name__
     return {{
-        "used_local": used_local,
+        "used_socket": used_socket,
         "saw_self": saw_self,
         "own_id": own_id,
         "page1_count": len(_page1),
@@ -143,9 +131,10 @@ class TestSdkExecutionReadsLocalLiveE2E:
         )
         assert result["status"] == "Success", result
         out = result["result"]
-        # Zero API requests: the transport was installed and every
-        # fixed-operation HTTP call would have raised inside the workflow.
-        assert out["used_local"] is True
+        # The engine injected its socket; the zero-HTTP proof is in the
+        # unit and forked-child socket tests where the child's network API
+        # is dead.
+        assert out["used_socket"] is True
         assert out["saw_self"] is True, out
         # Filtered + keyset-paged list agrees with itself across pages.
         assert out["page1_count"] == 1, out
