@@ -11,7 +11,6 @@ Note: `get_app_schema` provides a concise platform overview and component index.
 
 import logging
 from typing import Any
-from uuid import UUID
 
 from fastmcp.tools import ToolResult
 
@@ -32,32 +31,15 @@ def _write_scope_bypass(context: Any) -> bool:
     )
 
 
-def _caller_org_id(context: Any) -> UUID | None:
-    org_id = getattr(context, "org_id", None)
-    if isinstance(org_id, UUID):
-        return org_id
-    if isinstance(org_id, str) and org_id:
-        return UUID(org_id)
-    return None
-
-
 def _app_write_denied(context: Any, app: Any) -> bool:
     """Whether the caller lacks write scope for ``app``.
 
-    Write scope is scope bypass (platform admin or provider-org member) or
-    the app belonging to the caller's own organization. A global app
-    (``organization_id is None``) can only be written by a bypass caller.
+    Writing to any application — own-org included — requires scope bypass
+    (platform admin or provider-org member), matching REST's
+    ``get_application_for_write_or_404``.
     """
-    if _write_scope_bypass(context):
-        return False
-    return app.organization_id is None or app.organization_id != _caller_org_id(context)
-
-
-# Sentinel: a path did not resolve to any owning entity (App or Workflow).
-# Distinct from an owner whose organization_id is None (a global entity) —
-# an unresolved path is bypass-only, same as a global one, but for a
-# different reason (there's nothing to check ownership of).
-_NO_OWNING_ENTITY = object()
+    del app  # write scope no longer depends on the app's org
+    return not _write_scope_bypass(context)
 
 
 def _pick_slug_row(rows: list[Any], org_id: Any) -> Any | None:
@@ -161,6 +143,11 @@ async def create_app(
     from src.services.file_storage import FileStorageService
 
     logger.info(f"MCP create_app called with name={name}, scope={scope}")
+
+    if not _write_scope_bypass(context):
+        return error_result(
+            "Only a platform admin or provider-org member can create applications."
+        )
 
     if not name:
         return error_result("name is required")
@@ -392,11 +379,10 @@ async def update_app(
             if not app:
                 return error_result(f"Application not found: {app_id}")
 
-            # Writing requires scope bypass or that the app belongs to the
-            # caller's own org — the same rule the REST router enforces via
-            # get_application_for_write_or_404. Report the same not-found
-            # message as the lookup above so a caller can't distinguish "no
-            # write access" from "doesn't exist".
+            # Writing requires scope bypass — the same rule the REST router
+            # enforces via get_application_for_write_or_404. Report the same
+            # not-found message as the lookup above so a caller can't
+            # distinguish "no write access" from "doesn't exist".
             if _app_write_denied(context, app):
                 return error_result(f"Application not found: {app_id}")
 
@@ -866,7 +852,6 @@ async def push_files(
 
     from src.models.orm.applications import Application
     from src.models.orm.file_index import FileIndex
-    from src.models.orm.workflows import Workflow
     from src.services.app_storage import AppStorageService
     from src.services.file_storage import FileStorageService
     from src.services.solutions.guard import (
@@ -930,49 +915,15 @@ async def push_files(
                 existing_paths = {row[0] for row in existing_files.all()}
                 delete_prefix_paths = existing_paths - set(files.keys())
 
-            # Write scope: a non-bypass caller may only write or delete a
-            # path that maps to an owning entity (Application or Workflow)
-            # in their own organization. A path with no owning entity, or
-            # one owned by another org / global, is denied. Reject the
-            # WHOLE batch if ANY path fails — never a partial write.
+            # Write scope: writing or deleting any `_repo/` path requires
+            # scope bypass (platform admin or provider-org member) — this
+            # matches REST, where `_repo/` writes have no non-admin path at
+            # all (files.py's editor routes are CurrentSuperuser).
             if not _write_scope_bypass(context):
-                caller_org_id = _caller_org_id(context)
-                app_prefixes = [
-                    (app_obj.repo_path.rstrip("/") + "/", app_obj.organization_id)
-                    for app_obj in all_apps
-                    if app_obj.repo_path
-                ]
-                workflow_org_cache: dict[str, Any] = {}
-                denied: list[str] = []
-                for repo_path in sorted(set(files.keys()) | delete_prefix_paths):
-                    owner_org_id: Any = _NO_OWNING_ENTITY
-                    for app_prefix, org_id in app_prefixes:
-                        if repo_path.startswith(app_prefix):
-                            owner_org_id = org_id
-                            break
-                    if owner_org_id is _NO_OWNING_ENTITY and repo_path.endswith(".py"):
-                        if repo_path not in workflow_org_cache:
-                            wf_result = await db.execute(
-                                select(Workflow.organization_id)
-                                .where(Workflow.path == repo_path)
-                                .limit(1)
-                            )
-                            wf_row = wf_result.first()
-                            workflow_org_cache[repo_path] = (
-                                wf_row[0] if wf_row is not None else _NO_OWNING_ENTITY
-                            )
-                        owner_org_id = workflow_org_cache[repo_path]
-                    if (
-                        owner_org_id is _NO_OWNING_ENTITY
-                        or owner_org_id is None
-                        or owner_org_id != caller_org_id
-                    ):
-                        denied.append(repo_path)
-                if denied:
-                    return error_result(
-                        "You don't have permission to write one or more of these paths.",
-                        {"denied_paths": denied},
-                    )
+                return error_result(
+                    "You don't have permission to write one or more of these paths.",
+                    {"denied_paths": sorted(set(files.keys()) | delete_prefix_paths)},
+                )
 
             file_storage = FileStorageService(db)
             created = 0
@@ -1221,8 +1172,7 @@ async def update_app_dependencies(
             if not app:
                 return error_result(f"Application not found: {app_id}")
 
-            # Writing requires scope bypass or that the app belongs to the
-            # caller's own org (see _app_write_denied).
+            # Writing requires scope bypass (see _app_write_denied).
             if _app_write_denied(context, app):
                 return error_result(f"Application not found: {app_id}")
 

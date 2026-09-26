@@ -3,10 +3,9 @@
 ``get_application_for_write_or_404`` is the single write-scope gate reused
 by every mutating route in ``applications.py``. These tests exercise the
 gate directly: read access is unchanged (delegated to
-``get_application_by_id_or_404``), but writing additionally requires scope
-bypass (platform admin or provider-org member) or that the application
-belongs to the caller's own organization. A global application
-(``organization_id is None``) can only be written by a bypass caller.
+``get_application_by_id_or_404``), but writing to ANY application requires
+scope bypass (platform admin or provider-org member) — own-org membership
+alone is no longer sufficient.
 """
 
 from types import SimpleNamespace
@@ -47,7 +46,8 @@ async def test_non_bypass_member_denied_for_global_app():
 
 
 @pytest.mark.asyncio
-async def test_non_bypass_member_allowed_for_own_org_app():
+async def test_non_bypass_member_denied_for_own_org_app():
+    """Own-org membership alone no longer grants write access."""
     app_id = uuid4()
     org_id = uuid4()
     application = SimpleNamespace(id=app_id, organization_id=org_id)
@@ -57,9 +57,10 @@ async def test_non_bypass_member_allowed_for_own_org_app():
         "src.routers.applications.get_application_by_id_or_404",
         new=AsyncMock(return_value=application),
     ):
-        result = await get_application_for_write_or_404(ctx, app_id)
+        with pytest.raises(HTTPException) as exc_info:
+            await get_application_for_write_or_404(ctx, app_id)
 
-    assert result is application
+    assert exc_info.value.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -94,12 +95,44 @@ async def test_platform_admin_allowed_for_global_app():
 
 
 @pytest.mark.asyncio
+async def test_platform_admin_allowed_for_own_org_app():
+    app_id = uuid4()
+    org_id = uuid4()
+    application = SimpleNamespace(id=app_id, organization_id=org_id)
+    ctx = _ctx(org_id=org_id, is_platform_admin=True)
+
+    with patch(
+        "src.routers.applications.get_application_by_id_or_404",
+        new=AsyncMock(return_value=application),
+    ):
+        result = await get_application_for_write_or_404(ctx, app_id)
+
+    assert result is application
+
+
+@pytest.mark.asyncio
 async def test_provider_org_non_admin_allowed_for_global_app():
     """Bypass is is_platform_admin OR is_provider_org — either flag alone
     must be sufficient to write a global application."""
     app_id = uuid4()
     application = SimpleNamespace(id=app_id, organization_id=None)
     ctx = _ctx(org_id=uuid4(), is_platform_admin=False, is_provider_org=True)
+
+    with patch(
+        "src.routers.applications.get_application_by_id_or_404",
+        new=AsyncMock(return_value=application),
+    ):
+        result = await get_application_for_write_or_404(ctx, app_id)
+
+    assert result is application
+
+
+@pytest.mark.asyncio
+async def test_provider_org_non_admin_allowed_for_own_org_app():
+    app_id = uuid4()
+    org_id = uuid4()
+    application = SimpleNamespace(id=app_id, organization_id=org_id)
+    ctx = _ctx(org_id=org_id, is_platform_admin=False, is_provider_org=True)
 
     with patch(
         "src.routers.applications.get_application_by_id_or_404",

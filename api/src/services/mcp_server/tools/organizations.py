@@ -2,27 +2,19 @@
 Organization MCP Tools
 
 Tools for listing, creating, getting, updating, and deleting organizations.
-All organization tools are restricted (platform-admin only).
-
-``list_organizations`` / ``get_organization`` / ``create_organization``
-predate this plan and continue to use the ORM directly; they are **not
-modified** by the Task 6 parity work.
-
-``update_organization`` and ``delete_organization`` are added here as
-thin wrappers over the REST API (Task 6). They must not touch the ORM
-or repositories — all side effects go through the canonical REST path.
+Every organization route is platform-admin only in REST
+(``CurrentSuperuser``), so every tool in this file is a thin wrapper over
+the REST API — none of them touch the ORM or repositories directly, so
+they inherit REST's exact gate and behavior.
 """
 
 import logging
 import re
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from fastmcp.tools import ToolResult
-from sqlalchemy import select
 
-from src.services.mcp_server.tools.db import get_tool_db
-from src.models.orm.organizations import Organization
 from src.services.mcp_server.tool_result import error_result, success_result
 from src.services.mcp_server.tools._http_bridge import call_rest, rest_client
 
@@ -40,34 +32,25 @@ def _ref_error_payload(exc: Exception) -> dict[str, Any]:
 
 
 async def list_organizations(context: Any) -> ToolResult:
-    """List all organizations.
-
-    Platform admin only. Returns id, name, domain, is_active for each org.
-    """
+    """List all organizations — thin wrapper over ``GET /api/organizations``."""
     logger.info("MCP list_organizations called")
 
-    try:
-        async with get_tool_db(context) as db:
-            query = select(Organization).order_by(Organization.name)
-            result = await db.execute(query)
-            orgs = result.scalars().all()
+    status_code, resp = await call_rest(context, "GET", "/api/organizations")
+    if status_code != 200:
+        return error_result(f"list_organizations failed: HTTP {status_code}", {"body": resp})
 
-            orgs_data = [
-                {
-                    "id": str(org.id),
-                    "name": org.name,
-                    "domain": org.domain,
-                    "is_active": org.is_active,
-                }
-                for org in orgs
-            ]
-
-            display_text = f"Found {len(orgs_data)} organization(s)"
-            return success_result(display_text, {"organizations": orgs_data, "count": len(orgs_data)})
-
-    except Exception as e:
-        logger.exception(f"Error listing organizations via MCP: {e}")
-        return error_result(f"Error listing organizations: {str(e)}")
+    orgs = resp if isinstance(resp, list) else []
+    orgs_data = [
+        {
+            "id": org.get("id"),
+            "name": org.get("name"),
+            "domain": org.get("domain"),
+            "is_active": org.get("is_active"),
+        }
+        for org in orgs
+    ]
+    display_text = f"Found {len(orgs_data)} organization(s)"
+    return success_result(display_text, {"organizations": orgs_data, "count": len(orgs_data)})
 
 
 async def get_organization(
@@ -77,49 +60,36 @@ async def get_organization(
 ) -> ToolResult:
     """Get organization details by ID or domain.
 
-    Platform admin only. Must provide at least one of organization_id or domain.
+    ID lookup is a thin wrapper over ``GET /api/organizations/{id}``.
+    Domain lookup filters the thin-wrapped list result (REST has no
+    by-domain route) — both paths inherit REST's platform-admin gate.
     """
     logger.info(f"MCP get_organization called with id={organization_id}, domain={domain}")
 
     if not organization_id and not domain:
         return error_result("Either organization_id or domain is required")
 
-    try:
-        async with get_tool_db(context) as db:
-            query = select(Organization)
+    if organization_id:
+        try:
+            UUID(organization_id)
+        except ValueError:
+            return error_result(f"Invalid organization_id format: {organization_id}")
+        status_code, resp = await call_rest(
+            context, "GET", f"/api/organizations/{organization_id}"
+        )
+        if status_code != 200:
+            return error_result(f"Organization not found: {organization_id}", {"body": resp})
+        org = resp if isinstance(resp, dict) else {}
+    else:
+        status_code, resp = await call_rest(context, "GET", "/api/organizations")
+        if status_code != 200:
+            return error_result(f"get_organization failed: HTTP {status_code}", {"body": resp})
+        org = next((o for o in (resp or []) if o.get("domain") == domain), None)
+        if org is None:
+            return error_result(f"Organization not found: {domain}")
 
-            if organization_id:
-                try:
-                    query = query.where(Organization.id == UUID(organization_id))
-                except ValueError:
-                    return error_result(f"Invalid organization_id format: {organization_id}")
-            else:
-                query = query.where(Organization.domain == domain)
-
-            result = await db.execute(query)
-            org = result.scalar_one_or_none()
-
-            if not org:
-                identifier = organization_id or domain
-                return error_result(f"Organization not found: {identifier}")
-
-            org_data = {
-                "id": str(org.id),
-                "name": org.name,
-                "domain": org.domain,
-                "is_active": org.is_active,
-                "settings": org.settings,
-                "created_at": org.created_at.isoformat() if org.created_at else None,
-                "created_by": org.created_by,
-                "updated_at": org.updated_at.isoformat() if org.updated_at else None,
-            }
-
-            display_text = f"Organization: {org.name}"
-            return success_result(display_text, org_data)
-
-    except Exception as e:
-        logger.exception(f"Error getting organization via MCP: {e}")
-        return error_result(f"Error getting organization: {str(e)}")
+    display_text = f"Organization: {org.get('name')}"
+    return success_result(display_text, org)
 
 
 async def create_organization(
@@ -127,9 +97,7 @@ async def create_organization(
     name: str,
     domain: str | None = None,
 ) -> ToolResult:
-    """Create a new organization.
-
-    Platform admin only.
+    """Create a new organization — thin wrapper over ``POST /api/organizations``.
 
     Args:
         context: MCP context with user permissions
@@ -143,53 +111,23 @@ async def create_organization(
 
     if not name:
         return error_result("name is required")
-
     if len(name) > 255:
         return error_result("name must be 255 characters or less")
 
-    # Generate domain from name if not provided
     if not domain:
-        # Convert to lowercase, replace spaces/special chars with hyphens
         domain = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
-
     if len(domain) > 255:
         return error_result("domain must be 255 characters or less")
 
-    try:
-        async with get_tool_db(context) as db:
-            # Check for duplicate domain
-            existing_query = select(Organization).where(Organization.domain == domain)
-            existing_result = await db.execute(existing_query)
-            if existing_result.scalar_one_or_none():
-                return error_result(f"Organization with domain '{domain}' already exists")
+    status_code, resp = await call_rest(
+        context, "POST", "/api/organizations", json_body={"name": name, "domain": domain}
+    )
+    if status_code not in (200, 201):
+        return error_result(f"create_organization failed: HTTP {status_code}", {"body": resp})
 
-            # Create organization
-            org = Organization(
-                id=uuid4(),
-                name=name,
-                domain=domain,
-                is_active=True,
-                settings={},
-                created_by=context.user_email,
-            )
-
-            db.add(org)
-            await db.commit()
-
-            logger.info(f"Created organization {org.id}: {org.name}")
-
-            display_text = f"Created organization: {org.name}"
-            return success_result(display_text, {
-                "success": True,
-                "id": str(org.id),
-                "name": org.name,
-                "domain": org.domain,
-                "is_active": org.is_active,
-            })
-
-    except Exception as e:
-        logger.exception(f"Error creating organization via MCP: {e}")
-        return error_result(f"Error creating organization: {str(e)}")
+    org = resp if isinstance(resp, dict) else {}
+    display_text = f"Created organization: {org.get('name', name)}"
+    return success_result(display_text, {"success": True, **org})
 
 
 # ---------------------------------------------------------------------------

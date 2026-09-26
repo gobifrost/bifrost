@@ -14,7 +14,6 @@ from fastmcp.tools import ToolResult
 from sqlalchemy import select
 from sqlalchemy.orm import joinedload
 
-from shared.scope_resolver import has_scope_bypass
 from src.services.mcp_server.tool_result import error_result, success_result
 from src.services.mcp_server.tools.db import get_tool_db
 
@@ -29,44 +28,26 @@ def _build_callback_url(source_id: UUID) -> str:
 def _source_in_scope(context: Any, source_org_id: UUID | None) -> bool:
     """Whether the MCP caller may touch an event source in ``source_org_id``.
 
-    By-id reads/writes must respect the caller's org scope (NEW-2):
-    - platform admin: any source.
-    - org user: own org OR global.
-    A cross-org source is out of scope for any non-bypass caller.
+    REST reserves ALL event-source/webhook/schedule/subscription
+    administration for platform admins, even within the caller's own org
+    (every route in ``routers/events.py`` is ``CurrentSuperuser``). This
+    supersedes the earlier per-org cascade: ``source_org_id`` is accepted
+    only to keep the call sites' shape (and because a future admin-only
+    per-org filter may want it), but the rule is simply "platform admin".
     """
-    if getattr(context, "is_platform_admin", False):
-        return True
-    ctx_org = getattr(context, "org_id", None)
-    if isinstance(ctx_org, str) and ctx_org:
-        ctx_org = UUID(ctx_org)
-    if source_org_id is not None:
-        return source_org_id == ctx_org
-    return True
+    del source_org_id
+    return bool(getattr(context, "is_platform_admin", False))
 
 
 def _source_write_in_scope(context: Any, source_org_id: UUID | None) -> bool:
     """Whether the MCP caller may MUTATE an event source's own fields.
 
-    Used only by ``update_event_source`` / ``delete_event_source`` — the
-    source entity itself (name, is_active, cron_expression, etc). Unlike
-    ``_source_in_scope`` (used for reads, and for subscription create/
-    update/delete — subscribing a workflow onto a source is deliberately
-    open to any org, including global sources, since sources are shared
-    infrastructure), a global source (``source_org_id is None``) is
-    bypass-only for mutating the SOURCE — the caller must be a platform
-    admin or a provider-org member (``has_scope_bypass``). An org-owned
-    source may only be mutated by a caller in that same org, or a bypass
-    caller.
+    Same rule as ``_source_in_scope`` — REST gates every event-source
+    write on ``CurrentSuperuser`` regardless of org, so this is platform
+    admin only, not ``has_scope_bypass``'s broader provider-org allowance.
     """
-    if has_scope_bypass(
-        is_platform_admin=getattr(context, "is_platform_admin", False),
-        is_provider_org=getattr(context, "is_provider_org", False),
-    ):
-        return True
-    ctx_org = getattr(context, "org_id", None)
-    if isinstance(ctx_org, str) and ctx_org:
-        ctx_org = UUID(ctx_org)
-    return source_org_id is not None and source_org_id == ctx_org
+    del source_org_id
+    return bool(getattr(context, "is_platform_admin", False))
 
 
 async def _reject_service_target(db: Any, workflow_id: str) -> ToolResult | None:
@@ -103,6 +84,9 @@ async def list_event_sources(
 
     logger.info(f"MCP list_event_sources called with type={source_type}, org={organization_id}")
 
+    if not context.is_platform_admin:
+        return error_result("Only platform admins can list event sources")
+
     try:
         # Parse source_type enum
         source_type_enum = None
@@ -114,20 +98,10 @@ async def list_event_sources(
                     f"Invalid source_type: {source_type}. Valid values: webhook, schedule, topic"
                 )
 
-        is_admin = bool(getattr(context, "is_platform_admin", False))
-        ctx_org = getattr(context, "org_id", None)
-        if isinstance(ctx_org, str) and ctx_org:
-            ctx_org = UUID(ctx_org)
-
-        # Org scoping (NEW-2): a non-bypass caller may ONLY list their own
-        # org's sources — never a caller-supplied foreign org. A platform
-        # admin may target any org via organization_id.
-        if is_admin:
-            org_id = UUID(organization_id) if organization_id else None
-            include_global = org_id is None
-        else:
-            org_id = ctx_org
-            include_global = True
+        # Only a platform admin reaches this point (gated above), so they
+        # may target any org via organization_id, or global (omitted).
+        org_id = UUID(organization_id) if organization_id else None
+        include_global = org_id is None
 
         async with get_tool_db(context) as db:
             repo = EventSourceRepository(db)
@@ -202,6 +176,9 @@ async def create_event_source(
 
     logger.info(f"MCP create_event_source called: name={name}, type={source_type}, workflow_id={workflow_id}")
 
+    if not context.is_platform_admin:
+        return error_result("Only platform admins can create event sources")
+
     try:
         source_type_enum = EventSourceType(source_type)
     except ValueError:
@@ -228,29 +205,9 @@ async def create_event_source(
         user_email = getattr(context, "user_email", "") or getattr(context, "email", "mcp")
 
         async with get_tool_db(context) as db:
-            # Org scoping (EXT-1 NEW-2): a non-bypass caller may only create
-            # sources in their OWN org — never a caller-supplied foreign org or
-            # global. A bypass caller (platform admin or provider-org member)
-            # may target any org (or global).
-            is_bypass = has_scope_bypass(
-                is_platform_admin=getattr(context, "is_platform_admin", False),
-                is_provider_org=getattr(context, "is_provider_org", False),
-            )
-            if is_bypass:
-                org_uuid = UUID(organization_id) if organization_id else None
-            else:
-                ctx_org = getattr(context, "org_id", None)
-                if isinstance(ctx_org, str) and ctx_org:
-                    ctx_org = UUID(ctx_org)
-                if ctx_org is None:
-                    return error_result(
-                        "Cannot create an event source without an organization scope"
-                    )
-                if organization_id and UUID(organization_id) != ctx_org:
-                    return error_result(
-                        "Cannot create event sources in another organization"
-                    )
-                org_uuid = ctx_org
+            # Only a platform admin reaches this point (gated above), so
+            # they may target any org, or global (organization_id omitted).
+            org_uuid = UUID(organization_id) if organization_id else None
 
             # Upsert logic: if workflow_id provided, check for existing matching source
             existing_source = None
@@ -267,19 +224,10 @@ async def create_event_source(
                         EventSource.is_active.is_(True),
                     )
                 )
-                # Exact-scope existence check for the create TARGET (not a read
-                # cascade). org_uuid is None only when a bypass caller targets
-                # global — non-bypass callers were forced to their own org
-                # above, so the global arm is bypass-only.
                 if org_uuid:
                     query = query.where(EventSource.organization_id == org_uuid)
-                elif is_bypass:
-                    query = query.where(EventSource.organization_id.is_(None))
                 else:
-                    # Unreachable (non-admins have a forced org), defensive.
-                    return error_result(
-                        "Cannot resolve event source in global scope"
-                    )
+                    query = query.where(EventSource.organization_id.is_(None))
 
                 result = await db.execute(query)
                 existing_source = result.unique().scalar_one_or_none()
@@ -922,6 +870,9 @@ async def list_webhook_adapters(
     from src.services.webhooks.registry import get_adapter_registry
 
     logger.info("MCP list_webhook_adapters called")
+
+    if not context.is_platform_admin:
+        return error_result("Only platform admins can list webhook adapters")
 
     try:
         registry = get_adapter_registry()

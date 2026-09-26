@@ -269,10 +269,8 @@ async def get_application_for_write_or_404(ctx: Context, app_id: UUID) -> Applic
 
     Read access (including the embed-token binding above) resolves exactly
     as ``get_application_or_404``. Writing to an application's files
-    additionally requires scope bypass (platform admin or provider-org
-    member) or that the application belongs to the caller's own
-    organization. A global application (``organization_id is None``) can
-    only be written by a bypass caller. An embed principal has no
+    requires scope bypass (platform admin or provider-org member), for
+    every application — own-org included. An embed principal has no
     organization and no bypass flags, so it can never satisfy this rule —
     embed tokens only ever get read access to app files.
 
@@ -285,8 +283,6 @@ async def get_application_for_write_or_404(ctx: Context, app_id: UUID) -> Applic
         is_provider_org=ctx.user.is_provider_org,
     )
     if is_bypass:
-        return app
-    if app.organization_id is not None and app.organization_id == ctx.org_id:
         return app
     raise HTTPException(
         status_code=status.HTTP_404_NOT_FOUND,

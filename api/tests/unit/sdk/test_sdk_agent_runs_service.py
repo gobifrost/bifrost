@@ -66,6 +66,7 @@ async def _seed_solution(db_session, *, status="active"):
 
 
 async def _seed_agent(db_session, name, **kwargs):
+    from src.models.enums import AgentAccessLevel
     from src.models.orm.agents import Agent as AgentModel
 
     row = AgentModel(
@@ -74,6 +75,8 @@ async def _seed_agent(db_session, name, **kwargs):
         is_active=kwargs.get("is_active", True),
         organization_id=kwargs.get("organization_id"),
         solution_id=kwargs.get("solution_id"),
+        access_level=kwargs.get("access_level", AgentAccessLevel.ROLE_BASED),
+        owner_user_id=kwargs.get("owner_user_id"),
         created_by="sdk-agent-runs-test",
     )
     db_session.add(row)
@@ -151,7 +154,14 @@ def _redis_stream_context(entries):
 class TestEnqueueSdkAgentRun:
     async def test_success_enqueues_with_actor_attribution(self, db_session):
         org = await _seed_org(db_session)
-        agent = await _seed_agent(db_session, "Ticket Agent")
+        # AUTHENTICATED so a non-bypass principal (no role grants seeded)
+        # passes the access check resolve_executable_agent now enforces —
+        # this test is about actor attribution, not access-level gating.
+        from src.models.enums import AgentAccessLevel
+
+        agent = await _seed_agent(
+            db_session, "Ticket Agent", access_level=AgentAccessLevel.AUTHENTICATED
+        )
         principal = _principal(org.id, name="Caller Name")
         receipt_id = str(uuid4())
 
@@ -339,16 +349,31 @@ class TestGetSdkAgentRun:
 
         assert exc_info.value.status_code == 404
 
-    async def test_org_user_sees_own_org_run(self, db_session):
+    async def test_org_user_sees_own_run(self, db_session):
+        """A non-bypass caller sees a run only if THEY started it — org
+        membership alone is not enough (that was the pre-fix behavior)."""
         org = await _seed_org(db_session)
         agent = await _seed_agent(db_session, "Own Agent")
-        run = await _seed_run(db_session, agent.id, org_id=org.id)
-
-        detail = await get_sdk_agent_run(
-            db_session, _principal(org.id), run_id=run.id
+        principal = _principal(org.id)
+        run = await _seed_run(
+            db_session, agent.id, org_id=org.id, caller_user_id=str(principal.user_id)
         )
 
+        detail = await get_sdk_agent_run(db_session, principal, run_id=run.id)
+
         assert detail.id == run.id
+
+    async def test_org_user_cannot_see_another_users_run_in_same_org(self, db_session):
+        org = await _seed_org(db_session)
+        agent = await _seed_agent(db_session, "Shared Org Agent")
+        run = await _seed_run(
+            db_session, agent.id, org_id=org.id, caller_user_id=str(uuid4())
+        )
+
+        with pytest.raises(SdkAgentRunError) as exc_info:
+            await get_sdk_agent_run(db_session, _principal(org.id), run_id=run.id)
+
+        assert exc_info.value.status_code == 404
 
     async def test_in_progress_run_reads_steps_from_redis(self, db_session):
         agent = await _seed_agent(db_session, "Running Agent")

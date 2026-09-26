@@ -69,14 +69,24 @@ def _poll_notification(
 
 
 def test_publish_success_deduplication_and_requester_visibility(
-    e2e_client, platform_admin, org1, org1_user
+    e2e_client, platform_admin, org1_user, provider_org_user
 ):
-    app = _create_app(
-        e2e_client,
-        platform_admin.headers,
-        f"async-publish-{uuid.uuid4().hex[:8]}",
-        organization_id=org1["id"],
+    # Global scope (explicit organization_id=None) so a second bypass
+    # caller (provider_org_user) can both read and write it — a
+    # provider-org member's REST read access is global-or-own-org, not
+    # full cross-org like a platform admin's.
+    create_response = e2e_client.post(
+        "/api/applications",
+        headers=platform_admin.headers,
+        json={
+            "name": f"async-publish-{uuid.uuid4().hex[:8]}",
+            "slug": f"async-publish-{uuid.uuid4().hex[:8]}",
+            "app_model": "inline_v1",
+            "organization_id": None,
+        },
     )
+    assert create_response.status_code == 201, create_response.text
+    app = create_response.json()
     barrier = Barrier(2)
 
     def enqueue():
@@ -102,9 +112,14 @@ def test_publish_success_deduplication_and_requester_visibility(
         for response in responses
     )
     assert accepted["notification_id"]
+    # A different bypass caller (provider-org member, not the platform admin
+    # who enqueued the job) hits the same dedupe path — publish write access
+    # is bypass-only, so a plain org1 member would 404 before ever reaching
+    # the in-progress check; that denial is covered separately
+    # (TestApplicationWriteScope).
     duplicate = e2e_client.post(
         f"/api/applications/{app['id']}/publish",
-        headers=org1_user.headers,
+        headers=provider_org_user.headers,
     )
     assert duplicate.status_code == 409, duplicate.text
     assert duplicate.json()["detail"] == (

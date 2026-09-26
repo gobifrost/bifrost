@@ -435,10 +435,10 @@ async def get_application_for_write_or_404(
     """Get application by UUID, enforcing write scope.
 
     Read access is resolved exactly as ``get_application_by_id_or_404``
-    (unchanged). Mutating an application additionally requires scope bypass
-    (platform admin or provider-org member) or that the application belongs
-    to the caller's own organization. A global application
-    (``organization_id is None``) can only be mutated by a bypass caller.
+    (unchanged). Mutating an application requires scope bypass (platform
+    admin or provider-org member), for every application — own-org included.
+    Regular org members can read their org's apps but cannot write to any
+    application, own-org or global.
 
     Raises the identical 404 the read helper uses, so a caller cannot tell
     "exists but no write access" apart from "does not exist".
@@ -449,8 +449,6 @@ async def get_application_for_write_or_404(
         is_provider_org=ctx.user.is_provider_org,
     )
     if is_bypass:
-        return application
-    if application.organization_id is not None and application.organization_id == ctx.org_id:
         return application
     raise HTTPException(
         status_code=status.HTTP_404_NOT_FOUND,
@@ -475,6 +473,14 @@ async def create_application(
     user: CurrentUser,
 ) -> ApplicationPublic:
     """Create a new application."""
+    if not has_scope_bypass(
+        is_platform_admin=user.is_platform_admin,
+        is_provider_org=user.is_provider_org,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only a platform admin or provider-org member can create applications.",
+        )
     # Use organization_id from request body if explicitly provided, else default to current org
     if "organization_id" in (data.model_fields_set or set()):
         target_org_id = data.organization_id

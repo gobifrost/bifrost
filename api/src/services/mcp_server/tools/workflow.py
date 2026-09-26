@@ -357,6 +357,9 @@ async def register_workflow(context: Any, path: str, function_name: str, organiz
     from src.services.file_storage import FileStorageService
     from src.services.file_storage.indexers.workflow import WorkflowIndexer
 
+    if not context.is_platform_admin:
+        return error_result("Only platform admins can register workflows")
+
     if not path:
         return error_result("path is required")
     if not function_name:

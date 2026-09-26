@@ -84,27 +84,51 @@ async def resolve_executable_agent(
     session: AsyncSession,
     *,
     agent_name: str,
+    principal: UserPrincipal,
 ) -> Agent:
     """Resolve an agent by name and enforce solution execution availability.
 
-    Case-insensitive name lookup; unknown names are 404. An agent bound
-    to a non-active Solution is 409 — the reinstall hint matches the
+    Case-insensitive name lookup; unknown names are 404. Once a candidate
+    row is found by name, access is verified through the exact same
+    ``AgentRepository.get_agent_with_access_check`` gate REST uses for
+    ``GET /api/agents/{id}`` — org cascade + role-based/private access
+    level — so a caller can never execute another org's or another
+    user's private agent merely by guessing its name. An agent bound to
+    a non-active Solution is 409 — the reinstall hint matches the
     historical handler exactly.
 
     Args:
         session: Database session.
         agent_name: Agent name as validated on the request.
+        principal: The auth-verified caller, used for the access check.
 
     Raises:
-        SdkAgentRunError: 404 when the agent name is unknown; 409 when
-            the agent belongs to an inactive Solution.
+        SdkAgentRunError: 404 when the agent name is unknown or not
+            accessible to ``principal``; 409 when the agent belongs to an
+            inactive Solution.
     """
+    from shared.scope_resolver import has_scope_bypass
     from src.models.orm.agents import Agent
     from src.models.orm.solutions import Solution
+    from src.repositories.agents import AgentRepository
 
-    result = await session.execute(select(Agent).where(Agent.name.ilike(agent_name)))
-    agent = result.scalar_one_or_none()
+    result = await session.execute(select(Agent.id).where(Agent.name.ilike(agent_name)))
+    agent_id = result.scalar_one_or_none()
 
+    if agent_id is None:
+        raise SdkAgentRunError(404, f"Agent '{agent_name}' not found")
+
+    repo = AgentRepository(
+        session,
+        org_id=principal.organization_id,
+        user_id=principal.user_id,
+        is_superuser=has_scope_bypass(
+            is_platform_admin=principal.is_platform_admin,
+            is_provider_org=principal.is_provider_org,
+        ),
+        is_external=principal.is_external,
+    )
+    agent = await repo.get_agent_with_access_check(agent_id)
     if agent is None:
         raise SdkAgentRunError(404, f"Agent '{agent_name}' not found")
 
@@ -155,7 +179,7 @@ async def enqueue_sdk_agent_run(
         SdkAgentRunError: 404 when the agent name is unknown; 409 when
             the agent belongs to an inactive Solution.
     """
-    agent = await resolve_executable_agent(session, agent_name=agent_name)
+    agent = await resolve_executable_agent(session, agent_name=agent_name, principal=principal)
 
     if not agent.is_active:
         return PausedResponse(

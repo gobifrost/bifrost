@@ -1,13 +1,12 @@
 """Write-scope enforcement for the event source MCP mutation tools.
 
-``update_event_source`` and ``delete_event_source`` mutate the source
-entity itself, so — unlike reads (``get_event_source``) and unlike
-subscription create/update/delete, which deliberately stay open onto a
-global source (subscribing is "using" shared infrastructure, not mutating
-it) — a global source (``organization_id is None``) is bypass-only to
-write. This closes a gap where any non-bypass caller in scope for a read
-could also rename/deactivate a GLOBAL event source, since the write paths
-previously reused the read-only ``_source_in_scope`` check verbatim.
+REST reserves ALL event-source/webhook/schedule/subscription
+administration for platform admins, even within the caller's own org —
+every route in ``routers/events.py`` is ``CurrentSuperuser``. ``update_event_source``
+and ``delete_event_source`` (and every other mutation in this module) are
+therefore platform-admin only: neither org membership nor the broader
+``has_scope_bypass`` provider-org allowance is sufficient. This supersedes
+the earlier per-org cascade this file used to test.
 """
 
 from types import SimpleNamespace
@@ -65,37 +64,52 @@ def _is_error(tool_result) -> bool:
 
 @pytest.mark.asyncio
 class TestUpdateEventSourceWriteScope:
-    async def test_non_bypass_caller_denied_for_global_source(self):
+    async def test_non_admin_denied_for_own_org_source(self):
+        """Own-org membership alone no longer grants write access."""
+        org = uuid4()
+        ctx = _ctx_returning(_source(org), is_external=False, org_id=org)
+        res = await events_tool.update_event_source(ctx, source_id=str(uuid4()), name="renamed")
+        assert _is_error(res)
+
+    async def test_non_admin_denied_for_global_source(self):
         ctx = _ctx_returning(_source(None), is_external=False)
         res = await events_tool.update_event_source(ctx, source_id=str(uuid4()), name="renamed")
         assert _is_error(res)
 
-    async def test_non_bypass_caller_allowed_for_own_org_source(self):
-        org = uuid4()
-        ctx = _ctx_returning(_source(org), is_external=False, org_id=org)
+    async def test_provider_org_non_admin_denied(self):
+        """The broader has_scope_bypass provider-org allowance does NOT
+        apply here — REST's CurrentSuperuser gate is platform-admin only."""
+        ctx = _ctx_returning(_source(None), is_provider_org=True)
         res = await events_tool.update_event_source(ctx, source_id=str(uuid4()), name="renamed")
-        assert not _is_error(res)
+        assert _is_error(res)
 
     async def test_platform_admin_allowed_for_global_source(self):
         ctx = _ctx_returning(_source(None), is_platform_admin=True)
         res = await events_tool.update_event_source(ctx, source_id=str(uuid4()), name="renamed")
         assert not _is_error(res)
 
-    async def test_provider_org_non_admin_allowed_for_global_source(self):
-        ctx = _ctx_returning(_source(None), is_provider_org=True)
+    async def test_platform_admin_allowed_for_own_org_source(self):
+        org = uuid4()
+        ctx = _ctx_returning(_source(org), is_platform_admin=True, org_id=org)
         res = await events_tool.update_event_source(ctx, source_id=str(uuid4()), name="renamed")
         assert not _is_error(res)
 
 
 @pytest.mark.asyncio
 class TestDeleteEventSourceWriteScope:
-    async def test_non_bypass_caller_denied_for_global_source(self):
+    async def test_non_admin_denied_for_own_org_source(self):
+        org = uuid4()
+        ctx = _ctx_returning(_source(org), is_external=False, org_id=org)
+        res = await events_tool.delete_event_source(ctx, source_id=str(uuid4()))
+        assert _is_error(res)
+
+    async def test_non_admin_denied_for_global_source(self):
         ctx = _ctx_returning(_source(None), is_external=False)
         res = await events_tool.delete_event_source(ctx, source_id=str(uuid4()))
         assert _is_error(res)
 
-    async def test_non_bypass_caller_allowed_for_own_org_source(self):
+    async def test_platform_admin_allowed_for_own_org_source(self):
         org = uuid4()
-        ctx = _ctx_returning(_source(org), is_external=False, org_id=org)
+        ctx = _ctx_returning(_source(org), is_platform_admin=True, org_id=org)
         res = await events_tool.delete_event_source(ctx, source_id=str(uuid4()))
         assert not _is_error(res)

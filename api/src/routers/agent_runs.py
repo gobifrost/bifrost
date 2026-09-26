@@ -13,6 +13,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, Response, status
 from sqlalchemy import desc, func, literal_column, or_, select, update
 
+from shared.scope_resolver import has_scope_bypass
 from src.core.auth import CurrentActiveUser
 from src.core.database import get_session_factory
 from src.core.db_deps import DbSession
@@ -48,6 +49,7 @@ from shared.sdk_agent_runs import (
     get_sdk_agent_run,
     resolve_executable_agent,
 )
+from src.models.enums import AgentAccessLevel
 from src.models.orm.agent_run_verdict_history import AgentRunVerdictHistory
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.agents import Agent
@@ -74,16 +76,50 @@ router = APIRouter(prefix="/api/agent-runs", tags=["Agent Runs"])
 async def _get_executable_agent(
     db: DbSession,
     agent_name: str,
+    user: CurrentActiveUser,
 ) -> Agent:
     """Resolve an agent and enforce solution execution availability.
 
     Thin wrapper over the shared service so ``/execute`` keeps its exact
-    historical behavior (404 unknown name, 409 inactive Solution).
+    historical behavior (404 unknown name, 409 inactive Solution) while
+    the shared service enforces the access check.
     """
     try:
-        return await resolve_executable_agent(db, agent_name=agent_name)
+        return await resolve_executable_agent(db, agent_name=agent_name, principal=user)
     except SdkAgentRunError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail) from None
+
+
+async def _require_own_private_agent_run(
+    db: DbSession, user: CurrentActiveUser, run: AgentRun
+) -> None:
+    """Enforce the tuning-action rule on a run already passed visibility.
+
+    Tuning actions (rerun, verdict set/clear, flag message, dry-run) are
+    narrower than plain run visibility: a non-bypass caller may act on a
+    run only when it's their own run of an agent they own that is
+    PRIVATE — the same rule ``agent_tuning.py`` applies. Bypass callers
+    (platform admin or provider-org member) may act on any run already
+    visible to them.
+    """
+    if has_scope_bypass(
+        is_platform_admin=user.is_platform_admin,
+        is_provider_org=user.is_provider_org,
+    ):
+        return
+
+    agent = (
+        await db.execute(select(Agent).where(Agent.id == run.agent_id))
+    ).scalar_one_or_none()
+    if (
+        agent is None
+        or agent.access_level != AgentAccessLevel.PRIVATE
+        or agent.owner_user_id != user.user_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Agent run {run.id} not found",
+        )
 
 
 def _run_to_response(run: AgentRun) -> AgentRunResponse:
@@ -505,6 +541,7 @@ async def rerun_agent_run(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Agent run {run_id} not found",
         )
+    await _require_own_private_agent_run(db, user, original)
 
     new_run_id = await enqueue_agent_run(
         agent_id=str(original.agent_id),
@@ -635,6 +672,7 @@ async def set_verdict(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Agent run {run_id} not found",
         )
+    await _require_own_private_agent_run(db, user, run)
     if run.status != "completed":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -688,6 +726,7 @@ async def clear_verdict(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Agent run {run_id} not found",
         )
+    await _require_own_private_agent_run(db, user, run)
 
     now = datetime.now(timezone.utc)
     previous = run.verdict
@@ -739,6 +778,7 @@ async def get_flag_conversation(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Agent run {run_id} not found",
         )
+    await _require_own_private_agent_run(db, user, run)
 
     conv = await get_or_create_conversation(run_id, db)
     # Persist the created-empty conversation so subsequent GETs see the same id.
@@ -771,6 +811,7 @@ async def send_flag_message(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Agent run {run_id} not found",
         )
+    await _require_own_private_agent_run(db, user, run)
     if run.status != "completed":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -844,6 +885,7 @@ async def dry_run_agent_run(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Agent run {run_id} not found",
         )
+    await _require_own_private_agent_run(db, user, run)
     if run.status != "completed":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -903,7 +945,7 @@ async def execute_agent_run(
     user: CurrentActiveUser,
 ) -> dict:
     """Execute an agent synchronously via the SDK."""
-    agent = await _get_executable_agent(db, request.agent_name)
+    agent = await _get_executable_agent(db, request.agent_name, user)
 
     # Paused agents short-circuit gracefully — HTTP 200 with structured body.
     # Downstream consumers (webhook senders, SDK) discriminate on status="paused".

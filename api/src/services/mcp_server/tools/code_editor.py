@@ -38,26 +38,32 @@ from src.services.mcp_server.tool_result import (
     format_grep_matches,
     success_result,
 )
-from src.services.mcp_server.tools._org_scope import (
-    mcp_caller_org_id,
-    mcp_write_scope_bypass,
-    resolve_repo_path_owner_org,
-    write_scope_denied,
-)
+from src.services.mcp_server.tools._org_scope import mcp_write_scope_bypass
 
 
-async def _check_write_scope(context: Any, db: Any, path: str) -> str | None:
+def _check_write_scope(context: Any, path: str) -> str | None:
     """Return an error message if ``context`` may not write ``path``, else None.
 
-    A non-bypass caller may only write a path that maps to an owning entity
-    (Application or Workflow) in their own organization.
+    Writing (or deleting) any `_repo/` path requires scope bypass (platform
+    admin or provider-org member) — matching REST, where `_repo/` file
+    writes have no non-admin path at all (files.py's editor routes are
+    CurrentSuperuser).
     """
     if mcp_write_scope_bypass(context):
         return None
-    owner_org_id = await resolve_repo_path_owner_org(db, path)
-    if write_scope_denied(owner_org_id, mcp_caller_org_id(context)):
-        return f"File not found: {path}"
-    return None
+    return f"File not found: {path}"
+
+
+def _check_read_scope(context: Any) -> str | None:
+    """Return an error message if ``context`` may not read `_repo/`, else None.
+
+    Reading `_repo/` content requires scope bypass — matching REST, where
+    `_repo/` reads (files.py's `/editor`, `/editor/content`) are
+    CurrentSuperuser-only.
+    """
+    if mcp_write_scope_bypass(context):
+        return None
+    return "Not found"
 
 
 def _format_deactivation_result(
@@ -239,7 +245,7 @@ async def _replace_workspace_file(
         # organization. Applied here so both patch_content and
         # replace_content — which both funnel through this helper — get the
         # same check.
-        denial = await _check_write_scope(context, db, path)
+        denial = _check_write_scope(context, path)
         if denial is not None:
             raise PermissionError(denial)
 
@@ -309,6 +315,10 @@ async def list_content(
     """List files in the workspace. Optionally filter by path prefix."""
     logger.info(f"MCP list_content: path_prefix={path_prefix}")
 
+    denial = _check_read_scope(context)
+    if denial is not None:
+        return error_result(denial)
+
     try:
         repo = RepoStorage()
         paths = await repo.list(path_prefix or "")
@@ -343,6 +353,10 @@ async def search_content(
 ) -> ToolResult:
     """Search for regex patterns across all workspace files."""
     logger.info(f"MCP search_content: pattern={pattern}")
+
+    denial = _check_read_scope(context)
+    if denial is not None:
+        return error_result(denial)
 
     if not pattern:
         return error_result("pattern is required")
@@ -412,6 +426,10 @@ async def read_content_lines(
         f"MCP read_content_lines: path={path}, lines={start_line}-{end_line}"
     )
 
+    denial = _check_read_scope(context)
+    if denial is not None:
+        return error_result(denial)
+
     if not path:
         return error_result("path is required")
 
@@ -474,6 +492,10 @@ async def get_content(
 ) -> ToolResult:
     """Get the entire content of a file."""
     logger.info(f"MCP get_content: path={path}")
+
+    denial = _check_read_scope(context)
+    if denial is not None:
+        return error_result(denial)
 
     if not path:
         return error_result("path is required")
@@ -558,6 +580,10 @@ async def patch_content(
         replacements: Mapping of old_workflow_id -> new_function_name for renames
     """
     logger.info(f"MCP patch_content: path={path}")
+
+    denial = _check_write_scope(context, path)
+    if denial is not None:
+        return error_result(denial)
 
     if not path:
         return error_result("path is required")
@@ -734,7 +760,7 @@ async def delete_content(
             # Write scope: a non-bypass caller may only delete a path that
             # maps to an owning entity (Application or Workflow) in their
             # own organization.
-            denial = await _check_write_scope(context, db, path)
+            denial = _check_write_scope(context, path)
             if denial is not None:
                 return error_result(denial)
 

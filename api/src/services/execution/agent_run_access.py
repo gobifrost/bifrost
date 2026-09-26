@@ -1,8 +1,10 @@
 """Shared visibility policy for agent-run records."""
 
-from sqlalchemy import or_
+from sqlalchemy import and_, or_, select
+from sqlalchemy.orm import aliased
 from sqlalchemy.sql.elements import ColumnElement
 
+from shared.scope_resolver import has_scope_bypass
 from src.core.principal import UserPrincipal
 from src.models.orm.agent_runs import AgentRun
 
@@ -12,22 +14,35 @@ def agent_run_visibility_conditions(
 ) -> tuple[ColumnElement[bool], ...]:
     """Return SQL conditions limiting runs to those visible to ``user``.
 
-    Autonomous delegations have a parent run and remain visible anywhere
-    their parent orchestration is visible. Chat has no parent ``AgentRun``, so
-    its delegated child is a root delegation row. Those rows inherit the
-    private conversation's owner boundary through ``caller_user_id``.
+    A non-bypass caller sees only runs they started — mirroring how
+    ``executions.py`` restricts to ``executed_by == user`` — never another
+    user's runs in the same org. A delegated child run (``trigger_type ==
+    "delegation"``, has a ``parent_run_id``) is visible only when the
+    PARENT run's own caller is this user (a correlated subquery against the
+    parent row), not merely because some ``parent_run_id`` is set.
     """
-    if user.is_superuser:
+    if has_scope_bypass(
+        is_platform_admin=user.is_platform_admin,
+        is_provider_org=user.is_provider_org,
+    ):
         return ()
+
+    caller_id = str(user.user_id)
+    ParentRun = aliased(AgentRun)
+    parent_is_caller = (
+        select(1)
+        .where(ParentRun.id == AgentRun.parent_run_id)
+        .where(ParentRun.caller_user_id == caller_id)
+        .exists()
+    )
 
     conditions: list[ColumnElement[bool]] = []
     if user.organization_id is not None:
         conditions.append(AgentRun.org_id == user.organization_id)
     conditions.append(
         or_(
-            AgentRun.trigger_type != "delegation",
-            AgentRun.parent_run_id.is_not(None),
-            AgentRun.caller_user_id == str(user.user_id),
+            AgentRun.caller_user_id == caller_id,
+            and_(AgentRun.parent_run_id.is_not(None), parent_is_caller),
         )
     )
     return tuple(conditions)

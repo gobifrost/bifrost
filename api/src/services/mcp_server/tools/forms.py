@@ -12,7 +12,7 @@ from uuid import UUID
 from fastmcp.tools import ToolResult
 
 from src.services.mcp_server.tool_result import error_result, success_result
-from src.services.mcp_server.tools._org_scope import apply_mcp_org_scope
+from src.services.mcp_server.tools._http_bridge import call_rest
 from src.services.mcp_server.tools.db import get_tool_db
 from shared.form_runtime import (
     DEFAULT_FORM_CONFIRMATION_MARKDOWN,
@@ -205,19 +205,8 @@ async def create_form(
     Returns:
         ToolResult with form details
     """
-    from uuid import UUID as UUID_TYPE
-
-    from sqlalchemy import select
-    from sqlalchemy.orm import selectinload
-
-    from src.models import Form as FormORM
-    from src.models import FormSchema
-    from src.repositories.workflows import WorkflowRepository
-    from src.routers.forms import _form_schema_to_fields
-
     logger.info(f"MCP create_form called: name={name}, workflow_id={workflow_id}, scope={scope}")
 
-    # Validate inputs
     if not name:
         return error_result("name is required")
     if not workflow_id:
@@ -228,129 +217,49 @@ async def create_form(
         return error_result("name must be 200 characters or less")
     if len(confirmation_markdown) > MAX_FORM_CONFIRMATION_MARKDOWN_LENGTH:
         return error_result("confirmation_markdown must be 20000 characters or less")
-
-    # Validate scope parameter
     if scope not in ("global", "organization"):
         return error_result("scope must be 'global' or 'organization'")
 
-    # Determine effective organization_id based on scope
-    effective_org_id: UUID_TYPE | None = None
-    if scope == "global":
-        # Global resources have no organization_id
-        effective_org_id = None
-    else:
-        # Organization scope: use provided organization_id or fall back to context.org_id
+    effective_org_id: str | None = None
+    if scope == "organization":
         if organization_id:
-            try:
-                effective_org_id = UUID_TYPE(organization_id)
-            except ValueError:
-                return error_result(f"organization_id '{organization_id}' is not a valid UUID")
+            effective_org_id = organization_id
         elif context.org_id:
-            effective_org_id = UUID_TYPE(str(context.org_id)) if isinstance(context.org_id, str) else context.org_id
+            effective_org_id = str(context.org_id)
         else:
             return error_result("organization_id is required when scope='organization' and no context org_id is set")
 
-    # Validate workflow_id is a valid UUID
     try:
-        UUID_TYPE(workflow_id)
+        UUID(workflow_id)
     except ValueError:
         return error_result(f"workflow_id '{workflow_id}' is not a valid UUID")
-
-    # Validate launch_workflow_id if provided
     if launch_workflow_id:
         try:
-            UUID_TYPE(launch_workflow_id)
+            UUID(launch_workflow_id)
         except ValueError:
             return error_result(f"launch_workflow_id '{launch_workflow_id}' is not a valid UUID")
 
-    try:
-        async with get_tool_db(context) as db:
-            # Verify workflow exists with proper scoping
-            ctx_org_id = UUID_TYPE(str(context.org_id)) if context.org_id else None
-            ctx_user_id = UUID_TYPE(str(context.user_id)) if context.user_id else None
-            workflow_repo = WorkflowRepository(
-                db,
-                org_id=ctx_org_id,
-                user_id=ctx_user_id,
-                is_superuser=context.is_platform_admin,
-                is_external=context.is_external,
-            )
-            workflow = await workflow_repo.get(id=UUID_TYPE(workflow_id))
-            if not workflow:
-                return error_result(f"Workflow '{workflow_id}' not found. Use list_workflows to see available workflows.")
+    # Thin wrapper over POST /forms: REST (CurrentSuperuser, platform-admin
+    # only) owns workflow-reference validation, form-schema validation, and
+    # persistence — MCP does not re-implement any of that.
+    body = {
+        "name": name,
+        "description": description,
+        "confirmation_markdown": confirmation_markdown,
+        "workflow_id": workflow_id,
+        "launch_workflow_id": launch_workflow_id,
+        "form_schema": {"fields": fields},
+        "access_level": "role_based",
+        "organization_id": effective_org_id,
+    }
 
-            # Verify launch workflow if provided
-            launch_workflow = None
-            if launch_workflow_id:
-                launch_workflow = await workflow_repo.get(id=UUID_TYPE(launch_workflow_id))
-                if not launch_workflow:
-                    return error_result(f"Launch workflow '{launch_workflow_id}' not found.")
+    status_code, resp = await call_rest(context, "POST", "/api/forms", json_body=body)
+    if status_code not in (200, 201):
+        return error_result(f"create_form failed: HTTP {status_code}", {"body": resp})
 
-            # Validate form schema using Pydantic model
-            from pydantic import ValidationError
-
-            try:
-                FormSchema.model_validate({"fields": fields})
-            except ValidationError as e:
-                errors_str = "; ".join(f"{'.'.join(str(x) for x in err['loc'])}: {err['msg']}" for err in e.errors())
-                return error_result(f"Invalid form schema: {errors_str}")
-            except Exception as e:
-                return error_result(f"Error validating form schema: {str(e)}")
-
-            # Create form record
-            now = datetime.now(timezone.utc)
-
-            form = FormORM(
-                name=name,
-                description=description,
-                confirmation_markdown=confirmation_markdown,
-                workflow_id=workflow_id,
-                launch_workflow_id=launch_workflow_id,
-                access_level="role_based",
-                organization_id=effective_org_id,
-                is_active=True,
-                created_by=context.user_email,
-                created_at=now,
-                updated_at=now,
-            )
-
-            db.add(form)
-            await db.flush()  # Get the form ID
-
-            # Convert form_schema to FormField records
-            field_records = _form_schema_to_fields({"fields": fields}, form.id)
-            for field in field_records:
-                db.add(field)
-
-            await db.flush()
-
-            # Reload form with fields eager-loaded
-            result = await db.execute(
-                select(FormORM)
-                .options(selectinload(FormORM.fields))
-                .where(FormORM.id == form.id)
-            )
-            form = result.scalar_one()
-
-            logger.info(f"Created form {form.id}: {form.name}")
-
-            display_text = f"Created form: {form.name}"
-            return success_result(display_text, {
-                "success": True,
-                "id": str(form.id),
-                "name": form.name,
-                "confirmation_markdown": form.confirmation_markdown,
-                "url": f"/forms/{form.id}",
-                "workflow_id": workflow_id,
-                "workflow_name": workflow.name,
-                "field_count": len(fields),
-                "launch_workflow_id": launch_workflow_id,
-                "launch_workflow_name": launch_workflow.name if launch_workflow else None,
-            })
-
-    except Exception as e:
-        logger.exception(f"Error creating form via MCP: {e}")
-        return error_result(f"Error creating form: {str(e)}")
+    form = resp if isinstance(resp, dict) else {"body": resp}
+    display_text = f"Created form: {form.get('name', name)}"
+    return success_result(display_text, {"success": True, **form})
 
 
 async def get_form(
@@ -370,10 +279,10 @@ async def get_form(
     """
     from uuid import UUID as UUID_TYPE
 
+    from shared.scope_resolver import has_scope_bypass
     from sqlalchemy import select
-    from sqlalchemy.orm import selectinload
-
     from src.models import Form as FormORM
+    from src.repositories.forms import FormRepository
     from src.repositories.workflows import WorkflowRepository
 
     logger.info(f"MCP get_form called: form_id={form_id}, form_name={form_name}")
@@ -383,43 +292,63 @@ async def get_form(
 
     try:
         async with get_tool_db(context) as db:
-            # Build query
-            query = select(FormORM).options(selectinload(FormORM.fields))
+            ctx_org_id = UUID_TYPE(str(context.org_id)) if context.org_id else None
+            ctx_user_id = UUID_TYPE(str(context.user_id)) if context.user_id else None
+            is_bypass = has_scope_bypass(
+                is_platform_admin=getattr(context, "is_platform_admin", False),
+                is_provider_org=getattr(context, "is_provider_org", False),
+            )
+            form_repo = FormRepository(
+                db,
+                org_id=ctx_org_id,
+                user_id=ctx_user_id,
+                is_superuser=is_bypass,
+                is_external=getattr(context, "is_external", False),
+            )
 
             if form_id:
-                # ID-based lookup: IDs are unique, so cascade filter is safe.
                 try:
                     uuid_id = UUID_TYPE(form_id)
                 except ValueError:
                     return error_result(f"'{form_id}' is not a valid UUID")
-                query = query.where(FormORM.id == uuid_id)
-                query = apply_mcp_org_scope(query, FormORM, context)
+                # Same access-check REST uses for GET /api/forms/{id}: org
+                # cascade + role-based/access-level enforcement.
+                form = await form_repo.get_form_with_access_check(uuid_id)
             else:
-                # Name-based lookup: use prioritized lookup (org-specific > global)
-                query = query.where(FormORM.name == form_name)
-                query = apply_mcp_org_scope(query, FormORM, context)
-                if not context.is_platform_admin and context.org_id:
-                    # Prioritize org-specific over global (nulls come last)
-                    query = query.order_by(
+                # Name-based lookup: resolve the candidate id via the same
+                # org-cascade priority, then re-verify it through the
+                # identical access check so a name lookup can't read a
+                # role-gated form the caller lacks the role for.
+                name_query = select(FormORM.id).where(FormORM.name == form_name)
+                if form_repo.org_id is not None:
+                    name_query = name_query.order_by(
                         FormORM.organization_id.desc().nulls_last()
-                    ).limit(1)
+                    )
+                elif not form_repo.is_superuser:
+                    name_query = name_query.where(FormORM.organization_id.is_(None))
+                candidate_id = (await db.execute(name_query.limit(1))).scalar_one_or_none()
+                form = (
+                    await form_repo.get_form_with_access_check(candidate_id)
+                    if candidate_id is not None
+                    else None
+                )
 
-            result = await db.execute(query)
-            form = result.scalar_one_or_none()
+            if form is not None and not form.is_active and not is_bypass:
+                # Inactive forms are hidden from non-bypass callers, matching
+                # the REST get_sdk_form rule.
+                form = None
 
             if not form:
                 identifier = form_id or form_name
                 return error_result(f"Form '{identifier}' not found. Use list_forms to see available forms.")
 
             # Get workflow names with proper scoping
-            ctx_org_id = UUID_TYPE(str(context.org_id)) if context.org_id else None
-            ctx_user_id = UUID_TYPE(str(context.user_id)) if context.user_id else None
             workflow_repo = WorkflowRepository(
                 db,
                 org_id=ctx_org_id,
                 user_id=ctx_user_id,
-                is_superuser=context.is_platform_admin,
-                is_external=context.is_external,
+                is_superuser=is_bypass,
+                is_external=getattr(context, "is_external", False),
             )
             workflow_name = None
             launch_workflow_name = None
@@ -528,6 +457,9 @@ async def update_form(
 
     logger.info(f"MCP update_form called: form_id={form_id}")
 
+    if not context.is_platform_admin:
+        return error_result("Only platform admins can update forms")
+
     if not form_id:
         return error_result("form_id is required")
 
@@ -562,15 +494,6 @@ async def update_form(
 
             if is_solution_managed(form):
                 return error_result(SOLUTION_MANAGED_MESSAGE)
-
-            # Check access for non-admins
-            if not context.is_platform_admin:
-                if form.organization_id:
-                    if context.org_id and str(form.organization_id) != str(context.org_id):
-                        return error_result("You don't have permission to update this form.")
-                # Global forms can only be updated by admins
-                if form.organization_id is None:
-                    return error_result("Only platform admins can update global forms.")
 
             updates_made = []
 

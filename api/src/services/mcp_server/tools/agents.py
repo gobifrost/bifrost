@@ -8,7 +8,6 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
-from uuid import uuid4
 
 from fastmcp.tools import ToolResult
 
@@ -133,10 +132,10 @@ async def get_agent(
         ToolResult with agent details
     """
     from sqlalchemy import select
-    from sqlalchemy.orm import selectinload
 
+    from shared.scope_resolver import has_scope_bypass
     from src.models.orm import Agent
-    from src.services.mcp_server.tools._org_scope import apply_mcp_org_scope
+    from src.repositories.agents import AgentRepository
 
     logger.info(f"MCP get_agent called: agent_id={agent_id}, agent_name={agent_name}")
 
@@ -145,34 +144,59 @@ async def get_agent(
 
     try:
         async with get_tool_db(context) as db:
-            # Build query
-            query = select(Agent).options(
-                selectinload(Agent.tools),
-                selectinload(Agent.delegated_agents),
-                selectinload(Agent.roles),
+            org_id = (
+                UUID(str(context.org_id))
+                if context.org_id and isinstance(context.org_id, str)
+                else context.org_id
+            )
+            user_id = (
+                UUID(str(context.user_id))
+                if getattr(context, "user_id", None) and isinstance(context.user_id, str)
+                else getattr(context, "user_id", None)
+            )
+            repo = AgentRepository(
+                session=db,
+                org_id=org_id,
+                user_id=user_id,
+                is_superuser=has_scope_bypass(
+                    is_platform_admin=getattr(context, "is_platform_admin", False),
+                    is_provider_org=getattr(context, "is_provider_org", False),
+                ),
+                is_external=getattr(context, "is_external", False),
             )
 
             if agent_id:
-                # ID-based lookup: IDs are unique, so cascade filter is safe
                 try:
                     uuid_id = UUID(agent_id)
                 except ValueError:
                     return error_result(f"'{agent_id}' is not a valid UUID")
-                query = query.where(Agent.id == uuid_id)
-                # Apply org scoping for non-admins (cascade filter for ID lookups)
-                query = apply_mcp_org_scope(query, Agent, context)
+                # Same access-check REST uses for GET /api/agents/{id}: org
+                # cascade + role-based/private access-level enforcement.
+                agent = await repo.get_agent_with_access_check(uuid_id)
             else:
-                # Name-based lookup: use prioritized lookup (org-specific > global)
-                query = query.where(Agent.name == agent_name)
-                query = apply_mcp_org_scope(query, Agent, context)
-                if not context.is_platform_admin and context.org_id:
-                    # Prioritize org-specific over global (nulls come last)
-                    query = query.order_by(
+                # Name-based lookup: resolve the candidate id via the same
+                # org-cascade priority as before, then re-verify it through
+                # the identical access check so a name lookup can't read a
+                # PRIVATE agent or a role-gated agent the caller lacks.
+                name_query = select(Agent.id).where(Agent.name == agent_name)
+                if repo.org_id is not None:
+                    # Prioritize the org-specific row over a same-named
+                    # global row.
+                    name_query = name_query.order_by(
                         Agent.organization_id.desc().nulls_last()
-                    ).limit(1)
-
-            result = await db.execute(query)
-            agent = result.scalar_one_or_none()
+                    )
+                elif not repo.is_superuser:
+                    # No org context and not a bypass caller: only a global
+                    # row is even a candidate (legacy "no org -> global
+                    # only" cascade) — an org-scoped same-named row must
+                    # never resolve here.
+                    name_query = name_query.where(Agent.organization_id.is_(None))
+                candidate_id = (await db.execute(name_query.limit(1))).scalar_one_or_none()
+                agent = (
+                    await repo.get_agent_with_access_check(candidate_id)
+                    if candidate_id is not None
+                    else None
+                )
 
             if not agent:
                 identifier = agent_id or agent_name
@@ -241,15 +265,8 @@ async def create_agent(
     Returns:
         ToolResult with created agent details
     """
-    from sqlalchemy import select
-    from sqlalchemy.orm import selectinload
-
-    from src.models.enums import AgentAccessLevel
-    from src.models.orm import Agent, AgentDelegation, AgentTool, AIModelProfile, Workflow
-
     logger.info(f"MCP create_agent called: name={name}, scope={scope}")
 
-    # Validate inputs
     if not name:
         return error_result("name is required")
     if not system_prompt:
@@ -258,12 +275,9 @@ async def create_agent(
         return error_result("name must be 255 characters or less")
     if len(system_prompt) > 50000:
         return error_result("system_prompt must be 50000 characters or less")
-
-    # Validate scope parameter
     if scope not in ("global", "organization"):
         return error_result("scope must be 'global' or 'organization'")
 
-    # Validate channels if provided
     valid_channels = {"chat", "voice", "teams", "slack"}
     if channels:
         invalid_channels = set(channels) - valid_channels
@@ -272,139 +286,49 @@ async def create_agent(
     else:
         channels = ["chat"]
 
-    profile_uuid: UUID | None = None
     if llm_profile_id:
         try:
-            profile_uuid = UUID(llm_profile_id)
+            UUID(llm_profile_id)
         except ValueError:
             return error_result(f"llm_profile_id '{llm_profile_id}' is not a valid UUID")
 
-    # Determine effective organization_id based on scope
-    effective_org_id: UUID | None = None
-    if scope == "global":
-        # Global resources have no organization_id
-        effective_org_id = None
-    else:
-        # Organization scope: use provided organization_id or fall back to context.org_id
+    # organization_id follows REST's own resolution: global scope means
+    # explicit null; organization scope defaults to the caller's org.
+    effective_org_id: str | None = None
+    if scope == "organization":
         if organization_id:
-            try:
-                effective_org_id = UUID(organization_id)
-            except ValueError:
-                return error_result(f"organization_id '{organization_id}' is not a valid UUID")
+            effective_org_id = organization_id
         elif context.org_id:
-            effective_org_id = UUID(str(context.org_id)) if isinstance(context.org_id, str) else context.org_id
+            effective_org_id = str(context.org_id)
         else:
             return error_result("organization_id is required when scope='organization' and no context org_id is set")
 
-    try:
-        async with get_tool_db(context) as db:
-            if profile_uuid is not None:
-                profile_exists = await db.scalar(
-                    select(AIModelProfile.id).where(AIModelProfile.id == profile_uuid)
-                )
-                if profile_exists is None:
-                    return error_result(f"llm_profile_id '{llm_profile_id}' does not reference an existing model profile")
+    # Thin wrapper over POST /api/agents: REST enforces the non-admin
+    # rules (forced PRIVATE access_level, forced own org, admin-only
+    # fields stripped to empty, tool_ids validated against the caller's
+    # own accessible tools) — MCP does not re-implement that logic.
+    body = {
+        "name": name,
+        "description": description,
+        "system_prompt": system_prompt,
+        "channels": channels,
+        "access_level": "role_based",
+        "organization_id": effective_org_id,
+        "tool_ids": tool_ids or [],
+        "delegated_agent_ids": delegated_agent_ids or [],
+        "knowledge_sources": knowledge_sources or [],
+        "system_tools": system_tools or [],
+        "llm_profile_id": llm_profile_id,
+        "llm_max_tokens": llm_max_tokens,
+    }
 
-            agent_id = uuid4()
-            now = datetime.now(timezone.utc)
+    status_code, resp = await call_rest(context, "POST", "/api/agents", json_body=body)
+    if status_code not in (200, 201):
+        return error_result(f"create_agent failed: HTTP {status_code}", {"body": resp})
 
-            # Create the agent
-            agent = Agent(
-                id=agent_id,
-                name=name,
-                description=description,
-                system_prompt=system_prompt,
-                channels=channels,
-                access_level=AgentAccessLevel.ROLE_BASED,
-                organization_id=effective_org_id,
-                is_active=True,
-                knowledge_sources=knowledge_sources or [],
-                system_tools=system_tools or [],
-                llm_profile_id=profile_uuid,
-                llm_max_tokens=llm_max_tokens,
-                created_by=context.user_email,
-                created_at=now,
-                updated_at=now,
-            )
-            db.add(agent)
-
-            # Add tool relationships
-            tools: list[Workflow] = []
-            if tool_ids:
-                for tool_id in tool_ids:
-                    try:
-                        workflow_uuid = UUID(tool_id)
-                        result = await db.execute(
-                            select(Workflow)
-                            .where(Workflow.id == workflow_uuid)
-                            .where(Workflow.type == "tool")
-                            .where(Workflow.is_active.is_(True))
-                        )
-                        workflow = result.scalar_one_or_none()
-                        if workflow:
-                            tools.append(workflow)
-                            db.add(AgentTool(agent_id=agent_id, workflow_id=workflow.id))
-                        else:
-                            logger.warning(f"Tool workflow not found or inactive: {tool_id}")
-                    except ValueError:
-                        logger.warning(f"Invalid tool ID: {tool_id}")
-
-            # Add delegation relationships
-            delegated_agents: list[Agent] = []
-            if delegated_agent_ids:
-                for delegate_id in delegated_agent_ids:
-                    try:
-                        delegate_uuid = UUID(delegate_id)
-                        if delegate_uuid == agent_id:
-                            logger.warning("Agent cannot delegate to itself, skipping")
-                            continue
-                        result = await db.execute(
-                            select(Agent)
-                            .where(Agent.id == delegate_uuid)
-                            .where(Agent.is_active.is_(True))
-                        )
-                        delegate = result.scalar_one_or_none()
-                        if delegate:
-                            delegated_agents.append(delegate)
-                            db.add(AgentDelegation(
-                                parent_agent_id=agent_id,
-                                child_agent_id=delegate.id,
-                            ))
-                        else:
-                            logger.warning(f"Delegate agent not found or inactive: {delegate_id}")
-                    except ValueError:
-                        logger.warning(f"Invalid delegate agent ID: {delegate_id}")
-
-            await db.flush()
-
-            # Reload with relationships
-            result = await db.execute(
-                select(Agent)
-                .options(
-                    selectinload(Agent.tools),
-                    selectinload(Agent.delegated_agents),
-                    selectinload(Agent.roles),
-                )
-                .where(Agent.id == agent_id)
-            )
-            agent = result.scalar_one()
-
-            logger.info(f"Created agent {agent.id}: {agent.name}")
-
-            display_text = f"Created agent: {agent.name}"
-            return success_result(display_text, {
-                "success": True,
-                "id": str(agent.id),
-                "name": agent.name,
-                "description": agent.description,
-                "channels": agent.channels,
-                "tool_count": len(tools),
-                "delegated_agent_count": len(delegated_agents),
-            })
-
-    except Exception as e:
-        logger.exception(f"Error creating agent via MCP: {e}")
-        return error_result(f"Error creating agent: {str(e)}")
+    agent_data = resp if isinstance(resp, dict) else {"body": resp}
+    display_text = f"Created agent: {agent_data.get('name', name)}"
+    return success_result(display_text, {"success": True, **agent_data})
 
 
 async def update_agent(
