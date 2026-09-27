@@ -430,6 +430,9 @@ class EventDelivery(Base):
     # Retry tracking (for future use)
     attempt_count: Mapped[int] = mapped_column(Integer, default=0)
     next_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    attempt_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
     # Audit

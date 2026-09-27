@@ -587,6 +587,12 @@ class EventDeliveryRepository(BaseRepository[EventDelivery]):
                     EventDeliveryStatus.QUEUED,
                 ])
             )
-            .where(EventDelivery.created_at < cutoff)
+            .where(
+                func.coalesce(
+                    EventDelivery.attempt_started_at,
+                    EventDelivery.created_at,
+                )
+                < cutoff
+            )
         )
         return result.unique().scalars().all()
