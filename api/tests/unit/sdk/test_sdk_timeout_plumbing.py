@@ -223,7 +223,6 @@ async def test_workflow_and_execution_facades_send_no_per_call_timeout(monkeypat
         "duration_ms": None,
         "started_at": None,
         "completed_at": None,
-        "session_id": None,
         "peak_memory_bytes": None,
         "process_rss_bytes": None,
         "cpu_total_seconds": None,
