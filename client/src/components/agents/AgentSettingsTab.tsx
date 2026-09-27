@@ -70,10 +70,7 @@ import {
 
 import { useAuth } from "@/contexts/AuthContext";
 import { useQuery } from "@tanstack/react-query";
-import {
-	listModelProfiles,
-	type AIModelProfile,
-} from "@/services/aiModels";
+import { listModelProfiles, type AIModelProfile } from "@/services/aiModels";
 import {
 	useAgents,
 	useCreateAgent,
@@ -338,7 +335,9 @@ export function AgentSettingsTab({
 		control: form.control,
 		name: "access_level",
 	});
-	const shouldLoadRoles = accessLevel === "role_based";
+	// Non-admins can never edit role_ids (the field is hidden and the server
+	// 403s if it's sent at all), so there's no reason to load roles for them.
+	const shouldLoadRoles = accessLevel === "role_based" && isPlatformAdmin;
 	const {
 		data: roles,
 		isError: rolesError,
@@ -452,23 +451,30 @@ export function AgentSettingsTab({
 			return;
 		}
 
+		// Non-admins can't edit these — the server 403s if a non-admin sends
+		// any of them at all (even an empty list/budget). Omit them entirely
+		// so create defaults to the caller's own org and update preserves
+		// whatever an admin previously set.
 		const body = {
 			name: values.name,
 			description: values.description || null,
 			system_prompt: values.system_prompt,
 			channels: values.channels,
 			access_level: values.access_level as AgentAccessLevel,
-			organization_id: values.organization_id,
 			is_active: values.is_active,
 			tool_ids: values.tool_ids,
-			system_tools: values.system_tools,
-			delegated_agent_ids: values.delegated_agent_ids,
-			role_ids: values.access_level === "private" ? [] : values.role_ids,
-			knowledge_sources: values.knowledge_sources,
-			mcp_connection_ids: values.mcp_connection_ids,
 			llm_profile_id: values.llm_profile_id,
 			...(isPlatformAdmin
 				? {
+						organization_id: values.organization_id,
+						system_tools: values.system_tools,
+						delegated_agent_ids: values.delegated_agent_ids,
+						role_ids:
+							values.access_level === "private"
+								? []
+								: values.role_ids,
+						knowledge_sources: values.knowledge_sources,
+						mcp_connection_ids: values.mcp_connection_ids,
 						llm_max_tokens: values.llm_max_tokens,
 						max_iterations: values.max_iterations,
 						max_token_budget: values.max_token_budget,
@@ -505,7 +511,12 @@ export function AgentSettingsTab({
 	}
 
 	const pending = saving || createAgent.isPending || updateAgent.isPending;
-	const totalTools = (systemTools?.length ?? 0) + (toolIds?.length ?? 0);
+	// Non-admins can't see or edit system_tools (hidden + not sent), so their
+	// count/badges only reflect workflow tools even if an admin previously
+	// assigned system tools to this agent.
+	const totalTools =
+		(isPlatformAdmin ? (systemTools?.length ?? 0) : 0) +
+		(toolIds?.length ?? 0);
 
 	return (
 		<Form {...form}>
@@ -521,32 +532,34 @@ export function AgentSettingsTab({
 						<SolutionManagedBanner entityLabel="agent" />
 					</div>
 				)}
-				{agentsError ||
+				{(isPlatformAdmin && agentsError) ||
 				toolsError ||
 				(shouldLoadRoles && rolesError) ||
-				agentsLoading ||
+				(isPlatformAdmin && agentsLoading) ||
 				toolsLoading ||
 				(shouldLoadRoles && rolesLoading) ||
-				knowledgeError ||
-				knowledgeLoading ? (
+				(isPlatformAdmin && knowledgeError) ||
+				(isPlatformAdmin && knowledgeLoading) ? (
 					<div
 						className={
-							agentsError ||
+							(isPlatformAdmin && agentsError) ||
 							toolsError ||
 							(shouldLoadRoles && rolesError) ||
-							knowledgeError
+							(isPlatformAdmin && knowledgeError)
 								? "space-y-3 px-5 pt-5"
 								: "sr-only"
 						}
 					>
-						<SettingsResourceNotice
-							resource="available agents"
-							failed={agentsError}
-							loading={agentsLoading}
-							cached={!!agentsUpdated}
-							pending={agentsFetching}
-							onRetry={() => void refetchAgents()}
-						/>
+						{isPlatformAdmin ? (
+							<SettingsResourceNotice
+								resource="available agents"
+								failed={agentsError}
+								loading={agentsLoading}
+								cached={!!agentsUpdated}
+								pending={agentsFetching}
+								onRetry={() => void refetchAgents()}
+							/>
+						) : null}
 						<SettingsResourceNotice
 							resource="available tools"
 							failed={toolsError}
@@ -565,14 +578,16 @@ export function AgentSettingsTab({
 								onRetry={() => void refetchRoles()}
 							/>
 						) : null}
-						<SettingsResourceNotice
-							resource="knowledge namespaces"
-							failed={knowledgeError}
-							loading={knowledgeLoading}
-							cached={!!knowledgeUpdated}
-							pending={knowledgeFetching}
-							onRetry={() => void refetchKnowledge()}
-						/>
+						{isPlatformAdmin ? (
+							<SettingsResourceNotice
+								resource="knowledge namespaces"
+								failed={knowledgeError}
+								loading={knowledgeLoading}
+								cached={!!knowledgeUpdated}
+								pending={knowledgeFetching}
+								onRetry={() => void refetchKnowledge()}
+							/>
+						) : null}
 					</div>
 				) : null}
 				<fieldset
@@ -700,7 +715,7 @@ export function AgentSettingsTab({
 								)}
 							/>
 						)}
-						{accessLevel === "role_based" ? (
+						{accessLevel === "role_based" && isPlatformAdmin ? (
 							<FormField
 								control={form.control}
 								name="role_ids"
@@ -1038,45 +1053,50 @@ export function AgentSettingsTab({
 								</PopoverTrigger>
 								{totalTools > 0 ? (
 									<div className="flex min-w-0 flex-1 flex-wrap gap-1">
-										{systemTools?.map((toolId) => {
-											const tool =
-												toolsGrouped?.system.find(
-													(t) => t.id === toolId,
-												);
-											if (!tool) return null;
-											return (
-												<Badge
-													key={toolId}
-													variant="secondary"
-													className="mr-1 h-auto min-h-5 max-w-full text-left leading-normal whitespace-normal [overflow-wrap:anywhere] font-mono text-xs"
-												>
-													{tool.name}
-													<button
-														type="button"
-
-														tabIndex={0}
-														onClick={(e) => {
-															e.stopPropagation();
-															e.preventDefault();
-															toolsTriggerRef.current?.focus();
-															setDraftValue(
-																"system_tools",
-																systemTools.filter(
-																	(id) =>
-																		id !==
-																		toolId,
-																),
-															);
-														}}
-
-														className="ml-1 inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-[var(--bf-radius-control)] transition-colors hover:bg-muted-foreground/20 focus-visible:outline-2 focus-visible:outline-ring motion-reduce:transition-none"
-														aria-label={`Remove ${tool.name}`}
-													>
-														<X className="h-3 w-3" />
-													</button>
-												</Badge>
-											);
-										})}
+										{isPlatformAdmin
+											? systemTools?.map((toolId) => {
+													const tool =
+														toolsGrouped?.system.find(
+															(t) =>
+																t.id === toolId,
+														);
+													if (!tool) return null;
+													return (
+														<Badge
+															key={toolId}
+															variant="secondary"
+															className="mr-1 h-auto min-h-5 max-w-full text-left leading-normal whitespace-normal [overflow-wrap:anywhere] font-mono text-xs"
+														>
+															{tool.name}
+															<button
+																type="button"
+																tabIndex={0}
+																onClick={(
+																	e,
+																) => {
+																	e.stopPropagation();
+																	e.preventDefault();
+																	toolsTriggerRef.current?.focus();
+																	setDraftValue(
+																		"system_tools",
+																		systemTools.filter(
+																			(
+																				id,
+																			) =>
+																				id !==
+																				toolId,
+																		),
+																	);
+																}}
+																className="ml-1 inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-[var(--bf-radius-control)] transition-colors hover:bg-muted-foreground/20 focus-visible:outline-2 focus-visible:outline-ring motion-reduce:transition-none"
+																aria-label={`Remove ${tool.name}`}
+															>
+																<X className="h-3 w-3" />
+															</button>
+														</Badge>
+													);
+												})
+											: null}
 										{toolIds?.map((toolId) => {
 											const tool =
 												toolsGrouped?.workflow.find(
@@ -1142,7 +1162,8 @@ export function AgentSettingsTab({
 													? "Tool options could not be loaded."
 													: "No tools found."}
 											</CommandEmpty>
-											{toolsGrouped?.system?.length ? (
+											{isPlatformAdmin &&
+											toolsGrouped?.system?.length ? (
 												<CommandGroup heading="System Tools">
 													{toolsGrouped.system.map(
 														(tool) => (
@@ -1294,234 +1315,242 @@ export function AgentSettingsTab({
 							</FormDescription>
 						</FormItem>
 
-						<FormField
-							control={form.control}
-							name="delegated_agent_ids"
-							render={({ field }) => (
-								<FormItem>
-									<FormLabel>Delegated agents</FormLabel>
-									<Popover
-										open={delegationsOpen}
-										onOpenChange={setDelegationsOpen}
-									>
-										<PopoverTrigger asChild>
-											<FormControl>
-												<Button
-													variant="outline"
-													role="combobox"
-													ref={delegatesTriggerRef}
-													aria-expanded={
-														delegationsOpen
-													}
-													className="h-auto min-h-11 w-full justify-between font-normal"
-												>
-													{field.value?.length
-														? `${field.value.length} agent${field.value.length === 1 ? "" : "s"} selected`
-														: "Select agents…"}
-													<ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-												</Button>
-											</FormControl>
-										</PopoverTrigger>
-										{field.value?.length ? (
-											<div className="flex min-w-0 flex-1 flex-wrap gap-1">
-												{field.value.map((id) => {
-													const delegate =
-														delegationOptions.find(
-															(a) => a.id === id,
-														);
-													return (
-														<Badge
-															key={id}
-															variant="secondary"
-															className="mr-1 h-auto min-h-5 max-w-full text-left leading-normal whitespace-normal [overflow-wrap:anywhere]"
-														>
-															{delegate?.name ??
-																id}
-															<button
-																type="button"
-
-																tabIndex={0}
-																onClick={(
-																	e,
-																) => {
-																	e.stopPropagation();
-																	e.preventDefault();
-																	delegatesTriggerRef.current?.focus();
-																	field.onChange(
-																		field.value.filter(
-																			(
-																				x,
-																			) =>
-																				x !==
-																				id,
-																		),
-																	);
-																}}
-
-																className="ml-1 inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-[var(--bf-radius-control)] transition-colors hover:bg-muted-foreground/20 focus-visible:outline-2 focus-visible:outline-ring motion-reduce:transition-none"
-																aria-label={`Remove ${delegate?.name ?? id}`}
-															>
-																<X className="h-3 w-3" />
-															</button>
-														</Badge>
-													);
-												})}
-											</div>
-										) : null}
-										<PopoverContent
-											className="w-[min(400px,calc(100vw-2rem))] p-0"
-											align="start"
+						{isPlatformAdmin ? (
+							<FormField
+								control={form.control}
+								name="delegated_agent_ids"
+								render={({ field }) => (
+									<FormItem>
+										<FormLabel>Delegated agents</FormLabel>
+										<Popover
+											open={delegationsOpen}
+											onOpenChange={setDelegationsOpen}
 										>
-											<Command>
-												<CommandInput placeholder="Search agents…" />
-												<CommandList>
-													<CommandEmpty>
-														{agentsError
-															? "Agent options could not be loaded."
-															: "No agents found."}
-													</CommandEmpty>
-													<CommandGroup>
-														{delegationOptions.map(
-															(delegate) => (
-																<CommandItem
-																	key={
-																		delegate.id
-																	}
-																	value={
-																		delegate.name
-																	}
-																	data-checked={
-																		field.value?.includes(
-																			delegate.id,
-																		) ??
-																		false
-																	}
-																	onSelect={() => {
-																		const current =
-																			field.value ??
-																			[];
+											<PopoverTrigger asChild>
+												<FormControl>
+													<Button
+														variant="outline"
+														role="combobox"
+														ref={
+															delegatesTriggerRef
+														}
+														aria-expanded={
+															delegationsOpen
+														}
+														className="h-auto min-h-11 w-full justify-between font-normal"
+													>
+														{field.value?.length
+															? `${field.value.length} agent${field.value.length === 1 ? "" : "s"} selected`
+															: "Select agents…"}
+														<ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+													</Button>
+												</FormControl>
+											</PopoverTrigger>
+											{field.value?.length ? (
+												<div className="flex min-w-0 flex-1 flex-wrap gap-1">
+													{field.value.map((id) => {
+														const delegate =
+															delegationOptions.find(
+																(a) =>
+																	a.id === id,
+															);
+														return (
+															<Badge
+																key={id}
+																variant="secondary"
+																className="mr-1 h-auto min-h-5 max-w-full text-left leading-normal whitespace-normal [overflow-wrap:anywhere]"
+															>
+																{delegate?.name ??
+																	id}
+																<button
+																	type="button"
+
+																	tabIndex={0}
+																	onClick={(
+																		e,
+																	) => {
+																		e.stopPropagation();
+																		e.preventDefault();
+																		delegatesTriggerRef.current?.focus();
 																		field.onChange(
-																			current.includes(
-																				delegate.id,
-																			)
-																				? current.filter(
-																						(
-																							id,
-																						) =>
-																							id !==
-																							delegate.id,
-																					)
-																				: [
-																						...current,
-																						delegate.id,
-																					],
+																			field.value.filter(
+																				(
+																					x,
+																				) =>
+																					x !==
+																					id,
+																			),
 																		);
 																	}}
+
+																	className="ml-1 inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-[var(--bf-radius-control)] transition-colors hover:bg-muted-foreground/20 focus-visible:outline-2 focus-visible:outline-ring motion-reduce:transition-none"
+																	aria-label={`Remove ${delegate?.name ?? id}`}
 																>
-																	<div className="flex min-w-0 flex-col text-left">
-																		<span>
-																			{
-																				delegate.name
-																			}
-																		</span>
-																		{delegate.description ? (
-																			<span className="text-xs text-muted-foreground">
+																	<X className="h-3 w-3" />
+																</button>
+															</Badge>
+														);
+													})}
+												</div>
+											) : null}
+											<PopoverContent
+												className="w-[min(400px,calc(100vw-2rem))] p-0"
+												align="start"
+											>
+												<Command>
+													<CommandInput placeholder="Search agents…" />
+													<CommandList>
+														<CommandEmpty>
+															{agentsError
+																? "Agent options could not be loaded."
+																: "No agents found."}
+														</CommandEmpty>
+														<CommandGroup>
+															{delegationOptions.map(
+																(delegate) => (
+																	<CommandItem
+																		key={
+																			delegate.id
+																		}
+																		value={
+																			delegate.name
+																		}
+																		data-checked={
+																			field.value?.includes(
+																				delegate.id,
+																			) ??
+																			false
+																		}
+																		onSelect={() => {
+																			const current =
+																				field.value ??
+																				[];
+																			field.onChange(
+																				current.includes(
+																					delegate.id,
+																				)
+																					? current.filter(
+																							(
+																								id,
+																							) =>
+																								id !==
+																								delegate.id,
+																						)
+																					: [
+																							...current,
+																							delegate.id,
+																						],
+																			);
+																		}}
+																	>
+																		<div className="flex min-w-0 flex-col text-left">
+																			<span>
 																				{
-																					delegate.description
+																					delegate.name
 																				}
 																			</span>
-																		) : null}
-																	</div>
-																</CommandItem>
-															),
-														)}
-													</CommandGroup>
-												</CommandList>
-											</Command>
-										</PopoverContent>
-									</Popover>
-									<FormDescription>
-										Other agents this agent can delegate
-										tasks to.
-									</FormDescription>
-									<FormMessage />
-								</FormItem>
-							)}
-						/>
+																			{delegate.description ? (
+																				<span className="text-xs text-muted-foreground">
+																					{
+																						delegate.description
+																					}
+																				</span>
+																			) : null}
+																		</div>
+																	</CommandItem>
+																),
+															)}
+														</CommandGroup>
+													</CommandList>
+												</Command>
+											</PopoverContent>
+										</Popover>
+										<FormDescription>
+											Other agents this agent can delegate
+											tasks to.
+										</FormDescription>
+										<FormMessage />
+									</FormItem>
+								)}
+							/>
+						) : null}
 
-						<FormField
-							control={form.control}
-							name="knowledge_sources"
-							render={({ field }) => (
-								<FormItem>
-									<FormLabel>Knowledge sources</FormLabel>
-									<FormControl>
-										<MultiCombobox
-											options={[
-												...(
-													knowledgeNamespaces ?? []
-												).map((ns) => ({
-													value: ns.namespace,
-													label: ns.namespace,
-													description: `${ns.scopes.total} documents`,
-												})),
-												...(field.value ?? [])
-													.filter(
-														(value) =>
-															!(
-																knowledgeNamespaces ??
-																[]
-															).some(
-																(ns) =>
-																	ns.namespace ===
-																	value,
-															),
-													)
-													.map((value) => ({
-														value,
-														label: value,
-														description:
-															"Saved namespace",
+						{isPlatformAdmin ? (
+							<FormField
+								control={form.control}
+								name="knowledge_sources"
+								render={({ field }) => (
+									<FormItem>
+										<FormLabel>Knowledge sources</FormLabel>
+										<FormControl>
+											<MultiCombobox
+												options={[
+													...(
+														knowledgeNamespaces ??
+														[]
+													).map((ns) => ({
+														value: ns.namespace,
+														label: ns.namespace,
+														description: `${ns.scopes.total} documents`,
 													})),
-											]}
-											value={field.value ?? []}
-											onValueChange={field.onChange}
-											placeholder="Select namespaces…"
-											searchPlaceholder="Search namespaces…"
-											isLoading={knowledgeLoading}
-											emptyText={
-												knowledgeError
-													? "Namespaces could not be loaded."
-													: "No namespaces found."
-											}
-										/>
-									</FormControl>
-									{field.value?.length ? (
-										<div className="flex flex-wrap items-center gap-2 rounded-md bg-muted/50 ring-1 ring-foreground/5 p-2">
-											<Badge
-												variant="secondary"
-												className="font-mono text-xs"
-											>
-												search_knowledge
-											</Badge>
-											<span className="text-xs text-muted-foreground">
-												tool auto-enabled
-											</span>
-										</div>
-									) : null}
-									<FormDescription>
-										Namespaces this agent can search for
-										context.
-									</FormDescription>
-									<FormMessage />
-								</FormItem>
-							)}
-						/>
+													...(field.value ?? [])
+														.filter(
+															(value) =>
+																!(
+																	knowledgeNamespaces ??
+																	[]
+																).some(
+																	(ns) =>
+																		ns.namespace ===
+																		value,
+																),
+														)
+														.map((value) => ({
+															value,
+															label: value,
+															description:
+																"Saved namespace",
+														})),
+												]}
+												value={field.value ?? []}
+												onValueChange={field.onChange}
+												placeholder="Select namespaces…"
+												searchPlaceholder="Search namespaces…"
+												isLoading={knowledgeLoading}
+												emptyText={
+													knowledgeError
+														? "Namespaces could not be loaded."
+														: "No namespaces found."
+												}
+											/>
+										</FormControl>
+										{field.value?.length ? (
+											<div className="flex flex-wrap items-center gap-2 rounded-md bg-muted/50 ring-1 ring-foreground/5 p-2">
+												<Badge
+													variant="secondary"
+													className="font-mono text-xs"
+												>
+													search_knowledge
+												</Badge>
+												<span className="text-xs text-muted-foreground">
+													tool auto-enabled
+												</span>
+											</div>
+										) : null}
+										<FormDescription>
+											Namespaces this agent can search for
+											context.
+										</FormDescription>
+										<FormMessage />
+									</FormItem>
+								)}
+							/>
+						) : null}
 					</FormSection>
 
 					{/* Model + Budgets */}
 				</fieldset>
-				{watchedOrgId ? (
+				{watchedOrgId && isPlatformAdmin ? (
 					<div className="border-b px-5 py-5">
 						<FormField
 							control={form.control}
@@ -1682,8 +1711,7 @@ export function AgentSettingsTab({
 												Blank = inherit. Agent value
 												wins when set.
 											</FormDescription>
-											{profileDefaultMaxTokens !=
-											null ? (
+											{profileDefaultMaxTokens != null ? (
 												<p
 													className="text-xs text-muted-foreground"
 													data-testid="profile-default-max-tokens"
