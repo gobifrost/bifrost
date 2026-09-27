@@ -164,6 +164,9 @@ async def bifrost_agent_create(
     Workflow, delegated-Agent, role, and organization values accept UUIDs or
     human refs. MCP connection values are UUIDs. ``scope`` is ``global``, an
     organization UUID/name, or omitted for the caller's home organization.
+    Callers who are not platform administrators must pass
+    ``access_level="private"`` and may not set roles, delegations, knowledge
+    sources, system tools, MCP connections, budgets, or another scope.
     """
 
     fields = {

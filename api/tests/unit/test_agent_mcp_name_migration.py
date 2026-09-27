@@ -25,11 +25,11 @@ MIGRATION = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MIGRATION)
 
 EXPECTED_RENAMES = [
-    ("bifrost_list_agents", "bifrost_agent_list"),
-    ("bifrost_get_agent", "bifrost_agent_get"),
-    ("bifrost_create_agent", "bifrost_agent_create"),
-    ("bifrost_update_agent", "bifrost_agent_update"),
-    ("bifrost_delete_agent", "bifrost_agent_delete"),
+    ("list_agents", "bifrost_agent_list"),
+    ("get_agent", "bifrost_agent_get"),
+    ("create_agent", "bifrost_agent_create"),
+    ("update_agent", "bifrost_agent_update"),
+    ("delete_agent", "bifrost_agent_delete"),
 ]
 
 
@@ -64,7 +64,7 @@ def test_replace_uses_bound_parameters_not_string_interpolation(monkeypatch) -> 
     executed: list[object] = []
     monkeypatch.setattr(MIGRATION.op, "execute", executed.append)
 
-    MIGRATION._replace("bifrost_get_agent", "bifrost_agent_get")
+    MIGRATION._replace("get_agent", "bifrost_agent_get")
 
     assert len(executed) == 1
     statement = executed[0]
@@ -73,8 +73,45 @@ def test_replace_uses_bound_parameters_not_string_interpolation(monkeypatch) -> 
     assert not isinstance(statement, str)
     compiled = statement.compile()
     assert compiled.params == {
-        "old": "bifrost_get_agent",
+        "old": "get_agent",
         "new": "bifrost_agent_get",
     }
-    assert "bifrost_get_agent" not in str(statement)
+    assert "get_agent" not in str(statement)
     assert "array_replace" in str(statement)
+
+
+async def test_upgrade_rewrites_stored_pre_r1b_tool_ids(db_session, monkeypatch) -> None:
+    """Run the real SQL against Postgres on an Agent stored with pre-R1b ids.
+
+    The old names are the tool ids registered before R1b (``list_agents`` …),
+    not the catalog's metadata names — a mismatch here matches zero rows and
+    silently strips the tools from every existing Agent.
+    """
+    from uuid import uuid4
+
+    from sqlalchemy import select
+
+    from src.models.orm import Agent
+
+    agent_id = uuid4()
+    db_session.add(
+        Agent(
+            id=agent_id,
+            name=f"mcp-rename-{agent_id}",
+            system_prompt="x",
+            system_tools=["list_agents", "execute_workflow", "delete_agent"],
+            created_by="test",
+        )
+    )
+    await db_session.flush()
+
+    executed: list[object] = []
+    monkeypatch.setattr(MIGRATION.op, "execute", executed.append)
+    MIGRATION.upgrade()
+    for statement in executed:
+        await db_session.execute(statement)  # type: ignore[arg-type]
+
+    stored = await db_session.scalar(
+        select(Agent.system_tools).where(Agent.id == agent_id)
+    )
+    assert stored == ["bifrost_agent_list", "execute_workflow", "bifrost_agent_delete"]

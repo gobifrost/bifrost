@@ -3,10 +3,9 @@
 Revision ID: 20260927_agent_mcp_names
 Revises: 20260926_audit_execution_id
 
-Agent ``system_tools`` stores public Bifrost tool identifiers. RBAC R1b flips
-the Agent CRUD tools' MCP names from the verb-first
-``bifrost_{list,get,create,update,delete}_agent`` to the noun-first
-``bifrost_agent_{list,get,create,update,delete}`` convention (see
+Agent ``system_tools`` stores public Bifrost tool identifiers. RBAC R1b renames
+the registered Agent CRUD tools from ``{list,get,create,update,delete}_agent(s)``
+to the catalog's ``bifrost_agent_{list,get,create,update,delete}`` names (see
 ``operation_catalog.py``). Rename existing Agent ``system_tools`` entries
 atomically with the registration change so existing Agent assignments keep
 working after upgrade.
@@ -39,16 +38,16 @@ def _replace(old: str, new: str) -> None:
 
 
 def upgrade() -> None:
-    _replace("bifrost_list_agents", "bifrost_agent_list")
-    _replace("bifrost_get_agent", "bifrost_agent_get")
-    _replace("bifrost_create_agent", "bifrost_agent_create")
-    _replace("bifrost_update_agent", "bifrost_agent_update")
-    _replace("bifrost_delete_agent", "bifrost_agent_delete")
+    _replace("list_agents", "bifrost_agent_list")
+    _replace("get_agent", "bifrost_agent_get")
+    _replace("create_agent", "bifrost_agent_create")
+    _replace("update_agent", "bifrost_agent_update")
+    _replace("delete_agent", "bifrost_agent_delete")
 
 
 def downgrade() -> None:
-    _replace("bifrost_agent_list", "bifrost_list_agents")
-    _replace("bifrost_agent_get", "bifrost_get_agent")
-    _replace("bifrost_agent_create", "bifrost_create_agent")
-    _replace("bifrost_agent_update", "bifrost_update_agent")
-    _replace("bifrost_agent_delete", "bifrost_delete_agent")
+    _replace("bifrost_agent_list", "list_agents")
+    _replace("bifrost_agent_get", "get_agent")
+    _replace("bifrost_agent_create", "create_agent")
+    _replace("bifrost_agent_update", "update_agent")
+    _replace("bifrost_agent_delete", "delete_agent")
