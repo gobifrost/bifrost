@@ -8,6 +8,7 @@ capacity, the org gate, and shutdown handover.
 
 import json
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
@@ -44,6 +45,23 @@ class FakeRedis:
         for key in keys:
             self.values.pop(key, None)
         return len(keys)
+
+
+# The test stack's worker container runs a real claim loop against this same
+# database. Services created here become eligible a day ahead of wall-clock
+# time, and this process's lifecycle clock runs two days ahead, so only the
+# loop under test can ever claim them.
+_ELIGIBLE_AHEAD = timedelta(days=1)
+_CLOCK_AHEAD = timedelta(days=2)
+
+
+@pytest.fixture(autouse=True)
+def _clock_ahead_of_stack_worker():
+    real_now = service_lifecycle._now
+    with patch.object(
+        service_lifecycle, "_now", lambda: real_now() + _CLOCK_AHEAD
+    ):
+        yield
 
 
 @asynccontextmanager
@@ -150,6 +168,7 @@ async def _ensure_service(db_session, org=None, **overrides):
     definition = await service_lifecycle.ensure_definition_for_workflow(
         db_session, wf, created_by="tester"
     )
+    definition.restart_eligible_at = datetime.now(timezone.utc) + _ELIGIBLE_AHEAD
     for key, value in overrides.items():
         setattr(definition, key, value)
     await db_session.flush()
@@ -507,8 +526,6 @@ async def test_route_failure_completes_without_accounting(db_session):
 
 async def test_startup_grace_breach_fails_unready_attempt(db_session):
     """An attempt that never reports ready fails once its grace elapses."""
-    from datetime import datetime, timedelta, timezone
-
     from src.models.orm.services import ServiceAttempt
 
     definition, _, _ = await _ensure_service(db_session)
