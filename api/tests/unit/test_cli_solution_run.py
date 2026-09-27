@@ -73,3 +73,26 @@ def test_bifrost_run_non_solution_file_still_works(
     rc = handle_run([str(tmp_path / "w.py"), "-w", "run"])
     assert rc == 0, capsys.readouterr()
     assert capsys.readouterr().out.strip() == "7"
+
+
+def test_bifrost_run_interactive_flag_rejected(
+    tmp_path: pathlib.Path, capsys, monkeypatch, _restore_sys_path
+) -> None:
+    """The removed browser-session flow's --interactive/-i and --no-browser/-n
+    flags now fall through to the same "Unknown option" error every other
+    unrecognized `bifrost run` flag gets — a clean, loud failure rather than
+    silently doing nothing or being swallowed as a positional argument.
+    """
+    (tmp_path / "w.py").write_text(
+        "from bifrost import workflow\n"
+        "@workflow\n"
+        "async def run():\n"
+        "    return 1\n"
+    )
+    monkeypatch.chdir(tmp_path)
+
+    for flag in ("--interactive", "-i", "--no-browser", "-n"):
+        rc = handle_run([str(tmp_path / "w.py"), "-w", "run", flag])
+        err = capsys.readouterr().err
+        assert rc == 1
+        assert f"Unknown option: {flag}" in err

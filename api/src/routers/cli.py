@@ -102,11 +102,6 @@ from src.models.contracts.artifacts import (
     VideoArtifactSpec,
 )
 from src.models.contracts.platform_jobs import PlatformJobAccepted
-from src.core.pubsub import (
-    publish_execution_log,
-    publish_execution_update,
-    publish_history_update,
-)
 
 logger = logging.getLogger(__name__)
 
