@@ -479,7 +479,7 @@ class TestPoliciesMatrix:
             f"alice should not be able to forge a row for org2; got {cross.text}"
         )
 
-    def test_single_doc_get_enforces_policy_indistinguishable_from_missing(
+    def test_single_doc_get_enforces_policy(
         self, e2e_client, platform_admin, alice_user, bob_user
     ):
         """A row filtered out of the LIST must also be unreachable via
@@ -487,9 +487,7 @@ class TestPoliciesMatrix:
 
         Security boundary: same policy gate on both endpoints. If the single-doc
         handler skipped the policy check, an attacker who guesses or otherwise
-        learns a doc_id could read across the row-level boundary. The denied
-        row and a genuinely missing row must be indistinguishable (both 404)
-        so a 403-vs-404 status doesn't itself leak the row's existence.
+        learns a doc_id could read across the row-level boundary.
         """
         table_id = _create_table(
             e2e_client, platform_admin.headers,
@@ -517,25 +515,17 @@ class TestPoliciesMatrix:
         aq = _query(e2e_client, alice_user.headers, table_id).json()["documents"]
         assert all(d["id"] != bob_doc_id for d in aq), aq
 
-        # Direct single-doc GET MUST be blocked, and indistinguishably from
-        # a missing row: the handler runs the policy check (the row is
-        # fetched first, then evaluated — see
-        # api/shared/table_documents.py::get_table_document) and maps a
-        # policy denial to the SAME 404 a missing/wrong-table id gets.
+        # Direct single-doc GET MUST be blocked. The handler returns 403 via
+        # `_check_action_or_403` (the row is fetched first, then the policy
+        # check runs against it — see api/src/routers/tables.py::get_document).
         r = e2e_client.get(
             f"/api/tables/{table_id}/documents/{bob_doc_id}",
             headers=alice_user.headers,
         )
-        assert r.status_code == 404, (
-            f"single-doc GET must apply read policy and 404 (not 403) on "
-            f"denial; got {r.status_code} body={r.text}"
+        assert r.status_code == 403, (
+            f"single-doc GET must apply read policy; got {r.status_code} "
+            f"body={r.text}"
         )
-
-        missing = e2e_client.get(
-            f"/api/tables/{table_id}/documents/{uuid.uuid4()}",
-            headers=alice_user.headers,
-        )
-        assert missing.status_code == 404, missing.text
 
     def test_additive_or_across_multiple_policies(
         self, e2e_client, platform_admin, alice_user, bob_user

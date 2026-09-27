@@ -190,20 +190,26 @@ class TestAppChannelVisibility:
         e2e_ws_url,
         e2e_client,
         platform_admin,
+        org1,
         org1_user,
     ):
         slug = f"ws-draft-{uuid4().hex[:8]}"
         create = e2e_client.post(
             "/api/applications",
-            headers=org1_user.headers,
-            json={"name": slug, "slug": slug, "app_model": "inline_v1"},
+            headers=platform_admin.headers,
+            json={
+                "name": slug,
+                "slug": slug,
+                "app_model": "inline_v1",
+                "organization_id": org1["id"],
+            },
         )
         assert create.status_code == 201, create.text
         app_id = create.json()["id"]
 
         try:
             ws_url = f"{e2e_ws_url}/ws/connect"
-            # Even the app's own creator does not get the draft channel —
+            # Even the app's own org member does not get the draft channel —
             # it's bypass-only (authoring surface).
             async with connect(
                 ws_url,
@@ -221,28 +227,34 @@ class TestAppChannelVisibility:
                 resp = await _subscribe(ws, f"app:draft:{app_id}")
                 assert resp["type"] == "subscribed", resp
         finally:
-            e2e_client.delete(f"/api/applications/{app_id}", headers=org1_user.headers)
+            e2e_client.delete(f"/api/applications/{app_id}", headers=platform_admin.headers)
 
     async def test_live_channel_uses_app_read_access_check(
         self,
         e2e_ws_url,
         e2e_client,
         platform_admin,
+        org1,
         org1_user,
         org2_user,
     ):
         slug = f"ws-live-{uuid4().hex[:8]}"
         create = e2e_client.post(
             "/api/applications",
-            headers=org1_user.headers,
-            json={"name": slug, "slug": slug, "app_model": "inline_v1"},
+            headers=platform_admin.headers,
+            json={
+                "name": slug,
+                "slug": slug,
+                "app_model": "inline_v1",
+                "organization_id": org1["id"],
+            },
         )
         assert create.status_code == 201, create.text
         app_id = create.json()["id"]
 
         try:
             ws_url = f"{e2e_ws_url}/ws/connect"
-            # Same-org creator can access the live channel.
+            # Same-org member can access the live channel.
             async with connect(
                 ws_url,
                 additional_headers={"Authorization": f"Bearer {org1_user.access_token}"},
@@ -260,4 +272,4 @@ class TestAppChannelVisibility:
                 resp = await _subscribe(ws, f"app:live:{app_id}")
                 assert resp["type"] == "error", resp
         finally:
-            e2e_client.delete(f"/api/applications/{app_id}", headers=org1_user.headers)
+            e2e_client.delete(f"/api/applications/{app_id}", headers=platform_admin.headers)

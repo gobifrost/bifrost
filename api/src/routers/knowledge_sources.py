@@ -14,7 +14,6 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import delete, select, update
 
-from shared.knowledge_access import accessible_namespaces_for_user
 from shared.scope_resolver import has_scope_bypass
 from src.core.auth import CurrentActiveUser, CurrentSuperuser
 from src.core.db_deps import DbSession
@@ -85,10 +84,6 @@ async def list_namespaces(
     else:
         # ORG_PLUS_GLOBAL
         ns_list = await repo.list_namespaces(organization_id=filter_org_id, include_global=True)
-
-    accessible_namespaces = await accessible_namespaces_for_user(db, user)
-    if accessible_namespaces is not None:
-        ns_list = [ns for ns in ns_list if ns.namespace in accessible_namespaces]
 
     return [
         KnowledgeNamespaceInfo(
@@ -250,12 +245,6 @@ async def list_all_documents(
             | KnowledgeStore.key.ilike(f"%{search}%")
         )
 
-    accessible_namespaces = await accessible_namespaces_for_user(db, user)
-    if accessible_namespaces is not None:
-        if not accessible_namespaces:
-            return []
-        stmt = stmt.where(KnowledgeStore.namespace.in_(accessible_namespaces))
-
     stmt = stmt.order_by(KnowledgeStore.created_at.desc()).offset(offset).limit(limit)
     result = await db.execute(stmt)
     docs = result.scalars().all()
@@ -370,10 +359,6 @@ async def list_documents(
 ) -> list[KnowledgeDocumentSummary]:
     """List documents in a namespace."""
     _deny_external(user)
-
-    accessible_namespaces = await accessible_namespaces_for_user(db, user)
-    if accessible_namespaces is not None and namespace not in accessible_namespaces:
-        raise HTTPException(403, f"Namespace '{namespace}' is not accessible.")
 
     try:
         filter_type, filter_org_id = resolve_org_filter(user, scope)
@@ -494,10 +479,6 @@ async def get_document(
         doc_org_id = doc.organization_id
         user_org_id = str(user.organization_id) if user.organization_id else None
         if doc_org_id is not None and doc_org_id != user_org_id:
-            raise HTTPException(404, f"Document {doc_id} not found in namespace {namespace}")
-
-        accessible_namespaces = await accessible_namespaces_for_user(db, user)
-        if accessible_namespaces is not None and namespace not in accessible_namespaces:
             raise HTTPException(404, f"Document {doc_id} not found in namespace {namespace}")
 
     return KnowledgeDocumentPublic(

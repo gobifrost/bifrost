@@ -375,6 +375,8 @@ class TestKnowledgeStoreIsolation:
         platform_admin,
         org1,
         org2,
+        org1_user,
+        org2_user,
         org1_service_headers,
         org2_service_headers,
         embedding_config_setup,
@@ -383,12 +385,9 @@ class TestKnowledgeStoreIsolation:
         """Test that org1 users cannot access org2's knowledge documents.
 
         ``knowledge/store`` is gated to execution credentials and bypass
-        principals. ``knowledge/search`` isn't gated the same way, but a
-        regular user's own login token is namespace-role filtered there
-        (see TestSdkKnowledgeExecutionCredentialGating) — so this org-level
-        isolation assertion uses org-scoped service tokens (unfiltered,
-        execution-credential) for both, to test org scoping specifically
-        rather than namespace-role filtering.
+        principals, so the writes go through org-scoped service tokens; the
+        isolation assertion itself is exercised over ``knowledge/search``
+        (unaffected by the gate) with each org's own login token.
         """
         # Org1 stores a document (via an org1-scoped service token)
         response = e2e_client.post(
@@ -416,12 +415,10 @@ class TestKnowledgeStoreIsolation:
         )
         assert response.status_code == 200, f"Org2 store failed: {response.text}"
 
-        # Org1 searches (its own service token, not its own login token —
-        # namespace-role filtering only applies to a regular user's own
-        # session token) - should only find org1's document
+        # Org1 searches - should only find org1's document
         search_response = e2e_client.post(
             "/api/sdk/knowledge/search",
-            headers=org1_service_headers,
+            headers=org1_user.headers,
             json={
                 "query": "secret knowledge systems processes",
                 "namespace": ["e2e-isolation"],
@@ -437,7 +434,7 @@ class TestKnowledgeStoreIsolation:
         # Org2 searches - should only find org2's document
         search_response = e2e_client.post(
             "/api/sdk/knowledge/search",
-            headers=org2_service_headers,
+            headers=org2_user.headers,
             json={
                 "query": "secret knowledge systems processes",
                 "namespace": ["e2e-isolation"],
@@ -453,16 +450,17 @@ class TestKnowledgeStoreIsolation:
     def test_org1_cannot_get_org2_document_by_key(
         self,
         e2e_client,
-        org1_service_headers,
+        org1_user,
+        org2_user,
         org2_service_headers,
         embedding_config_setup,
         knowledge_cleanup,
     ):
         """Test that org1 cannot retrieve org2's document by key.
 
-        Both store and the cross-org get go through org-scoped service
-        tokens (execution credentials) — this tests org isolation, not
-        namespace-role filtering of a regular user's own token.
+        Store is gated, so it goes through org2's service token; the
+        cross-org get (unaffected by the gate) is exercised with org1_user's
+        own login token.
         """
         # Org2 stores a document
         response = e2e_client.post(
@@ -479,7 +477,7 @@ class TestKnowledgeStoreIsolation:
         # Org1 tries to get it - should fail
         get_response = e2e_client.get(
             "/api/sdk/knowledge/get",
-            headers=org1_service_headers,
+            headers=org1_user.headers,
             params={"namespace": "e2e-isolation", "key": "org2-only"},
         )
         assert get_response.status_code == 404
@@ -487,6 +485,8 @@ class TestKnowledgeStoreIsolation:
     def test_org1_cannot_delete_org2_document(
         self,
         e2e_client,
+        org1_user,
+        org2_user,
         org1_service_headers,
         org2_service_headers,
         embedding_config_setup,
@@ -495,8 +495,8 @@ class TestKnowledgeStoreIsolation:
         """Test that org1 cannot delete org2's document.
 
         Store and delete are gated, so both go through org-scoped service
-        tokens; the follow-up get also uses org2's service token to test
-        org isolation rather than namespace-role filtering.
+        tokens; the follow-up get (unaffected by the gate) is exercised with
+        org2_user's own login token.
         """
         # Org2 stores a document
         response = e2e_client.post(
@@ -522,202 +522,10 @@ class TestKnowledgeStoreIsolation:
         # Verify org2's document still exists
         get_response = e2e_client.get(
             "/api/sdk/knowledge/get",
-            headers=org2_service_headers,
+            headers=org2_user.headers,
             params={"namespace": "e2e-isolation", "key": "org2-protected"},
         )
         assert get_response.status_code == 200
-
-
-class TestSdkKnowledgeExecutionCredentialGating:
-    """/api/sdk/knowledge/search, /get and /namespaces: execution
-    credentials (engine/service tokens) and bypass principals keep the
-    org-scoped behavior above unchanged. A regular user's OWN session
-    token is not an execution credential, so it's additionally filtered
-    to the namespaces their roles grant via KnowledgeNamespaceRole — the
-    same gate REST knowledge_sources.py applies."""
-
-    def test_regular_user_own_token_without_role_grant_is_filtered(
-        self,
-        e2e_client,
-        org1_user,
-        org1_service_headers,
-        embedding_config_setup,
-        knowledge_cleanup,
-    ):
-        namespace = "e2e-sdk-nsrole-denied"
-        stored = e2e_client.post(
-            "/api/sdk/knowledge/store",
-            headers=org1_service_headers,
-            json={
-                "content": "org1 execution-credential-only content",
-                "namespace": namespace,
-                "key": "sdk-nsrole-doc",
-            },
-        )
-        assert stored.status_code == 200, stored.text
-
-        # The execution credential (service token) sees it fine.
-        service_get = e2e_client.get(
-            "/api/sdk/knowledge/get",
-            headers=org1_service_headers,
-            params={"namespace": namespace, "key": "sdk-nsrole-doc"},
-        )
-        assert service_get.status_code == 200, service_get.text
-
-        # org1_user's own login token has no KnowledgeNamespaceRole grant
-        # for this namespace, so get/search/namespaces are all filtered.
-        user_get = e2e_client.get(
-            "/api/sdk/knowledge/get",
-            headers=org1_user.headers,
-            params={"namespace": namespace, "key": "sdk-nsrole-doc"},
-        )
-        assert user_get.status_code == 403, user_get.text
-
-        user_search = e2e_client.post(
-            "/api/sdk/knowledge/search",
-            headers=org1_user.headers,
-            json={
-                "query": "execution-credential-only content",
-                "namespace": [namespace],
-                "limit": 10,
-            },
-        )
-        assert user_search.status_code == 403, user_search.text
-
-        user_namespaces = e2e_client.get(
-            "/api/sdk/knowledge/namespaces",
-            headers=org1_user.headers,
-        )
-        assert user_namespaces.status_code == 200, user_namespaces.text
-        assert namespace not in {
-            item["namespace"] for item in user_namespaces.json()
-        }
-
-
-class TestKnowledgeSourcesRestBrowsingVisibility:
-    """GET /api/knowledge-sources/* (the raw document-browsing REST surface,
-    distinct from the org-scoped SDK CRUD surface used by workflows/CLI):
-    a regular user needs a KnowledgeNamespaceRole grant to browse a
-    namespace's raw documents directly, same as the role gate that already
-    applies to GET /api/agents/accessible-knowledge and MCP search_knowledge.
-    Cross-org id lookups also 404 for non-bypass callers."""
-
-    def test_regular_user_without_namespace_role_sees_nothing(
-        self,
-        e2e_client,
-        platform_admin,
-        org1_user,
-        org1,
-        embedding_config_setup,
-        knowledge_cleanup,
-    ):
-        namespace = "e2e-nsrole-denied"
-        created = e2e_client.post(
-            f"/api/knowledge-sources/{namespace}/documents",
-            headers=platform_admin.headers,
-            json={"content": "role-gated content", "key": "role-gated-doc"},
-        )
-        assert created.status_code == 201, created.text
-        doc_id = created.json()["id"]
-
-        listed = e2e_client.get(
-            f"/api/knowledge-sources/{namespace}/documents",
-            headers=org1_user.headers,
-        )
-        assert listed.status_code == 403, listed.text
-
-        all_docs = e2e_client.get(
-            "/api/knowledge-sources/documents",
-            headers=org1_user.headers,
-            params={"namespace": namespace},
-        )
-        assert all_docs.status_code == 200, all_docs.text
-        assert all_docs.json() == []
-
-        namespaces = e2e_client.get(
-            "/api/knowledge-sources",
-            headers=org1_user.headers,
-        )
-        assert namespaces.status_code == 200, namespaces.text
-        assert namespace not in {n["namespace"] for n in namespaces.json()}
-
-        got = e2e_client.get(
-            f"/api/knowledge-sources/{namespace}/documents/{doc_id}",
-            headers=org1_user.headers,
-        )
-        assert got.status_code == 404, got.text
-
-    def test_regular_user_with_namespace_role_sees_own_org_document(
-        self,
-        e2e_client,
-        platform_admin,
-        org1_user,
-        org2_user,
-        org1,
-        embedding_config_setup,
-        knowledge_cleanup,
-    ):
-        namespace = "e2e-nsrole-granted"
-        created = e2e_client.post(
-            f"/api/knowledge-sources/{namespace}/documents",
-            headers=platform_admin.headers,
-            json={
-                "content": "role-granted content",
-                "key": "role-granted-doc",
-                "metadata": {},
-            },
-            params={"scope": str(org1["id"])},
-        )
-        assert created.status_code == 201, created.text
-        doc_id = created.json()["id"]
-
-        role = e2e_client.post(
-            "/api/roles",
-            headers=platform_admin.headers,
-            json={"name": f"E2E KB role {namespace}", "description": "test role"},
-        )
-        assert role.status_code == 201, role.text
-        role_id = role.json()["id"]
-
-        try:
-            assign_user = e2e_client.post(
-                f"/api/roles/{role_id}/users",
-                headers=platform_admin.headers,
-                json={"user_ids": [str(org1_user.user_id)]},
-            )
-            assert assign_user.status_code in (200, 201, 204), assign_user.text
-
-            assign_namespace = e2e_client.post(
-                "/api/knowledge-sources/roles",
-                headers=platform_admin.headers,
-                json={"namespace": namespace, "role_ids": [role_id]},
-            )
-            assert assign_namespace.status_code == 201, assign_namespace.text
-            assert len(assign_namespace.json()) == 1, assign_namespace.text
-
-            got = e2e_client.get(
-                f"/api/knowledge-sources/{namespace}/documents/{doc_id}",
-                headers=org1_user.headers,
-            )
-            assert got.status_code == 200, got.text
-            assert got.json()["content"] == "role-granted content"
-
-            listed = e2e_client.get(
-                f"/api/knowledge-sources/{namespace}/documents",
-                headers=org1_user.headers,
-            )
-            assert listed.status_code == 200, listed.text
-            assert any(d["id"] == doc_id for d in listed.json())
-
-            # A different org's user (no role grant and wrong org) still
-            # 404s on this org-scoped document.
-            other_org_get = e2e_client.get(
-                f"/api/knowledge-sources/{namespace}/documents/{doc_id}",
-                headers=org2_user.headers,
-            )
-            assert other_org_get.status_code == 404, other_org_get.text
-        finally:
-            e2e_client.delete(f"/api/roles/{role_id}", headers=platform_admin.headers)
 
 
 class TestKnowledgeStoreGlobalScope:
@@ -756,17 +564,12 @@ class TestKnowledgeStoreGlobalScope:
         self,
         e2e_client,
         platform_admin,
-        org1_service_headers,
-        org2_service_headers,
+        org1_user,
+        org2_user,
         embedding_config_setup,
         knowledge_cleanup,
     ):
-        """Test that global documents are visible via search fallback.
-
-        Uses org-scoped service tokens (execution credentials) rather than
-        a regular user's own login token, since this tests the org/global
-        cascade fallback, not namespace-role filtering.
-        """
+        """Test that global documents are visible via search fallback."""
         # Store a global document
         response = e2e_client.post(
             "/api/sdk/knowledge/store",
@@ -783,7 +586,7 @@ class TestKnowledgeStoreGlobalScope:
         # Org1 can find it via search (fallback=True by default)
         search_response = e2e_client.post(
             "/api/sdk/knowledge/search",
-            headers=org1_service_headers,
+            headers=org1_user.headers,
             json={
                 "query": "How do I reset my password?",
                 "namespace": ["e2e-global"],
@@ -798,7 +601,7 @@ class TestKnowledgeStoreGlobalScope:
         # Org2 can also find it
         search_response = e2e_client.post(
             "/api/sdk/knowledge/search",
-            headers=org2_service_headers,
+            headers=org2_user.headers,
             json={
                 "query": "How do I reset my password?",
                 "namespace": ["e2e-global"],
@@ -1142,3 +945,34 @@ class TestKnowledgeDocumentUpdate:
         assert body["content"] == "short v2"
         assert body["metadata"] == {"v": 2}
         assert body["created_at"] == created["created_at"]
+
+
+class TestKnowledgeDocumentByIdOrgScope:
+    """GET /api/knowledge-sources/{ns}/documents/{id} honors the caller's org."""
+
+    def test_other_org_document_is_not_found(
+        self,
+        e2e_client,
+        platform_admin,
+        org2,
+        org1_user,
+        org2_user,
+        embedding_config_setup,
+        knowledge_cleanup,
+    ):
+        create = e2e_client.post(
+            "/api/knowledge-sources/e2e-test/documents",
+            headers=platform_admin.headers,
+            params={"scope": org2["id"]},
+            json={"content": "org2 only", "key": "org2-by-id"},
+        )
+        assert create.status_code == 201, create.text
+        doc_id = create.json()["id"]
+        path = f"/api/knowledge-sources/e2e-test/documents/{doc_id}"
+
+        other_org = e2e_client.get(path, headers=org1_user.headers)
+        assert other_org.status_code == 404, other_org.text
+
+        own_org = e2e_client.get(path, headers=org2_user.headers)
+        assert own_org.status_code == 200, own_org.text
+        assert own_org.json()["content"] == "org2 only"

@@ -10,20 +10,25 @@ import pytest
 @pytest.mark.e2e
 class TestBundleManifestNonBypassNeverBuilds:
     @pytest.fixture
-    def inline_app(self, e2e_client, org1_user):
-        """Owned by org1_user so org1_user's own read access is unambiguous
-        (an admin-owned app would be scoped to the admin's own org, which
-        isn't necessarily org1)."""
+    def inline_app(self, e2e_client, platform_admin, org1, org1_user):
+        """Created by platform_admin scoped into org1 (application creation
+        is bypass-only), so org1_user's own read access against it is
+        unambiguous."""
         slug = f"bundle-manifest-rv-{uuid.uuid4().hex[:8]}"
         resp = e2e_client.post(
             "/api/applications",
-            headers=org1_user.headers,
-            json={"name": slug, "slug": slug, "app_model": "inline_v1"},
+            headers=platform_admin.headers,
+            json={
+                "name": slug,
+                "slug": slug,
+                "app_model": "inline_v1",
+                "organization_id": org1["id"],
+            },
         )
         assert resp.status_code == 201, resp.text
         app = resp.json()
         yield app
-        e2e_client.delete(f"/api/applications/{app['id']}", headers=org1_user.headers)
+        e2e_client.delete(f"/api/applications/{app['id']}", headers=platform_admin.headers)
 
     def test_non_bypass_caller_gets_404_when_no_manifest_exists_yet(
         self, e2e_client, org1_user, inline_app

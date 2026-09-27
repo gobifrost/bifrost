@@ -108,16 +108,6 @@ async def list_tools(
             active_only=not include_inactive,
         )
 
-        # list_tools_for_filter only applies org scope, not access_level/role
-        # checks — filter those here so a role_based tool workflow isn't
-        # exposed to a caller without the matching role.
-        if not user.is_superuser:
-            workflows = [
-                workflow
-                for workflow in workflows
-                if await workflow_repo._can_access_entity(workflow)
-            ]
-
         for workflow in workflows:
             tools.append(
                 ToolInfo(
