@@ -35,6 +35,7 @@ async def test_runner_restores_requesting_actor_for_handler(monkeypatch) -> None
         requested_by_user_id=str(user_id),
         requested_by_email="operator@example.com",
         requested_by_name="Operator",
+        result=None,
     )
     db = AsyncMock()
     result = MagicMock()
