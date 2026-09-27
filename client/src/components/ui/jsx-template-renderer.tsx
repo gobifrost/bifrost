@@ -56,7 +56,7 @@ function evaluateTemplate(
 			filename: "template.jsx",
 		});
 
-		if (!result.code) {
+		if (!result || !result.code) {
 			return {
 				ok: false,
 				error: "Babel transformation produced no code",
