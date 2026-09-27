@@ -14,12 +14,21 @@ from src.models.orm.solutions import Solution
 
 
 @pytest.mark.asyncio
-async def test_failed_repo_install_cleanup_commits_before_job_failure(monkeypatch):
+async def test_failed_repo_install_raises_job_failure_without_touching_install(
+    monkeypatch,
+):
+    """The brand-new install row for a failed from-repo first deploy is now
+    deleted atomically by ``_run_deploy_job`` itself, in the same transaction
+    as its ``failed`` status write (see ``_run_deploy_job``'s docstring and
+    ``tests/unit/routers/test_solution_deploy_jobs.py``). ``run_solution_deploy``
+    only needs to read the terminal job status back and surface its error as a
+    ``PlatformJobFailure`` — it must not also reach for the install row itself.
+    """
     deploy_job_id = uuid4()
     install_id = uuid4()
     projection = SolutionDeployJob(
         id=deploy_job_id,
-        install_id=install_id,
+        install_id=None,  # already cleared by _run_deploy_job's own failure path
         status="failed",
         error="manifest invalid",
     )
@@ -73,6 +82,7 @@ async def test_failed_repo_install_cleanup_commits_before_job_failure(monkeypatc
         )
 
     assert transaction_committed is True
-    assert projection.install_id is None
-    db.flush.assert_awaited_once()
-    db.delete.assert_awaited_once_with(orphan)
+    # No install-cleanup reach-in from this layer anymore: the orphan lookup
+    # (db.get(Solution, ...)) never happens, and neither does a flush/delete.
+    db.flush.assert_not_awaited()
+    db.delete.assert_not_awaited()

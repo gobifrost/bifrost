@@ -2275,6 +2275,7 @@ async def _run_deploy_job(
     *,
     force: bool,
     allow_connected_install: bool = False,
+    delete_install_on_failure: bool = False,
 ) -> None:
     """Execute the deploy under a fresh session (background task).
 
@@ -2289,6 +2290,14 @@ async def _run_deploy_job(
     the install row is created git-connected by the same request that enqueues
     this job, so the one-writer refusal below would deadlock creation. Manual
     deploys to connected installs stay refused (auto-pull is their only writer).
+
+    ``delete_install_on_failure`` is also from-repo-first-deploy-only: the
+    install row is brand new and has no user-visible content yet, so a failed
+    first deploy should leave no trace. The delete happens in the SAME
+    transaction as the job's ``failed`` status write (below) so the two are
+    never observably out of sync — a poller must never see the job reported
+    failed while ``GET /api/solutions`` still lists the orphan (it would also
+    block an immediate retry with the same slug).
     """
     from src.core.database import get_db_context
     from src.services.solutions.zip_install import (
@@ -2314,6 +2323,12 @@ async def _run_deploy_job(
             job.status = status_value
             job.error = error
             job.result = result
+            if status_value == "failed" and delete_install_on_failure:
+                job.install_id = None
+                await db.flush()
+                orphan = await db.get(SolutionORM, solution_id)
+                if orphan is not None:
+                    await db.delete(orphan)
             return True
 
     async def _set_phase(phase: str) -> None:
