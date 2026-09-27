@@ -14,7 +14,6 @@ to avoid dependencies on src.* modules that only exist in the Docker environment
 import asyncio
 import base64
 import hashlib
-import inspect
 import json
 import logging
 import os
@@ -742,7 +741,7 @@ Usage:
 
 Commands:
   sync        Bidirectional sync between local files and Bifrost platform
-  run         Run a workflow directly (silent JSON output) or interactively via browser
+  run         Run a workflow directly (silent JSON output)
   git         Git source control operations (fetch, status, commit, push, resolve, diff, discard)
   push        Push local files to Bifrost platform (alias for sync)
   pull        Pull files from Bifrost platform to local directory (alias for sync)
@@ -807,7 +806,6 @@ Examples:
   bifrost run workflow.py -w greet
   bifrost run workflow.py -w greet -p '{"name": "World"}'
   bifrost run workflow.py -w greet | jq .
-  bifrost run workflow.py --interactive
   bifrost git fetch
   bifrost git status
   bifrost git commit -m "sync clients"
@@ -1287,40 +1285,6 @@ Examples:
     return 1
 
 
-def _extract_workflow_parameters(func: Any) -> list[dict[str, Any]]:
-    """Extract parameter info from a workflow function signature."""
-    params = []
-    sig = inspect.signature(func)
-
-    for name, param in sig.parameters.items():
-        # Skip *args and **kwargs
-        if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
-            continue
-
-        param_info: dict[str, Any] = {
-            "name": name,
-            "type": "string",  # default
-            "required": param.default is inspect.Parameter.empty,
-            "label": name.replace("_", " ").title(),
-            "default_value": None if param.default is inspect.Parameter.empty else param.default,
-        }
-
-        # Try to determine type from annotation
-        if param.annotation is not inspect.Parameter.empty:
-            annotation = param.annotation
-            type_name = getattr(annotation, "__name__", str(annotation))
-            if type_name in ("int", "float", "bool", "str"):
-                param_info["type"] = type_name
-            elif "list" in type_name.lower():
-                param_info["type"] = "list"
-            elif "dict" in type_name.lower():
-                param_info["type"] = "dict"
-
-        params.append(param_info)
-
-    return params
-
-
 def _run_direct(
     selected_workflow: str,
     workflows: dict[str, Any],
@@ -1446,8 +1410,7 @@ def handle_run(args: list[str]) -> int:
     """
     Handle 'bifrost run <file>' command.
 
-    Default behavior: direct execution (silent, pipeable output).
-    Use --interactive for browser-based session.
+    Runs a workflow directly (silent, pipeable output).
 
     Args:
         args: Command arguments [file, --workflow, etc.]
@@ -1463,8 +1426,6 @@ def handle_run(args: list[str]) -> int:
 
     workflow_file = args[0]
     selected_workflow: str | None = None
-    no_browser = False
-    interactive = False
     verbose = False
     inline_params: dict[str, Any] | None = None
     organization_id: str | None = None
@@ -1488,9 +1449,6 @@ def handle_run(args: list[str]) -> int:
                 print(f"Error: Invalid JSON for --params: {e}", file=sys.stderr)
                 return 1
             i += 2
-        elif args[i] in ("--interactive", "-i"):
-            interactive = True
-            i += 1
         elif args[i] in ("--verbose", "-v"):
             verbose = True
             i += 1
@@ -1500,9 +1458,6 @@ def handle_run(args: list[str]) -> int:
                 return 1
             organization_id = args[i + 1]
             i += 2
-        elif args[i] in ("--no-browser", "-n"):
-            no_browser = True
-            i += 1
         elif args[i] in ("--help", "-h"):
             print_run_help()
             return 0
@@ -1539,8 +1494,8 @@ def handle_run(args: list[str]) -> int:
         if verbose:
             print(f"Detected Solution workspace root: {root_str}")
 
-    # In non-verbose direct mode, suppress decorator warnings before loading the module
-    if not interactive and not verbose:
+    # In non-verbose mode, suppress decorator warnings before loading the module
+    if not verbose:
         logging.getLogger("bifrost.decorators").setLevel(logging.ERROR)
 
     # Load the workflow file
@@ -1575,206 +1530,19 @@ def handle_run(args: list[str]) -> int:
         )
         return 1
 
-    # Direct execution mode (default) — requires --workflow
-    if not interactive:
-        if not selected_workflow:
-            print(
-                f"Error: --workflow is required. Available workflows: {list(workflows.keys())}. "
-                "Use --interactive for browser UI.",
-                file=sys.stderr,
-            )
-            return 1
-
-        params = inline_params if inline_params is not None else {}
-        return _run_direct(
-            selected_workflow, workflows, params,
-            verbose=verbose, organization_id=organization_id,
-            solution_root=solution_root,
+    if not selected_workflow:
+        print(
+            f"Error: --workflow is required. Available workflows: {list(workflows.keys())}.",
+            file=sys.stderr,
         )
-
-    # Interactive mode (--interactive) — browser-based session
-    # Ensure user is authenticated (only needed for API-based flow)
-    try:
-        client = BifrostClient.get_instance(require_auth=True)
-    except RuntimeError as e:
-        print(f"Authentication required: {e}", file=sys.stderr)
         return 1
 
-    # Build workflow info for session registration
-    workflow_infos = []
-    for name, func in workflows.items():
-        metadata = getattr(func, "_executable_metadata", None)
-        description = ""
-        if metadata is not None:
-            # WorkflowMetadata is a dataclass, access attributes directly
-            description = getattr(metadata, "description", "") or ""
-        workflow_infos.append({
-            "name": name,
-            "description": description,
-            "parameters": _extract_workflow_parameters(func),
-        })
-
-    # Generate session ID
-    session_id = str(uuid4())
-
-    # Run the session flow
-    return asyncio.run(_run_session_flow(
-        client=client,
-        session_id=session_id,
-        file_path=abs_file_path,
-        workflow_infos=workflow_infos,
-        workflows=workflows,
-        selected_workflow=selected_workflow,
-        no_browser=no_browser,
-    ))
-
-
-async def _run_session_flow(
-    client: BifrostClient,
-    session_id: str,
-    file_path: str,
-    workflow_infos: list[dict[str, Any]],
-    workflows: dict[str, Any],
-    selected_workflow: str | None,
-    no_browser: bool,
-) -> int:
-    """
-    Run the session-based workflow execution flow.
-
-    1. Register session with API
-    2. Open browser to DevRun page
-    3. Poll for pending execution
-    4. Execute workflow locally
-    5. Post results back to API
-    """
-    api_url = client.api_url
-
-    # Step 1: Register session
-    print(f"Registering session with {len(workflow_infos)} workflow(s)...")
-    try:
-        response = await client.post(
-            "/api/sdk/sessions",
-            json={
-                "session_id": session_id,
-                "file_path": file_path,
-                "workflows": workflow_infos,
-                "selected_workflow": selected_workflow,
-            },
-        )
-        if response.status_code not in (200, 201):
-            print(f"Error registering session: {response.status_code} - {response.text}", file=sys.stderr)
-            return 1
-    except Exception as e:
-        print(f"Error registering session: {e}", file=sys.stderr)
-        return 1
-
-    # Step 2: Open browser to CLI session page
-    session_url = f"{api_url}/cli/{session_id}"
-    print(f"\nOpening browser to {session_url}")
-    print("Select a workflow and enter parameters in the browser, then click 'Continue'.\n")
-
-    if not no_browser:
-        try:
-            webbrowser.open(session_url)
-        except Exception:
-            pass  # Ignore browser open failures
-
-    # Step 3: Poll for pending execution
-    print("Waiting for execution", end="", flush=True)
-    poll_interval = 2  # seconds
-    heartbeat_interval = 5  # seconds
-    last_heartbeat = time.time()
-
-    while True:
-        await asyncio.sleep(poll_interval)
-        print(".", end="", flush=True)
-
-        # Send heartbeat periodically
-        if time.time() - last_heartbeat > heartbeat_interval:
-            try:
-                await client.post(f"/api/sdk/sessions/{session_id}/heartbeat")
-                last_heartbeat = time.time()
-            except Exception:
-                pass  # Ignore heartbeat failures
-
-        # Poll for pending execution
-        try:
-            response = await client.get(f"/api/sdk/sessions/{session_id}/pending")
-
-            if response.status_code == 204:
-                # No pending execution yet
-                continue
-            elif response.status_code == 200:
-                # Execution is pending!
-                pending_data = response.json()
-                execution_id = pending_data["execution_id"]
-                workflow_name = pending_data["workflow_name"]
-                params = pending_data["params"]
-                print(f" OK\n\nExecuting workflow: {workflow_name}")
-                break
-            elif response.status_code == 404:
-                print("\n\nSession expired or deleted.", file=sys.stderr)
-                return 1
-            else:
-                print(f"\n\nError polling: {response.status_code}", file=sys.stderr)
-                return 1
-        except Exception as e:
-            print(f"\n\nError polling: {e}", file=sys.stderr)
-            return 1
-
-    # Step 4: Execute workflow locally
-    workflow_fn = workflows.get(workflow_name)
-    if not workflow_fn:
-        error_msg = f"Workflow '{workflow_name}' not found in loaded module"
-        print(f"Error: {error_msg}", file=sys.stderr)
-        await _post_result(client, session_id, execution_id, "Failed", None, error_msg, 0)
-        return 1
-
-    start_time = time.time()
-    result = None
-    error_message = None
-    status = "Success"
-
-    try:
-        result = await workflow_fn(**params)
-        print(f"\nResult: {json.dumps(result, indent=2, default=str)}")
-    except Exception as e:
-        status = "Failed"
-        error_message = str(e)
-        print(f"\nError: {error_message}", file=sys.stderr)
-
-    duration_ms = int((time.time() - start_time) * 1000)
-
-    # Step 5: Post results back to API
-    await _post_result(client, session_id, execution_id, status, result, error_message, duration_ms)
-
-    return 0 if status == "Success" else 1
-
-
-async def _post_result(
-    client: BifrostClient,
-    session_id: str,
-    execution_id: str,
-    status: str,
-    result: Any,
-    error_message: str | None,
-    duration_ms: int,
-) -> None:
-    """Post execution result back to API."""
-    try:
-        await client.post(
-            f"/api/sdk/sessions/{session_id}/executions/{execution_id}/result",
-            json={
-                "status": status,
-                "result": result,
-                "error_message": error_message,
-                "duration_ms": duration_ms,
-                "logs": [],  # Could collect logs during execution
-            },
-        )
-        print(f"\nExecution completed ({status})")
-    except Exception as e:  # noqa: BLE001 — best-effort result post; the local run already finished, so a failed callback only loses server-side bookkeeping and must not crash the CLI.
-        print(f"\nWarning: Failed to post result: {e}", file=sys.stderr)
+    params = inline_params if inline_params is not None else {}
+    return _run_direct(
+        selected_workflow, workflows, params,
+        verbose=verbose, organization_id=organization_id,
+        solution_root=solution_root,
+    )
 
 
 def handle_git(args: list[str]) -> int:
@@ -4042,18 +3810,16 @@ def print_run_help() -> None:
     print("""
 Usage: bifrost run <file> -w <workflow> [options]
 
-Run a workflow directly. Output is raw JSON (pipeable). Use --interactive for browser UI.
+Run a workflow directly. Output is raw JSON (pipeable).
 
 Arguments:
   file                  Python file containing @workflow decorated functions
 
 Options:
-  --workflow, -w NAME          Workflow to run (required in direct mode)
+  --workflow, -w NAME          Workflow to run (required)
   --params, -p JSON            JSON parameters to pass to the workflow (default: {})
   --organization-id, --org ID  Run as a specific organization (superusers only)
   --verbose, -v                Show status messages (e.g., "Running...", "Result:")
-  --interactive, -i            Open browser-based session instead of direct execution
-  --no-browser, -n             Don't auto-open browser (only with --interactive)
   --help, -h                   Show this help message
 
 Examples:
@@ -4061,7 +3827,6 @@ Examples:
   bifrost run workflow.py -w greet -p '{"name": "World"}'                  # With parameters
   bifrost run workflow.py -w greet -v                                      # Verbose output
   bifrost run workflow.py -w greet | jq .                                  # Pipe to jq
-  bifrost run workflow.py --interactive                                    # Browser-based session
 """.strip())
 
 

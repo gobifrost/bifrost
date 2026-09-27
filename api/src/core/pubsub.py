@@ -567,56 +567,6 @@ async def publish_system_event(
 
 
 # =============================================================================
-# Local Runner Pub/Sub (CLI<->Web Communication)
-# =============================================================================
-
-
-async def publish_local_runner_state_update(
-    user_id: str | UUID,
-    state: dict[str, Any] | None,
-) -> None:
-    """
-    Publish local runner state update.
-
-    Notifies the web UI when CLI registers workflows or state changes.
-
-    Args:
-        user_id: User ID
-        state: Current local runner state (None if no active session)
-    """
-    message = {
-        "type": "local_runner_state_update",
-        "state": state,
-    }
-    await manager.broadcast(f"local-runner:{user_id}", message)
-
-
-async def publish_cli_session_update(
-    user_id: str | UUID,
-    session_id: str,
-    state: dict[str, Any] | None,
-) -> None:
-    """
-    Publish CLI session state update.
-
-    Notifies the web UI when CLI session state changes.
-
-    Args:
-        user_id: User ID
-        session_id: CLI session ID
-        state: Current CLI session state (None if session deleted)
-    """
-    message = {
-        "type": "cli_session_update",
-        "session_id": session_id,
-        "state": state,
-    }
-    # Broadcast to both session-specific and user-level channels
-    await manager.broadcast(f"cli-session:{session_id}", message)
-    await manager.broadcast(f"cli-sessions:{user_id}", message)
-
-
-# =============================================================================
 # App Builder Pub/Sub
 # =============================================================================
 # These functions enable real-time updates for App Builder applications.

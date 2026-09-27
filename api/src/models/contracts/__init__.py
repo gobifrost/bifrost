@@ -407,16 +407,6 @@ if TYPE_CHECKING:
         CLIFileListRequest,
         CLIFileReadRequest,
         CLIFileWriteRequest,
-        CLIRegisteredWorkflow,
-        CLISessionContinueRequest,
-        CLISessionContinueResponse,
-        CLISessionExecutionSummary,
-        CLISessionListResponse,
-        CLISessionLogRequest,
-        CLISessionPendingResponse,
-        CLISessionRegisterRequest,
-        CLISessionResponse,
-        CLISessionResultRequest,
     )
     from src.models.contracts.sdk import (  # noqa: F401
         ConfigData,

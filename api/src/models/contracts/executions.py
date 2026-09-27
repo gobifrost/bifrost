@@ -97,8 +97,6 @@ class ExecutionSummary(BaseModel):
     completed_at: datetime | None = None
     scheduled_at: datetime | None = None  # For Scheduled rows, when the row is due to promote
     created_at: datetime | None = None  # Fallback timeline anchor before a run starts
-    # CLI session tracking
-    session_id: str | None = None  # CLI session ID if executed from local runner
     # Resource metrics (admin only, null for non-admins)
     peak_memory_bytes: int | None = None
     process_rss_bytes: int | None = None
