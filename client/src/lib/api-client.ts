@@ -223,16 +223,22 @@ async function retryRequestWithFreshAuth(request: Request): Promise<Response> {
 /**
  * Handle authentication failure - clear session and redirect to login
  */
+let loginRedirectStarted = false;
+
 function handleAuthFailure(): void {
 	sessionStorage.removeItem("userId");
 	clearAuthTokens();
 
 	const currentPath = window.location.pathname;
 	if (
+		!loginRedirectStarted &&
 		currentPath !== "/login" &&
 		currentPath !== "/setup" &&
 		!currentPath.startsWith("/auth/callback")
 	) {
+		// Location remains on the protected page until navigation commits. Other
+		// failed requests must not restart that pending navigation.
+		loginRedirectStarted = true;
 		window.location.href = `/login?returnTo=${encodeURIComponent(currentPath)}`;
 	}
 }
@@ -309,15 +315,7 @@ baseClient.use({
 		if (!isAuthEndpoint) {
 			const hasValidToken = await ensureValidToken();
 			if (!hasValidToken) {
-				// No valid token and refresh failed - redirect to login
-				const currentPath = window.location.pathname;
-				if (
-					currentPath !== "/login" &&
-					currentPath !== "/setup" &&
-					!currentPath.startsWith("/auth/callback")
-				) {
-					window.location.href = `/login?returnTo=${encodeURIComponent(currentPath)}`;
-				}
+				handleAuthFailure();
 				// Throw to prevent the request from proceeding
 				throw new Error("Authentication required");
 			}
@@ -477,10 +475,7 @@ export function withUserContext(userId: string) {
 			// Ensure valid token before request
 			const hasValidToken = await ensureValidToken();
 			if (!hasValidToken) {
-				const currentPath = window.location.pathname;
-				if (currentPath !== "/login" && currentPath !== "/setup") {
-					window.location.href = `/login?returnTo=${encodeURIComponent(currentPath)}`;
-				}
+				handleAuthFailure();
 				throw new Error("Authentication required");
 			}
 
