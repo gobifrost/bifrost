@@ -7,12 +7,14 @@ Tests that workflow parameters are correctly:
 3. Handled with/without ExecutionContext parameter
 """
 
+import asyncio
 import pytest
 from enum import Enum
 from typing import Literal
 
 from src.sdk.context import ExecutionContext, Organization
 from src.sdk.decorators import workflow
+from src.sdk.errors import WorkflowExecutionException
 from src.services.execution.engine import _execute_workflow_with_trace
 
 
@@ -309,6 +311,45 @@ class TestWorkflowParameterExecution:
         assert result["name"] == "Alice"
         assert result["optional"] == "extra"
         assert result["org"] == "test-org-456"
+
+
+class TestWorkflowVariableCapture:
+    @pytest.mark.asyncio
+    async def test_await_suspensions_do_not_recapture_large_locals(self, mock_context):
+        scans: list[int] = []
+
+        class CountedDict(dict[str, str]):
+            def items(self):
+                scans.append(1)
+                return super().items()
+
+        @workflow(name="capture_after_awaits", description="Capture locals once")
+        async def capture_after_awaits():
+            payload = CountedDict({"data": "x" * 1_000})
+            for _ in range(5):
+                await asyncio.sleep(0)
+            return len(payload["data"])
+
+        result, captured, _ = await _execute_workflow_with_trace(
+            capture_after_awaits, mock_context, {}
+        )
+
+        assert result == 1_000
+        assert captured["payload"] == {"data": "x" * 1_000}
+        assert scans == [1]
+
+    @pytest.mark.asyncio
+    async def test_failure_still_captures_locals_after_await(self, mock_context):
+        @workflow(name="capture_failure", description="Capture failure locals")
+        async def capture_failure():
+            marker = "available on error"
+            await asyncio.sleep(0)
+            raise ValueError(marker)
+
+        with pytest.raises(WorkflowExecutionException) as exc:
+            await _execute_workflow_with_trace(capture_failure, mock_context, {})
+
+        assert exc.value.captured_vars["marker"] == "available on error"
 
 
 class TestContextParameterDetection:

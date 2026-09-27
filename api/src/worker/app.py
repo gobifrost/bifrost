@@ -68,6 +68,7 @@ class Worker:
         self._consumers: list = []
         self._stopping = False
         self._startup_lock = asyncio.Lock()
+        self._service_claim_loop = None
 
     async def start(self) -> None:
         """Start the worker.
@@ -130,6 +131,13 @@ class Worker:
                     f"Error stopping consumer {consumer.queue_name} during cleanup: {e}"
                 )
 
+        if self._service_claim_loop is not None:
+            try:
+                await self._service_claim_loop.stop()
+            except Exception as e:
+                logger.error(f"Error stopping service claim loop during cleanup: {e}")
+            self._service_claim_loop = None
+
         try:
             await rabbitmq.close()
         except Exception as e:
@@ -171,6 +179,26 @@ class Worker:
                 logger.error(f"Failed to start consumer {consumer.queue_name}: {e}")
                 raise
 
+        # Supervised services: worker-pull claim loop over the shared process
+        # pool (service slots are separate from workflow slots). Started after
+        # the workflow consumer so the pool (template + callbacks) exists.
+        if not self._stopping:
+            from src.services.execution.process_pool import get_process_pool
+            from src.services.service_claim import ServiceClaimLoop
+
+            pool = get_process_pool()
+            self._service_claim_loop = ServiceClaimLoop(
+                worker_id=pool.worker_id,
+                pool=pool,
+                claim_interval_seconds=self.settings.service_claim_interval_seconds,
+                beat_interval_seconds=self.settings.service_heartbeat_interval_seconds,
+                lease_ttl_seconds=self.settings.service_lease_ttl_seconds,
+                token_lifetime_seconds=self.settings.service_token_lifetime_seconds,
+            )
+            pool.on_service_result = self._service_claim_loop.handle_service_result
+            await self._service_claim_loop.start()
+            logger.info("Started service claim loop")
+
     async def stop(self) -> None:
         """Stop the worker gracefully (drain in-flight, then close).
 
@@ -189,6 +217,18 @@ class Worker:
 
         async with self._startup_lock:
             pass
+
+        # Hand supervised service attempts over first: stop claiming, ask
+        # owned children to stop gracefully, and wait boundedly for their
+        # terminal results while the database is still open. Anything still
+        # live afterwards expires via its lease and restarts elsewhere.
+        if self._service_claim_loop is not None:
+            try:
+                await self._service_claim_loop.stop()
+                logger.info("Service claim loop stopped")
+            except Exception as e:
+                logger.error(f"Error stopping service claim loop: {e}")
+            self._service_claim_loop = None
 
         # Drain consumers in parallel — each cancels its consumer tag, waits on
         # its in-flight tasks, then closes its channel.

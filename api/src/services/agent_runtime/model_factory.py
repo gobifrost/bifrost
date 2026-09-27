@@ -13,12 +13,21 @@ from pydantic_ai.usage import RequestUsage
 from src.services.agent_runtime.retry_transport import get_ai_retry_http_client
 from src.services.llm.base import LLMConfig, is_deepseek_family, request_max_tokens
 from src.services.model_pricing import is_openrouter_endpoint
+from src.services.opencode_go import (
+    is_opencode_go_endpoint,
+    opencode_go_extra_headers,
+    opencode_go_wire_api,
+)
 
 
 def provider_name_for_config(config: LLMConfig) -> str:
     """Return the provider that actually served and billed the request."""
 
-    return "openrouter" if is_openrouter_endpoint(config.endpoint) else config.provider
+    if is_openrouter_endpoint(config.endpoint):
+        return "openrouter"
+    if is_opencode_go_endpoint(config.endpoint):
+        return "opencode_go"
+    return config.provider
 
 
 def agent_model_settings(
@@ -28,7 +37,8 @@ def agent_model_settings(
     session_id: str,
     agent_kind: str | None = None,
 ) -> dict[str, object]:
-    """Build per-run settings, including OpenRouter sticky cache routing.
+    """Build per-run settings, including OpenRouter sticky cache routing and
+    OpenCode Go request identity.
 
     ``max_tokens`` is the explicit agent override (Agent.llm_max_tokens); the
     profile default travels on ``config.default_max_tokens`` — see
@@ -42,7 +52,14 @@ def agent_model_settings(
         settings["max_tokens"] = resolved_max_tokens
     if is_openrouter_endpoint(config.endpoint):
         settings["extra_body"] = {"session_id": session_id[:256]}
-    if config.provider == "openai" and not is_openrouter_endpoint(config.endpoint):
+    opencode_go = is_opencode_go_endpoint(config.endpoint)
+    if opencode_go:
+        settings["extra_headers"] = opencode_go_extra_headers(session_id)
+    if (
+        config.provider == "openai"
+        and not is_openrouter_endpoint(config.endpoint)
+        and not opencode_go
+    ):
         settings["openai_store"] = False
     elif config.provider == "anthropic":
         settings.update(
@@ -218,7 +235,14 @@ def create_agent_model(config: LLMConfig, *, model: str | None = None) -> Model:
         deepseek_direct = is_deepseek_family(
             effective_config
         ) and not is_openrouter_endpoint(config.endpoint)
-        if config.openai_transport == "chat_completions" or deepseek_direct:
+        opencode_go_chat = is_opencode_go_endpoint(
+            config.endpoint
+        ) and opencode_go_wire_api(model_name) == "chat_completions"
+        if (
+            config.openai_transport == "chat_completions"
+            or deepseek_direct
+            or opencode_go_chat
+        ):
             # DeepSeek exposes Chat Completions only: force the chat adapter
             # even when transport auto-detection picked (or would pick) the
             # Responses API, and force the legacy plain ``max_tokens`` wire
@@ -226,6 +250,9 @@ def create_agent_model(config: LLMConfig, *, model: str | None = None) -> Model:
             # ``max_completion_tokens`` on OpenAI-family paths, which DeepSeek
             # rejects — the OpenRouter gateway already forces ``max_tokens``
             # via its provider profile; direct DeepSeek needs the same here.
+            # OpenCode Go likewise serves most of its curated coding models
+            # through Chat Completions; its Grok/GPT Luna/Muse Spark entries
+            # use the Responses API instead.
             if deepseek_direct:
                 from pydantic_ai.profiles import ModelProfile
 

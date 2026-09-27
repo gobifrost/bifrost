@@ -92,6 +92,15 @@ async def e2e_test_validation(name: str, count: int = 1) -> dict:
         # Should have parameters extracted from function signature
         assert len(data["metadata"]["parameters"]) == 2
 
+    def test_validate_workflow_requires_platform_admin(self, e2e_client, org1_user):
+        """Validation imports the submitted module, so only platform admins may call it."""
+        response = e2e_client.post(
+            "/api/workflows/validate",
+            headers=org1_user.headers,
+            json={"path": "test_validation.py", "content": "x = 1\n"},
+        )
+        assert response.status_code == 403, response.text
+
     def test_validate_workflow_with_roi(self, e2e_client, platform_admin):
         """Validate workflow with time_saved and value fields (set via API, not decorator)."""
         workflow_with_roi = '''

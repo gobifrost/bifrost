@@ -88,6 +88,8 @@ services:
 
   seaweedfs:
     image: chrislusf/seaweedfs:latest
+    # Its default admin gRPC port 33646 can collide with an ephemeral port.
+    command: ["mini", "-dir=/data", "-admin.port=12646"]
     environment:
       AWS_ACCESS_KEY_ID: bifrost
       AWS_SECRET_ACCESS_KEY: bifrost_debug_key

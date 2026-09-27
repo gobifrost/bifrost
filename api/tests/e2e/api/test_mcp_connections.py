@@ -137,6 +137,33 @@ class TestMCPConnectionsCRUD:
         ids = [c["id"] for c in resp.json()]
         assert connection["id"] in ids
 
+    def test_org_user_cannot_update_own_org_connection(
+        self, e2e_client, org1_user, connection
+    ):
+        """Managing an MCP connection is bypass-only, even within the
+        caller's own org."""
+        resp = e2e_client.patch(
+            f"/api/mcp-connections/{connection['id']}",
+            headers=org1_user.headers,
+            json={"available_in_chat": False},
+        )
+        assert resp.status_code == 403, resp.text
+
+    def test_org_user_cannot_create_connection(
+        self, e2e_client, org1_user, server_template, org1
+    ):
+        resp = e2e_client.post(
+            "/api/mcp-connections",
+            headers=org1_user.headers,
+            json={
+                "server_id": server_template["id"],
+                "organization_id": org1["id"],
+                "client_id": "denied-client",
+                "client_secret": "denied-secret",
+            },
+        )
+        assert resp.status_code == 403, resp.text
+
     def test_update_connection_flags_and_secret(
         self, e2e_client, platform_admin, connection
     ):

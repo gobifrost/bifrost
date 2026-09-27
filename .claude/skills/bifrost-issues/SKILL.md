@@ -123,6 +123,18 @@ Debug stacks are per-worktree — `./debug.sh` derives its Compose project name 
 
 ### 5.5. CI bottleneck reducers before PR
 
+Run `./test.sh pr-preflight` before opening a PR. It checks repository mirrors
+and action pins, API/client lint and types, the full backend and client unit suites,
+and every backend E2E test file changed on the branch,
+using CI's credential-free GitHub test mode,
+and the same Python and JavaScript
+CodeQL security-and-quality suites used in CI. It rebuilds the local CodeQL
+databases from the current worktree and fails on findings in lines changed from
+`origin/main`, so existing main-branch findings do not block the PR and stale
+cached analysis cannot give a false green result. Run focused behavior tests for the
+changed surface as required by `AGENTS.md`. `./test.sh pre-pr` remains the
+optional full merge-gate reproduction.
+
 Run cheap, targeted tripwires for the surfaces you touched before opening the PR. These catch the common "CI found the stale generated thing" loop locally.
 
 | If you touched... | Run before PR |

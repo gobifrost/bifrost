@@ -16,6 +16,7 @@ Fixtures:
 """
 
 from pathlib import Path
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -222,17 +223,52 @@ async def sync_service(db_session: AsyncSession, bare_repo, tmp_path):
             shutil.rmtree(work_dir, ignore_errors=True)
 
     @asynccontextmanager
+    async def local_checkout_readonly():
+        """Simulates sync down without publishing preview reads back to storage."""
+        import tempfile
+        work_dir = Path(tempfile.mkdtemp(prefix="bifrost-test-repo-readonly-"))
+        try:
+            if any(persistent_dir.iterdir()):
+                shutil.copytree(persistent_dir, work_dir, dirs_exist_ok=True)
+            yield work_dir
+        finally:
+            shutil.rmtree(work_dir, ignore_errors=True)
+
+    @asynccontextmanager
     async def local_lock():
         """Simulates Redis lock -- just yields the persistent dir directly."""
         yield persistent_dir
 
+    sync_up_calls: list[Path] = []
+
     # Also make sync_up a no-op for lock()-based operations that call sync_up explicitly
     async def noop_sync_up(source):
-        pass
+        sync_up_calls.append(source)
+
+    checkpoints_dir = tmp_path / "workspace_checkpoints"
+
+    async def checkpoint_workspace(source):
+        checkpoint_id = str(uuid4())
+        checkpoint = checkpoints_dir / checkpoint_id
+        checkpoint.parent.mkdir(exist_ok=True)
+        shutil.copytree(source, checkpoint)
+        return checkpoint_id
+
+    async def restore_workspace_checkpoint(checkpoint_id, target):
+        shutil.rmtree(target)
+        shutil.copytree(checkpoints_dir / checkpoint_id, target)
+
+    async def delete_workspace_checkpoint(checkpoint_id):
+        shutil.rmtree(checkpoints_dir / checkpoint_id)
 
     service.repo_manager.checkout = local_checkout  # type: ignore[assignment]
+    service.repo_manager.checkout_readonly = local_checkout_readonly  # type: ignore[assignment]
     service.repo_manager.lock = local_lock  # type: ignore[assignment]
     service.repo_manager.sync_up = noop_sync_up  # type: ignore[assignment]
+    service.repo_manager.checkpoint_workspace = checkpoint_workspace  # type: ignore[assignment]
+    service.repo_manager.restore_workspace_checkpoint = restore_workspace_checkpoint  # type: ignore[assignment]
+    service.repo_manager.delete_workspace_checkpoint = delete_workspace_checkpoint  # type: ignore[assignment]
+    service._sync_up_calls = sync_up_calls  # type: ignore[attr-defined]
     # Patch the module-level PERSISTENT_WORK_DIR so is_initialized checks the test dir
     import src.services.git_repo_manager as grm_mod
     grm_mod.PERSISTENT_WORK_DIR = persistent_dir
@@ -411,6 +447,95 @@ async def cleanup_test_data(db_session: AsyncSession):
     await db_session.execute(delete(Organization).where(Organization.created_by.in_(["git-sync", "test"])))
     await db_session.execute(delete(Role).where(Role.created_by == "git-sync"))
     await db_session.commit()
+
+
+# =============================================================================
+# First connection reconciliation
+# =============================================================================
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+class TestFirstGitConnection:
+    async def test_connect_preview_classifies_detached_local_and_remote_files(
+        self, sync_service, bare_repo, working_clone,
+    ) -> None:
+        """A detached workspace compares local-only, remote-only, same, and conflict paths."""
+        write_entity_to_repo(sync_service._persistent_dir, "modules/local.py", "local")
+        write_entity_to_repo(sync_service._persistent_dir, "modules/same.py", "same")
+        write_entity_to_repo(sync_service._persistent_dir, "modules/shared.py", "ours")
+        work_path = Path(working_clone.working_tree_dir)
+        write_entity_to_repo(work_path, "modules/remote.py", "remote")
+        write_entity_to_repo(work_path, "modules/same.py", "same")
+        write_entity_to_repo(work_path, "modules/shared.py", "theirs")
+        working_clone.git.add(A=True)
+        working_clone.index.commit("remote workspace")
+        working_clone.remotes.origin.push(refspec="main:main")
+
+        preview = await sync_service.preview_connect(
+            str(bare_repo),
+            "main",
+            requested_by_user_id="connect-preview-user",
+            organization_id=None,
+        )
+
+        classifications = {item.path: item.classification for item in preview.items}
+        assert preview.state == "requires_reconciliation"
+        assert classifications["modules/local.py"] == "local_only"
+        assert classifications["modules/remote.py"] == "remote_only"
+        assert classifications["modules/same.py"] == "identical"
+        assert classifications["modules/shared.py"] == "conflict"
+
+    async def test_connect_reconcile_refuses_workspace_changed_after_preview(
+        self, sync_service, bare_repo, working_clone,
+    ) -> None:
+        """The preview hash prevents a reviewed decision from applying to changed local bytes."""
+        write_entity_to_repo(sync_service._persistent_dir, "modules/shared.py", "ours")
+        write_entity_to_repo(Path(working_clone.working_tree_dir), "modules/shared.py", "theirs")
+        working_clone.git.add(A=True)
+        working_clone.index.commit("remote conflict")
+        working_clone.remotes.origin.push(refspec="main:main")
+        preview = await sync_service.preview_connect(
+            str(bare_repo), "main", requested_by_user_id="connect-stale-user", organization_id=None,
+        )
+        write_entity_to_repo(sync_service._persistent_dir, "modules/after-preview.py", "changed")
+
+        from src.models.contracts.github import GitConnectRequest
+        from src.services.github_sync import GitConnectPreviewStale
+
+        with pytest.raises(GitConnectPreviewStale, match="workspace changed"):
+            await sync_service.desktop_connect(
+                GitConnectRequest(
+                    preview_token=preview.token,
+                    strategy="reconcile",
+                    decisions={"modules/shared.py": "local"},
+                ),
+                requested_by_user_id="connect-stale-user",
+                organization_id=None,
+            )
+
+    async def test_connect_preview_refuses_file_directory_shape_conflicts(
+        self, sync_service, bare_repo, working_clone,
+    ) -> None:
+        """A review cannot offer a reconciliation that cannot be materialized."""
+        write_entity_to_repo(sync_service._persistent_dir, "modules/shared", "local")
+        write_entity_to_repo(
+            Path(working_clone.working_tree_dir), "modules/shared/task.py", "remote"
+        )
+        repo = working_clone
+        repo.git.add(A=True)
+        repo.index.commit("remote directory conflicts with local file")
+        repo.remotes.origin.push(refspec="main:main")
+
+        from src.services.github_sync import GitConnectPreviewError
+
+        with pytest.raises(GitConnectPreviewError, match="file/directory shape conflict.*modules/shared"):
+            await sync_service.preview_connect(
+                str(bare_repo),
+                "main",
+                requested_by_user_id="connect-shape-user",
+                organization_id=None,
+            )
 
 
 # =============================================================================
@@ -1972,6 +2097,8 @@ class TestSplitManifestFormat:
                     "key": "app/api_url",
                     "config_type": "string",
                     "description": "API Base URL",
+                    "required": True,
+                    "position": 7,
                     "value": "https://api.example.com",
                 },
             },
@@ -1991,6 +2118,65 @@ class TestSplitManifestFormat:
         assert cfg.key == "app/api_url"
         assert cfg.config_type == "string"
         assert cfg.value == "https://api.example.com"
+        assert cfg.required is True
+        assert cfg.position == 7
+
+    async def test_pull_removes_stale_subscription_before_its_workflow(
+        self,
+        db_session: AsyncSession,
+        sync_service,
+        working_clone,
+    ):
+        """Deletion preview and apply agree when a stale workflow owns a subscription."""
+        from src.models.orm.events import EventSource, EventSubscription
+
+        workflow_id = uuid4()
+        event_id = uuid4()
+        subscription_id = uuid4()
+        db_session.add(Workflow(
+            id=workflow_id,
+            name="Stale subscription workflow",
+            function_name="stale_subscription_workflow",
+            path="workflows/stale_subscription.py",
+            is_active=True,
+        ))
+        db_session.add(EventSource(
+            id=event_id,
+            name="Stale subscription source",
+            source_type="schedule",
+            is_active=True,
+            created_by="git-sync",
+        ))
+        db_session.add(EventSubscription(
+            id=subscription_id,
+            event_source_id=event_id,
+            workflow_id=workflow_id,
+            is_active=True,
+            created_by="git-sync",
+        ))
+        await db_session.commit()
+
+        work_dir = Path(working_clone.working_dir)
+        bifrost_dir = work_dir / ".bifrost"
+        bifrost_dir.mkdir(exist_ok=True)
+        (bifrost_dir / "configs.yaml").write_text(yaml.dump({
+            "configs": {
+                "stale/subscription/sync_marker": {
+                    "id": str(uuid4()),
+                    "key": "stale/subscription/sync_marker",
+                    "config_type": "string",
+                    "value": "present",
+                },
+            },
+        }))
+        working_clone.index.add([".bifrost/configs.yaml"])
+        working_clone.index.commit("remove stale subscription and workflow")
+        working_clone.remotes.origin.push()
+
+        result = await sync_service.desktop_sync(confirm_deletes=True)
+        assert result.success is True
+        assert await db_session.get(EventSubscription, subscription_id) is None
+        assert await db_session.get(Workflow, workflow_id) is None
 
     async def test_pull_integration_config_links_config_schema_id(
         self,
@@ -2956,7 +3142,7 @@ class TestCrossInstanceManifestReconciliation:
     """Test that manifest regeneration + commit + pull correctly reconciles
     cross-instance changes to .bifrost/*.yaml files."""
 
-    async def test_config_add_and_delete_merge(
+    async def test_config_add_and_delete_requires_explicit_resolution(
         self,
         db_session: AsyncSession,
         sync_service,
@@ -2964,99 +3150,86 @@ class TestCrossInstanceManifestReconciliation:
         working_clone,
         tmp_path,
     ):
-        """
-        Instance A (working_clone) adds a config.
-        Instance B (sync_service/prod) deletes a config.
-        After sync, both changes should be reflected.
-        """
+        """Concurrent config changes conflict until one reviewed side is selected."""
         from src.models.orm.config import Config
         from src.models.orm.integrations import Integration
 
-        # --- Setup: Create initial state with an integration and 2 configs ---
-        integ_id = uuid4()
-        config_1_id = uuid4()
-        config_2_id = uuid4()
-
-        integ = Integration(id=integ_id, name="TestReconcileInteg", is_deleted=False)
-        db_session.add(integ)
-        await db_session.flush()  # FK: configs reference integration_id
-        cfg1 = Config(
-            id=config_1_id, key="keep_this", value="yes",
-            integration_id=integ_id, updated_by="git-sync",
-        )
-        cfg2 = Config(
-            id=config_2_id, key="delete_this", value="remove_me",
-            integration_id=integ_id, updated_by="git-sync",
-        )
-        db_session.add_all([cfg1, cfg2])
-
-        # Also need a workflow so the manifest isn't empty
-        wf_id = uuid4()
-        wf = Workflow(
-            id=wf_id, name="Reconcile Test WF",
-            function_name="reconcile_test_wf",
-            path="workflows/git_sync_test_reconcile.py",
+        integration_id = uuid4()
+        keep_id = uuid4()
+        delete_id = uuid4()
+        db_session.add(Integration(
+            id=integration_id,
+            name="Explicit config resolution",
+            is_deleted=False,
+        ))
+        await db_session.flush()
+        db_session.add_all([
+            Config(
+                id=keep_id,
+                key="keep_this",
+                value="yes",
+                integration_id=integration_id,
+                updated_by="git-sync",
+            ),
+            Config(
+                id=delete_id,
+                key="delete_this",
+                value="remove_me",
+                integration_id=integration_id,
+                updated_by="git-sync",
+            ),
+        ])
+        workflow = Workflow(
+            id=uuid4(),
+            name="Explicit config resolution workflow",
+            function_name="explicit_config_resolution_wf",
+            path="workflows/explicit_config_resolution.py",
             is_active=True,
         )
-        db_session.add(wf)
+        db_session.add(workflow)
         await db_session.commit()
 
-        # Write workflow file + manifest to persistent dir
-        write_entity_to_repo(
-            sync_service._persistent_dir,
-            "workflows/git_sync_test_reconcile.py",
-            SAMPLE_WORKFLOW_PY,
-        )
+        write_entity_to_repo(sync_service._persistent_dir, workflow.path, SAMPLE_WORKFLOW_PY)
         await write_manifest_to_repo(db_session, sync_service._persistent_dir)
+        assert (await sync_service.desktop_commit("initial configs")).success
+        assert (await sync_service.desktop_sync(confirm_deletes=True)).success
 
-        # Commit + push initial state
-        commit_result = await sync_service.desktop_commit("initial with configs")
-        assert commit_result.success
-        sync_result = await sync_service.desktop_sync(confirm_deletes=True)
-        assert sync_result.success
-
-        # --- Instance A (working_clone): Pull, add config-3, push ---
         working_clone.remotes.origin.pull("main")
-        clone_dir = Path(working_clone.working_dir)
-
-        # Read current configs.yaml and add a new config
-        configs_yaml_path = clone_dir / ".bifrost" / "configs.yaml"
-        configs_yaml = yaml.safe_load(configs_yaml_path.read_text())
-        config_3_id = str(uuid4())
-        configs_yaml["configs"]["new_from_dev"] = {
-            "id": config_3_id,
-            "key": "new_from_dev",
-            "value": "hello_from_dev",
-            "integration_id": str(integ_id),
-        }
-        configs_yaml_path.write_text(
-            yaml.dump(configs_yaml, default_flow_style=False, sort_keys=False)
+        configs_path = Path(working_clone.working_dir) / ".bifrost" / "configs.yaml"
+        configs = yaml.safe_load(configs_path.read_text())
+        remote_delete_target = next(
+            config for config in configs["configs"].values()
+            if config["key"] == "delete_this"
         )
+        remote_delete_target["value"] = "changed_remotely"
+        configs["configs"]["new_from_remote"] = {
+            "id": str(uuid4()),
+            "key": "new_from_remote",
+            "value": "remote",
+            "integration_id": str(integration_id),
+        }
+        configs_path.write_text(yaml.dump(configs, default_flow_style=False, sort_keys=False))
         working_clone.index.add([".bifrost/configs.yaml"])
-        working_clone.index.commit("Dev: add new_from_dev config")
+        working_clone.index.commit("remote config addition")
         working_clone.remotes.origin.push("main")
 
-        # --- Instance B (prod/sync_service): Delete config-2 from DB ---
-        await db_session.execute(
-            delete(Config).where(Config.id == config_2_id)
-        )
+        await db_session.execute(delete(Config).where(Config.id == delete_id))
         await db_session.commit()
+        assert (await sync_service.desktop_commit("local config deletion")).success
 
-        # --- Sync: commit (regenerates manifest without config-2) then pull ---
-        commit_result = await sync_service.desktop_commit("Prod: delete config-2")
-        assert commit_result.success
+        conflict = await sync_service.desktop_sync(confirm_deletes=True)
 
-        sync_result = await sync_service.desktop_sync(confirm_deletes=True)
-        assert sync_result.success, f"Sync failed: {sync_result.error}"
+        assert conflict.success is False
+        assert conflict.pull_success is False
+        assert [item.path for item in conflict.conflicts] == [".bifrost/configs.yaml"]
 
-        # --- Verify: manifest should have config-1 and new_from_dev, NOT config-2 ---
-        persistent_dir = sync_service._persistent_dir
-        final_manifest = read_manifest_from_dir(persistent_dir / ".bifrost")
+        resolved = await sync_service.desktop_resolve({".bifrost/configs.yaml": "ours"})
+        assert resolved.success is True
+        assert (await sync_service.desktop_sync(confirm_deletes=True)).success
 
-        config_key_names = {c.key for c in final_manifest.configs.values()}
-        assert "keep_this" in config_key_names, f"config-1 should be preserved, got: {config_key_names}"
-        assert "new_from_dev" in config_key_names, f"dev's new config should be merged in, got: {config_key_names}"
-        assert "delete_this" not in config_key_names, f"config-2 should be deleted, got: {config_key_names}"
+        manifest = read_manifest_from_dir(sync_service._persistent_dir / ".bifrost")
+        keys = {config.key for config in manifest.configs.values()}
+        assert keys == {"keep_this"}
 
     async def test_empty_repo_pull_imports_remote_state(
         self,
@@ -5053,6 +5226,60 @@ class TestOrgScopedEntities:
 class TestDesktopSync:
     """Combined sync operation: pull + push in a single call."""
 
+    async def test_sync_returns_manifest_conflict_until_desktop_resolve(
+        self,
+        db_session: AsyncSession,
+        sync_service,
+        working_clone,
+    ):
+        """A manifest conflict stays unmerged until the user explicitly resolves it."""
+        workflow = Workflow(
+            id=uuid4(),
+            name="Manifest Conflict Test",
+            function_name="manifest_conflict_wf",
+            path="workflows/git_sync_test_manifest_conflict.py",
+            is_active=True,
+        )
+        db_session.add(workflow)
+        await db_session.commit()
+
+        workflow_path = "workflows/git_sync_test_manifest_conflict.py"
+        manifest_path = ".bifrost/workflows.yaml"
+        write_entity_to_repo(sync_service._persistent_dir, workflow_path, SAMPLE_WORKFLOW_PY)
+        await write_manifest_to_repo(db_session, sync_service._persistent_dir)
+        await sync_service.desktop_commit("initial manifest conflict state")
+        await sync_service.desktop_sync(confirm_deletes=True)
+
+        remote_manifest = Path(working_clone.working_dir) / manifest_path
+        working_clone.remotes.origin.pull()
+        remote_manifest.write_text(
+            remote_manifest.read_text().replace(
+                "Manifest Conflict Test", "Remote Manifest Conflict"
+            )
+        )
+        working_clone.index.add([manifest_path])
+        working_clone.index.commit("remote: change manifest")
+        working_clone.remotes.origin.push()
+
+        workflow.name = "Local Manifest Conflict"
+        await db_session.commit()
+        await write_manifest_to_repo(db_session, sync_service._persistent_dir)
+        await sync_service.desktop_commit("local: change manifest")
+
+        result = await sync_service.desktop_sync(confirm_deletes=True)
+
+        assert result.success is False
+        assert result.pull_success is False
+        assert [conflict.path for conflict in result.conflicts] == [manifest_path]
+        assert manifest_path in {
+            str(path) for path in Repo(sync_service._persistent_dir).index.unmerged_blobs()
+        }
+
+        resolve_result = await sync_service.desktop_resolve({manifest_path: "ours"})
+
+        assert resolve_result.success is True
+        assert not Repo(sync_service._persistent_dir).index.unmerged_blobs()
+
     async def test_sync_pull_and_push_combined(
         self,
         db_session: AsyncSession,
@@ -5340,6 +5567,395 @@ class TestAbortMerge:
 
 @pytest.mark.e2e
 @pytest.mark.asyncio
+class TestSyncPublicationOrdering:
+    """Validation and confirmation must precede all workspace publication."""
+
+    async def test_import_failure_does_not_push_or_sync_storage(
+        self,
+        sync_service,
+        bare_repo,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """A failed import leaves the remote and RepoStorage publication untouched."""
+        await sync_service.desktop_commit("initial commit")
+        initial = await sync_service.desktop_sync(confirm_deletes=True)
+        assert initial.success is True
+
+        write_entity_to_repo(sync_service._persistent_dir, "README.md", "not published yet\n")
+        committed = await sync_service.desktop_commit("publish only after import")
+        assert committed.success is True
+
+        before_remote = Repo(str(bare_repo)).commit("main").hexsha
+        sync_service._sync_up_calls.clear()
+        monkeypatch.setattr(
+            sync_service,
+            "_import_all_entities",
+            AsyncMock(side_effect=ValueError("bad manifest")),
+        )
+
+        result = await sync_service.desktop_sync(confirm_deletes=True)
+
+        assert result.success is False
+        assert Repo(str(bare_repo)).commit("main").hexsha == before_remote
+        assert sync_service._sync_up_calls == []
+
+    async def test_delete_confirmation_occurs_before_publish(
+        self,
+        db_session: AsyncSession,
+        sync_service,
+        bare_repo,
+    ):
+        """A deletion preview requires action without publishing its commit."""
+        wf = Workflow(
+            id=uuid4(),
+            name="Confirmation Ordering",
+            function_name="confirmation_ordering",
+            path="workflows/confirmation_ordering.py",
+            is_active=True,
+        )
+        db_session.add(wf)
+        await db_session.commit()
+
+        write_entity_to_repo(
+            sync_service._persistent_dir,
+            "workflows/confirmation_ordering.py",
+            SAMPLE_WORKFLOW_PY,
+        )
+        await write_manifest_to_repo(db_session, sync_service._persistent_dir)
+        assert (await sync_service.desktop_commit("add confirmation workflow")).success
+        assert (await sync_service.desktop_sync(confirm_deletes=True)).success
+
+        remove_entity_from_repo(sync_service._persistent_dir, "workflows/confirmation_ordering.py")
+        await write_manifest_to_repo(db_session, sync_service._persistent_dir)
+        assert (await sync_service.desktop_commit("remove confirmation workflow")).success
+
+        before_remote = Repo(str(bare_repo)).commit("main").hexsha
+        sync_service._sync_up_calls.clear()
+
+        result = await sync_service.desktop_sync(confirm_deletes=False)
+
+        assert result.success is False
+        assert result.requires_action == "confirm_deletes"
+        assert result.pending_deletes
+        assert Repo(str(bare_repo)).commit("main").hexsha == before_remote
+        assert sync_service._sync_up_calls == []
+
+    async def test_apply_rejects_a_stale_plan_before_publish(
+        self,
+        sync_service,
+    ):
+        """A commit after validation invalidates the plan instead of publishing it."""
+        from src.services.github_sync import WorkspacePlanStale
+
+        await sync_service.desktop_commit("initial commit")
+        assert (await sync_service.desktop_sync(confirm_deletes=True)).success
+
+        async with sync_service.repo_manager.lock() as work_dir:
+            repo = sync_service._open_or_init(work_dir)
+            plan = await sync_service.prepare_desktop_sync(work_dir, repo)
+            write_entity_to_repo(work_dir, "README.md", "stale plan\n")
+            repo.index.add(["README.md"])
+            repo.index.commit("make plan stale")
+            sync_service._sync_up_calls.clear()
+
+            with pytest.raises(WorkspacePlanStale, match="changed after validation"):
+                await sync_service.apply_desktop_sync(
+                    work_dir,
+                    repo,
+                    plan,
+                    confirm_deletes=True,
+                )
+
+        assert sync_service._sync_up_calls == []
+
+    async def test_apply_rejects_an_uncommitted_workspace_mutation(
+        self,
+        sync_service,
+    ):
+        """An untracked edit after preparation invalidates the reviewed plan."""
+        from src.services.github_sync import WorkspacePlanStale
+
+        await sync_service.desktop_commit("initial commit")
+        assert (await sync_service.desktop_sync(confirm_deletes=True)).success
+
+        async with sync_service.repo_manager.lock() as work_dir:
+            repo = sync_service._open_or_init(work_dir)
+            plan = await sync_service.prepare_desktop_sync(work_dir, repo)
+            write_entity_to_repo(work_dir, "uncommitted.txt", "not in the plan\n")
+            sync_service._sync_up_calls.clear()
+
+            with pytest.raises(WorkspacePlanStale, match="changed after validation"):
+                await sync_service.apply_desktop_sync(
+                    work_dir, repo, plan, confirm_deletes=True,
+                )
+
+        assert sync_service._sync_up_calls == []
+
+    async def test_apply_rejects_delete_set_changed_after_confirmation(
+        self,
+        db_session: AsyncSession,
+        sync_service,
+    ):
+        """A concurrent stale entity cannot be deleted under an older confirmation."""
+        from src.services.github_sync import WorkspacePlanStale
+
+        approved = Workflow(
+            id=uuid4(),
+            name="Approved deletion",
+            function_name="approved_deletion",
+            path="workflows/approved_deletion.py",
+            is_active=True,
+        )
+        db_session.add(approved)
+        await db_session.commit()
+        write_entity_to_repo(
+            sync_service._persistent_dir,
+            approved.path,
+            SAMPLE_WORKFLOW_PY,
+        )
+        await write_manifest_to_repo(db_session, sync_service._persistent_dir)
+        assert (await sync_service.desktop_commit("add approved workflow")).success
+        assert (await sync_service.desktop_sync(confirm_deletes=True)).success
+
+        remove_entity_from_repo(sync_service._persistent_dir, approved.path)
+        await write_manifest_to_repo(db_session, sync_service._persistent_dir)
+        assert (await sync_service.desktop_commit("remove approved workflow")).success
+
+        async with sync_service.repo_manager.lock() as work_dir:
+            repo = sync_service._open_or_init(work_dir)
+            plan = await sync_service.prepare_desktop_sync(work_dir, repo)
+            concurrent = Workflow(
+                id=uuid4(),
+                name="Unreviewed deletion",
+                function_name="unreviewed_deletion",
+                path="workflows/unreviewed_deletion.py",
+                is_active=True,
+            )
+            db_session.add(concurrent)
+            await db_session.commit()
+            sync_service._sync_up_calls.clear()
+
+            with pytest.raises(WorkspacePlanStale, match="pending entity deletions changed"):
+                await sync_service.apply_desktop_sync(
+                    work_dir, repo, plan, confirm_deletes=True,
+                )
+
+        assert await db_session.get(Workflow, approved.id) is not None
+        assert await db_session.get(Workflow, concurrent.id) is not None
+        assert sync_service._sync_up_calls == []
+
+    async def test_push_failure_returns_a_retryable_plan(
+        self,
+        sync_service,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """A post-import push failure preserves the exact plan for retry."""
+        from src.models.contracts.github import PushResult
+
+        await sync_service.desktop_commit("initial commit")
+        assert (await sync_service.desktop_sync(confirm_deletes=True)).success
+        write_entity_to_repo(sync_service._persistent_dir, "README.md", "retry me\n")
+        assert (await sync_service.desktop_commit("retryable push")).success
+
+        async with sync_service.repo_manager.lock() as work_dir:
+            repo = sync_service._open_or_init(work_dir)
+            plan = await sync_service.prepare_desktop_sync(work_dir, repo)
+            original_push = sync_service._do_push
+            sync_service._sync_up_calls.clear()
+            monkeypatch.setattr(
+                sync_service,
+                "_do_push",
+                lambda *_args: PushResult(success=False, error="remote unavailable"),
+            )
+            failed = await sync_service.apply_desktop_sync(
+                work_dir, repo, plan, confirm_deletes=True,
+            )
+
+            assert failed.retryable is True
+            assert failed.retry_plan == plan.model_copy(
+                update={"db_applied": True, "checkpoint_id": failed.retry_plan.checkpoint_id}
+            )
+            assert failed.retry_plan.checkpoint_id is not None
+            assert sync_service._sync_up_calls == []
+
+            monkeypatch.setattr(sync_service, "_do_push", original_push)
+            retried = await sync_service.apply_desktop_sync(
+                work_dir, repo, failed.retry_plan, confirm_deletes=True,
+            )
+
+        assert retried.success is True
+
+    async def test_storage_failure_returns_a_retryable_plan(
+        self,
+        sync_service,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """A failed _repo publication can be retried after its Git push succeeds."""
+        await sync_service.desktop_commit("initial commit")
+        assert (await sync_service.desktop_sync(confirm_deletes=True)).success
+        write_entity_to_repo(sync_service._persistent_dir, "README.md", "retry storage\n")
+        assert (await sync_service.desktop_commit("retryable storage")).success
+
+        async with sync_service.repo_manager.lock() as work_dir:
+            repo = sync_service._open_or_init(work_dir)
+            plan = await sync_service.prepare_desktop_sync(work_dir, repo)
+            original_sync_up = sync_service.repo_manager.sync_up
+
+            async def fail_sync_up(_source):
+                raise RuntimeError("storage unavailable")
+
+            monkeypatch.setattr(sync_service.repo_manager, "sync_up", fail_sync_up)
+            failed = await sync_service.apply_desktop_sync(
+                work_dir, repo, plan, confirm_deletes=True,
+            )
+
+            assert failed.retryable is True
+            assert failed.retry_plan == plan.model_copy(
+                update={"db_applied": True, "checkpoint_id": failed.retry_plan.checkpoint_id}
+            )
+            assert failed.retry_plan.checkpoint_id is not None
+
+            monkeypatch.setattr(sync_service.repo_manager, "sync_up", original_sync_up)
+            retried = await sync_service.apply_desktop_sync(
+                work_dir, repo, failed.retry_plan, confirm_deletes=True,
+            )
+
+        assert retried.success is True
+
+    async def test_push_retry_reuses_an_applied_delete_plan(
+        self,
+        db_session: AsyncSession,
+        sync_service,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Publication retry does not re-run a deletion already committed to DB."""
+        from src.models.contracts.github import PushResult
+
+        workflow = Workflow(
+            id=uuid4(),
+            name="Retry confirmed deletion",
+            function_name="retry_confirmed_deletion",
+            path="workflows/retry_confirmed_deletion.py",
+            is_active=True,
+        )
+        db_session.add(workflow)
+        await db_session.commit()
+        write_entity_to_repo(sync_service._persistent_dir, workflow.path, SAMPLE_WORKFLOW_PY)
+        await write_manifest_to_repo(db_session, sync_service._persistent_dir)
+        assert (await sync_service.desktop_commit("add retry deletion workflow")).success
+        assert (await sync_service.desktop_sync(confirm_deletes=True)).success
+
+        remove_entity_from_repo(sync_service._persistent_dir, workflow.path)
+        await write_manifest_to_repo(db_session, sync_service._persistent_dir)
+        assert (await sync_service.desktop_commit("remove retry deletion workflow")).success
+
+        async with sync_service.repo_manager.lock() as work_dir:
+            repo = sync_service._open_or_init(work_dir)
+            plan = await sync_service.prepare_desktop_sync(work_dir, repo)
+            original_push = sync_service._do_push
+            monkeypatch.setattr(
+                sync_service,
+                "_do_push",
+                lambda *_args: PushResult(success=False, error="remote unavailable"),
+            )
+            failed = await sync_service.apply_desktop_sync(
+                work_dir, repo, plan, confirm_deletes=True,
+            )
+
+            assert failed.retryable is True
+            assert failed.retry_plan.db_applied is True
+            assert await db_session.get(Workflow, workflow.id) is None
+
+            monkeypatch.setattr(sync_service, "_do_push", original_push)
+            retried = await sync_service.apply_desktop_sync(
+                work_dir, repo, failed.retry_plan, confirm_deletes=True,
+            )
+
+        assert retried.success is True
+
+    async def test_publication_retry_restores_a_durable_workspace_checkpoint(
+        self,
+        sync_service,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """A retry can publish after a new worker loses its local /tmp/git tree."""
+        import shutil
+
+        from src.models.contracts.github import PushResult
+
+        await sync_service.desktop_commit("checkpoint base")
+        assert (await sync_service.desktop_sync(confirm_deletes=True)).success
+        write_entity_to_repo(sync_service._persistent_dir, "README.md", "checkpoint retry\n")
+        assert (await sync_service.desktop_commit("checkpoint retry")).success
+
+        original_push = sync_service._do_push
+        monkeypatch.setattr(
+            sync_service,
+            "_do_push",
+            lambda *_args: PushResult(success=False, error="remote unavailable"),
+        )
+        failed = await sync_service.desktop_sync(confirm_deletes=True)
+
+        assert failed.retryable is True
+        assert failed.retry_plan is not None
+        assert failed.retry_plan.checkpoint_id is not None
+
+        shutil.rmtree(sync_service._persistent_dir)
+        sync_service._persistent_dir.mkdir()
+        monkeypatch.setattr(sync_service, "_do_push", original_push)
+
+        retried = await sync_service.desktop_sync(retry_plan=failed.retry_plan)
+
+        assert retried.success is True
+        assert sync_service._persistent_dir.joinpath("README.md").read_text() == "checkpoint retry\n"
+
+    async def test_prepare_validation_rolls_back_database_mutations(
+        self,
+        db_session: AsyncSession,
+        sync_service,
+        working_clone,
+    ):
+        """Prepare validates dependent manifest rows without retaining their inserts."""
+        from uuid import UUID as UUIDType
+
+        from src.models.orm.custom_claims import CustomClaim
+        from src.models.orm.organizations import Organization
+
+        work_dir = Path(working_clone.working_dir)
+        org_id = str(uuid4())
+        claim_id = str(uuid4())
+        bifrost_dir = work_dir / ".bifrost"
+        bifrost_dir.mkdir(exist_ok=True)
+        (bifrost_dir / "organizations.yaml").write_text(yaml.dump({
+            "organizations": [{"id": org_id, "name": "Validation Org"}],
+        }, default_flow_style=False))
+        (bifrost_dir / "claims.yaml").write_text(yaml.dump({
+            "claims": {
+                claim_id: {
+                    "id": claim_id,
+                    "name": "validation_claim",
+                    "organization_id": org_id,
+                    "type": "list",
+                    "query": {"table": "users", "select": "id"},
+                },
+            },
+        }, default_flow_style=False))
+        working_clone.index.add([".bifrost/organizations.yaml", ".bifrost/claims.yaml"])
+        working_clone.index.commit("manifest validated without applying")
+        working_clone.remotes.origin.push()
+
+        async with sync_service.repo_manager.lock() as persistent_dir:
+            repo = sync_service._open_or_init(persistent_dir)
+            plan = await sync_service.prepare_desktop_sync(persistent_dir, repo)
+
+        assert any(change.entity_type == "claims" for change in plan.entity_changes)
+        assert await db_session.get(Organization, UUIDType(org_id)) is None
+        assert await db_session.get(CustomClaim, UUIDType(claim_id)) is None
+        assert sync_service._sync_up_calls == []
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
 class TestDeleteConfirmation:
     """Verify confirm_deletes gate blocks or allows entity deletion."""
 
@@ -5351,7 +5967,7 @@ class TestDeleteConfirmation:
     ):
         """
         When DB has entities not in the manifest and confirm_deletes is False,
-        sync returns success=True with needs_delete_confirmation=True.
+        sync returns an explicit confirmation requirement.
         """
         # Create a workflow in DB
         wf_id = uuid4()
@@ -5382,8 +5998,9 @@ class TestDeleteConfirmation:
 
         # Sync WITHOUT confirm_deletes → should be blocked
         result = await sync_service.desktop_sync()
-        assert result.success is True
+        assert result.success is False
         assert result.needs_delete_confirmation is True
+        assert result.requires_action == "confirm_deletes"
         assert len(result.pending_deletes) > 0
 
         # The workflow should still exist in DB (not deleted)

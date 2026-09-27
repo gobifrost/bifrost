@@ -1,5 +1,12 @@
 """Tests for job status endpoint with preview data."""
-from src.routers.jobs import JobStatusResponse
+from uuid import uuid4
+
+from src.core.principal import UserPrincipal
+
+import pytest
+
+from src.models.orm.platform_jobs import PlatformJob
+from src.routers.jobs import JobStatusResponse, get_job_status
 
 
 class TestJobStatusResponse:
@@ -30,3 +37,39 @@ class TestJobStatusResponse:
         """Preview should default to None for non-preview jobs."""
         response = JobStatusResponse(status="pending")
         assert response.preview is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("platform_status", "legacy_status"),
+    [("waiting", "running"), ("requires_action", "failed")],
+)
+async def test_platform_jobs_use_safe_legacy_statuses(
+    db_session,
+    platform_status: str,
+    legacy_status: str,
+) -> None:
+    job = PlatformJob(
+        job_type="workspace.sync",
+        payload={},
+        requested_by_user_id=str(uuid4()),
+        requested_by_email="operator@example.com",
+        requested_by_name="Operator",
+        title="Workspace sync",
+        status=platform_status,
+        phase="Confirm deletes" if platform_status == "requires_action" else "Waiting",
+        result={"requires_action": "confirm_deletes"},
+    )
+    db_session.add(job)
+    await db_session.flush()
+
+    admin = UserPrincipal(
+        user_id=uuid4(), email="admin@example.com", organization_id=None, is_superuser=True
+    )
+    response = await get_job_status(str(job.id), db_session, _user=admin)
+
+    assert response.status == legacy_status
+    assert response.message == job.phase
+    assert response.data == {"requires_action": "confirm_deletes"}
+    if platform_status == "requires_action":
+        assert response.error == "Action required: confirm_deletes"

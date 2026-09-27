@@ -36,6 +36,24 @@ from src.core.redis_reconnect import ResilientPubSubListener
 logger = logging.getLogger(__name__)
 
 
+def service_channel_for_log(channel: str, data: Any) -> str | None:
+    """Service-wide channel for an attempt-scoped log pubsub message.
+
+    Children publish to ``service-logs:{attempt_id}``; the Services UI
+    subscribes per service (``service:{service_id}``), so the API fans
+    each line out to its service channel. Returns None for anything that
+    is not a service log line (no bridge, no re-publish).
+    """
+    if not channel.startswith("service-logs:"):
+        return None
+    if not isinstance(data, dict):
+        return None
+    service_id = data.get("service_id")
+    if not service_id:
+        return None
+    return f"service:{service_id}"
+
+
 _PUBLISH_CHAT_RUN_EVENT_SCRIPT = """
 local sequence = redis.call('INCR', KEYS[2])
 local envelope = cjson.decode(ARGV[1])
@@ -119,6 +137,19 @@ class ConnectionManager:
         if not published:
             await self._send_local(channel, message)
 
+    async def _bridge_service_log(self, channel: str, data: Any) -> None:
+        """Fan one attempt-scoped log line out to its service channel.
+
+        Delivered locally only: EVERY API instance pattern-receives the
+        original pubsub message, so each instance serves its own
+        subscribers exactly once with no extra Redis hop. (Re-publishing
+        here would duplicate every line once per API instance.) A
+        different channel name means bridged lines never re-bridge.
+        """
+        service_channel = service_channel_for_log(channel, data)
+        if service_channel is not None:
+            await self._send_local(service_channel, data)
+
     async def _send_local(self, channel: str, message: dict[str, Any]) -> None:
         """Send message to local WebSocket connections.
 
@@ -187,6 +218,7 @@ class ConnectionManager:
                 # Strip "bifrost:" prefix from channel
                 local_channel = channel.replace("bifrost:", "")
                 await self._send_local(local_channel, data)
+                await self._bridge_service_log(local_channel, data)
 
             self._pubsub_listener = ResilientPubSubListener(
                 redis_url=settings.redis_url,
@@ -708,165 +740,6 @@ async def publish_app_published(
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
     await manager.broadcast(channel, message)
-
-
-# =============================================================================
-# Git Desktop Operations
-# =============================================================================
-
-
-async def publish_git_operation(
-    job_id: str,
-    org_id: str,
-    user_id: str,
-    user_email: str,
-    op_type: str,
-    **kwargs: Any,
-) -> str:
-    """
-    Queue a durable git desktop operation for any scheduler replica.
-
-    Args:
-        job_id: Unique job ID for tracking
-        org_id: Organization ID
-        user_id: User who initiated the operation
-        user_email: Email of the user
-        op_type: Operation type (git_fetch, git_commit, git_pull, git_push, git_status, git_resolve, git_diff)
-        **kwargs: Additional operation-specific data
-    """
-    from uuid import UUID, uuid4
-
-    from src.core.database import get_db_context
-    from src.jobs.platform.git_operation import (
-        GIT_OPERATION_DEFINITION,
-        GitOperationPayload,
-    )
-    from src.services.platform_jobs import enqueue_platform_job, publish_platform_job_update
-
-    try:
-        resolved_job_id = UUID(job_id)
-    except ValueError:
-        resolved_job_id = uuid4()
-    organization_id = UUID(org_id) if org_id else None
-    async with get_db_context() as db:
-        job, _ = await enqueue_platform_job(
-            db,
-            GIT_OPERATION_DEFINITION,
-            GitOperationPayload(
-                operation=op_type,
-                organization_id=organization_id,
-                options=kwargs,
-            ),
-            dedupe_key=str(resolved_job_id),
-            resource_lock_key="workspace",
-            priority=500,
-            organization_id=organization_id,
-            requested_by_user_id=user_id,
-            requested_by_email=user_email,
-            requested_by_name=user_email,
-            resource_type="workspace",
-            resource_id="git",
-            title=op_type.replace("_", " ").title(),
-            action_url="/git",
-            job_id=resolved_job_id,
-        )
-        await db.commit()
-    await publish_platform_job_update(job)
-    return str(job.id)
-
-
-async def publish_git_progress(
-    job_id: str,
-    phase: str,
-    current: int = 0,
-    total: int = 0,
-) -> None:
-    """
-    Publish a git operation progress update to the frontend.
-
-    Args:
-        job_id: Unique job ID (matches the job that triggered the operation)
-        phase: Human-readable phase string (e.g. "Fetching remote...")
-        current: Current entity index (1-based) for progress percentage
-        total: Total entities to import
-    """
-    message: dict[str, Any] = {
-        "type": "git_progress",
-        "jobId": job_id,
-        "phase": phase,
-        "current": current,
-        "total": total,
-    }
-    await manager.broadcast(f"git:{job_id}", message)
-
-
-async def publish_git_op_completed(
-    job_id: str,
-    status: str,
-    result_type: str,
-    data: dict[str, Any] | None = None,
-    error: str | None = None,
-    preview: dict[str, Any] | None = None,
-    pulled: int = 0,
-    pushed: int = 0,
-    commit_sha: str | None = None,
-    conflicts: list[dict[str, Any]] | None = None,
-) -> None:
-    """
-    Publish git operation completion.
-
-    Broadcasts to git:{job_id} channel with the result.
-    Also stores in Redis for HTTP polling (5-minute TTL).
-
-    Args:
-        job_id: Unique job ID
-        status: Completion status (success, failed, conflict)
-        result_type: Which operation completed (fetch, commit, pull, push, status, resolve, diff)
-        data: Result data dict
-        error: Error message if failed
-        preview: Sync preview data (for sync_preview ops, consumed by CLI)
-        pulled: Number of files pulled (for sync_execute ops)
-        pushed: Number of files pushed (for sync_execute ops)
-        commit_sha: Commit SHA if created (for sync_execute ops)
-        conflicts: List of merge conflict dicts (for sync ops with conflicts)
-    """
-    completion_message: dict[str, Any] = {
-        "type": "git_op_complete",
-        "jobId": job_id,
-        "status": status,
-        "resultType": result_type,
-    }
-    if data is not None:
-        completion_message["data"] = data
-    if error is not None:
-        completion_message["error"] = error
-    if preview is not None:
-        completion_message["preview"] = preview
-    if pulled:
-        completion_message["pulled"] = pulled
-    if pushed:
-        completion_message["pushed"] = pushed
-    if commit_sha is not None:
-        completion_message["commit_sha"] = commit_sha
-    if conflicts is not None:
-        completion_message["conflicts"] = conflicts
-
-    await manager.broadcast(f"git:{job_id}", completion_message)
-
-    # Store result in Redis for HTTP polling
-    try:
-        from src.core.redis_client import get_redis_client
-
-        redis_client = get_redis_client()
-        if redis_client:
-            result_key = f"bifrost:job:{job_id}"
-            await redis_client.setex(
-                result_key,
-                300,  # 5 minutes TTL
-                json.dumps(completion_message),
-            )
-    except Exception as e:
-        logger.warning(f"Failed to store job result in Redis: {e}")
 
 
 # =============================================================================

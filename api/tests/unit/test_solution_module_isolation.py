@@ -158,6 +158,7 @@ async def test_run_execution_refreshes_modules_and_clears_context_on_failure(mon
     monkeypatch.setattr(worker, "_get_resource_usage", lambda: (0, 0.0, 0.0))
     monkeypatch.setattr(worker, "_capture_metrics", lambda *_args: types.SimpleNamespace(
         peak_memory_bytes=0,
+        peak_process_rss_bytes=0,
         cpu_user_seconds=0.0,
         cpu_system_seconds=0.0,
         cpu_total_seconds=0.0,

@@ -15,6 +15,10 @@ def _db_with_total(total: int = 0) -> MagicMock:
     db = MagicMock()
     result = MagicMock()
     result.scalar.return_value = total
+    # ArtifactService.store()'s workspace-ownership pre-check queries for an
+    # existing owner via scalar_one_or_none(); None means "no existing
+    # owner yet" so the store proceeds (this test's workspace is new).
+    result.scalar_one_or_none.return_value = None
     db.execute = AsyncMock(return_value=result)
     db.flush = AsyncMock()
     user_id = uuid4()

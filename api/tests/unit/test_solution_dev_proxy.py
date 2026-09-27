@@ -6,6 +6,7 @@ import time
 
 import aiohttp
 import httpx
+import pytest
 import yarl
 from aiohttp import web
 
@@ -98,12 +99,29 @@ def test_join_upstream_retains_non_default_ports():
     )
 
 
-def _free_port() -> int:
+_reserved_ports: dict[int, socket.socket] = {}
+
+
+@pytest.fixture(autouse=True)
+def _release_unused_ports():
+    """Close reservations for intentionally unavailable upstreams after each test."""
+    yield
+    for reserved in _reserved_ports.values():
+        reserved.close()
+    _reserved_ports.clear()
+
+
+def _reserve_port(port: int = 0) -> int:
     s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    port = s.getsockname()[1]
-    s.close()
-    return port
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind(("127.0.0.1", port))
+    assigned_port = s.getsockname()[1]
+    _reserved_ports[assigned_port] = s
+    return assigned_port
+
+
+def _free_port() -> int:
+    return _reserve_port()
 
 
 class _StubHost:
@@ -207,10 +225,17 @@ def _make_auth_refresh_upstream(record):
 
 
 async def _serve(app, port):
+    sock = _reserved_ports.pop(port)
     runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "127.0.0.1", port)
-    await site.start()
+    try:
+        sock.listen(socket.SOMAXCONN)
+        await runner.setup()
+        site = web.SockSite(runner, sock)
+        await site.start()
+    except Exception:
+        await runner.cleanup()
+        sock.close()
+        raise
     return runner
 
 
@@ -891,6 +916,7 @@ async def test_browser_session_reload_signal_changes_after_same_origin_restart()
     finally:
         await first_runner.cleanup()
 
+    _reserve_port(dev_port)
     second_cfg, second_runner = await _start_proxy()
     try:
         async with httpx.AsyncClient() as c:

@@ -100,7 +100,7 @@ def test_async_deploy_reports_failure(e2e_client, platform_admin):
     NOT a failure — import persists the decorated name regardless of the slug, so
     preflight only blocks the genuinely execution-breaking case (the named
     function is absent from the source). This mirrors the unit/e2e preflight
-    contract in test_deploy_preflight.py / test_solution_deploy_preflight_e2e.py.
+    contract in test_deploy_preflight.py / test_solution_deploy_validation.py.
     """
     headers = platform_admin.headers
     slug = f"sol-async-fail-{uuid.uuid4().hex[:8]}"

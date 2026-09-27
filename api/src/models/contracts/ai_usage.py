@@ -9,7 +9,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
 
 
 # ==================== AI MODEL PRICING MODELS ====================
@@ -307,6 +307,85 @@ class UsageReportResponse(BaseModel):
     @field_serializer("knowledge_storage_as_of")
     def serialize_storage_date(self, d: dt.date | None) -> str | None:
         return d.isoformat() if d else None
+
+
+# ==================== WORKFLOW RESOURCE REPORT MODELS ====================
+
+
+class WorkflowResourceSummary(BaseModel):
+    """Summary totals for the workflow resource report."""
+
+    run_count: int = Field(default=0, description="Number of executions in the window")
+    total_cpu_seconds: float = Field(default=0.0, description="Sum of CPU time in seconds")
+    total_duration_ms: int = Field(default=0, description="Sum of execution durations in milliseconds")
+    total_ai_cost: Decimal = Field(default=Decimal("0"), description="Sum of AI cost in USD")
+    total_ai_calls: int = Field(default=0, description="Total number of AI calls")
+
+    @field_serializer("total_ai_cost")
+    def serialize_cost(self, d: Decimal) -> str:
+        return str(d)
+
+
+class WorkflowResourceRun(BaseModel):
+    """One execution row in the workflow resource report."""
+
+    execution_id: str
+    workflow_id: str | None = None
+    workflow_name: str
+    organization_name: str | None = None
+    status: str
+    started_at: datetime | None = None
+    duration_ms: int | None = None
+    cpu_total_seconds: float | None = None
+    avg_cpu_cores: float | None = None
+    peak_cpu_cores: float | None = None
+    peak_process_rss_bytes: int | None = None
+    ai_cost: Decimal = Decimal("0")
+    ai_calls: int = 0
+    ai_tokens: int = 0
+
+    @field_serializer("ai_cost")
+    def serialize_cost(self, d: Decimal) -> str:
+        return str(d)
+
+    @field_serializer("started_at")
+    def serialize_started_at(self, d: datetime | None) -> str | None:
+        return d.isoformat() if d else None
+
+    @model_validator(mode="after")
+    def compute_avg_cpu_cores(self) -> "WorkflowResourceRun":
+        if self.duration_ms and self.duration_ms > 0 and self.cpu_total_seconds is not None:
+            self.avg_cpu_cores = round(self.cpu_total_seconds / (self.duration_ms / 1000), 4)
+        return self
+
+
+class WorkflowResourceWorkflow(BaseModel):
+    """One workflow-aggregated row in the workflow resource report."""
+
+    workflow_id: str | None = None
+    workflow_name: str
+    run_count: int = 0
+    failed_count: int = 0
+    total_cpu_seconds: float = 0.0
+    total_duration_ms: int = 0
+    max_peak_cpu_cores: float | None = None
+    max_peak_process_rss_bytes: int | None = None
+    total_ai_cost: Decimal = Decimal("0")
+
+    @field_serializer("total_ai_cost")
+    def serialize_cost(self, d: Decimal) -> str:
+        return str(d)
+
+
+class WorkflowResourceReport(BaseModel):
+    """Response for the workflow resource report endpoint."""
+
+    summary: WorkflowResourceSummary
+    runs: list[WorkflowResourceRun] = Field(default_factory=list)
+    workflows: list[WorkflowResourceWorkflow] = Field(default_factory=list)
+    total: int = 0
+    page: int = 1
+    page_size: int = 25
 
 
 # ==================== PRICING LIST MODELS ====================

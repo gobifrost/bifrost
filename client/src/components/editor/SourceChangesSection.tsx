@@ -53,6 +53,7 @@ export function SourceChangesSection({
 	pendingDeletes,
 	onConfirmDeletes,
 	onDismissDeletes,
+	onRetryPublication,
 }: {
 	syncError: string | null;
 	hasLoadError: boolean;
@@ -90,6 +91,7 @@ export function SourceChangesSection({
 	pendingDeletes?: EntityChange[];
 	onConfirmDeletes?: () => void;
 	onDismissDeletes?: () => void;
+	onRetryPublication?: () => void;
 }) {
 	const writesDisabled = disabled || hasLoadError;
 	const unavailableReason = hasLoadError
@@ -216,12 +218,25 @@ export function SourceChangesSection({
 					)}
 
 					{syncError && !pendingDeletes?.length && (
-						<p
-							role="alert"
-							className="mx-3 mb-3 text-sm text-destructive [overflow-wrap:anywhere]"
-						>
-							Sync failed: {syncError}
-						</p>
+						<div className="mx-3 mb-3 space-y-2">
+							<p
+								role="alert"
+								className="text-sm text-destructive [overflow-wrap:anywhere]"
+							>
+								Sync failed: {syncError}
+							</p>
+							{onRetryPublication && (
+								<Button
+									type="button"
+									variant="outline"
+									className="min-h-11"
+									disabled={disabled}
+									onClick={onRetryPublication}
+								>
+									Retry publication
+								</Button>
+							)}
+						</div>
 					)}
 					{showCleanupPrompt && (
 						<SourceCleanupPrompt

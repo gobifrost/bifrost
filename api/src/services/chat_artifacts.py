@@ -152,8 +152,7 @@ async def execute_artifact_tool(
         artifacts = await ArtifactService(db).list_workspace(
             conversation_id,
             user_id=user.id,
-            organization_id=user.organization_id,
-            is_platform_admin=user.is_superuser,
+            bypass=user.is_superuser,
         )
         return None, {
             "workspace_id": str(conversation_id),
@@ -179,8 +178,7 @@ async def execute_artifact_tool(
                     conversation_id,
                     image.path,
                     user_id=user.id,
-                    organization_id=user.organization_id,
-                    is_platform_admin=user.is_superuser,
+                    bypass=user.is_superuser,
                 )
                 if not artifact.content_type.startswith("image/"):
                     raise ValueError(f"{image.path} is not an image artifact.")

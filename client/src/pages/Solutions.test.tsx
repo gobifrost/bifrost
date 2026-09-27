@@ -59,6 +59,7 @@ const mockInstallSolution = vi.fn();
 const mockUpdateSolution = vi.fn();
 const mockPreviewSolutionFromRepo = vi.fn();
 const mockInstallSolutionFromRepo = vi.fn();
+const mockPreviewWorkspaceBundle = vi.fn();
 vi.mock("@/services/solutions", () => ({
 	listSolutions: (...a: unknown[]) => mockListSolutions(...a),
 	updateSelectedSolutionAppSdks: (...a: unknown[]) =>
@@ -70,6 +71,8 @@ vi.mock("@/services/solutions", () => ({
 		mockPreviewSolutionFromRepo(...a),
 	installSolutionFromRepo: (...a: unknown[]) =>
 		mockInstallSolutionFromRepo(...a),
+	previewWorkspaceBundle: (...a: unknown[]) =>
+		mockPreviewWorkspaceBundle(...a),
 }));
 
 const mockTrackAccepted = vi.fn();
@@ -126,8 +129,9 @@ async function renderPage() {
 }
 
 /**
- * Open the install dialog via the + button, choose the From-zip source, and
- * upload a file through the dropzone's file input.
+ * Open the install dialog via the + button, choose the managed Solution
+ * destination and the From-zip source, and upload a file through the
+ * dropzone's file input.
  */
 async function uploadThroughDialog(
 	user: ReturnType<typeof renderWithProviders>["user"],
@@ -135,6 +139,7 @@ async function uploadThroughDialog(
 ) {
 	await user.click(screen.getByTestId("open-install"));
 	const dialog = await screen.findByTestId("solution-dialog");
+	await user.click(within(dialog).getByTestId("destination-solution"));
 	await user.click(within(dialog).getByTestId("source-zip"));
 	await user.upload(
 		within(dialog).getByTestId("install-file-input") as HTMLInputElement,
@@ -1290,7 +1295,7 @@ describe("Solutions — upgrade flow", () => {
 });
 
 describe("Solutions — page dropzone", () => {
-	it("opens the install dialog prefilled when a file is dropped on the page", async () => {
+	it("a dropped file asks for the destination first, then previews the chosen path", async () => {
 		mockPreviewInstall.mockResolvedValue({
 			slug: "dropped",
 			name: "Dropped Solution",
@@ -1298,7 +1303,45 @@ describe("Solutions — page dropzone", () => {
 			workflows: [],
 			config_schemas: [],
 		});
-		await renderPage();
+		const { user } = await renderPage();
+		await screen.findByText(/no solutions installed yet/i);
+
+		const file = new File(["zip"], "dropped.zip", {
+			type: "application/zip",
+		});
+		const dropzone = screen.getByTestId("install-dropzone");
+		const { fireEvent } = await import("@testing-library/react");
+		fireEvent.drop(dropzone, {
+			dataTransfer: { files: [file], types: ["Files"] },
+		});
+
+		// The file does not imply a destination: the picker comes first and
+		// nothing previews yet.
+		const dialog = await screen.findByTestId("solution-dialog");
+		expect(within(dialog).getByTestId("destination-picker")).toBeInTheDocument();
+		expect(mockPreviewInstall).not.toHaveBeenCalled();
+
+		// Managed path: the dropped file prefills the zip source.
+		await user.click(within(dialog).getByTestId("destination-solution"));
+		expect(within(dialog).getByText(file.name)).toBeInTheDocument();
+		await waitFor(() =>
+			expect(mockPreviewInstall).toHaveBeenCalledWith(file, {
+				organizationId: "",
+			}),
+		);
+	});
+
+	it("a dropped file can go to the workspace import instead", async () => {
+		mockPreviewWorkspaceBundle.mockResolvedValue({
+			preview_token: "workspace-preview",
+			package_name: "Dropped",
+			package_sha256: "a".repeat(64),
+			conflict_count: 0,
+			source_kind: "zip",
+			items: [],
+			warnings: [],
+		});
+		const { user } = await renderPage();
 		await screen.findByText(/no solutions installed yet/i);
 
 		const file = new File(["zip"], "dropped.zip", {
@@ -1311,36 +1354,43 @@ describe("Solutions — page dropzone", () => {
 		});
 
 		const dialog = await screen.findByTestId("solution-dialog");
-		expect(within(dialog).getByText(file.name)).toBeInTheDocument();
+		await user.click(within(dialog).getByTestId("destination-workspace"));
+		// The dropped file prefills the workspace zip source and previews.
 		await waitFor(() =>
-			expect(mockPreviewInstall).toHaveBeenCalledWith(file, {
-				organizationId: "",
-			}),
+			expect(mockPreviewWorkspaceBundle).toHaveBeenCalledWith(file, { organizationId: "" }),
 		);
+		expect(
+			await within(dialog).findByTestId("workspace-import-footer"),
+		).toBeInTheDocument();
 	});
 });
 
-describe("Solutions — source picker", () => {
-	it("opens a From-repo / From-zip picker from the + button (no empty-shell create)", async () => {
+describe("Solutions — destination-first install", () => {
+	it("opens a destination picker from the + button, then a source picker (no empty-shell create)", async () => {
 		const { user } = await renderPage();
 		await screen.findByText(/no solutions installed yet/i);
 
 		await user.click(screen.getByTestId("open-install"));
 		const dialog = await screen.findByTestId("solution-dialog");
+		expect(within(dialog).getByTestId("destination-picker")).toBeInTheDocument();
+		expect(within(dialog).getByTestId("destination-workspace")).toBeInTheDocument();
+		expect(within(dialog).getByTestId("destination-solution")).toBeInTheDocument();
+		// No blank-create form: no name input, no immediate install button.
+		expect(within(dialog).queryByTestId("confirm-install")).toBeNull();
+
+		await user.click(within(dialog).getByTestId("destination-solution"));
 		expect(within(dialog).getByTestId("source-picker")).toBeInTheDocument();
 		expect(within(dialog).getByTestId("source-repo")).toBeInTheDocument();
 		expect(within(dialog).getByTestId("source-zip")).toBeInTheDocument();
-		// No blank-create form: no name input, no immediate install button.
-		expect(within(dialog).queryByTestId("confirm-install")).toBeNull();
 	});
 
-	it("the empty state opens the source picker too", async () => {
+	it("the empty state opens the destination picker too", async () => {
 		const { user } = await renderPage();
 		await user.click(
 			await screen.findByText(/no solutions installed yet/i),
 		);
 		const dialog = await screen.findByTestId("solution-dialog");
-		expect(within(dialog).getByTestId("source-picker")).toBeInTheDocument();
+		expect(within(dialog).getByTestId("destination-picker")).toBeInTheDocument();
 	});
 });
 

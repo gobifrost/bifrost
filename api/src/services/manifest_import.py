@@ -8,9 +8,10 @@ ManifestResolver class and standalone import functions.
 
 import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Mapping
 from uuid import UUID
 
 import yaml
@@ -27,6 +28,83 @@ from bifrost.manifest import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class PartialImportSelection:
+    """The explicit, non-destructive subset of a workspace manifest import.
+
+    ``target_ids`` maps package UUIDs to the stable IDs selected by the collision
+    plan.  It includes kept conflicts so references to a kept destination remain
+    valid when another selected item points to it.
+    """
+
+    included_source_ids: frozenset[str]
+    target_ids: Mapping[UUID, UUID]
+    solution_id: None = None
+
+
+def filter_partial_manifest(manifest: Manifest, selection: PartialImportSelection) -> Manifest:
+    """Keep only selected package entities; this function never implies deletion."""
+    ids = selection.included_source_ids
+
+    def selected(entries: Mapping[str, Any]) -> dict[str, Any]:
+        # Manifest maps are keyed by an author-facing name in a few cases
+        # (notably configs), so selection must be based on the entity UUID.
+        return {key: entry for key, entry in entries.items() if entry.id in ids}
+
+    return Manifest(
+        organizations=[entry for entry in manifest.organizations if entry.id in ids],
+        roles=[entry for entry in manifest.roles if entry.id in ids],
+        workflows=selected(manifest.workflows), integrations=selected(manifest.integrations),
+        configs=selected(manifest.configs), claims=selected(manifest.claims),
+        policy_rules=selected(manifest.policy_rules), tables=selected(manifest.tables),
+        file_policies=selected(manifest.file_policies), events=selected(manifest.events),
+        forms=selected(manifest.forms), agents=selected(manifest.agents),
+        apps=selected(manifest.apps), mcp_servers=selected(manifest.mcp_servers),
+    )
+
+
+def rewrite_manifest_references(
+    manifest: Manifest, selection: PartialImportSelection,
+    organization_id: UUID | None = None,
+) -> Manifest:
+    """Apply the planner's UUID map and restamp the scope.
+
+    Environment bindings from an install must never leak into the workspace:
+    organization stamps the import target scope (None = global content) and
+    solution linkage plus raw role UUIDs are always stripped. Portable
+    role_names survive for the workspace importer to merge afterwards.
+    """
+    id_map = {str(source): str(target) for source, target in selection.target_ids.items()}
+    scope = str(organization_id) if organization_id is not None else None
+
+    def rewrite(value: Any, *, field: str | None = None) -> Any:
+        if isinstance(value, dict):
+            # Dict-based manifest collections are normally UUID-keyed.  Rewriting
+            # just the entry's ``id`` leaves a model whose key and identity
+            # disagree, which breaks changed-id selection and downstream callers.
+            rewritten = {
+                id_map.get(key, key): rewrite(item, field=key)
+                for key, item in value.items()
+            }
+            # Environment bindings from an install must never leak into _repo.
+            if "organization_id" in rewritten:
+                rewritten["organization_id"] = scope
+            if "solution_id" in rewritten:
+                rewritten["solution_id"] = None
+            if "roles" in rewritten:
+                rewritten["roles"] = []
+            if "role_names" in rewritten:
+                rewritten.pop("role_names")
+            return rewritten
+        if isinstance(value, list):
+            return [rewrite(item, field=field) for item in value]
+        if isinstance(value, str):
+            return id_map.get(value, value)
+        return value
+
+    return Manifest.model_validate(rewrite(manifest.model_dump(mode="json", by_alias=True)))
 
 
 def _load_file_policy_model() -> Any:
@@ -405,6 +483,20 @@ class ManifestResolver:
         # invalidate_config on each, so a renamed/moved/deleted config (or a
         # changed non-secret value) does not keep serving stale until TTL.
         self.configs_touched: set[tuple[str | None, str]] = set()
+        self._skip_role_sync = False
+        # Partial workspace-bundle imports only match unattached rows. A
+        # globally unique workflow path or app slug can be moved across scopes
+        # by an explicit Replace decision in the workspace review.
+        self._workspace_global_scope = False
+        # Target scope for workspace-partial lookups (None = global). Set only
+        # for the duration of plan_partial_import.
+        self._workspace_organization_id: UUID | None = None
+
+    def _workspace_scope_clause(self, column):
+        """Match the workspace-partial target scope (exact org, or IS NULL)."""
+        if self._workspace_organization_id is None:
+            return column.is_(None)
+        return column == self._workspace_organization_id
 
     async def _prefetch_existing_entities(self) -> dict:
         """Prefetch all existing entity IDs/natural-keys in bulk queries.
@@ -456,9 +548,12 @@ class ManifestResolver:
             cache["role_by_name"][row[1]] = row[0]
 
         # Workflows: {(path, function_name): id} + {id} set
-        wf_result = await self.db.execute(
-            select(Workflow.id, Workflow.path, Workflow.function_name)
-        )
+        workflow_query = select(Workflow.id, Workflow.path, Workflow.function_name)
+        if self._workspace_global_scope:
+            workflow_query = workflow_query.where(
+                Workflow.solution_id.is_(None),
+            )
+        wf_result = await self.db.execute(workflow_query)
         cache["wf_ids"] = set()
         cache["wf_by_natural"] = {}
         for row in wf_result.all():
@@ -488,7 +583,12 @@ class ManifestResolver:
             cache["integ_mappings"].setdefault(m.integration_id, {})[org_key] = m
 
         # Apps: {slug: id}
-        app_result = await self.db.execute(select(Application.id, Application.slug))
+        app_query = select(Application.id, Application.slug)
+        if self._workspace_global_scope:
+            app_query = app_query.where(
+                Application.solution_id.is_(None),
+            )
+        app_result = await self.db.execute(app_query)
         cache["app_by_slug"] = {}
         for row in app_result.all():
             cache["app_by_slug"][row[1]] = row[0]
@@ -592,6 +692,7 @@ class ManifestResolver:
         changed_ids: set[str] | None = None,
         sidecar_content: Any = None,
         install_id: "UUID | None" = None,
+        sync_app_previews: bool = True,
     ) -> "list[SyncOp]":
         """Build and execute SyncOps for importing a manifest (entities only).
 
@@ -752,8 +853,10 @@ class ManifestResolver:
             app_ops = self._resolve_app(mapp, cache)
             await self._apply_ops(app_ops, all_ops, dry_run=dry_run, existing_ids=_app_id_set)
 
-            # Compile source files from _repo/ into _apps/{id}/preview/
-            if not dry_run:
+            # Compile source files from _repo/ into _apps/{id}/preview/.
+            # Workspace Git sync defers this until its Git and _repo
+            # publication has succeeded.
+            if not dry_run and sync_app_previews:
                 try:
                     from src.services.app_storage import AppStorageService
 
@@ -867,6 +970,63 @@ class ManifestResolver:
             )
 
         return all_ops
+
+    async def plan_partial_import(
+        self,
+        manifest: "Manifest",
+        *,
+        selection: PartialImportSelection,
+        work_dir: Path,
+        progress_fn=None,
+        organization_id: UUID | None = None,
+    ) -> "list[SyncOp]":
+        """Apply a selected workspace bundle subset without a stale-row sweep.
+
+        This intentionally does not delegate to a convenience full-sync method:
+        those methods pair entity import with ``_resolve_deletions``.  A package
+        import is additive/explicit-replace only, so absent package entities must
+        remain untouched.
+
+        ``organization_id`` scopes definitions to the import target (None =
+        global). A reviewed workflow or app collision may move an unattached
+        row between scopes while preserving its identity.
+        """
+        selected = filter_partial_manifest(manifest, selection)
+        rewritten = rewrite_manifest_references(
+            selected, selection, organization_id=organization_id,
+        )
+        changed_ids = {
+            entity.id
+            for collection in (
+                rewritten.workflows, rewritten.integrations, rewritten.configs,
+                rewritten.claims, rewritten.policy_rules, rewritten.tables,
+                rewritten.file_policies, rewritten.events, rewritten.forms,
+                rewritten.agents, rewritten.apps, rewritten.mcp_servers,
+            )
+            for entity in collection.values()
+        }
+        self._skip_role_sync = True
+        self._workspace_global_scope = True
+        self._workspace_organization_id = organization_id
+        try:
+            ops = await self.plan_import(
+                rewritten, work_dir=work_dir, progress_fn=progress_fn,
+                changed_ids=changed_ids, install_id=None,
+            )
+        finally:
+            self._skip_role_sync = False
+            self._workspace_global_scope = False
+            self._workspace_organization_id = None
+
+        async def read_workspace(path: str) -> bytes | None:
+            candidate = work_dir / path
+            return candidate.read_bytes() if candidate.is_file() else None
+
+        # Unlike full git sync, this bounded entry point owns its indexer phase.
+        await self._index_workflows_from_manifest(rewritten, read_workspace, changed_ids)
+        await self._index_forms_from_manifest(rewritten, read_workspace, changed_ids)
+        await self._index_agents_from_manifest(rewritten, read_workspace, changed_ids)
+        return ops
 
     async def _index_forms_from_manifest(
         self,
@@ -1237,7 +1397,7 @@ class ManifestResolver:
         # (full role sync). git-sync always serializes `roles` (model default []), so
         # a present-empty list reliably means "no roles" (B3). `is not None` guards a
         # hypothetical roles-less model; SyncRoles({}) deletes all rows.
-        if getattr(mwf, "roles", None) is not None:
+        if not self._skip_role_sync and getattr(mwf, "roles", None) is not None:
             role_ids = {UUID(r) for r in mwf.roles}
             ops.append(SyncRoles(
                 junction_model=WorkflowRole,
@@ -1341,7 +1501,15 @@ class ManifestResolver:
                     resolved_list.append(item)
             data[field_name] = resolved_list
 
-    async def _resolve_deletions(self, work_dir: Path | None = None, manifest: "Manifest | None" = None, repo: "RepoStorage | None" = None, dry_run: bool = False) -> list:
+    async def _resolve_deletions(
+        self,
+        work_dir: Path | None = None,
+        manifest: "Manifest | None" = None,
+        repo: "RepoStorage | None" = None,
+        dry_run: bool = False,
+        approved_deletes: set[tuple[str, str]] | None = None,
+        lock_rows: bool = False,
+    ) -> list:
         """Compute delete/deactivate ops for entities removed from the manifest.
 
         Optimized: pushes filtering to SQL with NOT IN clauses, returning only
@@ -1482,8 +1650,12 @@ class ManifestResolver:
             q = _spare_solution_managed(model, q)
             if present:
                 q = q.where(model.id.notin_(present))  # type: ignore[attr-defined]
+            if lock_rows:
+                q = q.with_for_update()
             result = await self.db.execute(q)
             rows = result.all()
+            if approved_deletes is not None:
+                rows = [row for row in rows if (entity_type, str(row[0])) in approved_deletes]
             if not rows:
                 return 0
             stale_ids = []
@@ -1496,6 +1668,7 @@ class ManifestResolver:
                     action="removed",
                     entity_type=entity_type,
                     name=name,
+                    entity_id=str(sid),
                 ))
             if not dry_run:
                 await self.db.execute(
@@ -1513,8 +1686,12 @@ class ManifestResolver:
             q = _spare_solution_managed(model, q)
             if present:
                 q = q.where(model.id.notin_(present))  # type: ignore[attr-defined]
+            if lock_rows:
+                q = q.with_for_update()
             result = await self.db.execute(q)
             rows = result.all()
+            if approved_deletes is not None:
+                rows = [row for row in rows if (entity_type, str(row[0])) in approved_deletes]
             if not rows:
                 return 0
             stale_ids = []
@@ -1527,6 +1704,7 @@ class ManifestResolver:
                     action="removed",
                     entity_type=entity_type,
                     name=name,
+                    entity_id=str(sid),
                 ))
             if not dry_run:
                 await self.db.execute(
@@ -1535,6 +1713,11 @@ class ManifestResolver:
                     .values(is_active=False, updated_at=now)
                 )
             return len(stale_ids)
+
+        # Delete subscriptions before workflows. Workflow deletion cascades to
+        # subscriptions; preview and dry-run revalidation must see the same
+        # explicit deletion set as the real apply phase.
+        await _bulk_delete(EventSubscription, [], present_sub_uuids, "event_subscriptions")
 
         # Delete workflows synced from git that are no longer present
         await _bulk_delete(
@@ -1559,8 +1742,15 @@ class ManifestResolver:
         ).where(Config.config_schema_id.is_(None))
         if present_config_uuids:
             cfg_q = cfg_q.where(Config.id.notin_(present_config_uuids))
+        if lock_rows:
+            cfg_q = cfg_q.with_for_update()
         cfg_result = await self.db.execute(cfg_q)
         stale_cfg_rows = cfg_result.all()
+        if approved_deletes is not None:
+            stale_cfg_rows = [
+                row for row in stale_cfg_rows
+                if ("configs", str(row[0])) in approved_deletes
+            ]
         stale_cfg_ids = [row[0] for row in stale_cfg_rows]
         if stale_cfg_ids:
             for sid, s_org_id, s_key in stale_cfg_rows:
@@ -1569,6 +1759,7 @@ class ManifestResolver:
                     action="removed",
                     entity_type="configs",
                     name=str(sid),
+                    entity_id=str(sid),
                 ))
                 # Record for post-commit cache invalidation (the deleted row
                 # would otherwise keep serving from the read-through cache).
@@ -1591,6 +1782,7 @@ class ManifestResolver:
                 action="keep",
                 entity_type="tables",
                 name=row[1] or str(row[0]),
+                entity_id=str(row[0]),
             ))
 
         # Delete file policies not in manifest.
@@ -1616,9 +1808,6 @@ class ManifestResolver:
             present_policy_rule_uuids,
             "policy_rules",
         )
-
-        # Delete event subscriptions not in manifest
-        await _bulk_delete(EventSubscription, [], present_sub_uuids, "event_subscriptions")
 
         # Delete event sources not in manifest
         await _bulk_delete(EventSource, [], present_event_uuids, "events")
@@ -1656,10 +1845,16 @@ class ManifestResolver:
             tool_q = select(MCPConnectionTool.id, MCPConnectionTool.tool_name, MCPConnectionTool.connection_id).where(
                 MCPConnectionTool.connection_id.in_(present_mcp_connection_uuids)
             )
+            if lock_rows:
+                tool_q = tool_q.with_for_update()
             tool_rows = (await self.db.execute(tool_q)).all()
             stale_tool_ids: list[UUID] = []
             for row in tool_rows:
                 if (row[2], row[1]) not in present_tool_keys:
+                    if approved_deletes is not None and (
+                        "mcp_connection_tools", str(row[0])
+                    ) not in approved_deletes:
+                        continue
                     stale_tool_ids.append(row[0])
                     logger.info(
                         f"Deleting mcp_connection_tools {row[0]} ({row[1]}) — removed from manifest"
@@ -1668,6 +1863,7 @@ class ManifestResolver:
                         action="removed",
                         entity_type="mcp_connection_tools",
                         name=row[1] or str(row[0]),
+                        entity_id=str(row[0]),
                     ))
             if stale_tool_ids and not dry_run:
                 await self.db.execute(
@@ -1947,8 +2143,8 @@ class ManifestResolver:
     def _resolve_config(self, mcfg, cache: dict) -> "list[SyncOp]":
         """Resolve a config entry from manifest into SyncOps.
 
-        Uses prefetch cache for lookup. Skips writing value if type=SECRET
-        and existing value is non-null. Returns ops list.
+        Uses prefetch cache for lookup. Secret values are never replaced by
+        portable manifest content; declaration metadata still updates.
         """
         from uuid import UUID
 
@@ -1984,11 +2180,7 @@ class ManifestResolver:
         is_secret = ct == ConfigType.SECRET
 
         if cache_hit is not None:
-            existing_id, existing_value, _config_schema_id = cache_hit
-
-            # Secret with existing value — don't overwrite
-            if is_secret and existing_value is not None and schema_id is None:
-                return []
+            existing_id, _existing_value, _config_schema_id = cache_hit
 
             # Update existing row (including ID if it changed)
             update_values: dict = {
@@ -1996,6 +2188,8 @@ class ManifestResolver:
                 "key": vals["key"],
                 "config_type": ct,
                 "description": vals["description"],
+                "required": vals["required"],
+                "position": vals["position"],
                 "integration_id": integ_id,
                 "organization_id": org_id,
                 "updated_by": "git-sync",
@@ -2017,6 +2211,8 @@ class ManifestResolver:
                 "key": vals["key"],
                 "config_type": ct,
                 "description": vals["description"],
+                "required": vals["required"],
+                "position": vals["position"],
                 "integration_id": integ_id,
                 "organization_id": org_id,
                 "value": vals["value"] if vals["value"] is not None else {},
@@ -2139,7 +2335,7 @@ class ManifestResolver:
             ))
 
         # Role sync op — fire on present-empty too, to clear bindings (B3; see _resolve_workflow).
-        if getattr(mapp, "roles", None) is not None:
+        if not self._skip_role_sync and getattr(mapp, "roles", None) is not None:
             role_ids = {UUID(r) for r in mapp.roles}
             ops.append(SyncRoles(
                 junction_model=AppRole,
@@ -2520,18 +2716,26 @@ class ManifestResolver:
 
         fields = mclaim.to_orm_values(Destination.GIT_SYNC).direct
         claim_id = UUID(fields["id"])
-        org_id = UUID(fields["organization_id"])
-        now = datetime.now(timezone.utc)
-        query = fields["query"]
+        # Workspace imports carry global claims (organization_id None); ``== None``
+        # never matches in SQL, so the fallback lookup uses IS NULL explicitly.
+        org_raw = fields["organization_id"]
+        org_id = UUID(org_raw) if org_raw else None
 
         if cache is not None:
             existing_by_natural = cache["claim_by_natural"].get((claim_name, org_id))
         else:
+            org_clause = (
+                CustomClaim.organization_id.is_(None)
+                if org_id is None
+                else CustomClaim.organization_id == org_id
+            )
             natural_q = select(CustomClaim.id).where(
                 CustomClaim.name == claim_name,
-                CustomClaim.organization_id == org_id,
+                org_clause,
             )
             existing_by_natural = (await self.db.execute(natural_q)).scalar_one_or_none()
+        now = datetime.now(timezone.utc)
+        query = fields["query"]
 
         if existing_by_natural is not None:
             # Keep the DB-assigned id stable. Claims are referenced by
@@ -2930,25 +3134,26 @@ class ManifestResolver:
         form_id = UUID(mform.id)
         ops: list[SyncOp] = []
 
-        if org_id:
-            form_values: dict = {
-                "name": data.get("name", ""),
-                "is_active": True,
-                "created_by": "git-sync",
-                "organization_id": org_id,
-            }
-            if mform.access_level is not None:
-                form_values["access_level"] = mform.access_level
-            ops.append(Upsert(
-                model=Form,
-                id=form_id,
-                values=form_values,
-                match_on="id",
-            ))
+        # Global forms are first-class workspace content too.  The old guard
+        # silently dropped them because ``None`` is falsy.
+        form_values: dict = {
+            "name": data.get("name", ""),
+            "is_active": True,
+            "created_by": "git-sync",
+            "organization_id": org_id,
+        }
+        if mform.access_level is not None:
+            form_values["access_level"] = mform.access_level
+        ops.append(Upsert(
+            model=Form,
+            id=form_id,
+            values=form_values,
+            match_on="id",
+        ))
 
         # Role sync op (FormRole.assigned_by is NOT NULL — pass via extra_fields).
         # Fire on present-empty too, to clear bindings (B3; see _resolve_workflow).
-        if getattr(mform, "roles", None) is not None:
+        if not self._skip_role_sync and getattr(mform, "roles", None) is not None:
             role_ids = {UUID(r) for r in mform.roles}
             ops.append(SyncRoles(
                 junction_model=FormRole,
@@ -2979,28 +3184,29 @@ class ManifestResolver:
         agent_id = UUID(magent.id)
         ops: list[SyncOp] = []
 
-        if org_id:
-            agent_values: dict = {
-                "name": data.get("name", ""),
-                "system_prompt": data.get("system_prompt", ""),
-                "is_active": True,
-                "created_by": "git-sync",
-                "organization_id": org_id,
-                "max_iterations": data.get("max_iterations"),
-                "max_token_budget": data.get("max_token_budget"),
-            }
-            if magent.access_level is not None:
-                agent_values["access_level"] = magent.access_level
-            ops.append(Upsert(
-                model=Agent,
-                id=agent_id,
-                values=agent_values,
-                match_on="id",
-            ))
+        # Global agents are first-class workspace content too.  The old guard
+        # silently dropped them because ``None`` is falsy.
+        agent_values: dict = {
+            "name": data.get("name", ""),
+            "system_prompt": data.get("system_prompt", ""),
+            "is_active": True,
+            "created_by": "git-sync",
+            "organization_id": org_id,
+            "max_iterations": data.get("max_iterations"),
+            "max_token_budget": data.get("max_token_budget"),
+        }
+        if magent.access_level is not None:
+            agent_values["access_level"] = magent.access_level
+        ops.append(Upsert(
+            model=Agent,
+            id=agent_id,
+            values=agent_values,
+            match_on="id",
+        ))
 
         # Role sync op (AgentRole.assigned_by is NOT NULL — pass via extra_fields).
         # Fire on present-empty too, to clear bindings (B3; see _resolve_workflow).
-        if getattr(magent, "roles", None) is not None:
+        if not self._skip_role_sync and getattr(magent, "roles", None) is not None:
             role_ids = {UUID(r) for r in magent.roles}
             ops.append(SyncRoles(
                 junction_model=AgentRole,

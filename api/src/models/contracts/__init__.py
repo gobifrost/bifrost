@@ -356,11 +356,9 @@ if TYPE_CHECKING:
         GitHubBranchInfo,
         GitHubBranchesResponse,
         GitHubConfigEntity,
-        GitHubConfigRequest,
         GitHubConfigResponse,
         GitHubRepoInfo,
         GitHubReposResponse,
-        GitHubSetupResponse,
         GitRefreshStatusResponse,
         OrphanedWorkflowInfo,
         OrphanedWorkflowsResponse,
@@ -548,6 +546,10 @@ if TYPE_CHECKING:
         KnowledgeStorageUsage,
         KnowledgeStorageTrend,
         UsageReportResponse,
+        WorkflowResourceReport,
+        WorkflowResourceRun,
+        WorkflowResourceSummary,
+        WorkflowResourceWorkflow,
     )
     from src.models.contracts.export_import import (  # noqa: F401
         BulkExportRequest,

@@ -22,7 +22,7 @@ async def test_enqueue_returns_typed_handle_without_execution_wait(monkeypatch):
         "status": "queued",
     }
     client = MagicMock()
-    client.post = AsyncMock(return_value=response)
+    client.engine_request = AsyncMock(return_value=response)
     monkeypatch.setattr(mod, "get_client", lambda: client)
 
     handle = await mod.agents.enqueue(
@@ -33,7 +33,8 @@ async def test_enqueue_returns_typed_handle_without_execution_wait(monkeypatch):
 
     assert handle.run_id == "11111111-1111-1111-1111-111111111111"
     assert handle.status == "queued"
-    client.post.assert_awaited_once_with(
+    client.engine_request.assert_awaited_once_with(
+        "POST",
         "/api/agent-runs/enqueue",
         json={
             "agent_name": "Ticket Agent",
@@ -54,7 +55,7 @@ async def test_enqueue_raises_agent_paused_error(monkeypatch):
         "agent_id": "22222222-2222-2222-2222-222222222222",
     }
     client = MagicMock()
-    client.post = AsyncMock(return_value=response)
+    client.engine_request = AsyncMock(return_value=response)
     monkeypatch.setattr(mod, "get_client", lambda: client)
 
     with pytest.raises(mod.AgentPausedError):
@@ -74,13 +75,16 @@ async def test_get_run_returns_typed_status(monkeypatch):
         "created_at": "2026-08-24T12:00:00Z",
     }
     client = MagicMock()
-    client.get = AsyncMock(return_value=response)
+    client.engine_request = AsyncMock(return_value=response)
     monkeypatch.setattr(mod, "get_client", lambda: client)
 
     run = await mod.agents.get_run("11111111-1111-1111-1111-111111111111")
 
     assert run.status == "queued"
     assert run.agent_name == "Ticket Agent"
+    client.engine_request.assert_awaited_once_with(
+        "GET", "/api/agent-runs/11111111-1111-1111-1111-111111111111"
+    )
 
 
 @pytest.mark.asyncio
@@ -88,7 +92,7 @@ async def test_get_run_translates_not_found(monkeypatch):
     mod = _agents_module()
     response = MagicMock(status_code=404, is_success=False)
     client = MagicMock()
-    client.get = AsyncMock(return_value=response)
+    client.engine_request = AsyncMock(return_value=response)
     monkeypatch.setattr(mod, "get_client", lambda: client)
 
     with pytest.raises(ValueError, match="Agent run not found"):

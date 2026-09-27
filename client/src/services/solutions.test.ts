@@ -22,6 +22,7 @@ import {
 	deleteSolution,
 	createSolutionExportJob,
 	downloadSolutionExportJob,
+	disconnectSolutionGit,
 	getSolution,
 	getSolutionEntities,
 	getSolutionExportJob,
@@ -33,6 +34,9 @@ import {
 	listSolutions,
 	previewInstall,
 	previewSolutionFromRepo,
+	previewWorkspaceBundle,
+	previewWorkspaceBundleFromRepo,
+	importWorkspaceBundle,
 	putSolutionReadme,
 	syncSolution,
 	updateSelectedSolutionAppSdks,
@@ -50,6 +54,56 @@ beforeEach(() => {
 });
 
 describe("solutions service", () => {
+	it("previews a workspace bundle as multipart content", async () => {
+		mockAuthFetch.mockResolvedValue({ ok: true, json: async () => ({ items: [] }) });
+
+		await previewWorkspaceBundle(new File(["zip"], "bundle.zip"));
+
+		expect(mockAuthFetch).toHaveBeenCalledWith(
+			"/api/solutions/import-workspace/preview",
+			expect.objectContaining({ method: "POST" }),
+		);
+	});
+
+	it("enqueues reviewed workspace decisions", async () => {
+		mockPost.mockResolvedValue({ data: { job_id: "job-1", status: "queued", reused: false } });
+
+		await importWorkspaceBundle({ preview_token: "preview-1", decisions: [] });
+
+		expect(mockPost).toHaveBeenCalledWith("/api/solutions/import-workspace", {
+			body: { preview_token: "preview-1", decisions: [] },
+		});
+	});
+
+	it("previews a workspace bundle from repository coordinates", async () => {
+		mockPost.mockResolvedValue({ data: { preview_token: "preview-2", items: [] } });
+
+		const out = await previewWorkspaceBundleFromRepo({
+			repo_url: "https://example.com/repo.git",
+			git_ref: "main",
+			repo_subpath: "packages/demo",
+		});
+
+		expect(mockPost).toHaveBeenCalledWith("/api/solutions/import-workspace/preview-repo", {
+			body: {
+				repo_url: "https://example.com/repo.git",
+				git_ref: "main",
+				repo_subpath: "packages/demo",
+				organization_id: null,
+			},
+		});
+		expect(out).toEqual({ preview_token: "preview-2", items: [] });
+	});
+
+	it("normalizes empty workspace repo coordinates to null", async () => {
+		mockPost.mockResolvedValue({ data: { preview_token: "preview-3", items: [] } });
+
+		await previewWorkspaceBundleFromRepo({ repo_url: "https://example.com/repo.git" });
+
+		expect(mockPost).toHaveBeenCalledWith("/api/solutions/import-workspace/preview-repo", {
+			body: { repo_url: "https://example.com/repo.git", git_ref: null, repo_subpath: null, organization_id: null },
+		});
+	});
 	it("lists solutions", async () => {
 		mockGet.mockResolvedValue({ data: { solutions: [] } });
 
@@ -172,9 +226,15 @@ describe("solutions service", () => {
 	});
 
 	it("syncs a solution by id", async () => {
-		mockPost.mockResolvedValue({ data: undefined });
+		mockPost.mockResolvedValue({
+			data: { job_id: "job-1", status: "queued", reused: false },
+		});
 
-		await syncSolution("sol-1");
+		await expect(syncSolution("sol-1")).resolves.toEqual({
+			job_id: "job-1",
+			status: "queued",
+			reused: false,
+		});
 
 		expect(mockPost).toHaveBeenCalledWith(
 			"/api/solutions/{solution_id}/sync",
@@ -188,6 +248,22 @@ describe("solutions service", () => {
 		mockPost.mockResolvedValue({ error: { detail: "no remote" } });
 
 		await expect(syncSolution("sol-1")).rejects.toThrow(/no remote/);
+	});
+
+	it("disconnects a solution without changing its installed entities", async () => {
+		mockPatch.mockResolvedValue({ data: { id: "sol-1" } });
+
+		await disconnectSolutionGit("sol-1");
+
+		expect(mockPatch).toHaveBeenCalledWith("/api/solutions/{solution_id}", {
+			params: { path: { solution_id: "sol-1" } },
+			body: {
+				git_connected: false,
+				git_repo_url: null,
+				repo_subpath: null,
+				git_ref: null,
+			},
+		});
 	});
 
 	it("gets aggregate SDK status for a solution", async () => {

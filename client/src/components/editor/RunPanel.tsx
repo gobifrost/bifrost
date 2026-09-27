@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import { useNavigate } from "react-router-dom";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
 	useState,
@@ -63,6 +64,7 @@ interface RunPanelProps {
  * Shows detected file type and appropriate inputs
  */
 export function RunPanel({ executeRef }: RunPanelProps) {
+	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const orgId = useScopeStore((state) => state.scope.orgId);
 
@@ -880,28 +882,28 @@ export function RunPanel({ executeRef }: RunPanelProps) {
 										>
 											<SelectValue placeholder="Select a workflow to run" />
 										</SelectTrigger>
-										<SelectContent className="z-[200]">
-											{detectedItem.workflows?.map(
-												(w) => (
-													<SelectItem
-														key={w.id}
-														value={w.id}
-													>
-														<div className="flex flex-col items-start">
-															<span>
-																{w.name}
+									<SelectContent className="z-[200]">
+										{detectedItem.workflows
+											?.filter((w) => w.type !== "service")
+											.map((w) => (
+												<SelectItem
+													key={w.id}
+													value={w.id}
+												>
+													<div className="flex flex-col items-start">
+														<span>
+															{w.name}
+														</span>
+														{w.description && (
+															<span className="text-xs text-muted-foreground">
+																{
+																	w.description
+																}
 															</span>
-															{w.description && (
-																<span className="text-xs text-muted-foreground">
-																	{
-																		w.description
-																	}
-																</span>
-															)}
-														</div>
-													</SelectItem>
-												),
-											)}
+														)}
+													</div>
+												</SelectItem>
+											))}
 										</SelectContent>
 									</Select>
 								</div>
@@ -913,8 +915,25 @@ export function RunPanel({ executeRef }: RunPanelProps) {
 							) : null}
 						</div>
 
-						{/* Parameters form - only show when a workflow is selected */}
-						{selectedWorkflow ? (
+						{/* Parameters form - only show when a runnable workflow is selected */}
+						{selectedWorkflow?.type === "service" ? (
+							<div className="p-3">
+								<p className="text-sm leading-6 text-muted-foreground">
+									{selectedWorkflow.name} is a supervised
+									service — it runs under start/stop control,
+									not one-shot execution. Manage it from the
+									Services tab.
+								</p>
+								<Button
+									type="button"
+									variant="outline"
+									className="mt-2 min-h-11"
+									onClick={() => navigate("/workflows")}
+								>
+									Open Services
+								</Button>
+							</div>
+						) : selectedWorkflow ? (
 							<div className="p-3">
 								<WorkflowParametersForm
 									key={selectedWorkflowId} // Reset form when workflow changes

@@ -51,6 +51,7 @@ class AuditLogRepository:
         ip_address: str | None,
         user_agent: str | None,
         details: dict[str, Any] | None,
+        execution_id: UUID | None,
     ) -> AuditLog:
         """Insert a new audit log row."""
         log = AuditLog(
@@ -64,6 +65,7 @@ class AuditLogRepository:
             ip_address=ip_address,
             user_agent=user_agent,
             details=details,
+            execution_id=execution_id,
         )
         self.session.add(log)
         await self.session.flush()
@@ -76,6 +78,7 @@ class AuditLogRepository:
         resource_type: str | None = None,
         outcome: str | None = None,
         user_id: UUID | None = None,
+        execution_id: UUID | None = None,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
         search: str | None = None,
@@ -103,6 +106,8 @@ class AuditLogRepository:
             query = query.where(AuditLog.outcome == outcome)
         if user_id:
             query = query.where(AuditLog.user_id == user_id)
+        if execution_id:
+            query = query.where(AuditLog.execution_id == execution_id)
         if start_date:
             query = query.where(AuditLog.created_at >= start_date)
         if end_date:

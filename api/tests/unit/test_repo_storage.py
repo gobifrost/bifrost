@@ -1,4 +1,6 @@
 """Tests for repo storage service."""
+from contextlib import asynccontextmanager
+import hashlib
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -50,6 +52,38 @@ async def test_read_prepends_repo_prefix(mock_s3_client):
     call_kwargs = mock_s3_client.get_object.call_args[1]
     assert call_kwargs["Key"] == "_repo/workflows/test.py"
     assert content == b"print('hello')"
+
+
+@pytest.mark.asyncio
+async def test_content_hash_streams_repo_object_without_materializing_it():
+    storage = RepoStorage.__new__(RepoStorage)
+    storage._bucket = "test-bucket"
+
+    class Body:
+        def __init__(self):
+            self.chunks = iter((b"hello ", b"world", b""))
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def read(self, _size):  # noqa: ANN001, ANN201
+            return next(self.chunks)
+
+    client = AsyncMock()
+    client.get_object = AsyncMock(return_value={"Body": Body()})
+
+    @asynccontextmanager
+    async def fake_client():
+        yield client
+
+    storage._get_client = fake_client
+    digest = await storage.content_hash("modules/customer.py")
+
+    assert digest == hashlib.sha256(b"hello world").hexdigest()
+    assert client.get_object.await_args.kwargs["Key"] == "_repo/modules/customer.py"
 
 
 @pytest.mark.asyncio

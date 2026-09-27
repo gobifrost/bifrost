@@ -199,6 +199,8 @@ async def get_current_user_optional(
         verified_context=payload.get("verified_context"),
         engine_execution_id=payload.get("engine_execution_id"),
         engine_solution_id=payload.get("engine_solution_id"),
+        service_id=payload.get("service_id"),
+        service_attempt_id=payload.get("service_attempt_id"),
         capability_fingerprint=payload.get("capability_fingerprint"),
         token_exp=payload.get("exp"),
     )
@@ -285,6 +287,31 @@ async def get_current_superuser(
             detail="Superuser privileges required"
         )
     return user
+
+
+async def get_current_engine_or_bypass_user(
+    user: Annotated[UserPrincipal, Depends(get_current_user)],
+) -> UserPrincipal:
+    """Admit execution credentials and scope-bypass principals only.
+
+    Execution credentials are the signed engine and service tokens: they
+    carry ``engine_execution_id`` and never an embed claim. Bypass is
+    platform admin OR provider-org member. Every other principal, including
+    an ordinary user's own session token, is refused.
+    """
+    from shared.scope_resolver import has_scope_bypass
+
+    if user.engine_execution_id and not user.embed:
+        return user
+    if has_scope_bypass(
+        is_platform_admin=user.is_platform_admin,
+        is_provider_org=user.is_provider_org,
+    ):
+        return user
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Execution credentials or platform access required",
+    )
 
 
 # Dependency for requiring platform admin access
@@ -426,6 +453,7 @@ async def _refuse_if_solution_inactive(solution_row: object) -> None:
 CurrentUser = Annotated[UserPrincipal, Depends(get_current_user)]
 CurrentActiveUser = Annotated[UserPrincipal, Depends(get_current_active_user)]
 CurrentSuperuser = Annotated[UserPrincipal, Depends(get_current_superuser)]
+CurrentEngineOrBypassUser = Annotated[UserPrincipal, Depends(get_current_engine_or_bypass_user)]
 Context = Annotated[ExecutionContext, Depends(get_execution_context)]
 
 
@@ -565,6 +593,8 @@ async def get_current_user_ws(websocket) -> UserPrincipal | None:
         verified_context=payload.get("verified_context"),
         engine_execution_id=payload.get("engine_execution_id"),
         engine_solution_id=payload.get("engine_solution_id"),
+        service_id=payload.get("service_id"),
+        service_attempt_id=payload.get("service_attempt_id"),
         capability_fingerprint=payload.get("capability_fingerprint"),
         token_exp=payload.get("exp"),
     )

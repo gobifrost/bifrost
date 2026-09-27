@@ -7,7 +7,12 @@ import type { components } from "@/lib/v1";
 
 type AcceptedSdkUpdate = components["schemas"]["ApplicationSdkUpdateAccepted"];
 
-const TERMINAL_STATUSES = new Set(["succeeded", "failed", "cancelled"]);
+const TERMINAL_STATUSES = new Set([
+	"succeeded",
+	"failed",
+	"cancelled",
+	"requires_action",
+]);
 
 function isSdkUpdateJob(job: PlatformJobUpdate): boolean {
 	return job.job_type === "application.sdk_update";
@@ -18,7 +23,12 @@ function appIdFromJob(job: PlatformJobUpdate): string | null {
 }
 
 function stateFromStatus(status: string): ApplicationSdkUpdateState {
-	if (status === "failed" || status === "cancelled") return "failed";
+	if (
+		status === "failed" ||
+		status === "cancelled" ||
+		status === "requires_action"
+	)
+		return "failed";
 	if (status === "succeeded") return "idle";
 	if (status === "queued") return "queued";
 	return "updating";

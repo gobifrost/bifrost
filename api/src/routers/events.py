@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import joinedload
 
-from src.core.auth import Context, CurrentSuperuser
+from src.core.auth import Context, CurrentActiveUser, CurrentSuperuser
 from src.core.db_deps import DbSession
 from src.core.error_messages import format_exception_message
 from src.core.log_safety import log_safe
@@ -62,7 +62,6 @@ from src.repositories.events import (
 )
 from src.core.cache import get_shared_redis
 from src.config import get_settings
-from src.services.events import emit_event
 from src.services.events.registry import CURATED_TOPICS
 from src.services.events.validation import validate_topic
 from src.services.webhooks.registry import get_adapter_registry
@@ -74,6 +73,7 @@ from src.services.webhooks.lifecycle import (
     resubscribe_provider,
     unsubscribe_provider,
 )
+from src.services.operation_catalog import operation_route
 
 logger = logging.getLogger(__name__)
 
@@ -212,7 +212,7 @@ async def _build_event_subscription_response(
     response_model=WebhookAdapterListResponse,
     summary="List available webhook adapters",
     description="List all available webhook adapters and their configuration schemas (Platform admin only).",
-)
+**operation_route("events.webhook_adapters.list"))
 async def list_adapters(
     ctx: Context,
     user: CurrentSuperuser,
@@ -314,7 +314,7 @@ async def get_dynamic_values(
     response_model=EventSourceListResponse,
     summary="List event sources",
     description="List all event sources (Platform admin only).",
-)
+**operation_route("events.sources.list"))
 async def list_sources(
     ctx: Context,
     user: CurrentSuperuser,
@@ -387,7 +387,7 @@ async def list_sources(
     status_code=status.HTTP_201_CREATED,
     summary="Create event source",
     description="Create a new event source (Platform admin only).",
-)
+**operation_route("events.sources.create"))
 async def create_source(
     request: EventSourceCreate,
     ctx: Context,
@@ -570,7 +570,7 @@ async def create_source(
     response_model=EventSourceResponse,
     summary="Get event source",
     description="Get a specific event source by ID (Platform admin only).",
-)
+**operation_route("events.sources.get"))
 async def get_source(
     source_id: UUID,
     ctx: Context,
@@ -595,7 +595,7 @@ async def get_source(
     response_model=EventSourceResponse,
     summary="Update event source",
     description="Update an event source (Platform admin only).",
-)
+**operation_route("events.sources.update"))
 async def update_source(
     source_id: UUID,
     request: EventSourceUpdate,
@@ -748,7 +748,7 @@ async def resubscribe_source(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete event source",
     description="Permanently delete an event source and all its subscriptions, events, and deliveries (Platform admin only).",
-)
+**operation_route("events.sources.delete"))
 async def delete_source(
     source_id: UUID,
     ctx: Context,
@@ -821,7 +821,7 @@ async def delete_source(
     response_model=EventSubscriptionListResponse,
     summary="List subscriptions",
     description="List subscriptions for an event source (Platform admin only).",
-)
+**operation_route("events.subscriptions.list"))
 async def list_subscriptions(
     source_id: UUID,
     ctx: Context,
@@ -858,7 +858,7 @@ async def list_subscriptions(
     status_code=status.HTTP_201_CREATED,
     summary="Create subscription",
     description="Create a subscription to an event source (Platform admin only).",
-)
+**operation_route("events.subscriptions.create"))
 async def create_subscription(
     source_id: UUID,
     request: EventSubscriptionCreate,
@@ -890,6 +890,22 @@ async def create_subscription(
     elif request.target_type == "workflow":
         if not request.workflow_id:
             raise HTTPException(status_code=400, detail="workflow_id required when target_type is 'workflow'")
+        # Services run under supervision and cannot be one-shot event targets.
+        from src.models.orm.workflows import Workflow as WorkflowORM
+
+        target = await db.get(WorkflowORM, request.workflow_id)
+        if target is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Workflow '{request.workflow_id}' not found",
+            )
+        if target.type == "service":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Workflow '{target.name}' is a long-lived service "
+                "(type='service') and cannot be an event subscription target. "
+                "Services emit events; workflows and agents consume them.",
+            )
 
     subscription = EventSubscription(
         event_source_id=source_id,
@@ -925,7 +941,7 @@ async def create_subscription(
     response_model=EventSubscriptionResponse,
     summary="Update subscription",
     description="Update an event subscription (Platform admin only).",
-)
+**operation_route("events.subscriptions.update"))
 async def update_subscription(
     source_id: UUID,
     subscription_id: UUID,
@@ -991,7 +1007,7 @@ async def update_subscription(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete subscription",
     description="Permanently delete an event subscription (Platform admin only).",
-)
+**operation_route("events.subscriptions.delete"))
 async def delete_subscription(
     source_id: UUID,
     subscription_id: UUID,
@@ -1157,69 +1173,23 @@ async def list_events(
 async def emit_topic_event(
     request: EmitEventRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
 ) -> EmitEventResponse:
     """Emit a topic event and return the event_id and subscriber count."""
+    from shared.event_emission import (
+        EventEmissionCaller,
+        EventEmissionError,
+        emit_topic_event as emit_topic_service,
+    )
+
+    caller = EventEmissionCaller.from_context(ctx, user)
     try:
-        validate_topic(request.topic)
-    except ValueError as exc:
+        return await emit_topic_service(caller, request)
+    except EventEmissionError as exc:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        )
-
-    organization_id: UUID | None = None
-    if request.scope and request.scope != "GLOBAL":
-        try:
-            organization_id = UUID(request.scope)
-        except ValueError:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid scope: must be a UUID or 'GLOBAL', got '{request.scope}'",
-            )
-
-    solution_id: UUID | None = None
-    requested_solution = request.solution or ctx.solution_id
-    if requested_solution:
-        from src.services.solution_scope import (
-            check_inbound_allowed,
-            is_engine_user,
-            resolve_solution_ref,
-            resolve_trustworthy_caller,
-        )
-
-        solution_id = await resolve_solution_ref(
-            ctx.db, str(requested_solution), organization_id
-        )
-        if solution_id is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Solution not found",
-            )
-        caller = await resolve_trustworthy_caller(ctx.db, ctx)
-        if caller is None and request.caller_solution and is_engine_user(ctx.user):
-            try:
-                caller = UUID(str(request.caller_solution))
-            except ValueError:
-                caller = None
-        if not await check_inbound_allowed(ctx.db, solution_id, caller):
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Solution not found",
-            )
-
-    event_id, subscribers_notified = await emit_event(
-        request.topic,
-        request.data,
-        organization_id=organization_id,
-        solution_id=solution_id,
-        triggered_by=str(user.user_id),
-    )
-
-    return EmitEventResponse(
-        event_id=str(event_id),
-        subscribers_notified=subscribers_notified,
-    )
+            status_code=exc.status_code,
+            detail=exc.detail,
+        ) from exc
 
 
 @router.get(
@@ -1230,6 +1200,7 @@ async def emit_topic_event(
 )
 async def list_topics(
     db: DbSession,
+    _user: CurrentSuperuser,
 ) -> TopicsRegistryResponse:
     """Return the curated topic registry plus topics currently in use."""
     source_repo = EventSourceRepository(db)

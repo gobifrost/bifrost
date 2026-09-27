@@ -41,6 +41,13 @@ def _make_client(
         headers={"Authorization": f"Bearer {client._access_token}"},
         transport=httpx.MockTransport(handler),
     )
+    # Bypassing __init__ means the engine-local transport slots must be set
+    # explicitly: close() and install_access_token() read them.
+    client._engine_http = None
+    client._engine_http_loop = None
+    client._engine_http_path = None
+    client._engine_sync_http = None
+    client._engine_sync_http_path = None
     client._context = None
     return client
 
@@ -118,6 +125,13 @@ def _make_fixed_client(
         headers={"Authorization": f"Bearer {client._access_token}"},
         transport=httpx.MockTransport(handler),
     )
+    # Bypassing __init__ means the engine-local transport slots must be set
+    # explicitly: close() and install_access_token() read them.
+    client._engine_http = None
+    client._engine_http_loop = None
+    client._engine_http_path = None
+    client._engine_sync_http = None
+    client._engine_sync_http_path = None
     client._context = None
     return client
 

@@ -149,6 +149,93 @@ class SolutionSdkUpdateBatchResponse(BaseModel):
     skipped: list[ApplicationSdkUpdateSkipped] = Field(default_factory=list)
 
 
+class WorkspaceBundleDiffLine(BaseModel):
+    """One portable field difference shown before importing a bundle."""
+
+    field: str
+    existing: Any | None = None
+    incoming: Any | None = None
+
+
+class WorkspaceBundleItem(BaseModel):
+    """One entity or source file considered by a workspace-bundle preview."""
+
+    id: str
+    kind: Literal[
+        "workflow", "integration", "config", "app", "table", "event", "form",
+        "agent", "claim", "policy_rule", "file_policy", "file",
+    ]
+    name: str
+    classification: Literal["create", "unchanged", "conflict"]
+    match_key: str | None = None
+    source_id: UUID | None = None
+    target_id: UUID | None = None
+    # Links a definition to the source files that implement it (a workflow and
+    # its .py, an app and its source tree) so the review can decide them
+    # together. Items without an owning definition carry None.
+    group_key: str | None = None
+    # Replacing a globally unique workflow/app match changes its org scope.
+    scope_change: bool = False
+    diff: list[WorkspaceBundleDiffLine] = Field(default_factory=list)
+
+
+class WorkspaceBundlePreview(BaseModel):
+    """A deterministic, staged workspace-bundle import preview."""
+
+    preview_token: str
+    package_name: str
+    package_sha256: str
+    items: list[WorkspaceBundleItem]
+    # Declared keys and whether input is needed; values and defaults stay private.
+    config_schemas: list[dict[str, Any]] = Field(default_factory=list)
+    source_kind: Literal["zip", "repo"] = "zip"
+    repo_url: str | None = None
+    git_ref: str | None = None
+    repo_subpath: str | None = None
+    resolved_commit: str | None = None
+    # Target scope for scoped definitions (null = global workspace content).
+    # Files, integrations, and roles are always global; everything else lands here.
+    organization_id: UUID | None = None
+
+    @computed_field
+    @property
+    def conflict_count(self) -> int:
+        return sum(item.classification == "conflict" for item in self.items)
+
+
+class WorkspaceBundleDecision(BaseModel):
+    item_id: str
+    action: Literal["keep", "replace"]
+
+
+class WorkspaceBundleRepoPreviewRequest(BaseModel):
+    """One-time repository snapshot coordinates for a workspace import.
+
+    Snapshot semantics only: the coordinates are bound into the preview for
+    audit/retry, but no ongoing package-repository connection is persisted.
+    A future saved re-import recipe may prefill these same fields.
+    """
+
+    repo_url: str = Field(min_length=1, max_length=2048)
+    git_ref: str | None = Field(default=None, max_length=256)
+    repo_subpath: str | None = Field(default=None, max_length=1024)
+    # Target scope for scoped definitions (absent/null = global).
+    organization_id: UUID | None = None
+
+
+class WorkspaceBundleImportRequest(BaseModel):
+    preview_token: str
+    decisions: list[WorkspaceBundleDecision]
+    config_values: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _unique_decisions(self) -> "WorkspaceBundleImportRequest":
+        ids = [decision.item_id for decision in self.decisions]
+        if len(ids) != len(set(ids)):
+            raise ValueError("workspace import decisions must be unique")
+        return self
+
+
 class SolutionEntityCounts(BaseModel):
     """Per-install inventory counts for lightweight list/catalog views."""
 

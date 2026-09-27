@@ -194,27 +194,19 @@ class TestListContent:
             mock_repo.list.assert_called_once_with("")
 
     @pytest.mark.asyncio
-    async def test_list_workflows_org_scoped(self, org_user_context):
-        """Should list files filtered by path_prefix for org users."""
+    async def test_list_content_denied_for_org_user(self, org_user_context):
+        """`_repo/` listing requires scope bypass — a regular org user (no
+        platform-admin/provider-org flag) is denied, matching REST's
+        admin-only `/files/editor` route."""
         from src.services.mcp_server.tools.code_editor import list_content
 
-        with patch("src.services.mcp_server.tools.code_editor.RepoStorage") as mock_repo_cls:
-            mock_repo = MagicMock()
-            mock_repo.list = AsyncMock(return_value=[
-                "workflows/sync_tickets.py",
-            ])
-            mock_repo_cls.return_value = mock_repo
+        result = await list_content(
+            context=org_user_context,
+            path_prefix="workflows/",
+        )
 
-            result = await list_content(
-                context=org_user_context,
-                path_prefix="workflows/",
-            )
-
-            assert isinstance(result, ToolResult)
-            data = get_result_data(result)
-            assert "files" in data
-            assert len(data["files"]) == 1
-            assert data["files"][0]["path"] == "workflows/sync_tickets.py"
+        assert isinstance(result, ToolResult)
+        assert is_error_result(result)
 
 
 class TestSearchContent:
@@ -747,8 +739,9 @@ class TestDeleteContent:
         assert "path" in data["error"]
 
     @pytest.mark.asyncio
-    async def test_delete_workflow_with_org_filter(self, org_user_context):
-        """Should delete a file for org-scoped users."""
+    async def test_delete_denied_for_org_user(self, org_user_context):
+        """Deleting a `_repo/` file requires scope bypass — a regular org
+        user is denied regardless of which org owns the underlying entity."""
         from src.services.mcp_server.tools.code_editor import delete_content
 
         with patch("src.services.mcp_server.tools.code_editor.RepoStorage") as mock_repo_cls:
@@ -773,8 +766,8 @@ class TestDeleteContent:
                     )
 
                     assert isinstance(result, ToolResult)
-                    data = get_result_data(result)
-                    assert data["success"] is True
+                    assert is_error_result(result)
+                    mock_fs_instance.delete_file.assert_not_called()
 
 
 class TestMultiFunctionWorkflows:

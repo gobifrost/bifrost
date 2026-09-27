@@ -1387,7 +1387,9 @@ class TestTopicEmitEndpoints:
         assert "user.invited" in curated_topics
         assert "test.e2e_emit" in body["in_use"]
 
-    def test_topics_registry_no_auth_required(self, e2e_client):
-        """GET /api/events/topics is accessible without authentication."""
-        response = e2e_client.get("/api/events/topics")
-        assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
+    def test_topics_registry_requires_platform_admin(self, e2e_client, org1_user):
+        """GET /api/events/topics lists topics across organizations, so it is admin-only."""
+        anonymous = e2e_client.get("/api/events/topics")
+        assert anonymous.status_code in (401, 403), anonymous.text
+        regular = e2e_client.get("/api/events/topics", headers=org1_user.headers)
+        assert regular.status_code == 403, regular.text

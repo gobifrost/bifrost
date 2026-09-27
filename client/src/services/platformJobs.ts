@@ -7,6 +7,52 @@ export type PlatformJobListResponse =
 export type PlatformJobCancelResponse =
 	components["schemas"]["PlatformJobCancelResponse"];
 
+const TERMINAL_PLATFORM_JOB_STATUSES = new Set<PlatformJob["status"]>([
+	"succeeded",
+	"failed",
+	"cancelled",
+	"requires_action",
+]);
+
+export type PlatformJobObservation = {
+	promise: Promise<PlatformJob | undefined>;
+	cancel: () => void;
+};
+
+export async function getPlatformJob(jobId: string): Promise<PlatformJob> {
+	const { data, error } = await apiClient.GET("/api/platform-jobs/{job_id}", {
+		params: { path: { job_id: jobId } },
+	});
+	if (error) {
+		throw new Error("Failed to load platform job");
+	}
+	return data;
+}
+
+/**
+ * Recover a shared PlatformJob status when a notification is missed.
+ *
+ * Browser progress remains notification-driven. One status snapshot closes
+ * the response-to-notification race without creating a polling loop.
+ */
+export function observePlatformJob(
+	jobId: string,
+	onUpdate: (job: PlatformJob) => void,
+): PlatformJobObservation {
+	let cancelled = false;
+	const cancel = () => {
+		cancelled = true;
+	};
+	const promise = (async (): Promise<PlatformJob | undefined> => {
+		if (cancelled) return undefined;
+		const job = await getPlatformJob(jobId);
+		if (cancelled) return undefined;
+		onUpdate(job);
+		return TERMINAL_PLATFORM_JOB_STATUSES.has(job.status) ? job : undefined;
+	})();
+	return { promise, cancel };
+}
+
 export async function getPlatformJobs(
 	options: {
 		activeOnly?: boolean;

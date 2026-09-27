@@ -115,6 +115,37 @@ def _candidate_row(
     }
 
 
+def _update_post_image_row(
+    old_row: dict[str, Any],
+    patch_data: dict[str, Any],
+    *,
+    updated_by: str | None,
+    now: datetime,
+    replace: bool,
+) -> dict[str, Any]:
+    """Build the post-image row dict for ``update`` policy evaluation.
+
+    ``replace=False`` merges ``patch_data`` over the pre-image (PATCH /
+    ``merge_upsert`` semantics); ``replace=True`` uses ``patch_data`` as the
+    full new data (single ``upsert`` / ``replace_upsert`` semantics, where
+    the JSONB ``data`` column is overwritten, not merged).
+
+    Column-mapped fields (``id``, ``table_id``, ``created_by``,
+    ``created_at``) always win over same-named keys in ``patch_data`` —
+    mirroring :func:`_row_from_doc`, where the ORM columns overwrite the
+    flattened JSONB data. ``created_by``/``created_at`` are preserved from
+    the pre-image because updates never rewrite them.
+    """
+    base: dict[str, Any] = dict(patch_data) if replace else {**old_row, **patch_data}
+    base["id"] = old_row["id"]
+    base["table_id"] = old_row["table_id"]
+    base["created_by"] = old_row.get("created_by")
+    base["created_at"] = old_row.get("created_at")
+    base["updated_by"] = updated_by
+    base["updated_at"] = now.isoformat()
+    return base
+
+
 async def _load_existing_for_update(
     session: AsyncSession,
     table: Table,
@@ -151,6 +182,20 @@ def _check_policies(
             old_row = _row_from_doc(existing_doc)
             previous_rows_by_index[row.submission_index] = old_row
             if not evaluate_action("update", policies, old_row, user):
+                denied.append(row.submission_index)
+                continue
+            # Dual-gate: the post-image must also satisfy `update`. Without
+            # this, a user authorized on the pre-image (e.g.
+            # row.organization_id == their org) could retarget the row into
+            # a value they could never write (e.g. another org's id).
+            post_image = _update_post_image_row(
+                old_row,
+                row.data,
+                updated_by=row.updated_by if row.updated_by is not None else row.created_by,
+                now=now,
+                replace=(mode == "replace_upsert"),
+            )
+            if not evaluate_action("update", policies, post_image, user):
                 denied.append(row.submission_index)
             continue
 

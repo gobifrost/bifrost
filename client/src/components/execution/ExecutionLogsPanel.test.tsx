@@ -112,6 +112,120 @@ describe("ExecutionLogsPanel — rendering logs", () => {
 		expect(positions).toEqual([...positions].sort((a, b) => a - b));
 	});
 
+	it("renders newest-first with sortOrder=desc", () => {
+		renderWithProviders(
+			<ExecutionLogsPanel
+				status="Success"
+				logs={[
+					log("INFO", "older", "2026-04-20T12:00:00Z"),
+					log("INFO", "newer", "2026-04-20T12:05:00Z"),
+				]}
+				sortOrder="desc"
+			/>,
+		);
+		const newer = screen.getByText("newer");
+		const older = screen.getByText("older");
+		expect(
+			newer.compareDocumentPosition(older) &
+				Node.DOCUMENT_POSITION_FOLLOWING,
+		).toBeTruthy();
+	});
+
+	it("pins arrivals to the top while following newest-first", () => {
+		const { rerender } = renderWithProviders(
+			<ExecutionLogsPanel
+				status="Running"
+				logs={[log("INFO", "first")]}
+				sortOrder="desc"
+			/>,
+		);
+		rerender(
+			<ExecutionLogsPanel
+				status="Running"
+				logs={[log("INFO", "first"), log("INFO", "second")]}
+				sortOrder="desc"
+			/>,
+		);
+		// Newest renders first; no "Following paused" footer appears
+		// because the follow edge (top) was never left.
+		const newer = screen.getByText("second");
+		const older = screen.getByText("first");
+		expect(
+			newer.compareDocumentPosition(older) &
+				Node.DOCUMENT_POSITION_FOLLOWING,
+		).toBeTruthy();
+		expect(screen.queryByText("Following paused")).not.toBeInTheDocument();
+	});
+
+	it("renders the pagination bar with follow control and pager", () => {
+		renderWithProviders(
+			<ExecutionLogsPanel
+				status="Success"
+				logs={[log("INFO", "only")]}
+				sortOrder="desc"
+				isConnected={true}
+				pagination={<span>pager-node</span>}
+			/>,
+		);
+		expect(screen.getByText("pager-node")).toBeInTheDocument();
+		expect(
+			screen.getByText("Following live updates"),
+		).toBeInTheDocument();
+	});
+
+	it("pauses into Back to Top inside the bar, without a floating duplicate", () => {
+		renderWithProviders(
+			<ExecutionLogsPanel
+				status="Running"
+				logs={[log("INFO", "only")]}
+				sortOrder="desc"
+				pagination={<span>pager-node</span>}
+			/>,
+		);
+		const region = screen.getByRole("region", {
+			name: "Execution log messages",
+		});
+		Object.defineProperty(region, "scrollHeight", {
+			value: 1000,
+			configurable: true,
+		});
+		Object.defineProperty(region, "clientHeight", {
+			value: 100,
+			configurable: true,
+		});
+		region.scrollTop = 500;
+		fireEvent.scroll(region);
+		expect(
+			screen.getAllByRole("button", { name: "Back to Top" }),
+		).toHaveLength(1);
+	});
+
+	it("keeps the floating pause control when there is no pagination", () => {
+		renderWithProviders(
+			<ExecutionLogsPanel
+				status="Running"
+				logs={[log("INFO", "only")]}
+			/>,
+		);
+		const region = screen.getByRole("region", {
+			name: "Execution log messages",
+		});
+		Object.defineProperty(region, "scrollHeight", {
+			value: 1000,
+			configurable: true,
+		});
+		Object.defineProperty(region, "clientHeight", {
+			value: 100,
+			configurable: true,
+		});
+		region.scrollTop = 500;
+		fireEvent.scroll(region);
+		expect(
+			screen.getByRole("button", { name: "Jump to latest" }),
+		).toBeInTheDocument();
+		expect(screen.getByText("Following paused")).toBeInTheDocument();
+	});
+
 	it("hides the level-filter note when the viewer is a platform admin", () => {
 		renderWithProviders(
 			<ExecutionLogsPanel
@@ -122,7 +236,6 @@ describe("ExecutionLogsPanel — rendering logs", () => {
 		);
 		expect(screen.queryByText(/INFO and above/i)).not.toBeInTheDocument();
 	});
-
 	it("tells non-admin viewers which levels are filtered", () => {
 		renderWithProviders(
 			<ExecutionLogsPanel
@@ -385,4 +498,35 @@ it("retains logs during a connection interruption and clears the notice on recov
 		screen.queryByText(/connection unavailable/i),
 	).not.toBeInTheDocument();
 	expect(screen.getByText("Last received message")).toBeVisible();
+});
+
+describe("ExecutionLogsPanel — date filter", () => {
+	const logs = [
+		log("info", "old line", "2026-04-17T09:30:12Z"),
+		log("info", "new line", "2026-04-20T07:12:44Z"),
+	];
+
+	it("hides the picker unless showDateFilter is set", () => {
+		renderWithProviders(<ExecutionLogsPanel logs={logs} />);
+		expect(
+			screen.queryByRole("button", { name: "Pick a date range" }),
+		).not.toBeInTheDocument();
+	});
+
+	it("narrows lines to the selected day window", () => {
+		const day = new Date("2026-04-20T07:12:44Z");
+		const { rerender } = renderWithProviders(
+			<ExecutionLogsPanel logs={logs} showDateFilter />,
+		);
+		expect(screen.getByText("old line")).toBeInTheDocument();
+		rerender(
+			<ExecutionLogsPanel
+				logs={logs}
+				showDateFilter
+				dateRange={{ from: day, to: day }}
+			/>,
+		);
+		expect(screen.queryByText("old line")).not.toBeInTheDocument();
+		expect(screen.getByText("new line")).toBeInTheDocument();
+	});
 });

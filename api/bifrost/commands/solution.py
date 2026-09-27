@@ -360,6 +360,150 @@ def update_cmd(
     asyncio.run(_run())
 
 
+async def _resolve_solution_git_ref(client: BifrostClient, solution_ref: str) -> dict[str, Any]:
+    """Resolve an install id or unambiguous slug for managed Git operations."""
+    response = await client.get("/api/solutions")
+    if response.status_code != 200:
+        raise click.ClickException(
+            f"Failed to list Solution installs ({response.status_code}): {response.text[:200]}"
+        )
+    installs = response.json().get("solutions", [])
+    matches = [install for install in installs if install.get("id") == solution_ref]
+    if not matches:
+        matches = [install for install in installs if install.get("slug") == solution_ref]
+    if not matches:
+        raise click.ClickException(f"No Solution install found for {solution_ref!r}.")
+    if len(matches) > 1:
+        ids = ", ".join(str(install.get("id")) for install in matches)
+        raise click.ClickException(
+            f"Solution slug {solution_ref!r} is ambiguous; use an install id: {ids}"
+        )
+    return matches[0]
+
+
+@solution_group.command(
+    name="install-repo",
+    help="Install a Solution from a repository and make Git its sole writer.",
+)
+@click.argument("repository_url")
+@click.option("--subpath", "repo_subpath", default=None, help="Solution workspace path inside the repository.")
+@click.option("--ref", "git_ref", default="main", show_default=True, help="Git ref to install.")
+def install_repo_cmd(repository_url: str, repo_subpath: str | None, git_ref: str) -> None:
+    """Install from Git; local ``solution deploy`` is refused afterwards."""
+
+    async def _run() -> int:
+        client = BifrostClient.get_instance(require_auth=True)
+        response = await client.post(
+            "/api/solutions/install/from-repo",
+            json={
+                "repo_url": repository_url,
+                "repo_subpath": repo_subpath,
+                "git_ref": git_ref,
+            },
+        )
+        if response.status_code != 202:
+            raise click.ClickException(
+                f"Repository install failed ({response.status_code}): {response.text[:200]}"
+            )
+        job_id = response.json().get("deploy_job_id")
+        if not isinstance(job_id, str):
+            raise click.ClickException("Repository install did not return a deploy job id.")
+        click.echo(f"Installing Git-connected Solution (job {job_id})...")
+        return await _poll_deploy_job(client, job_id, action="Install")
+
+    rc = asyncio.run(_run())
+    if rc:
+        raise SystemExit(rc)
+
+
+@solution_group.group(name="git", help="Connect or disconnect a managed Solution repository.")
+def solution_git_group() -> None:
+    pass
+
+
+@solution_git_group.command(name="connect")
+@click.argument("solution_ref")
+@click.argument("repository_url")
+@click.option("--subpath", "repo_subpath", default=None, help="Solution workspace path inside the repository.")
+@click.option("--ref", "git_ref", default="main", show_default=True, help="Git ref to update from.")
+def solution_git_connect_cmd(
+    solution_ref: str, repository_url: str, repo_subpath: str | None, git_ref: str
+) -> None:
+    """Connect an existing install; repository updates become its sole writer."""
+
+    async def _run() -> None:
+        client = BifrostClient.get_instance(require_auth=True)
+        solution = await _resolve_solution_git_ref(client, solution_ref)
+        response = await client.patch(
+            f"/api/solutions/{solution['id']}",
+            json={
+                "git_connected": True,
+                "git_repo_url": repository_url,
+                "repo_subpath": repo_subpath,
+                "git_ref": git_ref,
+            },
+        )
+        if response.status_code != 200:
+            raise click.ClickException(
+                f"Failed to connect Solution Git ({response.status_code}): {response.text[:200]}"
+            )
+        click.echo(
+            f"Connected Solution install {solution['id']} to Git. "
+            "Repository sync is now its only writer."
+        )
+
+    asyncio.run(_run())
+
+
+@solution_git_group.command(name="disconnect")
+@click.argument("solution_ref")
+def solution_git_disconnect_cmd(solution_ref: str) -> None:
+    """Disconnect Git so future updates are manual Solution deployments."""
+
+    async def _run() -> None:
+        client = BifrostClient.get_instance(require_auth=True)
+        solution = await _resolve_solution_git_ref(client, solution_ref)
+        response = await client.patch(
+            f"/api/solutions/{solution['id']}", json={"git_connected": False}
+        )
+        if response.status_code != 200:
+            raise click.ClickException(
+                f"Failed to disconnect Solution Git ({response.status_code}): {response.text[:200]}"
+            )
+        click.echo(
+            f"Disconnected Solution install {solution['id']}. "
+            "Future updates require an explicit deploy."
+        )
+
+    asyncio.run(_run())
+
+
+@solution_group.command(name="sync", help="Update a Git-connected Solution from its configured ref.")
+@click.argument("solution_ref")
+def solution_sync_cmd(solution_ref: str) -> None:
+    """Ask the server's sole Git writer to update the selected Solution."""
+
+    async def _run() -> None:
+        client = BifrostClient.get_instance(require_auth=True)
+        solution = await _resolve_solution_git_ref(client, solution_ref)
+        response = await client.post(f"/api/solutions/{solution['id']}/sync", json={})
+        if response.status_code not in {200, 202}:
+            raise click.ClickException(
+                f"Solution Git sync failed ({response.status_code}): {response.text[:200]}"
+            )
+        result = response.json()
+        job_id = result.get("job_id") or result.get("deploy_job_id")
+        if isinstance(job_id, str):
+            completed = await poll_platform_job(client, job_id, label="Syncing Solution")
+            output_result(completed)
+            return
+        # The current endpoint executes synchronously despite returning 202.
+        # Preserve its REST contract rather than inventing a second job system.
+        output_result(result)
+
+    asyncio.run(_run())
+
+
 def _workspace_from_path_arg(path: str) -> pathlib.Path:
     """Resolve a command's PATH argument to the solution root.
 
@@ -1439,6 +1583,10 @@ def _collect_apps(workspace: pathlib.Path) -> list[dict]:
             "id": body.get("id", key),
             "slug": body.get("slug") or key,
             "name": body.get("name") or key,
+            # The manifest-relative source dir. The workspace projection needs
+            # it (ManifestApp.path is required); the deployer keeps its
+            # apps/{slug} fallback for entries that predate it.
+            "path": body.get("path"),
             # description is deploy-owned: _upsert_apps full-replaces it, so
             # dropping it here would CLEAR the deployed app's description on every
             # deploy (non-round-tripping — Codex #16).
@@ -1920,7 +2068,7 @@ def _entities_in_manifest(workspace: pathlib.Path) -> list[dict[str, str]]:
 
 
 @solution_group.command(
-    name="pull",
+    name="pull-manifests",
     help="Pull captured entities into the local .bifrost/ manifest (does not touch source code).",
 )
 @click.argument("path", type=click.Path(exists=True, file_okay=False), default=".")
@@ -1937,6 +2085,12 @@ def pull_cmd(path: str, solution_id: str | None, org: str | None, is_global: boo
     entities it materialized so the matching ``pending_captures`` rows clear.
     Safe for an agent to run (it only rewrites the generated manifest).
     """
+    if click.get_current_context().info_name == "pull":
+        click.echo(
+            "Warning: `bifrost solution pull` is deprecated; use "
+            "`bifrost solution pull-manifests`.",
+            err=True,
+        )
     workspace = _workspace_from_path_arg(path)
     if not is_solution_workspace(workspace):
         raise click.ClickException(
@@ -2014,6 +2168,11 @@ def pull_cmd(path: str, solution_id: str | None, org: str | None, is_global: boo
     rc = asyncio.run(_run())
     if rc:
         raise SystemExit(rc)
+
+
+# Kept for released CLI scripts. Both spellings intentionally execute the same
+# command callback so the manifest-only behavior cannot drift.
+solution_group.add_command(pull_cmd, "pull")
 
 
 async def _poll_deploy_job(
@@ -3638,6 +3797,189 @@ async def _serve(
         observer.stop()
         observer.join(timeout=2)
         await runner.cleanup()
+
+
+def _workspace_import_decisions(
+    preview: dict[str, Any], *, keep_all: bool, replace_all: bool,
+    decisions_path: pathlib.Path | None, json_output: bool,
+) -> list[dict[str, str]]:
+    conflicts = [item for item in preview.get("items", []) if item.get("classification") == "conflict"]
+    if keep_all and replace_all:
+        raise click.UsageError("--keep-all and --replace-all cannot be combined")
+    if decisions_path is not None:
+        raw = json.loads(decisions_path.read_text())
+        values = raw.get("decisions", raw) if isinstance(raw, dict) else raw
+        if not isinstance(values, list):
+            raise click.ClickException("--decisions must contain a JSON list or {\"decisions\": [...]} object")
+        supplied = {item.get("item_id"): item for item in values if isinstance(item, dict)}
+        if set(supplied) != {item["id"] for item in conflicts}:
+            raise click.ClickException("--decisions must explicitly cover every conflict")
+        return values
+    if keep_all or replace_all:
+        action = "keep" if keep_all else "replace"
+        return [{"item_id": item["id"], "action": action} for item in conflicts]
+    if not conflicts:
+        return []
+    if json_output or not click.get_text_stream("stdin").isatty():
+        raise click.ClickException("Use --keep-all, --replace-all, or --decisions for noninteractive workspace imports.")
+    click.echo("Warning: workspace import creates uncommitted changes; review references and run compatibility checks before committing.")
+    decisions: list[dict[str, str]] = []
+    remaining_action: str | None = None
+    for item in conflicts:
+        choice = remaining_action or click.prompt(
+            f"{item['kind']} {item['name']} [k]eep/[r]eplace/[K]eep all/[R]eplace all",
+            type=click.Choice(["k", "r", "K", "R"]),
+        )
+        if choice == "K":
+            remaining_action = "keep"
+            choice = "keep"
+        elif choice == "R":
+            remaining_action = "replace"
+            choice = "replace"
+        decisions.append({"item_id": item["id"], "action": "keep" if choice in {"k", "keep"} else "replace"})
+    return decisions
+
+
+def _print_workspace_import_preview(preview: dict[str, Any]) -> None:
+    """Render the staged workspace changes before any decisions are applied."""
+    items = preview.get("items", [])
+    conflicts = sum(item.get("classification") == "conflict" for item in items)
+    creates = sum(item.get("classification") == "create" for item in items)
+    unchanged = sum(item.get("classification") == "unchanged" for item in items)
+    if preview.get("source_kind") == "repo" or preview.get("repo_url"):
+        coords = " ".join(
+            part for part in (
+                f"repo {preview.get('repo_url')}" if preview.get("repo_url") else None,
+                f"ref {preview.get('git_ref')}" if preview.get("git_ref") else None,
+                f"path {preview.get('repo_subpath')}" if preview.get("repo_subpath") else None,
+                f"commit {preview.get('resolved_commit')}" if preview.get("resolved_commit") else None,
+            ) if part
+        )
+        if coords:
+            click.echo(f"Source: {coords} (one-time snapshot; no ongoing connection).")
+    scope = preview.get("organization_id")
+    click.echo(
+        f"Scope: {'organization ' + scope if scope else 'global workspace content'} "
+        "(files, integrations, and roles are always global)."
+    )
+    click.echo(
+        "Review compatibility: package definitions were designed together; "
+        "mixed keep/replace choices can change references."
+    )
+    click.echo(
+        "Workspace import preview: "
+        f"{conflicts} conflict{'s' if conflicts != 1 else ''}, "
+        f"{creates} create{'s' if creates != 1 else ''}, "
+        f"{unchanged} unchanged."
+    )
+    for warning in preview.get("warnings", []):
+        click.echo(f"Warning: {warning}")
+    click.echo("Warning: the result is unattached workspace content and creates uncommitted workspace Git changes.")
+    for item in items:
+        click.echo(
+            f"{item['classification']:<9} {item['kind']:<12} {item['name']}"
+        )
+        details = []
+        if item.get("match_key"):
+            details.append(f"matched by {item['match_key']}")
+        if item.get("target_id"):
+            details.append(f"replace preserves destination ID {item['target_id']}")
+        if details:
+            click.echo(f"  {'; '.join(details)}")
+
+
+@solution_group.command("import-workspace", help="Import a Solution package as unattached workspace content (one-time snapshot).")
+@click.argument("archive", type=click.Path(exists=True, dir_okay=False, path_type=pathlib.Path), required=False)
+@click.option("--repo", "repo_url", default=None, help="Solution git repository URL (snapshot import; mutually exclusive with ARCHIVE).")
+@click.option("--ref", "git_ref", default=None, help="Git ref to import (default branch when omitted).")
+@click.option("--path", "repo_subpath", default=None, help="Package subfolder within the repository.")
+@click.option("--org", "org_ref", default=None, help="Target organization name or UUID for scoped definitions. Omit for global workspace content.")
+@click.option("--global", "is_global", is_flag=True, help="Target global workspace content (the default).")
+@click.option("--keep-all", is_flag=True, help="Keep every conflicting destination item.")
+@click.option("--replace-all", is_flag=True, help="Replace every conflicting destination item.")
+@click.option("--decisions", type=click.Path(exists=True, dir_okay=False, path_type=pathlib.Path))
+@click.option("--preview", "preview_only", is_flag=True, help="Print the staged collision preview without queuing an import.")
+@click.option("--json", "json_output", is_flag=True, help="Emit raw preview and terminal job JSON.")
+def import_workspace_cmd(
+    archive: pathlib.Path | None, repo_url: str | None, git_ref: str | None,
+    repo_subpath: str | None, org_ref: str | None, is_global: bool,
+    keep_all: bool, replace_all: bool,
+    decisions: pathlib.Path | None, preview_only: bool, json_output: bool,
+) -> None:
+    """Preview, explicitly decide conflicts, and queue a workspace import."""
+    if archive is not None and repo_url is not None:
+        raise click.UsageError("ARCHIVE and --repo are mutually exclusive.")
+    if archive is None and repo_url is None:
+        raise click.UsageError("Provide ARCHIVE or --repo.")
+    if repo_url is None and (git_ref is not None or repo_subpath is not None):
+        raise click.UsageError("--ref and --path require --repo.")
+    async def _run() -> dict[str, Any]:
+        from bifrost.org_target import resolve_org_target
+
+        client = BifrostClient.get_instance(require_auth=True)
+        # Unlike entity commands (omit = your org), a workspace import defaults
+        # to global content; --org opts a single organization into scope.
+        try:
+            target = await resolve_org_target(org_ref, is_global, RefResolver(client))
+        except ValueError as exc:
+            raise click.UsageError(str(exc)) from exc
+        organization_id = target.organization_id
+        if repo_url is not None:
+            response = await client.post(
+                "/api/solutions/import-workspace/preview-repo",
+                json={
+                    "repo_url": repo_url,
+                    "git_ref": git_ref,
+                    "repo_subpath": repo_subpath,
+                    "organization_id": organization_id,
+                }, timeout=600,
+            )
+        else:
+            assert archive is not None
+            with archive.open("rb") as stream:
+                response = await client.post(
+                    "/api/solutions/import-workspace/preview",
+                    files={"file": (archive.name, stream, "application/zip")},
+                    data=(
+                        {"organization_id": organization_id}
+                        if organization_id is not None else {}
+                    ),
+                    timeout=600,
+                )
+        if response.status_code != 200:
+            raise click.ClickException(f"Workspace preview failed: {response.status_code} {response.text}")
+        preview = response.json()
+        if preview_only:
+            if not json_output:
+                _print_workspace_import_preview(preview)
+            return {"preview": preview}
+        if not json_output:
+            click.echo("Warning: package cohesion may change in workspace scope; review references and run compatibility checks.")
+        selected = _workspace_import_decisions(
+            preview, keep_all=keep_all, replace_all=replace_all,
+            decisions_path=decisions, json_output=json_output,
+        )
+        if not json_output:
+            for item in preview.get("items", []):
+                click.echo(f"{item['classification']:9} {item['kind']:12} {item['name']}")
+        queued = await client.post("/api/solutions/import-workspace", json={
+            "preview_token": preview["preview_token"], "decisions": selected,
+        })
+        if queued.status_code != 202:
+            raise click.ClickException(f"Workspace import enqueue failed: {queued.status_code} {queued.text}")
+        job = await poll_platform_job(
+            client, str(queued.json()["job_id"]), label="Workspace import",
+            timeout_operation="workspace import",
+        )
+        return {"preview": preview, "job": job}
+
+    result = asyncio.run(_run())
+    if json_output:
+        click.echo(json.dumps(result, default=str))
+    elif preview_only:
+        click.echo("Workspace import preview complete; no changes were queued.")
+    else:
+        click.echo("Workspace import completed with uncommitted workspace changes; review references and run compatibility checks before committing.")
 
 
 def handle_solution(args: list[str]) -> int:

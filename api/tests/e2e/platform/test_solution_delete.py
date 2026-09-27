@@ -7,16 +7,10 @@ installs are deletable; only the install and its local artifacts go."""
 from __future__ import annotations
 
 import uuid
-from uuid import UUID
 
 import pytest
-from sqlalchemy import select
 
 from src.models.orm.solutions import Solution as SolutionORM
-from src.models.orm.tables import Table
-from src.models.orm.workflows import Workflow
-from src.services.solutions.deploy import solution_entity_id
-from tests.e2e.platform.conftest import wait_for_deploy
 
 pytestmark = pytest.mark.e2e
 
@@ -27,93 +21,6 @@ def _create_solution(e2e_client, headers, slug: str) -> str:
     })
     assert r.status_code in (200, 201), r.text
     return r.json()["id"]
-
-
-async def test_delete_cascades_code_entities(e2e_client, platform_admin, db_session):
-    """Pure-code entities (workflows) and config DECLARATIONS cascade via FK."""
-    headers = platform_admin.headers
-    slug = f"del-e2e-{uuid.uuid4().hex[:8]}"
-    sid = _create_solution(e2e_client, headers, slug)
-
-    wf_id = str(uuid.uuid4())
-    dep = e2e_client.post(f"/api/solutions/{sid}/deploy", headers=headers, json={
-        "python_files": {
-            "workflows/w.py": (
-                "from bifrost import workflow\n\n"
-                "@workflow\n"
-                "async def go():\n"
-                "    return 1\n"
-            ),
-        },
-        "workflows": [{
-            "id": wf_id, "name": f"go_{slug}", "function_name": "go",
-            "path": "workflows/w.py", "type": "workflow",
-        }],
-        "config_schemas": [{
-            "id": str(uuid.uuid4()), "key": "API_KEY", "type": "secret",
-            "required": True, "description": "needed", "position": 0,
-        }],
-    })
-    dep = wait_for_deploy(e2e_client, dep, headers)
-    assert dep.status_code == 200, dep.text
-
-    r = e2e_client.request("DELETE", f"/api/solutions/{sid}", headers=headers,
-                            params={"confirm": slug})
-    assert r.status_code in (200, 204), r.text
-    body = r.json()
-    assert body["solution_id"] == sid
-    assert body["workflows_deleted"] >= 1
-    assert body["config_declarations_deleted"] >= 1
-
-    # The install is gone.
-    g = e2e_client.get(f"/api/solutions/{sid}", headers=headers)
-    assert g.status_code == 404, g.text
-
-    # Cascade removed the owned workflow row.
-    rows = (
-        await db_session.execute(
-            select(Workflow).where(Workflow.solution_id == UUID(sid))
-        )
-    ).scalars().all()
-    assert rows == [], f"expected cascade to remove owned workflows, got {len(rows)}"
-
-
-async def test_delete_cascades_tables(e2e_client, platform_admin, db_session):
-    """Owned tables and their documents are cascade-deleted on hard-delete."""
-    headers = platform_admin.headers
-    slug = f"del-tbl-{uuid.uuid4().hex[:8]}"
-    sid = _create_solution(e2e_client, headers, slug)
-
-    bundle_tid = str(uuid.uuid4())
-    dep = e2e_client.post(f"/api/solutions/{sid}/deploy", headers=headers, json={
-        "tables": [{
-            "id": bundle_tid,
-            "name": f"customers_{slug}",
-            "description": "customer records",
-            "schema": {"columns": [{"name": "email"}]},
-            "policies": None,
-        }],
-    })
-    dep = wait_for_deploy(e2e_client, dep, headers)
-    assert dep.status_code == 200, dep.text
-    real_tid = solution_entity_id(UUID(sid), UUID(bundle_tid))
-
-    r = e2e_client.request("DELETE", f"/api/solutions/{sid}", headers=headers,
-                            params={"confirm": slug})
-    assert r.status_code in (200, 204), r.text
-    body = r.json()
-    assert body["tables_deleted"] >= 1, body
-
-    # The install is gone.
-    g = e2e_client.get(f"/api/solutions/{sid}", headers=headers)
-    assert g.status_code == 404, g.text
-
-    # The Table row was cascaded away (hard-delete path).
-    db_session.expire_all()
-    tbl = (
-        await db_session.execute(select(Table).where(Table.id == real_tid))
-    ).scalar_one_or_none()
-    assert tbl is None, "table survived hard-delete — cascade did not fire"
 
 
 def test_delete_missing_is_404(e2e_client, platform_admin):

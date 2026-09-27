@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.models.contracts.tables import DocumentQuery
 from src.models.orm.organizations import Organization
 from src.models.orm.tables import Document, Table
-from src.routers.tables import DocumentRepository
+from shared.table_documents import DocumentRepository
 
 
 def _plan_nodes(plan: dict):

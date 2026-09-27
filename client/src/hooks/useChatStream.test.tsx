@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { toast } from "sonner";
 import type { ChatProjection } from "@/lib/chat-runtime";
 
 type ChatCallback = (event: Record<string, unknown>) => void;
@@ -13,6 +14,7 @@ const mocks = vi.hoisted(() => {
 	const callbacks = {
 		chat: undefined as ChatCallback | undefined,
 		connection: undefined as ConnectionCallback | undefined,
+		platformJob: undefined as ChatCallback | undefined,
 	};
 	const generatedIds: string[] = [];
 	const store = {
@@ -62,7 +64,10 @@ vi.mock("@/services/websocket", () => ({
 			mocks.callbacks.connection = callback;
 			return vi.fn();
 		}),
-		onPlatformJobUpdate: vi.fn(() => vi.fn()),
+		onPlatformJobUpdate: vi.fn((_id: string, callback: ChatCallback) => {
+			mocks.callbacks.platformJob = callback;
+			return vi.fn();
+		}),
 	},
 }));
 
@@ -113,6 +118,7 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	mocks.callbacks.chat = undefined;
 	mocks.callbacks.connection = undefined;
+	mocks.callbacks.platformJob = undefined;
 	mocks.generatedIds.splice(0);
 	mocks.store.projectionsByConversation = {};
 	vi.mocked(webSocketService.isConnected).mockReturnValue(true);
@@ -267,6 +273,44 @@ describe("useChatStream", () => {
 		expect(mocks.store.applyChatRunEvents).toHaveBeenCalledWith(
 			"conversation-1",
 			[first, second],
+		);
+	});
+
+	it("stops observing an artifact job that requires action", async () => {
+		renderHook(() => useChatStream({ conversationId: "conversation-1" }), {
+			wrapper: wrapper(),
+		});
+		await waitFor(() => expect(mocks.callbacks.chat).toBeDefined());
+
+		act(() => {
+			mocks.callbacks.chat?.({
+				type: "chat_run_event",
+				event_id: "event-tool-result",
+				sequence: 1,
+				conversation_id: "conversation-1",
+				run_id: "run-1",
+				payload: {
+					type: "tool_result",
+					tool_result: {
+						tool_call_id: "tool-1",
+						result: {
+							type: "platform_job",
+							kind: "video_generation",
+							job_id: "job-1",
+						},
+					},
+				},
+			});
+		});
+		await waitFor(() => expect(mocks.callbacks.platformJob).toBeDefined());
+
+		act(() => {
+			mocks.callbacks.platformJob?.({ status: "requires_action" });
+		});
+
+		expect(toast.error).toHaveBeenCalledWith(
+			"Video generation did not finish",
+			expect.any(Object),
 		);
 	});
 

@@ -327,6 +327,11 @@ class ai:
         Can be called with a simple prompt or a list of messages.
         Optionally returns structured output as a Pydantic model.
 
+        Inside an engine child this completes through the parent over the
+        worker's private Unix socket (the same HTTP route); elsewhere it
+        calls the SDK API endpoint. A local attempt never falls back to
+        HTTP.
+
         Args:
             prompt: Simple text prompt (becomes a user message)
             messages: List of message dicts with "role" and "content"
@@ -337,7 +342,9 @@ class ai:
             org_id: Organization scope for knowledge search
             profile: Model profile name (defaults to the platform default profile)
             model: Override default model (must be compatible with configured provider)
-            timeout: Override default HTTP timeout in seconds (default: 30s)
+            timeout: Optional per-request timeout in seconds. Omitting it
+                applies no SDK-imposed deadline, so a slow completion may
+                run to completion.
             files: Up to five binary inputs or portable ArtifactRef objects.
 
         Returns:
@@ -385,9 +392,16 @@ class ai:
         ctx = _execution_context.get()
         execution_id = str(ctx.execution_id) if ctx and ctx.execution_id else None
 
-        # Call API
+        encoded_files = await _encode_input_files(files)
+
+        # Inside an engine child the shared client carries this over the
+        # worker's private Unix socket to the same HTTP route (knowledge
+        # context, structured-output instructions, and input-file encoding
+        # already applied above); outside an engine it goes over the network.
+        # A local attempt never falls back to HTTP.
         client = get_client()
-        response = await client.post(
+        response = await client.engine_request(
+            "POST",
             "/api/sdk/ai/complete",
             json={
                 "messages": msg_list,
@@ -396,7 +410,7 @@ class ai:
                 "profile": profile,
                 "model": model,
                 "execution_id": execution_id,
-                "input_files": await _encode_input_files(files),
+                "input_files": encoded_files,
             },
             timeout=timeout,
         )
@@ -437,6 +451,12 @@ class ai:
         Generate a streaming AI completion.
 
         Yields chunks as they arrive from the LLM.
+
+        Inside an engine child this streams through the worker's private
+        Unix socket (the parent serves the same HTTP route); elsewhere it
+        calls the SDK API endpoint with SSE. Both paths consume the same SSE
+        body with the same parser, so chunk, done-token, and provider-error
+        semantics are identical. A local attempt never falls back to HTTP.
 
         Args:
             prompt: Simple text prompt (becomes a user message)
@@ -479,9 +499,15 @@ class ai:
         ctx = _execution_context.get()
         execution_id = str(ctx.execution_id) if ctx and ctx.execution_id else None
 
-        # Call API with SSE streaming
+        # Inside an engine child the shared client carries this over the
+        # worker's private Unix socket to the same HTTP route; outside an
+        # engine it goes over the network. Both consume the same SSE body and
+        # parser below, so chunks, done tokens, and provider-error semantics
+        # are identical (knowledge context and input-file encoding already
+        # applied above, like ``complete``). A local attempt never falls back
+        # to HTTP.
         client = get_client()
-        async with client.stream(
+        async with client.engine_stream(
             "POST",
             "/api/sdk/ai/stream",
             json={
@@ -493,6 +519,11 @@ class ai:
                 "input_files": await _encode_input_files(files),
             },
         ) as response:
+            if not response.is_success:
+                from .client import raise_for_status_with_detail
+
+                await response.aread()
+                raise_for_status_with_detail(response)
             async for line in response.aiter_lines():
                 if not line or not line.startswith("data: "):
                     continue
@@ -523,6 +554,10 @@ class ai:
         """
         Get information about the configured LLM.
 
+        Inside an engine child this reads through the worker's private Unix
+        socket (the parent serves the same HTTP route); outside an engine it
+        calls the SDK API endpoint. A local attempt never falls back to HTTP.
+
         Returns:
             Dict with provider, model, and configuration details
 
@@ -531,7 +566,7 @@ class ai:
             >>> print(f"Using {info['provider']}/{info['model']}")
         """
         client = get_client()
-        response = await client.get("/api/sdk/ai/info")
+        response = await client.engine_request("GET", "/api/sdk/ai/info")
         if not response.is_success:
             # Extract error detail from response if available
             try:

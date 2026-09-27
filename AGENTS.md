@@ -296,9 +296,10 @@ export async function getDataProviders() {
     -   **A known failure must receive a durable disposition.** If a broader local or CI run finds a failure outside the scoped set, determine whether it is a regression, product race, leaked state, harness defect, overcomplicated test, or obsolete coverage. Fix the cause, simplify the test, or delete genuinely redundant coverage with a documented replacement. "Unrelated" or "flaky" alone is not a disposition.
     -   **Never rerun until green or mask instability.** Do not add retries, longer timeouts, `skip`, or `xfail`. Reproduce the exposing condition, fix the hypothesized cause, then use repetition only to validate the fix. See `.claude/skills/bifrost-testing/SKILL.md` for the full protocol.
     -   **Prefer simple, durable tests.** Keep one observable contract per test, minimal fixtures, deterministic state, explicit cleanup, and only one useful end-to-end happy path. Move edge cases down to unit/component tests; complexity is not evidence of rigor.
+    -   **Expensive backend E2E tests:** Before adding a deploy, install, publish, build, sync, or worker job to a test, follow `.claude/skills/bifrost-testing/authoring-rules.md` → “Expensive backend E2E tests.” Count the jobs and identify the unique cross-process contract each one proves.
     -   **IMPORTANT**: Always use `./test.sh` — it manages the Dockerized test stack (PostgreSQL, Redis, RabbitMQ, SeaweedFS, API, worker). Running pytest directly on the host will FAIL for anything touching DB/queue/cache.
     -   **Stack lifecycle is separate from test execution.** Boot once per worktree, run tests many times. See the Commands section below.
-    -   **Test results**: `./test.sh` writes JUnit XML to `/tmp/bifrost/test-results.xml` — parse this for pass/fail details instead of grepping stdout.
+    -   **Test results**: `./test.sh` writes JUnit XML to `/tmp/bifrost-<project>/test-results.xml` on the host (the project name is printed by `./test.sh stack status`) — parse this for pass/fail details instead of grepping stdout.
     -   **Logs**: Container logs are exported to `/tmp/bifrost-<project>/*.log` after test runs (per-worktree, so parallel worktrees don't clobber each other).
 -   **Type Checking**: Must pass `pyright` (API) and `npm run tsc` (client)
 -   **Linting**: Must pass `ruff check` (API) and `npm run lint` (client)

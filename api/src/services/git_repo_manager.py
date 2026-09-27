@@ -17,9 +17,12 @@ only used for bulk sync operations (git clone/fetch/merge/push).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
+from uuid import UUID, uuid4
 from contextlib import asynccontextmanager
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
+from dataclasses import dataclass
 from pathlib import Path
 
 import redis.asyncio as redis
@@ -31,8 +34,45 @@ logger = logging.getLogger(__name__)
 
 GIT_LOCK_KEY = "bifrost:git-lock"
 GIT_LOCK_TIMEOUT = 300  # 5 minutes
+WORKSPACE_CHECKPOINT_PREFIX = "_workspace_sync_checkpoints"
 
 PERSISTENT_WORK_DIR = Path("/tmp/git")
+TREE_HASH_CHUNK_SIZE = 8 * 1024 * 1024
+
+
+@dataclass(frozen=True)
+class TreeEntryMetadata:
+    """Content-independent metadata for a workspace file."""
+
+    path: str
+    size: int
+    sha256: str
+
+
+def iter_repo_files(root: Path) -> Iterator[Path]:
+    """Yield workspace files without descending into Git internals."""
+    for path in root.rglob("*"):
+        if not path.is_file() or ".git" in path.relative_to(root).parts:
+            continue
+        yield path
+
+
+def hash_file(path: Path) -> tuple[int, str]:
+    """Stream one file's hash without retaining its content."""
+    digest = hashlib.sha256()
+    size = 0
+    with path.open("rb") as source:
+        while chunk := source.read(TREE_HASH_CHUNK_SIZE):
+            digest.update(chunk)
+            size += len(chunk)
+    return size, digest.hexdigest()
+
+
+def iter_tree_metadata(root: Path) -> Iterator[TreeEntryMetadata]:
+    """Yield metadata for each workspace file while retaining bounded memory."""
+    for path in iter_repo_files(root):
+        size, sha256 = hash_file(path)
+        yield TreeEntryMetadata(path.relative_to(root).as_posix(), size, sha256)
 
 
 class GitRepoManager:
@@ -126,10 +166,10 @@ class GitRepoManager:
             await client.aclose()
 
     async def sync_down(self, target: Path) -> None:
-        """Sync _repo/ from S3 to a local directory."""
+        """Mirror S3 _repo/ into a local directory, removing stale local files."""
         target.mkdir(parents=True, exist_ok=True)
         s3_uri = self._s3_uri()
-        cmd = self._build_sync_cmd(source=s3_uri, dest=str(target))
+        cmd = self._build_sync_cmd(source=s3_uri, dest=str(target), delete=True)
         logger.info(f"sync_down: {s3_uri} -> {target}")
         await self._run_aws_cli(cmd)
 
@@ -138,6 +178,29 @@ class GitRepoManager:
         s3_uri = self._s3_uri()
         cmd = self._build_sync_cmd(source=str(source), dest=s3_uri, delete=True)
         logger.info(f"sync_up: {source} -> {s3_uri}")
+        await self._run_aws_cli(cmd)
+
+    async def checkpoint_workspace(self, source: Path) -> str:
+        """Persist an exact workspace snapshot for a post-DB publication retry."""
+        checkpoint_id = str(uuid4())
+        uri = self._checkpoint_uri(checkpoint_id)
+        await self._run_aws_cli(self._build_sync_cmd(str(source), uri, delete=True))
+        return checkpoint_id
+
+    async def restore_workspace_checkpoint(self, checkpoint_id: str, target: Path) -> None:
+        """Restore a checkpoint exactly, including Git objects and uncommitted files."""
+        target.mkdir(parents=True, exist_ok=True)
+        await self._run_aws_cli(
+            self._build_sync_cmd(self._checkpoint_uri(checkpoint_id), str(target), delete=True)
+        )
+
+    async def delete_workspace_checkpoint(self, checkpoint_id: str) -> None:
+        """Remove a checkpoint only after successful publication."""
+        cmd = ["aws", "s3", "rm", self._checkpoint_uri(checkpoint_id), "--recursive"]
+        endpoint_url = self._settings.s3_endpoint_url
+        if endpoint_url:
+            cmd.extend(["--endpoint-url", endpoint_url])
+        cmd.append("--only-show-errors")
         await self._run_aws_cli(cmd)
 
     async def has_git_dir(self) -> bool:
@@ -150,6 +213,14 @@ class GitRepoManager:
         """Build the S3 URI for _repo/."""
         bucket = self._settings.s3_bucket
         return f"s3://{bucket}/_repo/"
+
+    def _checkpoint_uri(self, checkpoint_id: str) -> str:
+        """Build a bounded, validated prefix for one workspace checkpoint."""
+        try:
+            checkpoint = UUID(checkpoint_id)
+        except ValueError as error:
+            raise ValueError("Invalid workspace checkpoint ID") from error
+        return f"s3://{self._settings.s3_bucket}/{WORKSPACE_CHECKPOINT_PREFIX}/{checkpoint}/"
 
     def _build_sync_cmd(
         self,

@@ -9,6 +9,7 @@ cut over separately.
 from typing import Any, cast
 import logging
 from collections.abc import AsyncGenerator
+from uuid import uuid4
 
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.messages import (
@@ -47,6 +48,7 @@ from src.services.llm.base import (
     ToolDefinition,
     request_max_tokens,
 )
+from src.services.opencode_go import is_opencode_go_endpoint, opencode_go_extra_headers
 
 logger = logging.getLogger(__name__)
 
@@ -59,9 +61,14 @@ class PydanticAIClient(BaseLLMClient):
         config: LLMConfig,
         *,
         fallback_configs: list[LLMConfig] | tuple[LLMConfig, ...] = (),
+        session_id: str | None = None,
     ) -> None:
         super().__init__(config)
         self.fallback_configs: tuple[LLMConfig, ...] = tuple(fallback_configs)
+        # OpenCode Go keeps routing and prompt-cache affinity per session.
+        # Direct LLM calls have no conversation of their own, so this client
+        # instance is the unit of session stability.
+        self._session_id = session_id or f"bifrost-{uuid4()}"
 
     @property
     def provider_name(self) -> str:
@@ -185,15 +192,19 @@ class PydanticAIClient(BaseLLMClient):
     def _model_settings(self, max_tokens: int | None) -> ModelSettings:
         return self._settings_for_config(self.config, max_tokens)
 
-    @staticmethod
     def _settings_for_config(
-        config: LLMConfig, max_tokens: int | None
+        self, config: LLMConfig, max_tokens: int | None
     ) -> ModelSettings:
         resolved_max_tokens = request_max_tokens(config, max_tokens)
         settings: dict[str, Any] = {}
         if resolved_max_tokens is not None:
             settings["max_tokens"] = resolved_max_tokens
-        if config.provider == "openai" and provider_name_for_config(config) != "openrouter":
+        if is_opencode_go_endpoint(config.endpoint):
+            settings["extra_headers"] = opencode_go_extra_headers(self._session_id)
+        if (
+            config.provider == "openai"
+            and provider_name_for_config(config) not in ("openrouter", "opencode_go")
+        ):
             settings["openai_store"] = False
         elif config.provider == "anthropic":
             # Prompt caching for ai.complete/ai.stream as well; see model_factory.

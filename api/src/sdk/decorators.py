@@ -8,6 +8,7 @@ All executable types are stored in the workflows table with a type discriminator
 - @workflow: type='workflow' - Standard workflows
 - @tool: type='tool' - AI agent tools
 - @data_provider: type='data_provider' - Data providers for forms/app builder
+- @service: type='service' - Long-lived supervised services (connections/listeners)
 
 Parameter information is derived from function signatures - no @param decorator needed.
 
@@ -329,3 +330,141 @@ def data_provider(
     else:
         # Called as @data_provider(...) with arguments
         return decorator
+
+
+def service(
+    _func: Callable | None = None,
+    *,
+    # Identity parameters only
+    name: str | None = None,
+    description: str | None = None,
+    category: str = "General",
+    tags: list[str] | None = None,
+    # Accept unknown params for backwards compatibility
+    **kwargs: Any,
+):
+    """
+    Decorator for long-lived supervised service functions.
+
+    Services hold a connection, subscription, or listener indefinitely
+    (e.g. Telegram long-polling, Discord gateway, MQTT subscriber) and bridge
+    external systems into Bifrost by emitting events. They run under service
+    supervision (desired state, fenced leases, restart policy) instead of
+    producing a terminal result like workflows.
+
+    Services are stored in the workflows table with type='service'.
+
+    Only identity parameters are accepted - lifecycle configuration
+    (startup/restart policy, shutdown grace) is managed via UI/API.
+
+    Usage:
+        @service
+        async def telegram_bridge() -> None:
+            '''Bridge Telegram messages into Bifrost events.'''
+            ...
+
+    Args:
+        name: Service name (defaults to function name)
+        description: Human-readable description (defaults to first line of docstring)
+        category: Category for organization (default: "General")
+        tags: Optional list of tags for filtering
+
+    Returns:
+        Decorated function with _executable_metadata attribute
+    """
+    _bind_service_runtime()
+    # Warn about deprecated parameters
+    if kwargs:
+        unknown_params = sorted(kwargs.keys())
+        logger.warning(
+            "Unknown @service parameters ignored: %s. "
+            "Configuration should be set via UI/API.",
+            ", ".join(unknown_params),
+        )
+
+    def decorator(func: Callable) -> Callable:
+        # Derive name from function name if not provided
+        service_name = name or func.__name__
+
+        # Derive description from docstring if not provided
+        service_description = description
+        if service_description is None and func.__doc__:
+            # Use first line of docstring
+            service_description = func.__doc__.strip().split('\n')[0].strip()
+        service_description = service_description or ""
+
+        # Extract parameters from function signature
+        param_dicts = extract_parameters_from_signature(func)
+        parameters = [
+            WorkflowParameter(
+                name=p["name"],
+                type=p["type"],
+                label=p.get("label"),
+                required=p["required"],
+                default_value=p.get("default_value"),
+                options=p.get("options"),
+                python_type=p.get("python_type"),
+                json_schema=p.get("json_schema"),
+            )
+            for p in param_dicts
+        ]
+
+        # Get source file path
+        source_file_path = None
+        if hasattr(func, '__code__'):
+            source_file_path = func.__code__.co_filename
+
+        # Get tags with default
+        service_tags = tags if tags is not None else []
+
+        # Create metadata with identity fields only
+        # Lifecycle config (startup/restart policy) comes from DB
+        metadata = WorkflowMetadata(
+            name=service_name,
+            description=service_description,
+            category=category,
+            tags=service_tags,
+            type="service",
+            source_file_path=source_file_path,
+            parameters=parameters,
+            function=func,
+        )
+
+        # Store metadata on function for dynamic discovery
+        # All executable types use the same attribute name for unified loading
+        func._executable_metadata = metadata  # type: ignore[attr-defined]
+
+        logger.debug(
+            f"Service decorator applied: {service_name} "
+            f"({len(parameters)} params)"
+        )
+
+        # Return function unchanged
+        return func
+
+    # Support both @service and @service(...) syntax
+    if _func is not None:
+        # Called as @service without parentheses
+        return decorator(_func)
+    else:
+        # Called as @service(...) with arguments
+        return decorator
+
+
+# Service supervision SDK: ready() / is_stopping() /
+# wait_until_stopping() live on the `service` decorator namespace so user
+# code calls `service.ready()` etc. (state in bifrost/_service_runtime.py).
+def _bind_service_runtime() -> None:
+    """Bind supervision callables to `service` (idempotent rebind).
+
+    Imported lazily: importing bifrost.* at module top would cycle back
+    through bifrost/__init__ (which imports this module for
+    `from bifrost import service`), silently downgrading
+    `bifrost.workflow` to the non-extracting fallback. Re-attaching the
+    same callables on repeat calls is harmless, so no once-flag is kept.
+    """
+    from bifrost._service_runtime import (
+        attach_service_runtime as _attach_service_runtime,
+    )
+
+    _attach_service_runtime(service)

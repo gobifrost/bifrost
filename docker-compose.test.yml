@@ -100,6 +100,8 @@ services:
   # Stores workspace files and runtime outputs
   seaweedfs:
     image: chrislusf/seaweedfs:latest
+    # Its default admin gRPC port 33646 can collide with an ephemeral port.
+    command: ["mini", "-dir=/data", "-admin.port=12646"]
     environment:
       AWS_ACCESS_KEY_ID: bifrost
       AWS_SECRET_ACCESS_KEY: bifrost_test_key
@@ -221,6 +223,9 @@ services:
       BIFROST_REDIS_URL: redis://redis:6379/0
       BIFROST_SECRET_KEY: test-secret-key-for-e2e-testing-must-be-32-chars
       BIFROST_ENVIRONMENT: testing
+      # Exercise the same claim/beat transitions without production idle intervals.
+      BIFROST_SERVICE_CLAIM_INTERVAL_SECONDS: "1"
+      BIFROST_SERVICE_HEARTBEAT_INTERVAL_SECONDS: "2"
       # S3-compatible object storage
       BIFROST_S3_BUCKET: bifrost-test
       BIFROST_S3_ENDPOINT_URL: http://seaweedfs:8333
@@ -293,6 +298,11 @@ services:
       - ./api/shared:/app/shared:ro
       - ./api/bifrost:/app/bifrost:ro
       - test-mounts:/mounts
+      # Platform jobs (Solution git sync, workspace imports) run on the
+      # scheduler, so it needs the same file:// fixture repos the api clones
+      # server-side. Same safety shape as the api mount: only the
+      # uid-1000-created fixture subdir, never the LOG_DIR root.
+      - ${LOG_DIR:-/tmp/bifrost}/solution-repo-fixtures:/tmp/bifrost/solution-repo-fixtures
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -405,6 +415,7 @@ services:
       - ./client/playwright.config.ts:/app/client/playwright.config.ts:ro
       - ./client/nginx.conf:/app/client/nginx.conf:ro  # Production routing contract.
       - ./client/Dockerfile:/app/client/Dockerfile:ro  # Production asset-mode contract.
+      - ./docs/generated:/app/docs/generated:ro  # Canonical operation inventory freshness.
       - ./.claude/skills:/.claude/skills:ro  # Read-only — the drift test in
                                       # tests/unit/test_platform_api_docs.py reads
                                       # bifrost-build/platform-api.md to enforce docs

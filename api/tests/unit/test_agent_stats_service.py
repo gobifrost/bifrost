@@ -167,6 +167,142 @@ async def test_fleet_stats(db_session, seed_agents_with_runs):
 
 
 @pytest.mark.asyncio
+async def test_agent_stats_batch_caller_scoping_excludes_other_users_runs(
+    db_session, seed_agent
+):
+    """caller_user_id must restrict counted runs to that caller only."""
+    now = datetime.now(timezone.utc)
+    caller_a = uuid4()
+    caller_b = uuid4()
+    run_a = AgentRun(
+        id=uuid4(),
+        agent_id=seed_agent.id,
+        trigger_type="test",
+        status="completed",
+        caller_user_id=str(caller_a),
+        created_at=now,
+    )
+    run_b = AgentRun(
+        id=uuid4(),
+        agent_id=seed_agent.id,
+        trigger_type="test",
+        status="completed",
+        caller_user_id=str(caller_b),
+        created_at=now,
+    )
+    db_session.add_all([run_a, run_b])
+    await db_session.commit()
+    try:
+        scoped = await get_agent_stats_batch(
+            [seed_agent.id], db_session, caller_user_id=caller_a
+        )
+        assert scoped[seed_agent.id].runs_7d == 1
+
+        unscoped = await get_agent_stats_batch([seed_agent.id], db_session)
+        assert unscoped[seed_agent.id].runs_7d == 2
+    finally:
+        await db_session.execute(
+            delete(AgentRun).where(AgentRun.id.in_([run_a.id, run_b.id]))
+        )
+        await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_fleet_stats_excludes_other_users_private_agent(db_session):
+    """A private agent owned by someone else must not contribute to a
+    caller-scoped fleet view's active_agents/run counts."""
+    from src.models.orm.users import User
+
+    now = datetime.now(timezone.utc)
+    caller_user = User(
+        id=uuid4(),
+        email=f"fleet-caller-{uuid4().hex[:8]}@example.com",
+        name="Fleet Caller",
+        is_active=True,
+        is_superuser=True,
+        is_verified=True,
+        is_registered=True,
+    )
+    other_user = User(
+        id=uuid4(),
+        email=f"fleet-other-{uuid4().hex[:8]}@example.com",
+        name="Fleet Other Owner",
+        is_active=True,
+        is_superuser=True,
+        is_verified=True,
+        is_registered=True,
+    )
+    db_session.add_all([caller_user, other_user])
+    await db_session.flush()
+    caller = caller_user.id
+    other_owner = other_user.id
+
+    own_agent = Agent(
+        id=uuid4(),
+        name=f"fleet-own-{uuid4().hex[:8]}",
+        description="",
+        system_prompt="test",
+        channels=["chat"],
+        access_level=AgentAccessLevel.PRIVATE,
+        owner_user_id=caller,
+        organization_id=None,
+        is_active=True,
+        knowledge_sources=[],
+        system_tools=[],
+        created_by="test@example.com",
+    )
+    other_private_agent = Agent(
+        id=uuid4(),
+        name=f"fleet-other-{uuid4().hex[:8]}",
+        description="",
+        system_prompt="test",
+        channels=["chat"],
+        access_level=AgentAccessLevel.PRIVATE,
+        owner_user_id=other_owner,
+        organization_id=None,
+        is_active=True,
+        knowledge_sources=[],
+        system_tools=[],
+        created_by="test@example.com",
+    )
+    db_session.add_all([own_agent, other_private_agent])
+    await db_session.flush()
+
+    other_run = AgentRun(
+        id=uuid4(),
+        agent_id=other_private_agent.id,
+        trigger_type="test",
+        status="completed",
+        caller_user_id=str(other_owner),
+        created_at=now,
+    )
+    db_session.add(other_run)
+    await db_session.commit()
+
+    try:
+        scoped = await get_fleet_stats(
+            db_session, org_id=None, window_days=7, caller_user_id=caller
+        )
+        # own_agent counts toward active_agents; other_private_agent must not.
+        unscoped_active = (
+            await get_fleet_stats(db_session, org_id=None, window_days=7)
+        ).active_agents
+        assert scoped.active_agents == unscoped_active - 1
+        assert scoped.total_runs == 0
+    finally:
+        from src.models.orm.users import User
+
+        await db_session.execute(delete(AgentRun).where(AgentRun.id == other_run.id))
+        await db_session.execute(
+            delete(Agent).where(Agent.id.in_([own_agent.id, other_private_agent.id]))
+        )
+        await db_session.execute(
+            delete(User).where(User.id.in_([caller, other_owner]))
+        )
+        await db_session.commit()
+
+
+@pytest.mark.asyncio
 async def test_summarizer_cost_is_included_in_total_cost_7d(
     db_session, seed_agent
 ):

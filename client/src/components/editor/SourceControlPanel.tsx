@@ -1,4 +1,3 @@
-import { generateUUID } from "@/lib/uuid";
 import { SourceChangesSection } from "./SourceChangesSection";
 import { SourceOperationDialog } from "./SourceOperationDialog";
 import { SourceControlSetupState } from "./SourceControlSetupState";
@@ -9,7 +8,6 @@ import {
 import { CommitHistorySection } from "./CommitHistorySection";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { webSocketService, type GitOpComplete } from "@/services/websocket";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import {
@@ -38,16 +36,11 @@ import {
 	type PreflightResult,
 } from "@/hooks/useGitHub";
 import { useEditorStore, type DiffPreviewState } from "@/stores/editorStore";
-
-/** Custom error that preserves the data payload from failed git operations */
-class GitOpError extends Error {
-	data: Record<string, unknown> | undefined;
-	constructor(message: string, data?: Record<string, unknown>) {
-		super(message);
-		this.name = "GitOpError";
-		this.data = data;
-	}
-}
+import {
+	GitOpError,
+	runGitOp as runPlatformGitOp,
+	type GitOperationAccepted,
+} from "./runGitOperation";
 
 /** Log preflight validation issues to the editor terminal */
 function logPreflightToTerminal(
@@ -200,134 +193,37 @@ function logEntityChangesToTerminal(
 	});
 }
 
-/**
- * Helper to run a git operation via WebSocket job pattern.
- * Queues the job, connects to WebSocket, waits for completion.
- */
+/** Queue Git work through the shared durable PlatformJob transport. */
 async function runGitOp<T>(
-	queueFn: (jobId: string) => Promise<{ job_id: string }>,
+	queueFn: (jobId: string) => Promise<GitOperationAccepted>,
 	resultType: string,
+	onQueued?: (jobId: string) => void,
 ): Promise<T> {
-	// Generate job_id client-side and subscribe BEFORE queueing to avoid
-	// race condition where fast operations (e.g. diff) complete before
-	// the WebSocket subscription is active.
-	const job_id = generateUUID();
-
-	await webSocketService.connectToGitSync(job_id);
-
-	// Stream progress messages immediately; accumulate sync log summaries for final flush
-	const syncLogs: Array<{
-		level: string;
-		message: string;
-		source: string;
-		timestamp: string;
-	}> = [];
-	const executionId = `git-${resultType}-${job_id.slice(0, 8)}`;
-
-	const unsubLog = webSocketService.onGitSyncLog(job_id, (log) => {
-		syncLogs.push({
-			level: log.level,
-			message: log.message,
-			source: "git",
-			timestamp: new Date().toISOString(),
-		});
-	});
-
-	let hadProgress = false;
-	const unsubProgress = webSocketService.onGitProgress(job_id, (progress) => {
-		hadProgress = true;
-		// Stream each progress message immediately to the terminal
-		const pct =
-			progress.total > 0
-				? `[${Math.round((progress.current / progress.total) * 100)}%] `
-				: "";
-		useEditorStore.getState().streamTerminalLog(
-			executionId,
-			{
-				level: "INFO",
-				message: `${pct}${progress.phase}`,
-				source: "git",
-				timestamp: new Date().toISOString(),
-			},
-			"Running",
-		);
-	});
-
-	const resultPromise = new Promise<T>((resolve, reject) => {
-		const unsub = webSocketService.onGitOpComplete(
-			job_id,
-			(complete: GitOpComplete) => {
-				unsub();
-				unsubLog();
-				unsubProgress();
-
-				// Treat "needs_confirmation" as a non-error status — the caller
-				// handles the confirmation flow, not the terminal.
-				const isOk =
-					complete.status === "success" ||
-					complete.status === "needs_confirmation";
-
-				// Only emit terminal logs if there was visible activity (progress
-				// messages or sync logs). Silent operations like "status" produce
-				// no output and shouldn't clutter the terminal.
-				const hadOutput = syncLogs.length > 0 || hadProgress;
-				if (hadOutput || !isOk) {
-					const finalStatus = isOk ? "Success" : "Failed";
-					for (const log of syncLogs) {
-						useEditorStore
-							.getState()
-							.streamTerminalLog(executionId, log, finalStatus);
-					}
-					const opLabel =
-						resultType === "sync"
-							? "Sync"
-							: resultType === "fetch"
-								? "Fetch"
-								: resultType === "commit"
-									? "Commit"
-									: resultType.charAt(0).toUpperCase() +
-										resultType.slice(1);
-					useEditorStore.getState().streamTerminalLog(
-						executionId,
-						{
-							level: isOk ? "INFO" : "WARNING",
-							message: isOk
-								? `${opLabel} complete`
-								: `${opLabel} failed: ${complete.error || "unknown error"}`,
-							source: "git",
-							timestamp: new Date().toISOString(),
-						},
-						finalStatus,
-					);
-				}
-
-				if (isOk || complete.resultType === resultType) {
-					if (complete.error && !isOk) {
-						reject(
-							new GitOpError(
-								complete.error,
-								complete.data as Record<string, unknown>,
-							),
-						);
-					} else {
-						resolve((complete.data ?? {}) as T);
-					}
-				} else {
-					reject(
-						new GitOpError(
-							complete.error || `${resultType} failed`,
-							complete.data as Record<string, unknown>,
-						),
-					);
-				}
-			},
-		);
-	});
-
-	// Now queue the operation — the WebSocket listener is already active
-	await queueFn(job_id);
-
-	return resultPromise;
+	let executionId = `git-${resultType}-queued`;
+	return runPlatformGitOp(
+		queueFn,
+		resultType,
+		(jobId) => {
+			executionId = `git-${resultType}-${jobId.slice(0, 8)}`;
+			onQueued?.(jobId);
+		},
+		(job) => {
+			const phase = job.progress.phase;
+			if (!phase) return;
+			const pct = job.progress.percent == null ? "" : `[${Math.round(job.progress.percent)}%] `;
+			const terminal = ["succeeded", "requires_action"].includes(job.status);
+			useEditorStore.getState().streamTerminalLog(
+				executionId,
+				{
+					level: terminal ? "INFO" : job.status === "failed" ? "WARNING" : "INFO",
+					message: `${pct}${phase}`,
+					source: "git",
+					timestamp: new Date().toISOString(),
+				},
+				terminal ? "Success" : job.status === "failed" ? "Failed" : "Running",
+			);
+		},
+	);
 }
 
 /**
@@ -627,20 +523,24 @@ export function SourceControlPanel() {
 	}, [cleanupOp, commitOp, commitMessage, loadChanges, refreshStatus]);
 
 	const [syncError, setSyncError] = useState<string | null>(null);
+	const [retryJobId, setRetryJobId] = useState<string | null>(null);
 	const handleSync = useCallback(
-		async (confirmDeletes = false) => {
+		async (confirmDeletes = false, retryJobId?: string) => {
 			setSyncError(null);
+			if (!retryJobId) setRetryJobId(null);
 			setLoading("syncing");
+			let queuedJobId: string | null = null;
 			try {
 				const result = await runGitOp<SyncResult>(
 					(jobId) =>
 						syncOp.mutateAsync(
 							jobId,
-							confirmDeletes
-								? { confirm_deletes: true }
+							confirmDeletes || retryJobId
+								? { confirm_deletes: confirmDeletes, retry_job_id: retryJobId }
 								: undefined,
 						),
 					"sync",
+					(jobId) => { queuedJobId = jobId; },
 				);
 				if (
 					result.needs_delete_confirmation &&
@@ -651,6 +551,7 @@ export function SourceControlPanel() {
 						`${result.pending_deletes.length} entity deletion(s) require confirmation`,
 					);
 				} else if (result.success) {
+					setRetryJobId(null);
 					const parts = [];
 					if (result.pushed_commits > 0)
 						parts.push(`pushed ${result.pushed_commits} commit(s)`);
@@ -689,6 +590,7 @@ export function SourceControlPanel() {
 						`${result.conflicts.length} conflict(s) need resolution`,
 					);
 				} else {
+					if (result.retryable && queuedJobId) setRetryJobId(queuedJobId);
 					setSyncError(result.error || "Sync failed. Try again.");
 					toast.error(result.error || "Sync failed");
 				}
@@ -713,6 +615,7 @@ export function SourceControlPanel() {
 						);
 						return;
 					}
+					if (syncData.retryable && queuedJobId) setRetryJobId(queuedJobId);
 				}
 				const msg =
 					error instanceof Error ? error.message : String(error);
@@ -1057,6 +960,7 @@ export function SourceControlPanel() {
 					onCleanupAndRetry={handleCleanupAndRetry}
 					onDismissCleanup={() => setShowCleanupPrompt(false)}
 					pendingDeletes={pendingDeletes}
+					onRetryPublication={retryJobId ? () => handleSync(false, retryJobId) : undefined}
 					onConfirmDeletes={() => handleSync(true)}
 					onDismissDeletes={() => setPendingDeletes([])}
 				/>

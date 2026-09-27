@@ -10,7 +10,12 @@ vi.mock("@/lib/api-client", () => ({
 	},
 }));
 
-import { cancelPlatformJob, getPlatformJobs } from "./platformJobs";
+import {
+	cancelPlatformJob,
+	getPlatformJob,
+	getPlatformJobs,
+	observePlatformJob,
+} from "./platformJobs";
 
 describe("platform jobs service", () => {
 	beforeEach(() => {
@@ -46,6 +51,16 @@ describe("platform jobs service", () => {
 		});
 	});
 
+	it("reads one durable platform-job snapshot by id", async () => {
+		const job = { id: "job-1", status: "succeeded", result: { success: true } };
+		mockGet.mockResolvedValue({ data: job });
+
+		await expect(getPlatformJob("job-1")).resolves.toBe(job);
+		expect(mockGet).toHaveBeenCalledWith("/api/platform-jobs/{job_id}", {
+			params: { path: { job_id: "job-1" } },
+		});
+	});
+
 	it("cancels through the shared platform-job endpoint", async () => {
 		const result = {
 			accepted: true,
@@ -70,5 +85,22 @@ describe("platform jobs service", () => {
 		await expect(cancelPlatformJob("job-1")).rejects.toThrow(
 			"Failed to cancel platform job",
 		);
+		await expect(getPlatformJob("job-1")).rejects.toThrow(
+			"Failed to load platform job",
+		);
+	});
+
+	it("uses one snapshot fallback instead of polling after a failed read", async () => {
+		vi.useFakeTimers();
+		mockGet.mockResolvedValue({ error: { detail: "temporarily unavailable" } });
+
+		const observation = observePlatformJob("job-1", vi.fn());
+		const completion = expect(observation.promise).rejects.toThrow("Failed to load platform job");
+		await vi.advanceTimersByTimeAsync(250);
+
+		await completion;
+		expect(mockGet).toHaveBeenCalledTimes(1);
+		observation.cancel();
+		vi.useRealTimers();
 	});
 });

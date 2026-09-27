@@ -140,7 +140,7 @@ async def test_complete_sends_optional_profile_name(monkeypatch):
     from bifrost.ai import ai
 
     client = AsyncMock()
-    client.post.return_value = httpx.Response(
+    client.engine_request.return_value = httpx.Response(
         200,
         json={
             "content": "Done",
@@ -154,4 +154,4 @@ async def test_complete_sends_optional_profile_name(monkeypatch):
     response = await ai.complete("Hello", profile="Reasoning")
 
     assert response.content == "Done"
-    assert client.post.await_args.kwargs["json"]["profile"] == "Reasoning"
+    assert client.engine_request.await_args.kwargs["json"]["profile"] == "Reasoning"

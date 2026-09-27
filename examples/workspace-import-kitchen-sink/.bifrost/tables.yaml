@@ -1,0 +1,20 @@
+tables:
+  55555555-5555-4555-8555-555555555555:
+    id: 55555555-5555-4555-8555-555555555555
+    name: sink_items
+    schema:
+      columns:
+        - name: title
+          type: text
+        - name: qty
+          type: integer
+  55555555-5555-4555-8555-555555555556:
+    id: 55555555-5555-4555-8555-555555555556
+    name: sink_audit
+    description: Append-only audit log
+    schema:
+      columns:
+        - name: event
+          type: text
+        - name: at
+          type: text

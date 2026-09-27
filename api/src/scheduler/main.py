@@ -28,8 +28,7 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from src.config import get_settings
-from src.core.database import init_db, close_db, get_db_context
-from src.core.pubsub import publish_git_op_completed
+from src.core.database import init_db, close_db
 from src.jobs.schedulers.cron_scheduler import process_schedule_sources
 from src.jobs.schedulers.execution_cleanup import cleanup_stuck_executions
 from src.jobs.schedulers.platform_jobs import platform_job_worker_loop
@@ -274,6 +273,18 @@ class Scheduler:
             **misfire_options,
         )
         logger.info("Deferred execution promoter scheduled (every 60s)")
+
+        from src.jobs.schedulers.workspace_bundle_cleanup import cleanup_workspace_bundle_previews
+        scheduler.add_job(
+            self._run_scheduled_task,
+            IntervalTrigger(hours=1),
+            id="workspace_bundle_preview_cleanup",
+            name="Clean up expired workspace bundle previews",
+            replace_existing=True,
+            next_run_time=datetime.now(timezone.utc),
+            args=["workspace_bundle_preview_cleanup", cleanup_workspace_bundle_previews],
+            **misfire_options,
+        )
 
         # Legacy entity-logo normalization — bounded batches, immediate at startup.
         from src.jobs.schedulers.logo_thumbnail_backfill import (
@@ -632,187 +643,6 @@ class Scheduler:
                 await self._leadership_lease.release()
             except Exception:
                 logger.exception("Failed to release scheduler trigger lease on shutdown")
-
-    @staticmethod
-    def _build_clone_url_from_config(config) -> str:
-        """Build an authenticated git clone URL from a GitHubConfig object."""
-        repo_url = config.repo_url
-
-        # Extract owner/repo from URL
-        if repo_url.startswith("https://github.com/"):
-            repo = repo_url.replace("https://github.com/", "").rstrip(".git")
-        else:
-            repo = repo_url
-
-        return f"https://x-access-token:{config.token}@github.com/{repo}.git"
-
-    async def _handle_git_operation(self, data: dict) -> bool:
-        """
-        Handle a desktop-style git operation request.
-
-        Dispatches to the appropriate GitHubSyncService method based on op_type.
-        """
-        from src.services.github_config import get_github_config
-        from src.services.github_sync import GitHubSyncService
-
-        op_type = data.get("type", "unknown")
-        job_id = data.get("jobId", "unknown")
-        org_id = data.get("orgId")
-
-        logger.info(f"Starting git operation {op_type} job {job_id} for org {org_id}")
-
-        try:
-            async with get_db_context() as db:
-                github_config = await get_github_config(db, org_id)
-
-                if not github_config:
-                    await publish_git_op_completed(
-                        job_id, status="failed", result_type=op_type.replace("git_", ""),
-                        error="GitHub not configured",
-                    )
-                    return False
-
-                if not github_config.token or not github_config.repo_url:
-                    await publish_git_op_completed(
-                        job_id, status="failed", result_type=op_type.replace("git_", ""),
-                        error="GitHub token or repository not configured",
-                    )
-                    return False
-
-                clone_url = self._build_clone_url_from_config(github_config)
-                branch = github_config.branch
-
-                sync_service = GitHubSyncService(
-                    db=db,
-                    repo_url=clone_url,
-                    branch=branch,
-                    settings=get_settings(),
-                )
-
-                result_type = op_type.replace("git_", "")
-
-                if op_type == "git_fetch":
-                    # Fetch does S3 sync down + git fetch + status
-                    fetch_result = await sync_service.desktop_fetch(job_id=job_id)
-                    if fetch_result.success:
-                        status_result = await sync_service.desktop_status()
-                        await publish_git_op_completed(
-                            job_id, status="success", result_type="fetch",
-                            data={
-                                **fetch_result.model_dump(),
-                                "changed_files": [cf.model_dump() for cf in status_result.changed_files],
-                                "conflicts": [c.model_dump() for c in status_result.conflicts],
-                            },
-                        )
-                    else:
-                        await publish_git_op_completed(
-                            job_id, status="failed", result_type="fetch",
-                            error=fetch_result.error,
-                        )
-                    return bool(fetch_result.success)
-
-                elif op_type == "git_status":
-                    op_result = await sync_service.desktop_status()
-                    await publish_git_op_completed(
-                        job_id, status="success", result_type="status",
-                        data=op_result.model_dump(),
-                    )
-                    return True
-
-                elif op_type == "git_commit":
-                    message = data.get("message", "Commit from Bifrost")
-                    op_result = await sync_service.desktop_commit(message)
-                    await publish_git_op_completed(
-                        job_id, status="success" if op_result.success else "failed",
-                        result_type="commit",
-                        data=op_result.model_dump(),
-                        error=op_result.error,
-                    )
-                    return bool(op_result.success)
-
-                elif op_type == "git_sync":
-                    # Combined pull + push + entity import
-                    confirm_deletes = data.get("confirm_deletes", False)
-                    op_result = await sync_service.desktop_sync(job_id=job_id, confirm_deletes=confirm_deletes)
-                    if op_result.needs_delete_confirmation:
-                        status_str = "needs_confirmation"
-                    else:
-                        status_str = "success" if op_result.success else ("conflict" if op_result.conflicts else "failed")
-                    await publish_git_op_completed(
-                        job_id, status=status_str, result_type="sync",
-                        data=op_result.model_dump(),
-                        error=op_result.error if not op_result.success else None,
-                        pulled=op_result.pulled,
-                        pushed=op_result.pushed_commits,
-                        commit_sha=op_result.commit_sha,
-                        conflicts=[c.model_dump() for c in op_result.conflicts] if op_result.conflicts else None,
-                    )
-
-                    # Clear repo dirty flag after successful sync
-                    if op_result.success:
-                        from src.core.repo_dirty import clear_repo_dirty
-                        try:
-                            await clear_repo_dirty()
-                        except Exception as e:
-                            logger.warning(f"Failed to clear repo dirty flag: {e}")
-                    return bool(op_result.success or op_result.needs_delete_confirmation)
-
-                elif op_type == "git_resolve":
-                    resolutions = data.get("resolutions", {})
-                    op_result = await sync_service.desktop_resolve(resolutions)
-                    await publish_git_op_completed(
-                        job_id, status="success" if op_result.success else "failed",
-                        result_type="resolve",
-                        data=op_result.model_dump() if op_result.success else None,
-                        error=op_result.error,
-                    )
-                    return bool(op_result.success)
-
-                elif op_type == "git_abort_merge":
-                    op_result = await sync_service.desktop_abort_merge()
-                    await publish_git_op_completed(
-                        job_id, status="success" if op_result.success else "failed",
-                        result_type="abort_merge",
-                        data=op_result.model_dump() if op_result.success else None,
-                        error=op_result.error,
-                    )
-                    return bool(op_result.success)
-
-                elif op_type == "git_diff":
-                    path = data.get("path", "")
-                    op_result = await sync_service.desktop_diff(path)
-                    await publish_git_op_completed(
-                        job_id, status="success", result_type="diff",
-                        data=op_result.model_dump(),
-                    )
-                    return True
-
-                elif op_type == "git_discard":
-                    paths = data.get("paths", [])
-                    op_result = await sync_service.desktop_discard(paths)
-                    await publish_git_op_completed(
-                        job_id,
-                        status="success" if op_result.success else "failed",
-                        result_type="discard",
-                        data=op_result.model_dump(),
-                        error=op_result.error if not op_result.success else None,
-                    )
-                    return bool(op_result.success)
-
-                else:
-                    await publish_git_op_completed(
-                        job_id, status="failed", result_type=result_type,
-                        error=f"Unknown operation type: {op_type}",
-                    )
-                    return False
-
-        except Exception as e:
-            logger.error(f"Git operation {op_type} job {job_id} failed: {e}", exc_info=True)
-            await publish_git_op_completed(
-                job_id, status="failed", result_type=op_type.replace("git_", ""),
-                error=str(e),
-            )
-            return False
 
     async def stop(self) -> None:
         """Stop the scheduler gracefully."""

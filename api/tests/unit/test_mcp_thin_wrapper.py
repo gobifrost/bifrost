@@ -45,6 +45,7 @@ import pytest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
 from src.services.mcp_server.tools import (  # noqa: E402
+    agents as agents_mod,
     claims as claims_mod,
     configs as configs_mod,
     files as files_mod,
@@ -59,6 +60,13 @@ from src.services.mcp_server.tools import (  # noqa: E402
 
 
 PARITY_HANDLERS: dict[str, set[str]] = {
+    "agents": {
+        "bifrost_agent_list",
+        "bifrost_agent_get",
+        "bifrost_agent_create",
+        "bifrost_agent_update",
+        "bifrost_agent_delete",
+    },
     "roles": {"list_roles", "create_role", "update_role", "delete_role"},
     "configs": {
         "list_configs",
@@ -73,7 +81,13 @@ PARITY_HANDLERS: dict[str, set[str]] = {
         "update_claim",
         "delete_claim",
     },
-    "organizations": {"update_organization", "delete_organization"},
+    "organizations": {
+        "list_organizations",
+        "get_organization",
+        "create_organization",
+        "update_organization",
+        "delete_organization",
+    },
     "integrations": {
         "create_integration",
         "update_integration",
@@ -111,6 +125,7 @@ PARITY_HANDLERS: dict[str, set[str]] = {
 
 
 MODULES = {
+    "agents": agents_mod,
     "roles": roles_mod,
     "claims": claims_mod,
     "configs": configs_mod,
@@ -253,6 +268,31 @@ def _call_rest_capturing_params() -> tuple[AsyncMock, list[dict]]:
         return (200, {"policies": [], "count": 0})
 
     return AsyncMock(side_effect=_fake_call_rest), calls
+
+
+@pytest.mark.asyncio
+async def test_get_app_publish_status_requires_action_is_an_error() -> None:
+    """An action-required publish must not be presented as a completed success."""
+    ctx = _make_mcp_context()
+    response = {
+        "status": "requires_action",
+        "progress": {"phase": "Confirm deletes"},
+        "result": {
+            "requires_action": "confirm_deletes",
+            "unsafe_detail": "must not reach MCP consumers",
+        },
+    }
+
+    with patch.object(apps_mod, "call_rest", AsyncMock(return_value=(200, response))):
+        result = await apps_mod.get_app_publish_status(ctx, "publish-job-id")
+
+    assert result.structured_content is not None
+    assert result.structured_content["error"] == (
+        "Application publish requires_action: Confirm deletes"
+    )
+    assert result.structured_content["status"] == "requires_action"
+    assert result.structured_content["result"] == {"requires_action": "confirm_deletes"}
+    assert "unsafe_detail" not in result.structured_content
 
 
 @pytest.mark.asyncio

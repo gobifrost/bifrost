@@ -267,6 +267,43 @@ def execution_logs_stream_key(execution_id: str) -> str:
     return f"bifrost:logs:{execution_id}"
 
 
+def service_logs_stream_key(attempt_id: str) -> str:
+    """
+    Key for the Redis Stream containing logs for one service attempt.
+
+    Attempt-scoped by construction: a stale (fenced) attempt keeps appending
+    to its own superseded stream, which no reader follows after reassignment.
+    The service-wide timeline (Slice 4) reads the live attempt's stream.
+    """
+    return f"bifrost:service-logs:{attempt_id}"
+
+
+def service_logs_cursor_key(attempt_id: str) -> str:
+    """
+    Last Postgres-flushed stream entry ID for one service attempt.
+
+    Owned by whoever owns the attempt: the claim-loop flush advances it,
+    and a new owner resumes from it — so failover never duplicates rows.
+    Plain string key (not a hash field); deleted when the attempt completes.
+    """
+    return f"bifrost:service-logs:{attempt_id}:cursor"
+
+
+def service_token_key(attempt_id: str) -> str:
+    """Parent-rotated service credential handoff (JSON {token, expires_at})."""
+    return f"bifrost:service:{attempt_id}:token"
+
+
+def service_ready_key(attempt_id: str) -> str:
+    """Child-reported readiness flag, consumed by the owning worker."""
+    return f"bifrost:service:{attempt_id}:ready"
+
+
+def service_stop_key(attempt_id: str) -> str:
+    """Parent-mirrored stop request, polled by the child supervisor."""
+    return f"bifrost:service:{attempt_id}:stop"
+
+
 def chat_run_events_stream_key(conversation_id: str) -> str:
     """Redis Stream containing replayable chat run events for a conversation."""
     return f"bifrost:chat:{conversation_id}:events"

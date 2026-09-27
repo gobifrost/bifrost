@@ -12,6 +12,7 @@ batch after the run completes via flush_to_db().
 import asyncio
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -76,6 +77,25 @@ logger = logging.getLogger(__name__)
 
 MAX_DELEGATION_DEPTH = 5  # Prevent infinite delegation chains
 DELEGATION_TIMEOUT_SECONDS = 600  # 10 minutes per delegation
+
+_JSON_FENCE_RE = re.compile(r"^```[a-zA-Z]*\s*\n(.*)\n\s*```$", re.DOTALL)
+
+
+def _parse_structured_output(content: str) -> Any:
+    """Parse a structured-output reply, tolerating one outer markdown code fence.
+
+    Models asked for JSON sometimes wrap it in a ```json fence. Returns the
+    parsed value, or the original string when it is not JSON.
+    """
+    text = content.strip()
+    fenced = _JSON_FENCE_RE.match(text)
+    if fenced:
+        text = fenced.group(1).strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        logger.debug("final agent output is not JSON, returning raw string: %s", exc)
+        return content
 
 
 class ToolError(Exception):
@@ -500,10 +520,7 @@ class AutonomousAgentExecutor:
 
         output: str | dict = final_content
         if output_schema and final_content:
-            try:
-                output = json.loads(final_content)
-            except json.JSONDecodeError as exc:
-                logger.debug("final agent output is not JSON, returning raw string: %s", exc)
+            output = _parse_structured_output(final_content)
 
         response = {
             "output": output or None,

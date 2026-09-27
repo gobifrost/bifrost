@@ -22,29 +22,25 @@ from src.core.requirements_cache import (
 class TestGetRequirementsSync:
     """Tests for the worker's synchronous requirements lookup."""
 
-    def test_caches_authoritative_absence_without_s3_fallback(self):
+    def test_redis_hit_skips_s3(self):
         redis_client = MagicMock()
-        redis_client.get.return_value = None
+        redis_client.get.return_value = json.dumps(
+            {"content": "requests==2.32.0\n", "hash": "cached"}
+        )
 
         with (
             patch(
                 "src.core.module_cache_sync._get_sync_redis",
                 return_value=redis_client,
-            ),
-            patch(
-                "src.core.module_cache_sync._fetch_requirements_from_api",
-                return_value=(True, None),
             ),
             patch("src.core.requirements_cache._read_requirements_from_s3") as read_s3,
         ):
-            assert get_requirements_sync() is None
+            assert get_requirements_sync() == "requests==2.32.0\n"
 
         read_s3.assert_not_called()
-        cached = json.loads(redis_client.setex.call_args.args[2])
-        assert cached["content"] == ""
-        assert cached["hash"] == hashlib.sha256(b"").hexdigest()
+        redis_client.setex.assert_not_called()
 
-    def test_api_failure_preserves_legacy_s3_fallback(self):
+    def test_redis_miss_reads_s3_and_recaches(self):
         redis_client = MagicMock()
         redis_client.get.return_value = None
 
@@ -52,10 +48,6 @@ class TestGetRequirementsSync:
             patch(
                 "src.core.module_cache_sync._get_sync_redis",
                 return_value=redis_client,
-            ),
-            patch(
-                "src.core.module_cache_sync._fetch_requirements_from_api",
-                return_value=(False, None),
             ),
             patch(
                 "src.core.requirements_cache._read_requirements_from_s3",
@@ -65,6 +57,34 @@ class TestGetRequirementsSync:
             assert get_requirements_sync() == "requests==2.32.0\n"
 
         read_s3.assert_called_once()
+        cached = json.loads(redis_client.setex.call_args.args[2])
+        assert cached == {
+            "content": "requests==2.32.0\n",
+            "hash": hashlib.sha256(b"requests==2.32.0\n").hexdigest(),
+        }
+        assert redis_client.setex.call_args.args[:2] == (
+            REQUIREMENTS_KEY,
+            REQUIREMENTS_CACHE_TTL,
+        )
+
+    def test_redis_and_s3_miss_return_none_without_cache(self):
+        redis_client = MagicMock()
+        redis_client.get.return_value = None
+
+        with (
+            patch(
+                "src.core.module_cache_sync._get_sync_redis",
+                return_value=redis_client,
+            ),
+            patch(
+                "src.core.requirements_cache._read_requirements_from_s3",
+                return_value=None,
+            ) as read_s3,
+        ):
+            assert get_requirements_sync() is None
+
+        read_s3.assert_called_once()
+        redis_client.setex.assert_not_called()
 
 
 class TestGetRequirements:

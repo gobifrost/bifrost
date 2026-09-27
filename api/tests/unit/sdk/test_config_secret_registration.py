@@ -27,7 +27,7 @@ class TestConfigGetRegistersSecret:
                 "config_type": "secret",
             }
             mock_client = AsyncMock()
-            mock_client.post = AsyncMock(return_value=mock_response)
+            mock_client.engine_request = AsyncMock(return_value=mock_response)
 
             with patch("bifrost.config.get_client", return_value=mock_client):
                 result = await config.get("my_key")
@@ -52,7 +52,7 @@ class TestConfigGetRegistersSecret:
                 "config_type": "string",
             }
             mock_client = AsyncMock()
-            mock_client.post = AsyncMock(return_value=mock_response)
+            mock_client.engine_request = AsyncMock(return_value=mock_response)
 
             with patch("bifrost.config.get_client", return_value=mock_client):
                 await config.get("my_url")
@@ -71,7 +71,7 @@ class TestConfigGetRegistersSecret:
         mock_response.status_code = 200
         mock_response.json.return_value = {"value": "secret-val", "config_type": "secret"}
         mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client.engine_request = AsyncMock(return_value=mock_response)
 
         with patch("bifrost.config.get_client", return_value=mock_client):
             result = await config.get("my_key")

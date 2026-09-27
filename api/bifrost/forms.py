@@ -1,8 +1,10 @@
 """
-bifrost/forms.py - Forms SDK (API-only)
+bifrost/forms.py - Forms SDK
 
 Provides Python API for form operations (read-only).
-All operations go through HTTP API endpoints.
+
+Inside an engine child these reads go through the worker's private Unix
+socket (the parent serves the real HTTP endpoints); external callers use HTTP.
 """
 
 from __future__ import annotations
@@ -51,7 +53,7 @@ class forms:
             ...     print(f"{form.id}: {form.name}")
         """
         client = get_client()
-        response = await client.get("/api/forms")
+        response = await client.engine_request("GET", "/api/forms")
         raise_for_status_with_detail(response)
         data = response.json()
         return [FormPublic.model_validate(form) for form in data]
@@ -91,7 +93,7 @@ class forms:
             >>> print(form.name)
         """
         client = get_client()
-        response = await client.get(f"/api/forms/{form_id}")
+        response = await client.engine_request("GET", f"/api/forms/{form_id}")
         if response.status_code == 404:
             raise ValueError(f"Form not found: {form_id}")
         elif response.status_code == 403:

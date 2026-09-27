@@ -21,6 +21,8 @@ const APP_LOGO_DATA_URL =
 const wsMocks = vi.hoisted(() => ({
 	platformJobCallback: undefined as
 		((job: Record<string, unknown>) => void) | undefined,
+	jobSpecificCallback: undefined as
+		((job: Record<string, unknown>) => void) | undefined,
 }));
 
 vi.mock("@/services/websocket", () => ({
@@ -28,6 +30,15 @@ vi.mock("@/services/websocket", () => ({
 		onAnyPlatformJobUpdate: vi.fn(
 			(callback: (job: Record<string, unknown>) => void) => {
 				wsMocks.platformJobCallback = callback;
+				return vi.fn();
+			},
+		),
+		onPlatformJobUpdate: vi.fn(
+			(
+				_jobId: string,
+				callback: (job: Record<string, unknown>) => void,
+			) => {
+				wsMocks.jobSpecificCallback = callback;
 				return vi.fn();
 			},
 		),
@@ -98,6 +109,8 @@ const mockDownloadSolutionExportJob = vi.fn();
 const mockGetSolutionCaptureCandidates = vi.fn();
 const mockCaptureSolutionEntities = vi.fn();
 const mockSyncSolution = vi.fn();
+const mockDisconnectSolutionGit = vi.fn();
+const mockPreviewSolutionFromRepo = vi.fn();
 const mockGetSolutionReadme = vi.fn();
 const mockGetSolutionSdkStatus = vi.fn();
 const mockUpdateSolutionAppSdks = vi.fn();
@@ -123,10 +136,18 @@ vi.mock("@/services/solutions", () => ({
 	downloadSolutionExportJob: (...a: unknown[]) =>
 		mockDownloadSolutionExportJob(...a),
 	syncSolution: (...a: unknown[]) => mockSyncSolution(...a),
+	previewSolutionFromRepo: (...a: unknown[]) =>
+		mockPreviewSolutionFromRepo(...a),
+	disconnectSolutionGit: (...a: unknown[]) => mockDisconnectSolutionGit(...a),
 	getSolutionCaptureCandidates: (...a: unknown[]) =>
 		mockGetSolutionCaptureCandidates(...a),
 	captureSolutionEntities: (...a: unknown[]) =>
 		mockCaptureSolutionEntities(...a),
+}));
+
+const mockObservePlatformJob = vi.fn();
+vi.mock("@/services/platformJobs", () => ({
+	observePlatformJob: (...args: unknown[]) => mockObservePlatformJob(...args),
 }));
 
 vi.mock("@/services/workflowKeys", () => ({
@@ -236,6 +257,11 @@ beforeEach(() => {
 		solution_id: "sol-1",
 		accepted: [],
 		skipped: [],
+	});
+	mockPreviewSolutionFromRepo.mockResolvedValue({ diff: {} });
+	mockObservePlatformJob.mockReturnValue({
+		promise: Promise.resolve(undefined),
+		cancel: vi.fn(),
 	});
 	mockListSolutionExportJobs.mockResolvedValue({ jobs: [] });
 	mockCreateSolutionExportJob.mockResolvedValue({
@@ -772,10 +798,66 @@ describe("SolutionDetail", () => {
 		await screen.findByTestId("solution-detail");
 
 		expect(screen.getByTestId("update-solution")).toBeInTheDocument();
+		expect(
+			screen.getByRole("button", { name: "Connect Git" }),
+		).toBeInTheDocument();
 		expect(screen.queryByTestId("update-now")).not.toBeInTheDocument();
 		expect(
 			screen.queryByTestId("update-available-badge"),
 		).not.toBeInTheDocument();
+	});
+
+	it("offers Update from the configured ref and Disconnect Git for a connected install", async () => {
+		const entities = makeEntities();
+		entities.solution = {
+			...entities.solution,
+			git_connected: true,
+			git_repo_url: "https://github.com/acme/sol",
+			git_ref: "main",
+		} as unknown as typeof entities.solution;
+		mockGetSolutionEntities.mockResolvedValue(entities);
+
+		await renderPage();
+		await screen.findByTestId("solution-detail");
+
+		expect(
+			screen.getByRole("button", { name: "Update from main" }),
+		).toBeInTheDocument();
+		expect(
+			screen.getByRole("button", { name: "Disconnect Git" }),
+		).toBeInTheDocument();
+		expect(screen.getByTestId("git-provenance")).toHaveTextContent(
+			"https://github.com/acme/sol @ main",
+		);
+	});
+
+	it("confirms disconnect before making the solution manually writable", async () => {
+		mockDisconnectSolutionGit.mockResolvedValue({ id: "sol-1" });
+		const entities = makeEntities();
+		entities.solution = {
+			...entities.solution,
+			git_connected: true,
+			git_repo_url: "https://github.com/acme/sol",
+			git_ref: "main",
+		} as unknown as typeof entities.solution;
+		mockGetSolutionEntities.mockResolvedValue(entities);
+
+		const { user } = await renderPage();
+		await screen.findByTestId("solution-detail");
+		await user.click(
+			screen.getByRole("button", { name: "Disconnect Git" }),
+		);
+
+		expect(
+			await screen.findByRole("heading", { name: "Disconnect Git?" }),
+		).toBeInTheDocument();
+		expect(mockDisconnectSolutionGit).not.toHaveBeenCalled();
+		await user.click(
+			screen.getByRole("button", { name: "Disconnect Git" }),
+		);
+		await waitFor(() =>
+			expect(mockDisconnectSolutionGit).toHaveBeenCalledWith("sol-1"),
+		);
 	});
 
 	it("surfaces 'Update now' + an Update-available badge for a git-connected install with an available update", async () => {
@@ -828,6 +910,70 @@ describe("SolutionDetail", () => {
 		await waitFor(() =>
 			expect(mockGetSolutionEntities.mock.calls.length).toBeGreaterThan(
 				1,
+			),
+		);
+	});
+
+	it("refreshes the Solution after a queued Git sync reaches a terminal success", async () => {
+		mockSyncSolution.mockResolvedValue({ job_id: "solution-sync-job" });
+		const entities = makeEntities();
+		entities.solution = {
+			...entities.solution,
+			git_connected: true,
+			git_repo_url: "https://github.com/acme/sol",
+			git_ref: "main",
+		} as unknown as typeof entities.solution;
+		mockGetSolutionEntities.mockResolvedValue(entities);
+
+		const { user } = await renderPage();
+		await screen.findByTestId("solution-detail");
+		await user.click(screen.getByTestId("update-now"));
+		await user.click(screen.getByTestId("confirm-update-now"));
+
+		await waitFor(() =>
+			expect(mockObservePlatformJob).toHaveBeenCalledWith(
+				"solution-sync-job",
+				expect.any(Function),
+			),
+		);
+		const entityReadsBeforeTerminal =
+			mockGetSolutionEntities.mock.calls.length;
+
+		act(() => wsMocks.jobSpecificCallback?.({ status: "running" }));
+		expect(mockGetSolutionEntities).toHaveBeenCalledTimes(
+			entityReadsBeforeTerminal,
+		);
+
+		act(() => wsMocks.jobSpecificCallback?.({ status: "succeeded" }));
+		await waitFor(() =>
+			expect(mockGetSolutionEntities.mock.calls.length).toBeGreaterThan(
+				entityReadsBeforeTerminal,
+			),
+		);
+	});
+
+	it("refreshes the Solution after a queued Git sync fails terminally", async () => {
+		mockSyncSolution.mockResolvedValue({ job_id: "failed-sync-job" });
+		const entities = makeEntities();
+		entities.solution = {
+			...entities.solution,
+			git_connected: true,
+			git_repo_url: "https://github.com/acme/sol",
+			git_ref: "main",
+		} as unknown as typeof entities.solution;
+		mockGetSolutionEntities.mockResolvedValue(entities);
+
+		const { user } = await renderPage();
+		await screen.findByTestId("solution-detail");
+		await user.click(screen.getByTestId("update-now"));
+		await user.click(screen.getByTestId("confirm-update-now"));
+		const entityReadsBeforeTerminal =
+			mockGetSolutionEntities.mock.calls.length;
+
+		act(() => wsMocks.jobSpecificCallback?.({ status: "failed" }));
+		await waitFor(() =>
+			expect(mockGetSolutionEntities.mock.calls.length).toBeGreaterThan(
+				entityReadsBeforeTerminal,
 			),
 		);
 	});

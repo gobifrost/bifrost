@@ -16,15 +16,9 @@ DB query level.  This covers scheduled, event-triggered, API-key, and worker-que
 paths that do NOT go through ``get_execution_context``.  The same gate is mirrored
 for ``POST /api/agent-runs/execute`` in ``routers/agent_runs.py``.
 
-Tests:
-1. Inactive solution workflow execution is REFUSED (409 Conflict — dormant).
-2. Inactive solution entities are STILL BROWSABLE (200 OK).
-3. Active solution executes normally (regression).
-4. Inactive solution's APP is DOWN via X-Bifrost-App header (dormant gate).
-5. Active solution's app is NOT refused via X-Bifrost-App (regression).
-6. (worker gate) get_workflow_for_execution raises WorkflowNotFoundError for inactive solution.
-7. (worker gate) get_workflow_for_execution resolves normally for active solution.
-8. (worker gate) get_workflow_for_execution resolves normally for _repo workflow (no solution).
+The live lifecycle checks active and inactive workflow/app access plus inactive
+entity browsing on one deployed install. DB-backed worker-gate tests below check
+inactive, active, and _repo workflow resolution separately.
 """
 from __future__ import annotations
 
@@ -48,21 +42,32 @@ def _create_solution(e2e_client, headers, slug: str) -> str:
     return r.json()["id"]
 
 
-def _deploy_with_workflow(e2e_client, headers, sid: str) -> None:
-    """Deploy a minimal bundle containing one workflow."""
-    wf_content = "def main(**kwargs): return {'ok': True}"
+def _deploy_with_workflow_app_and_table(e2e_client, headers, sid: str) -> tuple[str, str]:
+    """Deploy one bundle for both execution-context transports."""
+    app_manifest_id = str(uuid.uuid4())
+    table_manifest_id = str(uuid.uuid4())
+    table_name = f"dormant_tbl_{sid[:8]}"
     dep = e2e_client.post(f"/api/solutions/{sid}/deploy", headers=headers, json={
-        "python_files": {"workflows/main.py": wf_content},
+        "python_files": {"workflows/main.py": "def main(**kwargs): return {'ok': True}"},
         "workflows": [{
             "id": str(uuid.uuid4()),
-            "name": "main",
-            "path": "workflows/main.py",
-            "function_name": "main",
-            "type": "workflow",
+            "name": "main", "path": "workflows/main.py",
+            "function_name": "main", "type": "workflow",
+        }],
+        "apps": [{
+            "id": app_manifest_id, "slug": f"app-{sid[:8]}", "name": "App",
+            "app_model": "standalone_v2",
+            "dist_files": {"index.html": "<html></html>"},
+        }],
+        "tables": [{
+            "id": table_manifest_id, "name": table_name,
+            "schema": {"columns": [{"name": "val"}]}, "policies": None,
         }],
     })
     dep = wait_for_deploy(e2e_client, dep, headers)
     assert dep.status_code == 200, dep.text
+    app_id = str(solution_entity_id(UUID(sid), UUID(app_manifest_id)))
+    return app_id, table_name
 
 
 def _uninstall(e2e_client, headers, sid: str) -> None:
@@ -71,166 +76,48 @@ def _uninstall(e2e_client, headers, sid: str) -> None:
     assert r.json()["status"] == "inactive"
 
 
-async def test_inactive_solution_workflow_execution_refused(
+async def test_solution_dormant_gate_for_workflow_app_and_browser(
     e2e_client, platform_admin,
 ):
-    """Workflow execution with ?solution=<inactive id> must be refused (dormant gate)."""
+    """The same install is executable while active and dormant after uninstall."""
     headers = platform_admin.headers
-    slug = f"dormant-exec-{uuid.uuid4().hex[:8]}"
+    slug = f"dormant-{uuid.uuid4().hex[:8]}"
     sid = _create_solution(e2e_client, headers, slug)
-    _deploy_with_workflow(e2e_client, headers, sid)
-    _uninstall(e2e_client, headers, sid)
-
-    # Try to execute with the inactive solution's id in the query param.
-    # The dormant gate in get_execution_context must refuse this.
-    r = e2e_client.post(
-        f"/api/workflows/execute?solution={sid}",
-        headers=headers,
-        json={
-            "workflow_id": "workflows/main.py::main",
-            "input_data": {},
-        },
-    )
-    assert r.status_code == 409, (
-        f"Expected 409 (dormant gate) for inactive solution execution, got {r.status_code}: {r.text}"
-    )
-    assert "inactive" in r.json().get("detail", "").lower(), (
-        f"Expected 'inactive' in detail, got: {r.text}"
-    )
-
-
-async def test_inactive_solution_files_still_browsable(
-    e2e_client, platform_admin,
-):
-    """Entities browser must still work for an inactive solution (browse != execute)."""
-    headers = platform_admin.headers
-    slug = f"dormant-browse-{uuid.uuid4().hex[:8]}"
-    sid = _create_solution(e2e_client, headers, slug)
-    _deploy_with_workflow(e2e_client, headers, sid)
-    _uninstall(e2e_client, headers, sid)
-
-    # GET /api/solutions/{id}/entities uses solution_id as a URL path param —
-    # it does NOT go through the ?solution= execution context gate.
-    r = e2e_client.get(f"/api/solutions/{sid}/entities", headers=headers)
-    assert r.status_code == 200, (
-        f"Expected 200 for browsing inactive solution entities, got {r.status_code}: {r.text}"
-    )
-    body = r.json()
-    assert "files" in body or "workflows" in body, (
-        f"entities response missing expected keys: {list(body.keys())}"
-    )
-
-
-async def test_active_solution_executes_normally(
-    e2e_client, platform_admin,
-):
-    """Active solution execution must NOT be blocked by the dormant gate (regression)."""
-    headers = platform_admin.headers
-    slug = f"active-exec-{uuid.uuid4().hex[:8]}"
-    sid = _create_solution(e2e_client, headers, slug)
-    _deploy_with_workflow(e2e_client, headers, sid)
-
-    # Active solution: ?solution= should set ctx.solution_id without refusal.
-    # Execution itself may 404 (workflow path resolution in test context) but
-    # must NOT return 403/409 (the dormant gate must not fire).
-    r = e2e_client.post(
-        f"/api/workflows/execute?solution={sid}",
-        headers=headers,
-        json={
-            "workflow_id": "workflows/main.py::main",
-            "input_data": {},
-        },
-    )
-    # 403/409 means the dormant gate fired — that's the regression.
-    assert r.status_code not in (403, 409), (
-        f"Active solution execution was refused by dormant gate: {r.status_code}: {r.text}"
-    )
-
-
-def _deploy_with_app_and_table(e2e_client, headers, sid: str) -> tuple[str, str]:
-    """Deploy a minimal bundle with one app + one table.
-
-    Returns (app_id, table_name) where app_id is the resolved
-    per-install entity id (suitable for the X-Bifrost-App header).
-    """
-    app_manifest_id = str(uuid.uuid4())
-    table_manifest_id = str(uuid.uuid4())
-    slug_suffix = sid[:8]
-    table_name = f"dormant_tbl_{slug_suffix}"
-
-    dep = e2e_client.post(f"/api/solutions/{sid}/deploy", headers=headers, json={
-        "apps": [{"id": app_manifest_id, "slug": f"app-{slug_suffix}", "name": "App",
-                  "app_model": "standalone_v2", "dist_files": {"index.html": "<html></html>"}}],
-        "tables": [{"id": table_manifest_id, "name": table_name,
-                    "schema": {"columns": [{"name": "val"}]}, "policies": None}],
-    })
-    from tests.e2e.platform.conftest import wait_for_deploy
-    dep = wait_for_deploy(e2e_client, dep, headers)
-    assert dep.status_code in (200, 201), dep.text
-
-    app_id = str(solution_entity_id(UUID(sid), UUID(app_manifest_id)))
-    return app_id, table_name
-
-
-async def test_inactive_solution_app_path_refused(
-    e2e_client, platform_admin,
-):
-    """X-Bifrost-App header carrying an inactive solution's app id must be refused.
-
-    Fixes the dormant-gate bypass: the ?solution= gate already blocks workflow
-    execution; this proves the app path (header) is also gated so the inactive
-    solution's tables cannot be reached via its app either.
-    """
-    headers = platform_admin.headers
-    slug = f"dormant-app-{uuid.uuid4().hex[:8]}"
-    sid = _create_solution(e2e_client, headers, slug)
-    app_id, table_name = _deploy_with_app_and_table(e2e_client, headers, sid)
-    _uninstall(e2e_client, headers, sid)
-
-    # Any request carrying the inactive solution's app id in X-Bifrost-App must
-    # hit the dormant gate (409) in get_execution_context before reaching the table.
+    app_id, table_name = _deploy_with_workflow_app_and_table(e2e_client, headers, sid)
+    workflow_body = {
+        "workflow_id": "workflows/main.py::main",
+        "input_data": {},
+    }
     app_headers = {**headers, "X-Bifrost-App": app_id}
-    r = e2e_client.post(
-        f"/api/tables/{table_name}/documents",
-        headers=app_headers,
-        json={"id": "probe", "data": {"val": "x"}},
-    )
-    assert r.status_code == 409, (
-        f"Expected 409 (dormant gate via X-Bifrost-App), got {r.status_code}: {r.text}"
-    )
-    assert "inactive" in r.json().get("detail", "").lower(), (
-        f"Expected 'inactive' in detail, got: {r.text}"
-    )
+    app_url = f"/api/tables/{table_name}/documents"
 
-
-async def test_active_solution_app_path_not_refused(
-    e2e_client, platform_admin,
-):
-    """X-Bifrost-App for an ACTIVE solution must NOT be refused (regression guard)."""
-    headers = platform_admin.headers
-    slug = f"active-app-{uuid.uuid4().hex[:8]}"
-    sid = _create_solution(e2e_client, headers, slug)
-    app_id, table_name = _deploy_with_app_and_table(e2e_client, headers, sid)
-
-    # Active solution: the dormant gate must not fire.  The row insert may
-    # succeed or 409-conflict (duplicate) — what must NOT happen is a 409 from
-    # the dormant gate.  We distinguish by checking the detail string.
-    app_headers = {**headers, "X-Bifrost-App": app_id}
-    r = e2e_client.post(
-        f"/api/tables/{table_name}/documents",
-        headers=app_headers,
-        json={"id": "probe", "data": {"val": "x"}},
+    # Both execution-context transports accept an active install.
+    active_workflow = e2e_client.post(
+        f"/api/workflows/execute?solution={sid}", headers=headers, json=workflow_body
     )
-    if r.status_code == 409:
-        # A 409 from the dormant gate has "inactive" in the detail; a normal
-        # duplicate-key 409 does not.
-        assert "inactive" not in r.json().get("detail", "").lower(), (
-            f"Active solution app was refused by dormant gate: {r.text}"
-        )
-    else:
-        assert r.status_code in (200, 201), (
-            f"Active solution app request unexpectedly failed: {r.status_code}: {r.text}"
-        )
+    assert active_workflow.status_code not in (403, 409), active_workflow.text
+    active_app = e2e_client.post(
+        app_url, headers=app_headers, json={"id": "probe", "data": {"val": "x"}}
+    )
+    assert active_app.status_code in (200, 201), active_app.text
+
+    _uninstall(e2e_client, headers, sid)
+
+    inactive_workflow = e2e_client.post(
+        f"/api/workflows/execute?solution={sid}", headers=headers, json=workflow_body
+    )
+    assert inactive_workflow.status_code == 409, inactive_workflow.text
+    assert "inactive" in inactive_workflow.json().get("detail", "").lower()
+    inactive_app = e2e_client.post(
+        app_url, headers=app_headers, json={"id": "probe-2", "data": {"val": "x"}}
+    )
+    assert inactive_app.status_code == 409, inactive_app.text
+    assert "inactive" in inactive_app.json().get("detail", "").lower()
+
+    # Entity browsing uses a path id and remains available after uninstall.
+    browser = e2e_client.get(f"/api/solutions/{sid}/entities", headers=headers)
+    assert browser.status_code == 200, browser.text
+    assert "files" in browser.json() or "workflows" in browser.json()
 
 
 # ---------------------------------------------------------------------------

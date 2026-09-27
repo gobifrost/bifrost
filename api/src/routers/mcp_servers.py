@@ -22,6 +22,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 
+from shared.scope_resolver import has_scope_bypass
 from src.core.auth import Context, CurrentSuperuser
 from src.core.log_safety import log_safe
 from src.core.org_filter import resolve_org_filter
@@ -34,7 +35,7 @@ from src.models.contracts.external_mcp import (
     MCPServerSummary,
     MCPServerUpdate,
 )
-from src.models.orm.external_mcp import MCPServer
+from src.models.orm.external_mcp import MCPConnection, MCPServer
 from src.models.orm.oauth import OAuthProvider
 from src.repositories.external_mcp import MCPServerRepository
 from src.services.mcp_client.discovery import discover_oauth_metadata
@@ -71,7 +72,9 @@ class MCPServerDiscoverResponse(BaseModel):
 
 
 def _server_to_public(
-    server: MCPServer, oauth_flow_type: str | None = None
+    server: MCPServer,
+    oauth_flow_type: str | None = None,
+    connections: list[MCPConnection] | None = None,
 ) -> MCPServerPublic:
     """Convert an ``MCPServer`` ORM row (with eager-loaded connections) to its
     public response model. Tools nested under each connection use the same
@@ -80,18 +83,26 @@ def _server_to_public(
     The OAuth provider's ``oauth_flow_type`` is surfaced when supplied — the
     handlers that pre-loaded the provider pass it through; the rest leave
     it ``None`` and the frontend treats that as "no provider linked".
+
+    ``connections`` overrides which of the server's connections are
+    serialized (e.g. filtered to the caller's own org). Defaults to all of
+    ``server.connections``. Callers must pass a plain filtered list here
+    rather than assigning to ``server.connections`` directly — that
+    relationship cascades ("all, delete-orphan") and would delete another
+    org's connection row on flush.
     """
-    connections: list[MCPConnectionPublic] = []
-    for conn in server.connections:
+    source_connections = server.connections if connections is None else connections
+    public_connections: list[MCPConnectionPublic] = []
+    for conn in source_connections:
         tools = [
             MCPConnectionToolPublic.model_validate(t) for t in conn.tools
         ]
         public = MCPConnectionPublic.model_validate(conn)
         public.tools = tools
-        connections.append(public)
+        public_connections.append(public)
 
     public_server = MCPServerPublic.model_validate(server)
-    public_server.connections = connections
+    public_server.connections = public_connections
     public_server.oauth_flow_type = oauth_flow_type
     return public_server
 
@@ -203,8 +214,25 @@ async def get_mcp_server(
                 detail="MCP server not found",
             )
 
+    # Connections are per-org secrets-bearing rows with no global fallback
+    # (see MCPServerRepository docstring). `get_server` eager-loads every
+    # org's connections for the shared template; a non-bypass caller must
+    # only ever see their own org's connections here, never another org's.
+    # Filter for the RESPONSE ONLY — never assign to `server.connections`,
+    # which cascades ("all, delete-orphan") and would delete another org's
+    # connection row on flush.
+    bypass = has_scope_bypass(
+        is_platform_admin=ctx.user.is_superuser,
+        is_provider_org=ctx.user.is_provider_org,
+    )
+    visible_connections = (
+        list(server.connections)
+        if bypass
+        else [conn for conn in server.connections if conn.organization_id == ctx.org_id]
+    )
+
     flow_type = await _resolve_flow_type(ctx, server)
-    return _server_to_public(server, oauth_flow_type=flow_type)
+    return _server_to_public(server, oauth_flow_type=flow_type, connections=visible_connections)
 
 
 # =============================================================================

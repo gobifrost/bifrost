@@ -168,3 +168,60 @@ describe("chat WebSocket contract", () => {
 		unsubscribe();
 	});
 });
+
+describe("service log streaming contract", () => {
+	it("dispatches bridged attempt lines by service id", () => {
+		const callback = vi.fn();
+		const unsubscribe = webSocketService.onServiceLog(
+			"svc-1",
+			callback,
+		);
+
+		(
+			webSocketService as unknown as {
+				handleMessage(message: unknown): void;
+			}
+		).handleMessage({
+			type: "service_log",
+			service_id: "svc-1",
+			attempt_id: "att-1",
+			level: "INFO",
+			message: "bridged live",
+			timestamp: "2026-09-21T12:00:00+00:00",
+		});
+
+		expect(callback).toHaveBeenCalledOnce();
+		expect(callback).toHaveBeenCalledWith({
+			serviceId: "svc-1",
+			attemptId: "att-1",
+			timestamp: "2026-09-21T12:00:00+00:00",
+			level: "INFO",
+			message: "bridged live",
+		});
+		unsubscribe();
+	});
+
+	it("does not leak lines across services", () => {
+		const callback = vi.fn();
+		const unsubscribe = webSocketService.onServiceLog(
+			"svc-1",
+			callback,
+		);
+
+		(
+			webSocketService as unknown as {
+				handleMessage(message: unknown): void;
+			}
+		).handleMessage({
+			type: "service_log",
+			service_id: "svc-2",
+			attempt_id: "att-9",
+			level: "INFO",
+			message: "other service",
+			timestamp: "2026-09-21T12:00:00+00:00",
+		});
+
+		expect(callback).not.toHaveBeenCalled();
+		unsubscribe();
+	});
+});

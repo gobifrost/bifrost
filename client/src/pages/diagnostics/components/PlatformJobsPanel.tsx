@@ -103,6 +103,9 @@ function statusClassName(status: string) {
 	if (status === "queued" || status === "cancel_requested") {
 		return "border-[var(--bf-warning)]/30 bg-[var(--bf-warning)]/10 text-[var(--bf-warning)]";
 	}
+	if (status === "requires_action") {
+		return "border-[var(--bf-warning)]/30 bg-[var(--bf-warning)]/10 text-[var(--bf-warning)]";
+	}
 	if (status === "failed" || status === "cancelled") {
 		return "border-destructive/30 bg-destructive/10 text-destructive";
 	}
@@ -112,6 +115,9 @@ function statusClassName(status: string) {
 function StatusIcon({ status }: { status: string }) {
 	if (status === "succeeded") return <CheckCircle2 className="h-3.5 w-3.5" />;
 	if (status === "failed" || status === "cancelled") {
+		return <AlertCircle className="h-3.5 w-3.5" />;
+	}
+	if (status === "requires_action") {
 		return <AlertCircle className="h-3.5 w-3.5" />;
 	}
 	if (ACTIVE_STATUSES.has(status))
@@ -353,6 +359,9 @@ export function PlatformJobsPanel({
 								<SelectItem value="failed">Failed</SelectItem>
 								<SelectItem value="cancelled">
 									Cancelled
+								</SelectItem>
+								<SelectItem value="requires_action">
+									Requires Action
 								</SelectItem>
 							</SelectContent>
 						</Select>

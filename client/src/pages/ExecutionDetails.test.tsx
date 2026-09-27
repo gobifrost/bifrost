@@ -4,6 +4,7 @@ import { ExecutionDetails } from "./ExecutionDetails";
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { useLocation } from "react-router-dom";
 import {
 	makeQueryClient,
 	renderWithProviders,
@@ -309,6 +310,46 @@ describe("ExecutionDetails — navigation fetch gating", () => {
 		workflow_id: execution.workflow_id,
 		input_data: execution.input_data,
 	};
+
+	it("preserves the parent history route state in embedded mode", () => {
+		function RouteState() {
+			const location = useLocation();
+			return (
+				<output aria-label="Route state">
+					{JSON.stringify(location.state)}
+				</output>
+			);
+		}
+		const restoreState = {
+			executionHistoryRestore: {
+				href: "/history?status=Success&execution=run-1",
+				scrollTop: 96,
+			},
+		};
+		renderWithProviders(
+			<>
+				<ExecutionDetails
+					executionId={execution.execution_id}
+					embedded
+				/>
+				<RouteState />
+			</>,
+			{
+				initialEntries: [
+					{
+						pathname: "/history",
+						state: restoreState,
+					} as unknown as string,
+				],
+			},
+		);
+		expect(screen.getByLabelText("Route state")).toHaveTextContent(
+			'"scrollTop":96',
+		);
+		expect(mockUseExecution).toHaveBeenCalledWith(execution.execution_id, {
+			disablePolling: false,
+		});
+	});
 
 	it("defers the initial API fetch for a newly triggered execution", async () => {
 		mockUseExecution.mockReturnValue({

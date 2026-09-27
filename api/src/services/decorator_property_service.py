@@ -4,8 +4,9 @@ Decorator Property Service
 Reads and writes decorator properties in Python source files using LibCST.
 Preserves formatting, comments, and structure when modifying code.
 
-Primary use case: Auto-inject stable UUIDs into @workflow and @data_provider
-decorators on first discovery, with extensibility for future property editing.
+Primary use case: Auto-inject stable UUIDs into @workflow, @data_provider,
+@tool, and @service decorators on first discovery, with extensibility for
+future property editing.
 """
 
 import logging
@@ -18,7 +19,7 @@ from libcst.helpers import get_full_name_for_node
 
 logger = logging.getLogger(__name__)
 
-DecoratorType = Literal["workflow", "data_provider", "tool"]
+DecoratorType = Literal["workflow", "data_provider", "tool", "service"]
 
 
 @dataclass
@@ -51,7 +52,7 @@ class DecoratorPropertyTransformer(cst.CSTTransformer):
     3. @workflow(id="existing", name="X") -> no change (already has id)
     """
 
-    SUPPORTED_DECORATORS = {"workflow", "data_provider", "tool"}
+    SUPPORTED_DECORATORS = {"workflow", "data_provider", "tool", "service"}
 
     def __init__(
         self,
@@ -287,7 +288,7 @@ class IdStripperTransformer(cst.CSTTransformer):
     IDs are DB-only and should not be serialized to files for git.
     """
 
-    SUPPORTED_DECORATORS = {"workflow", "data_provider", "tool"}
+    SUPPORTED_DECORATORS = {"workflow", "data_provider", "tool", "service"}
 
     def __init__(self) -> None:
         super().__init__()
@@ -374,7 +375,7 @@ class SpecificIdTransformer(cst.CSTTransformer):
     Used when user wants to reuse existing workflow IDs.
     """
 
-    SUPPORTED_DECORATORS = {"workflow", "data_provider", "tool"}
+    SUPPORTED_DECORATORS = {"workflow", "data_provider", "tool", "service"}
 
     def __init__(self, function_ids: dict[str, str]):
         """
@@ -465,7 +466,7 @@ class DecoratorPropertyReader(cst.CSTVisitor):
     LibCST visitor that reads decorator properties without modification.
     """
 
-    SUPPORTED_DECORATORS = {"workflow", "data_provider", "tool"}
+    SUPPORTED_DECORATORS = {"workflow", "data_provider", "tool", "service"}
 
     def __init__(self) -> None:
         self.decorators: list[DecoratorInfo] = []

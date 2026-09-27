@@ -240,7 +240,7 @@ async def _execute_async(
         if baseline_pss > 0 and end_pss > 0:
             metrics["peak_memory_bytes"] = max(0, end_pss - baseline_pss)
 
-        return {
+        envelope: dict[str, Any] = {
             "execution_id": execution_id,
             "success": success,
             "status": status,
@@ -258,6 +258,11 @@ async def _execute_async(
             "execution_context": result.get("execution_context"),
             "worker_id": worker_id,
         }
+        # Supervised services: pass the identity block through so the pool
+        # routes the envelope to attempt completion, not the execution path.
+        if isinstance(result.get("service"), dict):
+            envelope["service"] = result["service"]
+        return envelope
 
     except Exception as e:
         duration_ms = int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000)
@@ -326,8 +331,12 @@ def _capture_failure_metrics(baseline_pss: int) -> dict[str, Any]:
         peak_memory_bytes: int | None = max(0, end_pss - baseline_pss)
     else:
         peak_memory_bytes = None
+    peak_process_rss_bytes = (
+        usage.ru_maxrss if sys.platform == 'darwin' else usage.ru_maxrss * 1024
+    )
     return {
         "peak_memory_bytes": peak_memory_bytes,
+        "peak_process_rss_bytes": peak_process_rss_bytes,
         "cpu_user_seconds": round(usage.ru_utime, 4),
         "cpu_system_seconds": round(usage.ru_stime, 4),
         "cpu_total_seconds": round(usage.ru_utime + usage.ru_stime, 4),
@@ -351,6 +360,7 @@ def _capture_resource_metrics() -> dict[str, Any]:
 
     return {
         "peak_memory_bytes": peak_memory_bytes,
+        "peak_process_rss_bytes": peak_memory_bytes,
         "cpu_user_seconds": round(usage.ru_utime, 4),
         "cpu_system_seconds": round(usage.ru_stime, 4),
         "cpu_total_seconds": round(usage.ru_utime + usage.ru_stime, 4),

@@ -118,6 +118,25 @@ describe("useApplicationSdkUpdateJobs", () => {
 		expect(result.current.isAnyUpdating(["app-1", "app-2"])).toBe(true);
 	});
 
+	it("treats action-required SDK updates as terminal failures", () => {
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+		const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+		const { result } = renderHook(() => useApplicationSdkUpdateJobs(), {
+			wrapper: wrapper(queryClient),
+		});
+
+		act(() => {
+			mocks.callback?.(makeJob({ status: "requires_action" }));
+		});
+
+		expect(result.current.getUpdateState("app-1")).toBe("failed");
+		expect(invalidateSpy).toHaveBeenCalledWith({
+			queryKey: ["get", "/api/applications"],
+		});
+	});
+
 	it("ignores application jobs that are not the SDK update job type", () => {
 		const queryClient = new QueryClient({
 			defaultOptions: { queries: { retry: false } },

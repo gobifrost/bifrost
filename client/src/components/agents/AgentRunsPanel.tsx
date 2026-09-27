@@ -60,7 +60,9 @@ import type { components } from "@/lib/v1";
 
 type AgentRun = components["schemas"]["AgentRunResponse"];
 const PAGE_SIZE = 25;
+const MAX_PAGE_INDEX = 99;
 const ALL_FILTER_VALUE = "__all__";
+const AGENT_RUNS_SCROLL_STORAGE_PREFIX = "bifrost.agent-runs.scroll";
 const AGENT_RUN_STATUSES = [
 	{ value: "completed", label: "Completed" },
 	{ value: "running", label: "Running" },
@@ -70,6 +72,41 @@ const AGENT_RUN_STATUSES = [
 	{ value: "budget_exceeded", label: "Budget exceeded" },
 ] as const;
 
+function parseDateParam(value: string | null): Date | undefined {
+	if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined;
+	const date = new Date(`${value}T00:00:00`);
+	return Number.isNaN(date.getTime()) ? undefined : date;
+}
+
+function formatDateParam(date: Date): string {
+	const year = date.getFullYear();
+	const month = String(date.getMonth() + 1).padStart(2, "0");
+	const day = String(date.getDate()).padStart(2, "0");
+	return `${year}-${month}-${day}`;
+}
+
+function parsePageIndex(value: string | null): number {
+	const page = Number(value);
+	return Number.isSafeInteger(page) && page > 0 && page <= MAX_PAGE_INDEX + 1
+		? page - 1
+		: 0;
+}
+
+function agentRunsScrollStorageKey(href: string): string {
+	return `${AGENT_RUNS_SCROLL_STORAGE_PREFIX}:${href}`;
+}
+
+function readAgentRunsScrollTop(href: string): number | null {
+	try {
+		const value = sessionStorage.getItem(agentRunsScrollStorageKey(href));
+		if (value === null) return null;
+		const scrollTop = Number(value);
+		return Number.isFinite(scrollTop) && scrollTop >= 0 ? scrollTop : null;
+	} catch {
+		return null;
+	}
+}
+
 export function AgentRunsPanel() {
 	const isDesktop = useIsDesktop();
 	const navigate = useNavigate();
@@ -78,19 +115,23 @@ export function AgentRunsPanel() {
 	const { isPlatformAdmin } = useAuth();
 	const agentIdFilter = searchParams.get("agent") || "";
 	const statusFilter = searchParams.get("status") || "";
-	const [searchTerm, setSearchTerm] = useState(searchParams.get("q") || "");
-	const [filterOrgId, setFilterOrgId] = useState<string | null | undefined>(
-		undefined,
-	);
-	const [dateRange, setDateRange] = useState<DateRange | undefined>();
+	const searchTerm = searchParams.get("q") || "";
+	const orgParam = searchParams.get("org");
+	const filterOrgId = orgParam === "global" ? null : orgParam || undefined;
+	const from = parseDateParam(searchParams.get("from"));
+	const to = parseDateParam(searchParams.get("to"));
+	const dateRange = from ? { from, to } : undefined;
 	const [filtersOpen, setFiltersOpen] = useState(false);
-	const [pageIndex, setPageIndex] = useState(0);
+	const pageIndex = parsePageIndex(searchParams.get("page"));
+	const panelScrollRef = useRef<HTMLDivElement>(null);
+	const pendingScrollRestoreRef = useRef<number | null>(null);
+	const historyHref = getLocationHref(location);
 	const { data: agents } = useAgents(
 		isPlatformAdmin ? filterOrgId : undefined,
 		{ includeInactive: true },
 	);
 	const runNavigationState = createAgentRunNavigationState({
-		href: getLocationHref(location),
+		href: historyHref,
 		label: "Back to run history",
 	});
 	const listFilters = useMemo(() => {
@@ -129,6 +170,99 @@ export function AgentRunsPanel() {
 		isFetchNextPageError,
 		fetchNextPage,
 	} = useInfiniteAgentRuns(listFilters);
+	const loadedPageCount = data?.pages.length ?? 0;
+	useEffect(() => {
+		pendingScrollRestoreRef.current = readAgentRunsScrollTop(historyHref);
+	}, [historyHref]);
+	useEffect(() => {
+		const panel = panelScrollRef.current;
+		if (!panel) return;
+		const storageKey = agentRunsScrollStorageKey(historyHref);
+		const saveScrollPosition = () => {
+			if (pendingScrollRestoreRef.current !== null) return;
+			try {
+				sessionStorage.setItem(storageKey, String(panel.scrollTop));
+			} catch {
+				// Storage can be unavailable in private browsing.
+			}
+		};
+		panel.addEventListener("scroll", saveScrollPosition, { passive: true });
+		return () => {
+			saveScrollPosition();
+			panel.removeEventListener("scroll", saveScrollPosition);
+		};
+	}, [historyHref, isLoading]);
+	useEffect(() => {
+		if (isLoading) return;
+		const panel = panelScrollRef.current;
+		if (!panel) return;
+		const restoreScrollPosition = () => {
+			const scrollTop = pendingScrollRestoreRef.current;
+			if (scrollTop === null) return;
+			const maxScrollTop = panel.scrollHeight - panel.clientHeight;
+			if (maxScrollTop < scrollTop) return;
+			panel.scrollTop = scrollTop;
+			if (panel.scrollTop >= scrollTop)
+				pendingScrollRestoreRef.current = null;
+		};
+		restoreScrollPosition();
+		if (pendingScrollRestoreRef.current === null) return;
+
+		const resizeObserver =
+			typeof ResizeObserver === "undefined"
+				? null
+				: new ResizeObserver(() => {
+					restoreScrollPosition();
+					if (pendingScrollRestoreRef.current === null) {
+						resizeObserver?.disconnect();
+						mutationObserver?.disconnect();
+					}
+				});
+		const observeLayout = () => {
+			resizeObserver?.disconnect();
+			resizeObserver?.observe(panel);
+			for (const child of panel.children) resizeObserver?.observe(child);
+		};
+		observeLayout();
+		const mutationObserver =
+			typeof MutationObserver === "undefined"
+				? null
+				: new MutationObserver(() => {
+						observeLayout();
+						restoreScrollPosition();
+						if (pendingScrollRestoreRef.current === null) {
+							mutationObserver?.disconnect();
+							resizeObserver?.disconnect();
+						}
+					});
+		mutationObserver?.observe(panel, { childList: true, subtree: true });
+		return () => {
+			mutationObserver?.disconnect();
+			resizeObserver?.disconnect();
+		};
+	}, [historyHref, isLoading, loadedPageCount]);
+	useEffect(() => {
+		if (
+			isLoading ||
+			pageIndex < loadedPageCount ||
+			isFetchingNextPage ||
+			isFetchNextPageError
+		)
+			return;
+		if (hasNextPage) {
+			void fetchNextPage();
+			return;
+		}
+		if (loadedPageCount > 0) setPageIndex(loadedPageCount - 1);
+	}, [
+		fetchNextPage,
+		hasNextPage,
+		isFetchNextPageError,
+		isFetchingNextPage,
+		isLoading,
+		loadedPageCount,
+		pageIndex,
+	]);
 	const rerun = useRerunAgentRun();
 	const [pendingRunId, setPendingRunId] = useState<string | null>(null);
 	const [rerunError, setRerunError] = useState<{
@@ -165,49 +299,69 @@ export function AgentRunsPanel() {
 			pending={isFetchingNextPage}
 			previousDisabled={!hasPreviousPage || isFetchingNextPage}
 			nextDisabled={!hasFollowingPage || isFetchingNextPage}
-			onPrevious={() => setPageIndex((current) => current - 1)}
+			onPrevious={() => setPageIndex(pageIndex - 1)}
 			onNext={() => void handleNextPage()}
 		/>
 	);
 
-	const filtersKey = `${agentIdFilter}|${statusFilter}|${searchTerm}|${dateRange?.from?.toISOString() ?? ""}|${dateRange?.to?.toISOString() ?? ""}|${filterOrgId ?? ""}`;
-	const [prevFiltersKey, setPrevFiltersKey] = useState(filtersKey);
-	if (prevFiltersKey !== filtersKey) {
-		setPrevFiltersKey(filtersKey);
-		setPageIndex(0);
+	function updateSearchParams(
+		update: (params: URLSearchParams) => void,
+		resetPage = true,
+	) {
+		setSearchParams(
+			(prev) => {
+				const next = new URLSearchParams(prev);
+				update(next);
+				if (resetPage) next.delete("page");
+				return next;
+			},
+			{ replace: true },
+		);
 	}
 
 	function setQueryParam(name: string, value: string) {
-		setSearchParams(
-			(prev) => {
-				const next = new URLSearchParams(prev);
-				if (value) next.set(name, value);
-				else next.delete(name);
-				return next;
-			},
-			{ replace: true },
-		);
+		updateSearchParams((next) => {
+			if (value) next.set(name, value);
+			else next.delete(name);
+		});
 	}
 
 	function handleSearchChange(value: string) {
-		setSearchTerm(value);
 		setQueryParam("q", value);
 	}
 
+	function setFilterOrgId(value: string | null | undefined) {
+		updateSearchParams((next) => {
+			if (value === undefined) next.delete("org");
+			else next.set("org", value ?? "global");
+		});
+	}
+
+	function setDateRange(value: DateRange | undefined) {
+		updateSearchParams((next) => {
+			if (value?.from) next.set("from", formatDateParam(value.from));
+			else next.delete("from");
+			if (value?.to) next.set("to", formatDateParam(value.to));
+			else next.delete("to");
+		});
+	}
+
+	function setPageIndex(value: number) {
+		updateSearchParams((next) => {
+			if (value === 0) next.delete("page");
+			else next.set("page", String(value + 1));
+		}, false);
+	}
+
 	function clearFilters() {
-		setSearchTerm("");
-		setDateRange(undefined);
-		setFilterOrgId(undefined);
-		setSearchParams(
-			(prev) => {
-				const next = new URLSearchParams(prev);
-				next.delete("agent");
-				next.delete("status");
-				next.delete("q");
-				return next;
-			},
-			{ replace: true },
-		);
+		updateSearchParams((next) => {
+			next.delete("agent");
+			next.delete("status");
+			next.delete("q");
+			next.delete("org");
+			next.delete("from");
+			next.delete("to");
+		});
 	}
 
 	async function handleNextPage() {
@@ -458,7 +612,7 @@ export function AgentRunsPanel() {
 				onRetry={() => void refetch()}
 			/>
 		) : null;
-	if (runs.length === 0) {
+	if (runs.length === 0 && !isFetchNextPageError) {
 		return (
 			<>
 				{toolbar}
@@ -490,7 +644,8 @@ export function AgentRunsPanel() {
 
 	return (
 		<div
-			className="flex min-h-0 min-w-0 flex-1 flex-col gap-4"
+			ref={panelScrollRef}
+			className="flex min-h-0 min-w-0 flex-1 flex-col gap-4 lg:overflow-auto"
 			data-testid="agent-runs-panel"
 		>
 			{toolbar}

@@ -32,6 +32,7 @@ Choose the decorator by consumer:
 | `@workflow` | General execution from apps, forms, events, other workflows, or the CLI |
 | `@tool` | A callable intentionally exposed to an AI agent; equivalent to a tool workflow |
 | `@data_provider` | Dynamic form or select options |
+| `@service` | Long-lived supervised work bridging an external system — full contract in `references/services.md` |
 
 An agent's `tool_ids` must reference `@tool` registrations, not plain workflows.
 
@@ -51,6 +52,16 @@ Other keyword arguments are accepted only for backwards-compatible parsing:
 the runtime logs a warning and ignores them. Configure timeouts, execution
 mode, schedules, endpoints, access, ROI, retries, cache TTL, and tool-specific
 descriptions on the persisted workflow through the Bifrost UI or API.
+
+## Supervised services
+
+`@service` is covered in full in `references/services.md` (authoring
+contract, supervision SDK, lifecycle CLI, ownership, handoff checklist).
+The one rule that decides the decorator: if the work holds a connection,
+subscription, or listener indefinitely instead of returning a result, it is
+a service — register it with `bifrost workflows register` like a workflow
+(the platform detects `@service` and ensures the supervised definition)
+and manage it with `bifrost services ...`.
 
 ## Test-driven iteration
 

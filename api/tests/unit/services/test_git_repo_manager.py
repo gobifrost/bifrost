@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 import pytest
 
@@ -96,6 +97,15 @@ class TestS3Uri:
     def test_builds_uri_from_bucket(self, manager):
         assert manager._s3_uri() == "s3://bifrost-local/_repo/"
 
+    def test_checkpoint_uri_is_uuid_scoped(self, manager):
+        checkpoint_id = str(uuid4())
+
+        assert manager._checkpoint_uri(checkpoint_id) == (
+            f"s3://bifrost-local/_workspace_sync_checkpoints/{checkpoint_id}/"
+        )
+        with pytest.raises(ValueError, match="Invalid workspace checkpoint ID"):
+            manager._checkpoint_uri("../../repo")
+
 
 class TestHasGitDir:
     """Tests for has_git_dir existence check."""
@@ -157,6 +167,7 @@ class TestSyncDown:
             assert cmd[0:3] == ["aws", "s3", "sync"]
             assert cmd[3] == "s3://bifrost-local/_repo/"
             assert cmd[4] == str(tmp_path)
+            assert "--delete" in cmd
 
     @pytest.mark.asyncio
     async def test_creates_target_dir(self, manager):

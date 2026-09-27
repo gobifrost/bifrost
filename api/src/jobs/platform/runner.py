@@ -16,10 +16,11 @@ from src.jobs.platform.base import (
     PlatformJobContext,
     PlatformJobDeferred,
     PlatformJobFailure,
+    PlatformJobRequiresAction,
 )
 from src.jobs.platform.registry import get_platform_job_definition
 from src.models.orm.platform_jobs import PlatformJob
-from src.services.platform_jobs import defer_platform_job, finish_platform_job
+from src.services.platform_jobs import defer_platform_job, finish_platform_job, retry_platform_job_failure
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +74,7 @@ async def run_claimed_platform_job(job_id: UUID, lease_token: UUID) -> bool:
             requested_by_user_id=job.requested_by_user_id,
             requested_by_email=job.requested_by_email,
             requested_by_name=job.requested_by_name,
+            checkpoint=job.result,
         )
 
     try:
@@ -98,13 +100,14 @@ async def run_claimed_platform_job(job_id: UUID, lease_token: UUID) -> bool:
             result=exc.result,
         )
     except PlatformJobFailure as exc:
+        return await retry_platform_job_failure(job_id, lease_token, exc, enabled=definition.policy.retry_on_failure)
+    except PlatformJobRequiresAction as exc:
         return await finish_platform_job(
             job_id,
             lease_token,
-            status="failed",
-            error_code=exc.code,
-            error_message=exc.message,
-            error_retryable=exc.retryable,
+            status="requires_action",
+            phase=exc.phase,
+            result=exc.result,
         )
     except ValidationError as exc:
         return await finish_platform_job(

@@ -79,16 +79,14 @@ def get_requirements_sync() -> str | None:
 
     Lookup order:
     1. Redis cache (fast path)
-    2. API endpoint GET /api/sdk/requirements — preferred cold-cache fallback
-       (no S3 env vars required; uses engine token from credentials file)
-    3. Direct S3 via botocore — legacy fallback when BIFROST_S3_* are present
-    4. None (not found)
+    2. Direct S3 via botocore while the privileged setup helper still has
+       storage credentials (re-caches on hit)
+    3. None (not found)
 
     Returns:
         Requirements content string, or None if not found
     """
     from src.core.module_cache_sync import (
-        _fetch_requirements_from_api,
         _get_s3_client,
         _get_sync_redis,
     )
@@ -103,26 +101,7 @@ def get_requirements_sync() -> str | None:
                 return content
             return None
 
-        # Redis miss — try API endpoint first (Phase 2: no S3 env required)
-        logger.info("[requirements] Redis cache empty, trying API endpoint")
-        api_authoritative, api_content = _fetch_requirements_from_api()
-        if api_authoritative:
-            try:
-                normalized_content = api_content or ""
-                content_hash = hashlib.sha256(normalized_content.encode()).hexdigest()
-                cached_data = CachedRequirements(
-                    content=normalized_content,
-                    hash=content_hash,
-                )
-                client.setex(REQUIREMENTS_KEY, REQUIREMENTS_CACHE_TTL, json.dumps(cached_data))
-                logger.info("[requirements] Cached authoritative API response in Redis")
-            except Exception as e:
-                logger.warning(f"[requirements] Failed to re-cache to Redis: {e}")
-            return api_content if api_content and api_content.strip() else None
-
-        # Only a genuine API failure may use the legacy direct-S3 path. A 404
-        # above means the API authoritatively checked Redis/S3 and found no file.
-        logger.info("[requirements] API unavailable, falling back to S3")
+        logger.info("[requirements] Redis cache empty, reading S3")
         content = _read_requirements_from_s3(_get_s3_client)
         if not content:
             return None

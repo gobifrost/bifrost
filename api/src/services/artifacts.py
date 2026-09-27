@@ -6,7 +6,7 @@ import mimetypes
 from pathlib import PurePosixPath
 from uuid import UUID, uuid4
 
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.contracts.artifacts import ArtifactRef
@@ -83,11 +83,22 @@ class ArtifactService:
         storage_family: str = "generated",
         workspace_id: UUID | None = None,
         logical_path: str | None = None,
+        bypass: bool = False,
     ) -> Artifact:
         if not filename:
             raise ValueError("Artifact filename is required.")
         if not content:
             raise ValueError(f"{filename} is empty.")
+        if workspace_id is not None and not bypass:
+            existing_owner = (
+                await self.db.execute(
+                    select(Artifact.created_by_user_id)
+                    .where(Artifact.workspace_id == workspace_id)
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if existing_owner is not None and existing_owner != created_by_user_id:
+                raise ArtifactAccessError("Artifact workspace is not accessible.")
         artifact_id = uuid4()
         safe_name = filename.replace("/", "_").replace("\\", "_")
         resolved_path = (
@@ -136,20 +147,21 @@ class ArtifactService:
         workspace_id: UUID,
         *,
         user_id: UUID,
-        organization_id: UUID | None,
-        is_platform_admin: bool = False,
+        bypass: bool = False,
     ) -> list[Artifact]:
-        """List the latest version of every logical file in a workspace."""
-        conditions = [Artifact.created_by_user_id == user_id]
-        if organization_id is not None:
-            conditions.append(Artifact.organization_id == organization_id)
+        """List the latest version of every logical file in a workspace.
+
+        Regular (non-bypass) callers see only artifacts they created
+        themselves — never another org member's. ``bypass`` (platform admin
+        or provider-org) sees everything in the workspace.
+        """
         statement = (
             select(Artifact)
             .where(Artifact.workspace_id == workspace_id)
             .order_by(Artifact.created_at.desc(), Artifact.id.desc())
         )
-        if not is_platform_admin:
-            statement = statement.where(or_(*conditions))
+        if not bypass:
+            statement = statement.where(Artifact.created_by_user_id == user_id)
         artifacts = list((await self.db.execute(statement)).scalars().all())
         latest: dict[str, Artifact] = {}
         for artifact in artifacts:
@@ -163,14 +175,14 @@ class ArtifactService:
         path: str,
         *,
         user_id: UUID,
-        organization_id: UUID | None,
-        is_platform_admin: bool = False,
+        bypass: bool = False,
     ) -> Artifact:
-        """Resolve the latest authorized artifact at one logical path."""
+        """Resolve the latest authorized artifact at one logical path.
+
+        Regular (non-bypass) callers may only resolve an artifact they
+        created themselves.
+        """
         normalized = normalize_artifact_path(path)
-        conditions = [Artifact.created_by_user_id == user_id]
-        if organization_id is not None:
-            conditions.append(Artifact.organization_id == organization_id)
         statement = (
             select(Artifact)
             .where(Artifact.workspace_id == workspace_id)
@@ -178,8 +190,8 @@ class ArtifactService:
             .order_by(Artifact.created_at.desc(), Artifact.id.desc())
             .limit(1)
         )
-        if not is_platform_admin:
-            statement = statement.where(or_(*conditions))
+        if not bypass:
+            statement = statement.where(Artifact.created_by_user_id == user_id)
         artifact = (await self.db.execute(statement)).scalar_one_or_none()
         if artifact is None:
             raise ArtifactAccessError(f"Artifact workspace path {normalized} was not found.")
@@ -190,15 +202,16 @@ class ArtifactService:
         artifact_id: UUID,
         *,
         user_id: UUID,
-        organization_id: UUID | None,
-        is_platform_admin: bool = False,
+        bypass: bool = False,
     ) -> Artifact:
-        conditions = [Artifact.created_by_user_id == user_id]
-        if organization_id is not None:
-            conditions.append(Artifact.organization_id == organization_id)
+        """Resolve one artifact by id.
+
+        Regular (non-bypass) callers may only read an artifact they created
+        themselves — never another org member's.
+        """
         statement = select(Artifact).where(Artifact.id == artifact_id)
-        if not is_platform_admin:
-            statement = statement.where(or_(*conditions))
+        if not bypass:
+            statement = statement.where(Artifact.created_by_user_id == user_id)
         artifact = (await self.db.execute(statement)).scalar_one_or_none()
         if artifact is None:
             raise ArtifactAccessError("Artifact not found.")

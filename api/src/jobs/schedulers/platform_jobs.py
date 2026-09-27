@@ -517,7 +517,12 @@ async def run_claimed_platform_job(claim: ClaimedPlatformJob) -> bool:
 
     async with get_db_context() as db:
         job = await db.get(PlatformJob, claim.id)
-        if job is not None and job.status in ("succeeded", "failed", "cancelled"):
+        if job is not None and job.status in (
+            "succeeded",
+            "failed",
+            "cancelled",
+            "requires_action",
+        ):
             return job.status == "succeeded"
 
     await _handle_runner_loss(

@@ -252,7 +252,8 @@
 | POST | `/api/github/commit` |
 | GET | `/api/github/commits` |
 | GET | `/api/github/config` |
-| POST | `/api/github/configure` |
+| POST | `/api/github/connect` |
+| POST | `/api/github/connect/preview` |
 | POST | `/api/github/create-repository` |
 | POST | `/api/github/diff` |
 | POST | `/api/github/discard` |
@@ -414,6 +415,7 @@
 | GET | `/api/reports/roi/summary` |
 | GET | `/api/reports/roi/trends` |
 | GET | `/api/reports/usage` |
+| GET | `/api/reports/workflow-resources` |
 | GET | `/api/required-instructions` |
 | GET | `/api/roles` |
 | POST | `/api/roles` |
@@ -487,6 +489,16 @@
 | GET | `/api/sdk/sessions/{session_id}/pending` |
 | POST | `/api/sdk/tables/create` |
 | POST | `/api/sdk/tables/list` |
+| GET | `/api/services` |
+| GET | `/api/services/{service_id}` |
+| PATCH | `/api/services/{service_id}` |
+| GET | `/api/services/{service_id}/attempts` |
+| POST | `/api/services/{service_id}/disable` |
+| POST | `/api/services/{service_id}/enable` |
+| GET | `/api/services/{service_id}/logs` |
+| POST | `/api/services/{service_id}/restart` |
+| POST | `/api/services/{service_id}/start` |
+| POST | `/api/services/{service_id}/stop` |
 | GET | `/api/settings/ai/pricing` |
 | POST | `/api/settings/ai/pricing` |
 | DELETE | `/api/settings/ai/pricing/{pricing_id}` |
@@ -504,6 +516,9 @@
 | GET | `/api/solutions/deploy-jobs/{job_id}` |
 | GET | `/api/solutions/export-jobs/{job_id}` |
 | GET | `/api/solutions/export-jobs/{job_id}/download` |
+| POST | `/api/solutions/import-workspace` |
+| POST | `/api/solutions/import-workspace/preview` |
+| POST | `/api/solutions/import-workspace/preview-repo` |
 | POST | `/api/solutions/install` |
 | POST | `/api/solutions/install/from-repo` |
 | POST | `/api/solutions/install/preview` |

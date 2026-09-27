@@ -24,6 +24,8 @@ Behavior:
 
 from __future__ import annotations
 
+import html
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -77,26 +79,25 @@ def _popup_response(*, success: bool, connection_id: str, error: str | None = No
     on slow browsers. Inline JS sidesteps it.
     """
     if success:
-        message = (
-            "{type: 'mcp_oauth_success', connection_id: '"
-            + connection_id
-            + "'}"
-        )
+        payload: dict[str, str] = {"type": "mcp_oauth_success", "connection_id": connection_id}
         body_text = "Connected. You can close this window."
     else:
-        # Escape any quotes the error string might carry; the simple
-        # repr->slice trick works because error is server-controlled.
-        safe_error = (error or "Unknown error").replace("'", "\\'")
-        message = (
-            "{type: 'mcp_oauth_error', connection_id: '"
-            + connection_id
-            + "', error: '"
-            + safe_error
-            + "'}"
-        )
-        body_text = f"Connection failed: {error or 'Unknown error'}"
+        detail = error or "Unknown error"
+        payload = {"type": "mcp_oauth_error", "connection_id": connection_id, "error": detail}
+        body_text = f"Connection failed: {detail}"
 
-    html = f"""<!doctype html>
+    # The error text comes from query parameters and vendor responses, so it
+    # is untrusted: HTML-escape the visible text, and JSON-encode the message
+    # with <, > and & escaped so it cannot terminate the inline script.
+    message = (
+        json.dumps(payload)
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+    )
+    body_text = html.escape(body_text)
+
+    page = f"""<!doctype html>
 <html><head><title>MCP OAuth</title></head>
 <body>
 <p>{body_text}</p>
@@ -113,7 +114,7 @@ def _popup_response(*, success: bool, connection_id: str, error: str | None = No
 }})();
 </script>
 </body></html>"""
-    return HTMLResponse(content=html, status_code=200 if success else 400)
+    return HTMLResponse(content=page, status_code=200 if success else 400)
 
 
 # =============================================================================

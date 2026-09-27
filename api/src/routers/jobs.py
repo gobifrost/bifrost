@@ -12,6 +12,7 @@ from typing import Any
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
+from src.core.auth import CurrentSuperuser
 from src.core.log_safety import log_safe
 from src.core.database import get_db
 from src.models.orm.platform_jobs import PlatformJob
@@ -54,6 +55,8 @@ class JobStatusResponse(BaseModel):
 async def get_job_status(
     job_id: str,
     db: AsyncSession = Depends(get_db),
+    *,
+    _user: CurrentSuperuser,
 ) -> JobStatusResponse:
     """
     Get the status of a job by ID.
@@ -75,10 +78,12 @@ async def get_job_status(
             status_map = {
                 "queued": "pending",
                 "running": "running",
+                "waiting": "running",
                 "cancel_requested": "running",
                 "succeeded": "success",
                 "failed": "failed",
                 "cancelled": "cancelled",
+                "requires_action": "failed",
             }
             result = platform_job.result or {}
             return JobStatusResponse(
@@ -87,7 +92,12 @@ async def get_job_status(
                 pulled=result.get("pulled", 0),
                 pushed=result.get("pushed", 0),
                 commit_sha=result.get("commit_sha"),
-                error=platform_job.error_message,
+                error=platform_job.error_message or (
+                    f"Action required: {result['requires_action']}"
+                    if platform_job.status == "requires_action"
+                    and isinstance(result.get("requires_action"), str)
+                    else None
+                ),
                 data=result,
                 preview=result.get("preview"),
                 conflicts=result.get("conflicts"),

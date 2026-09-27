@@ -775,8 +775,9 @@ Entity mutation commands (see 'bifrost <entity> --help'):
   tables       Manage tables
   files        Read/write _repo files, Solution runtime files, and file policies
   events       Manage event sources and subscriptions
-  policy-rule  Manage reusable table/file policy rules
-  requirements Manage workspace Python requirements.txt (install/list/remove)
+   policy-rule  Manage reusable table/file policy rules
+   requirements Manage workspace Python requirements.txt (install/list/remove)
+   services     Manage supervised services
 
 Workspace/file targets:
   _repo source files:
@@ -1780,7 +1781,8 @@ def handle_git(args: list[str]) -> int:
     """
     Handle 'bifrost git <subcommand>' command.
 
-    Dispatches to git subcommands: fetch, status, commit, push, resolve, diff, discard.
+    Dispatches to git subcommands: fetch, status, commit, sync, connect,
+    abort-merge, push, resolve, diff, discard.
 
     Args:
         args: Subcommand and its arguments
@@ -1793,12 +1795,14 @@ def handle_git(args: list[str]) -> int:
         EXIT_ERROR,
         RESOLUTION_MAP,
         run_git_commit,
+        run_git_connect,
         run_git_diff,
         run_git_discard,
         run_git_fetch,
         run_git_push,
         run_git_resolve,
         run_git_status,
+        run_git_sync,
     )
 
     if not args or args[0] in ("--help", "-h"):
@@ -1839,8 +1843,69 @@ def handle_git(args: list[str]) -> int:
             return EXIT_ERROR
         return run_git_commit(client, message)
 
+    if subcmd == "sync":
+        if any(arg != "--confirm-deletes" for arg in sub_args):
+            print("Error: sync accepts only --confirm-deletes", file=sys.stderr)
+            return EXIT_ERROR
+        return run_git_sync(client, confirm_deletes="--confirm-deletes" in sub_args)
+
     if subcmd == "push":
         return run_git_push(client)
+
+    if subcmd == "abort-merge":
+        if sub_args:
+            print("Error: abort-merge does not accept arguments", file=sys.stderr)
+            return EXIT_ERROR
+        from .git_commands import run_git_abort_merge
+
+        return run_git_abort_merge(client)
+
+    if subcmd == "connect":
+        if not sub_args or sub_args[0].startswith("-"):
+            print("Error: connect requires a repository URL", file=sys.stderr)
+            return EXIT_ERROR
+        repository_url = sub_args[0]
+        branch = "main"
+        strategy = None
+        decisions: dict[str, str] = {}
+        confirm_destructive = False
+        index = 1
+        while index < len(sub_args):
+            option = sub_args[index]
+            if option == "--confirm-destructive":
+                confirm_destructive = True
+                index += 1
+                continue
+            if option in {"--branch", "--strategy", "--decision"}:
+                if index + 1 >= len(sub_args):
+                    print(f"Error: {option} requires a value", file=sys.stderr)
+                    return EXIT_ERROR
+                value = sub_args[index + 1]
+                if option == "--branch":
+                    branch = value
+                elif option == "--strategy":
+                    if value not in {"publish-local", "start-from-remote", "reconcile"}:
+                        print("Error: --strategy must be publish-local, start-from-remote, or reconcile", file=sys.stderr)
+                        return EXIT_ERROR
+                    strategy = value
+                else:
+                    path, separator, choice = value.partition("=")
+                    if not separator or not path or choice not in {"local", "remote"}:
+                        print("Error: --decision must be PATH=local or PATH=remote", file=sys.stderr)
+                        return EXIT_ERROR
+                    decisions[path] = choice
+                index += 2
+            else:
+                print(f"Unknown option: {option}", file=sys.stderr)
+                return EXIT_ERROR
+        return run_git_connect(
+            client,
+            repository_url,
+            branch=branch,
+            strategy=strategy,
+            decisions=decisions,
+            confirm_destructive=confirm_destructive,
+        )
 
     if subcmd == "resolve":
         # Parse path=strategy pairs
@@ -1888,7 +1953,10 @@ Subcommands:
   fetch                          Regenerate manifest from DB, fetch remote, show status
   status                         Show changed files and commits ahead/behind
   commit -m "message"            Regenerate manifest, stage, preflight, commit
-  push                           Pull remote + push local + import entities (deploy)
+  sync [--confirm-deletes]       Fetch, reconcile, publish, and import workspace changes
+  connect URL [options]          Preview and connect a workspace repository safely
+  abort-merge                    Restore the working tree before the current merge
+  push                           Deprecated alias for sync
   resolve path=strategy [...]    Resolve merge conflicts (keep_local or keep_remote)
   diff <path>                    Show file diff
   discard <path> [...]           Discard working tree changes
@@ -1896,13 +1964,17 @@ Subcommands:
 Typical workflow:
   bifrost git fetch                     # regenerate manifest, see what's changed
   bifrost git commit -m "sync clients"  # commit DB changes to manifest
-  bifrost git push                      # pull + push + import to deploy
+  bifrost git sync                      # pull + push + import to deploy
 
 Examples:
   bifrost git fetch
   bifrost git status
   bifrost git commit -m "add onboarding workflow"
-  bifrost git push
+  bifrost git sync
+  bifrost git connect https://github.com/example/workspace.git --strategy publish-local
+  bifrost git connect https://github.com/example/workspace.git --strategy start-from-remote --confirm-destructive
+  bifrost git connect https://github.com/example/workspace.git --strategy reconcile --decision workflows/billing.py=local
+  bifrost git abort-merge
   bifrost git resolve workflows/billing.py=keep_remote
   bifrost git diff .bifrost/workflows.yaml
   bifrost git discard workflows/old.py

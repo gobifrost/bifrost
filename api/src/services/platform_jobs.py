@@ -36,7 +36,7 @@ from src.services.notification_service import get_notification_service
 
 logger = logging.getLogger(__name__)
 ACTIVE_PLATFORM_JOB_STATUSES = ("queued", "running", "waiting", "cancel_requested")
-TERMINAL_PLATFORM_JOB_STATUSES = ("succeeded", "failed", "cancelled")
+TERMINAL_PLATFORM_JOB_STATUSES = ("succeeded", "failed", "cancelled", "requires_action")
 
 #: Job types eligible for Kubernetes placement when the build backend is
 #: enabled. Mirrors the config default so partial settings doubles in tests
@@ -128,6 +128,7 @@ def _notification_status(status: str) -> NotificationStatus:
         "succeeded": NotificationStatus.COMPLETED,
         "failed": NotificationStatus.FAILED,
         "cancelled": NotificationStatus.CANCELLED,
+        "requires_action": NotificationStatus.AWAITING_ACTION,
     }[status]
 
 
@@ -146,7 +147,7 @@ async def publish_platform_job_update(job: PlatformJob) -> None:
                     error=job.error_message[:1000] if job.error_message else None,
                     result=(
                         {"job_id": str(job.id), **(job.result or {})}
-                        if job.status == "succeeded"
+                        if job.status in ("succeeded", "requires_action")
                         else None
                     ),
                 ),
@@ -357,6 +358,7 @@ async def finish_platform_job(
     error_code: str | None = None,
     error_message: str | None = None,
     error_retryable: bool = False,
+    phase: str | None = None,
 ) -> bool:
     """Finalize only the currently leased attempt; stale runners are fenced out."""
     if status not in TERMINAL_PLATFORM_JOB_STATUSES:
@@ -376,11 +378,12 @@ async def finish_platform_job(
         if job is None:
             return False
         job.status = status
-        job.phase = {
+        job.phase = (phase or {
             "succeeded": "Completed",
             "failed": "Failed",
             "cancelled": "Cancelled",
-        }[status]
+            "requires_action": "Action required",
+        }[status])[:200]
         if status == "succeeded":
             job.progress_percent = 100
         job.result = result
@@ -397,6 +400,70 @@ async def finish_platform_job(
         await db.commit()
     await publish_platform_job_update(job)
     return True
+
+
+async def checkpoint_platform_job(
+    job_id: UUID, lease_token: UUID, *, result: dict[str, Any], phase: str
+) -> bool:
+    """Durably save resumable handler state on the fenced shared job row."""
+    async with get_db_context() as db:
+        job = (await db.execute(
+            select(PlatformJob).where(
+                PlatformJob.id == job_id, PlatformJob.lease_token == lease_token,
+                PlatformJob.status == "running",
+            ).with_for_update()
+        )).scalar_one_or_none()
+        if job is None:
+            return False
+        job.result = result
+        job.phase = phase[:200]
+        job.revision += 1
+        await db.commit()
+    await publish_platform_job_update(job)
+    return True
+
+
+async def retry_platform_job_failure(
+    job_id: UUID, lease_token: UUID, failure: Any, *, enabled: bool
+) -> bool:
+    """Requeue a retryable failure while retaining its handler checkpoint."""
+    if not enabled or not failure.retryable:
+        return await finish_platform_job(job_id, lease_token, status="failed", result=failure.result, error_code=failure.code, error_message=failure.message, error_retryable=failure.retryable)
+    async with get_db_context() as db:
+        job = (await db.execute(
+            select(PlatformJob).where(
+                PlatformJob.id == job_id, PlatformJob.lease_token == lease_token,
+                PlatformJob.status.in_(("running", "cancel_requested")),
+            ).with_for_update()
+        )).scalar_one_or_none()
+        if job is None:
+            return False
+        if job.status == "cancel_requested":
+            job.status = "cancelled"
+            job.phase = "Cancelled"
+            job.completed_at = _now()
+            job.error_retryable = False
+        elif job.attempt >= job.max_attempts:
+            job.status = "failed"
+            job.phase = "Failed"
+            job.completed_at = _now()
+            job.error_retryable = False
+        else:
+            job.status = "queued"
+            job.phase = "Retrying after recoverable failure"
+            job.available_at = _now()
+            job.error_retryable = True
+        job.result = failure.result
+        job.error_code = failure.code
+        job.error_message = failure.message[:4000]
+        job.lease_owner = None
+        job.lease_token = None
+        job.heartbeat_at = None
+        job.lease_expires_at = None
+        job.revision += 1
+        await db.commit()
+    await publish_platform_job_update(job)
+    return job.status == "queued"
 
 
 async def defer_platform_job(
@@ -459,6 +526,7 @@ async def finish_deferred_platform_job(
             "succeeded": "Completed",
             "failed": "Failed",
             "cancelled": "Cancelled",
+            "requires_action": "Action required",
         }[status]
         job.progress_percent = 100 if status == "succeeded" else job.progress_percent
         job.result = result

@@ -44,7 +44,7 @@ class TestIntegrationsGetRegistersSecrets:
             mock_response.status_code = 200
             mock_response.json.return_value = _make_oauth_response()
             mock_client = AsyncMock()
-            mock_client.post = AsyncMock(return_value=mock_response)
+            mock_client.engine_request = AsyncMock(return_value=mock_response)
 
             with patch("bifrost.integrations.get_client", return_value=mock_client):
                 result = await integrations.get("TestIntegration")
@@ -71,7 +71,7 @@ class TestIntegrationsGetRegistersSecrets:
                 access_token=None, refresh_token=None, client_secret=None
             )
             mock_client = AsyncMock()
-            mock_client.post = AsyncMock(return_value=mock_response)
+            mock_client.engine_request = AsyncMock(return_value=mock_response)
 
             with patch("bifrost.integrations.get_client", return_value=mock_client):
                 await integrations.get("TestIntegration")
@@ -95,7 +95,7 @@ class TestIntegrationsGetRegistersSecrets:
                 "config": {}, "oauth": None,
             }
             mock_client = AsyncMock()
-            mock_client.post = AsyncMock(return_value=mock_response)
+            mock_client.engine_request = AsyncMock(return_value=mock_response)
 
             with patch("bifrost.integrations.get_client", return_value=mock_client):
                 await integrations.get("TestIntegration")
@@ -122,7 +122,7 @@ class TestIntegrationsGetRegistersSecrets:
                 "config_secret_keys": ["api_key"],
             }
             mock_client = AsyncMock()
-            mock_client.post = AsyncMock(return_value=mock_response)
+            mock_client.engine_request = AsyncMock(return_value=mock_response)
 
             with patch("bifrost.integrations.get_client", return_value=mock_client):
                 result = await integrations.get("TestIntegration")
@@ -152,7 +152,7 @@ class TestIntegrationsGetRegistersSecrets:
                 "config_secret_keys": ["api_key"],
             }
             mock_client = AsyncMock()
-            mock_client.post = AsyncMock(return_value=mock_response)
+            mock_client.engine_request = AsyncMock(return_value=mock_response)
 
             with patch("bifrost.integrations.get_client", return_value=mock_client):
                 result = await integrations.get("TestIntegration")
@@ -173,7 +173,7 @@ class TestIntegrationsGetRegistersSecrets:
         mock_response.status_code = 200
         mock_response.json.return_value = _make_oauth_response()
         mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client.engine_request = AsyncMock(return_value=mock_response)
 
         with patch("bifrost.integrations.get_client", return_value=mock_client):
             result = await integrations.get("TestIntegration")

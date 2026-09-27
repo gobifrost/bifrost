@@ -7,12 +7,23 @@ for the MetaPathFinder to fetch modules during import.
 This module provides synchronous versions of the cache functions
 specifically for use in virtual_import.py's MetaPathFinder.
 
-When a cache miss occurs, we fall back via two paths (tried in order):
-1. API module-fetch endpoint (GET /api/sdk/modules/<path>) — preferred when
+When a cache miss occurs, we fall back via one of these paths, tried in order:
+1. Trusted engine socket (preferred inside a forked engine child): the worker
+   parent serves the original ``GET /api/sdk/modules-resolve`` and
+   ``GET /api/sdk/modules/{path:path}`` routes on a private Unix socket, and
+   the child reads them through the synchronous
+   ``BifrostClient.engine_request_sync`` entry point. This path needs no
+   child DB/S3 credentials and no shared pipe, and works while another async
+   SDK call is in flight.
+2. API module-fetch endpoints over the network — preferred when
    BIFROST_API_URL is set and a credentials file is present.  This path does
    not require BIFROST_S3_* in the child env (Phase 2 hardening).
-2. Direct S3 access via botocore — legacy fallback, only active when
+3. Direct S3 access via botocore — legacy fallback, only active when
    BIFROST_S3_ACCESS_KEY/SECRET_KEY are set in the environment.
+
+Inside a forked engine child with the trusted engine socket injected, a cold
+resolve/fetch failure raises instead of falling back to the network API or S3
+(an installed socket proves the engine socket is expected).
 
 Self-healing: on any successful fetch, the result is re-cached to Redis so
 subsequent calls on the same worker hit the fast path.
@@ -195,6 +206,29 @@ def _get_engine_credentials() -> tuple[str, str] | None:
     return None
 
 
+def _get_engine_client() -> Any | None:
+    """Return the engine-local SDK client when the trusted socket is injected.
+
+    Non-None only inside a forked engine child whose entrypoint installed the
+    worker's private Unix socket. Everywhere else (API processes, plain
+    workers, tests without an injection) this is None and the existing
+    HTTP/S3 fallbacks apply unchanged.
+
+    The import is lazy so this module stays importable before the SDK package
+    loads. A SDK package that is present but broken raises instead of
+    silently switching an engine child back to HTTP/S3.
+    """
+    try:
+        from bifrost.client import get_client, get_engine_socket_path
+    except ModuleNotFoundError as e:
+        if e.name in {"bifrost", "bifrost.client"}:
+            return None
+        raise
+    if get_engine_socket_path() is None:
+        return None
+    return get_client()
+
+
 def _fetch_module_from_api(path: str) -> CachedModule | None:
     """
     Fetch a module via GET /api/sdk/modules/<path> (synchronous, httpx).
@@ -288,6 +322,105 @@ def _fetch_module_resolution_from_api(name: str) -> ModuleResolution | None:
     except Exception as e:
         logger.warning(f"API module-resolve error for {name}: {e}")
         return None
+
+
+def _resolve_via_engine_socket(client: Any, name: str) -> ModuleResolution:
+    """Resolve one import name through the trusted engine socket.
+
+    Calls the original ``GET /api/sdk/modules-resolve`` route (mounted on the
+    worker socket by ``worker_sdk_http``) through the synchronous
+    ``engine_request_sync`` entry point, so a cold import never needs a shared
+    pipe or a child DB/S3 connection. The active Solution scope rides the
+    query exactly as the network fallback sends it; the route's signed
+    per-execution claims remain authoritative for engine callers.
+
+    Raises :class:`ModuleResolutionError` on transport failure, a non-200
+    status, or an invalid payload. A local attempt never falls back to the
+    network API or S3.
+    """
+    ctx = get_solution_context()
+    params: dict[str, object] = {"name": name}
+    if ctx is not None:
+        params["solution_id"] = ctx.solution_id
+        params["global_repo_access"] = ctx.global_repo_access
+
+    try:
+        response = client.engine_request_sync(
+            "GET", "/api/sdk/modules-resolve", params=params
+        )
+    except Exception as e:
+        raise ModuleResolutionError(
+            f"Engine-local module resolver failed for {name}: {e}"
+        ) from e
+    if response.status_code != 200:
+        raise ModuleResolutionError(
+            f"Engine-local module resolver returned {response.status_code} "
+            f"for {name}"
+        )
+
+    data = response.json()
+    kind = data.get("kind")
+    if kind not in {"module", "package", "namespace", "not_found"}:
+        raise ModuleResolutionError(
+            f"Engine-local module resolver returned invalid kind for {name}"
+        )
+    content = data.get("content")
+    if content is not None and not isinstance(content, str):
+        raise ModuleResolutionError(
+            f"Engine-local module resolver returned invalid content for {name}"
+        )
+    module_hash = data.get("hash") or ""
+    if not isinstance(module_hash, str):
+        raise ModuleResolutionError(
+            f"Engine-local module resolver returned invalid hash for {name}"
+        )
+    storage_path = data.get("storage_path")
+    if storage_path is not None and not isinstance(storage_path, str):
+        raise ModuleResolutionError(
+            f"Engine-local module resolver returned invalid storage path for {name}"
+        )
+    return ModuleResolution(
+        kind=kind,
+        path=data.get("path") or name.replace(".", "/"),
+        content=content,
+        hash=module_hash,
+        storage_path=storage_path,
+    )
+
+
+def _fetch_via_engine_socket(client: Any, storage_path: str) -> CachedModule | None:
+    """Fetch one candidate's source through the trusted engine socket.
+
+    Calls the original ``GET /api/sdk/modules/{path}`` route (mounted on the
+    worker socket by ``worker_sdk_http``) through the synchronous
+    ``engine_request_sync`` entry point. Returns None on a route 404 so the
+    caller advances to the next candidate. Any other failure raises
+    :class:`ModuleResolutionError` — a local attempt never falls back to the
+    network API or S3.
+    """
+    try:
+        response = client.engine_request_sync(
+            "GET", f"/api/sdk/modules/{storage_path}"
+        )
+    except Exception as e:
+        raise ModuleResolutionError(
+            f"Engine-local module fetch failed for {storage_path}: {e}"
+        ) from e
+    if response.status_code == 404:
+        return None
+    if response.status_code != 200:
+        raise ModuleResolutionError(
+            f"Engine-local module fetch returned {response.status_code} "
+            f"for {storage_path}"
+        )
+
+    module = response.json()
+    content = module.get("content")
+    if not isinstance(content, str):
+        raise ModuleResolutionError(
+            f"Engine-local module fetch returned invalid content for {storage_path}"
+        )
+    return cast(CachedModule, dict(module))
 
 
 def _resolution_redis_key(name: str) -> str:
@@ -410,48 +543,20 @@ def resolve_module_sync(name: str) -> ModuleResolution:
     if resolution is None:
         resolution = _get_exact_scoped_module(name)
     if resolution is None:
-        resolution = _fetch_module_resolution_from_api(name)
+        # Inside a forked engine child with the trusted socket injected, the
+        # parent serves the original modules-resolve route on that socket —
+        # no API request, no shared pipe, and no HTTP/S3 fallback on failure.
+        # Everywhere else the existing API fallback applies unchanged.
+        engine_client = _get_engine_client()
+        if engine_client is not None:
+            resolution = _resolve_via_engine_socket(engine_client, name)
+        else:
+            resolution = _fetch_module_resolution_from_api(name)
     if resolution is None:
         raise ModuleResolutionError(f"Module resolver unavailable for {name}")
 
     cache[cache_key] = resolution
     return resolution
-
-
-def _fetch_requirements_from_api() -> tuple[bool, str | None]:
-    """
-    Fetch requirements.txt via GET /api/sdk/requirements (synchronous).
-
-    Returns ``(authoritative, content)``. A 404 is authoritative absence, while
-    connection/auth/server failures return ``(False, None)`` so the caller can
-    distinguish them from a workspace that intentionally has no requirements.
-    Used as the primary cold-cache fallback in get_requirements_sync() when
-    BIFROST_S3_* are absent from the child environment (Phase 2 hardening).
-    """
-    creds = _get_engine_credentials()
-    if not creds:
-        return False, None
-    creds_url, token = creds
-    api_url = creds_url or os.environ.get("BIFROST_API_URL", "").rstrip("/")
-    if not api_url:
-        return False, None
-
-    try:
-        resp = _get_http_client().get(
-            f"{api_url}/api/sdk/requirements",
-            headers={"Authorization": f"Bearer {token}"},
-        )
-        if resp.status_code == 404:
-            return True, None
-        if resp.status_code != 200:
-            logger.warning(f"API requirements-fetch returned {resp.status_code}")
-            return False, None
-
-        data = resp.json()
-        return True, data.get("content")
-    except Exception as e:
-        logger.warning(f"API requirements-fetch error: {e}")
-        return False, None
 
 
 def _get_s3_client() -> Any:
@@ -554,9 +659,14 @@ def get_module_sync(path: str) -> CachedModule | None:
 
     Per candidate, the lookup order is:
     1. Redis cache (fast path)
-    2. API endpoint GET /api/sdk/modules/<storage_path>  — preferred cold-cache
-       fallback (no S3 env vars required; uses engine token from credentials
-       file; the server performs the Redis→S3 lookup)
+    2a. Inside a forked engine child with the trusted socket injected: the
+        parent-served original route GET /api/sdk/modules/<storage_path> over
+        ``engine_request_sync`` (no pipe, no child DB/S3, no HTTP/S3 fallback;
+        a 404 tries the next candidate)
+    2b. Otherwise: API endpoint GET /api/sdk/modules/<storage_path>  —
+        preferred cold-cache fallback (no S3 env vars required; uses
+        engine token from credentials file; the server performs the
+        Redis→S3 lookup)
     3. Direct S3 via botocore — legacy fallback when BIFROST_S3_* are present
     Then the next candidate; None if no candidate resolves.
 
@@ -568,6 +678,14 @@ def get_module_sync(path: str) -> CachedModule | None:
     try:
         client = _get_sync_redis()
 
+        # Inside a forked engine child with the trusted socket injected, the
+        # parent serves the original modules/{path} route on that socket — no
+        # API request, no shared pipe, no child DB/S3 connection, and no
+        # HTTP/S3 fallback on failure. A route 404 advances to the next
+        # candidate; any other local failure raises. Everywhere else the
+        # existing API/S3 fallbacks apply unchanged.
+        engine_client = _get_engine_client()
+
         for storage_path in _candidate_storage_paths(path):
             key = f"{MODULE_KEY_PREFIX}{storage_path}"
             data = client.get(key)
@@ -575,6 +693,18 @@ def get_module_sync(path: str) -> CachedModule | None:
                 cached = cast(CachedModule, json.loads(data))
                 cached["storage_path"] = storage_path
                 return cached
+
+            if engine_client is not None:
+                engine_module = _fetch_via_engine_socket(engine_client, storage_path)
+                if engine_module is None:
+                    continue
+                try:
+                    client.setex(key, MODULE_CACHE_TTL, json.dumps(engine_module))
+                    client.sadd(MODULE_INDEX_KEY, storage_path)
+                except redis.RedisError as e:
+                    logger.warning(f"Failed to re-cache local module to Redis: {e}")
+                engine_module["storage_path"] = storage_path
+                return engine_module
 
             # --- Cold-cache fallback 1: API endpoint ---
             api_module = _fetch_module_from_api(storage_path)

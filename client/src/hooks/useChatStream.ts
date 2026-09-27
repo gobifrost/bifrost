@@ -58,7 +58,10 @@ function getChunk(input: ChatStreamEnvelope): ChatStreamChunk | null {
 
 function isTerminalPlatformJob(status: string | undefined): boolean {
 	return (
-		status === "succeeded" || status === "failed" || status === "cancelled"
+		status === "succeeded" ||
+		status === "failed" ||
+		status === "cancelled" ||
+		status === "requires_action"
 	);
 }
 

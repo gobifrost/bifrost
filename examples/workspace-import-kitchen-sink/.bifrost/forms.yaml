@@ -1,0 +1,18 @@
+forms:
+  66666666-6666-4666-8666-666666666666:
+    id: 66666666-6666-4666-8666-666666666666
+    name: sink_intake
+    description: Intake form v2
+    confirmation_markdown: "## Received\n\nWe will be in touch."
+    workflow_id: 11111111-1111-4111-8111-111111111111
+    form_schema:
+      fields:
+        - name: email
+          type: text
+          required: true
+          label: Email
+        - name: count
+          type: number
+          required: false
+          label: Count
+          default_value: 5

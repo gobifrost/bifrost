@@ -674,6 +674,440 @@ class TestAgentScopeFiltering:
             f"got {response.status_code}"
         )
 
+    def test_provider_org_non_admin_cannot_get_other_users_private_agent(
+        self, e2e_client, org1_user, provider_org_user
+    ):
+        """Private is owner-only regardless of org/provider scope bypass —
+        a provider-org non-admin's scope bypass does not extend to another
+        user's private agent."""
+        create_resp = e2e_client.post(
+            "/api/agents",
+            json={
+                "name": f"Private Owner Only {uuid4().hex[:8]}",
+                "system_prompt": "Private agent for owner-only test.",
+                "access_level": "private",
+            },
+            headers=org1_user.headers,
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        agent_id = create_resp.json()["id"]
+
+        try:
+            own_read = e2e_client.get(
+                f"/api/agents/{agent_id}", headers=org1_user.headers
+            )
+            assert own_read.status_code == 200, own_read.text
+
+            provider_read = e2e_client.get(
+                f"/api/agents/{agent_id}", headers=provider_org_user.headers
+            )
+            assert provider_read.status_code == 404, provider_read.text
+
+            provider_stats = e2e_client.get(
+                f"/api/agents/{agent_id}/stats", headers=provider_org_user.headers
+            )
+            assert provider_stats.status_code == 404, provider_stats.text
+        finally:
+            e2e_client.delete(f"/api/agents/{agent_id}", headers=org1_user.headers)
+
+
+async def _make_mcp_connection(db_session, organization_id: UUID) -> UUID:
+    """Insert a minimal MCPServer + MCPConnection row for reference tests."""
+    from src.models.orm.external_mcp import MCPConnection, MCPServer
+
+    server = MCPServer(
+        id=uuid4(),
+        name=f"agent-write-policy-server-{uuid4().hex[:8]}",
+        server_url="https://example.com/mcp",
+        organization_id=None,
+        is_active=True,
+    )
+    db_session.add(server)
+    await db_session.flush()
+
+    connection = MCPConnection(
+        id=uuid4(),
+        server_id=server.id,
+        organization_id=organization_id,
+        client_id="test-client",
+        encrypted_client_secret="encrypted-blob",
+        available_in_chat=True,
+        available_to_autonomous=False,
+    )
+    db_session.add(connection)
+    # Commit (not just flush) — the API request goes through a separate DB
+    # session/connection, which must see this row.
+    await db_session.commit()
+    return connection.id
+
+
+class TestAgentWritePolicyGates:
+    """A field is applied or explicitly refused (403/422) — never dropped.
+
+    Covers the RBAC R1b non-admin privileged/budget/org gates on create and
+    update, plus the admin-and-everyone reference-validation 422s.
+    """
+
+    # ---- create: privileged fields --------------------------------------
+
+    @pytest.mark.parametrize(
+        "field,value",
+        [
+            ("system_tools", ["some_system_tool"]),
+            ("knowledge_sources", ["some-namespace"]),
+            ("delegated_agent_ids", [str(uuid4())]),
+            ("role_ids", [str(uuid4())]),
+            ("mcp_connection_ids", [str(uuid4())]),
+        ],
+    )
+    def test_non_admin_create_with_privileged_field_non_empty_403(
+        self, e2e_client, org1_user, field, value
+    ):
+        response = e2e_client.post(
+            "/api/agents",
+            json={
+                "name": f"Privileged Create {uuid4().hex[:8]}",
+                "system_prompt": "Test prompt.",
+                "access_level": "private",
+                field: value,
+            },
+            headers=org1_user.headers,
+        )
+        assert response.status_code == 403, response.text
+        assert field in response.json()["detail"]
+
+    def test_non_admin_create_with_privileged_fields_empty_201(
+        self, e2e_client, org1_user
+    ):
+        response = e2e_client.post(
+            "/api/agents",
+            json={
+                "name": f"Privileged Create Empty {uuid4().hex[:8]}",
+                "system_prompt": "Test prompt.",
+                "access_level": "private",
+                "system_tools": [],
+                "knowledge_sources": [],
+                "delegated_agent_ids": [],
+                "role_ids": [],
+                "mcp_connection_ids": [],
+            },
+            headers=org1_user.headers,
+        )
+        assert response.status_code == 201, response.text
+        e2e_client.delete(
+            f"/api/agents/{response.json()['id']}", headers=org1_user.headers
+        )
+
+    def test_non_admin_create_with_budget_field_403(self, e2e_client, org1_user):
+        response = e2e_client.post(
+            "/api/agents",
+            json={
+                "name": f"Budget Create {uuid4().hex[:8]}",
+                "system_prompt": "Test prompt.",
+                "access_level": "private",
+                "llm_max_tokens": 500,
+            },
+            headers=org1_user.headers,
+        )
+        assert response.status_code == 403, response.text
+        assert "llm_max_tokens" in response.json()["detail"]
+
+    # ---- create: organization_id ------------------------------------------
+
+    def test_non_admin_create_with_foreign_org_403(
+        self, e2e_client, org1_user, org2
+    ):
+        response = e2e_client.post(
+            "/api/agents",
+            json={
+                "name": f"Foreign Org Create {uuid4().hex[:8]}",
+                "system_prompt": "Test prompt.",
+                "access_level": "private",
+                "organization_id": org2["id"],
+            },
+            headers=org1_user.headers,
+        )
+        assert response.status_code == 403, response.text
+
+    def test_non_admin_create_with_explicit_null_org_403(
+        self, e2e_client, org1_user
+    ):
+        response = e2e_client.post(
+            "/api/agents",
+            json={
+                "name": f"Global Org Create {uuid4().hex[:8]}",
+                "system_prompt": "Test prompt.",
+                "access_level": "private",
+                "organization_id": None,
+            },
+            headers=org1_user.headers,
+        )
+        assert response.status_code == 403, response.text
+
+    def test_non_admin_create_omitted_org_defaults_to_own(
+        self, e2e_client, org1_user
+    ):
+        response = e2e_client.post(
+            "/api/agents",
+            json={
+                "name": f"Own Org Create {uuid4().hex[:8]}",
+                "system_prompt": "Test prompt.",
+                "access_level": "private",
+            },
+            headers=org1_user.headers,
+        )
+        assert response.status_code == 201, response.text
+        assert response.json()["organization_id"] == str(org1_user.organization_id)
+        e2e_client.delete(
+            f"/api/agents/{response.json()['id']}", headers=org1_user.headers
+        )
+
+    # ---- update: privileged fields + clear_roles --------------------------
+
+    @pytest.fixture
+    def own_private_agent(self, e2e_client, org1_user):
+        create_resp = e2e_client.post(
+            "/api/agents",
+            json={
+                "name": f"Own Private {uuid4().hex[:8]}",
+                "system_prompt": "Test prompt.",
+                "access_level": "private",
+            },
+            headers=org1_user.headers,
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        agent_id = create_resp.json()["id"]
+        yield agent_id
+        e2e_client.delete(f"/api/agents/{agent_id}", headers=org1_user.headers)
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            {"system_tools": []},
+            {"knowledge_sources": []},
+            {"delegated_agent_ids": []},
+            {"role_ids": []},
+            {"clear_roles": True},
+        ],
+    )
+    def test_non_admin_update_with_privileged_field_403(
+        self, e2e_client, org1_user, own_private_agent, body
+    ):
+        response = e2e_client.put(
+            f"/api/agents/{own_private_agent}",
+            json=body,
+            headers=org1_user.headers,
+        )
+        assert response.status_code == 403, response.text
+
+    def test_non_admin_update_moving_org_403(
+        self, e2e_client, org1_user, own_private_agent, org2
+    ):
+        response = e2e_client.put(
+            f"/api/agents/{own_private_agent}",
+            json={"organization_id": org2["id"]},
+            headers=org1_user.headers,
+        )
+        assert response.status_code == 403, response.text
+
+    def test_non_admin_update_same_org_200(
+        self, e2e_client, org1_user, own_private_agent
+    ):
+        response = e2e_client.put(
+            f"/api/agents/{own_private_agent}",
+            json={"organization_id": str(org1_user.organization_id)},
+            headers=org1_user.headers,
+        )
+        assert response.status_code == 200, response.text
+
+    # ---- admin reference validation (422, everyone including admins) ------
+
+    @pytest.fixture
+    def admin_agent(self, e2e_client, platform_admin, org1):
+        create_resp = e2e_client.post(
+            "/api/agents",
+            json={
+                "name": f"Admin Reference Test {uuid4().hex[:8]}",
+                "system_prompt": "Test prompt.",
+                "access_level": "role_based",
+                "organization_id": org1["id"],
+            },
+            headers=platform_admin.headers,
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        agent_id = create_resp.json()["id"]
+        yield agent_id
+        e2e_client.delete(f"/api/agents/{agent_id}", headers=platform_admin.headers)
+
+    def test_admin_update_nonexistent_role_id_422(
+        self, e2e_client, platform_admin, admin_agent
+    ):
+        response = e2e_client.put(
+            f"/api/agents/{admin_agent}",
+            json={"role_ids": [str(uuid4())]},
+            headers=platform_admin.headers,
+        )
+        assert response.status_code == 422, response.text
+
+    @pytest.mark.asyncio
+    async def test_admin_update_cross_org_mcp_connection_422(
+        self, e2e_client, platform_admin, admin_agent, org2, db_session
+    ):
+        connection_id = await _make_mcp_connection(db_session, UUID(org2["id"]))
+        response = e2e_client.put(
+            f"/api/agents/{admin_agent}",
+            json={"mcp_connection_ids": [str(connection_id)]},
+            headers=platform_admin.headers,
+        )
+        assert response.status_code == 422, response.text
+
+    @pytest.mark.asyncio
+    async def test_admin_update_global_agent_with_connection_422(
+        self, e2e_client, platform_admin, org1, db_session
+    ):
+        create_resp = e2e_client.post(
+            "/api/agents",
+            json={
+                "name": f"Global Agent Connection {uuid4().hex[:8]}",
+                "system_prompt": "Test prompt.",
+                "access_level": "authenticated",
+                "organization_id": None,
+            },
+            headers=platform_admin.headers,
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        agent_id = create_resp.json()["id"]
+        try:
+            connection_id = await _make_mcp_connection(db_session, UUID(org1["id"]))
+            response = e2e_client.put(
+                f"/api/agents/{agent_id}",
+                json={"mcp_connection_ids": [str(connection_id)]},
+                headers=platform_admin.headers,
+            )
+            assert response.status_code == 422, response.text
+        finally:
+            e2e_client.delete(
+                f"/api/agents/{agent_id}", headers=platform_admin.headers
+            )
+
+    def test_admin_update_duplicate_role_ids_422(
+        self, e2e_client, platform_admin, admin_agent
+    ):
+        """Duplicate detection runs before existence checks — a repeated
+        (even nonexistent) UUID is enough to trip the 422."""
+        duplicate = str(uuid4())
+        response = e2e_client.put(
+            f"/api/agents/{admin_agent}",
+            json={"role_ids": [duplicate, duplicate]},
+            headers=platform_admin.headers,
+        )
+        assert response.status_code == 422, response.text
+
+    def test_admin_update_clear_roles_with_role_ids_422(
+        self, e2e_client, platform_admin, admin_agent
+    ):
+        response = e2e_client.put(
+            f"/api/agents/{admin_agent}",
+            json={"clear_roles": True, "role_ids": [str(uuid4())]},
+            headers=platform_admin.headers,
+        )
+        assert response.status_code == 422, response.text
+
+    @pytest.mark.asyncio
+    async def test_admin_rescope_with_connections_and_no_list_422(
+        self, e2e_client, platform_admin, org1, org2, db_session
+    ):
+        create_resp = e2e_client.post(
+            "/api/agents",
+            json={
+                "name": f"Rescope Connection {uuid4().hex[:8]}",
+                "system_prompt": "Test prompt.",
+                "access_level": "role_based",
+                "organization_id": org1["id"],
+            },
+            headers=platform_admin.headers,
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        agent_id = create_resp.json()["id"]
+        try:
+            connection_id = await _make_mcp_connection(db_session, UUID(org1["id"]))
+            grant_resp = e2e_client.put(
+                f"/api/agents/{agent_id}",
+                json={"mcp_connection_ids": [str(connection_id)]},
+                headers=platform_admin.headers,
+            )
+            assert grant_resp.status_code == 200, grant_resp.text
+
+            response = e2e_client.put(
+                f"/api/agents/{agent_id}",
+                json={"organization_id": org2["id"]},
+                headers=platform_admin.headers,
+            )
+            assert response.status_code == 422, response.text
+        finally:
+            e2e_client.delete(
+                f"/api/agents/{agent_id}", headers=platform_admin.headers
+            )
+
+
+class TestSolutionManagedAgentRest:
+    """REST refuses to mutate a solution-managed Agent (criterion 6).
+
+    Previously only covered by MCP unit tests exercising removed in-tool ORM
+    logic (RBAC R1b deleted them — the MCP tools are now thin REST wrappers,
+    so REST is the one place this guard needs direct coverage).
+    """
+
+    async def _managed_agent(self, db_session) -> str:
+        from src.models.orm.agents import Agent
+        from src.models.orm.solutions import Solution
+
+        solution = Solution(
+            id=uuid4(),
+            slug=f"agent-write-policy-{uuid4().hex[:8]}",
+            name="Agent Write Policy Solution",
+            organization_id=None,
+        )
+        db_session.add(solution)
+        await db_session.flush()
+
+        agent_id = uuid4()
+        db_session.add(
+            Agent(
+                id=agent_id,
+                name=f"solution-managed-{uuid4().hex[:8]}",
+                system_prompt="Managed agent.",
+                organization_id=None,
+                solution_id=solution.id,
+                created_by="test",
+            )
+        )
+        await db_session.commit()
+        return str(agent_id)
+
+    @pytest.mark.asyncio
+    async def test_update_solution_managed_agent_409(
+        self, e2e_client, platform_admin, db_session
+    ):
+        agent_id = await self._managed_agent(db_session)
+        response = e2e_client.put(
+            f"/api/agents/{agent_id}",
+            json={"name": "hijacked"},
+            headers=platform_admin.headers,
+        )
+        assert response.status_code == 409, response.text
+
+    @pytest.mark.asyncio
+    async def test_delete_solution_managed_agent_409(
+        self, e2e_client, platform_admin, db_session
+    ):
+        agent_id = await self._managed_agent(db_session)
+        response = e2e_client.delete(
+            f"/api/agents/{agent_id}",
+            headers=platform_admin.headers,
+        )
+        assert response.status_code == 409, response.text
+
 
 # =============================================================================
 # Fixtures

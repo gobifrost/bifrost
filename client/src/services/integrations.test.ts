@@ -27,7 +27,11 @@ vi.mock("@tanstack/react-query", () => ({
 }));
 
 // Import after mocks are in place.
-import { useAuthorizeMapping, useDisconnectMapping } from "./integrations";
+import {
+	useAuthorizeMapping,
+	useDisconnectMapping,
+	planOrgConfigSave,
+} from "./integrations";
 
 beforeEach(() => {
 	mockUseMutation.mockReset();
@@ -60,6 +64,91 @@ describe("useAuthorizeMapping", () => {
 				"/api/integrations/{integration_id}",
 				{ params: { path: { integration_id: "integ-1" } } },
 			],
+		});
+	});
+});
+
+describe("planOrgConfigSave", () => {
+	const unmappedOrg = {
+		id: "org-1",
+		mapping: undefined,
+		formData: { entity_id: "", entity_name: "", config: {} },
+	};
+	const mappedOrg = {
+		id: "org-1",
+		mapping: { id: "map-1" },
+		formData: {
+			entity_id: "ent-a",
+			entity_name: "Entity A",
+			oauth_token_id: "tok-1",
+			config: {},
+		},
+	};
+
+	it("plans a mapping create carrying the overrides for an unmapped org", () => {
+		expect(
+			planOrgConfigSave(unmappedOrg, { api_key: "secret" }),
+		).toEqual({
+			kind: "create",
+			body: {
+				organization_id: "org-1",
+				entity_id: "",
+				entity_name: undefined,
+				oauth_token_id: undefined,
+				config: { api_key: "secret" },
+			},
+		});
+	});
+
+	it("carries unsaved entity form values into the created mapping", () => {
+		const org = {
+			...unmappedOrg,
+			formData: {
+				entity_id: "ent-a",
+				entity_name: "Entity A",
+				config: {},
+			},
+		};
+		const plan = planOrgConfigSave(org, { api_key: "secret" });
+		expect(plan).toEqual({
+			kind: "create",
+			body: {
+				organization_id: "org-1",
+				entity_id: "ent-a",
+				entity_name: "Entity A",
+				oauth_token_id: undefined,
+				config: { api_key: "secret" },
+			},
+		});
+	});
+
+	it("plans noop when an unmapped org has nothing to save", () => {
+		expect(planOrgConfigSave(unmappedOrg, {})).toEqual({ kind: "noop" });
+	});
+
+	it("plans a mapping update for a mapped org", () => {
+		expect(planOrgConfigSave(mappedOrg, { api_key: "secret" })).toEqual({
+			kind: "update",
+			mapping_id: "map-1",
+			body: {
+				entity_id: "ent-a",
+				entity_name: "Entity A",
+				oauth_token_id: "tok-1",
+				config: { api_key: "secret" },
+			},
+		});
+	});
+
+	it("omits config on update when there is nothing to save", () => {
+		expect(planOrgConfigSave(mappedOrg, {})).toEqual({
+			kind: "update",
+			mapping_id: "map-1",
+			body: {
+				entity_id: "ent-a",
+				entity_name: "Entity A",
+				oauth_token_id: "tok-1",
+				config: undefined,
+			},
 		});
 	});
 });

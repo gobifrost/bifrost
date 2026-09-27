@@ -26,6 +26,7 @@ import {
 	BookOpen,
 	ServerCog,
 	Boxes,
+	Radio,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
@@ -96,6 +97,12 @@ const navSections: NavSection[] = [
 				title: "Workflows",
 				href: "/workflows",
 				icon: Workflow,
+				requiresPlatformAdmin: true,
+			},
+			{
+				title: "Services",
+				href: "/services",
+				icon: Radio,
 				requiresPlatformAdmin: true,
 			},
 		],

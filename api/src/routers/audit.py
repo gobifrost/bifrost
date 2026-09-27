@@ -36,6 +36,9 @@ async def list_audit_logs(
     resource_type: str | None = Query(None, description="Filter by resource type"),
     outcome: str | None = Query(None, description="Filter by outcome: 'success' or 'failure'"),
     user_id: UUID | None = Query(None, description="Filter by acting user ID"),
+    execution_id: UUID | None = Query(
+        None, description="Filter by workflow execution ID"
+    ),
     start_date: datetime | None = Query(None, description="Start of time range (inclusive)"),
     end_date: datetime | None = Query(None, description="End of time range (inclusive)"),
     search: str | None = Query(
@@ -54,6 +57,7 @@ async def list_audit_logs(
         resource_type=resource_type,
         outcome=outcome,
         user_id=user_id,
+        execution_id=execution_id,
         start_date=start_date,
         end_date=end_date,
         search=search,
@@ -88,6 +92,7 @@ async def list_audit_logs(
                 resource_id=row.resource_id,
                 outcome=row.outcome,
                 source=row.source,
+                execution_id=row.execution_id,
                 actor=AuditLogActor(
                     user_id=row.user_id,
                     user_email=actor_user.email if actor_user else None,

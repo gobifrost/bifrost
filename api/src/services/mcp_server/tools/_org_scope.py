@@ -57,3 +57,11 @@ def apply_mcp_org_scope(
 
     # Legacy: a non-admin with no org sees only global.
     return query.where(model.organization_id.is_(None))
+
+
+def mcp_write_scope_bypass(context: Any) -> bool:
+    """Whether ``context`` may write regardless of organization ownership."""
+    return has_scope_bypass(
+        is_platform_admin=getattr(context, "is_platform_admin", False),
+        is_provider_org=getattr(context, "is_provider_org", False),
+    )

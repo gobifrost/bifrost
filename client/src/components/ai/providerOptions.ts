@@ -16,6 +16,11 @@ export const PROVIDERS: {
 		endpoint: "https://openrouter.ai/api/v1",
 	},
 	{
+		value: "opencode_go",
+		label: "OpenCode Go",
+		endpoint: "https://opencode.ai/zen/go/v1",
+	},
+	{
 		value: "google",
 		label: "Google",
 		endpoint: "https://generativelanguage.googleapis.com",

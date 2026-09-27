@@ -1,8 +1,14 @@
 """
-bifrost/executions.py - Execution history SDK (API-only)
+bifrost/executions.py - Execution history SDK
 
 Provides Python API for execution history operations (list, get, get_current_logs).
-All operations go through HTTP API endpoints.
+
+``list`` and ``get`` send the ordinary HTTP request through the shared
+``BifrostClient``: over the worker's private Unix socket when the engine
+injected one, and over the network API otherwise. The worker parent owns the
+pooled database; an engine child holds neither, and a local attempt never
+falls back to the network API. ``get_current_logs`` reads the execution's
+Redis stream directly — it is not an API call.
 """
 
 from __future__ import annotations
@@ -112,7 +118,7 @@ class executions:
             params["continuation_token"] = continuation_token
         params["limit"] = min(limit, 1000)
 
-        response = await client.get("/api/executions", params=params)
+        response = await client.engine_request("GET", "/api/executions", params=params)
         raise_for_status_with_detail(response)
         data = response.json()
         # API returns ExecutionsListResponse with executions array
@@ -151,7 +157,9 @@ class executions:
             >>> print(exec_details.result)
         """
         client = get_client()
-        response = await client.get(f"/api/executions/{execution_id}")
+        response = await client.engine_request(
+            "GET", f"/api/executions/{execution_id}"
+        )
         if response.status_code == 404:
             raise ValueError(f"Execution not found: {execution_id}")
         elif response.status_code == 403:
