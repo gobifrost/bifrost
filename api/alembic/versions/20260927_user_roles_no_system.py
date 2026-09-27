@@ -23,7 +23,7 @@ def upgrade() -> None:
     # account is never a valid target for a role assignment, so make it
     # unrepresentable at the schema level too.
     op.execute(
-        sa.text("DELETE FROM user_roles WHERE user_id = :system_user_id").bindparams(
+        sa.text("DELETE FROM user_roles WHERE user_id = CAST(:system_user_id AS uuid)").bindparams(
             system_user_id=SYSTEM_USER_UUID
         )
     )
