@@ -1485,15 +1485,9 @@ async def submit_form(
                         detail="Invalid form session",
                     )
 
-                from src.core.cache.keys import embed_execution_key, TTL_EMBED_EXECUTION
-                from src.core.cache.redis_client import get_redis
+                from src.core.embed_middleware import register_embed_execution
 
-                async with get_redis() as redis:
-                    await redis.setex(
-                        embed_execution_key(ctx.user.jti, str(response.execution_id)),
-                        TTL_EMBED_EXECUTION,
-                        "1",
-                    )
+                await register_embed_execution(ctx.user.jti, str(response.execution_id))
                 return FormExecutionResponse.model_validate(
                     {"mode": "execution", **response.model_dump()}
                 )

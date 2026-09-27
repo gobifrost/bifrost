@@ -468,12 +468,21 @@ async def execute_workflow(
         execute_sdk_workflow,
     )
 
+    # Embed sessions (app-embed tokens) need a jti to link the execution they
+    # create back to their own session — required before dispatch, since the
+    # link is what lets a later GET /api/executions/{id} succeed.
+    if user.embed and not user.jti:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid embed session",
+        )
+
     # Business orchestration lives in the shared service so the engine-local
     # dispatcher can call the same function. SdkWorkflowExecutionError carries
     # the historical status/detail; ValueError (malformed scope/UUID inputs)
     # propagates to the global 422 handler, as before extraction.
     try:
-        return await execute_sdk_workflow(
+        response = await execute_sdk_workflow(
             db,
             user,
             request,
@@ -487,6 +496,13 @@ async def execute_workflow(
             status_code=e.status_code,
             detail=e.detail,
         )
+
+    if user.embed and response.execution_id:
+        from src.core.embed_middleware import register_embed_execution
+
+        await register_embed_execution(user.jti, response.execution_id)
+
+    return response
 
 
 @router.post(

@@ -109,6 +109,26 @@ def embed_request_allowed(method: str, path: str, payload: dict[str, Any]) -> bo
     return method == expected_method
 
 
+async def register_embed_execution(jti: str, execution_id: str) -> None:
+    """Link an embed session (jti) to an execution it created.
+
+    Writes the same Redis key this middleware checks on
+    ``GET /api/executions/{id}...`` and the WebSocket execution subscription,
+    so an embed session can read back the executions it started. Shared by
+    every embed-authorized execution entry point (form submission, app
+    workflow-execute) to avoid each one re-deriving the key.
+    """
+    from src.core.cache.keys import TTL_EMBED_EXECUTION, embed_execution_key
+    from src.core.cache.redis_client import get_redis
+
+    async with get_redis() as redis:
+        await redis.setex(
+            embed_execution_key(jti, execution_id),
+            TTL_EMBED_EXECUTION,
+            "1",
+        )
+
+
 class EmbedScopeMiddleware(BaseHTTPMiddleware):
     """Apply the typed embed capability policy before router authorization."""
 
