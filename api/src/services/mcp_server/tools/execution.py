@@ -13,9 +13,8 @@ report for the full persona table):
 * A platform admin now sees executions across all orgs by default (REST's
   ``scope`` query param, exposed here as an optional ``scope`` argument),
   not just their own org.
-* REST defaults ``excludeLocal=true``; local-runner executions are excluded
-  by default where the old MCP path included them. Pass ``exclude_local``
-  explicitly to opt back in.
+* REST excludes local-runner executions (``excludeLocal=true`` default); the
+  old MCP path included them.
 * Non-admin filtering (``executed_by == caller``) is unchanged — enforced by
   the shared read service, not by this tool.
 """
@@ -44,14 +43,12 @@ async def bifrost_execution_list(
     status: str | None = None,
     limit: int = 20,
     scope: str | None = None,
-    exclude_local: bool | None = None,
 ) -> ToolResult:
     """List recent workflow executions — thin wrapper over ``GET /api/executions``.
 
     ``scope`` forwards to REST: omit for the caller's default (all orgs for
     a platform admin, own org otherwise), ``"global"`` for global-only, or an
-    org UUID for that org + global. ``exclude_local`` defaults to REST's
-    ``excludeLocal=true`` when omitted.
+    org UUID for that org + global.
     """
     logger.info(
         "MCP bifrost_execution_list (HTTP bridge) workflow=%s status=%s",
@@ -66,8 +63,6 @@ async def bifrost_execution_list(
         params["status"] = status
     if scope is not None:
         params["scope"] = scope
-    if exclude_local is not None:
-        params["excludeLocal"] = exclude_local
 
     status_code, body = await call_rest(context, "GET", "/api/executions", params=params)
     if status_code != 200 or not isinstance(body, dict):
