@@ -441,7 +441,7 @@ async def test_instant_child_outcome_completes_claimed_attempt(db_session):
     """A fast result must observe the committed claim (commit-before-fork)."""
     from src.models.orm.services import ServiceAttempt
 
-    await _ensure_service(db_session)
+    definition, _, _ = await _ensure_service(db_session)
     await db_session.commit()
     pool = StubPool()
     loop = _loop(pool)
@@ -462,10 +462,17 @@ async def test_instant_child_outcome_completes_claimed_attempt(db_session):
     pool.route_service.side_effect = _instant_route
     await loop.tick()
 
-    # Find the claimed attempt through a fresh read.
+    # Find the claimed attempt through a fresh read, scoped to this test's
+    # own service: the shared test DB can carry attempt history from other
+    # services (e.g. real e2e service runs), which is legitimate data, not
+    # state this test owns.
     from sqlalchemy import select as sa_select
 
-    rows = (await db_session.execute(sa_select(ServiceAttempt))).scalars().all()
+    rows = (
+        await db_session.execute(
+            sa_select(ServiceAttempt).where(ServiceAttempt.service_id == definition.id)
+        )
+    ).scalars().all()
     assert len(rows) == 1
     assert rows[0].state == "failed"
     assert rows[0].error == "boom"
@@ -482,9 +489,15 @@ async def test_route_failure_completes_without_accounting(db_session):
     loop = _loop(pool)
     await loop.tick()
 
+    # Scoped to this test's own service — see test_instant_child_outcome_*
+    # for why a whole-table select isn't safe in a shared test DB.
     from sqlalchemy import select as sa_select
 
-    rows = (await db_session.execute(sa_select(ServiceAttempt))).scalars().all()
+    rows = (
+        await db_session.execute(
+            sa_select(ServiceAttempt).where(ServiceAttempt.service_id == definition.id)
+        )
+    ).scalars().all()
     assert len(rows) == 1
     assert rows[0].state == "stopped"
     assert rows[0].exit_reason == "route_failed"
