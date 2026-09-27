@@ -9,6 +9,18 @@
 #
 # Mechanism: enable GitHub auto-merge on the eligible PRs. Branch protection
 # requires CI green before merge happens, so this never bypasses CI.
+#
+# `main` is protected by a merge queue (ruleset "Protect Branch",
+# merge_method: SQUASH). `gh pr merge` against a merge-queue branch does not
+# take a merge strategy flag: per `gh pr merge --help`, "When targeting a
+# branch that requires a merge queue, no merge strategy is required. If
+# required checks have not yet passed, auto-merge will be enabled. If
+# required checks have passed, the pull request will be added to the merge
+# queue." Passing `--squash` here defeats that and always falls back to
+# enabling auto-merge, which never enters the queue on its own — a human has
+# to `gh pr merge --disable-auto` then re-run `gh pr merge` by hand (this
+# stranded PRs #786, #718, #828). Do not add a strategy flag back; the queue
+# already enforces squash.
 
 name: Dependabot auto-merge
 
@@ -34,7 +46,7 @@ jobs:
 
       - name: Auto-merge security advisory bumps (any semver level)
         if: steps.metadata.outputs.alert-state == 'OPEN'
-        run: gh pr merge --auto --squash "$PR_URL"
+        run: gh pr merge --auto "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -45,7 +57,7 @@ jobs:
           steps.metadata.outputs.package-ecosystem != 'docker' &&
           (steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
            steps.metadata.outputs.update-type == 'version-update:semver-minor')
-        run: gh pr merge --auto --squash "$PR_URL"
+        run: gh pr merge --auto "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

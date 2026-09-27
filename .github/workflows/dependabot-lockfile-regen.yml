@@ -8,13 +8,59 @@
 # This workflow detects Dependabot PRs that touch `pyproject.toml`,
 # regenerates `requirements.lock` with the same `pip-compile --generate-hashes`
 # command documented at the top of the lock file, and pushes the regenerated
-# lock back onto the PR branch. The PR's existing CI re-runs against the
-# updated lock, and `dependabot-auto-merge.yml` takes over from there.
+# lock back onto the PR branch so the PR's CI re-runs against the updated
+# lock; `dependabot-auto-merge.yml` takes over from there.
 #
-# Trigger: `pull_request` (not `pull_request_target`) — we only need read
-# access to the base repo and write access to the PR branch via the standard
-# GITHUB_TOKEN. The job-level `contents: write` permission is what allows the
-# push back; the workflow-level permission stays read-only.
+# Pushing as a GitHub App, not GITHUB_TOKEN: per GitHub's docs on triggering a
+# workflow from a workflow, "events triggered by the GITHUB_TOKEN will not
+# create a new workflow run" for push/pull_request-synchronize. A GITHUB_TOKEN
+# push here would land silently — CI never re-runs, the PR sits on stale
+# checks, and Dependabot then refuses to rebase it ("edited by someone else").
+# `workflow_dispatch` is *not* a usable substitute: GitHub's required-status-
+# checks troubleshooting docs say plainly that "if a workflow is triggered by
+# workflow_dispatch on a pull request's head branch, checks reported by its
+# jobs do not appear in the pull request's checks section" and do not satisfy
+# a required status check in a branch ruleset, even against the head SHA. So
+# this workflow authenticates as a GitHub App via actions/create-github-app-
+# token and pushes with that installation token instead, which GitHub treats
+# as a normal external actor and does trigger downstream `pull_request`
+# `synchronize` runs.
+#
+# Required setup (see repo README / ops runbook): create a GitHub App
+# installed on this repo with the "Contents: Read and write" repository
+# permission, then add its App ID and private key as **Dependabot secrets**
+# (Settings → Secrets and variables → Dependabot), not Actions secrets, named
+# DEPENDABOT_LOCKFILE_APP_ID and DEPENDABOT_LOCKFILE_APP_PRIVATE_KEY. This
+# workflow run's actor is dependabot[bot] (it's triggered by a Dependabot PR),
+# and GitHub only exposes the Dependabot secrets store — not the Actions
+# secrets store — to Dependabot-actor runs, so an Actions secret here would
+# silently resolve empty. The "Verify App credentials" step fails the job
+# loudly if either secret is missing, instead of silently doing nothing.
+#
+# Ordering / token exposure: the App token is minted (and even the secrets
+# are checked) only *after* the regen step has already run, and only when
+# `requirements.lock` actually changed. The checkout step uses the ambient
+# read-only GITHUB_TOKEN with `persist-credentials: false` — the regen step's
+# `docker run` mounts the whole working tree (including `.git`) and executes
+# `pip-compile`, which can run arbitrary sdist build code from the PR's own
+# dependency set. A 1-hour, contents:write App token must not be sitting in
+# `.git/config` (or anywhere else in that tree) while untrusted build code
+# runs. The App token is also scoped to just this repository
+# (`repositories:`) and to `contents: write` only, and it's used for exactly
+# one `git push` via an explicit `http.extraheader`, never persisted to disk.
+#
+# Known consequence (unavoidable, not new): once *any* non-Dependabot actor
+# pushes to a Dependabot branch — a human, github-actions[bot], or this App —
+# Dependabot considers the PR "edited by someone else" and will not rebase it
+# further; a subsequent base-branch conflict requires `@dependabot recreate`
+# or a manual rebase. That was already true of the previous GITHUB_TOKEN push
+# in this workflow, so switching to an App token does not add a new failure
+# mode, but it's worth knowing this workflow trades away Dependabot's own
+# auto-rebase for the PR once it runs.
+#
+# Trigger: `pull_request` (not `pull_request_target`) — the checkout only
+# needs read access to the base repo; the push authenticates separately with
+# the App installation token, not the job's own GITHUB_TOKEN.
 
 name: Regen requirements.lock for Dependabot
 
@@ -33,16 +79,19 @@ jobs:
     if: github.actor == 'dependabot[bot]'
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     steps:
       - name: Checkout PR branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Check out the PR's head ref so the regenerated lock is committed
-          # back to the same branch Dependabot is tracking.
+          # back to the same branch Dependabot is tracking. Read-only
+          # GITHUB_TOKEN, and don't persist it into .git/config — the next
+          # step runs untrusted PR-controlled build code (pip sdists) against
+          # this same working tree.
           ref: ${{ github.head_ref }}
           repository: ${{ github.event.pull_request.head.repo.full_name }}
-          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: false
 
       - name: Regenerate requirements.lock
         # Use the same Python minor as api/Dockerfile's FROM line (3.14-slim).
@@ -55,18 +104,68 @@ jobs:
         # deps) so the install satisfies Scorecard's Pinned-Dependencies
         # check. Regenerate that lock with the same `pip-compile` command
         # documented at the top of the file.
+        #
+        # No credentials are present in this working tree at this point
+        # (see the header comment) — pip-compile may execute PR-controlled
+        # sdist build scripts, and there is nothing here worth exfiltrating.
+        # Only the three inputs/outputs are mounted — never the checkout or
+        # .git — so build code can't plant git hooks or config that would run
+        # in the push step, where the App token is in the environment.
         run: |
-          docker run --rm -v "$PWD":/repo -w /repo python:3.14-slim sh -c "
+          work="$(mktemp -d)"
+          cp pyproject.toml requirements-piptools.lock requirements.lock "$work/"
+          docker run --rm -v "$work":/work -w /work python:3.14-slim sh -c "
             pip install --quiet --require-hashes -r requirements-piptools.lock
             pip-compile --generate-hashes --output-file=requirements.lock pyproject.toml
           "
+          cp "$work/requirements.lock" requirements.lock
 
-      - name: Commit and push if changed
+      - name: Check whether requirements.lock changed
+        id: diff
         run: |
           if [[ -n "$(git status --porcelain requirements.lock)" ]]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add requirements.lock
-            git commit -m "chore(deps): regenerate requirements.lock for Dependabot bump"
-            git push
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Verify GitHub App credentials are configured
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          APP_ID: ${{ secrets.DEPENDABOT_LOCKFILE_APP_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.DEPENDABOT_LOCKFILE_APP_PRIVATE_KEY }}
+        run: |
+          if [[ -z "$APP_ID" || -z "$APP_PRIVATE_KEY" ]]; then
+            echo "::error::requirements.lock changed but DEPENDABOT_LOCKFILE_APP_ID and/or DEPENDABOT_LOCKFILE_APP_PRIVATE_KEY are not set as Dependabot secrets (Settings > Secrets and variables > Dependabot). This workflow needs a GitHub App installation token to push the regenerated lockfile — GITHUB_TOKEN pushes do not trigger the PR's CI. See the header comment in this file for setup steps." >&2
+            exit 1
+          fi
+
+      - name: Mint GitHub App installation token
+        # Only minted once we know we actually need to push, and scoped to
+        # exactly this repository with the minimum permission (contents:
+        # write) it needs to push a commit.
+        if: steps.diff.outputs.changed == 'true'
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.DEPENDABOT_LOCKFILE_APP_ID }}
+          private-key: ${{ secrets.DEPENDABOT_LOCKFILE_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+
+      - name: Commit and push
+        if: steps.diff.outputs.changed == 'true'
+        # The App token lives only in this step's environment, never in
+        # .git/config or the command line: it's passed via `env` (not
+        # interpolated into the script text) and used solely as a git
+        # `http.extraheader` for this one push.
+        env:
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add requirements.lock
+          git commit -m "chore(deps): regenerate requirements.lock for Dependabot bump"
+          auth_header="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$APP_TOKEN" | base64 -w0)"
+          git -c http.https://github.com/.extraheader="$auth_header" push origin "HEAD:$HEAD_REF"
