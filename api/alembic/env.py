@@ -26,7 +26,6 @@ from src.models import (  # noqa: F401
     FormRole,
     Execution,
     ExecutionLog,
-    CLISession,
     Config,
     Workflow,
     ServiceDefinition,

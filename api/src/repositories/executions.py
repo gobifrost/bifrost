@@ -481,7 +481,6 @@ class ExecutionRepository(BaseRepository[Execution]):
             started_at=execution.started_at,
             completed_at=execution.completed_at,
             logs=[log.model_dump() for log in logs],
-            session_id=str(execution.session_id) if execution.session_id else None,
             # Admin-only fields (null for non-admins)
             variables=execution.variables if user.is_superuser else None,
             execution_context=execution.execution_context if user.is_superuser else None,
@@ -660,7 +659,6 @@ class ExecutionRepository(BaseRepository[Execution]):
             completed_at=execution.completed_at,
             logs=None,  # Fetched separately via /logs endpoint
             variables=execution.variables if is_admin else None,
-            session_id=str(execution.session_id) if execution.session_id else None,
             # ROI economics
             time_saved=execution.time_saved or 0,
             value=float(execution.value or 0),
@@ -682,7 +680,6 @@ async def create_execution(
     form_id: str | None = None,
     api_key_id: str | None = None,
     status: ExecutionStatus = ExecutionStatus.RUNNING,
-    is_local_execution: bool = False,
     execution_model: str | None = None,
     workflow_id: str | None = None,
     session: "AsyncSession | None" = None,
@@ -714,7 +711,6 @@ async def create_execution(
             form_id=form_id,
             api_key_id=api_key_id,
             status=status,
-            is_local_execution=is_local_execution,
             execution_model=execution_model,
             workflow_id=workflow_id,
             check_existing=check_existing,

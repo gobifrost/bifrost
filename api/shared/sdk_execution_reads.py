@@ -458,7 +458,6 @@ def to_execution_summary(execution):
         completed_at=execution.completed_at,
         scheduled_at=execution.scheduled_at,
         created_at=execution.created_at,
-        session_id=str(execution.session_id) if execution.session_id else None,
     )
 
 
@@ -477,7 +476,6 @@ async def list_sdk_executions(
     status_filter: str | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
-    exclude_local: bool = True,
     limit: int = 25,
     offset: int = 0,
     cursor: tuple[datetime | None, UUID] | None = None,
@@ -489,7 +487,7 @@ async def list_sdk_executions(
     superusers unfiltered unless scoped), non-superusers restricted to
     their own rows, ``workflow_id`` winning over ``workflow_name``,
     comma-separated status match-any, silently-ignored malformed
-    start/end dates, ``exclude_local`` default-true, the
+    start/end dates, the
     ``started_at/scheduled_at/completed_at/created_at`` timeline anchor,
     keyset cursor with legacy numeric-offset fallback, and keyset
     continuation tokens.
@@ -555,9 +553,6 @@ async def list_sdk_executions(
             query = query.where(ExecutionModel.started_at <= end_dt)
         except ValueError as e:
             logger.debug(f"invalid end_date {log_safe(end_date)!r}, ignoring filter: {log_safe(e)}")
-
-    if exclude_local:
-        query = query.where(ExecutionModel.is_local_execution == False)  # noqa: E712
 
     timeline_at = func.coalesce(
         ExecutionModel.started_at,

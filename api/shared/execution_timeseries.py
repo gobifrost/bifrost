@@ -133,7 +133,6 @@ async def get_execution_time_series(
         Execution.started_at >= bucket_starts[0],
         Execution.started_at <= now_utc,
         Execution.status.in_(_TERMINAL_STATUSES),
-        Execution.is_local_execution.is_(False),
     ]
 
     filter_type, filter_org = resolve_org_filter(user, scope)

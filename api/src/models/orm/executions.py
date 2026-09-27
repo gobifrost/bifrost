@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Enum as SQLAlchemyEnum, Float, ForeignKey, Index, Integer, Numeric, String, Text, func, text
+from sqlalchemy import BigInteger, DateTime, Enum as SQLAlchemyEnum, Float, ForeignKey, Index, Integer, Numeric, String, Text, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -17,7 +17,6 @@ from src.models.orm.base import Base
 
 if TYPE_CHECKING:
     from src.models.orm.ai_usage import AIUsage
-    from src.models.orm.cli import CLISession
     from src.models.orm.forms import Form
     from src.models.orm.organizations import Organization
     from src.models.orm.users import User
@@ -78,13 +77,9 @@ class Execution(Base):
     api_key_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("workflows.id", ondelete="SET NULL", onupdate="CASCADE"), default=None
     )  # Workflow whose API key triggered this execution (null for user-triggered)
-    is_local_execution: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     execution_model: Mapped[str | None] = mapped_column(
         String(20), default=None
     )  # 'process' or 'thread' - tracks which execution model ran the job
-    session_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("cli_sessions.id", ondelete="SET NULL"), default=None
-    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=text("NOW()")
     )
@@ -94,7 +89,6 @@ class Execution(Base):
 
     # Relationships
     executed_by_user: Mapped["User"] = relationship(back_populates="executions")
-    cli_session: Mapped["CLISession | None"] = relationship(back_populates="executions")
     workflow: Mapped["Workflow | None"] = relationship(
         foreign_keys=[workflow_id]
     )  # The workflow that was executed
@@ -119,8 +113,6 @@ class Execution(Base):
         Index("ix_executions_started_at", "started_at"),
         Index("ix_executions_user", "executed_by"),
         Index("ix_executions_workflow", "workflow_name"),
-        Index("ix_executions_is_local_execution", "is_local_execution"),
-        Index("ix_executions_session_id", "session_id"),
         Index("ix_executions_workflow_id", "workflow_id"),
     )
 
