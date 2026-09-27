@@ -22,7 +22,6 @@ def _execution_payload(execution_id: str, workflow_name: str) -> dict[str, objec
         "completed_at": None,
         "logs": None,
         "variables": None,
-        "session_id": None,
         "peak_memory_bytes": None,
         "process_rss_bytes": None,
         "cpu_total_seconds": None,
@@ -51,7 +50,6 @@ async def test_list_uses_snake_case_filters_and_returns_continuation_token(monke
         status="Success",
         start_date="2026-09-01T00:00:00",
         end_date="2026-09-02T00:00:00",
-        exclude_local=True,
         continuation_token="token-1",
         limit=2500,
     )
@@ -67,7 +65,6 @@ async def test_list_uses_snake_case_filters_and_returns_continuation_token(monke
             "status": "Success",
             "start_date": "2026-09-01T00:00:00",
             "end_date": "2026-09-02T00:00:00",
-            "exclude_local": "true",
             "continuation_token": "token-1",
             "limit": 1000,
         },

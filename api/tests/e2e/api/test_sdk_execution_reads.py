@@ -117,7 +117,6 @@ def test_executions_list_snake_case_filters(
         "/api/executions",
         params={
             "workflow_id": str(seeded_sdk_reads["workflow_id"]),
-            "exclude_local": "true",
             "limit": 25,
         },
         headers=platform_admin.headers,

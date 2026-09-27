@@ -333,38 +333,6 @@ class TestListSdkExecutions:
             )
         assert exc_info.value.status_code == 422
 
-    async def test_exclude_local_default_true(self, db_session):
-        admin = await _seed_user(db_session, is_superuser=True)
-        from src.models.orm.executions import Execution as ExecutionModel
-
-        local = ExecutionModel(
-            workflow_name="reads-local-wf",
-            status=ExecutionStatus.SUCCESS,
-            parameters={},
-            executed_by=admin.id,
-            executed_by_name="Admin",
-            is_local_execution=True,
-        )
-        db_session.add(local)
-        await db_session.flush()
-
-        result, _ = await list_sdk_executions(
-            db_session,
-            _admin(user_id=admin.id),
-            workflow_name="reads-local-wf",
-            limit=100,
-        )
-        assert str(local.id) not in {e.execution_id for e in result}
-
-        included, _ = await list_sdk_executions(
-            db_session,
-            _admin(user_id=admin.id),
-            workflow_name="reads-local-wf",
-            limit=100,
-            exclude_local=False,
-        )
-        assert str(local.id) in {e.execution_id for e in included}
-
 
 @pytest.mark.asyncio
 class TestGetSdkExecution:
@@ -508,7 +476,6 @@ class TestRouterBoundaries:
                 status_filter=None,
                 startDate=None,
                 endDate=None,
-                excludeLocal=True,
                 limit=25,
                 continuationToken=None,
             )
@@ -530,7 +497,6 @@ class TestRouterBoundaries:
                     status_filter=None,
                     startDate=None,
                     endDate=None,
-                    excludeLocal=True,
                     limit=25,
                     continuationToken=None,
                 )
