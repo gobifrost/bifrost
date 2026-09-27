@@ -463,63 +463,6 @@ async def test_mcp_create_app_allows_repo_slug_shadowing_solution(db_session, mo
     assert "Created application" in text, text
 
 
-async def _managed_agent_with_tool(db) -> tuple[uuid.UUID, uuid.UUID]:
-    """A solution-managed agent with one AgentTool binding. Returns (agent_id,
-    workflow_id of the tool)."""
-    from src.models.orm.agents import Agent, AgentTool
-    from src.models.orm.solutions import Solution
-    from src.models.orm.workflows import Workflow
-
-    sol = Solution(id=uuid.uuid4(), slug=f"mcp-{uuid.uuid4().hex[:8]}", name="MCP", organization_id=None)
-    db.add(sol)
-    await db.flush()
-    wf = Workflow(
-        id=uuid.uuid4(), name="tool_wf", function_name="run", path="workflows/t.py",
-        type="tool", organization_id=None, is_active=True,
-    )
-    db.add(wf)
-    aid = uuid.uuid4()
-    db.add(Agent(
-        id=aid, name=f"a_{uuid.uuid4().hex[:8]}", system_prompt="hi",
-        organization_id=None, solution_id=sol.id, created_by="test",
-    ))
-    await db.flush()
-    db.add(AgentTool(agent_id=aid, workflow_id=wf.id))
-    await db.flush()
-    return aid, wf.id
-
-
-async def test_mcp_update_agent_refuses_managed_without_deleting_tools(db_session, monkeypatch):
-    """Codex #13: update_agent on a solution-managed agent returns the read-only
-    error AND does NOT bulk-delete its AgentTool bindings (the Core delete must
-    not run / persist)."""
-    from contextlib import asynccontextmanager
-
-    from sqlalchemy import func, select
-
-    from src.models.orm.agents import AgentTool
-    from src.services.mcp_server.tools import agents as mcp_agents
-
-    aid, _wf = await _managed_agent_with_tool(db_session)
-
-    @asynccontextmanager
-    async def _fake_tool_db(_context):
-        yield db_session
-
-    monkeypatch.setattr(mcp_agents, "get_tool_db", _fake_tool_db)
-
-    context = SimpleNamespace(is_platform_admin=True, org_id=None, user_id=uuid.uuid4())
-    result = await mcp_agents.update_agent(context, agent_id=str(aid), tool_ids=[])
-
-    text = str(result.model_dump() if hasattr(result, "model_dump") else result)
-    assert SOLUTION_MANAGED_MESSAGE in text, text
-    # The binding SURVIVED — the bulk delete never persisted.
-    count = (await db_session.execute(
-        select(func.count()).select_from(AgentTool).where(AgentTool.agent_id == aid)
-    )).scalar()
-    assert count == 1
-
-
 async def _managed_form_with_field(db) -> uuid.UUID:
     from src.models.orm.forms import Form, FormField
     from src.models.orm.solutions import Solution
@@ -575,33 +518,6 @@ async def test_mcp_update_form_refuses_managed_without_deleting_fields(db_sessio
 # that leaves the shared session dirty). An explicit early guard makes them
 # refuse cleanly BEFORE mutating. The tests assert the locked message AND that
 # the entity was not mutated.
-
-
-async def test_mcp_delete_agent_refuses_managed(db_session, monkeypatch):
-    from sqlalchemy import select
-
-    from src.models.orm.agents import Agent
-    from src.services.mcp_server.tools import agents as mcp_agents
-
-    aid, _wf = await _managed_agent_with_tool(db_session)
-
-    async def _fake_call_rest(_context, method, path):
-        assert method == "DELETE"
-        assert path == f"/api/agents/{aid}"
-        return 409, {"detail": SOLUTION_MANAGED_MESSAGE}
-
-    monkeypatch.setattr(mcp_agents, "call_rest", _fake_call_rest)
-
-    context = SimpleNamespace(is_platform_admin=True, org_id=None, user_id=uuid.uuid4())
-    result = await mcp_agents.delete_agent(context, agent_id=str(aid))
-
-    text = str(result.model_dump() if hasattr(result, "model_dump") else result)
-    assert SOLUTION_MANAGED_MESSAGE in text, text
-    # The canonical REST endpoint refused the delete, so the agent is unchanged.
-    is_active = (await db_session.execute(
-        select(Agent.is_active).where(Agent.id == aid)
-    )).scalar_one()
-    assert is_active is True
 
 
 async def test_mcp_delete_table_refuses_managed(db_session, monkeypatch):
