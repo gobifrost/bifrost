@@ -200,7 +200,15 @@ describe("ModelProfileSelector", () => {
 		fireEvent.click(submit);
 		fireEvent.click(submit);
 
-		expect(aiModels.createModelProfile).toHaveBeenCalledTimes(1);
+		// The mutation's mutationFn call is scheduled on a microtask by
+		// react-query, so it isn't necessarily invoked synchronously with
+		// mutate(). The dedup guard itself (createSubmissionLockRef) is
+		// synchronous: the second click's submitCreate() bails out before
+		// calling mutate() at all, so the call count settles at 1 and never
+		// advances to 2 once the microtask flushes.
+		await waitFor(() =>
+			expect(aiModels.createModelProfile).toHaveBeenCalledTimes(1),
+		);
 
 		pendingCreate.resolve({
 			...profile,

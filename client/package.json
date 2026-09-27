@@ -119,7 +119,7 @@
 		"@types/react": "^19.2.18",
 		"@types/react-dom": "^19.2.5",
 		"@vitejs/plugin-react": "^6.1.1",
-		"@vitest/ui": "^4.1.11",
+		"@vitest/ui": "^5.0.2",
 		"eslint": "^9.39.5",
 		"eslint-plugin-react-hooks": "^7.0.1",
 		"eslint-plugin-react-refresh": "^0.4.14",
@@ -133,7 +133,7 @@
 		"typescript": "^5.9.3",
 		"typescript-eslint": "^8.68.0",
 		"vite": "^8.2.2",
-		"vitest": "^4.1.4"
+		"vitest": "^5.0.2"
 	},
 	"overrides": {
 		"@babel/core@<7.29.6": "7.29.6",
