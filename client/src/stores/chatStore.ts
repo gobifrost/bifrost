@@ -258,6 +258,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 		// created after its first message has already started streaming. Only a
 		// genuine switch should clear the conversation-scoped activity state.
 		if (
+			previousConversationId !== null &&
 			previousConversationId !== conversationId &&
 			get().isStreaming
 		) {
