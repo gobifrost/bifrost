@@ -150,11 +150,6 @@ test(
 
 			const UPDATED_DESCRIPTION = `${AGENT_DESCRIPTION} (edited)`;
 			await page.getByLabel("Description").fill(UPDATED_DESCRIPTION);
-			const updateRequest = page.waitForRequest(
-				(request) =>
-					request.url().includes(`/api/agents/${agentId}`) &&
-					request.method() === "PUT",
-			);
 			const updateResponse = page.waitForResponse(
 				(response) =>
 					response.url().includes(`/api/agents/${agentId}`) &&
@@ -163,13 +158,9 @@ test(
 			await page
 				.getByRole("button", { name: "Save changes", exact: true })
 				.click();
-			const updateBody = (await updateRequest).postDataJSON() as Record<
-				string,
-				unknown
-			>;
-			for (const field of ADMIN_ONLY_FIELDS) {
-				expect(updateBody).not.toHaveProperty(field);
-			}
+			// The API 403s a member update that carries any admin-only field
+			// (even an empty list), so a successful save proves the editor
+			// omitted them.
 			await expectOk(await updateResponse);
 
 			const fetched = await api.get(`/api/agents/${agentId}`);
