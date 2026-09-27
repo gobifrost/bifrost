@@ -20,6 +20,7 @@ from src.jobs.platform.base import (
 )
 from src.jobs.platform.registry import get_platform_job_definition
 from src.models.orm.platform_jobs import PlatformJob
+from src.services.audit_context import ActorContext, clear_actor, set_actor
 from src.services.platform_jobs import defer_platform_job, finish_platform_job, retry_platform_job_failure
 
 logger = logging.getLogger(__name__)
@@ -78,6 +79,20 @@ async def run_claimed_platform_job(job_id: UUID, lease_token: UUID) -> bool:
         )
 
     try:
+        requested_by_user_id = UUID(context.requested_by_user_id)
+    except ValueError:
+        requested_by_user_id = None
+    actor_token = set_actor(
+        ActorContext(
+            user_id=requested_by_user_id,
+            organization_id=context.organization_id,
+            email=context.requested_by_email,
+            name=context.requested_by_name,
+            source="platform_job",
+        )
+    )
+
+    try:
         payload = definition.payload_model.model_validate(payload_data)
         result = await definition.handler(context, payload)
         return await finish_platform_job(
@@ -118,7 +133,9 @@ async def run_claimed_platform_job(job_id: UUID, lease_token: UUID) -> bool:
             error_message=str(exc),
         )
     except Exception:
-        logger.exception("Unhandled platform-job handler failure", extra={"job_id": str(job_id)})
+        logger.exception(
+            "Unhandled platform-job handler failure", extra={"job_id": str(job_id)}
+        )
         return await finish_platform_job(
             job_id,
             lease_token,
@@ -127,6 +144,8 @@ async def run_claimed_platform_job(job_id: UUID, lease_token: UUID) -> bool:
             error_message="Platform job failed unexpectedly; see server logs.",
             error_retryable=False,
         )
+    finally:
+        clear_actor(actor_token)
 
 
 async def _main(job_id: str, lease_token: str) -> int:

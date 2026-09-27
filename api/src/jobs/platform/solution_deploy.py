@@ -18,7 +18,6 @@ from src.jobs.platform.base import (
     PlatformJobPolicy,
 )
 from src.models.orm.solution_deploy_jobs import SolutionDeployJob
-from src.models.orm.solutions import Solution
 from src.services.solutions.deploy_job_storage import SolutionDeployJobStorage
 
 logger = logging.getLogger(__name__)
@@ -62,6 +61,10 @@ async def run_solution_deploy(
                     # exemption the one-writer refusal would deadlock creation.
                     # Manual deploys (kind="deploy") stay refused.
                     allow_connected_install=payload.kind == "install_from_repo",
+                    # Same first-deploy-only exemption: if it fails, the
+                    # brand-new install is deleted atomically with the job's
+                    # failed status (see _run_deploy_job docstring).
+                    delete_install_on_failure=payload.kind == "install_from_repo",
                 )
             else:
                 raw_org_id = payload.options.get("organization_id")
@@ -84,21 +87,15 @@ async def run_solution_deploy(
             if projection is None:
                 raise PlatformJobFailure("deploy_job_missing", "Deploy job is missing.")
             if projection.status != "succeeded":
-                if payload.kind == "install_from_repo" and payload.install_id:
-                    projection.install_id = None
-                    await db.flush()
-                    orphan = await db.get(Solution, payload.install_id)
-                    if orphan is not None:
-                        await db.delete(orphan)
+                # A from-repo install's brand-new row is deleted by
+                # _run_deploy_job itself, atomically with this job's failed
+                # status write (see its docstring) — nothing to clean up here.
                 failure = PlatformJobFailure(
                     "solution_deploy_failed",
                     projection.error or "Solution deploy failed.",
                 )
             else:
                 result = projection.result or {}
-        # The failed install cleanup above must commit before the platform job
-        # reports failure. Raising inside get_db_context would roll the delete
-        # back and leave an orphan that blocks a retry with the same slug.
         if failure is not None:
             raise failure
         await context.report("Solution deploy complete", percent=100)

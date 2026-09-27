@@ -8,6 +8,12 @@ import {
 	useServiceLogs,
 } from "./useServiceQueries";
 
+const listServiceLogs = vi.hoisted(() => vi.fn());
+vi.mock("@/services/services", async (importOriginal) => ({
+	...((await importOriginal()) as object),
+	listServiceLogs: (...args: unknown[]) => listServiceLogs(...args),
+}));
+
 describe("serviceLogDateFilters", () => {
 	it("maps an empty window to unbounded filters", () => {
 		expect(serviceLogDateFilters(undefined)).toEqual({
@@ -48,13 +54,6 @@ describe("serviceLogsQueryKey", () => {
 });
 
 describe("useServiceLogs", () => {
-	const listServiceLogs = vi.hoisted(() => vi.fn());
-	vi.mock("@/services/services", async (importOriginal) => ({
-		...((await importOriginal()) as object),
-		listServiceLogs: (...args: unknown[]) =>
-			listServiceLogs(...args),
-	}));
-
 	function wrapper({ children }: { children: ReactNode }) {
 		return (
 			<QueryClientProvider

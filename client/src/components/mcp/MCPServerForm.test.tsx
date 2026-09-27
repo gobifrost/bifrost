@@ -126,3 +126,88 @@ it("keeps discovery failure guidance beside editable, labelled OAuth fields", as
 	);
 	expect(screen.getByLabelText(/Redirect URL/)).toHaveAttribute("readonly");
 });
+
+it("reads endpoints from nested authorization-server metadata, not attacker-shaped flat fields", async () => {
+	mutateAsync.mockReset().mockResolvedValue({ id: "created" });
+	discover.mockResolvedValue({
+		data: {
+			metadata: {
+				authorization_server_metadata: {
+					issuer: "https://issuer.example.com",
+					authorization_endpoint:
+						"https://issuer.example.com/authorize",
+					token_endpoint: "https://issuer.example.com/token",
+				},
+				protected_resource_metadata: {
+					resource: "https://resource.example.com/mcp",
+				},
+				// Attacker-controlled flat fields must not win over nested docs.
+				issuer: "https://attacker.example.com",
+				authorization_endpoint: "https://attacker.example.com/authorize",
+				token_endpoint: "https://attacker.example.com/token",
+			},
+		},
+	});
+	const { user } = renderWithProviders(<MCPServerForm />);
+	await user.type(screen.getByLabelText("Display name"), "Nested MCP");
+	await user.type(
+		screen.getByLabelText("Server URL"),
+		"https://resource.example.com/mcp",
+	);
+	await user.click(
+		screen.getByRole("button", { name: "Discover OAuth metadata" }),
+	);
+	expect(await screen.findByLabelText("Token URL")).toHaveValue(
+		"https://issuer.example.com/token",
+	);
+	expect(screen.getByLabelText("Authorization URL")).toHaveValue(
+		"https://issuer.example.com/authorize",
+	);
+	expect(screen.getByLabelText("Audience / resource indicator")).toHaveValue(
+		"https://resource.example.com/mcp",
+	);
+});
+
+it("reads scopes from nested authorization-server metadata", async () => {
+	mutateAsync.mockReset().mockResolvedValue({ id: "created" });
+	discover.mockResolvedValue({
+		data: {
+			metadata: {
+				authorization_endpoint: "https://issuer.example.com/authorize",
+				token_endpoint: "https://issuer.example.com/token",
+				authorization_server_metadata: {
+					issuer: "https://issuer.example.com",
+					authorization_endpoint:
+						"https://issuer.example.com/authorize",
+					token_endpoint: "https://issuer.example.com/token",
+					scopes_supported: ["mcp:access", "profile"],
+				},
+				protected_resource_metadata: {
+					resource: "https://resource.example.com/mcp",
+				},
+			},
+		},
+	});
+	const { user } = renderWithProviders(<MCPServerForm onSuccess={vi.fn()} />);
+	await user.type(screen.getByLabelText("Display name"), "Scoped MCP");
+	await user.type(
+		screen.getByLabelText("Server URL"),
+		"https://resource.example.com/mcp",
+	);
+	await user.click(
+		screen.getByRole("button", { name: "Discover OAuth metadata" }),
+	);
+	expect(await screen.findByLabelText("Scopes")).toHaveValue(
+		"mcp:access profile",
+	);
+	await user.click(screen.getByRole("button", { name: "Create Server" }));
+	expect(mutateAsync).toHaveBeenCalledWith(
+		expect.objectContaining({
+			body: expect.objectContaining({
+				oauth_provider: expect.objectContaining({
+					scopes: ["mcp:access", "profile"],
+				}),
+			}),
+		}),
+	);
+});

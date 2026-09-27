@@ -6,7 +6,7 @@
 # Uses BUILDPLATFORM to run on native architecture (no QEMU emulation)
 # =============================================================================
 # node:20-slim
-FROM --platform=$BUILDPLATFORM node:26-slim@sha256:c0753125a3789977aefe869cbebccf70e3cfd7ea84ca48547458f02e4f1d7146 AS base
+FROM --platform=$BUILDPLATFORM node:26-slim@sha256:14bf3eac4bf209d906d3c41256597d3ab1f926b2e93a79e9bdfe1efd32454239 AS base
 
 WORKDIR /app
 
@@ -37,7 +37,7 @@ RUN npm run build \
 # Stage 3: Production with nginx
 # =============================================================================
 # nginx:alpine
-FROM nginx:alpine@sha256:db35bfc6b2951e7f8a72db5db120288c127ffaeeb4a6d4b95a26fead017d5913 AS production
+FROM nginx:alpine@sha256:72ba65eb42c10344912a84ff42408db7d34f2feb642204570ab8fc5ffd29f1d3 AS production
 
 # Copy built assets from builder
 COPY --from=builder /app/dist /usr/share/nginx/html
