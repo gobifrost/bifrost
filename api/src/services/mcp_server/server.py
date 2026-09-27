@@ -506,7 +506,7 @@ def get_system_tool_function(tool_id: str) -> Any | None:
     Get the callable function for a system tool by ID.
 
     Args:
-        tool_id: The tool ID (e.g., "execute_workflow", "list_agents")
+        tool_id: The tool ID (e.g., "execute_workflow", "bifrost_agent_list")
 
     Returns:
         The async callable function, or None if not found.
@@ -622,12 +622,7 @@ if HAS_FASTMCP:
                                     artifact = await artifact_service.get_authorized(
                                         UUID(ref.id),
                                         user_id=UUID(str(context.user_id)),
-                                        organization_id=(
-                                            UUID(str(context.org_id))
-                                            if context.org_id
-                                            else None
-                                        ),
-                                        is_platform_admin=context.is_platform_admin,
+                                        bypass=context.has_scope_bypass,
                                     )
                                 except (ArtifactAccessError, ValueError):
                                     return error_result(

@@ -73,6 +73,7 @@ async def get_workflow_metadata_only(
             time_saved=cached.get("time_saved", 0),
             value=cached.get("value", 0.0),
             execution_mode=cached.get("execution_mode", "sync"),
+            type=cached.get("type", "workflow"),
         )
         metadata.id = cached["id"]
         metadata.source_file_path = cached["file_path"]
@@ -104,6 +105,7 @@ async def get_workflow_metadata_only(
         time_saved=workflow_record.time_saved or 0,
         value=float(workflow_record.value) if workflow_record.value else 0.0,
         execution_mode=workflow_record.execution_mode or "sync",
+        type=workflow_record.type or "workflow",
     )
     metadata.id = str(workflow_record.id)
     metadata.source_file_path = workflow_record.path
@@ -117,6 +119,7 @@ async def get_workflow_metadata_only(
         time_saved=workflow_record.time_saved or 0,
         value=float(workflow_record.value) if workflow_record.value else 0.0,
         execution_mode=workflow_record.execution_mode or "sync",
+        type=workflow_record.type or "workflow",
     )
 
     logger.debug(f"Loaded workflow metadata from DB: {workflow_id} -> {workflow_record.name}")
@@ -167,7 +170,7 @@ async def get_workflow_for_execution(
         from src.models.orm.solutions import Solution as SolutionORM
 
         stmt = (
-            select(WorkflowORM, SolutionORM.global_repo_access)
+            select(WorkflowORM, SolutionORM.allow_outbound_access)
             .outerjoin(SolutionORM, WorkflowORM.solution_id == SolutionORM.id)
             .where(
                 WorkflowORM.id == workflow_id,
@@ -187,7 +190,7 @@ async def get_workflow_for_execution(
         if row is None:
             raise WorkflowNotFoundError(f"Workflow with ID '{workflow_id}' not found")
 
-        workflow_record, global_repo_access = row
+        workflow_record, allow_outbound_access = row
         logger.debug(f"Loaded workflow for execution: {workflow_id} -> {workflow_record.name}")
 
         return {
@@ -200,7 +203,8 @@ async def get_workflow_for_execution(
             "execution_mode": workflow_record.execution_mode or "async",
             "organization_id": str(workflow_record.organization_id) if workflow_record.organization_id else None,
             "solution_id": str(workflow_record.solution_id) if workflow_record.solution_id else None,
-            "can_access_global_repo": bool(global_repo_access),
+            # Wire key kept stable for in-flight workflow_data across deploys.
+            "can_access_global_repo": bool(allow_outbound_access),
             "type": workflow_record.type or "workflow",
             "cache_ttl_seconds": workflow_record.cache_ttl_seconds or 0,
         }
@@ -391,9 +395,21 @@ async def run_workflow(
             raise WorkflowNotFoundError(
                 f"Failed to validate workflow '{workflow_id}': {str(e)}"
             )
+        if workflow_metadata.type == "service":
+            raise ValueError(
+                f"Workflow '{workflow_name}' is a long-lived service "
+                "(type='service'). One-shot execution is not supported; "
+                "manage it through the services lifecycle (start/stop/restart)."
+            )
     else:
         workflow_name = dispatch_metadata["name"]
         timeout_seconds = dispatch_metadata["timeout_seconds"]
+        if dispatch_metadata.get("type") == "service":
+            raise ValueError(
+                f"Workflow '{workflow_name}' is a long-lived service "
+                "(type='service'). One-shot execution is not supported; "
+                "manage it through the services lifecycle (start/stop/restart)."
+            )
 
     # Enqueue for execution via worker
     # sync is only True when explicitly passed by the caller (e.g. endpoints.py)

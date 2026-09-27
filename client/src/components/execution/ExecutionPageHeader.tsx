@@ -15,6 +15,7 @@ interface ExecutionPageHeaderProps {
 	name: string;
 	status: ReactNode;
 	onBack: () => void;
+	backLabel?: "History" | "Usage";
 	onCopyId: () => void;
 	onOpenEditor?: (() => void) | undefined;
 	onRerun?: (() => void) | undefined;
@@ -27,6 +28,7 @@ export function ExecutionPageHeader({
 	name,
 	status,
 	onBack,
+	backLabel = "History",
 	onCopyId,
 	onOpenEditor,
 	onRerun,
@@ -41,11 +43,11 @@ export function ExecutionPageHeader({
 					type="button"
 					variant="ghost"
 					className="min-h-11 px-2"
-					aria-label="Back to history"
+					aria-label={`Back to ${backLabel.toLowerCase()}`}
 					onClick={onBack}
 				>
 					<ArrowLeft aria-hidden="true" className="size-4" />
-					History
+					{backLabel}
 				</Button>
 				<Button
 					type="button"

@@ -144,6 +144,26 @@ test("[FORM-BROWSE-01 desktop] admin searches and opens a seeded form", async ({
 		await expect(row).toBeVisible();
 		await expect(row.getByText(FORM_DESCRIPTION)).toBeVisible();
 		await row.click();
+		await expect(page).toHaveURL(new RegExp(`/execute/${formId}$`));
+		await expect(
+			page.getByRole("heading", { name: FORM_NAME }),
+		).toBeVisible({
+			timeout: 10000,
+		});
+
+		await page.goto("/forms");
+		await page.getByRole("radio", { name: "Table view" }).click();
+		await page
+			.getByPlaceholder(
+				"Search forms by name, description, or workflow...",
+			)
+			.fill(FORM_NAME);
+		await page
+			.getByRole("row")
+			.filter({ hasText: FORM_NAME })
+			.getByRole("button", { name: `${FORM_NAME} actions` })
+			.click();
+		await page.getByRole("menuitem", { name: "Edit Form" }).click();
 		await expect(page).toHaveURL(new RegExp(`/forms/${formId}/edit$`));
 		await expect(
 			page.getByRole("heading", { name: FORM_NAME }),

@@ -83,7 +83,7 @@ export function Dashboard() {
 			<div className="shrink-0 space-y-6">
 				<ListPageHeader
 					title="Dashboard"
-					titleAccessory={<WorkspaceTabs />}
+					titleSlot={<WorkspaceTabs />}
 					description="Platform overview and metrics"
 					actions={
 						<Button

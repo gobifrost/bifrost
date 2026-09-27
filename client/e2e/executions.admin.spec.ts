@@ -288,10 +288,33 @@ test.describe("Execution History", () => {
 			});
 			await waitForTerminalSuccess(api, executionId);
 
-			await page.setViewportSize({ width: 1440, height: 900 });
-			await openExecutionDetail(page, executionId);
+			await page.setViewportSize({ width: 1440, height: 500 });
+			await page.goto("/history?status=Success");
+			const historyRow = page.getByRole("row").filter({
+				has: page
+					.getByRole("link", { name: workflowFunction, exact: true })
+					.and(page.locator(`a[href="/history/${executionId}"]`)),
+			});
+			await expect(historyRow).toBeVisible({ timeout: 10_000 });
+			await historyRow.click();
+			await expect(page).toHaveURL(
+				new RegExp(
+					`/history\\?status=Success&execution=${executionId}$`,
+				),
+			);
+			const historyScrollTop = await page
+				.locator("[data-page-scroll]")
+				.evaluate((element) => {
+					element.scrollTop = 96;
+					return element.scrollTop;
+				});
+			expect(historyScrollTop).toBeGreaterThan(0);
+			await page.getByRole("link", { name: "Open execution" }).click();
+			await page.waitForURL(new RegExp(`/history/${executionId}$`));
 			await expect(
-				page.getByText("Completed", { exact: true }),
+				page
+					.locator(".execution-shell")
+					.getByText("Completed", { exact: true }),
 			).toBeVisible();
 
 			await expect(
@@ -318,28 +341,25 @@ test.describe("Execution History", () => {
 			).toContainText("execution acceptance output exec-01");
 
 			await page.getByRole("button", { name: "Back to history" }).click();
-			await page.waitForURL(/\/history$/);
-			const historyRow = page.getByRole("row").filter({
-				has: page
-					.getByRole("link", { name: workflowFunction, exact: true })
-					.and(page.locator(`a[href="/history/${executionId}"]`)),
-			});
+			await page.waitForURL(
+				new RegExp(
+					`/history\\?status=Success&execution=${executionId}$`,
+				),
+			);
 			await expect(historyRow).toBeVisible({ timeout: 10_000 });
 			await expect(
 				historyRow.getByText("Completed", { exact: true }),
 			).toBeVisible();
-
-			await page.goBack();
-			await page.waitForURL(new RegExp(`/history/${executionId}$`));
 			await expect(
-				page.getByRole("heading", { level: 1, name: workflowFunction }),
-			).toBeVisible({ timeout: 10_000 });
-			await expect(
-				page.getByText("Completed", { exact: true }),
+				page.getByRole("complementary", { name: "Execution preview" }),
 			).toBeVisible();
-			await expect(
-				page.getByRole("tabpanel", { name: "Result", exact: true }),
-			).toContainText("exec-01");
+			await expect
+				.poll(() =>
+					page
+						.locator("[data-page-scroll]")
+						.evaluate((element) => element.scrollTop),
+				)
+				.toBe(historyScrollTop);
 		},
 	);
 

@@ -17,6 +17,7 @@ import os
 import re
 import tempfile
 import zipfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 from uuid import UUID, uuid4
@@ -77,6 +78,9 @@ from src.models.contracts.solutions import (
     SolutionsList,
     SolutionUpdate,
     SolutionUpgradeDiff,
+    WorkspaceBundleImportRequest,
+    WorkspaceBundlePreview,
+    WorkspaceBundleRepoPreviewRequest,
 )
 from src.models.orm.agents import Agent, AgentRole
 from src.models.orm.app_roles import AppRole
@@ -102,7 +106,28 @@ from src.jobs.platform.solution_deploy import (
     SOLUTION_DEPLOY_DEFINITION,
     SolutionDeployPayload,
 )
+from src.jobs.platform.solution_git_sync import (
+    SOLUTION_GIT_SYNC_DEFINITION,
+    SolutionGitSyncPayload,
+)
 from src.services.platform_jobs import enqueue_platform_job, publish_platform_job_update
+from src.services.platform_jobs import ensure_platform_job_notification
+from src.models.contracts.platform_jobs import PlatformJobAccepted, PlatformJobStatus
+from src.jobs.platform.workspace_bundle_import import (
+    WORKSPACE_BUNDLE_IMPORT_DEFINITION,
+    WorkspaceBundleImportPayload,
+)
+from src.jobs.platform.git_operation import WORKSPACE_MUTATION_RESOURCE_LOCK_KEY
+from src.services.solutions.workspace_bundle_plan import (
+    SolutionPackageWorkspaceProjection,
+    WorkspaceBundlePlanner,
+)
+from src.services.solutions.workspace_bundle_storage import WorkspaceBundleStorage
+from src.services.solutions.workspace_bundle_import import (
+    WorkspaceBundleDecisionError,
+    require_workspace_config_values,
+)
+from src.services.solutions.zip_install import MAX_SOLUTION_ARCHIVE_BYTES
 from src.services.platform_jobs import ACTIVE_PLATFORM_JOB_STATUSES
 from src.services.application_sdk_status import (
     CurrentApplicationSdkMetadata,
@@ -123,6 +148,7 @@ from src.services.solutions.export_jobs import (
     list_export_jobs,
     public_job,
 )
+from src.services.operation_catalog import operation_route
 
 if TYPE_CHECKING:
     from src.services.solutions.zip_install import PreviewResult
@@ -148,17 +174,402 @@ def _safe_zip_filename(filename: str) -> str:
     return f"{safe_stem or 'solution-export'}.zip"
 
 
+_WORKSPACE_PREVIEW_TTL = timedelta(minutes=30)
+
+
+async def _resolve_workspace_scope_org(
+    db: AsyncSession, raw: str | UUID | None,
+) -> UUID | None:
+    """Resolve the workspace-import target scope (None = global content).
+
+    Returns the validated organization UUID, or None for global scope. Fails
+    before any preview token is issued: malformed UUIDs are 422 and unknown
+    organizations are 404, so the durable job can never stamp a dangling scope.
+    """
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return None
+    try:
+        org_id = raw if isinstance(raw, UUID) else UUID(str(raw).strip())
+    except (ValueError, AttributeError, TypeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid organization_id: {raw}",
+        ) from exc
+    from src.models.orm.organizations import Organization
+
+    exists = await db.scalar(select(Organization.id).where(Organization.id == org_id))
+    if exists is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Organization {org_id} not found",
+        )
+    return org_id
+
+
+async def _load_workspace_preview_metadata(
+    preview_token: str, *, requested_by: UUID
+) -> tuple[UUID, WorkspaceBundleStorage, dict]:
+    try:
+        preview_id = UUID(preview_token)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace import preview not found") from exc
+    storage = WorkspaceBundleStorage(preview_id)
+    try:
+        metadata = await storage.load_metadata()
+    except (FileNotFoundError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace import preview not found") from exc
+    if metadata.get("requested_by") != str(requested_by):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace import preview not found")
+    try:
+        expires_at = datetime.fromisoformat(metadata["expires_at"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Workspace import preview is invalid") from exc
+    if expires_at <= datetime.now(timezone.utc):
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail="Workspace import preview has expired")
+    return preview_id, storage, metadata
+
+
+@router.post(
+    "/import-workspace/preview", response_model=WorkspaceBundlePreview,
+    summary="Preview a Solution archive as workspace content",
+)
+async def preview_workspace_import(
+    file: Annotated[UploadFile, File()], ctx: Context, user: CurrentSuperuser,
+    organization_id: Annotated[str | None, FastapiForm()] = None,
+) -> WorkspaceBundlePreview:
+    """Stage a requester-bound immutable archive and return its collision plan.
+
+    ``organization_id`` selects the target scope for scoped definitions
+    (absent = global workspace content). Files, integrations, and roles are
+    always global.
+    """
+    scope_org_id = await _resolve_workspace_scope_org(ctx.db, organization_id)
+    path = await _spool_upload_to_temp(file, prefix="bifrost-workspace-preview-")
+    preview_id = uuid4()
+    storage = WorkspaceBundleStorage(preview_id)
+    try:
+        digest, _size = await storage.stage_package(path)
+        with tempfile.TemporaryDirectory(prefix="bifrost-workspace-preview-") as tmp:
+            from src.services.solutions.zip_install import _parse_workspace, _safe_extract_path
+
+            workspace = Path(tmp) / "workspace"
+            workspace.mkdir()
+            _safe_extract_path(path, str(workspace))
+            projection = SolutionPackageWorkspaceProjection.from_preview(
+                _parse_workspace(workspace), preview_id=preview_id, work_dir=workspace,
+                organization_id=scope_org_id,
+            )
+            planned = await WorkspaceBundlePlanner(
+                ctx.db, preview_id=preview_id, organization_id=scope_org_id,
+            ).plan(projection)
+            preview = planned.preview.model_copy(update={
+                "preview_token": str(preview_id), "package_sha256": digest,
+            })
+            await storage.stage_metadata({
+                "requested_by": str(user.user_id),
+                "expires_at": (datetime.now(timezone.utc) + _WORKSPACE_PREVIEW_TTL).isoformat(),
+                "package_sha256": digest,
+                "organization_id": str(scope_org_id) if scope_org_id is not None else None,
+                "preview": preview.model_dump(mode="json"),
+                "manifest": planned.manifest.model_dump(mode="json"),
+                "id_map": {str(source): str(target) for source, target in planned.id_map.items()},
+                "file_hashes": planned.file_hashes,
+                "destination_file_hashes": planned.destination_file_hashes,
+            })
+            return preview
+    except (ValueError, zipfile.BadZipFile) as exc:
+        await storage.delete()
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    finally:
+        _cleanup_file(path)
+
+
+@router.post(
+    "/import-workspace", response_model=PlatformJobAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Queue a reviewed workspace bundle import",
+)
+async def enqueue_workspace_import(
+    body: WorkspaceBundleImportRequest, response: Response, ctx: Context, user: CurrentSuperuser,
+) -> PlatformJobAccepted:
+    preview_id, storage, metadata = await _load_workspace_preview_metadata(
+        body.preview_token, requested_by=user.user_id
+    )
+    preview = WorkspaceBundlePreview.model_validate(metadata["preview"])
+    conflicts = {item.id for item in preview.items if item.classification == "conflict"}
+    if {decision.item_id for decision in body.decisions} != conflicts:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="every workspace import conflict requires exactly one decision",
+        )
+    declared_config_keys = {str(schema["key"]) for schema in preview.config_schemas}
+    if set(body.config_values) - declared_config_keys:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="workspace import config values must match declared keys",
+        )
+    try:
+        require_workspace_config_values(preview, body.decisions, body.config_values)
+    except WorkspaceBundleDecisionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc),
+        ) from exc
+    payload = WorkspaceBundleImportPayload(
+        preview_id=preview_id, package_sha256=preview.package_sha256,
+        decisions=body.decisions, config_values=body.config_values,
+    )
+    job, reused = await enqueue_platform_job(
+        ctx.db,
+        WORKSPACE_BUNDLE_IMPORT_DEFINITION,
+        payload,
+        # A preview is requester-bound state, even when two archives have the
+        # same bytes. Never let a caller reuse another preview's active job.
+        dedupe_key=f"{user.user_id}:{preview_id}",
+        resource_lock_key=WORKSPACE_MUTATION_RESOURCE_LOCK_KEY,
+        priority=500,
+        organization_id=None,
+        requested_by_user_id=user.user_id,
+        requested_by_email=user.email,
+        requested_by_name=user.name or user.email or "Unknown",
+        resource_type="workspace",
+        resource_id="bundle-import",
+        title=f"Import workspace bundle {preview.package_name}",
+        action_url="/solutions",
+    )
+    if reused and not _same_workspace_bundle_decisions(job, payload):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A workspace import with different decisions is already active for this preview.",
+        )
+    if job.notification_id is None:
+        await ensure_platform_job_notification(ctx.db, job)
+    if not reused:
+        metadata["platform_job_id"] = str(job.id)
+        await storage.stage_metadata(metadata)
+    await ctx.db.commit()
+    await publish_platform_job_update(job)
+    response.headers["Location"] = f"/api/platform-jobs/{job.id}"
+    return PlatformJobAccepted(
+        job_id=job.id, status=PlatformJobStatus(job.status), reused=reused,
+        notification_id=job.notification_id,
+    )
+
+
+async def _stage_workspace_preview(
+    ctx: Context,
+    user: CurrentSuperuser,
+    *,
+    work_dir: Path,
+    staging_zip: Path,
+    source_kind: str,
+    organization_id: UUID | None = None,
+    repo_url: str | None = None,
+    git_ref: str | None = None,
+    repo_subpath: str | None = None,
+    resolved_commit: str | None = None,
+) -> WorkspaceBundlePreview:
+    """Plan a workspace bundle from an already-validated tree and stage it.
+
+    ZIP and repository inputs converge here: both supply a validated Solution
+    package directory plus the exact bytes the durable job will re-parse.
+    """
+    from src.services.solutions.zip_install import _parse_workspace
+
+    preview_id = uuid4()
+    storage = WorkspaceBundleStorage(preview_id)
+    try:
+        digest, _size = await storage.stage_package(staging_zip)
+        projection = SolutionPackageWorkspaceProjection.from_preview(
+            _parse_workspace(work_dir), preview_id=preview_id, work_dir=work_dir,
+            organization_id=organization_id,
+        )
+        planned = await WorkspaceBundlePlanner(
+            ctx.db, preview_id=preview_id, organization_id=organization_id,
+        ).plan(projection)
+        preview = planned.preview.model_copy(update={
+            "preview_token": str(preview_id),
+            "package_sha256": digest,
+            "source_kind": source_kind,
+            "repo_url": repo_url,
+            "git_ref": git_ref,
+            "repo_subpath": repo_subpath,
+            "resolved_commit": resolved_commit,
+        })
+        await storage.stage_metadata({
+            "requested_by": str(user.user_id),
+            "expires_at": (datetime.now(timezone.utc) + _WORKSPACE_PREVIEW_TTL).isoformat(),
+            "package_sha256": digest,
+            "organization_id": str(organization_id) if organization_id is not None else None,
+            "preview": preview.model_dump(mode="json"),
+            "manifest": planned.manifest.model_dump(mode="json"),
+            "id_map": {str(source): str(target) for source, target in planned.id_map.items()},
+            "file_hashes": planned.file_hashes,
+            "destination_file_hashes": planned.destination_file_hashes,
+            "source_kind": source_kind,
+            "repo_url": repo_url,
+            "git_ref": git_ref,
+            "repo_subpath": repo_subpath,
+            "resolved_commit": resolved_commit,
+        })
+        return preview
+    except (ValueError, zipfile.BadZipFile) as exc:
+        await storage.delete()
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+
+@router.post(
+    "/import-workspace/preview-repo", response_model=WorkspaceBundlePreview,
+    summary="Preview a Solution repository snapshot as workspace content",
+)
+async def preview_workspace_import_repo(
+    body: WorkspaceBundleRepoPreviewRequest, ctx: Context, user: CurrentSuperuser,
+) -> WorkspaceBundlePreview:
+    """Clone, validate, and plan a one-time repository snapshot.
+
+    Snapshot semantics: coordinates and the resolved commit are bound into the
+    staged preview for audit/retry, but no Solution record, install ID, or
+    ongoing package-repository connection is created. Checkout, ref, subfolder,
+    or descriptor failures return 422 before any preview token is issued.
+    ``organization_id`` selects the target scope (absent = global).
+    """
+    import shutil
+
+    from src.services.solutions.git_sync import (
+        NotASolutionWorkspace,
+        clone_repo_to_dir,
+        resolve_repo_subpath,
+    )
+
+    tmp = Path(tempfile.mkdtemp(prefix="bifrost-workspace-repo-preview-"))
+    try:
+        checkout = tmp / "checkout"
+        try:
+            await clone_repo_to_dir(body.repo_url, checkout, ref=body.git_ref)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Could not clone {body.repo_url}: {exc}",
+            ) from exc
+        try:
+            root = resolve_repo_subpath(checkout, body.repo_subpath)
+        except NotASolutionWorkspace as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            ) from exc
+        marker = Path(os.path.realpath(os.path.join(os.path.realpath(root), "bifrost.solution.yaml")))
+        if not marker.is_file() or not str(marker).startswith(os.path.realpath(root) + os.sep):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"No bifrost.solution.yaml at {body.repo_subpath or '<repo root>'} in {body.repo_url}",
+            )
+        symlink = next((path for path in root.rglob("*") if path.is_symlink()), None)
+        if symlink is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Solution repo workspaces may not contain symlinks (found {symlink.relative_to(root).as_posix()}).",
+            )
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "git", "rev-parse", "HEAD", cwd=str(checkout),
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _stderr = await proc.communicate()
+            resolved_commit = stdout.decode().strip() if proc.returncode == 0 else None
+        except Exception:
+            resolved_commit = None
+        if not resolved_commit:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Could not resolve commit for {body.repo_url} at ref {body.git_ref or 'default'}.",
+            )
+        from bifrost.commands.solution import _build_deploy_zip
+
+        staging_zip = tmp / "package.zip"
+        staging_zip.write_bytes(_build_deploy_zip(root, extra_text_files={}))
+        return await _stage_workspace_preview(
+            ctx, user,
+            work_dir=root, staging_zip=staging_zip, source_kind="repo",
+            organization_id=await _resolve_workspace_scope_org(ctx.db, body.organization_id),
+            repo_url=body.repo_url, git_ref=body.git_ref,
+            repo_subpath=body.repo_subpath, resolved_commit=resolved_commit,
+        )
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _same_workspace_bundle_decisions(
+    job: PlatformJob, requested: WorkspaceBundleImportPayload,
+) -> bool:
+    if job.encrypted_payload is None:
+        return False
+    from src.core.security import decrypt_secret
+
+    active = WorkspaceBundleImportPayload.model_validate_json(decrypt_secret(job.encrypted_payload))
+    return (
+        active.preview_id == requested.preview_id
+        and active.package_sha256 == requested.package_sha256
+        and sorted((decision.item_id, decision.action) for decision in active.decisions)
+        == sorted((decision.item_id, decision.action) for decision in requested.decisions)
+        and active.config_values == requested.config_values
+    )
+
+
 async def _spool_upload_to_temp(file: UploadFile, *, prefix: str) -> Path:
     tmp = tempfile.NamedTemporaryFile(prefix=prefix, suffix=".zip", delete=False)
     path = Path(tmp.name)
     try:
         with tmp:
+            compressed_size = 0
             while chunk := await file.read(UPLOAD_CHUNK_SIZE):
+                compressed_size += len(chunk)
+                if compressed_size > MAX_SOLUTION_ARCHIVE_BYTES:
+                    raise HTTPException(
+                        status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                        detail="Solution archive exceeds the compressed upload limit.",
+                    )
                 tmp.write(chunk)
     except Exception:
         _cleanup_file(path)
         raise
     return path
+
+
+async def _lock_solution_operation(db: AsyncSession, solution_id: UUID) -> None:
+    """Serialize Solution mutations with SDK-update enqueue decisions."""
+    await db.execute(
+        text(
+            "SELECT pg_advisory_xact_lock("
+            "hashtext('bifrost:solution-operation:' || :solution_id))"
+        ),
+        {"solution_id": str(solution_id)},
+    )
+
+
+async def _active_solution_sdk_update_exists(
+    db: AsyncSession, solution_id: UUID
+) -> bool:
+    """Return whether an owned App has a queued or running SDK rebuild."""
+    app_ids = [
+        str(app_id)
+        for app_id in (
+            await db.execute(
+                select(Application.id).where(Application.solution_id == solution_id)
+            )
+        ).scalars().all()
+    ]
+    if not app_ids:
+        return False
+    return (
+        await db.execute(
+            select(PlatformJob.id)
+            .where(
+                PlatformJob.job_type == "application.sdk_update",
+                PlatformJob.resource_id.in_(app_ids),
+                PlatformJob.status.in_(ACTIVE_PLATFORM_JOB_STATUSES),
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none() is not None
 
 
 async def _enqueue_solution_deploy_job(
@@ -179,38 +590,12 @@ async def _enqueue_solution_deploy_job(
     if (input_path is None) == (input_bytes is None):
         raise ValueError("exactly one staged input is required")
     if install_id is not None:
-        await db.execute(
-            text(
-                "SELECT pg_advisory_xact_lock("
-                "hashtext('bifrost:solution-operation:' || :solution_id))"
-            ),
-            {"solution_id": str(install_id)},
-        )
-        app_ids = [
-            str(app_id)
-            for app_id in (
-                await db.execute(
-                    select(Application.id).where(Application.solution_id == install_id)
-                )
-            ).scalars().all()
-        ]
-        if app_ids:
-            active_app_update = (
-                await db.execute(
-                    select(PlatformJob.id)
-                    .where(
-                        PlatformJob.job_type == "application.sdk_update",
-                        PlatformJob.resource_id.in_(app_ids),
-                        PlatformJob.status.in_(ACTIVE_PLATFORM_JOB_STATUSES),
-                    )
-                    .limit(1)
-                )
-            ).scalar_one_or_none()
-            if active_app_update is not None:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="An App SDK update is already in progress for this Solution.",
-                )
+        await _lock_solution_operation(db, install_id)
+        if await _active_solution_sdk_update_exists(db, install_id):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="An App SDK update is already in progress for this Solution.",
+            )
     job_id = uuid4()
     storage = SolutionDeployJobStorage(job_id)
     if input_path is not None:
@@ -260,7 +645,7 @@ async def _enqueue_solution_deploy_job(
     return projection
 
 
-@router.post("", response_model=SolutionDTO, status_code=status.HTTP_201_CREATED, summary="Create a Solution install (admin only)")
+@router.post("", response_model=SolutionDTO, status_code=status.HTTP_201_CREATED, summary="Create a Solution install (admin only)", **operation_route("solutions.create"))
 async def create_solution(body: SolutionCreate, ctx: Context, user: CurrentSuperuser) -> SolutionDTO:
     # Install kind is DERIVED from organization_id (unified --org standard) —
     # there is no `scope` input. HOME (organization_id absent) => the caller's
@@ -280,7 +665,8 @@ async def create_solution(body: SolutionCreate, ctx: Context, user: CurrentSuper
         slug=body.slug,
         name=body.name,
         organization_id=org_id,
-        global_repo_access=body.global_repo_access,
+        allow_outbound_access=body.allow_outbound_access,
+        allow_inbound_access=body.allow_inbound_access,
         git_connected=body.git_connected,
         git_repo_url=body.git_repo_url,
         repo_subpath=body.repo_subpath,
@@ -425,7 +811,7 @@ async def _solution_sdk_statuses_for_rows(
     }
 
 
-@router.get("", response_model=SolutionsList, summary="List Solution installs (admin only)")
+@router.get("", response_model=SolutionsList, summary="List Solution installs (admin only)", **operation_route("solutions.list"))
 async def list_solutions(ctx: Context, user: CurrentSuperuser) -> SolutionsList:
     rows = (
         (
@@ -669,7 +1055,7 @@ async def update_solution_app_sdks(
     )
 
 
-@router.get("/{solution_id}", response_model=SolutionDTO, summary="Get a Solution install (admin only)")
+@router.get("/{solution_id}", response_model=SolutionDTO, summary="Get a Solution install (admin only)", **operation_route("solutions.get"))
 async def get_solution(solution_id: UUID, ctx: Context, user: CurrentSuperuser) -> SolutionDTO:
     row = await ctx.db.get(SolutionORM, solution_id)
     if row is None:
@@ -803,7 +1189,7 @@ async def solution_setup(
         200: {"content": {"application/zip": {}}},
         404: {"description": "Install not found, or it predates export support"},
     },
-)
+**operation_route("solutions.export"))
 async def export_solution(
     solution_id: UUID,
     ctx: Context,
@@ -856,6 +1242,7 @@ async def export_solution(
     from src.services.solutions.export import (
         add_live_content_to_workspace_zip_file,
         build_workspace_zip_for_export,
+        copy_workspace_zip_with_readme,
     )
     from src.services.solutions.source_artifact import SolutionSourceArtifactStorage
 
@@ -883,7 +1270,7 @@ async def export_solution(
         stored_source_path.close()
         has_stored_source = await artifact.copy_to_path(source_path)
         if has_stored_source and mode == "shareable":
-            source_path.replace(out_path)
+            await asyncio.to_thread(copy_workspace_zip_with_readme, source_path, out_path, sol.readme)
         else:
             bundle = await SolutionCaptureService(ctx.db).bundle_for(
                 sol,
@@ -1490,11 +1877,11 @@ async def preview_solution_capture(
     "/{solution_id}",
     response_model=SolutionDTO,
     summary="Update an install's local fields (admin only)",
-)
+**operation_route("solutions.update"))
 async def update_solution(
     solution_id: UUID, body: SolutionUpdate, ctx: Context, user: CurrentSuperuser
 ) -> SolutionDTO:
-    """Edit INSTALL-LOCAL fields only (name/scope/global_repo_access/git fields).
+    """Edit INSTALL-LOCAL fields only (name/scope/allow_outbound_access/allow_inbound_access/git fields).
 
     Portable content (workflows/apps/forms/agents/tables/config declarations) is
     owned by the bundle/git and is never touched here. Changing the install's
@@ -1524,8 +1911,69 @@ async def update_solution(
         solution_write_lock,
     )
 
+    enabling_git_connection = (
+        fields.get("git_connected") is True and not sol.git_connected
+    )
+    if enabling_git_connection:
+        required_coordinates = {"git_repo_url", "repo_subpath", "git_ref"}
+        if not required_coordinates.issubset(fields):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    "Connecting Git requires git_repo_url, repo_subpath, and "
+                    "git_ref coordinates in the same request."
+                ),
+            )
+        repo_url = fields["git_repo_url"]
+        if not isinstance(repo_url, str) or not repo_url.strip():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Connecting Git requires a git_repo_url.",
+            )
+        git_ref = fields["git_ref"]
+        if isinstance(git_ref, str) and not git_ref.strip():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="git_ref must be a branch or tag when provided.",
+            )
+
     try:
         async with solution_write_lock(solution_id):
+            if enabling_git_connection:
+                await _lock_solution_operation(ctx.db, solution_id)
+                active_deploy = (
+                    await ctx.db.execute(
+                        select(PlatformJob.id)
+                        .where(
+                            PlatformJob.job_type == "solution.deploy",
+                            PlatformJob.resource_lock_key == f"solution:{solution_id}",
+                            PlatformJob.status.in_(ACTIVE_PLATFORM_JOB_STATUSES),
+                        )
+                        .limit(1)
+                    )
+                ).scalar_one_or_none()
+                if active_deploy is not None:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail=(
+                            "A Solution deployment is already queued or running; "
+                            "wait for it to finish before connecting Git."
+                        ),
+                    )
+                if await _active_solution_sdk_update_exists(ctx.db, solution_id):
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail=(
+                            "An App SDK update is already queued or running for this "
+                            "Solution; wait for it to finish before connecting Git."
+                        ),
+                    )
+                await _validate_solution_git_connection_source(
+                    sol,
+                    repo_url=repo_url.strip(),
+                    repo_subpath=fields["repo_subpath"],
+                    git_ref=git_ref,
+                )
             scope_changing = (
                 "organization_id" in fields
                 and fields["organization_id"] != sol.organization_id
@@ -1549,6 +1997,62 @@ async def update_solution(
         ) from exc
     await ctx.db.refresh(sol)
     return SolutionDTO.model_validate(sol)
+
+
+async def _validate_solution_git_connection_source(
+    solution: SolutionORM,
+    *,
+    repo_url: str,
+    repo_subpath: str | None,
+    git_ref: str | None,
+) -> None:
+    """Clone and verify the Git source before making an install managed by it."""
+    from src.services.solutions.git_sync import (
+        NotASolutionWorkspace,
+        clone_repo_to_dir,
+        resolve_repo_subpath,
+    )
+    from src.services.solutions.zip_install import _parse_workspace
+
+    with tempfile.TemporaryDirectory(prefix="bifrost-solution-git-connect-") as tmp:
+        checkout = Path(tmp)
+        try:
+            await clone_repo_to_dir(repo_url, checkout, ref=git_ref)
+        except Exception as exc:  # noqa: BLE001 - GitPython has varied errors
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Could not clone the configured Solution Git source.",
+            ) from exc
+        try:
+            root = resolve_repo_subpath(checkout, repo_subpath)
+        except NotASolutionWorkspace as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
+            ) from exc
+        descriptor = root / "bifrost.solution.yaml"
+        if not descriptor.is_file():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    "The configured Git source has no bifrost.solution.yaml at "
+                    f"{repo_subpath or '<repo root>'}."
+                ),
+            )
+        try:
+            preview = _parse_workspace(root)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="The configured Git source is not a valid Solution workspace.",
+            ) from exc
+        if preview.slug != solution.slug:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    f"The configured Git source declares solution '{preview.slug}', "
+                    f"not this install's '{solution.slug}'."
+                ),
+            )
 
 
 @router.post(
@@ -1630,7 +2134,7 @@ async def get_solution_deletion_summary(
     "/{solution_id}",
     response_model=SolutionDeleteSummary,
     summary="Hard-delete an install and ALL owned data — irreversible (admin only)",
-)
+**operation_route("solutions.delete"))
 async def delete_solution(
     solution_id: UUID,
     ctx: Context,
@@ -1770,6 +2274,7 @@ async def _run_deploy_job(
     zip_path: Path,
     *,
     force: bool,
+    allow_connected_install: bool = False,
 ) -> None:
     """Execute the deploy under a fresh session (background task).
 
@@ -1779,6 +2284,11 @@ async def _run_deploy_job(
     before this ran). The whole deploy — including the per-install write lock,
     the DB commit, and the post-commit S3 finalize — happens here so the (often
     >100s) work no longer blocks the request and times out the CLI (Task 7).
+
+    ``allow_connected_install`` is only for a from-repo install's first deploy:
+    the install row is created git-connected by the same request that enqueues
+    this job, so the one-writer refusal below would deadlock creation. Manual
+    deploys to connected installs stay refused (auto-pull is their only writer).
     """
     from src.core.database import get_db_context
     from src.services.solutions.zip_install import (
@@ -1821,6 +2331,11 @@ async def _run_deploy_job(
                 solution = await db.get(SolutionORM, solution_id)
                 if solution is None:
                     raise SolutionDeployConflict("Solution not found")
+                if solution.git_connected and not allow_connected_install:
+                    raise SolutionDeployConflict(
+                        "This install became git-connected before deploy started; "
+                        "deploy is disabled (auto-pull is the only writer)."
+                    )
                 await _set_phase("validating bundle and applying resources")
                 result = await deploy_zip_to_solution_path(
                     db, solution, zip_path, force=force
@@ -2018,7 +2533,7 @@ async def _run_install_job(
     response_model=SolutionDeployEnqueued,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Enqueue a deploy to an install (async, full replace, admin only)",
-)
+**operation_route("solutions.deploy"))
 async def deploy_solution(
     solution_id: UUID,
     file: Annotated[UploadFile, File(description="Solution workspace zip")],
@@ -2129,7 +2644,7 @@ async def get_deploy_job(
     "/{solution_id}/capture",
     response_model=SolutionCaptureResponse,
     summary="Capture existing loose entities into an install (admin only)",
-)
+**operation_route("solutions.capture"))
 async def capture_solution_entities(
     solution_id: UUID, body: SolutionCaptureRequest, ctx: Context, user: CurrentSuperuser
 ) -> SolutionCaptureResponse:
@@ -2231,15 +2746,18 @@ async def ack_pulled_captures(
 
 @router.post(
     "/{solution_id}/sync",
+    response_model=PlatformJobAccepted,
     status_code=status.HTTP_202_ACCEPTED,
-    summary="Auto-pull a git-connected install from its repo (admin only)",
-)
-async def sync_solution(solution_id: UUID, ctx: Context, user: CurrentSuperuser) -> dict:
-    """Pull the connected install's repo ``main`` and deploy it (criterion 13).
+    summary="Queue a git-connected install update from its repo (admin only)",
+**operation_route("solutions.sync"))
+async def sync_solution(
+    solution_id: UUID, response: Response, ctx: Context, user: CurrentSuperuser
+) -> PlatformJobAccepted:
+    """Queue a pull of the connected install's configured Git ref (criterion 13).
 
-    This is the auto-pull entry point (webhook/poll/manual). It is the ONLY
-    writer for a connected install — the deploy endpoint is refused for it. For a
-    disconnected install there is nothing to pull, so this is refused in turn.
+    The shared per-Solution resource lock serializes this durable mutation with
+    deploys and SDK updates. The git-sync handler retains the service-level
+    write lock, which also protects non-platform writers.
     """
     solution = await ctx.db.get(SolutionORM, solution_id)
     if solution is None:
@@ -2255,23 +2773,40 @@ async def sync_solution(solution_id: UUID, ctx: Context, user: CurrentSuperuser)
             detail="This git-connected install has no git_repo_url to pull from.",
         )
 
-    from src.services.solutions.git_sync import NotASolutionWorkspace
-    from src.services.solutions.git_sync import sync as git_sync
-
-    try:
-        # git_sync commits + runs the S3 phase itself (inside its per-install
-        # lock, DB-commit-before-S3 per P1-c), so the router does not commit here.
-        await git_sync(ctx.db, solution)
-        # A successful pull means the install is now at the repo HEAD — clear any
-        # pending "update available" signal so the badge disappears.
-        if solution.update_available_version is not None:
-            solution.update_available_version = None
-            await ctx.db.commit()
-    except NotASolutionWorkspace as exc:
+    await _lock_solution_operation(ctx.db, solution_id)
+    if await _active_solution_sdk_update_exists(ctx.db, solution_id):
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
-        ) from exc
-    return {"solution_id": str(solution_id), "status": "synced"}
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An App SDK update is already in progress for this Solution.",
+        )
+
+    job, reused = await enqueue_platform_job(
+        ctx.db,
+        SOLUTION_GIT_SYNC_DEFINITION,
+        SolutionGitSyncPayload(solution_id=solution_id),
+        dedupe_key=str(solution_id),
+        resource_lock_key=f"solution:{solution_id}",
+        priority=500,
+        organization_id=solution.organization_id,
+        requested_by_user_id=user.user_id,
+        requested_by_email=user.email,
+        requested_by_name=user.name or user.email or "Unknown",
+        resource_type="solution",
+        resource_id=str(solution_id),
+        title=f"Update {solution.name} from Git",
+        action_url=f"/solutions/{solution_id}",
+    )
+    if job.notification_id is None:
+        await ensure_platform_job_notification(ctx.db, job)
+    await ctx.db.commit()
+    await publish_platform_job_update(job)
+    response.headers["Location"] = f"/api/platform-jobs/{job.id}"
+    return PlatformJobAccepted(
+        job_id=job.id,
+        status=PlatformJobStatus(job.status),
+        reused=reused,
+        notification_id=job.notification_id,
+    )
 
 
 async def _preview_to_dto(
@@ -2589,7 +3124,7 @@ async def install_from_repo(
     response_model=SolutionDeployEnqueued,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Enqueue a Solution zip install (async deploy + config values, admin only)",
-)
+**operation_route("solutions.install"))
 async def install_solution(
     file: Annotated[UploadFile, File(description="Solution workspace zip")],
     ctx: Context,

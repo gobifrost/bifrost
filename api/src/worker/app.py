@@ -67,6 +67,8 @@ class Worker:
         self._shutdown_event = asyncio.Event()
         self._consumers: list = []
         self._stopping = False
+        self._startup_lock = asyncio.Lock()
+        self._service_claim_loop = None
 
     async def start(self) -> None:
         """Start the worker.
@@ -83,27 +85,33 @@ class Worker:
         logger.info(f"Environment: {self.settings.environment}")
 
         try:
-            # Initialize database connection
-            logger.info("Initializing database connection...")
-            await init_db()
-            # Configure the ORM before accepting queue messages. Lazy mapper
-            # setup otherwise lands on the first execution-row insert and can
-            # add hundreds of milliseconds to the first workflow after start.
-            from sqlalchemy.orm import configure_mappers
+            async with self._startup_lock:
+                if not self._stopping:
+                    # Initialize database connection
+                    logger.info("Initializing database connection...")
+                    await init_db()
 
-            configure_mappers()
-            logger.info("Database connection established")
+                if not self._stopping:
+                    # Configure the ORM before accepting queue messages. Lazy mapper
+                    # setup otherwise lands on the first execution-row insert and can
+                    # add hundreds of milliseconds to the first workflow after start.
+                    from sqlalchemy.orm import configure_mappers
 
-            # Initialize and start RabbitMQ consumers
-            logger.info("Starting RabbitMQ consumers...")
-            await self._start_consumers()
+                    configure_mappers()
+                    logger.info("Database connection established")
+
+                if not self._stopping:
+                    # Initialize and start RabbitMQ consumers
+                    logger.info("Starting RabbitMQ consumers...")
+                    await self._start_consumers()
         except Exception:
             logger.error("Startup failed; tearing down partially-started worker")
             await self._cleanup_after_failed_start()
             raise
 
-        logger.info("Bifrost Worker started")
-        logger.info("Waiting for messages... (Ctrl+C to stop)")
+        if not self._stopping:
+            logger.info("Bifrost Worker started")
+            logger.info("Waiting for messages... (Ctrl+C to stop)")
 
         # Keep running until shutdown
         await self._shutdown_event.wait()
@@ -122,6 +130,13 @@ class Worker:
                 logger.error(
                     f"Error stopping consumer {consumer.queue_name} during cleanup: {e}"
                 )
+
+        if self._service_claim_loop is not None:
+            try:
+                await self._service_claim_loop.stop()
+            except Exception as e:
+                logger.error(f"Error stopping service claim loop during cleanup: {e}")
+            self._service_claim_loop = None
 
         try:
             await rabbitmq.close()
@@ -147,12 +162,42 @@ class Worker:
 
         # Start each consumer
         for consumer in self._consumers:
+            if self._stopping:
+                logger.info(
+                    "Worker stop requested during startup; skipping remaining consumers"
+                )
+                break
             try:
                 await consumer.start()
+                if self._stopping:
+                    logger.info(
+                        f"Worker stop requested after starting {consumer.queue_name}"
+                    )
+                    break
                 logger.info(f"Started consumer: {consumer.queue_name}")
             except Exception as e:
                 logger.error(f"Failed to start consumer {consumer.queue_name}: {e}")
                 raise
+
+        # Supervised services: worker-pull claim loop over the shared process
+        # pool (service slots are separate from workflow slots). Started after
+        # the workflow consumer so the pool (template + callbacks) exists.
+        if not self._stopping:
+            from src.services.execution.process_pool import get_process_pool
+            from src.services.service_claim import ServiceClaimLoop
+
+            pool = get_process_pool()
+            self._service_claim_loop = ServiceClaimLoop(
+                worker_id=pool.worker_id,
+                pool=pool,
+                claim_interval_seconds=self.settings.service_claim_interval_seconds,
+                beat_interval_seconds=self.settings.service_heartbeat_interval_seconds,
+                lease_ttl_seconds=self.settings.service_lease_ttl_seconds,
+                token_lifetime_seconds=self.settings.service_token_lifetime_seconds,
+            )
+            pool.on_service_result = self._service_claim_loop.handle_service_result
+            await self._service_claim_loop.start()
+            logger.info("Started service claim loop")
 
     async def stop(self) -> None:
         """Stop the worker gracefully (drain in-flight, then close).
@@ -169,6 +214,21 @@ class Worker:
         self._stopping = True
         logger.info("Stopping Bifrost Worker (graceful drain)...")
         self.running = False
+
+        async with self._startup_lock:
+            pass
+
+        # Hand supervised service attempts over first: stop claiming, ask
+        # owned children to stop gracefully, and wait boundedly for their
+        # terminal results while the database is still open. Anything still
+        # live afterwards expires via its lease and restarts elsewhere.
+        if self._service_claim_loop is not None:
+            try:
+                await self._service_claim_loop.stop()
+                logger.info("Service claim loop stopped")
+            except Exception as e:
+                logger.error(f"Error stopping service claim loop: {e}")
+            self._service_claim_loop = None
 
         # Drain consumers in parallel — each cancels its consumer tag, waits on
         # its in-flight tasks, then closes its channel.

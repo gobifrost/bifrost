@@ -2,7 +2,7 @@
 
 Proves the FULL solution lifecycle end-to-end:
 
-  Arc 1  (test_arc_1_deploy_through_uninstall) — Steps 1–3 + 6 (leakage)
+  First, deploy and verify files, policy, and cross-solution isolation:
     1. Create solution + workflow + table + FILE (solutions/{install}/docs/readme.md)
        + file POLICY referencing {"$ref":"admin_bypass"} (Plan 1 named rule).
     2. Deploy (real async job → poll succeeded).
@@ -15,8 +15,7 @@ Proves the FULL solution lifecycle end-to-end:
        (dormant gate → 409).
     6. Cross-solution leakage: a second solution cannot read the first's file.
 
-  Arc 2  (test_arc_2_reactivate_export_harddelete) — Steps 4–5 (reinstall/reactivate)
-       + export + hard-delete.
+  Then, reinstall/reactivate, export, and hard-delete:
     REINSTALL without reactivate → 409 "inactive_install_exists".
     REINSTALL with reactivate=true → status "active", SAME install id, data intact
     (file + table still there under the same solution_id), file readable again.
@@ -24,10 +23,8 @@ Proves the FULL solution lifecycle end-to-end:
     HARD-DELETE with confirm=<slug> → Solution gone, table + file-metadata cascaded.
     Confirm MISMATCH → 4xx, nothing deleted.
 
-Design: two methods in a single class sharing state via a class-level dict.
-Class fixture ordering guarantees Arc 1 runs before Arc 2 (pytest alphabetical
-within-class ordering is stable when not randomised, and the state-check guard
-gives a clear skip message if ordering breaks).
+The full lifecycle runs in one test so its state is local and the file remains
+present across uninstall and reactivation.
 """
 from __future__ import annotations
 
@@ -48,12 +45,6 @@ from src.services.file_storage import FileStorageService
 
 pytestmark = pytest.mark.e2e
 
-
-# ---------------------------------------------------------------------------
-# Module-level state shared between Arc 1 → Arc 2
-# (populated by test_arc_1_*, consumed by test_arc_2_*)
-# ---------------------------------------------------------------------------
-_STATE: dict = {}
 
 EXPORT_PASSWORD = "capstone-e2e-export-pw"
 
@@ -252,7 +243,6 @@ class TestFilePolicyDenialDiagnostics:
         slug = f"deny-diag-{uuid.uuid4().hex[:8]}"
         sol = _create_solution(e2e_client, headers, slug)
         sol_id = sol["id"]
-        _deploy_solution(e2e_client, headers, sol_id, file_locations=["solutions"])
         await _declare_solution_file_location(db_session, sol_id, "solutions")
 
         # alice is a regular user: admin_bypass denies her the write.
@@ -279,13 +269,13 @@ class TestSolutionInactiveLifecycleCapstone:
     """Capstone: full inactive-lifecycle arc — deploy / uninstall / reactivate / export / hard-delete."""
 
     # ------------------------------------------------------------------
-    # ARC 1: steps 1–3 + leakage + uninstall-freezes assertion
+    # Full lifecycle: deploy, uninstall, reactivate, export, hard-delete
     # ------------------------------------------------------------------
 
-    async def test_arc_1_deploy_through_uninstall(
+    async def test_inactive_solution_file_lifecycle(
         self, e2e_client, platform_admin, alice_user, db_session
     ):
-        """Steps 1-3 + leakage check + UNINSTALL → frozen rows + dormant gate.
+        """Verify file ownership and policy through an entire Solution lifecycle.
 
         Covers:
         - Behavior 1: create solution + workflow + table + file + $ref policy
@@ -293,6 +283,9 @@ class TestSolutionInactiveLifecycleCapstone:
         - Behavior 6: cross-solution leakage blocked
         - UNINSTALL → status inactive; FileMetadata.solution_id unchanged; Table.solution_id unchanged
         - Behavior 3 (browse still works, execution refused)
+        - Behavior 4: reactivate the same install with its table and file intact
+        - Behavior 5: export encrypts file data and preserves the named policy
+        - Behavior 6: confirmed hard-delete removes owned rows and S3 bytes
         """
         headers = platform_admin.headers
         slug = f"capstone-{uuid.uuid4().hex[:8]}"
@@ -368,7 +361,7 @@ class TestSolutionInactiveLifecycleCapstone:
         slug_b = f"capstone-leak-{uuid.uuid4().hex[:8]}"
         sol_b = _create_solution(e2e_client, headers, slug_b)
         sol_b_id = sol_b["id"]
-        _deploy_solution(e2e_client, headers, sol_b_id, file_locations=["solutions"])
+        await _declare_solution_file_location(db_session, sol_b_id, "solutions")
 
         leak_r = e2e_client.post(
             f"/api/files/read?solution={sol_b_id}",
@@ -450,51 +443,6 @@ class TestSolutionInactiveLifecycleCapstone:
             f"Expected 'inactive' in dormant-gate detail, got: {exec_r.text}"
         )
 
-        # ── Persist state for Arc 2 ───────────────────────────────────────
-        _STATE.update(
-            sol_id=sol_id,
-            slug=slug,
-            file_path=file_path,
-            file_content=file_content,
-            table_name=table_name,
-            table_bundle_id=table_bundle_id,
-            real_tid=str(real_tid),
-        )
-
-    # ------------------------------------------------------------------
-    # ARC 2: reinstall/reactivate + export + hard-delete
-    # ------------------------------------------------------------------
-
-    async def test_arc_2_reactivate_export_harddelete(
-        self, e2e_client, platform_admin, db_session
-    ):
-        """Steps 4–5 (reinstall/reactivate) + export (encrypted tier + $ref) + hard-delete.
-
-        Covers:
-        - Behavior 4: reinstall without reactivate → 409 inactive_install_exists
-        - Behavior 4: reinstall with reactivate=true → status active, SAME install id, data intact
-        - Behavior 5: export with data → secrets.enc + $ref preserved in DB
-        - Behavior 6: hard-delete confirm mismatch → 4xx, nothing deleted
-        - Behavior 6: hard-delete confirmed → Solution gone, Table gone, FileMetadata gone
-        """
-        if not _STATE:
-            pytest.skip(
-                "test_arc_2_reactivate_export_harddelete requires test_arc_1_deploy_through_uninstall "
-                "to run first. Run the full class or fix test ordering."
-            )
-
-        headers = platform_admin.headers
-        sol_id: str = _STATE["sol_id"]
-        slug: str = _STATE["slug"]
-        file_path: str = _STATE["file_path"]
-        file_content: str = _STATE["file_content"]
-        table_name: str = _STATE["table_name"]
-        table_bundle_id: str = _STATE["table_bundle_id"]
-        real_tid = UUID(_STATE["real_tid"])
-
-        # Re-seed the allow-all policy (autouse isolate_file_policies wipes between tests).
-        _seed_solutions_policy(e2e_client, headers)
-
         # ── Behavior 4a: reinstall WITHOUT reactivate → 409 ──────────────
         zip_bytes = _make_install_zip(slug, table_name, table_bundle_id)
         r_no_react = _install_zip(e2e_client, headers, zip_bytes)
@@ -541,8 +489,7 @@ class TestSolutionInactiveLifecycleCapstone:
             f"Expected exactly one install for slug '{slug}', found {len(matching)}: {matching}"
         )
 
-        # Table still there (FileMetadata was wiped by isolate_file_policies
-        # between the two test methods — the freeze invariant is verified in Arc 1).
+        # The original table and file remain owned by this install.
         db_session.expire_all()
         tbl = (
             await db_session.execute(
@@ -556,9 +503,7 @@ class TestSolutionInactiveLifecycleCapstone:
             f"Table.solution_id changed on reactivation: got {tbl.solution_id!r}"
         )
 
-        # File readable again after reactivation.
-        # Re-write file because isolate_file_policies wiped the metadata row.
-        _write_solution_file(e2e_client, headers, sol_id, file_path, file_content)
+        # The original file is readable again after reactivation.
         read_status, read_content = _read_solution_file(
             e2e_client, headers, sol_id, file_path
         )
@@ -570,16 +515,6 @@ class TestSolutionInactiveLifecycleCapstone:
         )
 
         # ── Behavior 5: export with data → encrypted tier + $ref preserved ─
-        # Restore the $ref policy (wiped by isolate_file_policies).
-        _set_file_policy_ref(
-            e2e_client,
-            headers,
-            location="solutions",
-            scope=None,
-            prefix="docs",
-            ref_name="admin_bypass",
-        )
-
         zip_exp = _export_solution(e2e_client, headers, sol_id, EXPORT_PASSWORD)
 
         # secrets.enc must be present (file in encrypted tier, NOT plaintext).

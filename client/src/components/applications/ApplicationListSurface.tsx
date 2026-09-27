@@ -11,6 +11,7 @@ import {
 	Check,
 	Trash2,
 } from "lucide-react";
+import type { MouseEvent } from "react";
 
 import { RecordActionsMenu } from "@/components/common/RecordActionsMenu";
 import { ResourceCatalogCard } from "@/components/catalog/ResourceCatalogCard";
@@ -48,6 +49,8 @@ export type ApplicationListItem = components["schemas"]["ApplicationPublic"] & {
 export interface ApplicationListSurfaceProps {
 	apps: ApplicationListItem[];
 	viewMode: "grid" | "table";
+	/** Query string to preserve the originating page in native navigation links. */
+	navigationSearch?: string;
 	isLoading?: boolean;
 	isPlatformAdmin: boolean;
 	canManageApps: boolean;
@@ -83,6 +86,30 @@ function getApplicationPrimaryAction(
 	if (!isV2App(app) && actions.onPreview)
 		return () => actions.onPreview?.(app);
 	return undefined;
+}
+
+function getApplicationPrimaryHref(
+	app: ApplicationListItem,
+	navigationSearch: string,
+) {
+	if (canLaunchApp(app)) return `/apps/${app.slug}${navigationSearch}`;
+	if (!isV2App(app)) return `/apps/${app.slug}/preview${navigationSearch}`;
+	return undefined;
+}
+
+function isModifiedOpenEvent(
+	event: Pick<
+		MouseEvent<HTMLElement>,
+		"button" | "ctrlKey" | "metaKey" | "shiftKey" | "altKey"
+	>,
+) {
+	return (
+		event.button !== 0 ||
+		event.ctrlKey ||
+		event.metaKey ||
+		event.shiftKey ||
+		event.altKey
+	);
 }
 
 function ApplicationActions({
@@ -140,7 +167,7 @@ function ApplicationActions({
 					onSelect={() => onPreview?.(app)}
 				>
 					<Eye aria-hidden="true" className="size-4" />
-					Open Preview
+					Preview
 				</DropdownMenuItem>
 			)}
 			{onOpenSettings && (
@@ -149,7 +176,7 @@ function ApplicationActions({
 					onSelect={() => onOpenSettings(app)}
 				>
 					<Pencil aria-hidden="true" className="size-4" />
-					Settings
+					Edit
 				</DropdownMenuItem>
 			)}
 			{!isV2App(app) && onOpenCode && (
@@ -172,10 +199,7 @@ function ApplicationActions({
 					{app.sdk_source_available ? (
 						<RefreshCw aria-hidden="true" className="size-4" />
 					) : (
-						<CircleSlash
-							aria-hidden="true"
-							className="size-4"
-						/>
+						<CircleSlash aria-hidden="true" className="size-4" />
 					)}
 					{!app.sdk_source_available
 						? "Source unavailable — cannot rebuild SDK"
@@ -207,6 +231,7 @@ function ApplicationActions({
 export function ApplicationListSurface({
 	apps,
 	viewMode,
+	navigationSearch = "",
 	isLoading = false,
 	isPlatformAdmin,
 	canManageApps,
@@ -266,18 +291,29 @@ export function ApplicationListSurface({
 	};
 	const renderName = (app: ApplicationListItem) => {
 		const open = getApplicationPrimaryAction(app, { onLaunch, onPreview });
+		const href = open
+			? getApplicationPrimaryHref(app, navigationSearch)
+			: undefined;
+		if (!href) {
+			return (
+				<span className="min-h-11 min-w-0 text-left font-semibold [overflow-wrap:anywhere]">
+					{app.name}
+				</span>
+			);
+		}
 		return (
-			<button
-				type="button"
-				disabled={!open}
+			<a
+				href={href}
 				onClick={(event) => {
 					event.stopPropagation();
+					if (isModifiedOpenEvent(event)) return;
+					event.preventDefault();
 					open?.();
 				}}
-				className="min-h-11 min-w-0 text-left font-semibold [overflow-wrap:anywhere] hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:hover:text-foreground"
+				className="min-h-11 min-w-0 text-left font-semibold [overflow-wrap:anywhere] hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 			>
 				{app.name}
-			</button>
+			</a>
 		);
 	};
 
@@ -372,15 +408,18 @@ export function ApplicationListSurface({
 								onLaunch,
 								onPreview,
 							});
+							const href = open
+								? getApplicationPrimaryHref(
+										app,
+										navigationSearch,
+									)
+								: undefined;
 							return (
 								<DataTableRow
 									key={app.id}
-									clickable={
-										!selectionMode && Boolean(open)
-									}
-									onClick={
-										selectionMode ? undefined : open
-									}
+									clickable={!selectionMode && Boolean(open)}
+									onClick={selectionMode ? undefined : open}
+									href={selectionMode ? undefined : href}
 									onPointerEnter={() =>
 										prefetchApplicationDetail(
 											app,
@@ -499,37 +538,6 @@ export function ApplicationListSurface({
 										}
 									>
 										<div className="flex justify-end gap-1">
-											<Button
-												size="sm"
-												className="min-h-11 min-w-11 px-3 sm:min-h-0 sm:min-w-0 sm:px-2"
-												onClick={() => onLaunch(app)}
-												disabled={!canLaunchApp(app)}
-												title={
-													!canLaunchApp(app)
-														? isV2App(app)
-															? "Deploy this App first"
-															: "No published version"
-														: `Open ${term(terminology, "app", "formalSingularLower")}`
-												}
-											>
-												<PlayCircle className="h-4 w-4" />
-											</Button>
-											{canManageApps &&
-												!isV2App(app) &&
-												app.has_unpublished_changes &&
-												onPreview && (
-													<Button
-														variant="ghost"
-														size="sm"
-														className="min-h-11 min-w-11 px-3 sm:min-h-0 sm:min-w-0 sm:px-2"
-														onClick={() =>
-															onPreview(app)
-														}
-														title="Preview draft"
-													>
-														<Eye className="h-4 w-4" />
-													</Button>
-												)}
 											{app.is_solution_managed && (
 												<SolutionManagedBadge
 													solutionId={app.solution_id}
@@ -552,13 +560,17 @@ export function ApplicationListSurface({
 																? undefined
 																: onOpenCode
 														}
-														onUpdateSdk={onUpdateSdk}
+														onUpdateSdk={
+															onUpdateSdk
+														}
 														onDelete={
 															app.is_solution_managed
 																? undefined
 																: onDelete
 														}
-														updateState={updateState}
+														updateState={
+															updateState
+														}
 													/>
 												)}
 										</div>
@@ -583,6 +595,9 @@ export function ApplicationListSurface({
 					onLaunch,
 					onPreview,
 				});
+				const href = defaultTarget
+					? getApplicationPrimaryHref(app, navigationSearch)
+					: undefined;
 				const orgLabel = isPlatformAdmin
 					? app.organization_id
 						? getOrgName(app.organization_id)
@@ -609,6 +624,7 @@ export function ApplicationListSurface({
 								/>
 							}
 							title={app.name}
+							href={href}
 							subtitle={
 								<>
 									{term(terminology, "app", "formalSingular")}
@@ -624,41 +640,42 @@ export function ApplicationListSurface({
 								)
 							}
 							action={
-								selectionMode ? undefined :
-								<div className="flex items-center gap-1">
-									{app.is_solution_managed ? (
-										<SolutionManagedBadge
-											solutionId={app.solution_id}
-										/>
-									) : null}
-									{canManageApps ? (
-										<ApplicationActions
-											app={app}
-											onLaunch={onLaunch}
-											onPreview={onPreview}
-											onOpenSettings={
-												app.is_solution_managed
-													? undefined
-													: onOpenSettings
-											}
-											onOpenCode={
-												app.is_solution_managed
-													? undefined
-													: onOpenCode
-											}
-											onUpdateSdk={onUpdateSdk}
-											onDelete={
-												app.is_solution_managed
-													? undefined
-													: onDelete
-											}
-											updateState={
-												getSdkUpdateState?.(app) ??
-												"idle"
-											}
-										/>
-									) : null}
-								</div>
+								selectionMode ? undefined : (
+									<div className="flex items-center gap-1">
+										{app.is_solution_managed ? (
+											<SolutionManagedBadge
+												solutionId={app.solution_id}
+											/>
+										) : null}
+										{canManageApps ? (
+											<ApplicationActions
+												app={app}
+												onLaunch={onLaunch}
+												onPreview={onPreview}
+												onOpenSettings={
+													app.is_solution_managed
+														? undefined
+														: onOpenSettings
+												}
+												onOpenCode={
+													app.is_solution_managed
+														? undefined
+														: onOpenCode
+												}
+												onUpdateSdk={onUpdateSdk}
+												onDelete={
+													app.is_solution_managed
+														? undefined
+														: onDelete
+												}
+												updateState={
+													getSdkUpdateState?.(app) ??
+													"idle"
+												}
+											/>
+										) : null}
+									</div>
+								)
 							}
 							footer={
 								orgLabel ? (
@@ -728,10 +745,7 @@ export function ApplicationListSurface({
 						aria-disabled={!selectable}
 						onClick={toggle}
 						onKeyDown={(event) => {
-							if (
-								event.key === "Enter" ||
-								event.key === " "
-							) {
+							if (event.key === "Enter" || event.key === " ") {
 								event.preventDefault();
 								toggle();
 							}

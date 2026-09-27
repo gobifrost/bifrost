@@ -8,8 +8,8 @@ Proves the pending_captures queue closes the capture→deploy round-trip:
 3. Simulate `bifrost solution pull`: POST /export?mode=shareable → unzip .bifrost/
    → the manifest now contains the captured entities → POST /pull/ack clears their
    pending rows.
-4. Deploy the manifest now INCLUDING the captured entities → 200, entities survive.
-5. Genuine delete: deploy OMITTING one entity (no pending row remains) → it IS
+4. Reconcile the manifest now INCLUDING the captured entities → they survive.
+5. Genuine delete: reconcile OMITTING one entity (no pending row remains) → it IS
    deleted (source has demonstrably seen it; this is a deliberate removal).
 """
 
@@ -21,7 +21,13 @@ import zipfile
 
 import pytest
 import yaml
-from tests.e2e.platform.conftest import wait_for_deploy
+from sqlalchemy import select
+
+from src.models.orm.platform_jobs import PlatformJob
+from src.models.orm.solutions import Solution
+from src.services.solutions.deploy import SolutionBundle, SolutionDeployer
+from src.services.solutions.export import build_workspace_zip
+from src.services.solutions.source_artifact import SolutionSourceArtifactStorage
 
 pytestmark = pytest.mark.e2e
 
@@ -42,7 +48,12 @@ def _make_solution(e2e_client, headers, org_id: str) -> str:
     r = e2e_client.post(
         "/api/solutions",
         headers=headers,
-        json={"slug": slug, "name": slug.upper(), "scope": "org", "organization_id": org_id},
+        json={
+            "slug": slug,
+            "name": slug.upper(),
+            "scope": "org",
+            "organization_id": org_id,
+        },
     )
     assert r.status_code in (200, 201), r.text
     return r.json()["id"]
@@ -90,7 +101,27 @@ def _entities_from_zip(zip_bytes: bytes) -> dict[str, dict]:
     return out
 
 
-def test_capture_roundtrip(e2e_client, platform_admin):
+def _upload_headers(headers: dict[str, str]) -> dict[str, str]:
+    """Allow httpx to choose the multipart content type for a zip upload."""
+    return {
+        key: value for key, value in headers.items() if key.lower() != "content-type"
+    }
+
+
+async def _deploy_and_finalize(
+    db_session, solution: Solution, *, tables: list[dict], forms: list[dict]
+):
+    """Exercise full-replace reconciliation without dispatching a PlatformJob."""
+    result = await SolutionDeployer(db_session).deploy(
+        SolutionBundle(solution=solution, tables=tables, forms=forms)
+    )
+    await db_session.commit()
+    await result.finalize_s3()
+    return result
+
+
+@pytest.mark.asyncio
+async def test_capture_roundtrip(e2e_client, platform_admin, db_session):
     headers = platform_admin.headers
     org_id = _make_org(e2e_client, headers)
     sol_id = _make_solution(e2e_client, headers, org_id)
@@ -108,17 +139,33 @@ def test_capture_roundtrip(e2e_client, platform_admin):
     assert cap.json()["tables_captured"] == 1
     assert cap.json()["forms_captured"] == 1
 
-    # 2. Deploy a manifest that OMITS the captured entities → 409 (pull first).
+    solution = await db_session.get(Solution, uuid.UUID(sol_id))
+    assert solution is not None
+
+    # 2. An omitted manifest is refused synchronously by the HTTP deploy route
+    # before it can enqueue a PlatformJob.
     blocked = e2e_client.post(
         f"/api/solutions/{sol_id}/deploy",
-        headers=headers,
-        json={"tables": [], "forms": []},
+        headers=_upload_headers(headers),
+        files={
+            "file": (
+                "capture-roundtrip-empty.zip",
+                build_workspace_zip(SolutionBundle(solution=solution)),
+                "application/zip",
+            )
+        },
     )
-    blocked = wait_for_deploy(e2e_client, blocked, headers)
     assert blocked.status_code == 409, blocked.text
     detail = blocked.json()["detail"]
     assert "bifrost solution pull" in detail
     assert table_id in detail or form_id in detail
+    queued = await db_session.scalar(
+        select(PlatformJob.id).where(
+            PlatformJob.job_type == "solution.deploy",
+            PlatformJob.resource_id == sol_id,
+        )
+    )
+    assert queued is None
     # The block protected the entities — they still exist.
     assert e2e_client.get(f"/api/tables/{table_id}", headers=headers).status_code == 200
     assert e2e_client.get(f"/api/forms/{form_id}", headers=headers).status_code == 200
@@ -150,26 +197,31 @@ def test_capture_roundtrip(e2e_client, platform_admin):
     table_entry = manifest["tables"][str(table_id)]
     form_entry = manifest["forms"][str(form_id)]
 
-    # 4. Deploy WITH the captured entities now in the manifest → succeeds, survives.
-    ok = e2e_client.post(
-        f"/api/solutions/{sol_id}/deploy",
-        headers=headers,
-        json={"tables": [table_entry], "forms": [form_entry]},
+    # 4. Reconcile WITH the captured entities now in the manifest. The direct
+    # deployer covers this persistence edge without spending a queued job.
+    ok = await _deploy_and_finalize(
+        db_session, solution, tables=[table_entry], forms=[form_entry]
     )
-    ok = wait_for_deploy(e2e_client, ok, headers)
-    assert ok.status_code in (200, 201), ok.text
+    assert ok.tables_upserted == 1
+    assert ok.forms_upserted == 1
+    source_artifact = await SolutionSourceArtifactStorage(solution.id).read()
+    assert source_artifact is not None
+    deployed_manifest = _entities_from_zip(source_artifact)
+    assert str(table_id) in deployed_manifest.get("tables", {})
+    assert str(form_id) in deployed_manifest.get("forms", {})
     assert e2e_client.get(f"/api/tables/{table_id}", headers=headers).status_code == 200
     assert e2e_client.get(f"/api/forms/{form_id}", headers=headers).status_code == 200
 
     # 5. Genuine delete: omit the form (no pending row now) → it IS deleted, and
-    #    the table (still in the manifest) survives. No 409 — source has seen it.
-    deleted = e2e_client.post(
-        f"/api/solutions/{sol_id}/deploy",
-        headers=headers,
-        json={"tables": [table_entry], "forms": []},
+    #    the table (still in the manifest) survives. Source has seen the form.
+    deleted = await _deploy_and_finalize(
+        db_session, solution, tables=[table_entry], forms=[]
     )
-    deleted = wait_for_deploy(e2e_client, deleted, headers)
-    assert deleted.status_code in (200, 201), deleted.text
-    assert deleted.json()["forms_deleted"] >= 1
+    assert deleted.forms_deleted == 1
+    source_artifact = await SolutionSourceArtifactStorage(solution.id).read()
+    assert source_artifact is not None
+    deployed_manifest = _entities_from_zip(source_artifact)
+    assert str(table_id) in deployed_manifest.get("tables", {})
+    assert str(form_id) not in deployed_manifest.get("forms", {})
     assert e2e_client.get(f"/api/forms/{form_id}", headers=headers).status_code == 404
     assert e2e_client.get(f"/api/tables/{table_id}", headers=headers).status_code == 200

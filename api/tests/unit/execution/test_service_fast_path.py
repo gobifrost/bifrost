@@ -41,19 +41,19 @@ async def test_run_workflow_reuses_validated_timeout_for_sync_wait() -> None:
 
 
 def test_request_only_publishes_nonterminal_execution_state() -> None:
-    from src.routers.workflows import (
-        _is_uuid_workflow_ref,
-        _should_publish_request_execution_update,
+    from shared.sdk_workflow_execution import (
+        is_uuid_workflow_ref,
+        should_publish_request_execution_update,
     )
 
-    assert _should_publish_request_execution_update(ExecutionStatus.PENDING)
-    assert _should_publish_request_execution_update(ExecutionStatus.RUNNING)
-    assert not _should_publish_request_execution_update(ExecutionStatus.SUCCESS)
-    assert not _should_publish_request_execution_update(ExecutionStatus.FAILED)
-    assert not _should_publish_request_execution_update(ExecutionStatus.TIMEOUT)
+    assert should_publish_request_execution_update(ExecutionStatus.PENDING)
+    assert should_publish_request_execution_update(ExecutionStatus.RUNNING)
+    assert not should_publish_request_execution_update(ExecutionStatus.SUCCESS)
+    assert not should_publish_request_execution_update(ExecutionStatus.FAILED)
+    assert not should_publish_request_execution_update(ExecutionStatus.TIMEOUT)
 
-    assert _is_uuid_workflow_ref("84cc0faf-36a2-5873-b9a9-d5484d5db5d8")
-    assert not _is_uuid_workflow_ref("workflows/halo.py::list_tickets")
+    assert is_uuid_workflow_ref("84cc0faf-36a2-5873-b9a9-d5484d5db5d8")
+    assert not is_uuid_workflow_ref("workflows/halo.py::list_tickets")
 
 
 @pytest.mark.asyncio

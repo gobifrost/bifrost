@@ -20,7 +20,7 @@ def _mock_post_response(json_body: dict):
 @pytest.mark.asyncio
 async def test_execute_with_scheduled_at_includes_field():
     fake = MagicMock()
-    fake.post = AsyncMock(
+    fake.engine_request = AsyncMock(
         return_value=_mock_post_response(
             {"execution_id": "e1", "status": "Scheduled"}
         )
@@ -31,21 +31,23 @@ async def test_execute_with_scheduled_at_includes_field():
         eid = await workflows.execute("wf", scheduled_at=run_at)
 
     assert eid == "e1"
-    payload = fake.post.await_args.kwargs["json"]
+    args = fake.engine_request.await_args.args
+    assert args == ("POST", "/api/workflows/execute")
+    payload = fake.engine_request.await_args.kwargs["json"]
     assert payload["scheduled_at"] == run_at.isoformat()
 
 
 @pytest.mark.asyncio
 async def test_execute_with_delay_seconds_includes_field():
     fake = MagicMock()
-    fake.post = AsyncMock(
+    fake.engine_request = AsyncMock(
         return_value=_mock_post_response({"execution_id": "e1"})
     )
 
     with patch("bifrost.workflows.get_client", return_value=fake):
         await workflows.execute("wf", delay_seconds=60)
 
-    payload = fake.post.await_args.kwargs["json"]
+    payload = fake.engine_request.await_args.kwargs["json"]
     assert payload["delay_seconds"] == 60
 
 
@@ -69,21 +71,25 @@ async def test_execute_rejects_both_fields():
 @pytest.mark.asyncio
 async def test_cancel_calls_endpoint():
     fake = MagicMock()
-    fake.post = AsyncMock(
+    fake.engine_request = AsyncMock(
         return_value=_mock_post_response({"status": "Cancelled"})
     )
     with patch("bifrost.workflows.get_client", return_value=fake):
         await workflows.cancel("exec-1")
 
-    fake.post.assert_awaited_once()
-    url = fake.post.await_args.args[0]
-    assert url == "/api/workflows/executions/exec-1/cancel"
+    fake.engine_request.assert_awaited_once()
+    assert fake.engine_request.await_args.args == (
+        "POST",
+        "/api/workflows/executions/exec-1/cancel",
+    )
 
 
 @pytest.mark.asyncio
 async def test_execute_includes_solution_from_execution_context():
     fake = MagicMock()
-    fake.post = AsyncMock(return_value=_mock_post_response({"execution_id": "e1"}))
+    fake.engine_request = AsyncMock(
+        return_value=_mock_post_response({"execution_id": "e1"})
+    )
     org = Organization(id="11111111-1111-1111-1111-111111111111", name="Org")
     solution_id = "22222222-2222-2222-2222-222222222222"
     ctx = ExecutionContext(
@@ -104,5 +110,5 @@ async def test_execute_includes_solution_from_execution_context():
     finally:
         clear_execution_context()
 
-    payload = fake.post.await_args.kwargs["json"]
+    payload = fake.engine_request.await_args.kwargs["json"]
     assert payload["solution_id"] == solution_id

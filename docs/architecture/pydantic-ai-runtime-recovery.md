@@ -104,8 +104,8 @@ Recovery is idempotent only when the data model says it is:
 
 ## No provider fallback
 
-Do not turn a provider failure into a different provider selection decision.
-That includes:
+Do not turn a provider failure into a different provider selection decision,
+except through an operator-configured failover chain:
 
 - falling back from OpenRouter to stock OpenAI when the selected OpenRouter
   route is rate-limited;
@@ -115,6 +115,34 @@ That includes:
 The selected provider or endpoint is part of the contract. If it fails, the
 caller sees the failure and the operator decides whether to retry, repair the
 configuration, or use a separate recovery path.
+
+### Allowlisted failover chains
+
+`AIModelProfile.failover_profile_id` is the single sanctioned exception, and
+it stays narrow by construction:
+
+- Each profile names at most one fallback; resolution caps the chain at
+  `MAX_FAILOVER_CHAIN_LENGTH` (3) and never loops.
+- Failover fires only for transport-terminal retryable failures — the request
+  already exhausted the 6-attempt / 60s transport budget and kept a retryable
+  identity (429, 5xx, timeout, connection error). 4xx, validation,
+  token-limit truncation, budget, and cancellation never switch candidates.
+- Failover happens per model request with stickiness: tools already executed
+  stay done, only the failed call moves, and later requests in the run start
+  at the working candidate instead of flapping back.
+- Streaming calls fail over on stream-establishment errors only. Once a
+  stream is established, mid-stream failures propagate without switching;
+  streams are never replayed.
+- A fallback on the same connection/key shares the same upstream quota pool
+  and only covers single-model incidents. Real provider isolation needs the
+  fallback on a different connection.
+- Every switch logs `ai_model_failover` (from/to model, attempt, error
+  identity) and the run records its `failover_path` in `run_metadata`, so a
+  failed-over run is always attributable, never silent.
+- Chain resolution skips members that fail to resolve (unreachable endpoint
+  during transport detection, bad key) with `ai_model_chain_skip`, so a dead
+  primary cannot wedge the chain before any request is made. When nothing
+  resolves, the head member's error is raised unchanged.
 
 ## Observability
 
@@ -173,7 +201,8 @@ be treated as a generalized recover-and-rerun mechanism.
   structured error codes.
 - Catalog and pricing discovery are best-effort by design, so stale data is
   acceptable when the provider is unavailable.
-- This policy does not define a new global provider failover system.
+- Failover is per-profile chains only (see above). There is still no global
+  provider failover system beyond those chains.
 
 ## Related code
 

@@ -36,6 +36,7 @@ function makeJob(
 		resource_lock_key: "application:app-1",
 		priority: 100,
 		title: "Update SDK",
+		execution_backend: "kubernetes",
 		requested_by_user_id: "user-1",
 		requested_by_name: "Ada",
 		status: "running",
@@ -115,6 +116,25 @@ describe("useApplicationSdkUpdateJobs", () => {
 		expect(result.current.getUpdateState("app-2")).toBe("queued");
 		expect(result.current.hasUpdateState("app-2")).toBe(true);
 		expect(result.current.isAnyUpdating(["app-1", "app-2"])).toBe(true);
+	});
+
+	it("treats action-required SDK updates as terminal failures", () => {
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+		const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+		const { result } = renderHook(() => useApplicationSdkUpdateJobs(), {
+			wrapper: wrapper(queryClient),
+		});
+
+		act(() => {
+			mocks.callback?.(makeJob({ status: "requires_action" }));
+		});
+
+		expect(result.current.getUpdateState("app-1")).toBe("failed");
+		expect(invalidateSpy).toHaveBeenCalledWith({
+			queryKey: ["get", "/api/applications"],
+		});
 	});
 
 	it("ignores application jobs that are not the SDK update job type", () => {

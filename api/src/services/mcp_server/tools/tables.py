@@ -12,7 +12,6 @@ from uuid import UUID, uuid4
 from fastmcp.tools import ToolResult
 
 from src.services.mcp_server.tool_result import error_result, success_result
-from src.services.mcp_server.tools._org_scope import apply_mcp_org_scope
 from src.services.mcp_server.tools.db import get_tool_db
 
 logger = logging.getLogger(__name__)
@@ -22,19 +21,19 @@ async def list_tables(
     context: Any,
     scope: str | None = None,
 ) -> ToolResult:
-    """List tables with org filtering for non-admins."""
+    """List tables (platform admin only, matching REST)."""
     from sqlalchemy import select
 
     from src.models.orm.tables import Table
 
     logger.info(f"MCP list_tables called with scope={scope}")
 
+    if not context.is_platform_admin:
+        return error_result("Only platform admins can list table metadata")
+
     try:
         async with get_tool_db(context) as db:
             query = select(Table)
-
-            # Org cascade: own org + global (admins unscoped).
-            query = apply_mcp_org_scope(query, Table, context)
 
             # Apply scope filter if provided.
             if scope == "global":
@@ -69,12 +68,15 @@ async def get_table(
     context: Any,
     table_id: str | None = None,
 ) -> ToolResult:
-    """Get table details including schema."""
+    """Get table details including schema (platform admin only, matching REST)."""
     from sqlalchemy import func, select
 
     from src.models.orm.tables import Document, Table
 
     logger.info(f"MCP get_table called with id={table_id}")
+
+    if not context.is_platform_admin:
+        return error_result("Only platform admins can read table metadata")
 
     if not table_id:
         return error_result("table_id is required")
@@ -87,9 +89,6 @@ async def get_table(
     try:
         async with get_tool_db(context) as db:
             query = select(Table).where(Table.id == table_uuid)
-
-            # Org cascade (external-aware): externals get no global tier.
-            query = apply_mcp_org_scope(query, Table, context)
 
             result = await db.execute(query)
             table = result.scalar_one_or_none()
@@ -209,7 +208,7 @@ async def create_table(
     organization_id: str | None = None,
     columns: list[dict[str, Any]] | None = None,
 ) -> ToolResult:
-    """Create a new table with explicit scope."""
+    """Create a new table with explicit scope (platform admin only, matching REST)."""
     from sqlalchemy import select
 
     from shared.policies.probe import make_seed_admin_bypass
@@ -217,21 +216,20 @@ async def create_table(
 
     logger.info(f"MCP create_table called with name={name}, scope={scope}")
 
+    if not context.is_platform_admin:
+        return error_result("Only platform admins can create tables")
+
     if not name:
         return error_result("name is required")
 
     # Validate scope parameters
     if scope == "organization":
         if not organization_id:
-            # Default to context org_id for non-admins
             if context.org_id:
                 organization_id = str(context.org_id)
             else:
                 return error_result("organization_id is required for organization scope")
     elif scope == "global":
-        # Global tables can only be created by platform admins
-        if not context.is_platform_admin:
-            return error_result("Only platform admins can create global tables")
         organization_id = None
 
     # Parse UUIDs
@@ -243,26 +241,14 @@ async def create_table(
         except ValueError:
             return error_result(f"Invalid organization_id format: {organization_id}")
 
-    # Non-admins can only create tables in their own org
-    if not context.is_platform_admin and context.org_id:
-        if org_uuid and org_uuid != context.org_id:
-            return error_result("Cannot create tables in other organizations")
-
     try:
         async with get_tool_db(context) as db:
-            # Check for duplicate name within same scope. The global-scope
-            # branch (org_uuid is None) is only reachable by a platform admin —
-            # global table creation is admin-gated above, and an external
-            # principal can never target global scope.
+            # Check for duplicate name within same scope.
             query = select(Table).where(Table.name == name)
             if org_uuid:
                 query = query.where(Table.organization_id == org_uuid)
-            elif context.is_platform_admin:
-                query = query.where(Table.organization_id.is_(None))
             else:
-                # Defense-in-depth: a non-admin with no resolved org cannot
-                # create/check a global table.
-                return error_result("organization_id is required")
+                query = query.where(Table.organization_id.is_(None))
 
             existing = await db.execute(query)
             if existing.scalar_one_or_none():
@@ -311,12 +297,15 @@ async def update_table(
     organization_id: str | None = None,
     columns: list[dict[str, Any]] | None = None,
 ) -> ToolResult:
-    """Update table properties."""
+    """Update table properties (platform admin only, matching REST)."""
     from sqlalchemy import select
 
     from src.models.orm.tables import Table
 
     logger.info(f"MCP update_table called with id={table_id}")
+
+    if not context.is_platform_admin:
+        return error_result("Only platform admins can update tables")
 
     if not table_id:
         return error_result("table_id is required")
@@ -329,10 +318,6 @@ async def update_table(
     try:
         async with get_tool_db(context) as db:
             query = select(Table).where(Table.id == table_uuid)
-
-            # Non-admins can only update their org's tables (external-aware:
-            # externals can't reach global tables to mutate them).
-            query = apply_mcp_org_scope(query, Table, context)
 
             result = await db.execute(query)
             table = result.scalar_one_or_none()
@@ -363,10 +348,6 @@ async def update_table(
 
             # Handle scope changes
             if scope is not None:
-                # Validate scope change permissions
-                if scope == "global" and not context.is_platform_admin:
-                    return error_result("Only platform admins can set global scope")
-
                 if scope == "global":
                     table.organization_id = None
                     updates_made.append("scope")
@@ -415,12 +396,15 @@ async def delete_table(
     context: Any,
     table_id: str,
 ) -> ToolResult:
-    """Delete a table and all its documents by ID."""
+    """Delete a table and all its documents by ID (platform admin only, matching REST)."""
     from sqlalchemy import select
 
     from src.models.orm.tables import Table
 
     logger.info(f"MCP delete_table called with id={table_id}")
+
+    if not context.is_platform_admin:
+        return error_result("Only platform admins can delete tables")
 
     if not table_id:
         return error_result("table_id is required")
@@ -433,12 +417,6 @@ async def delete_table(
     try:
         async with get_tool_db(context) as db:
             query = select(Table).where(Table.id == table_uuid)
-
-            # Non-admins can only delete their org's tables
-            if not context.is_platform_admin and context.org_id:
-                query = query.where(
-                    (Table.organization_id == context.org_id)
-                )
 
             result = await db.execute(query)
             table = result.scalar_one_or_none()

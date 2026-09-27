@@ -17,6 +17,8 @@ const base = {
 	scope: "GLOBAL" as const,
 	org_id: null,
 	description: "Configuration settings",
+	required: false,
+	position: 0,
 	integration_name: null,
 };
 beforeEach(() => {

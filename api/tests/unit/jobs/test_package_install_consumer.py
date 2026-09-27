@@ -211,14 +211,14 @@ class TestRecycleWorkers:
             mock_pool.drain_and_restart_template.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_handles_pool_error_gracefully(self, consumer: PackageInstallConsumer):
-        """Test that pool errors are handled gracefully."""
+    async def test_propagates_pool_error_for_failure_reporting(self, consumer: PackageInstallConsumer):
+        """A failed restart must reach the caller that reports install progress."""
         with patch(
             "src.services.execution.process_pool.get_process_pool",
             side_effect=RuntimeError("Pool not initialized"),
         ):
-            # Should not raise
-            await consumer._recycle_workers()
+            with pytest.raises(RuntimeError, match="Pool not initialized"):
+                await consumer._recycle_workers()
 
 
 class TestUpdatePoolPackages:
@@ -252,3 +252,20 @@ class TestUpdatePoolPackages:
         ):
             # Should not raise
             await consumer._update_pool_packages()
+
+
+@pytest.mark.asyncio
+async def test_template_restart_failure_reports_failed_instead_of_recycled():
+    consumer = PackageInstallConsumer()
+    with (
+        patch.object(consumer, "_pip_install", new=AsyncMock(return_value=None)),
+        patch.object(consumer, "_recycle_workers", new=AsyncMock(side_effect=RuntimeError("restart failed"))),
+        patch.object(consumer, "_update_pool_packages", new=AsyncMock()) as update,
+        patch("src.jobs.consumers.package_install.report_phase", new=AsyncMock()) as report,
+    ):
+        await consumer.process_message({"package": "demo", "run_id": "restart-failure"})
+    assert [c.kwargs["phase"] for c in report.await_args_list] == [
+        "installing", "recycling", "failed",
+    ]
+    assert "restart" in report.await_args.kwargs["error"].lower()
+    update.assert_not_awaited()

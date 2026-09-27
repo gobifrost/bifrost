@@ -197,20 +197,10 @@ def _create_shared_resources(
     assert integration.status_code == 201, integration.text
 
 
-@pytest.mark.parametrize(
-    ("global_repo_access", "expected_app_status", "expected_rows"),
-    [
-        (True, 200, [{"marker": "table-ok"}]),
-        (False, 404, []),
-    ],
-)
 def test_solution_app_and_workflow_shared_resource_matrix(
     e2e_client,
     platform_admin,
     alice_user,
-    global_repo_access: bool,
-    expected_app_status: int,
-    expected_rows: list[dict[str, str]],
 ) -> None:
     """Exercise the real web-SDK transport and a deployed Python workflow.
 
@@ -237,7 +227,7 @@ def test_solution_app_and_workflow_shared_resource_matrix(
         e2e_client,
         platform_admin.headers,
         slug=slug,
-        global_repo_access=global_repo_access,
+        global_repo_access=True,
     )
     _deploy_workspace(
         e2e_client,
@@ -246,7 +236,7 @@ def test_solution_app_and_workflow_shared_resource_matrix(
         slug=slug,
         workspace_zip=_probe_workspace_zip(
             slug=slug,
-            global_repo_access=global_repo_access,
+            global_repo_access=True,
             table_name=table_name,
             config_key=config_key,
             integration_name=integration_name,
@@ -261,32 +251,44 @@ def test_solution_app_and_workflow_shared_resource_matrix(
     # BifrostProvider's data transport attaches X-Bifrost-App to this exact
     # request. Use a non-admin plus an unconditional read policy so a 200 proves
     # both Solution resolution and ordinary row-policy authorization.
-    app_query = e2e_client.post(
-        f"/api/tables/{table_name}/documents/query",
-        headers={**alice_user.headers, "X-Bifrost-App": app_id},
-        json={"where": {}, "limit": 10},
-    )
-    assert app_query.status_code == expected_app_status, app_query.text
-    if expected_app_status == 200:
-        assert [doc["data"] for doc in app_query.json()["documents"]] == expected_rows
+    for global_repo_access, expected_app_status, expected_rows in (
+        (True, 200, [{"marker": "table-ok"}]),
+        (False, 404, []),
+    ):
+        if not global_repo_access:
+            updated = e2e_client.patch(
+                f"/api/solutions/{solution_id}",
+                headers=platform_admin.headers,
+                json={"global_repo_access": False},
+            )
+            assert updated.status_code == 200, updated.text
 
-    workflow = e2e_client.post(
-        "/api/workflows/execute",
-        headers=alice_user.headers,
-        json={
-            "workflow_id": "workflows/probe.py::probe",
-            "solution_id": solution_id,
-            "sync": True,
-        },
-    )
-    assert workflow.status_code == 200, workflow.text
-    execution = workflow.json()
-    assert execution["status"] == "Success", execution
-    assert execution["result"] == {
-        "rows": expected_rows,
-        "config": "config-ok",
-        "integration_entity": "integration-ok",
-    }
+        app_query = e2e_client.post(
+            f"/api/tables/{table_name}/documents/query",
+            headers={**alice_user.headers, "X-Bifrost-App": app_id},
+            json={"where": {}, "limit": 10},
+        )
+        assert app_query.status_code == expected_app_status, app_query.text
+        if expected_app_status == 200:
+            assert [doc["data"] for doc in app_query.json()["documents"]] == expected_rows
+
+        workflow = e2e_client.post(
+            "/api/workflows/execute",
+            headers=alice_user.headers,
+            json={
+                "workflow_id": "workflows/probe.py::probe",
+                "solution_id": solution_id,
+                "sync": True,
+            },
+        )
+        assert workflow.status_code == 200, workflow.text
+        execution = workflow.json()
+        assert execution["status"] == "Success", execution
+        assert execution["result"] == {
+            "rows": expected_rows,
+            "config": "config-ok",
+            "integration_entity": "integration-ok",
+        }
 
 
 @pytest.mark.parametrize(

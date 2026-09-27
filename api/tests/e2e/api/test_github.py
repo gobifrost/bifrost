@@ -17,7 +17,30 @@ Tests skip gracefully if environment variables are not configured.
 
 import logging
 
+import pytest
+
 logger = logging.getLogger(__name__)
+
+
+@pytest.fixture
+async def github_repo_configured(db_session, require_github_config):
+    """Store a valid remote config for read endpoints without running a sync job."""
+    from src.services.github_config import delete_github_config, save_github_config
+    from tests.e2e.fixtures.setup import PROVIDER_ORG_ID
+
+    config = require_github_config
+    await save_github_config(
+        db_session,
+        org_id=PROVIDER_ORG_ID,
+        token=config["pat"],
+        repo_url=f"https://github.com/{config['repo']}.git",
+        branch=config["base_branch"],
+        updated_by="e2e-github-test",
+    )
+    try:
+        yield config
+    finally:
+        await delete_github_config(db_session, PROVIDER_ORG_ID)
 
 
 # =============================================================================
@@ -81,32 +104,28 @@ class TestGitHubConfiguration:
         assert data["configured"] is False
         assert data["token_saved"] is False
 
-    def test_configure_repository(
+    def test_connect_repository_through_reviewed_preview(
         self,
         e2e_client,
         platform_admin,
-        github_token_only,
-        github_test_branch,
+        github_configured,
     ):
-        """Test configuring a GitHub repository."""
-        response = e2e_client.post(
-            "/api/github/configure",
-            json={
-                "repo_url": github_test_branch["repo"],
-                "branch": github_test_branch["branch"],
-            },
+        """Test that repository setup uses the reviewed first-connect job."""
+        response = e2e_client.get(
+            "/api/github/config",
             headers=platform_admin.headers,
         )
-        assert response.status_code == 200, f"Configure failed: {response.text}"
-
-        data = response.json()
-        assert data["status"] == "configured"
+        assert response.status_code == 200, response.text
+        assert response.json()["configured"] is True
+        assert github_configured["connect_job"]["status"] in {
+            "succeeded", "requires_action"
+        }
 
     def test_get_config_after_configure(
         self,
         e2e_client,
         platform_admin,
-        github_configured,
+        github_repo_configured,
     ):
         """Test getting config after GitHub is configured."""
         response = e2e_client.get(
@@ -165,7 +184,7 @@ class TestGitHubConfiguration:
         self,
         e2e_client,
         platform_admin,
-        github_configured,
+        github_repo_configured,
     ):
         """Test disconnecting GitHub integration."""
         response = e2e_client.post(
@@ -198,7 +217,7 @@ class TestGitHubCommits:
         self,
         e2e_client,
         platform_admin,
-        github_configured,
+        github_repo_configured,
     ):
         """Test retrieving commit history."""
         response = e2e_client.get(
@@ -216,7 +235,7 @@ class TestGitHubCommits:
         self,
         e2e_client,
         platform_admin,
-        github_configured,
+        github_repo_configured,
     ):
         """Test paginating through commit history."""
         # First page

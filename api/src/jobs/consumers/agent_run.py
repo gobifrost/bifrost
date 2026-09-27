@@ -398,6 +398,13 @@ class AgentRunConsumer(BaseConsumer):
                     run_obj.completed_at = datetime.now(timezone.utc)
                     if run_result.get("error"):
                         run_obj.error = run_result["error"]
+                    if run_result.get("failover_path"):
+                        run_obj.run_metadata = {
+                            **(run_obj.run_metadata or {}),
+                            # run_metadata is a string-valued map on the wire
+                            # (AgentRunResponse.metadata); encode the path.
+                            "failover_path": json.dumps(run_result["failover_path"]),
+                        }
                     consumer_applied_result = True
                 else:
                     logger.info(
@@ -761,11 +768,16 @@ class AgentRunConsumer(BaseConsumer):
                         run_obj.output = output
                         run_obj.iterations_used = iterations_used
                         run_obj.tokens_used = tokens_used
-                        run_obj.llm_model = llm_model
+                        run_obj.llm_model = executor._active_llm_model or llm_model
                         run_obj.duration_ms = duration_ms
                         run_obj.completed_at = datetime.now(timezone.utc)
                         if terminal_error:
                             run_obj.error = terminal_error
+                        if executor._active_failover_path:
+                            run_obj.run_metadata = {
+                                **(run_obj.run_metadata or {}),
+                                "failover_path": json.dumps(executor._active_failover_path),
+                            }
                         await db.commit()
                     else:
                         logger.info(
@@ -882,10 +894,15 @@ class AgentRunConsumer(BaseConsumer):
                         }
                         run_obj.iterations_used = iterations_used
                         run_obj.tokens_used = tokens_used
-                        run_obj.llm_model = llm_model
+                        run_obj.llm_model = executor._active_llm_model or llm_model
                         run_obj.duration_ms = duration_ms
                         run_obj.completed_at = datetime.now(timezone.utc)
                         run_obj.error = interrupted_error
+                        if executor._active_failover_path:
+                            run_obj.run_metadata = {
+                                **(run_obj.run_metadata or {}),
+                                "failover_path": json.dumps(executor._active_failover_path),
+                            }
                         await db.commit()
                     agent_run_ref = run_obj
 

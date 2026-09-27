@@ -21,6 +21,7 @@ async def poll_platform_job(
     interval: float = 2.0,
     timeout_seconds: float = DEFAULT_PLATFORM_JOB_TIMEOUT_SECONDS,
     timeout_operation: str | None = None,
+    allow_requires_action: bool = False,
 ) -> dict[str, Any]:
     """Poll ``/api/platform-jobs/{job_id}`` until the job reaches a terminal state.
 
@@ -54,6 +55,19 @@ async def poll_platform_job(
             raise click.ClickException(
                 f"{failed_name} failed (job {job_id}): "
                 f"{error.get('message') or status_value}"
+            )
+        if status_value == "requires_action":
+            if allow_requires_action:
+                return body
+            result = body.get("result")
+            action = (
+                result.get("requires_action")
+                if isinstance(result, dict)
+                else None
+            )
+            follow_up = f" Required action: {action}." if isinstance(action, str) else " User action is required."
+            raise click.ClickException(
+                f"{failed_name} requires action (job {job_id}).{follow_up}"
             )
 
         progress_body = body.get("progress") or {}

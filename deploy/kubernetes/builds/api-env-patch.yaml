@@ -1,0 +1,19 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bifrost-api
+  namespace: bifrost
+spec:
+  template:
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: api
+          envFrom:
+            - configMapRef:
+                name: bifrost-config
+            - secretRef:
+                name: bifrost-secrets
+            - configMapRef:
+                name: bifrost-build-jobs-config
+

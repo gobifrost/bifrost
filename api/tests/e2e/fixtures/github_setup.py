@@ -177,68 +177,25 @@ def github_test_branch(
         # Don't fail - branch may already be deleted or cleanup isn't critical
 
 
-def _wait_for_notification_completion(
+def _wait_for_platform_job(
     e2e_client,
     headers: dict,
-    notification_id: str,
+    job_id: str,
     timeout_seconds: int = 120,
-    poll_interval: float = 2.0,
 ) -> dict[str, Any]:
-    """
-    Poll notification status until completion or timeout.
-
-    Args:
-        e2e_client: HTTP client
-        headers: Auth headers
-        notification_id: Notification ID to poll
-        timeout_seconds: Max time to wait
-        poll_interval: Time between polls
-
-    Returns:
-        Final notification data
-
-    Raises:
-        TimeoutError: If notification doesn't complete in time
-        AssertionError: If notification fails
-    """
-    import time as time_module
-
-    start = time_module.time()
-    while (time_module.time() - start) < timeout_seconds:
+    """Wait for the reviewed first-connect PlatformJob to reach a terminal state."""
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
         response = e2e_client.get(
-            f"/api/notifications/{notification_id}",
+            f"/api/platform-jobs/{job_id}",
             headers=headers,
         )
-
-        if response.status_code == 404:
-            # Notification may have been cleaned up, treat as completed
-            logger.info(f"Notification {notification_id} not found (may have expired)")
-            return {"status": "completed"}
-
-        if response.status_code != 200:
-            logger.warning(f"Notification poll failed: {response.status_code}")
-            time_module.sleep(poll_interval)
-            continue
-
+        assert response.status_code == 200, response.text
         data = response.json()
-        status = data.get("status")
-
-        if status == "completed":
-            logger.info(f"Notification {notification_id} completed successfully")
+        if data["status"] in {"succeeded", "failed", "cancelled", "requires_action"}:
             return data
-        elif status == "failed":
-            error = data.get("error", "Unknown error")
-            raise AssertionError(f"GitHub setup failed: {error}")
-        elif status == "cancelled":
-            raise AssertionError("GitHub setup was cancelled")
-
-        # Still pending or running
-        logger.debug(f"Notification {notification_id} status: {status}")
-        time_module.sleep(poll_interval)
-
-    raise TimeoutError(
-        f"Notification {notification_id} did not complete within {timeout_seconds}s"
-    )
+        time.sleep(0.5)
+    raise AssertionError(f"Git connection job {job_id} did not finish")
 
 
 @pytest.fixture(scope="function")
@@ -248,8 +205,8 @@ def github_configured(e2e_client, platform_admin, github_test_branch):
 
     This fixture:
     1. Validates and saves the GitHub token
-    2. Configures the repository (saves config to DB)
-    3. Pulls from GitHub to clone/sync the repository
+    2. Reviews the detached workspace against the repository
+    3. Reconciles the reviewed connection through a PlatformJob
     4. Yields the config for test use
     5. Disconnects GitHub after the test
 
@@ -274,23 +231,49 @@ def github_configured(e2e_client, platform_admin, github_test_branch):
     )
     assert response.status_code == 200, f"Token validation failed: {response.text}"
 
-    # Step 2: Configure repository (saves config to DB)
+    # Step 2: Review and reconcile the first connection.
     repo_url = f"https://github.com/{config['repo']}.git"
     response = e2e_client.post(
-        "/api/github/configure",
+        "/api/github/connect/preview",
         json={
-            "repo_url": repo_url,
+            "repository_url": repo_url,
             "branch": config["branch"],
         },
         headers=platform_admin.headers,
     )
-    assert response.status_code == 200, f"Repository configuration failed: {response.text}"
+    assert response.status_code == 200, f"Repository preview failed: {response.text}"
+    preview = response.json()
+    decisions = {
+        item["path"]: "local"
+        for item in preview["items"]
+        if item["classification"] == "conflict"
+    }
 
-    data = response.json()
-    assert data.get("status") == "configured", f"Unexpected status: {data}"
-    logger.info(f"GitHub configuration saved: {repo_url} @ {config['branch']}")
+    response = e2e_client.post(
+        "/api/github/connect",
+        json={
+            "preview_token": preview["token"],
+            "strategy": "reconcile",
+            "decisions": decisions,
+        },
+        headers=platform_admin.headers,
+    )
+    assert response.status_code == 202, f"Git connection enqueue failed: {response.text}"
+    job = _wait_for_platform_job(
+        e2e_client,
+        platform_admin.headers,
+        response.json()["job_id"],
+    )
+    # Earlier tests may have created workspace entities absent from the test
+    # repository. A reviewed connect then correctly pauses for delete approval;
+    # this fixture must not delete another test's data to complete setup.
+    assert job["status"] in {"succeeded", "requires_action"}, job
+    if job["status"] == "requires_action":
+        assert job["result"]["needs_delete_confirmation"] is True, job
+        assert job["result"]["pending_deletes"], job
+    logger.info("GitHub connection job reached %s", job["status"])
 
-    yield config
+    yield {**config, "connect_job": job}
 
     # Cleanup: Disconnect GitHub integration
     try:

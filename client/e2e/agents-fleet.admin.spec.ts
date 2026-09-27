@@ -80,12 +80,12 @@ test.describe("Agents Fleet Page (admin)", () => {
 			await search.fill(name);
 			const card = page
 				.getByRole("article")
-				.filter({ has: page.getByRole("button", { name, exact: true }) });
+				.filter({ has: page.getByRole("link", { name, exact: true }) });
 			await expect(card).toHaveCount(1);
 			await expect(card).toContainText(
 				"Known fleet browse acceptance record",
 			);
-			await card.getByRole("button", { name, exact: true }).click();
+			await card.getByRole("link", { name, exact: true }).click();
 			await expect(page).toHaveURL(new RegExp(`/agents/${agent.id}$`));
 			await expect(
 				page

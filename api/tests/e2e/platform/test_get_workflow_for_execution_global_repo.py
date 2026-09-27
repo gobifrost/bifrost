@@ -23,7 +23,7 @@ class TestGlobalRepoEnrichment:
         db = db_session
         org = (await _org(db)).id
         sol = Solution(id=uuid4(), slug=f"s-{uuid4().hex[:8]}", name="S",
-                       organization_id=org, global_repo_access=True)
+                       organization_id=org, allow_outbound_access=True)
         db.add(sol)
         await db.flush()
         wf = Workflow(id=uuid4(), name="w", function_name="main", path="workflows/w.py",
@@ -39,7 +39,7 @@ class TestGlobalRepoEnrichment:
         db = db_session
         org = (await _org(db)).id
         sol = Solution(id=uuid4(), slug=f"s-{uuid4().hex[:8]}", name="S",
-                       organization_id=org, global_repo_access=False)
+                       organization_id=org, allow_outbound_access=False)
         db.add(sol)
         await db.flush()
         wf = Workflow(id=uuid4(), name="w", function_name="main", path="workflows/w.py",

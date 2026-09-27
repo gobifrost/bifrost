@@ -45,6 +45,7 @@ SOLUTION_EXPORT_DEFINITION = PlatformJobDefinition(
     policy=PlatformJobPolicy(
         timeout_seconds=60 * 60,
         max_attempts=2,
+        max_concurrency=1,
         min_memory_headroom_mb=512,
     ),
 )

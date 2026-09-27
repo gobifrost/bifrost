@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { renderWithProviders, screen, waitFor } from "@/test-utils";
+import { fireEvent, renderWithProviders, screen, waitFor } from "@/test-utils";
 
 const mockUseRolesPage = vi.fn();
 const mockDeleteMutate = vi.fn();
@@ -95,6 +95,23 @@ describe("Roles", () => {
 				expect.objectContaining({ limit: 25, offset: 25 }),
 			);
 		});
+	});
+
+	it("opens a role row href on ctrl-click from a plain cell", () => {
+		const open = vi.spyOn(window, "open").mockImplementation(() => null);
+		mockUseRolesPage.mockReturnValue({
+			data: { items: [role], total: 1 },
+			isLoading: false,
+			isFetching: false,
+			isError: false,
+			refetch: vi.fn(),
+		});
+
+		renderWithProviders(<Roles />);
+
+		fireEvent.click(screen.getByText("Manage billing"), { ctrlKey: true });
+
+		expect(open).toHaveBeenCalledWith("/roles/role-1", "_blank");
 	});
 
 	it("sends debounced search to the server and resets the page", async () => {

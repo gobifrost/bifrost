@@ -568,7 +568,7 @@ class FileStorageService:
                 if not decorator_info:
                     continue
                 decorator_name, kwargs = decorator_info
-                if decorator_name in ("workflow", "tool", "data_provider"):
+                if decorator_name in ("workflow", "tool", "data_provider", "service"):
                     func_name = node.name
                     new_function_names.add(func_name)
                     display_name = kwargs.get("name") or func_name
@@ -577,6 +577,8 @@ class FileStorageService:
                         dtype = "tool"
                     elif decorator_name == "data_provider":
                         dtype = "data_provider"
+                    elif decorator_name == "service":
+                        dtype = "service"
                     else:
                         dtype = "workflow"
                     new_decorator_info[func_name] = (dtype, display_name)

@@ -1800,63 +1800,11 @@ class SolutionDeployer:
         credentials (config schema + an OAuthProvider with empty
         ``client_id``/``encrypted_client_secret``). Returns the count created.
         """
-        from src.models.orm.integrations import Integration, IntegrationConfigSchema
-        from src.models.orm.oauth import OAuthProvider
+        from src.services.solutions.integration_shells import (
+            upsert_integration_shells,
+        )
 
-        created = 0
-        for decl in connection_schemas:
-            name = decl["integration_name"]
-            template = decl.get("template") or {}
-            exists = (
-                await self.db.execute(
-                    select(Integration).where(Integration.name == name)
-                )
-            ).scalar_one_or_none()
-            if exists is not None:
-                continue  # never clobber a configured integration
-            integ = Integration(
-                name=name,
-                entity_id_name=template.get("entity_id_name"),
-                default_entity_id=template.get("default_entity_id"),
-            )
-            self.db.add(integ)
-            await self.db.flush()  # need integ.id for the child rows
-            for s in template.get("config_schema") or []:
-                self.db.add(
-                    IntegrationConfigSchema(
-                        integration_id=integ.id,
-                        key=s["key"],
-                        type=s["type"],
-                        required=bool(s.get("required")),
-                        description=s.get("description"),
-                        options=s.get("options"),
-                        position=s.get("position", 0),
-                    )
-                )
-            oauth = template.get("oauth")
-            if oauth:
-                # Global shells (organization_id NULL) never collide on provider_name: the unique index (organization_id, provider_name) treats NULLs as distinct in Postgres.
-                self.db.add(
-                    OAuthProvider(
-                        integration_id=integ.id,
-                        provider_name=oauth.get("provider_name") or name,
-                        display_name=oauth.get("display_name"),
-                        oauth_flow_type=oauth.get("oauth_flow_type")
-                        or "authorization_code",
-                        client_id="",  # empty shell — admin fills credentials
-                        encrypted_client_secret=b"",
-                        authorization_url=oauth.get("authorization_url"),
-                        token_url=oauth.get("token_url"),
-                        audience=oauth.get("audience"),
-                        token_url_defaults=oauth.get("token_url_defaults") or {},
-                        entity_id_source=oauth.get("entity_id_source"),
-                        scopes=oauth.get("scopes") or [],
-                        redirect_uri=oauth.get("redirect_uri"),
-                        status="not_connected",
-                    )
-                )
-            created += 1
-        return created
+        return await upsert_integration_shells(self.db, connection_schemas)
 
     async def _upsert_connection_declarations(
         self, solution: Solution, connection_schemas: list[dict[str, Any]]

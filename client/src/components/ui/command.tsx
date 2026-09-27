@@ -14,6 +14,16 @@ import {
 import { InputGroup, InputGroupAddon } from "@/components/ui/input-group";
 import { SearchIcon, CheckIcon } from "lucide-react";
 
+function filterCommandItems(
+	value: string,
+	search: string,
+	keywords: string[] = [],
+) {
+	const terms = search.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
+	const searchable = [value, ...keywords].join(" ").toLocaleLowerCase();
+	return terms.every((term) => searchable.includes(term)) ? 1 : 0;
+}
+
 function scrollWithinCommandList(item: HTMLElement) {
 	const list = item.closest<HTMLElement>('[cmdk-list=""]');
 	if (!list) return;
@@ -57,6 +67,7 @@ function setCommandItemRef(
 
 function Command({
 	className,
+	filter = filterCommandItems,
 	...props
 }: React.ComponentProps<typeof CommandPrimitive>) {
 	return (
@@ -66,6 +77,7 @@ function Command({
 				"flex size-full flex-col overflow-hidden rounded-[var(--bf-radius-surface)] bg-popover p-1 text-popover-foreground",
 				className,
 			)}
+			filter={filter}
 			{...props}
 		/>
 	);
@@ -113,17 +125,59 @@ function CommandDialog({
 
 function CommandInput({
 	className,
+	onValueChange,
+	ref,
 	...props
 }: React.ComponentProps<typeof CommandPrimitive.Input>) {
+	const inputRef = React.useRef<HTMLInputElement>(null);
+	const resetFrameRef = React.useRef<number | null>(null);
+	const commandInputRef = React.useCallback(
+		(input: HTMLInputElement | null) => {
+			inputRef.current = input;
+			if (typeof ref === "function") {
+				ref(input);
+			} else if (ref) {
+				ref.current = input;
+			}
+		},
+		[ref],
+	);
+	const handleValueChange = React.useCallback(
+		(search: string) => {
+			onValueChange?.(search);
+			if (resetFrameRef.current !== null) {
+				cancelAnimationFrame(resetFrameRef.current);
+			}
+			resetFrameRef.current = requestAnimationFrame(() => {
+				const commandRoot = inputRef.current?.closest('[cmdk-root=""]');
+				const list = commandRoot?.querySelector<HTMLElement>('[cmdk-list=""]');
+				if (list) list.scrollTop = 0;
+				resetFrameRef.current = null;
+			});
+		},
+		[onValueChange],
+	);
+
+	React.useEffect(
+		() => () => {
+			if (resetFrameRef.current !== null) {
+				cancelAnimationFrame(resetFrameRef.current);
+			}
+		},
+		[],
+	);
+
 	return (
 		<div data-slot="command-input-wrapper" className="p-1 pb-0">
 			<InputGroup className="h-11! rounded-[var(--bf-radius-control)] bg-background lg:h-9!">
 				<CommandPrimitive.Input
+					ref={commandInputRef}
 					data-slot="command-input"
 					className={cn(
 						"w-full text-sm outline-hidden disabled:cursor-not-allowed disabled:opacity-50",
 						className,
 					)}
+					onValueChange={handleValueChange}
 					{...props}
 				/>
 				<InputGroupAddon>
@@ -178,7 +232,7 @@ function CommandList({
 			ref={listRef}
 			data-slot="command-list"
 			className={cn(
-				"no-scrollbar max-h-72 scroll-py-1 overflow-x-hidden overflow-y-auto outline-none",
+				"max-h-72 scroll-py-1 overflow-x-hidden overflow-y-auto outline-none",
 				className,
 			)}
 			{...props}

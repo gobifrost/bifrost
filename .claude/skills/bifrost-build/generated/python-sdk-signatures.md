@@ -12,8 +12,11 @@ Agent execution operations.
 **`agents.get_run(run_id: str) -> AgentRun`**
   Get the current status and result for an agent run.
 
-**`agents.run(agent_name: str, input: dict[str, Any] | None = None, output_schema: dict[str, Any] | None = None, timeout: int = 1800) -> dict[str, Any] | str`**
+**`agents.run(agent_name: str, input: dict[str, Any] | None = None, output_schema: dict[str, Any] | None = None, timeout: float | None = None) -> dict[str, Any] | str | AgentRunPending`**
   Run an agent and wait for the result.
+
+**`agents.wait(run_id: str, output_schema: dict[str, Any] | None = None, timeout: float | None = None) -> dict[str, Any] | str | AgentRunPending`**
+  Wait for a previously enqueued run using short status requests.
 
 ### ai
 
@@ -78,7 +81,7 @@ Create, read, and share generated files from workflows.
 
 Event publishing operations (async).
 
-**`events.emit(topic: str, data: dict, scope: str | None = None) -> dict`**
+**`events.emit(topic: str, data: dict, scope: str | None = None, solution: str | None = None) -> dict`**
 
 ### executions
 
@@ -102,7 +105,7 @@ Event publishing operations (async).
 
 **`files.list(directory: str = '', location: str = 'workspace', mode: Mode = 'cloud', scope: str | None = None) -> list[str]`**
 
-**`files.read(path: str, location: str = 'workspace', mode: Mode = 'cloud', scope: str | None = None) -> str`**
+**`files.read(path: str, location: str = 'workspace', mode: Mode = 'cloud', scope: str | None = None, solution: str | None = None) -> str`**
 
 **`files.read_bytes(path: str, location: str = 'workspace', mode: Mode = 'cloud', scope: str | None = None) -> bytes`**
 
@@ -206,15 +209,15 @@ Event publishing operations (async).
 
 **`tables.delete_document(table: str, doc_id: str, scope: str | None = None) -> bool`**
 
-**`tables.get(table: str, doc_id: str, scope: str | None = None) -> DocumentData | None`**
+**`tables.get(table: str, doc_id: str, scope: str | None = None, solution: str | None = None) -> DocumentData | None`**
 
-**`tables.insert(table: str, data: dict[str, Any], id: str | None = None, scope: str | None = None, created_by: str | None = None) -> DocumentData`**
+**`tables.insert(table: str, data: dict[str, Any], id: str | None = None, scope: str | None = None, created_by: str | None = None, solution: str | None = None) -> DocumentData`**
 
 **`tables.insert_batch(table: str, documents: list[dict[str, Any]], scope: str | None = None, created_by: str | None = None) -> BatchResult`**
 
 **`tables.list(scope: str | None = None, app: str | None = None) -> list[TableInfo]`**
 
-**`tables.query(table: str, where: dict[str, Any] | None = None, order_by: str | None = None, order_dir: str = 'asc', limit: int = 100, offset: int = 0, scope: str | None = None, after_document_id: str | None = None, document_id_prefix: str | None = None, skip_count: bool = False, document_ids: list[str] | None = None) -> DocumentList`**
+**`tables.query(table: str, where: dict[str, Any] | None = None, order_by: str | None = None, order_dir: str = 'asc', limit: int = 100, offset: int = 0, scope: str | None = None, after_document_id: str | None = None, document_id_prefix: str | None = None, skip_count: bool = False, document_ids: list[str] | None = None, solution: str | None = None) -> DocumentList`**
 
 **`tables.update(table: str, doc_id: str, data: dict[str, Any], scope: str | None = None, updated_by: str | None = None) -> DocumentData | None`**
 
@@ -243,7 +246,7 @@ Event publishing operations (async).
 **`workflows.cancel(execution_id: str) -> None`**
   Cancel a Scheduled workflow execution.
 
-**`workflows.execute(workflow: str, input_data: dict[str, Any] | None = None, org_id: str | None = None, run_as: str | None = None, scheduled_at: datetime | None = None, delay_seconds: int | None = None) -> str`**
+**`workflows.execute(workflow: str, input_data: dict[str, Any] | None = None, org_id: str | None = None, run_as: str | None = None, solution: str | None = None, scheduled_at: datetime | None = None, delay_seconds: int | None = None) -> str`**
 
 **`workflows.get(execution_id: str) -> WorkflowExecution`**
 

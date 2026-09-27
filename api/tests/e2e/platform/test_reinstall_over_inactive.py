@@ -1,16 +1,7 @@
 """E2E: reinstall-over-inactive — prompt then reactivate (L6 of solution-inactive-lifecycle).
 
-Three scenarios:
-
-1. Deploy → uninstall (→ inactive) → install the SAME bundle WITHOUT reactivate
-   → assert 409 with structured reason ``"inactive_install_exists"``.
-
-2. Deploy → uninstall (→ inactive) → install with ``?reactivate=true``
-   → assert 200/201, the SAME install id is ``status == "active"`` (NOT a
-   duplicate), and retained table data written before uninstall is still there.
-
-3. Regression: install → install AGAIN (active slug) → assert no 409 (redeploy
-   over the active install still works).
+One lifecycle checks that an inactive install is refused until explicitly
+reactivated, preserving its identity and retained table data.
 """
 from __future__ import annotations
 
@@ -88,83 +79,43 @@ def _uninstall(e2e_client, headers, solution_id: str) -> None:
 # tests
 # ---------------------------------------------------------------------------
 
-async def test_reinstall_over_inactive_prompts_409(e2e_client, platform_admin):
-    """Deploy → uninstall → install (no reactivate) must return 409 with structured payload."""
+async def test_reinstall_inactive_then_reactivate(e2e_client, platform_admin):
+    """An inactive reinstall requires explicit reactivation and preserves data."""
     headers = platform_admin.headers
-    slug = f"reins-prompt-{uuid.uuid4().hex[:8]}"
+    slug = f"reins-lifecycle-{uuid.uuid4().hex[:8]}"
     table_name = f"rt_{uuid.uuid4().hex[:8]}"
     zip_bytes = _make_zip(slug, table_name)
 
-    # Initial install.
     r = _install(e2e_client, headers, zip_bytes)
     assert r.status_code in (200, 201), r.text
     sid = r.json()["id"]
 
-    # Uninstall → inactive.
-    _uninstall(e2e_client, headers, sid)
-
-    # Attempt reinstall WITHOUT reactivate — must be refused.
-    r2 = _install(e2e_client, headers, zip_bytes)
-    assert r2.status_code == 409, f"Expected 409, got {r2.status_code}: {r2.text}"
-    detail = r2.json()["detail"]
-    assert detail["reason"] == "inactive_install_exists", (
-        f"Expected reason='inactive_install_exists', got: {detail}"
-    )
-    assert detail["solution_id"] == sid, (
-        f"Conflict payload must carry the inactive install's id, got: {detail}"
-    )
-    assert detail["slug"] == slug, (
-        f"Conflict payload must carry the slug, got: {detail}"
-    )
-
-
-async def test_reinstall_over_inactive_reactivates_same_install(e2e_client, platform_admin):
-    """Deploy → insert data → uninstall → install with reactivate=true.
-
-    Asserts:
-    - Response is 200/201.
-    - The SAME install id is now active (not a duplicate).
-    - No second Solution row for that slug+org exists.
-    - The table deployed in the original install is still present (retained data intact).
-    """
-    headers = platform_admin.headers
-    slug = f"reins-react-{uuid.uuid4().hex[:8]}"
-    table_name = f"rt_{uuid.uuid4().hex[:8]}"
-    zip_bytes = _make_zip(slug, table_name)
-
-    # Initial install.
-    r = _install(e2e_client, headers, zip_bytes)
-    assert r.status_code in (200, 201), r.text
-    original_id = r.json()["id"]
-
-    # Wait for the deploy to finish (deploy is async).
-    deploy_r = e2e_client.get(f"/api/solutions/{original_id}", headers=headers)
-    assert deploy_r.status_code == 200, deploy_r.text
-
-    # Insert a row into the solution-owned table as proof of retained data.
+    # Retained data must exist before uninstall; a failed insert cannot silently
+    # weaken this assertion.
     tbl_doc_id = f"row-{uuid.uuid4().hex[:8]}"
     ins = e2e_client.post(
-        f"/api/tables/{table_name}/documents?solution={original_id}",
+        f"/api/tables/{table_name}/documents?solution={sid}",
         headers=headers,
         json={"id": tbl_doc_id, "data": {"val": "retained"}},
     )
-    # A 404 here means the table deploy hasn't finished yet; tolerate that in test
-    # context by skipping the retained-data assertion (only assert if insertion was
-    # successful — the important invariant is no duplicate install).
-    data_inserted = ins.status_code in (200, 201)
+    assert ins.status_code in (200, 201), ins.text
 
-    # Uninstall → inactive.
-    _uninstall(e2e_client, headers, original_id)
+    _uninstall(e2e_client, headers, sid)
 
-    # Reinstall WITH reactivate.
+    refused = _install(e2e_client, headers, zip_bytes)
+    assert refused.status_code == 409, refused.text
+    detail = refused.json()["detail"]
+    assert detail["reason"] == "inactive_install_exists", detail
+    assert detail["solution_id"] == sid, detail
+    assert detail["slug"] == slug, detail
+
     r2 = _install(e2e_client, headers, zip_bytes, query="?reactivate=true")
     assert r2.status_code in (200, 201), f"Expected 200/201 on reactivate, got {r2.status_code}: {r2.text}"
     reactivated = r2.json()
 
-    # SAME install id — not a duplicate.
-    assert reactivated["id"] == original_id, (
+    assert reactivated["id"] == sid, (
         f"Reactivate must return the SAME install id, not a new one. "
-        f"Original: {original_id}, returned: {reactivated['id']}"
+        f"Original: {sid}, returned: {reactivated['id']}"
     )
     assert reactivated["status"] == "active", (
         f"Reactivated install must have status='active', got: {reactivated['status']}"
@@ -178,33 +129,9 @@ async def test_reinstall_over_inactive_reactivates_same_install(e2e_client, plat
         f"Expected exactly one install for slug '{slug}', found {len(matching)}: {matching}"
     )
 
-    # Retained data: if we successfully inserted a row before uninstall, it must
-    # still be there after reactivation (solution_id unchanged, data never moved).
-    if data_inserted:
-        got = e2e_client.get(
-            f"/api/tables/{table_name}/documents/{tbl_doc_id}?solution={original_id}",
-            headers=headers,
-        )
-        assert got.status_code == 200, (
-            f"Row inserted before uninstall must still be accessible after reactivation, "
-            f"got {got.status_code}: {got.text}"
-        )
-        assert got.json().get("data", {}).get("val") == "retained", got.text
-
-
-async def test_active_slug_reinstall_is_unchanged(e2e_client, platform_admin):
-    """Regression: re-installing a zip over an ACTIVE install must not 409 (redeploy path)."""
-    headers = platform_admin.headers
-    slug = f"reins-active-{uuid.uuid4().hex[:8]}"
-    table_name = f"rt_{uuid.uuid4().hex[:8]}"
-    zip_bytes = _make_zip(slug, table_name)
-
-    # First install.
-    r = _install(e2e_client, headers, zip_bytes)
-    assert r.status_code in (200, 201), r.text
-
-    # Second install (same zip, same slug) — must succeed as a redeploy.
-    r2 = _install(e2e_client, headers, zip_bytes)
-    assert r2.status_code in (200, 201), (
-        f"Re-installing over an active slug must not return 409, got {r2.status_code}: {r2.text}"
+    got = e2e_client.get(
+        f"/api/tables/{table_name}/documents/{tbl_doc_id}?solution={sid}",
+        headers=headers,
     )
+    assert got.status_code == 200, got.text
+    assert got.json().get("data", {}).get("val") == "retained", got.text

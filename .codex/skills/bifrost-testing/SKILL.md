@@ -45,6 +45,10 @@ Already in `CLAUDE.md`:
 - Anything hitting API / DB / queue / S3 → `api/tests/e2e/`
 
 See also `authoring-rules.md` alongside this file for expanded examples.
+When a test would start a deploy, install, publish, build, sync, or another
+background job, follow **Expensive backend E2E tests** in that file before
+adding the case. Count the jobs, identify the unique boundary each proves,
+and compare its cost with an existing full-path test.
 
 ## Workflow
 
@@ -63,7 +67,7 @@ If `DOWN` → `./test.sh stack up`. Each worktree runs its own isolated stack (C
 - React component behavior → `./test.sh client unit` (vitest on host, no stack needed)
 - Full user flow through UI → `./test.sh client e2e`
 - All available suites (manual broad run) → `./test.sh all` (backend) + `./test.sh client unit` + `./test.sh client e2e`
-- Exact clean commit before opening or queueing a PR → `./test.sh pre-pr`
+- Optional full local reproduction of the merge gate (diagnostics, risky changes) → `./test.sh pre-pr`
 
 State is auto-reset before every test subcommand. If migrations changed, run `./test.sh stack reset` once — that rebuilds the template DB.
 
@@ -80,17 +84,13 @@ The full backend, Vitest, and Playwright suites are **not** the default iteratio
 
 Verify the authoring rules above are satisfied for any new code.
 
-### 4. Before opening or queueing a PR: clean-commit gate
+### 4. Before opening or queueing a PR: clean candidate + merge queue
 
-Targeted verification is necessary but not sufficient for a PR. Commit the exact candidate, make sure the worktree contains current `origin/main`, then run:
+Commit the exact candidate on a worktree that contains current `origin/main`. The focused verification from section 3 is the local requirement — it must be green for the changed surface. The merge queue is the authoritative complete-suite gate: it runs the full backend E2E, complete Vitest, and zero-retry browser smoke on the exact synthetic `main + queued PRs` candidate, plus the boundaries a workstation cannot reproduce (synthetic merge ref, registry push, signing, attestation).
 
-```bash
-./test.sh pre-pr
-```
+`./test.sh pre-pr` remains an optional full local reproduction of that gate. Use it to diagnose a queue failure or rehearse an unusually risky change; it is not a PR prerequisite and does not need rerunning after every commit, amend, rebase, or merge.
 
-This is mandatory for every code PR and must be rerun after any commit, amend, rebase, or merge. It refuses a dirty or stale worktree and reports the exact passing SHA. It covers every locally reproducible required PR and merge-queue boundary: repository freshness checks, production client and API builds, API/client lint and type checks, complete backend unit and E2E suites, complete Vitest, and zero-retry critical browser smoke.
-
-GitHub remains authoritative only for boundaries a workstation cannot reproduce: the synthetic merge-queue ref, registry push, signing, attestation, repository permissions, and third-party service availability. If CI fails in a locally reproducible gate after `pre-pr` passed for the same SHA, treat that as a defect in `pre-pr` or the harness and add the exposing condition to the local gate before retrying the PR.
+If the queue finds a failure, reproduce it locally, fix the cause under "Known failures outside the scoped run" below, and re-queue — never retry-until-green.
 
 ### 5. UX review (conditional, conversation-driven)
 
@@ -122,7 +122,7 @@ If the repair is bounded, make it in the current change. If it is substantial an
 
 Diagnostics:
 - Logs per service: `/tmp/bifrost-<project-name>/*.log` (per-worktree).
-- JUnit: `/tmp/bifrost/test-results.xml`.
+- JUnit on the host: `/tmp/bifrost-<project>/test-results.xml` (`./test.sh stack status` prints the project name).
 - To isolate a test, run it alone: `./test.sh tests/e2e/path/test_foo.py::TestClass::test_method -v`.
 
 ### 7. Prefer simple tests
@@ -130,6 +130,13 @@ Diagnostics:
 Test complexity is a liability, not evidence of rigor. Prefer one observable contract, minimal fixtures, deterministic state, explicit cleanup, and the lowest test layer that can catch the regression. An end-to-end test should prove the primary integration or user journey, not reproduce every validation rule and edge case already covered below it.
 
 When simplifying or deleting a test, preserve its unique behavioral signal. Do not preserve incidental implementation assertions merely because they already exist.
+
+For a new or changed E2E case that takes at least 2 seconds, run it with
+`--durations=0` and inspect setup, call, and teardown time. Report whether the
+time is spent in test setup, ordinary requests, or a background job; use a
+direct service/database test for isolated edge cases. Treat 2 seconds as a
+review trigger, not a pass/fail threshold. See **Expensive backend E2E tests**
+in `authoring-rules.md` for the full decision rule.
 
 ## Definition-of-Done Checklist
 
@@ -139,8 +146,8 @@ Before declaring work complete, every box must be checked:
 - [ ] New user-facing feature has a happy-path Playwright spec
 - [ ] Backend logic has a unit test; endpoint/workflow changes have an e2e test
 - [ ] No new `skip`, `xfail`, `.only`, or commented-out tests introduced
-- [ ] Targeted suite green
-- [ ] `./test.sh pre-pr` green for the exact clean `HEAD` before any PR is opened or queued
+- [ ] Targeted suite green for the changed surface
+- [ ] Worktree clean and based on current `origin/main` before opening or queueing a PR
 - [ ] Exact test commands and unrun broader suites reported honestly
 - [ ] Every known out-of-scope failure has a durable fix or a dedicated blocking repair change
 - [ ] UX review done if new UI was built

@@ -27,6 +27,9 @@ class ActorContext:
     ip_address: str | None = None
     user_agent: str | None = None
     source: str = "http"
+    # Execution (or service attempt) that produced the event, from a signed
+    # engine/service token's ``engine_execution_id``; None for human HTTP.
+    execution_id: UUID | None = None
 
 
 _actor: ContextVar[ActorContext | None] = ContextVar("audit_actor", default=None)

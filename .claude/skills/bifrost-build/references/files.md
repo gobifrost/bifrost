@@ -102,7 +102,7 @@ Build paths from immutable UUIDs, for example `documents/sites/<site UUID>/categ
 
 `path_within_any` is intentionally unavailable to table policies. Use indexed exact composite-key membership for table rows. Also treat `list` separately: permission to a descendant does not imply permission to enumerate every ancestor directory. Prefer an authorization-filtered table for navigation and grant file reads only when opening the selected resource.
 
-With `global_repo_access: false`, a Solution can access only its declared owned location. With it enabled, reads/list/exists/signed-read can fall back through eligible install-org and global file tiers. Writes and deletes still target the Solution-owned tier; the flag does not authorize modification of shared files.
+With `allow_outbound_access: false`, a Solution can access only its declared owned location. With it enabled, reads/list/exists/signed-read can fall back through eligible install-org and global file tiers. Writes and deletes still target the Solution-owned tier; the flag does not authorize modification of shared files. To read another install's declared location directly, pass `solution=` (install UUID or slug) to `files.read`; the target's `allow_inbound_access` gate decides. See `solution-resource-access.md`.
 
 Read `solution-resource-access.md` for the exact runtime matrix.
 

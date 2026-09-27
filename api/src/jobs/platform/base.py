@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Literal
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -15,10 +15,12 @@ class PlatformJobPolicy:
     max_attempts: int = 2
     max_concurrency: int | None = None
     retry_on_runner_loss: bool = True
+    retry_on_failure: bool = False
     min_memory_headroom_mb: int = 256
     admission_memory_ratio: float = 0.85
     hard_memory_ratio: float = 0.95
     allow_running_cancellation: bool = False
+    execution_class: Literal["default", "build"] = "default"
 
 
 class PlatformJobFailure(Exception):
@@ -28,11 +30,22 @@ class PlatformJobFailure(Exception):
         message: str,
         *,
         retryable: bool = False,
+        result: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
         self.retryable = retryable
+        self.result = result
+
+
+class PlatformJobRequiresAction(Exception):
+    """Stop a job until a user completes an explicit follow-up action."""
+
+    def __init__(self, phase: str, result: dict[str, Any]) -> None:
+        super().__init__(phase)
+        self.phase = phase
+        self.result = result
 
 
 class PlatformJobCancelled(Exception):
@@ -56,6 +69,7 @@ class PlatformJobContext:
     requested_by_user_id: str
     requested_by_email: str
     requested_by_name: str
+    checkpoint: dict[str, Any] | None = None
 
     async def report(
         self,
@@ -89,6 +103,12 @@ class PlatformJobContext:
             platform_job_id=self.job_id,
         )
 
+    async def save_checkpoint(self, result: dict[str, Any], *, phase: str) -> None:
+        from src.services.platform_jobs import checkpoint_platform_job
+
+        if not await checkpoint_platform_job(self.job_id, self.lease_token, result=result, phase=phase):
+            raise PlatformJobCancelled
+
 
 PlatformJobHandler = Callable[
     [PlatformJobContext, BaseModel],
@@ -104,3 +124,8 @@ class PlatformJobDefinition:
     handler: PlatformJobHandler
     policy: PlatformJobPolicy
     encrypt_payload: bool = False
+    # Product-surface copy for the Kubernetes Executions settings list.
+    # Only definitions with execution_class="build" are listed; others may
+    # leave these unset.
+    display_name: str | None = None
+    description: str | None = None

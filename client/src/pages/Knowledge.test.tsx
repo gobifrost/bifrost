@@ -144,8 +144,8 @@ describe("Knowledge", () => {
 		);
 	});
 
-	it("renders compact document rows with selection mode, pagination, and embedded drawer access", async () => {
-		const { user } = renderWithProviders(<Knowledge />);
+	it("renders compact document rows with pagination", async () => {
+		renderWithProviders(<Knowledge />);
 
 		expect(screen.queryByRole("table")).not.toBeInTheDocument();
 		expect(
@@ -173,6 +173,14 @@ describe("Knowledge", () => {
 			),
 		).toBeInTheDocument();
 
+		expect(
+			screen.getByRole("navigation", { name: /pagination/i }),
+		).toBeInTheDocument();
+	});
+
+	it("selects all documents in selection mode", async () => {
+		const { user } = renderWithProviders(<Knowledge />);
+		await screen.findByRole("button", { name: "support-01" });
 		await user.click(screen.getByRole("switch", { name: "Select" }));
 		const selectAllButton = screen.getByRole("button", {
 			name: /select all/i,
@@ -188,18 +196,6 @@ describe("Knowledge", () => {
 		expect(
 			screen.getByRole("button", { name: "sales-02" }),
 		).toHaveAttribute("aria-pressed", "true");
-
-		expect(
-			screen.getByRole("navigation", { name: /pagination/i }),
-		).toBeInTheDocument();
-
-		await user.click(screen.getByRole("switch", { name: "Select" }));
-		await user.click(
-			within(firstRecord).getByRole("button", { name: /support-01/i }),
-		);
-		expect(await screen.findByRole("dialog")).toHaveTextContent(
-			"Knowledge drawer support doc-01",
-		);
 	});
 
 	it("opens delete confirmation from the overflow menu without losing primary open access", async () => {

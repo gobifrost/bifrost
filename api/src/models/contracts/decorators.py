@@ -9,7 +9,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-DecoratorType = Literal["workflow", "data_provider", "tool"]
+DecoratorType = Literal["workflow", "data_provider", "tool", "service"]
 
 
 class DecoratorInfo(BaseModel):

@@ -257,6 +257,10 @@ class ExecutionRepository(BaseRepository[Execution]):
                 update_values["cpu_system_seconds"] = metrics["cpu_system_seconds"]
             if "cpu_total_seconds" in metrics:
                 update_values["cpu_total_seconds"] = metrics["cpu_total_seconds"]
+            if "peak_cpu_cores" in metrics:
+                update_values["peak_cpu_cores"] = metrics["peak_cpu_cores"]
+            if "peak_process_rss_bytes" in metrics:
+                update_values["peak_process_rss_bytes"] = metrics["peak_process_rss_bytes"]
 
         # Economics
         if time_saved is not None:

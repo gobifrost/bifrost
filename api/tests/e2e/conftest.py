@@ -103,7 +103,12 @@ def _legacy_deploy_body_to_zip(client: httpx.Client, solution_id: str, headers, 
         name=solution["name"],
         version=solution.get("version"),
         organization_id=uuid.UUID(org_id) if org_id else None,
-        global_repo_access=bool(solution.get("global_repo_access", False)),
+        allow_outbound_access=bool(
+            solution.get(
+                "allow_outbound_access",
+                solution.get("global_repo_access", False),
+            )
+        ),
     )
     bundle = SolutionBundle(
         solution=sol,

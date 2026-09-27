@@ -73,6 +73,7 @@ def _connection_response(connection: AIProviderConnection) -> AIProviderConnecti
         endpoint=connection.endpoint,
         api_key_set=bool(connection.encrypted_api_key),
         profile_count=len(connection.profiles),
+        anthropic_prompt_cache_supported=connection.anthropic_prompt_cache_supported,
         created_at=connection.created_at,
         updated_at=connection.updated_at,
     )
@@ -84,6 +85,7 @@ def _connection_summary(connection: AIProviderConnection) -> AIProviderConnectio
         name=connection.name,
         provider=connection.provider,
         endpoint=connection.endpoint,
+        anthropic_prompt_cache_supported=connection.anthropic_prompt_cache_supported,
     )
 
 
@@ -96,6 +98,11 @@ def _profile_response(profile: AIModelProfile) -> AIModelProfileResponse:
         model=profile.model,
         capabilities=capabilities,
         enabled_for_chat=profile.enabled_for_chat,
+        default_max_tokens=profile.default_max_tokens,
+        failover_profile_id=profile.failover_profile_id,
+        failover_profile_name=(
+            profile.failover_profile.name if profile.failover_profile else None
+        ),
         connection=_connection_summary(profile.connection),
         assignment_keys=[assignment.assignment_key for assignment in profile.assignments],
         referenced_agent_count=len(profile.agents),
@@ -265,6 +272,8 @@ async def create_model_profile(
             model=request.model,
             capabilities=request.capabilities,
             enabled_for_chat=request.enabled_for_chat,
+            default_max_tokens=request.default_max_tokens,
+            failover_profile_id=request.failover_profile_id,
         )
         await db.commit()
         return _profile_response(await service.get_profile(profile.id))
@@ -317,6 +326,10 @@ async def update_model_profile(
             capabilities=request.capabilities,
             capabilities_provided="capabilities" in request.model_fields_set,
             enabled_for_chat=request.enabled_for_chat,
+            default_max_tokens=request.default_max_tokens,
+            default_max_tokens_provided="default_max_tokens" in request.model_fields_set,
+            failover_profile_id=request.failover_profile_id,
+            failover_profile_id_provided="failover_profile_id" in request.model_fields_set,
         )
         await db.commit()
         return _profile_response(await service.get_profile(profile.id))

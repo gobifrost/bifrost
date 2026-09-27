@@ -1,0 +1,80 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: bifrost-build-controller
+  namespace: bifrost-local
+  labels:
+    app.kubernetes.io/name: bifrost-build-controller
+    app.kubernetes.io/component: build-controller
+    app.kubernetes.io/part-of: bifrost-local-kind
+automountServiceAccountToken: true
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: bifrost-build-runner
+  namespace: bifrost-local
+  labels:
+    app.kubernetes.io/name: bifrost-build-runner
+    app.kubernetes.io/component: build-runner
+    app.kubernetes.io/part-of: bifrost-local-kind
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: bifrost-build-controller
+  namespace: bifrost-local
+  labels:
+    app.kubernetes.io/name: bifrost-build-controller
+    app.kubernetes.io/component: build-controller
+    app.kubernetes.io/part-of: bifrost-local-kind
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: bifrost-build-controller
+  namespace: bifrost-local
+  labels:
+    app.kubernetes.io/name: bifrost-build-controller
+    app.kubernetes.io/component: build-controller
+    app.kubernetes.io/part-of: bifrost-local-kind
+subjects:
+  - kind: ServiceAccount
+    name: bifrost-build-controller
+    namespace: bifrost-local
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: bifrost-build-controller
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bifrost-build-jobs-config
+  namespace: bifrost-local
+  labels:
+    app.kubernetes.io/name: bifrost-build-jobs-config
+    app.kubernetes.io/component: build-controller
+    app.kubernetes.io/part-of: bifrost-local-kind
+data:
+  BIFROST_PLATFORM_BUILD_BACKEND: "kubernetes"
+  BIFROST_KUBERNETES_BUILD_NAMESPACE: "bifrost-local"
+  BIFROST_KUBERNETES_BUILD_IMAGE: "bifrost-api:kind-local"
+  BIFROST_KUBERNETES_BUILD_CONFIGMAP: "bifrost-local-config"
+  BIFROST_KUBERNETES_BUILD_SECRET: "bifrost-local-secrets"
+  BIFROST_KUBERNETES_BUILD_SERVICE_ACCOUNT: "bifrost-build-runner"
+  BIFROST_KUBERNETES_BUILD_JOB_TYPES: "application.deploy,application.sdk_update"
+  BIFROST_KUBERNETES_BUILD_MEMORY_REQUEST_MIB: "512"
+  BIFROST_KUBERNETES_BUILD_MEMORY_LIMIT_MIB: "2048"
+  BIFROST_KUBERNETES_BUILD_MAX_JOBS: "2"
+  BIFROST_KUBERNETES_BUILD_PENDING_TIMEOUT_SECONDS: "300"
+  BIFROST_KUBERNETES_BUILD_CPU_REQUEST: "250m"
+  BIFROST_KUBERNETES_BUILD_CPU_LIMIT: "1"

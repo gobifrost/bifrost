@@ -1233,6 +1233,38 @@ class TestIntegrationsAuthorization:
                 headers=platform_admin.headers,
             )
 
+    def test_non_superuser_cannot_read_integration_logo(
+        self, e2e_client, org1_user, platform_admin
+    ):
+        """Logo read needs the same access as the integration record itself
+        (platform admin only) — not just any authenticated user."""
+        response = e2e_client.post(
+            "/api/integrations",
+            headers=platform_admin.headers,
+            json={"name": f"logo_auth_test_{uuid4().hex[:8]}"},
+        )
+        integration = response.json()
+
+        try:
+            denied = e2e_client.get(
+                f"/api/integrations/{integration['id']}/logo",
+                headers=org1_user.headers,
+            )
+            assert denied.status_code == 403, denied.text
+
+            # Admin gets a real response (404 "no logo set" since none was
+            # uploaded — not a 403), proving the gate is access-based.
+            admin_resp = e2e_client.get(
+                f"/api/integrations/{integration['id']}/logo",
+                headers=platform_admin.headers,
+            )
+            assert admin_resp.status_code == 404, admin_resp.text
+        finally:
+            e2e_client.delete(
+                f"/api/integrations/{integration['id']}",
+                headers=platform_admin.headers,
+            )
+
     def test_non_superuser_cannot_access_mappings(self, e2e_client, org1_user, platform_admin, org1):
         """Non-superuser should get 403 when accessing mappings."""
         # Create integration as admin

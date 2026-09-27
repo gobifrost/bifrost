@@ -1,0 +1,10 @@
+claims:
+  cccccccc-cccc-4ccc-8ccc-cccccccccccc:
+    id: cccccccc-cccc-4ccc-8ccc-cccccccccccc
+    name: sink_vip
+    description: Flags VIP sink customers
+    type: list
+    query:
+      table: sink_items
+      where: {gt: [{row: qty}, 100]}
+      select: title

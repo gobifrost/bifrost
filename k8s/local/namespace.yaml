@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bifrost-local
+  labels:
+    app.kubernetes.io/name: bifrost
+    app.kubernetes.io/part-of: bifrost-local-kind

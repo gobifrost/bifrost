@@ -125,6 +125,34 @@ def get_default_scope() -> str | None:
     return ctx.org_id  # Returns None for GLOBAL scope, org UUID otherwise
 
 
+def get_effective_solution(explicit: str | None) -> str | None:
+    """SPIKE: per-call ``solution=`` override.
+
+    Explicit (UUID or slug/name) wins for this call only. Unset (None) →
+    inherit today's behavior (the active execution's own install, if any).
+    Never mutates the session.
+    """
+    if explicit is not None:
+        return explicit
+    ctx = _execution_context.get()
+    if ctx is None:
+        return None
+    return getattr(ctx, "solution_id", None)
+
+
+def get_caller_solution() -> str | None:
+    """SPIKE: the caller's OWN install for server-side inbound attestation.
+
+    Always the inherited ExecutionContext install (never the explicit
+    per-call target) — lets the server tell own-calls apart from
+    cross-install calls. None outside a solution execution.
+    """
+    ctx = _execution_context.get()
+    if ctx is None:
+        return None
+    return getattr(ctx, "solution_id", None)
+
+
 def resolve_scope(scope: str | None) -> str | None:
     """Resolve scope for SDK calls with the C2 bypass gate.
 

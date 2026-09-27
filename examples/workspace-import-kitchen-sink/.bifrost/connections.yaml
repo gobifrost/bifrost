@@ -1,0 +1,13 @@
+connections:
+  acme:
+    integration_name: acme
+    template: {}
+    position: 0
+  contoso:
+    integration_name: contoso
+    template:
+      config_schema:
+        - key: endpoint
+          type: string
+          required: true
+    position: 1

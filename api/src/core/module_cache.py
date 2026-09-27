@@ -13,40 +13,23 @@ import hashlib
 import json
 import logging
 from pathlib import Path
-from typing import Awaitable, NotRequired, TypedDict, cast
+from typing import Awaitable, cast
 
 from src.core.log_safety import log_safe
+from src.core.module_cache_contract import (
+    MODULE_INDEX_KEY,
+    MODULE_KEY_PREFIX,
+    MODULE_RESOLUTION_KEY_PREFIX,
+    MODULE_RESOLUTION_NEGATIVE_TTL,
+    MODULE_RESOLUTION_TTL,
+    CachedModule,
+    module_resolution_cache_key as module_resolution_cache_key,
+)
 from src.core.redis_client import get_redis_client
 from src.services.repo_storage import RepoStorage
 from src.services.solutions.storage import SOLUTIONS_ROOT, SolutionStorage
 
 logger = logging.getLogger(__name__)
-
-MODULE_KEY_PREFIX = "bifrost:module:"
-MODULE_INDEX_KEY = "bifrost:module:index"
-MODULE_RESOLUTION_KEY_PREFIX = "bifrost:module:resolution:"
-MODULE_RESOLUTION_TTL = 86400
-MODULE_RESOLUTION_NEGATIVE_TTL = 30
-
-
-def module_resolution_cache_key(
-    name: str,
-    *,
-    solution_id: str | None,
-    global_repo_access: bool,
-) -> str:
-    """Build the shared Redis key suffix for one scoped import name."""
-    dotted_name = name.strip().replace("/", ".").strip(".")
-    return f"{solution_id or '-'}:{int(global_repo_access)}:{dotted_name}"
-
-
-class CachedModule(TypedDict):
-    """Schema for cached module data."""
-
-    content: str
-    path: str
-    hash: str
-    storage_path: NotRequired[str]
 
 
 async def _read_module_from_storage(path: str) -> bytes:

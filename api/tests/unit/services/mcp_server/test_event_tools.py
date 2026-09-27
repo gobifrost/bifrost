@@ -427,3 +427,45 @@ class TestEventToolsRegistration:
         ) as mock_register:
             register_tools(mock_mcp, mock_get_context)
             assert mock_register.call_count == 10
+
+
+class TestRejectServiceTarget:
+    """Tests for the service-subscription guard helper."""
+
+    @pytest.mark.asyncio
+    async def test_service_workflow_is_rejected(self):
+        """A service row yields an error result mentioning services."""
+        from src.services.mcp_server.tools.events import _reject_service_target
+
+        target = MagicMock()
+        target.type = "service"
+        target.name = "telegram_bridge"
+        mock_db = MagicMock()
+        mock_db.get = AsyncMock(return_value=target)
+
+        result = await _reject_service_target(mock_db, str(uuid4()))
+
+        assert is_error_result(result)
+        assert "service" in result.structured_content["error"]
+
+    @pytest.mark.asyncio
+    async def test_workflow_target_passes(self):
+        """Ordinary workflows are unaffected by the guard."""
+        from src.services.mcp_server.tools.events import _reject_service_target
+
+        target = MagicMock()
+        target.type = "workflow"
+        mock_db = MagicMock()
+        mock_db.get = AsyncMock(return_value=target)
+
+        assert await _reject_service_target(mock_db, str(uuid4())) is None
+
+    @pytest.mark.asyncio
+    async def test_missing_workflow_passes(self):
+        """Absent rows fall through to FK/lookup handling, not the guard."""
+        from src.services.mcp_server.tools.events import _reject_service_target
+
+        mock_db = MagicMock()
+        mock_db.get = AsyncMock(return_value=None)
+
+        assert await _reject_service_target(mock_db, str(uuid4())) is None

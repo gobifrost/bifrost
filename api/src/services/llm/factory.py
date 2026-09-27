@@ -53,6 +53,36 @@ async def get_llm_config(
         raise ValueError("Failed to resolve LLM configuration.") from e
 
 
+async def get_llm_configs(
+    session: AsyncSession,
+    *,
+    profile_id: UUID | None = None,
+    profile_name: str | None = None,
+    assignment_key: AIModelAssignmentKey = "primary",
+) -> list[LLMConfig]:
+    """
+    Resolve the primary LLM configuration plus its failover chain.
+
+    Returns:
+        Non-empty list with the primary config first, then one config per
+        fallback hop (see ``AIModelService.resolve_chain``).
+
+    Raises:
+        ValueError: If configuration is missing or invalid
+    """
+    try:
+        return await AIModelService(session).resolve_chain(
+            profile_id=profile_id,
+            profile_name=profile_name,
+            assignment_key=assignment_key,
+        )
+    except ValueError:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to resolve LLM configuration: {e}")
+        raise ValueError("Failed to resolve LLM configuration.") from e
+
+
 async def get_llm_client(
     session: AsyncSession,
     *,
@@ -72,7 +102,7 @@ async def get_llm_client(
     Raises:
         ValueError: If configuration is invalid or missing
     """
-    config = await get_llm_config(
+    chain = await get_llm_configs(
         session,
         profile_id=profile_id,
         profile_name=profile_name,
@@ -83,7 +113,7 @@ async def get_llm_client(
     # closure until an LLM request is actually made.
     from src.services.llm.pydantic_client import PydanticAIClient
 
-    return PydanticAIClient(config)
+    return PydanticAIClient(chain[0], fallback_configs=chain[1:])
 
 
 def create_llm_client(

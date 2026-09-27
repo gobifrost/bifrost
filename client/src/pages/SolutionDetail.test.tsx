@@ -6,6 +6,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
+	fireEvent,
 	renderWithProviders,
 	screen,
 	waitFor,
@@ -19,8 +20,9 @@ const APP_LOGO_DATA_URL =
 
 const wsMocks = vi.hoisted(() => ({
 	platformJobCallback: undefined as
-		| ((job: Record<string, unknown>) => void)
-		| undefined,
+		((job: Record<string, unknown>) => void) | undefined,
+	jobSpecificCallback: undefined as
+		((job: Record<string, unknown>) => void) | undefined,
 }));
 
 vi.mock("@/services/websocket", () => ({
@@ -28,6 +30,15 @@ vi.mock("@/services/websocket", () => ({
 		onAnyPlatformJobUpdate: vi.fn(
 			(callback: (job: Record<string, unknown>) => void) => {
 				wsMocks.platformJobCallback = callback;
+				return vi.fn();
+			},
+		),
+		onPlatformJobUpdate: vi.fn(
+			(
+				_jobId: string,
+				callback: (job: Record<string, unknown>) => void,
+			) => {
+				wsMocks.jobSpecificCallback = callback;
 				return vi.fn();
 			},
 		),
@@ -98,6 +109,8 @@ const mockDownloadSolutionExportJob = vi.fn();
 const mockGetSolutionCaptureCandidates = vi.fn();
 const mockCaptureSolutionEntities = vi.fn();
 const mockSyncSolution = vi.fn();
+const mockDisconnectSolutionGit = vi.fn();
+const mockPreviewSolutionFromRepo = vi.fn();
 const mockGetSolutionReadme = vi.fn();
 const mockGetSolutionSdkStatus = vi.fn();
 const mockUpdateSolutionAppSdks = vi.fn();
@@ -108,8 +121,7 @@ vi.mock("@/services/solutions", () => ({
 	getSolutionSetup: (...a: unknown[]) => mockGetSolutionSetup(...a),
 	getSolutionReadme: (...a: unknown[]) => mockGetSolutionReadme(...a),
 	getSolutionSdkStatus: (...a: unknown[]) => mockGetSolutionSdkStatus(...a),
-	updateSolutionAppSdks: (...a: unknown[]) =>
-		mockUpdateSolutionAppSdks(...a),
+	updateSolutionAppSdks: (...a: unknown[]) => mockUpdateSolutionAppSdks(...a),
 	updateSolution: (...a: unknown[]) => mockUpdateSolution(...a),
 	deleteSolution: (...a: unknown[]) => mockDeleteSolution(...a),
 	uninstallSolution: (...a: unknown[]) => mockUninstallSolution(...a),
@@ -124,10 +136,18 @@ vi.mock("@/services/solutions", () => ({
 	downloadSolutionExportJob: (...a: unknown[]) =>
 		mockDownloadSolutionExportJob(...a),
 	syncSolution: (...a: unknown[]) => mockSyncSolution(...a),
+	previewSolutionFromRepo: (...a: unknown[]) =>
+		mockPreviewSolutionFromRepo(...a),
+	disconnectSolutionGit: (...a: unknown[]) => mockDisconnectSolutionGit(...a),
 	getSolutionCaptureCandidates: (...a: unknown[]) =>
 		mockGetSolutionCaptureCandidates(...a),
 	captureSolutionEntities: (...a: unknown[]) =>
 		mockCaptureSolutionEntities(...a),
+}));
+
+const mockObservePlatformJob = vi.fn();
+vi.mock("@/services/platformJobs", () => ({
+	observePlatformJob: (...args: unknown[]) => mockObservePlatformJob(...args),
 }));
 
 vi.mock("@/services/workflowKeys", () => ({
@@ -237,6 +257,11 @@ beforeEach(() => {
 		solution_id: "sol-1",
 		accepted: [],
 		skipped: [],
+	});
+	mockPreviewSolutionFromRepo.mockResolvedValue({ diff: {} });
+	mockObservePlatformJob.mockReturnValue({
+		promise: Promise.resolve(undefined),
+		cancel: vi.fn(),
 	});
 	mockListSolutionExportJobs.mockResolvedValue({ jobs: [] });
 	mockCreateSolutionExportJob.mockResolvedValue({
@@ -608,20 +633,17 @@ describe("SolutionDetail", () => {
 		).toBeInTheDocument();
 	});
 
-	it("opens workflow execution from the shared card and preserves the Solution return route", async () => {
+	it("opens workflow execution from the shared card", async () => {
 		const { user } = await renderPage();
 		await screen.findByTestId("solution-detail");
 
 		await user.click(screen.getByTestId("tab-contents"));
 		await user.click(screen.getByTestId("chip-workflows"));
-		const execute = screen.getByRole("button", {
-			name: "Sync Tickets",
-		});
-		await user.click(execute);
-
-		expect(mockNavigate).toHaveBeenCalledWith(
-			"/workflows/Sync%20Tickets/execute?from=solution:sol-1",
-		);
+		expect(
+			screen
+				.getAllByRole("link", { name: "Sync Tickets" })
+				.map((link) => link.getAttribute("href")),
+		).toContain("/workflows/Sync%20Tickets/execute?from=solution:sol-1");
 	});
 
 	it("opens the shared form card without exposing edit controls", async () => {
@@ -635,10 +657,11 @@ describe("SolutionDetail", () => {
 			screen.queryByRole("button", { name: /edit form/i }),
 		).not.toBeInTheDocument();
 
-		await user.click(screen.getByRole("button", { name: "Ticket Intake" }));
-		expect(mockNavigate).toHaveBeenCalledWith(
-			"/execute/form-1?from=solution:sol-1",
-		);
+		expect(
+			screen
+				.getAllByRole("link", { name: "Ticket Intake" })
+				.map((link) => link.getAttribute("href")),
+		).toContain("/execute/form-1?from=solution:sol-1");
 	});
 
 	it("opens sharing for a solution-managed form without exposing edit controls", async () => {
@@ -675,11 +698,11 @@ describe("SolutionDetail", () => {
 			"src",
 			APP_LOGO_DATA_URL,
 		);
-		await user.click(screen.getByRole("button", { name: "Solution App" }));
-
-		expect(mockNavigate).toHaveBeenCalledWith(
-			"/apps/solution-app?from=solution:sol-1",
-		);
+		expect(
+			screen
+				.getAllByRole("link", { name: "Solution App" })
+				.map((link) => link.getAttribute("href")),
+		).toContain("/apps/solution-app?from=solution:sol-1");
 	});
 
 	it("navigates a table row to its entity page with ?from=solution:", async () => {
@@ -693,6 +716,24 @@ describe("SolutionDetail", () => {
 		await user.click(screen.getByRole("row", { name: /customers/i }));
 		expect(mockNavigate).toHaveBeenCalledWith(
 			"/tables/tbl-1?from=solution:sol-1",
+		);
+	});
+
+	it("opens entity table row hrefs on ctrl-click with ?from=solution:", async () => {
+		const open = vi.spyOn(window, "open").mockImplementation(() => null);
+		const { user } = await renderPage();
+		await screen.findByTestId("solution-detail");
+
+		await user.click(screen.getByTestId("tab-contents"));
+		await user.click(screen.getByTestId("chip-tables"));
+		const row = screen.getByRole("row", { name: /customers/i });
+		fireEvent.click(within(row).getAllByText("-")[0], {
+			ctrlKey: true,
+		});
+
+		expect(open).toHaveBeenCalledWith(
+			"/tables/tbl-1?from=solution:sol-1",
+			"_blank",
 		);
 	});
 
@@ -757,10 +798,66 @@ describe("SolutionDetail", () => {
 		await screen.findByTestId("solution-detail");
 
 		expect(screen.getByTestId("update-solution")).toBeInTheDocument();
+		expect(
+			screen.getByRole("button", { name: "Connect Git" }),
+		).toBeInTheDocument();
 		expect(screen.queryByTestId("update-now")).not.toBeInTheDocument();
 		expect(
 			screen.queryByTestId("update-available-badge"),
 		).not.toBeInTheDocument();
+	});
+
+	it("offers Update from the configured ref and Disconnect Git for a connected install", async () => {
+		const entities = makeEntities();
+		entities.solution = {
+			...entities.solution,
+			git_connected: true,
+			git_repo_url: "https://github.com/acme/sol",
+			git_ref: "main",
+		} as unknown as typeof entities.solution;
+		mockGetSolutionEntities.mockResolvedValue(entities);
+
+		await renderPage();
+		await screen.findByTestId("solution-detail");
+
+		expect(
+			screen.getByRole("button", { name: "Update from main" }),
+		).toBeInTheDocument();
+		expect(
+			screen.getByRole("button", { name: "Disconnect Git" }),
+		).toBeInTheDocument();
+		expect(screen.getByTestId("git-provenance")).toHaveTextContent(
+			"https://github.com/acme/sol @ main",
+		);
+	});
+
+	it("confirms disconnect before making the solution manually writable", async () => {
+		mockDisconnectSolutionGit.mockResolvedValue({ id: "sol-1" });
+		const entities = makeEntities();
+		entities.solution = {
+			...entities.solution,
+			git_connected: true,
+			git_repo_url: "https://github.com/acme/sol",
+			git_ref: "main",
+		} as unknown as typeof entities.solution;
+		mockGetSolutionEntities.mockResolvedValue(entities);
+
+		const { user } = await renderPage();
+		await screen.findByTestId("solution-detail");
+		await user.click(
+			screen.getByRole("button", { name: "Disconnect Git" }),
+		);
+
+		expect(
+			await screen.findByRole("heading", { name: "Disconnect Git?" }),
+		).toBeInTheDocument();
+		expect(mockDisconnectSolutionGit).not.toHaveBeenCalled();
+		await user.click(
+			screen.getByRole("button", { name: "Disconnect Git" }),
+		);
+		await waitFor(() =>
+			expect(mockDisconnectSolutionGit).toHaveBeenCalledWith("sol-1"),
+		);
 	});
 
 	it("surfaces 'Update now' + an Update-available badge for a git-connected install with an available update", async () => {
@@ -817,6 +914,70 @@ describe("SolutionDetail", () => {
 		);
 	});
 
+	it("refreshes the Solution after a queued Git sync reaches a terminal success", async () => {
+		mockSyncSolution.mockResolvedValue({ job_id: "solution-sync-job" });
+		const entities = makeEntities();
+		entities.solution = {
+			...entities.solution,
+			git_connected: true,
+			git_repo_url: "https://github.com/acme/sol",
+			git_ref: "main",
+		} as unknown as typeof entities.solution;
+		mockGetSolutionEntities.mockResolvedValue(entities);
+
+		const { user } = await renderPage();
+		await screen.findByTestId("solution-detail");
+		await user.click(screen.getByTestId("update-now"));
+		await user.click(screen.getByTestId("confirm-update-now"));
+
+		await waitFor(() =>
+			expect(mockObservePlatformJob).toHaveBeenCalledWith(
+				"solution-sync-job",
+				expect.any(Function),
+			),
+		);
+		const entityReadsBeforeTerminal =
+			mockGetSolutionEntities.mock.calls.length;
+
+		act(() => wsMocks.jobSpecificCallback?.({ status: "running" }));
+		expect(mockGetSolutionEntities).toHaveBeenCalledTimes(
+			entityReadsBeforeTerminal,
+		);
+
+		act(() => wsMocks.jobSpecificCallback?.({ status: "succeeded" }));
+		await waitFor(() =>
+			expect(mockGetSolutionEntities.mock.calls.length).toBeGreaterThan(
+				entityReadsBeforeTerminal,
+			),
+		);
+	});
+
+	it("refreshes the Solution after a queued Git sync fails terminally", async () => {
+		mockSyncSolution.mockResolvedValue({ job_id: "failed-sync-job" });
+		const entities = makeEntities();
+		entities.solution = {
+			...entities.solution,
+			git_connected: true,
+			git_repo_url: "https://github.com/acme/sol",
+			git_ref: "main",
+		} as unknown as typeof entities.solution;
+		mockGetSolutionEntities.mockResolvedValue(entities);
+
+		const { user } = await renderPage();
+		await screen.findByTestId("solution-detail");
+		await user.click(screen.getByTestId("update-now"));
+		await user.click(screen.getByTestId("confirm-update-now"));
+		const entityReadsBeforeTerminal =
+			mockGetSolutionEntities.mock.calls.length;
+
+		act(() => wsMocks.jobSpecificCallback?.({ status: "failed" }));
+		await waitFor(() =>
+			expect(mockGetSolutionEntities.mock.calls.length).toBeGreaterThan(
+				entityReadsBeforeTerminal,
+			),
+		);
+	});
+
 	it("keeps Solution app SDK update action busy until durable jobs reach terminal state", async () => {
 		mockGetSolutionSdkStatus.mockResolvedValue({
 			solution_id: "sol-1",
@@ -851,9 +1012,9 @@ describe("SolutionDetail", () => {
 		await user.click(screen.getByTestId("solution-actions"));
 		await user.click(screen.getByTestId("update-solution-app-sdks"));
 		await user.click(screen.getByTestId("solution-actions"));
-		expect(screen.getByTestId("update-solution-app-sdks")).toHaveTextContent(
-			"Updating app SDKs",
-		);
+		expect(
+			screen.getByTestId("update-solution-app-sdks"),
+		).toHaveTextContent("Updating app SDKs");
 		expect(screen.getByTestId("update-solution-app-sdks")).toHaveAttribute(
 			"aria-disabled",
 			"true",
@@ -869,9 +1030,9 @@ describe("SolutionDetail", () => {
 				title: "Update app SDK",
 			});
 		});
-		expect(screen.getByTestId("update-solution-app-sdks")).toHaveTextContent(
-			"Updating app SDKs",
-		);
+		expect(
+			screen.getByTestId("update-solution-app-sdks"),
+		).toHaveTextContent("Updating app SDKs");
 
 		act(() => {
 			wsMocks.platformJobCallback?.({
@@ -889,10 +1050,9 @@ describe("SolutionDetail", () => {
 				screen.getByTestId("update-solution-app-sdks"),
 			).toHaveTextContent("Update app SDKs"),
 		);
-		expect(screen.getByTestId("update-solution-app-sdks")).not.toHaveAttribute(
-			"aria-disabled",
-			"true",
-		);
+		expect(
+			screen.getByTestId("update-solution-app-sdks"),
+		).not.toHaveAttribute("aria-disabled", "true");
 	});
 
 	it("renders a Files chip in Contents when the install has files", async () => {

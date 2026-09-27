@@ -12,7 +12,10 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { RecordActionsMenu } from "@/components/common/RecordActionsMenu";
-import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import {
+	DropdownMenuItem,
+	DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ManualEntityIdInput } from "./ManualEntityIdInput";
@@ -166,33 +169,55 @@ export function IntegrationMappingsTab({
 	}, [entityLabelByValue, normalizedSearch, orgsWithMappings]);
 
 	return (
-		<Card className="lg:min-h-0 lg:flex-1 lg:max-h-full">
-			<CardHeader className="flex flex-col gap-3 space-y-0 lg:flex-row lg:items-start lg:justify-between">
-				<div className="min-w-0">
-					<CardTitle>Organization Mappings</CardTitle>
-					<CardDescription>
-						Configure how each organization maps to external
-						entities
-					</CardDescription>
-				</div>
-				{/* Auto-Match Controls in header */}
-				{hasDataProvider && orgsWithMappings.length > 0 && (
-					<AutoMatchControls
-						onRunAutoMatch={onRunAutoMatch}
-						onAcceptAll={onAcceptAllSuggestions}
-						onClear={onClearSuggestions}
-						matchStats={matchStats}
-						hasSuggestions={autoMatchSuggestions.size > 0}
-						isMatching={isMatching}
-						disabled={
-							isLoadingEntities ||
-							isEntitiesError ||
-							isFetchingEntities
-						}
-					/>
+		<Card className="overflow-clip border-t-0">
+			{/*
+			 * Sticky so the tab's title, auto-match controls, and search stay
+			 * reachable once the page has scrolled the overview away. `overflow-clip`
+			 * on the Card keeps the rounded corners clipping children while still
+			 * allowing this to stick (unlike `overflow-hidden`, clip does not create
+			 * a scroll container). The bar is pulled up over the Card's own top
+			 * padding and carries the Card's top border itself, so the edge is
+			 * never cut off when pinned.
+			 */}
+			<div className="sticky top-0 z-20 -mt-(--card-spacing) flex flex-col gap-3 border-y border-border/70 bg-card pb-3 pt-(--card-spacing)">
+				<CardHeader className="flex flex-col gap-3 space-y-0 lg:flex-row lg:items-start lg:justify-between">
+					<div className="min-w-0">
+						<CardTitle>Organization Mappings</CardTitle>
+						<CardDescription>
+							Configure how each organization maps to external
+							entities
+						</CardDescription>
+					</div>
+					{/* Auto-Match Controls in header */}
+					{hasDataProvider && orgsWithMappings.length > 0 && (
+						<AutoMatchControls
+							onRunAutoMatch={onRunAutoMatch}
+							onAcceptAll={onAcceptAllSuggestions}
+							onClear={onClearSuggestions}
+							matchStats={matchStats}
+							hasSuggestions={autoMatchSuggestions.size > 0}
+							isMatching={isMatching}
+							disabled={
+								isLoadingEntities ||
+								isEntitiesError ||
+								isFetchingEntities
+							}
+						/>
+					)}
+				</CardHeader>
+				{orgsWithMappings.length > 0 && (
+					<div className="px-(--card-spacing)">
+						<MappingListToolbar
+							value={mappingSearch}
+							totalCount={orgsWithMappings.length}
+							filteredCount={filteredOrgs.length}
+							onChange={setMappingSearch}
+							onClear={() => setMappingSearch("")}
+						/>
+					</div>
 				)}
-			</CardHeader>
-			<CardContent className="lg:flex lg:min-h-0 lg:flex-1 lg:flex-col">
+			</div>
+			<CardContent>
 				{isEntitiesError && (
 					<div
 						role="alert"
@@ -240,13 +265,6 @@ export function IntegrationMappingsTab({
 								</p>
 							</div>
 						)}
-						<MappingListToolbar
-							value={mappingSearch}
-							totalCount={orgsWithMappings.length}
-							filteredCount={filteredOrgs.length}
-							onChange={setMappingSearch}
-							onClear={() => setMappingSearch("")}
-						/>
 						{filteredOrgs.length === 0 ? (
 							<div className="flex flex-col items-center justify-center rounded-[var(--bf-radius-control)] border border-dashed border-border/70 px-4 py-10 text-center">
 								<h3 className="text-base font-semibold">
@@ -267,7 +285,7 @@ export function IntegrationMappingsTab({
 							</div>
 						) : (
 							<ul
-								className="divide-y lg:min-h-0 lg:flex-1 lg:overflow-auto"
+								className="divide-y"
 								aria-label="Organization mappings"
 							>
 								{filteredOrgs.map((org) => {
@@ -403,43 +421,6 @@ function formatTimeUntil(expiresAt: string | null): string {
 	return `Expires in ${minutes}m`;
 }
 
-function ConnectedBadge({
-	expiresAt,
-	isRefreshing,
-	disabled,
-	onRefresh,
-}: {
-	expiresAt: string | null;
-	isRefreshing: boolean;
-	disabled: boolean;
-	onRefresh: () => void;
-}) {
-	return (
-		<div className="flex flex-wrap items-center gap-2">
-			<Badge className="border-[var(--bf-success)]/20 bg-[var(--bf-success-soft)] text-[var(--bf-success)]">
-				Connected
-			</Badge>
-			<span className="text-xs text-muted-foreground">
-				{formatTimeUntil(expiresAt)}
-			</span>
-			<Button
-				type="button"
-				variant="outline"
-				className="min-h-11"
-				disabled={disabled || isRefreshing}
-				onClick={onRefresh}
-			>
-				{isRefreshing ? (
-					<Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
-				) : (
-					<RefreshCw className="size-4" />
-				)}
-				{isRefreshing ? "Refreshing…" : "Refresh token"}
-			</Button>
-		</div>
-	);
-}
-
 function getConnectionState(org: OrgWithMapping) {
 	const mapping = org.mapping;
 	if (!mapping) return "none";
@@ -529,14 +510,21 @@ function IntegrationMappingRecord({
 	const isRowLocked = isActionPending || isDeletePending;
 
 	return (
-		<li className="grid min-w-0 gap-3 py-4 first:pt-0 last:pb-0 md:grid-cols-[minmax(8rem,0.8fr)_minmax(14rem,1.4fr)_minmax(7rem,0.55fr)_minmax(10rem,0.85fr)_auto] md:items-start">
+		/*
+		 * `relative` is load-bearing: the `lg:sr-only` field labels below are
+		 * `position: absolute`, and without a positioned ancestor they resolve
+		 * their containing block to the initial containing block. They would then
+		 * escape the tab's scroll clipping and inflate the document, producing a
+		 * phantom page scroll past the app shell.
+		 */
+		<li className="relative grid min-w-0 gap-3 py-4 first:pt-0 last:pb-0 lg:grid-cols-[minmax(7rem,0.8fr)_minmax(10rem,1.4fr)_minmax(6rem,0.55fr)_minmax(8rem,0.85fr)_auto] lg:items-center">
 			<section className="min-w-0 space-y-1">
 				<h3 className="min-w-0 font-medium [overflow-wrap:anywhere]">
 					{org.name}
 				</h3>
 			</section>
 			<fieldset disabled={isRowLocked} className="min-w-0 space-y-1">
-				<h4 className="text-[11px] font-medium uppercase tracking-normal text-muted-foreground md:sr-only">
+				<h4 className="text-[11px] font-medium uppercase tracking-normal text-muted-foreground lg:sr-only">
 					External entity
 				</h4>
 				{!hasDataProvider ? (
@@ -564,29 +552,31 @@ function IntegrationMappingRecord({
 					/>
 				)}
 			</fieldset>
-			<section className="min-w-0 space-y-1">
-				<h4 className="text-[11px] font-medium uppercase tracking-normal text-muted-foreground md:sr-only">
+			<section className="flex min-w-0 items-center">
+				<h4 className="text-[11px] font-medium uppercase tracking-normal text-muted-foreground lg:sr-only">
 					Mapping status
 				</h4>
 				{org.mapping ? (
 					<Badge
 						variant="default"
-						className="border-[var(--bf-success)]/20 bg-[var(--bf-success-soft)] text-[var(--bf-success)]"
+						className="shrink-0 border-[var(--bf-success)]/20 bg-[var(--bf-success-soft)] text-[var(--bf-success)]"
 					>
 						<CheckCircle2 className="h-3 w-3 mr-1" />
 						Mapped
 					</Badge>
 				) : org.formData.entity_id ? (
-					<Badge variant="secondary">
+					<Badge variant="secondary" className="shrink-0">
 						<Plus className="h-3 w-3 mr-1" />
 						New
 					</Badge>
 				) : (
-					<Badge variant="outline">Not Mapped</Badge>
+					<Badge variant="outline" className="shrink-0">
+						Not Mapped
+					</Badge>
 				)}
 			</section>
-			<section className="min-w-0 space-y-1">
-				<h4 className="text-[11px] font-medium uppercase tracking-normal text-muted-foreground md:sr-only">
+			<section className="flex min-w-0 flex-col items-start gap-1">
+				<h4 className="text-[11px] font-medium uppercase tracking-normal text-muted-foreground lg:sr-only">
 					Connection
 				</h4>
 				{!hasOAuth ? (
@@ -594,98 +584,94 @@ function IntegrationMappingRecord({
 						OAuth not configured
 					</span>
 				) : connectionState === "connected" ? (
-					<ConnectedBadge
-						expiresAt={org.mapping?.connection_expires_at ?? null}
-						isRefreshing={isRefreshPending}
-						disabled={isRowLocked}
-						onRefresh={() => onRefreshMapping(org)}
-					/>
+					<div className="flex flex-wrap items-center gap-2">
+						<Badge className="shrink-0 border-[var(--bf-success)]/20 bg-[var(--bf-success-soft)] text-[var(--bf-success)]">
+							Connected
+						</Badge>
+						<span className="text-xs text-muted-foreground">
+							{formatTimeUntil(
+								org.mapping?.connection_expires_at ?? null,
+							)}
+						</span>
+					</div>
 				) : connectionState === "failed" ? (
-					<div className="space-y-2">
-						<Badge variant="destructive">Failed</Badge>
+					<>
+						<Badge variant="destructive" className="shrink-0">
+							Failed
+						</Badge>
 						{org.mapping?.connection_message && (
 							<p className="text-sm text-destructive [overflow-wrap:anywhere]">
 								{org.mapping.connection_message}
 							</p>
 						)}
-						<Button
-							type="button"
-							variant="outline"
-							className="min-h-11"
-							disabled={isRowLocked || isConnectPending}
-							onClick={() => onConnectMapping(org)}
-						>
-							{isConnectPending ? (
-								<Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
-							) : null}
-							{isConnectPending
-								? getConnectionActionPendingLabel(
-										connectionState,
-									)
-								: getConnectionActionLabel(connectionState)}
-						</Button>
-					</div>
+					</>
 				) : connectionState === "expired" ? (
-					<div className="space-y-2">
-						<Badge variant="destructive">Expired</Badge>
+					<>
+						<Badge variant="destructive" className="shrink-0">
+							Expired
+						</Badge>
 						<p className="text-sm text-destructive">
 							Token expired - reconnect required
 						</p>
-						<Button
-							type="button"
-							variant="outline"
-							className="min-h-11"
-							disabled={isRowLocked || isConnectPending}
-							onClick={() => onConnectMapping(org)}
-						>
-							{isConnectPending ? (
-								<Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
-							) : null}
-							{isConnectPending
-								? getConnectionActionPendingLabel(
-										connectionState,
-									)
-								: getConnectionActionLabel(connectionState)}
-						</Button>
-					</div>
+					</>
 				) : (
-					<Button
-						size="sm"
-						variant="outline"
-						className="min-h-11"
-						onClick={() => onConnectMapping(org)}
-						disabled={isRowLocked || isConnectPending}
-					>
-						{isConnectPending ? (
-							<Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
-						) : null}
-						{isConnectPending
-							? getConnectionActionPendingLabel(connectionState)
-							: getConnectionActionLabel(connectionState)}
-					</Button>
+					<span className="text-xs text-muted-foreground">
+						Not connected
+					</span>
 				)}
 			</section>
-			<section className="min-w-0 space-y-1 md:justify-self-end">
-				<h4 className="text-[11px] font-medium uppercase tracking-normal text-muted-foreground md:sr-only">
+			<section className="min-w-0 space-y-1 lg:justify-self-end">
+				<h4 className="text-[11px] font-medium uppercase tracking-normal text-muted-foreground lg:sr-only">
 					Actions
 				</h4>
-				<div className="flex flex-wrap gap-2 md:justify-end">
-					<Button
-						size="sm"
-						variant="ghost"
-						onClick={() => onOpenConfigDialog(org.id)}
-						title="Configure"
-						disabled={isRowLocked}
-						className="relative min-h-11"
-					>
-						<Settings className="h-4 w-4" /> Configure
-						{hasNonDefaultConfig && (
-							<span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-primary" />
-						)}
-					</Button>
+				<div className="flex flex-wrap gap-2 lg:justify-end">
 					<RecordActionsMenu
 						label={`Mapping actions for ${org.name}`}
 					>
+						<DropdownMenuItem
+							disabled={isRowLocked}
+							onSelect={() => onOpenConfigDialog(org.id)}
+						>
+							<Settings className="size-4" /> Configure
+							{hasNonDefaultConfig && (
+								<span
+									className="ml-auto size-2 shrink-0 rounded-full bg-primary"
+									aria-label="Custom configuration"
+								/>
+							)}
+						</DropdownMenuItem>
+						{hasOAuth && connectionState !== "connected" && (
+							<DropdownMenuItem
+								disabled={isRowLocked || isConnectPending}
+								onSelect={() => onConnectMapping(org)}
+							>
+								{isConnectPending ? (
+									<Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
+								) : (
+									<LinkIcon className="size-4" />
+								)}
+								{isConnectPending
+									? getConnectionActionPendingLabel(
+											connectionState,
+										)
+									: getConnectionActionLabel(connectionState)}
+							</DropdownMenuItem>
+						)}
+						{hasOAuth && connectionState === "connected" && (
+							<DropdownMenuItem
+								disabled={isRowLocked || isRefreshPending}
+								onSelect={() => onRefreshMapping(org)}
+							>
+								{isRefreshPending ? (
+									<Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
+								) : (
+									<RefreshCw className="size-4" />
+								)}
+								{isRefreshPending
+									? "Refreshing…"
+									: "Refresh token"}
+							</DropdownMenuItem>
+						)}
 						{org.mapping?.oauth_token_id && (
 							<DropdownMenuItem
 								disabled={isRowLocked || isDisconnectPending}
@@ -697,6 +683,7 @@ function IntegrationMappingRecord({
 									: "Disconnect"}
 							</DropdownMenuItem>
 						)}
+						<DropdownMenuSeparator />
 						<DropdownMenuItem
 							variant="destructive"
 							disabled={!org.mapping || isRowLocked}

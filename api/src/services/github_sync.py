@@ -13,25 +13,34 @@ Key principles:
 
 import hashlib
 import logging
+import shutil
 import subprocess
+import tempfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, Mapping
+from uuid import uuid4
 
 import yaml
 from git import Repo as GitRepo
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import Settings, get_settings
 from src.models.contracts.github import (
+    GitConnectItem,
+    GitConnectPreview,
+    GitConnectRequest,
     PreflightIssue,
     PreflightResult,
+    WorkspaceFileChange,
+    WorkspaceSyncPlan,
 )
-from src.services.git_repo_manager import GitRepoManager
+from src.services.git_repo_manager import GitRepoManager, hash_file, iter_tree_metadata
 from src.services.github_sync_entity_metadata import extract_entity_metadata
 
 if TYPE_CHECKING:
-    from typing import Literal  # used only in string annotations below
     from src.models.contracts.github import (
         AbortMergeResult,
         CommitResult,
@@ -59,6 +68,15 @@ from src.services.manifest_import import (
 logger = logging.getLogger(__name__)
 
 
+# Keep changed text content bounded while building PostgreSQL upsert statements.
+# The content of one large searchable file necessarily lives in memory for its
+# database write, but unrelated files must never accumulate behind it.
+FILE_INDEX_UPSERT_MAX_ROWS = 100
+FILE_INDEX_UPSERT_MAX_BYTES = 8 * 1024 * 1024
+GIT_CONNECT_PREVIEW_TTL = timedelta(minutes=30)
+_GIT_CONNECT_PREVIEW_KEY_PREFIX = "bifrost:git-connect-preview:"
+
+
 # =============================================================================
 # Errors
 # =============================================================================
@@ -69,187 +87,178 @@ class SyncError(Exception):
     pass
 
 
+class GitStatusError(SyncError):
+    """Git status could not be read or parsed safely."""
+    pass
+
+
+class WorkspaceMergeConflict(SyncError):
+    """The remote merge must be resolved before a workspace sync can continue."""
+
+    def __init__(self, conflicts: list) -> None:
+        super().__init__("Merge conflicts detected")
+        self.conflicts = conflicts
+
+
+class WorkspacePlanStale(SyncError):
+    """A reviewed sync plan no longer matches the checked-out workspace."""
+    pass
+
+
+class GitConnectPreviewError(SyncError):
+    """A first-connect preview is unavailable, expired, or not owned by this caller."""
+
+
+class GitConnectPreviewStale(SyncError):
+    """The workspace or remote changed after the user reviewed the preview."""
+
+
+class GitConnectDecisionError(SyncError):
+    """A chosen connect strategy is unsafe or lacks required decisions."""
+
+
+class _GitConnectPreviewRecord(BaseModel):
+    token: str
+    repository_url: str
+    branch: str
+    requested_by_user_id: str
+    organization_id: str | None
+    expires_at: datetime
+    local_fingerprint: str
+    remote_fingerprint: str
+    remote_head_sha: str | None
+    items: list[GitConnectItem]
+
+
+def _delete_keys(changes: list) -> set[tuple[str, str]]:
+    """Return the stable identities that a deletion confirmation authorizes."""
+    keys = {
+        (change.entity_type, change.entity_id)
+        for change in changes
+        if change.action == "removed" and change.entity_id is not None
+    }
+    if len(keys) != len(changes):
+        raise WorkspacePlanStale("pending entity deletions lack stable identities")
+    return keys
+
+
 # =============================================================================
 # Helpers
 # =============================================================================
 
 
-def _content_hash(content: bytes) -> str:
-    """SHA-256 of bytes."""
-    return hashlib.sha256(content).hexdigest()
+def _workspace_fingerprint(root: Path) -> str:
+    """Hash every workspace path and byte sequence, excluding Git internals."""
+    digest = hashlib.sha256()
+    paths = sorted(
+        path for path in root.rglob("*")
+        if path.is_file() and ".git" not in path.relative_to(root).parts
+    )
+    for source in paths:
+        path = source.relative_to(root).as_posix()
+        digest.update(path.encode("utf-8"))
+        digest.update(b"\0")
+        with source.open("rb") as file:
+            while chunk := file.read(8 * 1024 * 1024):
+                digest.update(chunk)
+        digest.update(b"\0")
+    return digest.hexdigest()
 
 
-def _walk_tree(root: Path) -> dict[str, bytes]:
-    """Walk a directory tree and return {relative_path: content} for all files."""
-    files: dict[str, bytes] = {}
-    for p in root.rglob("*"):
-        if p.is_dir():
+def _connect_tree_hashes(root: Path) -> dict[str, str]:
+    """Hash one workspace tree while refusing symlinked first-connect input."""
+    files: dict[str, str] = {}
+    for path in root.rglob("*"):
+        relative = path.relative_to(root)
+        if ".git" in relative.parts:
             continue
-        rel = str(p.relative_to(root))
-        # Skip .git internals
-        if rel.startswith(".git/") or rel == ".git":
-            continue
-        files[rel] = p.read_bytes()
+        if path.is_symlink():
+            raise GitConnectPreviewError(
+                f"first Git connection does not support symlinks ({relative.as_posix()})"
+            )
+        if path.is_file():
+            files[relative.as_posix()] = hash_file(path)[1]
     return files
 
 
-def _three_way_merge_dicts(
-    base: dict, ours: dict, theirs: dict
-) -> dict:
-    """3-way merge two dicts against a common base.
-
-    - Keys deleted by either side (present in base but absent in ours/theirs)
-      stay deleted unless the other side modified the value.
-    - Keys added by either side are included.
-    - When both sides modify the same key, theirs wins.
-    """
-    merged = {}
-    # Preserve key ordering: ours first, then theirs additions, then base-only
-    seen: set = set()
-    ordered_keys: list = []
-    for key in ours:
-        if key not in seen:
-            ordered_keys.append(key)
-            seen.add(key)
-    for key in theirs:
-        if key not in seen:
-            ordered_keys.append(key)
-            seen.add(key)
-    for key in base:
-        if key not in seen:
-            ordered_keys.append(key)
-            seen.add(key)
-
-    for key in ordered_keys:
-        in_base = key in base
-        in_ours = key in ours
-        in_theirs = key in theirs
-
-        if in_ours and in_theirs:
-            # Both have it — if both are dicts, recurse; otherwise theirs wins
-            if isinstance(ours[key], dict) and isinstance(theirs[key], dict):
-                base_val = base.get(key, {}) if isinstance(base.get(key), dict) else {}
-                merged[key] = _three_way_merge_dicts(base_val, ours[key], theirs[key])
-            else:
-                merged[key] = theirs[key]
-        elif in_ours and not in_theirs:
-            if in_base:
-                # Theirs deleted it — honor the deletion unless ours modified it
-                if base.get(key) != ours[key]:
-                    merged[key] = ours[key]  # Ours modified, keep it
-                # else: theirs deleted, ours unchanged → delete
-            else:
-                merged[key] = ours[key]  # Added by ours
-        elif in_theirs and not in_ours:
-            if in_base:
-                # Ours deleted it — honor the deletion unless theirs modified it
-                if base.get(key) != theirs[key]:
-                    merged[key] = theirs[key]  # Theirs modified, keep it
-                # else: ours deleted, theirs unchanged → delete
-            else:
-                merged[key] = theirs[key]  # Added by theirs
-        # else: neither has it (shouldn't happen since key came from one of them)
-
-    return merged
+def _connect_tree_fingerprint(tree: Mapping[str, str]) -> str:
+    digest = hashlib.sha256()
+    for path, sha256 in sorted(tree.items()):
+        digest.update(path.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(sha256.encode("ascii"))
+        digest.update(b"\0")
+    return digest.hexdigest()
 
 
-def _auto_resolve_manifest_conflicts(repo: GitRepo, work_dir: Path, unmerged: dict) -> set[str]:
-    """Auto-resolve .bifrost/*.yaml manifest conflicts via 3-way YAML merge.
-
-    For each conflicted manifest file:
-    1. Parse base (stage 1), ours (stage 2), and theirs (stage 3) YAML
-    2. 3-way merge respecting additions and deletions from both sides
-    3. Write merged YAML to working tree and git add
-    4. On failure, accept theirs entirely
-
-    Returns set of paths that were auto-resolved (removed from conflict list).
-    """
-    resolved_paths: set[str] = set()
-
-    for cpath in list(unmerged.keys()):
-        cpath_str = str(cpath)
-        if not (cpath_str.startswith(".bifrost/") and cpath_str.endswith(".yaml")):
-            continue
-
-        try:
-            # Parse all three sides (base, ours, theirs)
-            base_yaml: dict = {}
-            ours_yaml: dict = {}
-            theirs_yaml: dict = {}
-            try:
-                base_raw = repo.git.show(f":1:{cpath_str}")
-                base_yaml = yaml.safe_load(base_raw) or {}
-            except Exception:
-                base_yaml = {}
-            try:
-                ours_raw = repo.git.show(f":2:{cpath_str}")
-                ours_yaml = yaml.safe_load(ours_raw) or {}
-            except Exception:
-                ours_yaml = {}
-            try:
-                theirs_raw = repo.git.show(f":3:{cpath_str}")
-                theirs_yaml = yaml.safe_load(theirs_raw) or {}
-            except Exception:
-                theirs_yaml = {}
-
-            if not isinstance(ours_yaml, dict) or not isinstance(theirs_yaml, dict):
-                # Not a dict-shaped YAML — fall back to accepting theirs
-                raise ValueError("Non-dict YAML")
-            if not isinstance(base_yaml, dict):
-                base_yaml = {}
-
-            # 3-way merge respecting deletions
-            merged = _three_way_merge_dicts(base_yaml, ours_yaml, theirs_yaml)
-
-            # Write merged YAML
-            merged_yaml = yaml.dump(merged, default_flow_style=False, sort_keys=True, allow_unicode=True)
-            file_path = work_dir / cpath_str
-            file_path.parent.mkdir(parents=True, exist_ok=True)
-            file_path.write_text(merged_yaml)
-            repo.git.add(cpath_str)
-            resolved_paths.add(cpath_str)
-            logger.info(f"Auto-resolved manifest conflict: {cpath_str}")
-
-        except Exception as e:
-            # Fall back to accepting theirs entirely
-            logger.warning(f"Manifest auto-merge failed for {cpath_str}, accepting theirs: {e}")
-            try:
-                theirs_raw = repo.git.show(f":3:{cpath_str}")
-                file_path = work_dir / cpath_str
-                file_path.parent.mkdir(parents=True, exist_ok=True)
-                file_path.write_text(theirs_raw)
-                repo.git.add(cpath_str)
-                resolved_paths.add(cpath_str)
-            except Exception as fallback_err:
-                logger.error(f"Failed to accept theirs for {cpath_str}: {fallback_err}")
-
-    return resolved_paths
+def _connect_shape_conflicts(
+    local: Mapping[str, str], remote: Mapping[str, str],
+) -> list[str]:
+    """Return paths that are a file on one side and a directory on the other."""
+    conflicts: set[str] = set()
+    for files, other_files in ((local, remote), (remote, local)):
+        for path in other_files:
+            components = path.split("/")
+            for index in range(1, len(components)):
+                ancestor = "/".join(components[:index])
+                if ancestor in files:
+                    conflicts.add(ancestor)
+    return sorted(conflicts)
 
 
-def _classify_conflict_type(unmerged: dict, cpath: str) -> str:
-    """Classify conflict type from git unmerged blob stages.
+def classify_connect_trees(
+    local: Mapping[str, str], remote: Mapping[str, str],
+) -> list[GitConnectItem]:
+    """Classify the union of detached local and reviewed remote tree hashes."""
+    shape_conflicts = _connect_shape_conflicts(local, remote)
+    if shape_conflicts:
+        raise GitConnectPreviewError(
+            "first Git connection cannot reconcile file/directory shape conflict(s): "
+            + ", ".join(shape_conflicts)
+        )
+    items: list[GitConnectItem] = []
+    for path in sorted(set(local) | set(remote)):
+        local_hash = local.get(path)
+        remote_hash = remote.get(path)
+        if local_hash is None:
+            classification: Literal["local_only", "remote_only", "identical", "conflict"] = "remote_only"
+        elif remote_hash is None:
+            classification = "local_only"
+        elif local_hash == remote_hash:
+            classification = "identical"
+        else:
+            classification = "conflict"
+        items.append(GitConnectItem(
+            path=path,
+            classification=classification,
+            local_sha256=local_hash,
+            remote_sha256=remote_hash,
+        ))
+    return items
 
-    Stage 1 = common ancestor, Stage 2 = ours, Stage 3 = theirs.
-    """
-    # unmerged keys may be PathLike — find matching entry by str comparison
-    entries = None
-    for key, val in unmerged.items():
-        if str(key) == cpath:
-            entries = val
-            break
-    if not entries:
-        return "both_modified"
-    stages = {stage for stage, _blob in entries}
-    if stages >= {1, 2, 3}:
-        return "both_modified"
-    elif stages == {2, 3}:
-        return "both_added"
-    elif stages == {1, 3}:
-        return "deleted_by_us"
-    elif stages == {1, 2}:
-        return "deleted_by_them"
-    else:
-        return "both_modified"
+
+def resolve_connect_items(
+    items: list[GitConnectItem],
+    *,
+    strategy: Literal["publish_local", "start_from_remote", "reconcile"],
+    decisions: Mapping[str, Literal["local", "remote"]],
+) -> dict[str, Literal["local", "remote"]]:
+    """Validate decisions and return the source selected for each conflicting path."""
+    conflicts = {item.path for item in items if item.classification == "conflict"}
+    if strategy != "reconcile":
+        if decisions:
+            raise GitConnectDecisionError("path decisions are only valid for reconcile")
+        return {}
+    if set(decisions) != conflicts:
+        missing = sorted(conflicts - set(decisions))
+        extra = sorted(set(decisions) - conflicts)
+        detail = []
+        if missing:
+            detail.append("missing conflict decisions: " + ", ".join(missing))
+        if extra:
+            detail.append("unknown conflict decisions: " + ", ".join(extra))
+        raise GitConnectDecisionError("; ".join(detail))
+    return dict(decisions)
 
 
 # =============================================================================
@@ -277,6 +286,266 @@ class GitHubSyncService:
         self.branch = branch
         self.repo_manager = GitRepoManager(settings or get_settings())
         self._resolver = ManifestResolver(db)
+
+    @staticmethod
+    def _connect_preview_key(token: str) -> str:
+        return f"{_GIT_CONNECT_PREVIEW_KEY_PREFIX}{token}"
+
+    @staticmethod
+    def _clone_connect_remote(destination: Path, repository_url: str, branch: str) -> GitRepo | None:
+        """Clone the reviewed remote branch, treating an empty remote as an empty tree."""
+        try:
+            repo = GitRepo.clone_from(repository_url, str(destination), branch=branch)
+        except Exception as exc:
+            message = str(exc).lower()
+            if "empty repository" in message:
+                return None
+            # Git reports both an empty repository and a missing branch as
+            # "remote branch ... not found" when a branch is requested.  A
+            # branchless clone distinguishes those cases without trusting the
+            # error text as the decision.
+            if "remote branch" in message:
+                if destination.exists():
+                    shutil.rmtree(destination)
+                try:
+                    fallback = GitRepo.clone_from(repository_url, str(destination))
+                except Exception as fallback_exc:
+                    if "empty repository" in str(fallback_exc).lower():
+                        return None
+                    raise GitConnectPreviewError(
+                        f"could not read remote branch {branch}: {fallback_exc}"
+                    ) from fallback_exc
+                if not fallback.head.is_valid():
+                    return None
+            raise GitConnectPreviewError(f"could not read remote branch {branch}: {exc}") from exc
+        return repo
+
+    @classmethod
+    async def load_connect_preview(
+        cls,
+        token: str,
+        *,
+        requested_by_user_id: str,
+        organization_id: str | None,
+    ) -> _GitConnectPreviewRecord:
+        """Load an opaque preview only for its requester and original organization."""
+        from src.core.cache.redis_client import get_shared_redis
+
+        redis = await get_shared_redis()
+        raw = await redis.get(cls._connect_preview_key(token))
+        if raw is None:
+            raise GitConnectPreviewError("Git connection preview was not found or has expired")
+        try:
+            record = _GitConnectPreviewRecord.model_validate_json(raw)
+        except Exception as exc:
+            raise GitConnectPreviewError("Git connection preview is invalid") from exc
+        if record.expires_at <= datetime.now(timezone.utc):
+            await redis.delete(cls._connect_preview_key(token))
+            raise GitConnectPreviewError("Git connection preview has expired")
+        if (
+            record.requested_by_user_id != requested_by_user_id
+            or record.organization_id != organization_id
+        ):
+            raise GitConnectPreviewError("Git connection preview was not found")
+        return record
+
+    async def preview_connect(
+        self,
+        repository_url: str,
+        branch: str,
+        *,
+        requested_by_user_id: str,
+        organization_id: str | None,
+    ) -> GitConnectPreview:
+        """Compare a detached workspace and remote branch without changing either."""
+        async with self.repo_manager.checkout_readonly() as work_dir:
+            local = _connect_tree_hashes(work_dir)
+            with tempfile.TemporaryDirectory(prefix="bifrost-connect-preview-") as raw_remote:
+                remote_root = Path(raw_remote) / "remote"
+                remote_repo = self._clone_connect_remote(remote_root, self.repo_url, branch)
+                remote = {} if remote_repo is None else _connect_tree_hashes(remote_root)
+                remote_head_sha = (
+                    remote_repo.head.commit.hexsha
+                    if remote_repo is not None and remote_repo.head.is_valid()
+                    else None
+                )
+
+        items = classify_connect_trees(local, remote)
+        token = str(uuid4())
+        record = _GitConnectPreviewRecord(
+            token=token,
+            repository_url=repository_url,
+            branch=branch,
+            requested_by_user_id=requested_by_user_id,
+            organization_id=organization_id,
+            expires_at=datetime.now(timezone.utc) + GIT_CONNECT_PREVIEW_TTL,
+            local_fingerprint=_connect_tree_fingerprint(local),
+            remote_fingerprint=_connect_tree_fingerprint(remote),
+            remote_head_sha=remote_head_sha,
+            items=items,
+        )
+        from src.core.cache.redis_client import get_shared_redis
+
+        redis = await get_shared_redis()
+        await redis.setex(
+            self._connect_preview_key(token),
+            int(GIT_CONNECT_PREVIEW_TTL.total_seconds()),
+            record.model_dump_json(),
+        )
+        return GitConnectPreview(
+            token=token,
+            repository_url=repository_url,
+            branch=branch,
+            state=(
+                "ready"
+                if all(item.classification == "identical" for item in items)
+                else "requires_reconciliation"
+            ),
+            items=items,
+        )
+
+    @staticmethod
+    def _replace_connect_workspace(destination: Path, source: Path) -> None:
+        """Replace the checked-out workspace from a reviewed, symlink-free tree."""
+        for child in destination.iterdir():
+            if child.is_dir():
+                shutil.rmtree(child)
+            else:
+                child.unlink()
+        for child in source.iterdir():
+            target = destination / child.name
+            if child.is_dir():
+                shutil.copytree(child, target)
+            else:
+                shutil.copy2(child, target)
+
+    @staticmethod
+    def _copy_connect_file(source_root: Path, destination_root: Path, path: str) -> None:
+        source = source_root / path
+        if not source.is_file():
+            raise GitConnectPreviewStale(f"reviewed source file disappeared: {path}")
+        destination = destination_root / path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if destination.exists():
+            destination.unlink()
+        shutil.copy2(source, destination)
+
+    def _configure_connect_repo(self, repo: GitRepo) -> None:
+        if "origin" in [remote.name for remote in repo.remotes]:
+            repo.remotes.origin.set_url(self.repo_url)
+        else:
+            repo.create_remote("origin", self.repo_url)
+        with repo.config_writer() as writer:
+            writer.set_value("user", "name", "Bifrost")
+            writer.set_value("user", "email", "bifrost@localhost")
+
+    async def _commit_connect_tree(self, work_dir: Path, repo: GitRepo) -> None:
+        """Commit reviewed files without regenerating a manifest from old DB state."""
+        repo.git.add(A=True)
+        if repo.head.is_valid() and not repo.index.diff("HEAD") and not repo.untracked_files:
+            return
+        preflight = await self._run_preflight(work_dir)
+        if not preflight.valid:
+            raise GitConnectDecisionError("reviewed workspace failed preflight validation")
+        repo.index.commit("Connect Bifrost workspace")
+
+    async def desktop_connect(
+        self,
+        request: GitConnectRequest,
+        *,
+        requested_by_user_id: str,
+        organization_id: str | None,
+        progress_fn=None,
+    ) -> "SyncResult":
+        """Materialize a reviewed first connection, then use the normal sync apply path."""
+        record = await self.load_connect_preview(
+            request.preview_token,
+            requested_by_user_id=requested_by_user_id,
+            organization_id=organization_id,
+        )
+        decisions = resolve_connect_items(
+            record.items, strategy=request.strategy, decisions=request.decisions
+        )
+        async with self.repo_manager.checkout() as work_dir:
+            local = _connect_tree_hashes(work_dir)
+            if _connect_tree_fingerprint(local) != record.local_fingerprint:
+                raise GitConnectPreviewStale("workspace changed after the connection preview")
+            with tempfile.TemporaryDirectory(prefix="bifrost-connect-apply-") as raw_remote:
+                remote_root = Path(raw_remote) / "remote"
+                remote_repo = self._clone_connect_remote(remote_root, self.repo_url, record.branch)
+                remote = {} if remote_repo is None else _connect_tree_hashes(remote_root)
+                remote_head_sha = (
+                    remote_repo.head.commit.hexsha
+                    if remote_repo is not None and remote_repo.head.is_valid()
+                    else None
+                )
+                if (
+                    _connect_tree_fingerprint(remote) != record.remote_fingerprint
+                    or remote_head_sha != record.remote_head_sha
+                ):
+                    raise GitConnectPreviewStale("remote branch changed after the connection preview")
+
+                if request.strategy == "publish_local":
+                    if remote_head_sha is not None or remote:
+                        raise GitConnectDecisionError(
+                            "publish_local refuses a nonempty remote branch; choose reconcile instead"
+                        )
+                    git_dir = work_dir / ".git"
+                    if git_dir.exists():
+                        shutil.rmtree(git_dir)
+                    repo = GitRepo.init(str(work_dir))
+                    self._configure_connect_repo(repo)
+                    await self._commit_connect_tree(work_dir, repo)
+                elif request.strategy == "start_from_remote":
+                    discards_local = any(
+                        item.classification in {"local_only", "conflict"}
+                        for item in record.items
+                    )
+                    if discards_local and not request.confirm_destructive:
+                        raise GitConnectDecisionError(
+                            "start_from_remote would discard local content; set confirm_destructive"
+                        )
+                    if remote_repo is None:
+                        raise GitConnectDecisionError(
+                            "start_from_remote requires a nonempty remote branch"
+                        )
+                    self._replace_connect_workspace(work_dir, remote_root)
+                    repo = GitRepo(str(work_dir))
+                    self._configure_connect_repo(repo)
+                else:
+                    if remote_repo is None:
+                        git_dir = work_dir / ".git"
+                        if git_dir.exists():
+                            shutil.rmtree(git_dir)
+                        repo = GitRepo.init(str(work_dir))
+                        self._configure_connect_repo(repo)
+                        await self._commit_connect_tree(work_dir, repo)
+                    else:
+                        local_root = Path(raw_remote) / "local"
+                        local_root.mkdir()
+                        for item in record.items:
+                            if item.local_sha256 is not None:
+                                self._copy_connect_file(work_dir, local_root, item.path)
+                        self._replace_connect_workspace(work_dir, remote_root)
+                        for item in record.items:
+                            if item.classification == "local_only" or (
+                                item.classification == "conflict" and decisions[item.path] == "local"
+                            ):
+                                self._copy_connect_file(local_root, work_dir, item.path)
+                        repo = GitRepo(str(work_dir))
+                        self._configure_connect_repo(repo)
+                        await self._commit_connect_tree(work_dir, repo)
+
+                if progress_fn:
+                    await progress_fn("Validating reconciled workspace")
+                plan = await self.prepare_desktop_sync(work_dir, repo, progress_fn=progress_fn)
+                return await self.apply_desktop_sync(
+                    work_dir,
+                    repo,
+                    plan,
+                    confirm_deletes=False,
+                    progress_fn=progress_fn,
+                )
 
     # -----------------------------------------------------------------
     # Preflight: validate repo health
@@ -342,120 +611,142 @@ class GitHubSyncService:
         """Core status logic. Returns changed files and conflicts."""
         from src.models.contracts.github import ChangedFile, MergeConflict, WorkingTreeStatus
 
-        # Check for unresolved conflicts BEFORE git add (which would resolve them)
-        conflict_list: list[MergeConflict] = []
+        def _read_stage(path: str, stage: int) -> str:
+            try:
+                return repo.git.show(f":{stage}:{path}")
+            except Exception as e:
+                raise GitStatusError(
+                    f"status failed reading conflict stage {stage} for {path}: {e}"
+                ) from e
+
         try:
-            unmerged = repo.index.unmerged_blobs()
-        except Exception:
-            unmerged = {}
-
-        if unmerged:
-            # Auto-resolve .bifrost/*.yaml manifest conflicts
-            try:
-                _auto_resolve_manifest_conflicts(repo, work_dir, unmerged)
-                unmerged = repo.index.unmerged_blobs()
-            except Exception as e:
-                logger.warning(f"Manifest auto-resolve in status failed: {e}")
-
-            for cpath in sorted(str(k) for k in unmerged.keys()):
-                ours_content = None
-                theirs_content = None
-                try:
-                    ours_content = repo.git.show(f":2:{cpath}")
-                except Exception as e:
-                    # Stage 2 (ours) may not exist in some conflict types (e.g. delete/modify)
-                    logger.debug(f"could not read stage 2 for {cpath}: {e}")
-                try:
-                    theirs_content = repo.git.show(f":3:{cpath}")
-                except Exception as e:
-                    # Stage 3 (theirs) may not exist (e.g. modify/delete)
-                    logger.debug(f"could not read stage 3 for {cpath}: {e}")
-                metadata = extract_entity_metadata(cpath)
-                conflict_list.append(MergeConflict(
-                    path=cpath,
-                    ours_content=ours_content,
-                    theirs_content=theirs_content,
-                    display_name=metadata.display_name,
-                    entity_type=metadata.entity_type,
-                    conflict_type=_classify_conflict_type(unmerged, cpath),
-                ))
-
-        # Detect merge state and ahead/behind
-        merging = (work_dir / ".git" / "MERGE_HEAD").exists()
-        ahead = 0
-        behind = 0
-        if repo.head.is_valid():
-            try:
-                ahead = int(repo.git.rev_list("--count", f"origin/{self.branch}..HEAD"))
-            except Exception as e:
-                # No origin/<branch> ref locally (never fetched) — leave ahead=0
-                logger.debug(f"could not compute commits ahead of origin/{self.branch}: {e}")
-            try:
-                behind = int(repo.git.rev_list("--count", f"HEAD..origin/{self.branch}"))
-            except Exception as e:
-                # No origin/<branch> ref locally — leave behind=0
-                logger.debug(f"could not compute commits behind origin/{self.branch}: {e}")
-
-        if conflict_list:
-            return WorkingTreeStatus(
-                changed_files=[],
-                total_changes=0,
-                conflicts=conflict_list,
-                commits_ahead=ahead,
-                commits_behind=behind,
-                merging=merging,
+            # `git status` normally refreshes index stat information. Disable optional
+            # locks so inspection cannot rewrite the index while gathering status.
+            porcelain = repo.git.status(
+                "--porcelain=v2", "-z", env={"GIT_OPTIONAL_LOCKS": "0"}
             )
+        except Exception as e:
+            raise GitStatusError(f"status failed: {e}") from e
 
-        # Stage everything to get accurate diff
-        repo.git.add(A=True)
+        if porcelain and not porcelain.endswith("\0"):
+            raise GitStatusError("status failed: malformed porcelain-v2 output")
 
+        conflict_types = {
+            "UU": "both_modified",
+            "AA": "both_added",
+            "UD": "deleted_by_them",
+            "DU": "deleted_by_us",
+            "AU": "both_modified",
+            "UA": "both_modified",
+            "DD": "both_modified",
+        }
+        ours_stages = {"UU", "AA", "UD", "AU"}
+        theirs_stages = {"UU", "AA", "DU", "UA"}
         changed: list[ChangedFile] = []
+        conflicts: list[MergeConflict] = []
+        records = porcelain.split("\0")
+        record_index = 0
+        while record_index < len(records) - 1:
+            record = records[record_index]
+            record_index += 1
+            if not record:
+                raise GitStatusError("status failed: malformed empty porcelain-v2 record")
 
-        if repo.head.is_valid():
-            porcelain = repo.git.status("--porcelain")
-            for line in porcelain.strip().split("\n"):
-                if not line.strip():
-                    continue
-                status_code = line[:2].strip()
-                path = line[3:].strip()
-                if path.startswith('"') and path.endswith('"'):
-                    path = path[1:-1]
-
-                if status_code in ("A", "??"):
-                    change_type = "added"
-                elif status_code == "D":
-                    change_type = "deleted"
-                elif status_code == "R":
-                    change_type = "renamed"
-                    if " -> " in path:
-                        path = path.split(" -> ", 1)[1]
-                else:
-                    change_type = "modified"
-
+            status_code = ""
+            path: str | None = None
+            if record.startswith("1 "):
+                fields = record.split(" ", 8)
+                if len(fields) != 9 or len(fields[1]) != 2 or not fields[8]:
+                    raise GitStatusError("status failed: malformed porcelain-v2 ordinary record")
+                status_code = fields[1]
+                path = fields[8]
+            elif record.startswith("2 "):
+                fields = record.split(" ", 9)
+                if (
+                    len(fields) != 10
+                    or len(fields[1]) != 2
+                    or not fields[9]
+                    or record_index >= len(records) - 1
+                    or not records[record_index]
+                ):
+                    raise GitStatusError("status failed: malformed porcelain-v2 rename record")
+                status_code = fields[1]
+                path = fields[9]
+                # A rename/copy record is followed by its original path.
+                record_index += 1
+            elif record.startswith("u "):
+                fields = record.split(" ", 10)
+                if len(fields) != 11 or fields[1] not in conflict_types or not fields[10]:
+                    raise GitStatusError("status failed: malformed porcelain-v2 conflict record")
+                status_code = fields[1]
+                path = fields[10]
                 metadata = extract_entity_metadata(path)
-                changed.append(ChangedFile(
+                conflicts.append(MergeConflict(
                     path=path,
-                    change_type=change_type,
+                    ours_content=_read_stage(path, 2) if status_code in ours_stages else None,
+                    theirs_content=_read_stage(path, 3) if status_code in theirs_stages else None,
                     display_name=metadata.display_name,
                     entity_type=metadata.entity_type,
+                    conflict_type=conflict_types[status_code],
                 ))
-        else:
-            for path in repo.untracked_files:
-                metadata = extract_entity_metadata(path)
-                changed.append(ChangedFile(
-                    path=path,
-                    change_type="added",
-                    display_name=metadata.display_name,
-                    entity_type=metadata.entity_type,
-                ))
+                continue
+            elif record.startswith("? "):
+                if not record[2:]:
+                    raise GitStatusError("status failed: malformed porcelain-v2 untracked record")
+                status_code = "?"
+                path = record[2:]
+            elif record.startswith("! "):
+                if not record[2:]:
+                    raise GitStatusError("status failed: malformed porcelain-v2 ignored record")
+                continue
+            else:
+                raise GitStatusError("status failed: unknown porcelain-v2 record")
 
-        # Unstage (reset) so we don't pollute the working tree
-        if repo.head.is_valid():
-            repo.git.reset("HEAD")
+            if status_code != "?" and any(code not in ".MTADRCU" for code in status_code):
+                raise GitStatusError("status failed: invalid porcelain-v2 status code")
+            if path is None:
+                raise GitStatusError("status failed: missing porcelain-v2 path")
+            if status_code == "?" or "A" in status_code:
+                change_type = "added"
+            elif "D" in status_code:
+                change_type = "deleted"
+            elif "R" in status_code:
+                change_type = "renamed"
+            else:
+                change_type = "modified"
+
+            metadata = extract_entity_metadata(path)
+            changed.append(ChangedFile(
+                path=path,
+                change_type=change_type,
+                display_name=metadata.display_name,
+                entity_type=metadata.entity_type,
+            ))
+
+        try:
+            merging = (work_dir / ".git" / "MERGE_HEAD").exists()
+            ahead = 0
+            behind = 0
+            if repo.head.is_valid():
+                try:
+                    ahead = int(repo.git.rev_list("--count", f"origin/{self.branch}..HEAD"))
+                except Exception as e:
+                    # No origin/<branch> ref locally (never fetched) — leave ahead=0
+                    logger.debug(f"could not compute commits ahead of origin/{self.branch}: {e}")
+                try:
+                    behind = int(repo.git.rev_list("--count", f"HEAD..origin/{self.branch}"))
+                except Exception as e:
+                    # No origin/<branch> ref locally — leave behind=0
+                    logger.debug(f"could not compute commits behind origin/{self.branch}: {e}")
+        except GitStatusError:
+            raise
+        except Exception as e:
+            raise GitStatusError(f"status failed: {e}") from e
 
         return WorkingTreeStatus(
             changed_files=changed,
             total_changes=len(changed),
+            conflicts=conflicts,
             commits_ahead=ahead,
             commits_behind=behind,
             merging=merging,
@@ -495,14 +786,13 @@ class GitHubSyncService:
             preflight=pf,
         )
 
-    async def _do_pull(self, work_dir: Path, repo: GitRepo, job_id: str | None = None) -> "PullResult":
+    async def _do_pull(self, work_dir: Path, repo: GitRepo, progress_fn=None) -> "PullResult":
         """Core pull logic. Fetches, merges, imports entities."""
-        from src.models.contracts.github import MergeConflict, PullResult
+        from src.models.contracts.github import PullResult
 
         async def _progress(phase: str, current: int = 0, total: int = 0) -> None:
-            if job_id:
-                from src.core.pubsub import publish_git_progress
-                await publish_git_progress(job_id, phase, current, total)
+            if progress_fn:
+                await progress_fn(phase, current, total)
 
         # NOTE: We intentionally do NOT regenerate the manifest here.
         # The sync_execute flow commits first (which regenerates the manifest),
@@ -533,74 +823,18 @@ class GitHubSyncService:
             is_merge_conflict = (work_dir / ".git" / "MERGE_HEAD").exists()
 
             if is_merge_conflict:
-                conflicts: list[MergeConflict] = []
-                try:
-                    unmerged = repo.index.unmerged_blobs()
-                except Exception:
-                    unmerged = {}
-
-                if unmerged:
-                    try:
-                        _auto_resolve_manifest_conflicts(repo, work_dir, unmerged)
-                        unmerged = repo.index.unmerged_blobs()
-                    except Exception as e:
-                        logger.warning(f"Manifest auto-resolve in pull failed: {e}")
-
-                conflicted_files = sorted(str(k) for k in unmerged.keys())
-
-                if not conflicted_files:
-                    # All conflicts were auto-resolved, commit the merge
-                    logger.info("All merge conflicts auto-resolved, completing merge")
-                    repo.index.commit(
-                        "Merge remote-tracking branch (auto-resolved)",
-                        parent_commits=[
-                            repo.head.commit,
-                            repo.commit("MERGE_HEAD"),
-                        ],
-                    )
-                    # Remove MERGE_HEAD to complete merge state
-                    merge_head = work_dir / ".git" / "MERGE_HEAD"
-                    if merge_head.exists():
-                        merge_head.unlink()
-                else:
-                    for cpath in conflicted_files:
-                        ours_content = None
-                        theirs_content = None
-                        try:
-                            ours_content = repo.git.show(f":2:{cpath}")
-                        except Exception as e:
-                            # Stage 2 may not exist in some conflict types
-                            logger.debug(f"could not read stage 2 for {cpath}: {e}")
-                        try:
-                            theirs_content = repo.git.show(f":3:{cpath}")
-                        except Exception as e:
-                            # Stage 3 may not exist in some conflict types
-                            logger.debug(f"could not read stage 3 for {cpath}: {e}")
-
-                        metadata = extract_entity_metadata(cpath)
-                        conflicts.append(MergeConflict(
-                            path=cpath,
-                            ours_content=ours_content,
-                            theirs_content=theirs_content,
-                            display_name=metadata.display_name,
-                            entity_type=metadata.entity_type,
-                            conflict_type=_classify_conflict_type(unmerged, cpath),
-                        ))
-
-                    logger.info(f"Merge conflict: returning {len(conflicts)} conflicts to UI")
-                    return PullResult(
-                        success=False,
-                        conflicts=conflicts,
-                        error="Merge conflicts detected",
-                    )
+                status = self._do_status(work_dir, repo)
+                logger.info(f"Merge conflict: returning {len(status.conflicts)} conflicts to UI")
+                return PullResult(
+                    success=False,
+                    conflicts=status.conflicts,
+                    error="Merge conflicts detected",
+                )
             else:
                 raise
 
         # Entity import is handled by desktop_sync() after push succeeds.
         pulled = 0  # Will be counted during entity import in desktop_sync
-
-        # Sync app preview files from repo to _apps/{id}/preview/
-        await self._sync_app_previews(work_dir)
 
         commit_sha = repo.head.commit.hexsha if repo.head.is_valid() else None
         logger.info(f"Pull complete: {pulled} entities, commit={commit_sha[:8] if commit_sha else 'none'}")
@@ -654,18 +888,54 @@ class GitHubSyncService:
             pushed_commits=ahead,
         )
 
+    @staticmethod
+    def _plan_file_changes(
+        work_dir: Path,
+        repo: GitRepo,
+        base_sha: str | None,
+        merge_sha: str,
+    ) -> list[WorkspaceFileChange]:
+        """Describe committed file changes between the pre-pull and merged heads."""
+        if not merge_sha or base_sha == merge_sha:
+            return []
+
+        if base_sha:
+            output = repo.git.diff("--name-status", f"{base_sha}..{merge_sha}")
+        else:
+            output = repo.git.diff_tree("--no-commit-id", "--name-status", "-r", merge_sha)
+
+        changes: list[WorkspaceFileChange] = []
+        for line in output.splitlines():
+            parts = line.split("\t")
+            if len(parts) < 2:
+                continue
+            status, *paths = parts
+            path = paths[-1]
+            action = {
+                "A": "create",
+                "D": "delete",
+            }.get(status[0], "update")
+            source = work_dir / path
+            changes.append(
+                WorkspaceFileChange(
+                    path=path,
+                    action=action,
+                    sha256=None if action == "delete" or not source.is_file() else hash_file(source)[1],
+                )
+            )
+        return changes
+
     # -----------------------------------------------------------------
     # Desktop-style operations: fetch, status, commit, sync, resolve, diff
     # -----------------------------------------------------------------
 
-    async def desktop_fetch(self, job_id: str | None = None) -> "FetchResult":
+    async def desktop_fetch(self, *, progress_fn=None) -> "FetchResult":
         """Git fetch origin. S3 sync down → regenerate manifest → git fetch → ahead/behind."""
         from src.models.contracts.github import FetchResult
 
         async def _progress(phase: str, current: int = 0, total: int = 0) -> None:
-            if job_id:
-                from src.core.pubsub import publish_git_progress
-                await publish_git_progress(job_id, phase, current, total)
+            if progress_fn:
+                await progress_fn(phase, current, total)
 
         try:
             await _progress("Syncing from storage...")
@@ -680,18 +950,20 @@ class GitHubSyncService:
             return FetchResult(success=False, error=str(e))
 
     async def desktop_status(self) -> "WorkingTreeStatus":
-        """Get working tree status. No lock, no S3. Returns empty if not initialized."""
+        """Get working tree status under the repo lock, without S3 sync."""
         from src.models.contracts.github import WorkingTreeStatus
 
+        if not self.repo_manager.is_initialized:
+            return WorkingTreeStatus()
+
         try:
-            if not self.repo_manager.is_initialized:
-                return WorkingTreeStatus()
             async with self.repo_manager.lock() as work_dir:
-                repo = self._open_or_init(work_dir)
-                return self._do_status(work_dir, repo)
+                return self._do_status(work_dir, GitRepo(str(work_dir)))
+        except GitStatusError:
+            raise
         except Exception as e:
             logger.error(f"Status failed: {e}", exc_info=True)
-            return WorkingTreeStatus()
+            raise GitStatusError(f"status failed: {e}") from e
 
     @staticmethod
     async def _regenerate_manifest_to_dir(db, work_dir) -> None:
@@ -776,123 +1048,230 @@ class GitHubSyncService:
             logger.error(f"Commit failed: {e}", exc_info=True)
             return CommitResult(success=False, error=str(e))
 
-    async def desktop_sync(self, job_id: str | None = None, confirm_deletes: bool = False) -> "SyncResult":
-        """Combined pull + push. The ONLY place entity import + S3 sync-up happen.
+    async def prepare_desktop_sync(self, work_dir: Path, repo: GitRepo, *, progress_fn=None) -> WorkspaceSyncPlan:
+        """Merge and validate a workspace sync without publishing it anywhere."""
+        base_sha = repo.head.commit.hexsha if repo.head.is_valid() else None
+        pull_result = await self._do_pull(work_dir, repo, progress_fn=progress_fn)
+        if not pull_result.success:
+            if pull_result.conflicts:
+                raise WorkspaceMergeConflict(pull_result.conflicts)
+            raise SyncError(pull_result.error or "Unable to merge remote changes")
 
-        Lock → git pull (stash, merge, pop) → if conflicts: return early.
-        If clean: git push → S3 sync up → entity import.
-        If stale entities detected and confirm_deletes=False, returns early
-        with needs_delete_confirmation=True and the list of pending deletes.
-        Returns SyncResult.
-        """
+        merge_sha = repo.head.commit.hexsha if repo.head.is_valid() else ""
+        if progress_fn:
+            await progress_fn("Validating entity import...")
+        configs_touched_before = self._resolver.configs_touched.copy()
+        try:
+            async with self.db.begin_nested() as validation:
+                _imported, entity_changes = await self._import_all_entities(
+                    work_dir,
+                    progress_fn=progress_fn,
+                    validate_only=True,
+                )
+                if progress_fn:
+                    await progress_fn("Checking for removed entities...")
+                pending_deletes = await self._resolver._resolve_deletions(work_dir=work_dir)
+                await validation.rollback()
+        finally:
+            self._resolver.configs_touched = configs_touched_before
+            self.db.expire_all()
+        pending_removals = [change for change in pending_deletes if change.action != "keep"]
+        return WorkspaceSyncPlan(
+            base_sha=base_sha,
+            merge_sha=merge_sha,
+            workspace_fingerprint=_workspace_fingerprint(work_dir),
+            pending_deletes=pending_removals,
+            entity_changes=entity_changes,
+            file_changes=self._plan_file_changes(work_dir, repo, base_sha, merge_sha),
+        )
+
+    async def apply_desktop_sync(
+        self,
+        work_dir: Path,
+        repo: GitRepo,
+        plan: WorkspaceSyncPlan,
+        *,
+        confirm_deletes: bool,
+        progress_fn=None,
+    ) -> "SyncResult":
+        """Apply a validated plan, publishing only after its DB import succeeds."""
+        from src.models.contracts.github import SyncResult
+
+        current_sha = repo.head.commit.hexsha if repo.head.is_valid() else ""
+        if (
+            current_sha != plan.merge_sha
+            or _workspace_fingerprint(work_dir) != plan.workspace_fingerprint
+        ):
+            raise WorkspacePlanStale("working tree changed after validation")
+        if plan.pending_deletes and not plan.db_applied and not confirm_deletes:
+            logger.info(
+                "Sync blocked: %d entity deletion(s) require confirmation",
+                len(plan.pending_deletes),
+            )
+            return SyncResult(
+                needs_delete_confirmation=True,
+                requires_action="confirm_deletes",
+                pending_deletes=plan.pending_deletes,
+                entity_changes=plan.entity_changes,
+            )
+
+        if plan.db_applied:
+            entities_imported = 0
+            all_entity_changes = list(plan.entity_changes)
+        else:
+            if progress_fn:
+                await progress_fn("Importing entities...")
+            checkpoint_id = None
+            async with self.db.begin_nested():
+                entities_imported, entity_changes = await self._import_all_entities(
+                    work_dir, progress_fn=progress_fn,
+                )
+                all_entity_changes = list(entity_changes)
+                if plan.pending_deletes:
+                    if progress_fn:
+                        await progress_fn("Deleting removed entities...")
+                    approved_deletes = _delete_keys(plan.pending_deletes)
+                    current_deletes = await self._resolver._resolve_deletions(
+                        work_dir=work_dir,
+                        dry_run=True,
+                        lock_rows=True,
+                    )
+                    current_keys = _delete_keys(
+                        [change for change in current_deletes if change.action != "keep"]
+                    )
+                    if current_keys != approved_deletes:
+                        raise WorkspacePlanStale(
+                            "pending entity deletions changed after confirmation"
+                        )
+                    all_entity_changes.extend(
+                        await self._resolver._resolve_deletions(
+                            work_dir=work_dir,
+                            approved_deletes=approved_deletes,
+                            lock_rows=True,
+                        )
+                    )
+                if progress_fn:
+                    await progress_fn("Updating file index...")
+                await self._update_file_index(work_dir)
+                checkpoint_id = await self.repo_manager.checkpoint_workspace(work_dir)
+            try:
+                await self.db.commit()
+            except Exception:
+                if checkpoint_id:
+                    await self.repo_manager.delete_workspace_checkpoint(checkpoint_id)
+                raise
+            plan = plan.model_copy(update={"checkpoint_id": checkpoint_id})
+
+        publication_plan = plan.model_copy(update={
+            "db_applied": True,
+            "entity_changes": all_entity_changes,
+        })
+
+        if progress_fn:
+            await progress_fn("Pushing to remote...")
+        push_result = self._do_push(work_dir, repo)
+        if not push_result.success:
+            logger.warning(
+                "Workspace publication failed after import; retaining local dirty state for retry: %s",
+                push_result.error,
+            )
+            return SyncResult(
+                pull_success=True,
+                push_success=False,
+                entities_imported=entities_imported,
+                entity_changes=all_entity_changes,
+                error=push_result.error,
+                retryable=True,
+                retry_plan=publication_plan,
+            )
+
+        try:
+            if progress_fn:
+                await progress_fn("Syncing to storage...")
+            await self.repo_manager.sync_up(work_dir)
+
+            from src.core.module_cache import refresh_modules_from_directory
+            await refresh_modules_from_directory(work_dir)
+
+            if progress_fn:
+                await progress_fn("Syncing app previews...")
+            await self._sync_app_previews(work_dir)
+            if publication_plan.checkpoint_id:
+                await self.repo_manager.delete_workspace_checkpoint(
+                    publication_plan.checkpoint_id
+                )
+        except Exception as error:
+            logger.warning(
+                "Workspace publication failed after import; retaining local dirty state for retry: %s",
+                error,
+            )
+            return SyncResult(
+                pull_success=True,
+                pushed_commits=push_result.pushed_commits,
+                commit_sha=push_result.commit_sha,
+                entities_imported=entities_imported,
+                entity_changes=all_entity_changes,
+                error=str(error),
+                retryable=True,
+                retry_plan=publication_plan,
+            )
+
+        logger.info(
+            "Sync complete: pushed=%d, imported=%d, sha=%s",
+            push_result.pushed_commits,
+            entities_imported,
+            push_result.commit_sha,
+        )
+        return SyncResult(
+            success=True,
+            pushed_commits=push_result.pushed_commits,
+            commit_sha=push_result.commit_sha,
+            entities_imported=entities_imported,
+            entity_changes=all_entity_changes,
+        )
+
+    async def desktop_sync(
+        self,
+        confirm_deletes: bool = False,
+        retry_plan: "WorkspaceSyncPlan | None" = None,
+        *,
+        progress_fn=None,
+    ) -> "SyncResult":
+        """Prepare, validate, then conditionally apply a workspace synchronization."""
         from src.models.contracts.github import SyncResult
 
         async def _progress(phase: str, current: int = 0, total: int = 0) -> None:
-            if job_id:
-                from src.core.pubsub import publish_git_progress
-                await publish_git_progress(job_id, phase, current, total)
+            if progress_fn:
+                await progress_fn(phase, current, total)
 
         try:
             async with self.repo_manager.lock() as work_dir:
+                if retry_plan and retry_plan.db_applied:
+                    if not retry_plan.checkpoint_id:
+                        raise SyncError("Publication retry is missing its workspace checkpoint")
+                    await self.repo_manager.restore_workspace_checkpoint(
+                        retry_plan.checkpoint_id, work_dir
+                    )
                 repo = self._open_or_init(work_dir)
-
-                # Step 1: Pull (fetch + merge, stash local changes)
-                pull_result = await self._do_pull(work_dir, repo, job_id)
-
-                if not pull_result.success:
-                    if pull_result.conflicts:
-                        # Return conflicts to UI — user resolves via desktop_resolve
-                        return SyncResult(
-                            success=False,
-                            pull_success=False,
-                            conflicts=pull_result.conflicts,
-                            error="Merge conflicts detected",
-                        )
-                    return SyncResult(
-                        success=False,
-                        pull_success=False,
-                        error=pull_result.error,
-                    )
-
-                # Step 2: Push
-                await _progress("Pushing to remote...")
-                push_result = self._do_push(work_dir, repo)
-
-                if not push_result.success:
-                    return SyncResult(
-                        success=False,
-                        pull_success=True,
-                        push_success=False,
-                        error=push_result.error,
-                    )
-
-                # Step 3: S3 sync up (so other containers see the changes)
-                await _progress("Syncing to storage...")
-                await self.repo_manager.sync_up(work_dir)
-
-                # Refresh Redis module cache so editor + workers see new .py content
-                from src.core.module_cache import refresh_modules_from_directory
-                await refresh_modules_from_directory(work_dir)
-
-                # Step 4: Entity import — always full import (safe, idempotent upserts)
-                await _progress("Importing entities...")
-                all_entity_changes: list = []
-                async with self.db.begin_nested():
-                    entities_imported, entity_changes = await self._import_all_entities(
-                        work_dir, progress_fn=_progress,
-                    )
-                    all_entity_changes.extend(entity_changes)
-                    await _progress("Updating file index...")
-                    await self._update_file_index(work_dir)
-                await self.db.commit()
-
-                # Step 5: Clean up removed entities (gated on confirmation)
-                await _progress("Checking for removed entities...")
-                pending_deletes = await self._resolver._resolve_deletions(work_dir=work_dir, dry_run=True)
-                # Filter out "keep" entries (e.g. tables) — only actual removals need confirmation
-                pending_removals = [e for e in pending_deletes if e.action != "keep"]
-                if pending_removals and not confirm_deletes:
-                    # Block sync — user must confirm deletions first
-                    logger.info(
-                        f"Sync blocked: {len(pending_removals)} entity deletion(s) require confirmation"
-                    )
-                    return SyncResult(
-                        success=True,
-                        needs_delete_confirmation=True,
-                        pending_deletes=pending_removals,
-                        pulled=pull_result.pulled,
-                        pushed_commits=push_result.pushed_commits,
-                        commit_sha=push_result.commit_sha,
-                        entities_imported=entities_imported,
-                        entity_changes=all_entity_changes,
-                    )
-
-                if pending_removals:
-                    await _progress("Deleting removed entities...")
-                    async with self.db.begin_nested():
-                        deletion_changes = await self._resolver._resolve_deletions(work_dir=work_dir)
-                        all_entity_changes.extend(deletion_changes)
-                    await self.db.commit()
-
-                # Step 6: Sync app previews
-                await _progress("Syncing app previews...")
-                await self._sync_app_previews(work_dir)
-
-                logger.info(
-                    f"Sync complete: pushed={push_result.pushed_commits}, "
-                    f"imported={entities_imported}, sha={push_result.commit_sha}"
+                plan = retry_plan or await self.prepare_desktop_sync(
+                    work_dir, repo, progress_fn=_progress,
                 )
-                return SyncResult(
-                    success=True,
-                    pulled=pull_result.pulled,
-                    pushed_commits=push_result.pushed_commits,
-                    commit_sha=push_result.commit_sha,
-                    entities_imported=entities_imported,
-                    entity_changes=all_entity_changes,
+                return await self.apply_desktop_sync(
+                    work_dir,
+                    repo,
+                    plan,
+                    confirm_deletes=confirm_deletes,
+                    progress_fn=_progress,
                 )
-        except Exception as e:
-            logger.error(f"Sync failed: {e}", exc_info=True)
-            return SyncResult(success=False, error=str(e))
+        except WorkspaceMergeConflict as error:
+            return SyncResult(
+                pull_success=False,
+                conflicts=error.conflicts,
+                error=str(error),
+            )
+        except Exception as error:
+            logger.error("Sync failed: %s", error, exc_info=True)
+            return SyncResult(success=False, error=str(error))
 
     async def desktop_abort_merge(self) -> "AbortMergeResult":
         """Abort an in-progress merge. Returns to pre-pull state."""
@@ -912,38 +1291,6 @@ class GitHubSyncService:
         except Exception as e:
             logger.error(f"Abort merge failed: {e}", exc_info=True)
             return AbortMergeResult(success=False, error=str(e))
-
-    def _do_resolve(self, work_dir: Path, repo: GitRepo, resolutions: dict[str, str]) -> "ResolveResult":
-        """Core resolve logic for inline conflict resolution during sync_execute."""
-        from src.models.contracts.github import ResolveResult
-
-        merge_head = work_dir / ".git" / "MERGE_HEAD"
-        is_merge = merge_head.exists()
-        has_unmerged = bool(repo.index.unmerged_blobs())
-
-        if not is_merge and not has_unmerged:
-            return ResolveResult(success=False, error="No conflicts to resolve")
-
-        for cpath, resolution in resolutions.items():
-            try:
-                if resolution == "ours":
-                    repo.git.checkout("--ours", cpath)
-                elif resolution == "theirs":
-                    repo.git.checkout("--theirs", cpath)
-                repo.git.add(cpath)
-            except Exception:
-                # DU/UD conflict — one side deleted, checkout fails
-                try:
-                    repo.git.rm(cpath)
-                except Exception:
-                    repo.git.add(cpath)
-
-        if is_merge:
-            repo.index.commit("Merge with conflict resolution")
-        else:
-            repo.index.commit("Apply stashed changes with conflict resolution")
-
-        return ResolveResult(success=True)
 
     async def desktop_resolve(self, resolutions: dict[str, str]) -> "ResolveResult":
         """
@@ -1133,6 +1480,7 @@ class GitHubSyncService:
         self,
         work_dir: Path,
         progress_fn=None,
+        validate_only: bool = False,
     ) -> "tuple[int, list]":
         """Import entities from the working tree into the DB (incremental).
 
@@ -1167,7 +1515,12 @@ class GitHubSyncService:
 
         # Resolve only changed entities
         await self._resolver.plan_import(
-            manifest, work_dir, progress_fn=progress_fn, changed_ids=changed_ids,
+            manifest,
+            work_dir,
+            progress_fn=progress_fn,
+            dry_run=False,
+            changed_ids=changed_ids,
+            sync_app_previews=False,
         )
 
         # Build entity change list from the diff
@@ -1186,6 +1539,9 @@ class GitHubSyncService:
                 ))
 
         count = len(changed_ids)
+
+        if validate_only:
+            return count, entity_changes
 
         # Indexer side-effects: WorkflowIndexer for changed workflows
         from src.models.orm.workflows import Workflow as WfORM
@@ -1368,10 +1724,10 @@ class GitHubSyncService:
         from sqlalchemy.dialects.postgresql import insert
 
         from src.models.orm.file_index import FileIndex
-        from src.services.file_index_service import _is_text_file
+        from src.services.file_index_service import MAX_INDEXABLE_TEXT_BYTES, _is_text_file
 
-        files = _walk_tree(work_dir)
-        repo_paths = set(files.keys())
+        files = iter_tree_metadata(work_dir)
+        repo_paths: set[str] = set()
 
         # Prefetch all existing (path, content_hash) in one query
         existing_result = await self.db.execute(
@@ -1379,32 +1735,18 @@ class GitHubSyncService:
         )
         existing_hashes = {row[0]: row[1] for row in existing_result.all()}
 
-        # Build list of rows that need upserting (changed or new)
+        # Flush changed text rows as they are discovered.  A row's content must
+        # be materialized for the database write, but retaining every changed
+        # text file until traversal completes can otherwise exhaust a worker.
         pending_upserts: list[dict] = []
-        for rel_path, content in files.items():
-            if not _is_text_file(rel_path):
-                continue
-            try:
-                content_str = content.decode("utf-8")
-            except UnicodeDecodeError:
-                continue
-            content_hash = _content_hash(content)
+        pending_bytes = 0
+        upserted_count = 0
 
-            # Skip if hash hasn't changed
-            if existing_hashes.get(rel_path) == content_hash:
-                continue
-
-            pending_upserts.append({
-                "path": rel_path,
-                "content": content_str,
-                "content_hash": content_hash,
-            })
-
-        # Batch upsert in chunks of 100
-        CHUNK_SIZE = 100
-        for i in range(0, len(pending_upserts), CHUNK_SIZE):
-            chunk = pending_upserts[i : i + CHUNK_SIZE]
-            stmt = insert(FileIndex).values(chunk).on_conflict_do_update(
+        async def flush_pending_upserts() -> None:
+            nonlocal pending_bytes, upserted_count
+            if not pending_upserts:
+                return
+            stmt = insert(FileIndex).values(pending_upserts).on_conflict_do_update(
                 index_elements=[FileIndex.path],
                 set_={
                     "content": insert(FileIndex).excluded.content,
@@ -1413,9 +1755,52 @@ class GitHubSyncService:
                 },
             )
             await self.db.execute(stmt)
+            upserted_count += len(pending_upserts)
+            pending_upserts.clear()
+            pending_bytes = 0
 
-        if pending_upserts:
-            logger.info(f"File index: upserted {len(pending_upserts)} changed files, skipped {len(files) - len(pending_upserts)} unchanged")
+        for entry in files:
+            rel_path = entry.path
+            repo_paths.add(rel_path)
+            if not _is_text_file(rel_path):
+                continue
+            if entry.size > MAX_INDEXABLE_TEXT_BYTES:
+                # Search indexing is a bounded projection. Delete a prior
+                # smaller-file entry so searches cannot return stale content,
+                # without loading the oversized repository file into memory.
+                await self.db.execute(delete(FileIndex).where(FileIndex.path == rel_path))
+                continue
+            try:
+                content_str = (work_dir / rel_path).read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                continue
+            content_hash = entry.sha256
+
+            # Skip if hash hasn't changed
+            if existing_hashes.get(rel_path) == content_hash:
+                continue
+
+            if pending_upserts and (
+                len(pending_upserts) >= FILE_INDEX_UPSERT_MAX_ROWS
+                or pending_bytes + entry.size > FILE_INDEX_UPSERT_MAX_BYTES
+            ):
+                await flush_pending_upserts()
+            pending_upserts.append({
+                "path": rel_path,
+                "content": content_str,
+                "content_hash": content_hash,
+            })
+            pending_bytes += entry.size
+            if (
+                len(pending_upserts) >= FILE_INDEX_UPSERT_MAX_ROWS
+                or pending_bytes >= FILE_INDEX_UPSERT_MAX_BYTES
+            ):
+                await flush_pending_upserts()
+
+        await flush_pending_upserts()
+
+        if upserted_count:
+            logger.info("File index: upserted %d changed files", upserted_count)
 
         # Remove file_index entries that no longer exist in the repo
         stale_paths = set(existing_hashes.keys()) - repo_paths

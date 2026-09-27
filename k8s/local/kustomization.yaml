@@ -1,0 +1,13 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - config.yaml
+  - postgres.yaml
+  - pgbouncer.yaml
+  - rabbitmq.yaml
+  - redis.yaml
+  - seaweedfs.yaml
+  - init.yaml
+  - bifrost.yaml
+  - keda.yaml

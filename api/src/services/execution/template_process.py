@@ -20,7 +20,9 @@ import logging
 import multiprocessing
 import os
 import signal
+import subprocess
 import sys
+from contextlib import suppress
 from multiprocessing.connection import Connection
 from typing import Any
 
@@ -117,9 +119,9 @@ def _template_main(
     """
     Entry point for the template process.
 
-    Loads all heavy dependencies, installs import hooks, then waits
-    for fork commands on the pipe. This function runs in the template
-    process (spawned via multiprocessing.spawn).
+    Loads all heavy dependencies, installs import hooks, then waits for fork
+    commands on the pipe. This function runs in the template subprocess after
+    the entrypoint restores multiprocessing spawn semantics.
 
     Args:
         pipe: Connection to receive commands from and send responses to consumer.
@@ -149,11 +151,6 @@ def _template_main(
             logger.warning("httpx not available — skipping preload")
 
         try:
-            import requests  # noqa: F401
-        except ImportError:
-            logger.warning("requests not available — skipping preload")
-
-        try:
             import pydantic  # noqa: F401
         except ImportError:
             logger.warning("pydantic not available — skipping preload")
@@ -163,18 +160,11 @@ def _template_main(
         except ImportError:
             logger.warning("redis not available — skipping preload")
 
-        try:
-            import sqlalchemy  # noqa: F401
-        except ImportError:
-            logger.warning("sqlalchemy not available — skipping preload")
-
         # Execution infrastructure
         try:
             from src.services.execution.virtual_import import install_virtual_import_hook
-            from src.services.execution.simple_worker import install_requirements
-
-            # Install user packages (pip install from requirements.txt)
-            install_requirements()
+            # The supervisor installs packages before startup/recycle. Reuse
+            # that filesystem without opening storage clients in this process.
 
             # Ensure user site-packages is in sys.path
             import site
@@ -199,8 +189,8 @@ def _template_main(
     # ----- Env scrub (Phase 2, M1) -----
     # Scrub credentials that the template loaded during startup but that
     # forked children must NOT inherit.  This point is chosen deliberately:
-    # - AFTER install_requirements() which needs BIFROST_S3_* for cold-cache
-    #   requirements fetch (legacy path) — safe to remove now.
+    # - Package installation already finished in the supervisor. This process
+    #   does not need storage credentials or a second requirements fetch.
     # - BEFORE pipe.send({"status": "ready"}) — all forks inherit this scrubbed env.
     #
     # Assertion: get_settings() must NOT have been called by this point.
@@ -270,6 +260,12 @@ def _template_main(
     # duration timer even starts. Forked children inherit these modules through
     # copy-on-write, so the pod pays that cost once while workflow code itself
     # remains freshly loaded per execution.
+    # SDK calls run under execution tracing; rebuilding models/client code in
+    # every child adds avoidable latency. Share these common runtime modules,
+    # while leaving database and object-storage implementations out entirely.
+    import bifrost.client  # noqa: F401
+    import bifrost.models  # noqa: F401
+    import src.sdk.decorators  # noqa: F401
     import bifrost.credentials  # noqa: F401
     import src.models.enums  # noqa: F401
     import src.sdk.context  # noqa: F401
@@ -283,7 +279,12 @@ def _template_main(
         install_virtual_import_hook()
 
     logger.info("Template process ready — all dependencies loaded")
-    pipe.send({"status": "ready", "pid": os.getpid()})
+    pipe.send({
+        "status": "ready",
+        "pid": os.getpid(),
+        "start_method": multiprocessing.get_start_method(),
+        "process_name": multiprocessing.current_process().name,
+    })
 
     # ----- Fork loop -----
     # Single-threaded, no event loop. Just wait for commands and fork.
@@ -320,9 +321,32 @@ def _template_main(
             persistent = cmd.get("persistent", False)
             work_recv: Connection = cmd["work_recv"]
             result_send: Connection = cmd["result_send"]
-            _handle_fork_request(pipe, worker_id, persistent, work_recv, result_send)
+            sdk_socket_path = cmd.get("sdk_socket_path")
+            _handle_fork_request(
+                pipe, worker_id, persistent, work_recv, result_send,
+                sdk_socket_path,
+            )
 
     logger.info("Template process exiting")
+
+
+def _template_subprocess_entry(control_fd: int) -> None:
+    """
+    Minimal subprocess entrypoint for the template.
+
+    The parent sends the multiprocessing authkey as the first frame on the
+    private inherited control Connection. That happens before any Connection
+    descriptors are received, preserving multiprocessing.resource_sharer
+    authentication without putting the authkey in argv or the environment.
+    """
+    multiprocessing.set_start_method("spawn", force=True)
+    multiprocessing.current_process().name = "template-process"
+    pipe = Connection(control_fd)
+    authkey = pipe.recv_bytes(maxlength=256)
+    if not authkey:
+        raise RuntimeError("template subprocess received an empty authkey")
+    multiprocessing.current_process().authkey = authkey
+    _template_main(pipe)
 
 
 def _handle_fork_request(
@@ -331,6 +355,7 @@ def _handle_fork_request(
     persistent: bool,
     work_recv: Connection,
     result_send: Connection,
+    sdk_socket_path: str | None = None,
 ) -> None:
     """
     Handle a fork request: fork and wire up pre-created pipe connections.
@@ -343,6 +368,11 @@ def _handle_fork_request(
     We fork, the child inherits them, we close them in the parent and
     reply with just the child_pid.
 
+    Engine SDK access does not travel on an inherited channel: the worker
+    parent serves the ordinary SDK HTTP routes on a private Unix socket and
+    passes its path through ``sdk_socket_path``. The work/result pipes remain
+    the only descriptors handed to the child at fork.
+
     Args:
         pipe: Control pipe to send response back to consumer.
         worker_id: ID to assign to the forked child worker.
@@ -350,22 +380,20 @@ def _handle_fork_request(
                     If False, child runs one execution and exits.
         work_recv: Read end of work pipe (child reads execution IDs from here).
         result_send: Write end of result pipe (child writes results here).
+        sdk_socket_path: Worker-local Unix socket the child should use for
+            engine SDK HTTP calls, or None when no socket is served.
     """
     child_pid = os.fork()
 
     if child_pid > 0:
         # ----- Parent (template) -----
         # Close the child-side connections — the child owns them now
-        try:
-            work_recv.close()
-        except (OSError, BrokenPipeError) as e:
-            # Already closed — ignore
-            logger.debug(f"parent: work_recv.close ignored: {e}")
-        try:
-            result_send.close()
-        except (OSError, BrokenPipeError) as e:
-            # Already closed — ignore
-            logger.debug(f"parent: result_send.close ignored: {e}")
+        for conn in (work_recv, result_send):
+            try:
+                conn.close()
+            except (OSError, BrokenPipeError) as e:
+                # Already closed — ignore
+                logger.debug(f"parent: work/result conn.close ignored: {e}")
 
         # Send child PID back to consumer
         pipe.send({
@@ -383,7 +411,10 @@ def _handle_fork_request(
             logger.debug(f"child: pipe.close ignored: {e}")
 
         # Run the worker function (this blocks until the child exits)
-        _run_forked_child(work_recv, result_send, worker_id, persistent)
+        _run_forked_child(
+            work_recv, result_send, worker_id, persistent,
+            sdk_socket_path=sdk_socket_path,
+        )
         os._exit(0)
 
 
@@ -392,22 +423,34 @@ def _run_forked_child(
     result_send: Connection,
     worker_id: str,
     persistent: bool,
+    sdk_socket_path: str | None = None,
 ) -> None:
     """
     Entry point for a forked child process.
 
     The child inherits all loaded modules from the template via COW and creates
-    its own event loop. Its execution context arrives on the private work pipe;
-    SDK/module access may still use network clients during the workflow.
+    its own event loop. Its execution context arrives on the private work pipe.
+    Engine SDK access uses ordinary HTTP over the worker-local Unix socket the
+    parent injects as ``sdk_socket_path``; the child never receives DB, S3, or
+    provider credentials.
 
     Communication uses raw Connection objects (Pipe ends) that were
     inherited via fork — no pickling required.
+
+    When the parent serves a socket (``sdk_socket_path`` is set), the
+    engine socket transport is installed before user code runs and cleared
+    afterwards. This is the explicit injection point: there is no
+    user-controlled flag, and outside this path the SDK uses the network HTTP
+    API.
 
     Args:
         work_recv: Read end of work pipe; receives ``(execution_id, context)``.
         result_send: Write end of result pipe; sends result dicts via .send().
         worker_id: Identifier for logging.
         persistent: If True, loop for multiple executions. If False, run once.
+        sdk_socket_path: Worker-local Unix socket for engine SDK HTTP calls,
+            injected only by the worker parent. When present the child sends
+            the ordinary HTTP request over it instead of the network API.
     """
     # Reconfigure logging for this child
     logging.basicConfig(
@@ -415,6 +458,14 @@ def _run_forked_child(
         format=f"[{worker_id}] %(levelname)s - %(message)s",
         force=True,
     )
+
+    # Engine start: install the worker-local SDK socket transport before any
+    # user code runs.
+    from bifrost.client import _clear_engine_socket, _install_engine_socket
+
+    if sdk_socket_path is not None:
+        _install_engine_socket(sdk_socket_path)
+        logger.info(f"Forked worker {worker_id} using engine-local SDK socket")
 
     # Setup signal handler for graceful shutdown
     shutdown_requested = False
@@ -527,6 +578,10 @@ def _run_forked_child(
             if not persistent:
                 break
 
+    # Engine teardown: drop the engine socket so a reused (persistent)
+    # child never serves the next execution on a stale socket.
+    _clear_engine_socket()
+
     logger.info(f"Worker {worker_id} exiting")
 
 
@@ -539,9 +594,11 @@ class TemplateProcess:
     """
 
     def __init__(self) -> None:
-        self._process: Any = None  # multiprocessing.Process or SpawnProcess
+        self._process: subprocess.Popen[bytes] | None = None
         self._pipe: Connection | None = None
         self.pid: int | None = None
+        self.start_method: str | None = None
+        self.process_name: str | None = None
 
     def start(self) -> None:
         """
@@ -550,36 +607,76 @@ class TemplateProcess:
         Blocks until the template has loaded all dependencies and
         signaled ready, or raises if startup fails.
         """
-        if self._process is not None and self._process.is_alive():
+        if self.is_alive():
             return  # Already running
+        if self._process is not None:
+            self._process.wait(timeout=0)
+            self._process = None
+            self.pid = None
+            self.start_method = None
+            self.process_name = None
+            if self._pipe is not None:
+                with suppress(OSError, BrokenPipeError):
+                    self._pipe.close()
+                self._pipe = None
 
-        ctx = multiprocessing.get_context("spawn")
         parent_conn, child_conn = multiprocessing.Pipe()
+        authkey = bytes(multiprocessing.current_process().authkey)
+        argv = [
+            sys.executable,
+            "-m",
+            "src.services.execution.template_process",
+            str(child_conn.fileno()),
+        ]
 
-        self._process = ctx.Process(
-            target=_template_main,
-            args=(child_conn,),
-            name="template-process",
-        )
-        self._process.start()
-        self._pipe = parent_conn
+        process: subprocess.Popen[bytes] | None = None
+        try:
+            process = subprocess.Popen(
+                argv,
+                pass_fds=(child_conn.fileno(),),
+                close_fds=True,
+            )
+            child_conn.close()
+            parent_conn.send_bytes(authkey)
 
-        # Wait for ready signal (with timeout)
-        if not parent_conn.poll(timeout=120):
-            self._process.kill()
-            raise RuntimeError("Template process failed to start within 120 seconds")
+            self._process = process
+            self._pipe = parent_conn
 
-        msg = parent_conn.recv()
-        if msg.get("status") == "error":
-            raise RuntimeError(f"Template process startup failed: {msg.get('error')}")
+            # Wait for ready signal (with timeout)
+            if not parent_conn.poll(timeout=120):
+                process.kill()
+                process.wait(timeout=5)
+                raise RuntimeError("Template process failed to start within 120 seconds")
 
-        self.pid = msg.get("pid", self._process.pid)
-        logger.info(f"Template process ready (PID={self.pid})")
+            msg = parent_conn.recv()
+            if msg.get("status") == "error":
+                raise RuntimeError(f"Template process startup failed: {msg.get('error')}")
+
+            self.pid = msg.get("pid", process.pid)
+            self.start_method = msg.get("start_method")
+            self.process_name = msg.get("process_name")
+            logger.info(f"Template process ready (PID={self.pid})")
+        except Exception:
+            with suppress(OSError, BrokenPipeError):
+                child_conn.close()
+            with suppress(OSError, BrokenPipeError):
+                parent_conn.close()
+            if process is not None and process.poll() is None:
+                process.kill()
+                process.wait(timeout=5)
+            self._process = None
+            self._pipe = None
+            self.pid = None
+            self.start_method = None
+            self.process_name = None
+            raise
 
     def fork(
         self,
         worker_id: str = "worker",
         persistent: bool = False,
+        *,
+        sdk_socket_path: str | None = None,
     ) -> tuple[int, _SendQueue, _RecvQueue]:
         """
         Request the template to fork a new child worker.
@@ -589,13 +686,21 @@ class TemplateProcess:
         process, which passes them to the forked child via fork
         inheritance. The consumer keeps the parent-side ends.
 
+        Engine SDK access does not travel on a dedicated channel. When the
+        worker serves one, the child receives ``sdk_socket_path`` and makes
+        ordinary HTTP requests over that Unix socket instead of the network
+        API.
+
         Args:
             worker_id: Identifier for the new worker (for logging).
             persistent: If True, child loops for multiple executions.
                         If False (default), child runs one execution and exits.
+            sdk_socket_path: Worker-local Unix socket for engine SDK HTTP
+                calls, forwarded to the child at fork. None when the worker
+                serves no socket.
 
         Returns:
-            Tuple of (child_pid, work_queue, result_queue).
+            ``(child_pid, work_queue, result_queue)``.
             work_queue.put(execution_id) sends work to the child.
             result_queue.get() retrieves the result from the child.
 
@@ -611,26 +716,33 @@ class TemplateProcess:
         work_recv, work_send = multiprocessing.Pipe(duplex=False)
         result_recv, result_send = multiprocessing.Pipe(duplex=False)
 
-        # Send fork command with child-side connections (picklable)
-        self._pipe.send({
-            "action": CMD_FORK,
-            "worker_id": worker_id,
-            "persistent": persistent,
-            "work_recv": work_recv,
-            "result_send": result_send,
-        })
+        try:
+            # Send fork command with child-side connections (picklable)
+            self._pipe.send({
+                "action": CMD_FORK,
+                "worker_id": worker_id,
+                "persistent": persistent,
+                "work_recv": work_recv,
+                "result_send": result_send,
+                "sdk_socket_path": sdk_socket_path,
+            })
 
-        # Close child-side connections on our end after sending
-        work_recv.close()
-        result_send.close()
+            # Close child-side connections on our end after sending
+            work_recv.close()
+            result_send.close()
 
-        # Wait for fork response (just child_pid now)
-        if not self._pipe.poll(timeout=30):
-            raise RuntimeError("Template process did not respond to fork request within 30s")
+            # Wait for fork response (just child_pid)
+            if not self._pipe.poll(timeout=30):
+                raise RuntimeError("Template process did not respond to fork request within 30s")
 
-        msg = self._pipe.recv()
-        if msg.get("status") != "forked":
-            raise RuntimeError(f"Unexpected fork response: {msg}")
+            msg = self._pipe.recv()
+            if msg.get("status") != "forked":
+                raise RuntimeError(f"Unexpected fork response: {msg}")
+        except Exception:
+            for conn in (work_recv, work_send, result_recv, result_send):
+                with suppress(OSError, BrokenPipeError):
+                    conn.close()
+            raise
 
         # Return queue-like wrappers around the consumer-side pipe ends.
         # work_queue:   consumer calls .put(execution_id) → sends via work_send
@@ -672,17 +784,32 @@ class TemplateProcess:
                 logger.debug(f"template pipe closed before shutdown send: {e}")
 
         if self._process is not None:
-            self._process.join(timeout=10)
-            if self._process.is_alive():
+            try:
+                self._process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
                 self._process.kill()
-                self._process.join(timeout=5)
+                self._process.wait(timeout=5)
+
+        if self._pipe is not None:
+            try:
+                self._pipe.close()
+            except (OSError, BrokenPipeError) as e:
+                logger.debug(f"template pipe close during shutdown ignored: {e}")
 
         self._pipe = None
         self._process = None
         self.pid = None
+        self.start_method = None
+        self.process_name = None
 
     def is_alive(self) -> bool:
         """Check if the template process is still running."""
         if self._process is None:
             return False
-        return self._process.is_alive()
+        return self._process.poll() is None
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        raise SystemExit("usage: python -m src.services.execution.template_process <control_fd>")
+    _template_subprocess_entry(int(sys.argv[1]))

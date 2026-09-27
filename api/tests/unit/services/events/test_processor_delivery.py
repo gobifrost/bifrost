@@ -40,3 +40,28 @@ async def test_process_delivery_returns_the_exact_persisted_event_id():
 
     persisted_event = session.add.call_args_list[0].args[0]
     assert result.event_id == persisted_event.id
+
+
+@pytest.mark.asyncio
+async def test_queue_service_target_fails_loudly():
+    """A delivery targeting a service fails with an attributable error."""
+    session = AsyncMock()
+    session.add = MagicMock()
+    processor = p.EventProcessor(session)
+    workflow_id = uuid.uuid4()
+    delivery = SimpleNamespace(
+        id=uuid.uuid4(),
+        workflow=SimpleNamespace(id=workflow_id, type="service", name="telegram_bridge"),
+    )
+    event = SimpleNamespace(
+        id=uuid.uuid4(),
+        event_type="telegram.message",
+        data={},
+        headers=None,
+        received_at=None,
+        source_ip=None,
+        organization_id=None,
+    )
+
+    with pytest.raises(ValueError, match="type='service'"):
+        await processor._queue_workflow_execution(delivery, event)

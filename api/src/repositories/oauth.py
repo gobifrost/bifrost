@@ -40,6 +40,25 @@ class OAuthProviderRepository(OrgScopedRepository[OAuthProvider]):
     model = OAuthProvider
     role_table = None  # OAuth providers have no role-based access
 
+    async def get_org_level_by_provider_name(
+        self, provider_name: str
+    ) -> OAuthProvider | None:
+        """Find a provider in this org without the normal global cascade.
+
+        External SDK refresh callers must never use a global provider's
+        client credentials to mint a token. The ordinary ``get`` cascade is
+        intentionally retained for normal users and engine executions.
+        """
+        if self.org_id is None:
+            return None
+        result = await self.session.execute(
+            select(OAuthProvider).where(
+                OAuthProvider.provider_name == provider_name,
+                OAuthProvider.organization_id == self.org_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
     # =========================================================================
     # OAuth-domain operations (absorbed from OAuthConnectionRepository)
     # =========================================================================

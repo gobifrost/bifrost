@@ -115,7 +115,30 @@ vi.mock("@/pages/ExecutionHistory/components/ExecutionPreviewPanel", () => ({
 }));
 
 vi.mock("@/pages/ExecutionHistory/components/LogsView", () => ({
-	LogsView: () => null,
+	LogsView: ({
+		workflowId,
+		filterOrgId,
+		dateRange,
+		searchTerm,
+		logLevel,
+	}: {
+		workflowId?: string;
+		filterOrgId?: string | null;
+		dateRange?: { from?: Date; to?: Date };
+		searchTerm?: string;
+		logLevel?: string;
+	}) => (
+		<div data-testid="logs-view-props">
+			{JSON.stringify({
+				workflowId,
+				filterOrgId,
+				from: dateRange?.from?.toISOString(),
+				to: dateRange?.to?.toISOString(),
+				searchTerm,
+				logLevel,
+			})}
+		</div>
+	),
 }));
 
 vi.mock("@/components/agents/AgentRunsPanel", () => ({
@@ -127,15 +150,37 @@ vi.mock("@/components/forms/WorkflowSelector", () => ({
 }));
 
 vi.mock("@/components/forms/OrganizationSelect", () => ({
-	OrganizationSelect: () => null,
+	OrganizationSelect: ({ value }: { value?: string | null }) => (
+		<div data-testid="history-organization-filter">{String(value)}</div>
+	),
 }));
 
 vi.mock("@/components/search/SearchBox", () => ({
-	SearchBox: () => null,
+	SearchBox: ({
+		value,
+		onChange,
+	}: {
+		value: string;
+		onChange: (value: string) => void;
+	}) => (
+		<input
+			aria-label="History search"
+			value={value}
+			onChange={(event) => onChange(event.target.value)}
+		/>
+	),
 }));
 
 vi.mock("@/components/ui/date-range-picker", () => ({
-	DateRangePicker: () => null,
+	DateRangePicker: ({
+		dateRange,
+	}: {
+		dateRange?: { from?: Date; to?: Date };
+	}) => (
+		<div data-testid="history-date-range">
+			{dateRange?.from?.toISOString()}|{dateRange?.to?.toISOString()}
+		</div>
+	),
 }));
 
 import { ExecutionHistory } from "./ExecutionHistory";
@@ -185,6 +230,7 @@ const mockRefetch = vi.fn();
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	sessionStorage.clear();
 	mockIsDesktop.mockReturnValue(true);
 	mockAuth.mockReturnValue({
 		isPlatformAdmin: false,
@@ -313,6 +359,129 @@ describe("ExecutionHistory — ?status= round-trip", () => {
 		expect(screen.getByRole("tab", { name: /^All$/i })).toHaveAttribute(
 			"aria-selected",
 			"true",
+		);
+	});
+});
+
+describe("ExecutionHistory — selected execution", () => {
+	it("opens the execution selected by the URL", async () => {
+		mockUseExecutions.mockReturnValue({
+			data: { executions: [makeRow()], continuation_token: null },
+			isFetching: false,
+			isError: false,
+			refetch: mockRefetch,
+		});
+		await renderPage([
+			"/history?execution=11111111-1111-1111-1111-111111111111",
+		]);
+
+		expect(screen.getByTestId("execution-preview")).toHaveTextContent(
+			"11111111-1111-1111-1111-111111111111",
+		);
+	});
+});
+
+describe("ExecutionHistory — URL-backed controls", () => {
+	it("prefers an explicit History URL over a saved return snapshot", async () => {
+		sessionStorage.setItem(
+			"bifrost.execution-history.return",
+			JSON.stringify({
+				href: "/history?status=Failed&execution=stale-run",
+				scrollTop: 144,
+			}),
+		);
+
+		await renderPage(["/history?status=Running"]);
+
+		expect(screen.getByRole("tab", { name: "Running" })).toHaveAttribute(
+			"aria-selected",
+			"true",
+		);
+		expect(screen.getByTestId("location-probe")).toHaveTextContent(
+			"/history?status=Running",
+		);
+	});
+
+	it("restores a saved History snapshot after navigation to the plain list URL", async () => {
+		sessionStorage.setItem(
+			"bifrost.execution-history.return",
+			JSON.stringify({
+				href: "/history?status=Failed",
+				scrollTop: 144,
+			}),
+		);
+
+		await renderPage(["/history"]);
+
+		await waitFor(() => {
+			expect(screen.getByTestId("location-probe")).toHaveTextContent(
+				"/history?status=Failed",
+			);
+		});
+		expect(screen.getByRole("tab", { name: "Failed" })).toHaveAttribute(
+			"aria-selected",
+			"true",
+		);
+	});
+
+	it("restores the saved continuation page before fetching the list", async () => {
+		sessionStorage.setItem(
+			"bifrost.execution-history.return",
+			JSON.stringify({
+				href: "/history?status=Failed",
+				scrollTop: 144,
+				currentToken: "page-2",
+				pageStack: [null],
+			}),
+		);
+		mockUseExecutions.mockReturnValue({
+			data: { executions: [makeRow()], continuation_token: null },
+			isFetching: false,
+			isError: false,
+			refetch: mockRefetch,
+		});
+
+		await renderPage(["/history"]);
+
+		expect(mockUseExecutions).toHaveBeenLastCalledWith(
+			undefined,
+			expect.objectContaining({
+				status: "Failed,Timeout,Stuck,CompletedWithErrors",
+			}),
+			"page-2",
+			{ preservePageData: true },
+		);
+		expect(screen.getByText(/Page 2/)).toBeInTheDocument();
+	});
+
+	it("restores search, organization, date, view, and log-level selections from the URL", async () => {
+		mockAuth.mockReturnValue({
+			isPlatformAdmin: true,
+			user: { id: "admin-1", email: "admin@example.com" },
+		});
+
+		await renderPage([
+			"/history?q=server&org=global&from=2026-09-01&to=2026-09-04&view=logs&level=ERROR",
+		]);
+
+		expect(
+			screen.getByRole("textbox", { name: "History search" }),
+		).toHaveValue("server");
+		expect(
+			screen.getByTestId("history-organization-filter"),
+		).toHaveTextContent("null");
+		expect(screen.getByTestId("history-date-range")).toHaveTextContent(
+			/2026-09-01.*2026-09-04/,
+		);
+		expect(screen.getByRole("tab", { name: "Error" })).toHaveAttribute(
+			"aria-selected",
+			"true",
+		);
+		expect(screen.getByTestId("logs-view-props")).toHaveTextContent(
+			'"filterOrgId":null',
+		);
+		expect(screen.getByTestId("logs-view-props")).toHaveTextContent(
+			'"searchTerm":"server"',
 		);
 	});
 });
@@ -621,7 +790,9 @@ describe("ExecutionHistory — feed rendering", () => {
 			"min-w-64",
 			"py-2",
 		);
-		expect(screen.getByTestId("location-probe")).toHaveTextContent(/^\/$/);
+		expect(screen.getByTestId("location-probe")).toHaveTextContent(
+			"/?execution=11111111-1111-1111-1111-111111111111",
+		);
 		expect(row).toHaveAttribute("data-state", "selected");
 
 		await user.click(
@@ -636,7 +807,9 @@ describe("ExecutionHistory — feed rendering", () => {
 		expect(screen.getByTestId("execution-preview")).toHaveTextContent(
 			"11111111-1111-1111-1111-111111111111",
 		);
-		expect(screen.getByTestId("location-probe")).toHaveTextContent(/^\/$/);
+		expect(screen.getByTestId("location-probe")).toHaveTextContent(
+			"/?execution=11111111-1111-1111-1111-111111111111",
+		);
 	});
 });
 

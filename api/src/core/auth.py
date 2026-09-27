@@ -54,6 +54,13 @@ class ExecutionContext:
     # app_id: lets a workflow's `sdk.tables.get("name")` resolve its OWN install's
     # table first. None outside a solution execution.
     solution_id: str | None = None
+    # SPIKE: the caller's OWN install on per-call targeted requests. The SDK
+    # sends ?caller_solution=<inherited_id> alongside an explicit ?solution=
+    # target so the server can tell own-calls (caller == target, always allow)
+    # from cross-install calls (target's allow_inbound_access decides). UUID
+    # format only; malformed values are ignored (caller treated as outside).
+    # Trusted on engine requests only — resolvers decide via is_engine_user.
+    caller_solution_id: str | None = None
 
     @property
     def scope(self) -> str:
@@ -190,6 +197,10 @@ async def get_current_user_optional(
         form_id=payload.get("form_id"),
         verified_params=payload.get("verified_params"),
         verified_context=payload.get("verified_context"),
+        engine_execution_id=payload.get("engine_execution_id"),
+        engine_solution_id=payload.get("engine_solution_id"),
+        service_id=payload.get("service_id"),
+        service_attempt_id=payload.get("service_attempt_id"),
         capability_fingerprint=payload.get("capability_fingerprint"),
         token_exp=payload.get("exp"),
     )
@@ -278,6 +289,31 @@ async def get_current_superuser(
     return user
 
 
+async def get_current_engine_or_bypass_user(
+    user: Annotated[UserPrincipal, Depends(get_current_user)],
+) -> UserPrincipal:
+    """Admit execution credentials and scope-bypass principals only.
+
+    Execution credentials are the signed engine and service tokens: they
+    carry ``engine_execution_id`` and never an embed claim. Bypass is
+    platform admin OR provider-org member. Every other principal, including
+    an ordinary user's own session token, is refused.
+    """
+    from shared.scope_resolver import has_scope_bypass
+
+    if user.engine_execution_id and not user.embed:
+        return user
+    if has_scope_bypass(
+        is_platform_admin=user.is_platform_admin,
+        is_provider_org=user.is_provider_org,
+    ):
+        return user
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Execution credentials or platform access required",
+    )
+
+
 # Dependency for requiring platform admin access
 # Usage: dependencies=[RequirePlatformAdmin]
 RequirePlatformAdmin = Depends(get_current_superuser)
@@ -329,17 +365,18 @@ async def get_execution_context(
         try:
             solution_uuid = UUID(solution_id_param)
         except ValueError:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid solution id in ?solution= parameter",
-            )
-        solution_row = await db.get(SolutionORM, solution_uuid)
-        if solution_row is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Solution not found",
-            )
-        await _refuse_if_solution_inactive(solution_row)
+            # SPIKE: slug/name ref — leave for router-level resolution inside
+            # the resolved org scope (see resolve_solution_ref). Auth only
+            # gates UUIDs here; slugs 404 later if unresolvable.
+            solution_uuid = None
+        if solution_uuid is not None:
+            solution_row = await db.get(SolutionORM, solution_uuid)
+            if solution_row is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Solution not found",
+                )
+            await _refuse_if_solution_inactive(solution_row)
 
     # Gate: v2 SDK apps send X-Bifrost-App: <app_id>.  If that app belongs to a
     # solution, the solution must be active — otherwise the app is down along
@@ -363,15 +400,30 @@ async def get_execution_context(
                 if sol_row is not None:
                     await _refuse_if_solution_inactive(sol_row)
     if solution_id_param is not None and app_solution_id is not None:
-        if UUID(solution_id_param) != app_solution_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="X-Bifrost-App does not belong to the requested solution",
-            )
+        try:
+            if UUID(solution_id_param) != app_solution_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="X-Bifrost-App does not belong to the requested solution",
+                )
+        except ValueError:
+            # SPIKE: slug ref — router resolves it; mismatch surfaces as 404 there.
+            pass
 
     effective_solution_id = solution_id_param or (
         str(app_solution_id) if app_solution_id is not None else None
     )
+
+    # SPIKE: per-call caller attestation (see field docs). Format-gated only;
+    # trust is decided per-request by resolvers (engine requests only).
+    caller_solution_id: str | None = None
+    raw_caller = request.query_params.get("caller_solution")
+    if raw_caller:
+        try:
+            UUID(raw_caller)
+            caller_solution_id = raw_caller
+        except ValueError:
+            caller_solution_id = None
 
     return ExecutionContext(
         user=user,
@@ -380,6 +432,7 @@ async def get_execution_context(
         # Set by the v2 SDK provider for Solution apps; harmless/None otherwise.
         app_id=app_id_header,
         solution_id=effective_solution_id,
+        caller_solution_id=caller_solution_id,
     )
 
 
@@ -400,6 +453,7 @@ async def _refuse_if_solution_inactive(solution_row: object) -> None:
 CurrentUser = Annotated[UserPrincipal, Depends(get_current_user)]
 CurrentActiveUser = Annotated[UserPrincipal, Depends(get_current_active_user)]
 CurrentSuperuser = Annotated[UserPrincipal, Depends(get_current_superuser)]
+CurrentEngineOrBypassUser = Annotated[UserPrincipal, Depends(get_current_engine_or_bypass_user)]
 Context = Annotated[ExecutionContext, Depends(get_execution_context)]
 
 
@@ -537,6 +591,10 @@ async def get_current_user_ws(websocket) -> UserPrincipal | None:
         form_id=payload.get("form_id"),
         verified_params=payload.get("verified_params"),
         verified_context=payload.get("verified_context"),
+        engine_execution_id=payload.get("engine_execution_id"),
+        engine_solution_id=payload.get("engine_solution_id"),
+        service_id=payload.get("service_id"),
+        service_attempt_id=payload.get("service_attempt_id"),
         capability_fingerprint=payload.get("capability_fingerprint"),
         token_exp=payload.get("exp"),
     )

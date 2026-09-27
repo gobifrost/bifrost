@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { renderWithProviders, screen, waitFor } from "@/test-utils";
+import { fireEvent, renderWithProviders, screen, waitFor } from "@/test-utils";
 
 const useEventsMock = vi.fn();
 
@@ -97,6 +97,25 @@ describe("EventsTable — populated", () => {
 		expect(screen.getAllByText("10.0.0.1")).toHaveLength(2);
 		// Not connected by default
 		expect(screen.queryByText("Live")).not.toBeInTheDocument();
+	});
+
+	it("opens an event row href on ctrl-click from a plain cell", () => {
+		const open = vi.spyOn(window, "open").mockImplementation(() => null);
+		useEventsMock.mockReturnValue({
+			data: { items: [makeEvent()] },
+			isLoading: false,
+		});
+
+		renderWithProviders(<EventsTable sourceId="src-1" />);
+
+		fireEvent.click(screen.getByRole("cell", { name: "10.0.0.1" }), {
+			ctrlKey: true,
+		});
+
+		expect(open).toHaveBeenCalledWith(
+			"/event-sources/src-1/events/evt-1",
+			"_blank",
+		);
 	});
 
 	it("passes the deep-linked event id to the detail dialog when the event is outside the current list window", () => {

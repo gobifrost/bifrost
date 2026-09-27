@@ -84,6 +84,7 @@ export function TableRecordList({
 				{tables.map((table) => {
 					const isChecked = selectedIds.has(table.id);
 					const titleId = `table-${table.id}-title`;
+					const OpenTarget = selectionMode || busy ? "button" : "a";
 					return (
 						<li
 							key={table.id}
@@ -99,19 +100,39 @@ export function TableRecordList({
 								aria-labelledby={titleId}
 								className="flex min-h-16 min-w-0 flex-1"
 							>
-								<button
+								<OpenTarget
+									href={
+										!selectionMode && !busy
+											? `/tables/${table.id}`
+											: undefined
+									}
 									aria-labelledby={titleId}
-									type="button"
+									type={
+										OpenTarget === "button"
+											? "button"
+											: undefined
+									}
 									className="flex min-h-16 min-w-0 flex-1 items-start gap-3 px-3 py-3 text-left focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
 									disabled={busy}
 									aria-pressed={
 										selectionMode ? isChecked : undefined
 									}
-									onClick={() =>
-										selectionMode
-											? onToggle(table.id)
-											: onOpen(table)
-									}
+									onClick={(event) => {
+										if (selectionMode) {
+											onToggle(table.id);
+											return;
+										}
+										if (
+											event.button !== 0 ||
+											event.ctrlKey ||
+											event.metaKey ||
+											event.shiftKey ||
+											event.altKey
+										)
+											return;
+										event.preventDefault();
+										onOpen(table);
+									}}
 								>
 									<span className="flex size-9 shrink-0 items-center justify-center rounded-[var(--bf-radius-surface)] border border-primary/20 bg-primary/10 text-primary">
 										{selectionMode && isChecked ? (
@@ -134,13 +155,6 @@ export function TableRecordList({
 											>
 												{table.name}
 											</span>
-											{table.is_solution_managed && (
-												<SolutionManagedBadge
-													solutionId={
-														table.solution_id
-													}
-												/>
-											)}
 										</span>
 										<span className="line-clamp-2 text-sm leading-5 text-muted-foreground [overflow-wrap:anywhere]">
 											<MarkdownContent
@@ -168,9 +182,16 @@ export function TableRecordList({
 											</span>
 										</span>
 									</span>
-								</button>
+								</OpenTarget>
 							</article>
-							{renderActions(table)}
+							<div className="flex shrink-0 items-center gap-1">
+								{table.is_solution_managed && (
+									<SolutionManagedBadge
+										solutionId={table.solution_id}
+									/>
+								)}
+								{renderActions(table)}
+							</div>
 						</li>
 					);
 				})}

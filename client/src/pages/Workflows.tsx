@@ -29,6 +29,8 @@ import { useSearch } from "@/hooks/useSearch";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
 import { useEditorStore } from "@/stores/editorStore";
 import { fileService } from "@/services/fileService";
+import { useServicesList } from "@/components/services/useServiceQueries";
+import { serviceDetailHref } from "@/pages/ServiceDetail";
 import { ListPageHeader } from "@/components/layout/ListPageHeader";
 import { ListLoadError } from "@/components/layout/ListLoadError";
 import { ListToolbar } from "@/components/layout/ListToolbar";
@@ -277,6 +279,19 @@ export function Workflows() {
 		}
 	};
 
+	// Service rows deep-link to the Services detail route, resolved
+	// against the live services list (admin-only endpoint — disabled
+	// for non-admins, who get no service links).
+	const { data: servicesData } = useServicesList({
+		enabled: isPlatformAdmin,
+	});
+	const getServiceHref = (workflow: WorkflowListItem) => {
+		const match = servicesData?.items.find(
+			(s) => s.workflow_id === workflow.id,
+		);
+		return match ? serviceDetailHref(match) : undefined;
+	};
+
 	const workflowList = (
 		<PageScrollArea
 			aria-label="Workflow list"
@@ -317,6 +332,7 @@ export function Workflows() {
 					}
 					onResolveOrphaned={handleOpenOrphanedDialog}
 					onExecute={(workflow) => handleExecute(workflow.name ?? "")}
+					getServiceHref={getServiceHref}
 					onOpenEmpty={() => openEditor()}
 					emptySearchActive={activeFilterCount > 0}
 				/>

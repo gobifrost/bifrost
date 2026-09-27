@@ -7,7 +7,11 @@ vi.mock("@/lib/detail-route-loaders", () => ({
 }));
 
 vi.mock("@/components/solutions/SolutionManagedBadge", () => ({
-	SolutionManagedBadge: () => <span>Solution managed</span>,
+	SolutionManagedBadge: ({ solutionId }: { solutionId?: string | null }) => (
+		<a href={`/solutions/${solutionId}`} aria-label="Managed by a Solution">
+			Solution managed
+		</a>
+	),
 }));
 
 import {
@@ -69,6 +73,62 @@ function renderSurface(
 }
 
 describe("ApplicationListSurface SDK update affordances", () => {
+	it("renders published app names as native links while preserving normal launch callbacks", async () => {
+		const user = userEvent.setup();
+		const onLaunch = vi.fn();
+		renderSurface({ onLaunch });
+
+		const link = screen.getByRole("link", { name: "Dispatch Board" });
+		expect(link).toHaveAttribute("href", "/apps/dispatch-board");
+
+		await user.click(link);
+		expect(onLaunch).toHaveBeenCalledWith(
+			expect.objectContaining({ id: makeApp().id }),
+		);
+	});
+
+	it("passes the published app href through the shared catalog card link", () => {
+		renderSurface();
+
+		expect(
+			screen.getByRole("link", { name: "Dispatch Board" }),
+		).toHaveAttribute("href", "/apps/dispatch-board");
+	});
+
+	it("leaves modified app name clicks to native link behavior", () => {
+		const onLaunch = vi.fn();
+		renderSurface({ onLaunch });
+
+		fireEvent.click(screen.getByRole("link", { name: "Dispatch Board" }), {
+			ctrlKey: true,
+		});
+
+		expect(onLaunch).not.toHaveBeenCalled();
+	});
+
+	it("uses preview hrefs for unpublished legacy app names", async () => {
+		const user = userEvent.setup();
+		const onPreview = vi.fn();
+		renderSurface({
+			apps: [
+				makeApp({
+					app_model: "legacy",
+					is_published: false,
+					has_unpublished_changes: true,
+				}),
+			],
+			onPreview,
+		});
+
+		const link = screen.getByRole("link", { name: "Dispatch Board" });
+		expect(link).toHaveAttribute("href", "/apps/dispatch-board/preview");
+
+		await user.click(link);
+		expect(onPreview).toHaveBeenCalledWith(
+			expect.objectContaining({ id: makeApp().id }),
+		);
+	});
+
 	it("toggles actionable cards as whole-card controls in selection mode", async () => {
 		const user = userEvent.setup();
 		const onToggleSelection = vi.fn();
@@ -160,9 +220,7 @@ describe("ApplicationListSurface SDK update affordances", () => {
 		await user.click(
 			screen.getByRole("button", { name: "Dispatch Board actions" }),
 		);
-		await user.click(
-			screen.getByRole("menuitem", { name: /update sdk/i }),
-		);
+		await user.click(screen.getByRole("menuitem", { name: /update sdk/i }));
 
 		expect(onUpdateSdk).toHaveBeenCalledWith(
 			expect.objectContaining({ id: makeApp().id }),
@@ -269,7 +327,70 @@ describe("ApplicationListSurface SDK update affordances", () => {
 		expect(
 			screen.getByRole("menuitem", { name: /update sdk/i }),
 		).toBeVisible();
-		expect(screen.queryByRole("menuitem", { name: /settings/i })).toBeNull();
+		expect(
+			screen.queryByRole("menuitem", { name: /settings/i }),
+		).toBeNull();
 		expect(screen.queryByRole("menuitem", { name: /delete/i })).toBeNull();
 	});
+
+	it("uses row hrefs and keeps table actions in the overflow menu", async () => {
+		const user = userEvent.setup();
+		const onLaunch = vi.fn();
+		const onPreview = vi.fn();
+		const onOpenSettings = vi.fn();
+		const onOpenCode = vi.fn();
+		const open = vi.spyOn(window, "open").mockImplementation(() => null);
+		renderSurface({
+			viewMode: "table",
+			apps: [
+				makeApp({ id: "published-app", name: "Published App" }),
+				makeApp({
+					id: "draft-app",
+					name: "Draft App",
+					slug: "draft-app",
+					app_model: "legacy",
+					is_published: false,
+					has_unpublished_changes: true,
+				}),
+			],
+			onLaunch,
+			onPreview,
+			onOpenSettings,
+			onOpenCode,
+		});
+
+		fireEvent.click(screen.getAllByText("Dispatch queue")[0], {
+			ctrlKey: true,
+		});
+		expect(open).toHaveBeenCalledWith("/apps/dispatch-board", "_blank");
+		expect(onLaunch).not.toHaveBeenCalled();
+		expect(screen.queryByTitle("Preview draft")).not.toBeInTheDocument();
+		expect(screen.queryByTitle("Open application")).not.toBeInTheDocument();
+
+		await user.click(
+			screen.getByRole("button", { name: "Draft App actions" }),
+		);
+		expect(
+			screen.getByRole("menuitem", { name: "Preview" }),
+		).toBeInTheDocument();
+		expect(
+			screen.getByRole("menuitem", { name: "Edit" }),
+		).toBeInTheDocument();
+	});
 });
+
+it.each(["grid", "table"] as const)(
+	"preserves solution context in %s links",
+	(viewMode) => {
+		renderSurface({
+			viewMode,
+			navigationSearch: "?from=solution:install-1",
+		});
+		expect(
+			screen.getByRole("link", { name: "Dispatch Board" }),
+		).toHaveAttribute(
+			"href",
+			"/apps/dispatch-board?from=solution:install-1",
+		);
+	},
+);

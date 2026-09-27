@@ -43,6 +43,7 @@ from src.models.contracts.integrations import (  # noqa: E402
     IntegrationMappingUpdate,
     IntegrationUpdate,
 )
+from src.models.contracts.services import ServicePolicyUpdate  # noqa: E402
 from src.models.contracts.organizations import (  # noqa: E402
     OrganizationCreate,
     OrganizationUpdate,
@@ -85,6 +86,7 @@ COVERED_DTOS: list[type] = [
     EventSourceUpdate,
     EventSubscriptionCreate,
     EventSubscriptionUpdate,
+    ServicePolicyUpdate,
 ]
 
 

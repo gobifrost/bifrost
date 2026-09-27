@@ -445,6 +445,8 @@ async def test_config_git_sync_parity(db_session):
         config_type=ConfigType.STRING,
         value="golden-value",
         description="parity test config",
+        required=True,
+        position=3,
         organization_id=None,
         integration_id=None,
         updated_by="test",

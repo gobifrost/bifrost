@@ -64,28 +64,6 @@ class TestCliApps:
         for item in payload["applications"]:
             assert "id" in item
 
-    def test_get_by_slug_returns_app(
-        self, cli_client, _invoke, e2e_client, platform_admin
-    ) -> None:
-        """``apps get <slug>`` round-trips the created app body."""
-        slug = f"cli-app-get-{uuid4().hex[:8]}"
-        create_resp = e2e_client.post(
-            "/api/applications",
-            headers=platform_admin.headers,
-            json={"name": slug, "slug": slug, "app_model": "inline_v1"},
-        )
-        assert create_resp.status_code == 201, create_resp.text
-        app_id = create_resp.json()["id"]
-
-        try:
-            result = _invoke(["--json", "get", slug])
-            assert result.exit_code == 0, result.output
-            payload = json.loads(result.output)
-            assert str(payload["id"]) == app_id
-            assert payload["slug"] == slug
-        finally:
-            _invoke(["--json", "delete", app_id])
-
     def test_create_with_deps_makes_two_rest_calls(
         self, cli_client, _invoke, e2e_client, platform_admin, tmp_path
     ) -> None:
@@ -141,10 +119,10 @@ class TestCliApps:
         # Cleanup.
         _invoke(["--json", "delete", app_id])
 
-    def test_create_without_deps_skips_dependencies_call(
-        self, cli_client, _invoke, e2e_client, platform_admin
+    def test_app_cli_lifecycle_without_initial_deps(
+        self, cli_client, _invoke, e2e_client, platform_admin, tmp_path
     ) -> None:
-        """``apps create`` without ``--deps`` makes only the POST — no deps key."""
+        """One app covers create, get, update, set-deps, and delete commands."""
         slug = f"cli-app-nodeps-{uuid4().hex[:8]}"
 
         result = _invoke(
@@ -165,23 +143,13 @@ class TestCliApps:
         assert deps_resp.status_code == 200, deps_resp.text
         assert deps_resp.json() == {}
 
-        # Cleanup.
-        _invoke(["--json", "delete", app_id])
+        result = _invoke(["--json", "get", slug])
+        assert result.exit_code == 0, result.output
+        fetched = json.loads(result.output)
+        assert str(fetched["id"]) == app_id
+        assert fetched["slug"] == slug
 
-    def test_update_metadata_via_patch(
-        self, cli_client, _invoke, e2e_client, platform_admin
-    ) -> None:
-        """``apps update <ref>`` PATCHes metadata (patch-without-draft)."""
-        slug = f"cli-app-upd-{uuid4().hex[:8]}"
-        create_resp = e2e_client.post(
-            "/api/applications",
-            headers=platform_admin.headers,
-            json={"name": slug, "slug": slug, "app_model": "inline_v1", "description": "before"},
-        )
-        assert create_resp.status_code == 201, create_resp.text
-        app_id = create_resp.json()["id"]
-
-        # Update by slug ref.
+        # Update by slug, leaving the slug unchanged.
         result = _invoke(
             [
                 "--json",
@@ -197,22 +165,6 @@ class TestCliApps:
         assert updated["description"] == "after"
         # Slug unchanged since we didn't pass --slug.
         assert updated["slug"] == slug
-
-        # Cleanup.
-        _invoke(["--json", "delete", app_id])
-
-    def test_set_deps_direct_put(
-        self, cli_client, _invoke, e2e_client, platform_admin, tmp_path
-    ) -> None:
-        """``apps set-deps <ref>`` PUTs to /dependencies without touching metadata."""
-        slug = f"cli-app-setdeps-{uuid4().hex[:8]}"
-        create_resp = e2e_client.post(
-            "/api/applications",
-            headers=platform_admin.headers,
-            json={"name": slug, "slug": slug, "app_model": "inline_v1"},
-        )
-        assert create_resp.status_code == 201, create_resp.text
-        app_id = create_resp.json()["id"]
 
         deps = {"lodash": "^4.17.0"}
         pkg_path = _write_package_json(tmp_path, deps)
@@ -230,22 +182,7 @@ class TestCliApps:
         assert deps_resp.status_code == 200
         assert deps_resp.json() == deps
 
-        # Cleanup.
-        _invoke(["--json", "delete", app_id])
-
-    def test_delete_by_slug(
-        self, cli_client, _invoke, e2e_client, platform_admin
-    ) -> None:
-        """``apps delete <ref>`` removes the app; subsequent GET returns 404."""
-        slug = f"cli-app-del-{uuid4().hex[:8]}"
-        create_resp = e2e_client.post(
-            "/api/applications",
-            headers=platform_admin.headers,
-            json={"name": slug, "slug": slug, "app_model": "inline_v1"},
-        )
-        assert create_resp.status_code == 201, create_resp.text
-        app_id = create_resp.json()["id"]
-
+        # Delete by slug and verify it is no longer addressable.
         result = _invoke(["--json", "delete", slug])
         assert result.exit_code == 0, result.output
         payload = json.loads(result.output)

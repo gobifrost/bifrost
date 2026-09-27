@@ -136,15 +136,19 @@ def _usage(payload: dict[str, Any]) -> tuple[int, int, Decimal | None]:
     return input_tokens, output_tokens, provider_cost
 
 
-async def generate_image(
-    db: AsyncSession,
+async def generate_image_with_config(
+    config: MediaProviderConfig,
     *,
     filename: str,
     prompt: str,
     client: httpx.AsyncClient | None = None,
 ) -> GeneratedArtifact:
-    """Generate one raster image with the configured dedicated image model."""
-    config = await get_media_provider_config(db, "image")
+    """Generate one raster image with a previously resolved provider config.
+
+    Runs the provider HTTP call without touching the database so callers
+    can resolve ``get_media_provider_config`` in a short transaction,
+    release its connection, then call this with no DB session held.
+    """
     path = "/images" if config.is_openrouter else "/images/generations"
     owns_client = client is None
     http = client or httpx.AsyncClient(timeout=180.0, follow_redirects=True)
@@ -189,6 +193,20 @@ async def generate_image(
     finally:
         if owns_client:
             await http.aclose()
+
+
+async def generate_image(
+    db: AsyncSession,
+    *,
+    filename: str,
+    prompt: str,
+    client: httpx.AsyncClient | None = None,
+) -> GeneratedArtifact:
+    """Generate one raster image with the configured dedicated image model."""
+    config = await get_media_provider_config(db, "image")
+    return await generate_image_with_config(
+        config, filename=filename, prompt=prompt, client=client
+    )
 
 
 def _same_provider_url(base: str, value: str) -> str:

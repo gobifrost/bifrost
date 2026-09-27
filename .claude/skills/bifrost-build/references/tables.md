@@ -124,7 +124,7 @@ Claims select one scalar field per source row and do not flatten a JSON list. Ma
 
 ## Solution scope and shared fallback
 
-Solution context resolves its own table first. With `global_repo_access: true`, a miss may fall back by name to an eligible install-org and then global loose table. Shared fallback tables are read-only from the Solution; the flag does not permit row mutation outside the install. Policies still apply after resolution.
+Solution context resolves its own table first. With `allow_outbound_access: true`, a miss may fall back by name to an eligible install-org and then global loose table. Shared fallback tables are read-only from the Solution; the flag does not permit row mutation outside the install. Policies still apply after resolution. To reach another install's table directly from your own code, pass `solution=` (install UUID or slug) to `tables.query`/`get`/`insert`; the target's `allow_inbound_access` gate decides. See `solution-resource-access.md`.
 
 Prefer Solution-owned tables for portable features. If relying on a shared table, document the dependency and test local preview and deployed behavior. Read `solution-resource-access.md` for the exact matrix.
 

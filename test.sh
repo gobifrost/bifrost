@@ -14,8 +14,12 @@
 #   ./test.sh all                       All backend tests, including slow tests.
 #   ./test.sh tests/path/... [args]     Pass through to pytest.
 #
+# Local Kubernetes spike (isolated Kind cluster):
+#   ./test.sh kubernetes up|status|down|collect|kubectl
+#
 # Quality checks:
 #   ./test.sh quality api               Run API pyright + ruff inside Docker.
+#   ./test.sh quality repo              Run local repository CI hygiene checks.
 #
 # Client tests:
 #   ./test.sh client unit               Vitest on the host (no stack).
@@ -26,18 +30,22 @@
 #   ./test.sh client e2e e2e/auth.unauth.spec.ts   Pass through to playwright.
 #
 # CI escape hatch:
-#   ./test.sh pre-pr                    Required local PR/merge gate for a clean commit.
+#   ./test.sh pr-preflight              Local repository, changed E2E, unit, quality, and CodeQL gate before opening a PR.
+#   ./test.sh pre-pr                    Optional full local reproduction of the merge gate (diagnostic).
 #   ./test.sh ci                        Full isolated run: up, all tests, down.
 #
-# Global flags (apply to most subcommands):
-#   --no-reset    Skip state reset before running tests.
-#   --coverage    Enable coverage reporting (backend only).
-#   --wait        On failure, pause before cleanup.
+# Pytest flags follow a test selector (for example, `./test.sh tests/unit/test_foo.py -v`).
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
+
+# Kubernetes uses an isolated kubeconfig and local fixtures, never Compose secrets.
+if [ "${1:-}" = "kubernetes" ]; then
+    shift
+    exec "$SCRIPT_DIR/scripts/kubernetes/local-kind.sh" "$@"
+fi
 
 # shellcheck source=scripts/lib/test_helpers.sh
 source "$SCRIPT_DIR/scripts/lib/test_helpers.sh"
@@ -275,7 +283,18 @@ stack_status() {
 # =============================================================================
 
 run_pytest() {
-    local runner_lock_fd runner_name runner_status
+    local runner_lock_fd runner_name runner_status target unit_only
+
+    unit_only="${BIFROST_TEST_UNIT_ONLY:-0}"
+    if [[ "${1:-}" == tests/unit/* ]]; then
+        unit_only=1
+        for target in "$@"; do
+            if [[ "$target" == tests/e2e/* ]]; then
+                unit_only=0
+                break
+            fi
+        done
+    fi
 
     # One worktree owns one mutable Docker test stack.  A second pytest process
     # against that stack can reset the database underneath the first process and
@@ -309,6 +328,12 @@ run_pytest() {
     # changed migrations they should run `./test.sh stack reset` once.
     require_stack_up
     prepare_test_state
+    if [[ "$unit_only" == "1" ]]; then
+        # Unit tests create committed service rows while exercising claim
+        # logic. A live scheduler/worker can claim those rows before the test
+        # loop does, making the result depend on an unrelated process tick.
+        docker compose -f "$COMPOSE_FILE" stop worker scheduler > /dev/null
+    fi
     # LOG_DIR is mkdir'd on the host as the runner/host user, then bind-mounted
     # into the test-runner container at /tmp/bifrost. The container runs as
     # uid 1000 (non-root, hardened), so it cannot write pytest's --junitxml file
@@ -333,7 +358,7 @@ run_pytest() {
 # not the ms a unit test should cost). Those still run in `all` and nightly, so
 # no coverage is dropped — just moved off the per-PR critical path. A caller can
 # re-include them ad hoc with `./test.sh unit -m slow` or `-m ""`.
-cmd_unit() { run_pytest tests/ --ignore=tests/e2e/ -m "not slow" -v "$@"; }
+cmd_unit() { BIFROST_TEST_UNIT_ONLY=1 run_pytest tests/ --ignore=tests/e2e/ -m "not slow" -v "$@"; }
 cmd_e2e()  { run_pytest tests/e2e/ -v "$@"; }
 cmd_all()  { run_pytest tests/ -v "$@"; }
 
@@ -342,8 +367,9 @@ cmd_quality() {
     shift || true
     case "$sub" in
         api) quality_api "$@" ;;
+        repo) repository_ci_checks "$@" ;;
         *)
-            echo "Usage: ./test.sh quality api [args]" >&2
+            echo "Usage: ./test.sh quality {api|repo} [args]" >&2
             exit 2
             ;;
     esac
@@ -395,6 +421,8 @@ client_ci_checks() {
 
 repository_ci_checks() {
     bash scripts/lib/test_stack_lock_test.sh
+    python3 -m unittest scripts.test_codeql_changed_lines
+    python3 -m unittest scripts.test_e2e_shard
     echo "Checking GitHub Action pins..."
     python3 api/scripts/check_github_action_pins.py --verify-versions
 
@@ -600,6 +628,30 @@ cmd_pre_pr() {
     fi
 }
 
+cmd_pr_preflight() {
+    local path
+    local -a changed_e2e_tests=()
+    git fetch --quiet origin main
+    repository_ci_checks
+    quality_api
+    stack_up
+    cmd_unit
+    while IFS= read -r path; do
+        if [[ "${path##*/}" == test_*.py ]]; then
+            changed_e2e_tests+=("${path#api/}")
+        fi
+    done < <(git diff --name-only --diff-filter=ACMR origin/main...HEAD -- api/tests/e2e/)
+    if ((${#changed_e2e_tests[@]})); then
+        echo "Running changed backend E2E test files: ${changed_e2e_tests[*]}"
+        # Match CI's credential-free E2E lane; optional live GitHub tests use
+        # a separate external repository and do not run in the merge queue.
+        GITHUB_TEST_PAT= run_pytest "${changed_e2e_tests[@]}" -v
+    fi
+    client_ci_checks
+    scripts/codeql-local.sh --rebuild --changed-only --fail-on-alerts
+    scripts/codeql-local.sh --rebuild --lang javascript --changed-only --fail-on-alerts
+}
+
 # =============================================================================
 # Dispatch
 # =============================================================================
@@ -632,6 +684,7 @@ case "$1" in
     all) shift; cmd_all "$@" ;;
     quality) shift; cmd_quality "$@" ;;
     client) shift; cmd_client "$@" ;;
+    pr-preflight) shift; cmd_pr_preflight "$@" ;;
     pre-pr) shift; cmd_pre_pr "$@" ;;
     ci) cmd_ci ;;
     -h|--help|help)

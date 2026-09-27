@@ -1,8 +1,10 @@
 """
-bifrost/users.py - User management SDK (API-only)
+bifrost/users.py - User management SDK
 
 Provides Python API for user operations from workflows.
-All operations go through HTTP API endpoints.
+
+Inside an engine child these operations go through the worker's private Unix
+socket (the parent serves the real HTTP endpoints); external callers use HTTP.
 """
 
 from __future__ import annotations
@@ -51,11 +53,11 @@ class users:
         client = get_client()
         params: dict[str, str] = {}
         if org_id:
-            params["org_id"] = org_id
+            params["scope"] = org_id
         if include_inactive:
             params["include_inactive"] = "true"
 
-        response = await client.get("/api/users", params=params)
+        response = await client.engine_request("GET", "/api/users", params=params)
         raise_for_status_with_detail(response)
         data = response.json()
         return [UserPublic.model_validate(user) for user in data]
@@ -81,7 +83,7 @@ class users:
             ...     print(user.email)
         """
         client = get_client()
-        response = await client.get(f"/api/users/{user_id}")
+        response = await client.engine_request("GET", f"/api/users/{user_id}")
         if response.status_code == 404:
             return None
         raise_for_status_with_detail(response)
@@ -133,7 +135,7 @@ class users:
         if org_id:
             payload["organization_id"] = org_id
 
-        response = await client.post("/api/users", json=payload)
+        response = await client.engine_request("POST", "/api/users", json=payload)
         raise_for_status_with_detail(response)
         return UserPublic.model_validate(response.json())
 
@@ -161,7 +163,9 @@ class users:
             >>> user = await users.update("user-123", name="New Name", is_active=False)
         """
         client = get_client()
-        response = await client.patch(f"/api/users/{user_id}", json=updates)
+        response = await client.engine_request(
+            "PATCH", f"/api/users/{user_id}", json=updates
+        )
         if response.status_code == 404:
             raise ValueError(f"User not found: {user_id}")
         raise_for_status_with_detail(response)
@@ -190,7 +194,7 @@ class users:
             >>> deleted = await users.delete("user-123")
         """
         client = get_client()
-        response = await client.delete(f"/api/users/{user_id}")
+        response = await client.engine_request("DELETE", f"/api/users/{user_id}")
         if response.status_code == 404:
             raise ValueError(f"User not found: {user_id}")
         raise_for_status_with_detail(response)

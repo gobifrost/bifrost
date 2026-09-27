@@ -87,17 +87,19 @@ test.describe.serial("Per-mapping OAuth", () => {
 			}),
 		).toBeVisible();
 		await expect(page.getByPlaceholder(/entity id/i).first()).toBeVisible();
+
+		const orgRow = page.getByRole("listitem").filter({
+			has: page.getByRole("heading", { name: organizationName }),
+		});
+		await orgRow
+			.getByRole("button", { name: /mapping actions/i })
+			.click();
 		await expect(
-			page
-				.getByRole("listitem")
-				.filter({
-					has: page.getByRole("heading", { name: organizationName }),
-				})
-				.getByRole("button", { name: "Connect", exact: true }),
+			page.getByRole("menuitem", { name: "Connect", exact: true }),
 		).toBeVisible();
 	});
 
-	test("Connect button on mapping row opens authorize URL", async ({
+	test("Connect action on a mapping row opens the authorize URL", async ({
 		page,
 	}) => {
 		await page.route(
@@ -128,7 +130,10 @@ test.describe.serial("Per-mapping OAuth", () => {
 			.filter({
 				has: page.getByRole("heading", { name: organizationName }),
 			})
-			.getByRole("button", { name: "Connect", exact: true })
+			.getByRole("button", { name: /mapping actions/i })
+			.click();
+		await page
+			.getByRole("menuitem", { name: "Connect", exact: true })
 			.click();
 
 		const request = await authorizeRequest;

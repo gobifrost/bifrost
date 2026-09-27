@@ -17,10 +17,12 @@ REQUIRED_JOBS = {
     "Lint & Type Check",
     "Unit Tests",
     "Client Unit Tests",
-    "E2E Tests (shard 1/2)",
-    "E2E Tests (shard 2/2)",
+    "E2E Tests (shard 1/3)",
+    "E2E Tests (shard 2/3)",
+    "E2E Tests (shard 3/3)",
     "Critical Browser Smoke",
-    "Build Dev Candidate",
+    "Build API Dev Candidate",
+    "Build Client Dev Candidate",
     "E2E Tests",
 }
 CI_WORKFLOW_PATH = ".github/workflows/ci.yml"

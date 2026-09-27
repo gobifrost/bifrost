@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from src.routers.agents import _agent_logo_url
 from src.routers.applications import _application_logo_url
-from src.routers.forms import _attach_form_logo_fields, _form_logo_url
+from shared.sdk_forms import attach_form_logo_fields, form_logo_url
 from src.routers.integrations import _integration_logo_url, _integration_to_response
 from src.models.contracts.forms import FormPublic
 
@@ -47,7 +47,7 @@ def test_legacy_integration_logo_uses_uncached_endpoint_during_backfill() -> Non
 
 def test_legacy_form_logo_uses_uncached_endpoint_during_backfill() -> None:
     form = _entity(logo_content_type="image/png")
-    assert _form_logo_url(form) == f"/api/forms/{form.id}/logo"
+    assert form_logo_url(form) == f"/api/forms/{form.id}/logo"
 
 
 def test_thumbnail_logo_keeps_immutable_versioned_url() -> None:
@@ -102,7 +102,7 @@ def test_form_response_includes_logo_url_and_version() -> None:
         is_active=True,
     )
 
-    _attach_form_logo_fields(response, form)
+    attach_form_logo_fields(response, form)
 
     assert response.logo is None
     assert response.logo_url == f"/api/forms/{form.id}/logo?v={'c' * 64}"

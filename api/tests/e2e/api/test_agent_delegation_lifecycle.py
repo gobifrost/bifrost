@@ -305,6 +305,20 @@ async def test_chat_executor_receives_durable_child_callback(
         tool_calling=True,
     )
 
+    parent_model = DelegatingTestModel(agent_delegation_slug(child["name"]))
+    child_model = TestModel(custom_output_text="Durable child answer")
+
+    def _route_model(config, model=None, **kwargs):
+        """Route model construction by config: parent chat vs delegated child.
+
+        Both executors build through the shared factory now, so dispatch on
+        the resolved model name instead of stacking two patches on one target
+        (the second would shadow the first for both surfaces).
+        """
+        del kwargs
+        name = model or config.model
+        return parent_model if name == "test-parent" else child_model
+
     try:
         with (
             patch(
@@ -323,23 +337,19 @@ async def test_chat_executor_receives_durable_child_callback(
                 ),
             ),
             patch(
-                "src.services.agent_executor.create_agent_model",
-                return_value=DelegatingTestModel(
-                    agent_delegation_slug(child["name"])
-                ),
+                "src.services.agent_runtime.model_factory.create_agent_model",
+                side_effect=_route_model,
             ),
             patch(
-                "src.services.execution.autonomous_agent_executor.create_agent_model",
-                return_value=TestModel(custom_output_text="Durable child answer"),
-            ),
-            patch(
-                "src.services.execution.autonomous_agent_executor.get_llm_config",
+                "src.services.execution.autonomous_agent_executor.get_llm_configs",
                 new_callable=AsyncMock,
-                return_value=LLMConfig(
-                    provider="openai",
-                    model="test-child",
-                    api_key="test-key",
-                ),
+                return_value=[
+                    LLMConfig(
+                        provider="openai",
+                        model="test-child",
+                        api_key="test-key",
+                    )
+                ],
             ),
             patch(
                 "src.services.execution.run_summarizer.enqueue_summarize",

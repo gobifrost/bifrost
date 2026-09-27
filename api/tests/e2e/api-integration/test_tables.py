@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.models.orm.tables import Document
 from src.models.orm.organizations import Organization
 from src.repositories.tables import TableRepository
-from src.routers.tables import DocumentRepository
+from shared.table_documents import DocumentRepository
 
 
 @pytest_asyncio.fixture

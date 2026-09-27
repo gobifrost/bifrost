@@ -98,7 +98,7 @@ Do not display raw workflow stack traces, decrypted integration errors, access t
 
 The scaffolded provider carries `appId` so deployed workflow/table/file requests resolve within the correct install. Do not construct `X-Bifrost-App`, auth, or Solution query headers manually.
 
-The host also supplies org scope. Explicit scope overrides are privileged behavior and should not be used for ordinary app navigation. `global_repo_access` affects server-side fallback; it does not change the web SDK API or bypass policies.
+The host also supplies org scope. Explicit scope overrides are privileged behavior and should not be used for ordinary app navigation. `allow_outbound_access` affects server-side fallback; it does not change the web SDK API or bypass policies.
 
 ## Verification
 

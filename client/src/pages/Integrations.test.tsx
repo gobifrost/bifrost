@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { waitFor } from "@testing-library/react";
-import { renderWithProviders, screen } from "@/test-utils";
+import { fireEvent, renderWithProviders, screen } from "@/test-utils";
 import type { Integration } from "@/services/integrations";
 
 import { Integrations } from "./Integrations";
@@ -162,6 +162,7 @@ describe("Integrations", () => {
 		mockDeleteIntegration.mockReturnValue({ mutateAsync });
 
 		const { user } = await renderPage();
+		const open = vi.spyOn(window, "open").mockImplementation(() => null);
 
 		expect(screen.getByText("Slack")).toBeInTheDocument();
 		expect(screen.getByText("Salesforce")).toBeInTheDocument();
@@ -186,6 +187,10 @@ describe("Integrations", () => {
 			"href",
 			"/integrations/int-1",
 		);
+		fireEvent.click(screen.getByRole("cell", { name: "OAuth configured" }), {
+			ctrlKey: true,
+		});
+		expect(open).toHaveBeenCalledWith("/integrations/int-1", "_blank");
 		expect(
 			screen.queryByRole("button", { name: /open slack/i }),
 		).not.toBeInTheDocument();

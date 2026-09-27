@@ -437,6 +437,34 @@ describe("Home", () => {
 	});
 });
 
+it("uses a plain Workspace title for users and title navigation for admins", () => {
+	const ordinary = renderHome();
+	expect(
+		screen.getByRole("heading", { name: "Workspace", level: 1 }),
+	).toBeInTheDocument();
+	expect(
+		screen.queryByRole("navigation", { name: "Workspace views" }),
+	).not.toBeInTheDocument();
+	ordinary.unmount();
+
+	state.isPlatformAdmin = true;
+	renderHome();
+	const navigation = screen.getByRole("navigation", {
+		name: "Workspace views",
+	});
+	const workspace = within(navigation).getByRole("link", {
+		name: "Workspace",
+	});
+	expect(workspace).toHaveAttribute("aria-current", "page");
+	expect(workspace).toContainElement(
+		screen.getByRole("heading", { name: "Workspace", level: 1 }),
+	);
+	expect(within(navigation).getAllByRole("link")).toHaveLength(2);
+	expect(
+		within(navigation).getByRole("link", { name: "Dashboard" }),
+	).toBeInTheDocument();
+});
+
 it("puts filtered catalog results ahead of shortcuts and keeps Dashboard admin-only", async () => {
 	const { user } = renderHome();
 	expect(

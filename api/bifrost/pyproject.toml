@@ -12,6 +12,7 @@ dependencies = [
     "aiohttp>=3.9.0",  # `bifrost solution start` local dev server (proxy + WS bridge)
     "click>=8.1.0",
     "httpx>=0.24.0",
+    "packaging>=24.0",  # imported by bifrost.cli (version gating)
     "pathspec>=0.11.0",
     "pydantic>=2.0.0",
     "watchdog>=4.0.0",
@@ -20,6 +21,7 @@ dependencies = [
     "textual>=1.0.0",
     "python-dotenv>=1.0.0",
     "keyring>=24.0.0",
+    "packaging>=24.0",  # CLI minimum-version comparison in bifrost.cli
 ]
 
 [project.optional-dependencies]

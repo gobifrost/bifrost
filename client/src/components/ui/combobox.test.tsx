@@ -7,6 +7,20 @@ import { renderWithProviders, screen } from "@/test-utils";
 import { Combobox } from "./combobox";
 
 describe("Combobox", () => {
+	it("keeps a long selected label on one truncated line", () => {
+		const label =
+			"Active Directory user audit with an exceptionally long display name";
+		renderWithProviders(
+			<Combobox
+				options={[{ value: "directory-audit", label }]}
+				value="directory-audit"
+			/>,
+		);
+
+		expect(screen.getByRole("combobox")).toHaveClass("h-11", "sm:h-10");
+		expect(screen.getByText(label)).toHaveClass("truncate");
+	});
+
 	it("keeps the selected value visible when options are unavailable", () => {
 		renderWithProviders(<Combobox options={[]} value="ticket_id" placeholder="Pick key" />);
 		expect(screen.getByRole("combobox")).toHaveTextContent("ticket_id");
@@ -66,6 +80,40 @@ describe("Combobox", () => {
 		).not.toBeInTheDocument();
 		expect(
 			screen.queryByRole("option", { name: "Sora" }),
+		).not.toBeInTheDocument();
+	});
+	it("filters options by description text", async () => {
+		const { user } = renderWithProviders(
+			<Combobox
+				options={[
+					{
+						value: "archive-library",
+						label: "Archive document library",
+						description: "Moves completed files from SharePoint",
+					},
+					{
+						value: "audit-mailboxes",
+						label: "Audit mailboxes",
+						description: "Checks Exchange retention policies",
+					},
+				]}
+				onValueChange={vi.fn()}
+				placeholder="Choose workflow"
+				searchPlaceholder="Search workflows..."
+			/>,
+		);
+
+		await user.click(screen.getByRole("combobox"));
+		await user.type(
+			screen.getByPlaceholderText("Search workflows..."),
+			"sharepoint",
+		);
+
+		expect(
+			screen.getByRole("option", { name: /Archive document library/ }),
+		).toBeInTheDocument();
+		expect(
+			screen.queryByRole("option", { name: /Audit mailboxes/ }),
 		).not.toBeInTheDocument();
 	});
 	it("selects and clears a long option by keyboard and restores trigger focus", async () => {

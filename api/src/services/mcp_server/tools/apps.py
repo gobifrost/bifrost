@@ -14,6 +14,7 @@ from typing import Any
 
 from fastmcp.tools import ToolResult
 
+from shared.scope_resolver import has_scope_bypass
 from src.core.pubsub import publish_app_draft_update
 from src.services.mcp_server.tool_result import error_result, success_result
 from src.services.mcp_server.tools._http_bridge import call_rest
@@ -21,6 +22,24 @@ from src.services.mcp_server.tools._org_scope import apply_mcp_org_scope
 from src.services.mcp_server.tools.db import get_tool_db
 
 logger = logging.getLogger(__name__)
+
+
+def _write_scope_bypass(context: Any) -> bool:
+    return has_scope_bypass(
+        is_platform_admin=getattr(context, "is_platform_admin", False),
+        is_provider_org=getattr(context, "is_provider_org", False),
+    )
+
+
+def _app_write_denied(context: Any, app: Any) -> bool:
+    """Whether the caller lacks write scope for ``app``.
+
+    Writing to any application — own-org included — requires scope bypass
+    (platform admin or provider-org member), matching REST's
+    ``get_application_for_write_or_404``.
+    """
+    del app  # write scope no longer depends on the app's org
+    return not _write_scope_bypass(context)
 
 
 def _pick_slug_row(rows: list[Any], org_id: Any) -> Any | None:
@@ -124,6 +143,11 @@ async def create_app(
     from src.services.file_storage import FileStorageService
 
     logger.info(f"MCP create_app called with name={name}, scope={scope}")
+
+    if not _write_scope_bypass(context):
+        return error_result(
+            "Only a platform admin or provider-org member can create applications."
+        )
 
     if not name:
         return error_result("name is required")
@@ -355,6 +379,13 @@ async def update_app(
             if not app:
                 return error_result(f"Application not found: {app_id}")
 
+            # Writing requires scope bypass — the same rule the REST router
+            # enforces via get_application_for_write_or_404. Report the same
+            # not-found message as the lookup above so a caller can't
+            # distinguish "no write access" from "doesn't exist".
+            if _app_write_denied(context, app):
+                return error_result(f"Application not found: {app_id}")
+
             # Solution-managed apps are read-only (criterion 6) — refuse before
             # mutating so the caller gets the clean locked message, not a 500 from
             # the before_flush backstop (audit M-MCP).
@@ -448,6 +479,17 @@ async def get_app_publish_status(
     description = f"Application publish {status_value}"
     if phase:
         description += f": {phase}"
+    if status_value == "requires_action":
+        result = body.get("result")
+        action = result.get("requires_action") if isinstance(result, dict) else None
+        safe_result = {"requires_action": action} if isinstance(action, str) else {}
+        return error_result(
+            description,
+            {
+                "status": status_value,
+                "result": safe_result,
+            },
+        )
     if status_value in ("failed", "cancelled"):
         error = body.get("error") or {}
         return error_result(
@@ -843,6 +885,46 @@ async def push_files(
                     {"blocked_paths": blocked},
                 )
 
+            # Resolve the delete-sweep's target paths (if any) BEFORE any
+            # write, so the write-scope check below covers them too and a
+            # denial rejects the whole batch atomically — no partial writes.
+            delete_prefix_paths: set[str] = set()
+            if delete_missing_prefix:
+                sweep_prefix = delete_missing_prefix
+                if not sweep_prefix.endswith("/"):
+                    sweep_prefix += "/"
+                # The delete-sweep is a separate write path from the files-key
+                # guard above: an empty/partial `files` dict slips past the
+                # key check, but the sweep would still delete _repo files
+                # under `sweep_prefix`. Refuse if the sweep would touch ANY
+                # solution-managed app's files — in either direction: the
+                # delete prefix is under a managed prefix (delete
+                # "apps/managed/sub"), OR contains/equals one (delete
+                # "apps/" which would sweep "apps/managed/...").
+                if any(
+                    sweep_prefix.startswith(managed) or managed.startswith(sweep_prefix)
+                    for managed in managed_prefixes
+                ):
+                    return error_result(
+                        SOLUTION_MANAGED_MESSAGE,
+                        {"blocked_delete_prefix": delete_missing_prefix},
+                    )
+                existing_files = await db.execute(
+                    select(FileIndex.path).where(FileIndex.path.startswith(sweep_prefix))
+                )
+                existing_paths = {row[0] for row in existing_files.all()}
+                delete_prefix_paths = existing_paths - set(files.keys())
+
+            # Write scope: writing or deleting any `_repo/` path requires
+            # scope bypass (platform admin or provider-org member) — this
+            # matches REST, where `_repo/` writes have no non-admin path at
+            # all (files.py's editor routes are CurrentSuperuser).
+            if not _write_scope_bypass(context):
+                return error_result(
+                    "You don't have permission to write one or more of these paths.",
+                    {"denied_paths": sorted(set(files.keys()) | delete_prefix_paths)},
+                )
+
             file_storage = FileStorageService(db)
             created = 0
             updated = 0
@@ -879,30 +961,11 @@ async def push_files(
                     push_errors.append(f"{repo_path}: {str(e)}")
 
             if delete_missing_prefix:
-                prefix = delete_missing_prefix
-                if not prefix.endswith("/"):
-                    prefix += "/"
-                # The delete-sweep is a separate write path from the files-key
-                # guard above: an empty/partial `files` dict slips past the key
-                # check, but the sweep would still delete _repo files under
-                # `prefix`. Refuse if the sweep would touch ANY solution-managed
-                # app's files — in either direction: the delete prefix is under a
-                # managed prefix (delete "apps/managed/sub"), OR contains/equals
-                # one (delete "apps/" which would sweep "apps/managed/...").
-                if any(
-                    prefix.startswith(managed) or managed.startswith(prefix)
-                    for managed in managed_prefixes
-                ):
-                    return error_result(
-                        SOLUTION_MANAGED_MESSAGE,
-                        {"blocked_delete_prefix": delete_missing_prefix},
-                    )
-                existing_files = await db.execute(
-                    select(FileIndex.path).where(FileIndex.path.startswith(prefix))
-                )
-                existing_paths = {row[0] for row in existing_files.all()}
-                push_paths = set(files.keys())
-                for path_to_delete in existing_paths - push_paths:
+                # The solution-managed guard and the target-path set were
+                # already resolved above (delete_prefix_paths) so the
+                # write-scope check could cover them before any write
+                # happened.
+                for path_to_delete in delete_prefix_paths:
                     try:
                         await file_storage.delete_file(path_to_delete)
                         deleted += 1
@@ -1107,6 +1170,10 @@ async def update_app_dependencies(
             result = await db.execute(query)
             app = result.scalar_one_or_none()
             if not app:
+                return error_result(f"Application not found: {app_id}")
+
+            # Writing requires scope bypass (see _app_write_denied).
+            if _app_write_denied(context, app):
                 return error_result(f"Application not found: {app_id}")
 
             # Solution-managed apps are read-only (criterion 6) — refuse before

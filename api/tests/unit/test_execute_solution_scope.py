@@ -47,11 +47,33 @@ async def _sol(db, org_id):
 class TestDeriveSolutionScope:
     async def test_explicit_solution_id_wins(self, db_session):
         db = db_session
-        sid = uuid4()
+        org = (await _org(db)).id
+        sol = await _sol(db, org)
         got = await derive_execution_solution_scope(
-            db, _no_ctx(), solution_id=str(sid), form_id=None, app_id=None
+            db,
+            _no_ctx(),
+            solution_id=str(sol.id),
+            form_id=None,
+            app_id=None,
+            target_org_id=org,
         )
-        assert got == sid
+        assert got == sol.id
+
+    async def test_explicit_unknown_solution_id_raises(self, db_session):
+        # SPIKE + Codex P1: an explicit UUID that resolves to no reachable
+        # install raises (routers 404 WITHOUT shared fallback) instead of
+        # passing through — a dangling id must not execute a loose workflow.
+        from src.services.solution_scope import SolutionInboundDenied
+
+        with pytest.raises(SolutionInboundDenied):
+            await derive_execution_solution_scope(
+                db_session,
+                _no_ctx(),
+                solution_id=str(uuid4()),
+                form_id=None,
+                app_id=None,
+                target_org_id=None,
+            )
 
     async def test_form_id_resolves_to_form_solution_id(self, db_session):
         db = db_session
@@ -83,11 +105,15 @@ class TestDeriveSolutionScope:
         )
         assert got is None
 
-    async def test_invalid_uuid_yields_none(self, db_session):
-        got = await derive_execution_solution_scope(
-            db_session, _no_ctx(), solution_id="not-a-uuid", form_id=None, app_id=None
-        )
-        assert got is None
+    async def test_invalid_uuid_raises(self, db_session):
+        # Codex P1: an explicit garbage ref is a denial (404 without shared
+        # fallback), not a silent fallthrough to loose resolution.
+        from src.services.solution_scope import SolutionInboundDenied
+
+        with pytest.raises(SolutionInboundDenied):
+            await derive_execution_solution_scope(
+                db_session, _no_ctx(), solution_id="not-a-uuid", form_id=None, app_id=None
+            )
 
     async def test_form_exists_with_null_solution_id_yields_none(self, db_session):
         db = db_session
@@ -110,37 +136,46 @@ class TestDeriveSolutionScope:
     async def test_ctx_solution_id_is_primary_scope(self, db_session):
         # The auth layer already validated ?solution= / X-Bifrost-App and put the
         # install id on the context — that's the authoritative runtime scope.
-        sid = uuid4()
+        # Inbound-gated (Codex P1): a real open install resolves.
+        db = db_session
+        org = (await _org(db)).id
+        sol = await _sol(db, org)
         got = await derive_execution_solution_scope(
-            db_session,
-            SimpleNamespace(solution_id=str(sid), app_id=None),
+            db,
+            SimpleNamespace(solution_id=str(sol.id), app_id=None),
             solution_id=None,
             form_id=None,
             app_id=None,
         )
-        assert got == sid
+        assert got == sol.id
 
     async def test_ctx_solution_id_wins_over_body_fields(self, db_session):
-        ctx_sid, body_sid = uuid4(), uuid4()
+        db = db_session
+        org = (await _org(db)).id
+        ctx_sol = await _sol(db, org)
+        body_sol = await _sol(db, org)
         got = await derive_execution_solution_scope(
-            db_session,
-            SimpleNamespace(solution_id=str(ctx_sid), app_id=None),
-            solution_id=str(body_sid),
+            db,
+            SimpleNamespace(solution_id=str(ctx_sol.id), app_id=None),
+            solution_id=str(body_sol.id),
             form_id=None,
             app_id=None,
         )
-        assert got == ctx_sid
+        assert got == ctx_sol.id
 
     async def test_invalid_ctx_solution_id_falls_through_to_body(self, db_session):
-        sid = uuid4()
+        db = db_session
+        org = (await _org(db)).id
+        sol = await _sol(db, org)
         got = await derive_execution_solution_scope(
-            db_session,
+            db,
             SimpleNamespace(solution_id="not-a-uuid", app_id=None),
-            solution_id=str(sid),
+            solution_id=str(sol.id),
             form_id=None,
             app_id=None,
+            target_org_id=org,
         )
-        assert got == sid
+        assert got == sol.id
 
     async def test_ctx_app_id_resolves_install_when_solution_id_absent(self, db_session):
         # solution_context_id's app fallback: a context carrying only app_id

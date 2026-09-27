@@ -23,13 +23,13 @@ function unconfiguredConfig(): GitHubConfig {
 }
 
 test.describe("GitHub settings acceptance (admin)", () => {
-	test("validates, selects, saves, reloads, creates a repo, and disconnects through the UI", async ({
+	test("reviews a selected repository and queues an explicit reconciliation", async ({
 		page,
 	}) => {
-		let config = unconfiguredConfig();
+		const config = unconfiguredConfig();
 		let validateCalls = 0;
-		let configurePayload: unknown;
-		let disconnectCalls = 0;
+		let previewPayload: unknown;
+		let connectPayload: unknown;
 		const repositories = [
 			{ full_name: REPO, private: true },
 			{ full_name: "fixture-owner/secondary", private: false },
@@ -83,23 +83,38 @@ test.describe("GitHub settings acceptance (admin)", () => {
 				},
 			});
 		});
-		await page.route("**/api/github/configure", async (route) => {
-			configurePayload = route.request().postDataJSON();
-			config = {
-				configured: true,
-				token_saved: true,
-				repo_url: REPO,
-				branch: BRANCH,
-				backup_path: null,
-			};
+		await page.route("**/api/github/connect/preview", async (route) => {
+			previewPayload = route.request().postDataJSON();
 			await route.fulfill({
-				json: { job_id: "github-settings-job", status: "queued" },
+				json: {
+					token: "review-token",
+					repository_url: `https://github.com/${REPO}`,
+					branch: BRANCH,
+					state: "requires_reconciliation",
+					items: [
+						{
+							path: "apps/local.tsx",
+							classification: "local_only",
+						},
+						{
+							path: "apps/remote.tsx",
+							classification: "remote_only",
+						},
+						{ path: "apps/shared.tsx", classification: "conflict" },
+					],
+				},
 			});
 		});
-		await page.route("**/api/github/disconnect", async (route) => {
-			disconnectCalls += 1;
-			config = unconfiguredConfig();
-			await route.fulfill({ json: { success: true } });
+		await page.route("**/api/github/connect", async (route) => {
+			connectPayload = route.request().postDataJSON();
+			await route.fulfill({
+				status: 202,
+				json: {
+					job_id: "github-settings-job",
+					status: "queued",
+					notification_id: "github-settings-notification",
+				},
+			});
 		});
 
 		await page.goto("/settings/github");
@@ -145,30 +160,32 @@ test.describe("GitHub settings acceptance (admin)", () => {
 		await page
 			.getByRole("option", { name: /release\/settings-acceptance/i })
 			.click();
-		await page.getByRole("button", { name: "Configure GitHub" }).click();
+		await page.getByRole("button", { name: "Review connection" }).click();
 
-		expect(configurePayload).toEqual({ repo_url: REPO, branch: BRANCH });
-		await expect(page.getByRole("region", { name: "Connected GitHub repository" })).toBeVisible();
-
-		await page.reload();
-		const summary = page.getByRole("region", {
-			name: "Connected GitHub repository",
+		expect(previewPayload).toEqual({
+			repository_url: REPO,
+			branch: BRANCH,
 		});
-		await expect(summary).toContainText("Connected");
-		await expect(summary).toContainText(REPO);
-		await expect(summary).toContainText(BRANCH);
-
-		await summary.getByRole("button", { name: "Disconnect" }).click();
-		await expect(
-			page.getByRole("dialog", { name: "Disconnect GitHub Integration" }),
-		).toBeVisible();
-		await page
-			.getByRole("dialog", { name: "Disconnect GitHub Integration" })
-			.getByRole("button", { name: "Disconnect" })
+		const review = page.getByRole("region", {
+			name: "Review workspace connection",
+		});
+		await expect(review).toBeVisible();
+		await review.getByRole("radio", { name: /reconcile both/i }).click();
+		await review
+			.getByRole("radio", { name: /keep local: apps\/shared.tsx/i })
 			.click();
-		expect(disconnectCalls).toBe(1);
+		await review.getByRole("button", { name: "Connect GitHub" }).click();
+
+		expect(connectPayload).toEqual({
+			preview_token: "review-token",
+			strategy: "reconcile",
+			decisions: { "apps/shared.tsx": "local" },
+			confirm_destructive: false,
+		});
 		await expect(
-			page.getByLabel("GitHub Personal Access Token"),
+			page
+				.getByRole("status", { name: "" })
+				.filter({ hasText: "Connection queued" }),
 		).toBeVisible();
 	});
 });

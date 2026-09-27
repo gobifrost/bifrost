@@ -1,0 +1,31 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: bifrost-init
+  namespace: bifrost-local
+spec:
+  backoffLimit: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: bifrost-init
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      containers:
+        - name: init
+          image: bifrost-api:kind-local
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "scripts.init_container"]
+          envFrom:
+            - configMapRef:
+                name: bifrost-local-config
+            - secretRef:
+                name: bifrost-local-secrets
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi

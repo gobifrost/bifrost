@@ -190,6 +190,7 @@ async def get_endpoint_enabled_workflows(db: AsyncSession) -> list[Workflow]:
     stmt = select(Workflow).where(
         Workflow.endpoint_enabled == True,  # noqa: E712
         Workflow.is_active == True,  # noqa: E712
+        Workflow.type != "service",  # Services are never endpoint-executable
     )
     result = await db.execute(stmt)
     return list(result.scalars().all())
@@ -302,8 +303,12 @@ def refresh_workflow_endpoint(app: FastAPI, workflow: Workflow) -> None:
         app: FastAPI application instance
         workflow: Updated workflow model
     """
-    if workflow.endpoint_enabled:
+    if workflow.endpoint_enabled and workflow.type != "service":
         register_workflow_endpoint(app, workflow)
+    elif workflow.type == "service":
+        # Services never expose HTTP routes; ensure no stale route lingers
+        # if the row was converted to a service after being an endpoint.
+        remove_workflow_endpoint(app, workflow.name)
     else:
         # Remove the endpoint if it was disabled
         remove_workflow_endpoint(app, workflow.name)

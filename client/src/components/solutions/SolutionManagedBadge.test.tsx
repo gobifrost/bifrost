@@ -21,6 +21,8 @@ describe("SolutionManagedBadge", () => {
 		renderBadge("abc-123");
 		const link = screen.getByRole("link", { name: /managed/i });
 		expect(link).toHaveAttribute("href", "/solutions/abc-123");
+		expect(link).toHaveTextContent(/^$/);
+		expect(link).toHaveAccessibleName("Managed by a Solution");
 	});
 
 	it("renders nothing for non-admins", () => {

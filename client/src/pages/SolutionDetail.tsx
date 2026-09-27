@@ -80,6 +80,16 @@ import {
 	type WorkflowListItem,
 } from "@/components/workflows/WorkflowListSurface";
 import { Input } from "@/components/ui/input";
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -126,7 +136,10 @@ import {
 	setSolutionConfig,
 	syncSolution,
 	previewSolutionFromRepo,
+	disconnectSolutionGit,
 } from "@/services/solutions";
+import { observePlatformJob } from "@/services/platformJobs";
+import { webSocketService } from "@/services/websocket";
 import { SolutionUpdateDialog } from "@/components/solutions/SolutionUpdateDialog";
 import { SolutionSetupWizard } from "@/components/solutions/SolutionSetupWizard";
 import { SolutionReadmeTab } from "@/components/solutions/SolutionReadmeTab";
@@ -471,7 +484,6 @@ function SolutionEntityGrid({
 	items: EntitySummary[];
 	solutionId: string;
 }) {
-	const navigate = useNavigate();
 	return (
 		<div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
 			{items.map((entity) => {
@@ -481,19 +493,7 @@ function SolutionEntityGrid({
 					return (
 						<div
 							key={entity.id}
-							role="button"
-							tabIndex={0}
-							onClick={() => navigate(href)}
-							onKeyDown={(event) => {
-								if (
-									event.key === "Enter" ||
-									event.key === " "
-								) {
-									event.preventDefault();
-									navigate(href);
-								}
-							}}
-							className="group relative flex cursor-pointer flex-col overflow-hidden rounded-[var(--bf-radius-surface)] border border-border/70 bg-card transition-colors duration-[var(--bf-motion-feedback)] hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring motion-reduce:transition-none"
+							className="group relative flex flex-col overflow-hidden rounded-[var(--bf-radius-surface)] border border-border/70 bg-card transition-colors duration-[var(--bf-motion-feedback)] hover:bg-accent/40 motion-reduce:transition-none"
 						>
 							<div className="border-b px-4 py-3">
 								<div className="flex items-start justify-between gap-3">
@@ -508,9 +508,16 @@ function SolutionEntityGrid({
 											size={20}
 											className="h-5 w-5 rounded object-cover shrink-0"
 										/>
-										<span className="truncate text-[14.5px] font-semibold">
-											{entity.name}
-										</span>
+										<>
+											<Link
+												to={href}
+												aria-label={entity.name}
+												className="absolute inset-0 z-[1] rounded-[var(--bf-radius-surface)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+											/>
+											<span className="truncate text-[14.5px] font-semibold">
+												{entity.name}
+											</span>
+										</>
 									</div>
 									<Badge
 										variant="outline"
@@ -635,14 +642,6 @@ function SolutionEntityGrid({
 										</Badge>
 									)}
 								</div>
-								<Button
-									variant="outline"
-									size="icon-lg"
-									onClick={() => navigate(href)}
-									aria-label={`Open ${entity.name}`}
-								>
-									<Code2 className="h-3.5 w-3.5" />
-								</Button>
 							</div>
 							<CardTitle
 								className={
@@ -653,7 +652,14 @@ function SolutionEntityGrid({
 										: "text-base [overflow-wrap:anywhere]"
 								}
 							>
-								{entity.name}
+								<>
+									<Link
+										to={href}
+										aria-label={entity.name}
+										className="absolute inset-0 z-[1] rounded-[var(--bf-radius-surface)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+									/>
+									<span className="">{entity.name}</span>
+								</>
 							</CardTitle>
 							{entity.description && (
 								<CardDescription className="mt-2 text-sm [overflow-wrap:anywhere]">
@@ -816,13 +822,13 @@ function SolutionEntityTable({
 			<DataTableBody>
 				{items.map((entity) => {
 					const status = entityStatus(entity, kind);
+					const href = entityHref(kind, entity, solutionId);
 					return (
 						<DataTableRow
 							key={entity.id}
 							clickable
-							onClick={() =>
-								navigate(entityHref(kind, entity, solutionId))
-							}
+							href={href}
+							onClick={() => navigate(href)}
 						>
 							<DataTableCell
 								className={
@@ -859,11 +865,7 @@ function SolutionEntityTable({
 										/>
 									)}
 									<Link
-										to={entityHref(
-											kind,
-											entity,
-											solutionId,
-										)}
+										to={href}
 										onClick={(event) =>
 											event.stopPropagation()
 										}
@@ -1108,6 +1110,7 @@ function EntityTabContent({
 				</div>
 			) : kind === "workflows" ? (
 				<WorkflowListSurface
+					navigationSearch={`?from=solution:${solutionId}`}
 					workflows={managedVisible as WorkflowListItem[]}
 					viewMode={isMobile ? "grid" : viewMode}
 					isPlatformAdmin={false}
@@ -1122,6 +1125,7 @@ function EntityTabContent({
 				/>
 			) : kind === "apps" ? (
 				<ApplicationListSurface
+					navigationSearch={`?from=solution:${solutionId}`}
 					apps={managedAppVisible as ApplicationListItem[]}
 					viewMode={isMobile ? "grid" : viewMode}
 					isPlatformAdmin={false}
@@ -1162,6 +1166,7 @@ function EntityTabContent({
 			) : kind === "forms" ? (
 				<>
 					<FormListSurface
+						navigationSearch={`?from=solution:${solutionId}`}
 						forms={managedVisible as FormListItem[]}
 						viewMode={isMobile ? "grid" : viewMode}
 						isPlatformAdmin={false}
@@ -2324,6 +2329,7 @@ export function SolutionDetail() {
 	const [editOpen, setEditOpen] = useState(false);
 	const [updateOpen, setUpdateOpen] = useState(false);
 	const [syncConfirmOpen, setSyncConfirmOpen] = useState(false);
+	const [disconnectGitOpen, setDisconnectGitOpen] = useState(false);
 	const [captureOpen, setCaptureOpen] = useState(false);
 	const [exportDialogOpen, setExportDialogOpen] = useState(false);
 	// Hard-delete modal state.
@@ -2509,15 +2515,57 @@ export function SolutionDetail() {
 		setHardDeleteOpen(true);
 	}
 
-	// "Update now" for a git-connected install with an available update: pull the
-	// repo at its configured ref and full-replace the installed content. The
-	// backend clears `update_available_version` on success, so invalidating the
-	// solution query clears the badge.
+	// Pull the configured ref and full-replace a git-connected install through a
+	// shared PlatformJob. The notification transport owns durable progress.
 	const syncMut = useMutation({
 		mutationFn: () => syncSolution(solutionId!),
-		onSuccess: () => {
-			toast.success("Solution updated from repository");
+		onSuccess: (accepted) => {
 			setSyncConfirmOpen(false);
+			if (accepted?.job_id) {
+				toast.success("Solution update queued", {
+					description: "Progress is available in Notifications.",
+				});
+				const jobId = String(accepted.job_id);
+				let unsubscribe: () => void = () => undefined;
+				const handleUpdate = (job: { status: string }) => {
+					const terminal = [
+						"succeeded",
+						"failed",
+						"cancelled",
+						"requires_action",
+					].includes(job.status);
+					if (terminal) {
+						void queryClient.invalidateQueries({
+							queryKey: ["solutions"],
+						});
+						invalidate();
+						unsubscribe();
+					}
+				};
+				// Subscribe first, then take a durable snapshot. The pair closes both
+				// sides of the accepted-response-to-notification race without polling.
+				unsubscribe = webSocketService.onPlatformJobUpdate(
+					jobId,
+					handleUpdate,
+				);
+				const observation = observePlatformJob(jobId, handleUpdate);
+				void observation.promise.catch(() => undefined);
+				return;
+			}
+			toast.success("Solution updated from repository");
+			void queryClient.invalidateQueries({ queryKey: ["solutions"] });
+			invalidate();
+		},
+	});
+
+	const disconnectGitMut = useMutation({
+		mutationFn: () => disconnectSolutionGit(solutionId!),
+		onSuccess: () => {
+			setDisconnectGitOpen(false);
+			toast.success("Git disconnected", {
+				description:
+					"Installed entities are unchanged and can be updated manually.",
+			});
 			void queryClient.invalidateQueries({ queryKey: ["solutions"] });
 			invalidate();
 		},
@@ -2786,8 +2834,7 @@ export function SolutionDetail() {
 									<RotateCcw className="mr-1.5 h-4 w-4" />
 									Reactivate
 								</Button>
-							) : sol.git_connected &&
-							  sol.update_available_version ? (
+							) : sol.git_connected ? (
 								<Button
 									data-testid="update-now"
 									className="min-h-11 whitespace-nowrap"
@@ -2802,16 +2849,36 @@ export function SolutionDetail() {
 									) : (
 										<ArrowUp className="mr-1.5 h-4 w-4" />
 									)}
-									Update now
+									Update from {sol.git_ref ?? "main"}
 								</Button>
 							) : (
+								<>
+									<Button
+										data-testid="update-solution"
+										className="min-h-11 whitespace-nowrap"
+										onClick={() => setUpdateOpen(true)}
+									>
+										<Upload className="mr-1.5 h-4 w-4" />
+										Update
+									</Button>
+									<Button
+										variant="outline"
+										className="min-h-11 whitespace-nowrap"
+										onClick={() => setEditOpen(true)}
+									>
+										<GitBranch className="mr-1.5 h-4 w-4" />
+										Connect Git
+									</Button>
+								</>
+							)}
+							{sol.status !== "inactive" && sol.git_connected && (
 								<Button
-									data-testid="update-solution"
+									variant="outline"
 									className="min-h-11 whitespace-nowrap"
-									onClick={() => setUpdateOpen(true)}
+									disabled={disconnectGitMut.isPending}
+									onClick={() => setDisconnectGitOpen(true)}
 								>
-									<Upload className="mr-1.5 h-4 w-4" />
-									Update
+									Disconnect Git
 								</Button>
 							)}
 							<SolutionActionsMenu
@@ -2827,9 +2894,7 @@ export function SolutionDetail() {
 									!solutionSdkStatus ||
 									solutionSdkStatus.actionable_count === 0
 								}
-								appSdkUpdating={
-									solutionSdkUpdating
-								}
+								appSdkUpdating={solutionSdkUpdating}
 								onCapture={() => setCaptureOpen(true)}
 								onExport={() => setExportDialogOpen(true)}
 								onEdit={() => setEditOpen(true)}
@@ -3235,6 +3300,53 @@ export function SolutionDetail() {
 							onClose={() => setGeneratedEndpointKey(null)}
 						/>
 					)}
+
+					<AlertDialog
+						open={disconnectGitOpen}
+						onOpenChange={setDisconnectGitOpen}
+					>
+						<AlertDialogContent>
+							<AlertDialogHeader>
+								<AlertDialogTitle>
+									Disconnect Git?
+								</AlertDialogTitle>
+								<AlertDialogDescription>
+									This does not change installed entities.
+									Future updates become manual, and Git will
+									no longer be the only writer for this
+									Solution.
+								</AlertDialogDescription>
+							</AlertDialogHeader>
+							{disconnectGitMut.isError && (
+								<p
+									role="alert"
+									className="text-sm text-destructive"
+								>
+									{disconnectGitMut.error instanceof Error
+										? disconnectGitMut.error.message
+										: "Could not disconnect Git. Try again."}
+								</p>
+							)}
+							<AlertDialogFooter>
+								<AlertDialogCancel
+									disabled={disconnectGitMut.isPending}
+								>
+									Cancel
+								</AlertDialogCancel>
+								<AlertDialogAction
+									disabled={disconnectGitMut.isPending}
+									onClick={(event) => {
+										event.preventDefault();
+										disconnectGitMut.mutate();
+									}}
+								>
+									{disconnectGitMut.isPending
+										? "Disconnecting…"
+										: "Disconnect Git"}
+								</AlertDialogAction>
+							</AlertDialogFooter>
+						</AlertDialogContent>
+					</AlertDialog>
 
 					{/* Hard-delete confirmation modal (type-the-slug to confirm) */}
 					<SolutionDeleteDialog

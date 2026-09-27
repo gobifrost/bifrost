@@ -147,6 +147,7 @@ APPLICATION_PUBLISH_DEFINITION = PlatformJobDefinition(
     policy=PlatformJobPolicy(
         timeout_seconds=20 * 60,
         max_attempts=2,
+        max_concurrency=1,
         retry_on_runner_loss=True,
         min_memory_headroom_mb=256,
     ),

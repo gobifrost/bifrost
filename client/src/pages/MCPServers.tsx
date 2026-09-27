@@ -209,6 +209,7 @@ export function MCPServers() {
 											<DataTableRow
 												key={server.id}
 												clickable
+												href={`/mcp-servers/${server.id}`}
 												onClick={() =>
 													navigate(
 														`/mcp-servers/${server.id}`,

@@ -126,7 +126,11 @@ test.describe("review fixture pack acceptance", () => {
 
 			await page.goto(first.index.homeUrl);
 			await expect(
-				page.getByRole("heading", { name: "Your workspace" }),
+				page.getByRole("heading", {
+					name: "Workspace",
+					exact: true,
+					level: 1,
+				}),
 			).toBeVisible({ timeout: 10_000 });
 			await expect(
 				page.getByRole("region", { name: "Browse resources" }),

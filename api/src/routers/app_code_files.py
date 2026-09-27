@@ -25,6 +25,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Path, status
 
+from shared.scope_resolver import has_scope_bypass
 from src.core.auth import Context, CurrentUser
 from src.core.exceptions import AccessDeniedError
 from src.core.log_safety import log_safe
@@ -41,6 +42,7 @@ from src.routers.applications import ApplicationRepository
 from src.services.app_storage import AppStorageService
 from src.services.repo_storage import RepoStorage
 from src.services.file_storage.service import get_file_storage_service
+from src.services.operation_catalog import operation_route
 
 logger = logging.getLogger(__name__)
 
@@ -263,6 +265,32 @@ async def get_application_or_404(ctx: Context, app_id: UUID) -> Application:
         )
 
 
+async def get_application_for_write_or_404(ctx: Context, app_id: UUID) -> Application:
+    """Get application by UUID, enforcing write scope.
+
+    Read access (including the embed-token binding above) resolves exactly
+    as ``get_application_or_404``. Writing to an application's files
+    requires scope bypass (platform admin or provider-org member), for
+    every application — own-org included. An embed principal has no
+    organization and no bypass flags, so it can never satisfy this rule —
+    embed tokens only ever get read access to app files.
+
+    Raises the identical 404 the read helper uses, so a caller cannot tell
+    "exists but no write access" apart from "does not exist".
+    """
+    app = await get_application_or_404(ctx, app_id)
+    is_bypass = has_scope_bypass(
+        is_platform_admin=ctx.user.is_platform_admin,
+        is_provider_org=ctx.user.is_provider_org,
+    )
+    if is_bypass:
+        return app
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=f"Application '{app_id}' not found",
+    )
+
+
 class FileMode(str, Enum):
     draft = "draft"
     live = "live"
@@ -415,7 +443,7 @@ async def write_app_file(
     Validates the path, then writes via FileStorageService (which handles
     S3 _repo/ storage, file_index update, pubsub, and preview sync).
     """
-    app = await get_application_or_404(ctx, app_id)
+    app = await get_application_for_write_or_404(ctx, app_id)
     # Solution-managed app source is read-only on the platform — only deploy
     # may write it. The before_flush backstop can't see this: it writes to S3 +
     # file_index, never dirtying the Application ORM row. (criterion 6)
@@ -465,7 +493,7 @@ async def delete_app_file(
     Deletes via FileStorageService (which handles S3 _repo/ deletion,
     file_index cleanup, pubsub, and preview sync).
     """
-    app = await get_application_or_404(ctx, app_id)
+    app = await get_application_for_write_or_404(ctx, app_id)
     # Read-only for solution-managed apps (S3 delete bypasses the ORM backstop).
     await assert_entity_id_not_solution_managed(ctx.db, Application, app_id)
     prefix = _server_source_prefix(app)
@@ -676,6 +704,30 @@ async def get_bundle_manifest(
                 needs_rebuild = True
 
     if needs_rebuild:
+        bypass = has_scope_bypass(
+            is_platform_admin=ctx.user.is_superuser,
+            is_provider_org=ctx.user.is_provider_org,
+        )
+        if not bypass:
+            # A GET must never trigger a _repo build/write for a non-bypass
+            # caller. Serve the existing (possibly stale-schema) manifest
+            # as-is, or 404 if there is none yet — never build here.
+            if manifest_bytes is None:
+                raise HTTPException(
+                    status_code=404, detail="Bundle manifest not built yet"
+                )
+            manifest_bytes_stale = manifest_bytes
+            m = _json.loads(manifest_bytes_stale)
+            return {
+                "entry": m.get("entry"),
+                "css": m.get("css"),
+                "base_url": f"/api/applications/{app_id}/bundle-asset",
+                "mode": storage_mode,
+                "dependencies": m.get("dependencies") or (app.dependencies or {}),
+                "migrated": False,
+                "organization_id": str(app.organization_id) if app.organization_id else None,
+                "app_model": app.app_model,
+            }
         repo_prefix = app.repo_prefix
         # Serialize migrate+rebuild across concurrent first-viewers so two
         # requests don't double-migrate or race on writes. Hold the lock
@@ -879,7 +931,7 @@ async def get_v2_dist_asset(
     "/dependencies",
     response_model=dict[str, str],
     summary="Get app dependencies",
-)
+**operation_route("apps.dependencies.get"))
 async def get_dependencies(
     app_id: UUID = Path(..., description="Application UUID"),
     *,
@@ -895,7 +947,7 @@ async def get_dependencies(
     "/dependencies",
     response_model=dict[str, str],
     summary="Update app dependencies",
-)
+**operation_route("apps.dependencies.update"))
 async def put_dependencies(
     deps: dict[str, str],
     app_id: UUID = Path(..., description="Application UUID"),
@@ -907,7 +959,7 @@ async def put_dependencies(
 
     Validates every package name and version, enforces the max-dependency limit.
     """
-    app = await get_application_or_404(ctx, app_id)
+    app = await get_application_for_write_or_404(ctx, app_id)
     # Dependencies are solution-owned metadata — read-only for managed apps.
     await assert_entity_id_not_solution_managed(ctx.db, Application, app_id)
 

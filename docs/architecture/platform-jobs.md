@@ -93,6 +93,45 @@ durable child work. The child tracker completes the parent row later. Summary
 backfills and Solution app builds use this path so RabbitMQ fan-out or an
 isolated build process does not occupy scheduler capacity.
 
+### Opt-in Kubernetes build execution
+
+Platform jobs run locally by default. When
+`BIFROST_PLATFORM_BUILD_BACKEND=kubernetes` is configured, build-class jobs for
+independent App deploys and App SDK updates (`application.deploy` and
+`application.sdk_update`) are durably placed on the Kubernetes backend at
+enqueue time. The row stores that placement in `execution_backend` so scheduler
+replicas do not disagree after restart or configuration changes. Broader
+Solution build routing is not implemented by this path.
+
+The scheduler still owns the control loop. A separate Kubernetes build
+controller task watches `execution_backend='kubernetes'` rows and creates one
+deterministic `batch/v1` Job for each claimed attempt. Local platform-job claim
+loops filter to `execution_backend='local'`, so remote App builds do not occupy
+the warm scheduler's ordinary child-runner slots. The scheduler remains warm for
+maintenance jobs, non-build PlatformJobs and trigger leadership while the build
+pod runs in its own cgroup.
+
+Remote launch is fenced by durable Kubernetes identity:
+
+1. the scheduler claims the row with the same lease-token mechanism used by
+   local jobs;
+2. it persists the target namespace and deterministic Job name before launch;
+3. it creates the Job suspended, records the returned Job UID, then unsuspends
+   only that UID-bound Job;
+4. the runner pod must present both the expected Kubernetes Job UID and its pod
+   UID before it can execute the registered handler;
+5. progress, heartbeats and terminal completion still use the PlatformJob
+   lease token, and stale pods cannot complete a superseded attempt.
+
+Kubernetes is capacity, not authority. PostgreSQL remains the status, retry,
+progress, cancellation and result source of truth. Kubernetes Job retry is
+disabled; Bifrost retry policy owns any subsequent attempt. Controller outages,
+API failures or namespace mismatches do not silently fall back to local
+execution. Existing remote attempts keep their persisted namespace and fail
+closed until the controller can account for the bound Job or pod. Operators must
+drain and clean up remote attempts before changing namespace, cluster or
+controller credentials.
+
 Lease-token checks fence stale runners: only the current attempt may update
 progress or record a terminal result. A handler may be retried after runner
 loss only when its side effects are idempotent. Otherwise set
@@ -133,6 +172,12 @@ container memory when representative jobs are repeatedly deferred or approach
 the hard ratio. Do not add Kubernetes-style resource classes until observed
 workloads show that one common scheduler size cannot safely serve the registered
 job types.
+
+Opt-in Kubernetes App build Jobs have their own resource envelope, configured
+by the operator through the build-job deployment settings. The initial local
+spike uses a 1 GiB memory setting and a separate maximum remote build count.
+Those values bound remote build concurrency independently from the scheduler's
+local slots; they are not a general resource-class system for every PlatformJob.
 
 `GET /api/platform/scheduler` and the Diagnostics → Scheduler tab expose leader
 health, online replicas and active claims, queue age, memory-admission waits,
@@ -258,6 +303,9 @@ application environment is production.
 | Handler and policy contracts | `api/src/jobs/platform/base.py` |
 | Registered job types | `api/src/jobs/platform/registry.py` |
 | Isolated child runner | `api/src/jobs/platform/runner.py` |
+| Kubernetes build runner | `api/src/jobs/platform/kubernetes_runner.py` |
+| Kubernetes Job client and manifest builder | `api/src/jobs/platform/kubernetes_client.py` |
+| Kubernetes build controller | `api/src/jobs/schedulers/kubernetes_jobs.py` |
 | Lease recovery, claiming, and resource enforcement | `api/src/jobs/schedulers/platform_jobs.py` |
 | Trigger leader election | `api/src/scheduler/leadership.py` |
 | Generic status and cancellation API | `api/src/routers/platform_jobs.py` |

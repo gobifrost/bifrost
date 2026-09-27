@@ -321,7 +321,7 @@ export function AgentRunDetailPage() {
 	// Refetch this run whenever the backend broadcasts an update for it —
 	// covers summarizer transitions (pending → generating → completed) and
 	// step-writes so the page reflects live state without a manual refresh.
-	useAgentRunUpdates({ agentId: owningAgentId });
+	useAgentRunUpdates({ agentId: owningAgentId, runId });
 
 	const verdict = ((run?.verdict as Verdict | undefined) ?? null) as Verdict;
 	const [noteDrafts, setNoteDrafts] = useState<ReadonlyMap<string, string>>(() => new Map());

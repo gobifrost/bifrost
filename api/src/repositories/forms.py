@@ -166,6 +166,14 @@ class FormRepository(OrgScopedRepository[FormORM]):
             .where(self.model.id == form_id)
         )
 
+        # Superusers: no scoping. IDs are globally unique; trust the ID
+        # lookup regardless of the caller's own org_id (mirrors
+        # AgentRepository.get_agent_with_access_check — a platform admin
+        # with no org context in scope must still see every org's forms).
+        if self.is_superuser:
+            result = await self.session.execute(query)
+            return result.scalar_one_or_none()
+
         # Apply cascade scoping: prioritize org-specific, then global
         if self.org_id is not None:
             # Try org-specific first

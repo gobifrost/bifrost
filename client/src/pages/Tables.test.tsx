@@ -190,7 +190,11 @@ describe("Tables — catalog selection", () => {
 			screen.queryByRole("checkbox", { name: /select/i }),
 		).not.toBeInTheDocument();
 
-		await user.click(screen.getByRole("button", { name: "Customers" }));
+		expect(screen.getByRole("link", { name: "Customers" })).toHaveAttribute(
+			"href",
+			"/tables/tbl-1",
+		);
+		await user.click(screen.getByRole("link", { name: "Customers" }));
 		expect(mockUseNavigate).toHaveBeenCalledWith("/tables/tbl-1");
 	});
 

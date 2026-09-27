@@ -1985,6 +1985,190 @@ Options:
   --help              Show this message and exit.
 ```
 
+## `services`
+
+```
+Usage: services [OPTIONS] COMMAND [ARGS]...
+
+  Manage supervised services.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+
+Commands:
+  attempts  List attempt history newest-first for a service.
+  disable   Disable a service: stops the live attempt, blocks future claims.
+  enable    Enable a service (distinct from start: no desired-state change).
+  get       Get a single service by definition UUID or workflow name.
+  list      List service definitions (wrapped ``{items, total}`` payload).
+  logs      List trailing persisted logs for a service.
+  restart   Rolling restart: stays desired-running, stops the live...
+  start     Request running: clears suppression so the claim loop picks...
+  stop      Request stopped: durable desire is stored before termination.
+  update    Update a service's lifecycle policy.
+```
+
+### `services attempts`
+
+```
+Usage: services attempts [OPTIONS] REF
+
+  List attempt history newest-first for a service.
+
+  ``REF`` is a definition UUID or workflow name.
+
+Options:
+  --limit INTEGER   Max results (server default 100, max 1000).
+  --offset INTEGER  Skip results.
+  --json            Emit JSON instead of human-readable output.
+  --help            Show this message and exit.
+```
+
+### `services disable`
+
+```
+Usage: services disable [OPTIONS] REF
+
+  Disable a service: stops the live attempt, blocks future claims.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `services enable`
+
+```
+Usage: services enable [OPTIONS] REF
+
+  Enable a service (distinct from start: no desired-state change).
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `services get`
+
+```
+Usage: services get [OPTIONS] REF
+
+  Get a single service by definition UUID or workflow name.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `services list`
+
+```
+Usage: services list [OPTIONS]
+
+  List service definitions (wrapped ``{items, total}`` payload).
+
+Options:
+  --limit INTEGER   Max results (server default 100, max 1000).
+  --offset INTEGER  Skip results.
+  --json            Emit JSON instead of human-readable output.
+  --help            Show this message and exit.
+```
+
+### `services logs`
+
+```
+Usage: services logs [OPTIONS] REF
+
+  List trailing persisted logs for a service.
+
+  ``REF`` is a definition UUID or workflow name. Page through older lines by
+  passing the previous response's ``continuation_token`` back via
+  ``--continuation-token``.
+
+Options:
+  --attempt-id TEXT               Scope to one attempt UUID.
+  --level TEXT                    Level allowlist, e.g. INFO. Repeat for
+                                  multiple values.
+  --start-date TEXT               ISO timestamp lower bound.
+  --end-date TEXT                 ISO timestamp upper bound.
+  --limit INTEGER                 Max lines per page (server default 200, max
+                                  1000).
+  --continuation-token TEXT       Keyset cursor from the previous page (load-
+                                  older paging).
+  --order [chronological|newest_first]
+                                  Log order (server default chronological).
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
+```
+
+### `services restart`
+
+```
+Usage: services restart [OPTIONS] REF
+
+  Rolling restart: stays desired-running, stops the live attempt if any.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `services start`
+
+```
+Usage: services start [OPTIONS] REF
+
+  Request running: clears suppression so the claim loop picks it up.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `services stop`
+
+```
+Usage: services stop [OPTIONS] REF
+
+  Request stopped: durable desire is stored before termination.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `services update`
+
+```
+Usage: services update [OPTIONS] REF
+
+  Update a service's lifecycle policy.
+
+  ``REF`` is a definition UUID or workflow name. Unset flags are omitted from
+  the payload so only the supplied fields are patched.
+
+Options:
+  --startup-policy [automatic|manual]
+                                  startup_policy
+  --restart-policy [always|on_failure|never]
+                                  restart_policy
+  --graceful-shutdown-seconds INTEGER
+                                  graceful_shutdown_seconds
+  --startup-grace-seconds INTEGER
+                                  startup_grace_seconds
+  --restart-backoff-initial-seconds INTEGER
+                                  restart_backoff_initial_seconds
+  --restart-backoff-max-seconds INTEGER
+                                  restart_backoff_max_seconds
+  --crash-loop-max-restarts INTEGER
+                                  crash_loop_max_restarts
+  --crash-loop-window-seconds INTEGER
+                                  crash_loop_window_seconds
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
+```
+
 ## `solution`
 
 ```
@@ -1996,19 +2180,25 @@ Options:
   --help  Show this message and exit.
 
 Commands:
-  bind          Bind this local Solution workspace to an existing install.
-  capture       Adopt loose _repo/ entities into an install (migration).
-  create        Create a Solution workspace and remote install.
-  deploy        Non-interactive full-replace deploy of the current...
-  export        Download a Solution's workspace zip (shareable or full...
-  init          Alias for `solution create`: scaffold and create a remote...
-  install       Install a Solution from a workspace zip (drag-and-drop...
-  migrate-app   Migrate a v1 inline App directory to a scaffolded V2 App:...
-  pull          Pull captured entities into the local .bifrost/ manifest...
-  scaffold-app  Scaffold a standalone_v2 React app (package.json, vite,...
-  sdk           Manage the app's vendored Bifrost SDK.
-  start         Run the app's dev server + local workflows on one stable...
-  swap-slugs    Atomically exchange two apps' slugs (v1→v2 migration...
+  bind              Bind this local Solution workspace to an existing...
+  capture           Adopt loose _repo/ entities into an install (migration).
+  create            Create a Solution workspace and remote install.
+  deploy            Non-interactive full-replace deploy of the current...
+  export            Download a Solution's workspace zip (shareable or...
+  git               Connect or disconnect a managed Solution repository.
+  import-workspace  Import a Solution package as unattached workspace...
+  init              Alias for `solution create`: scaffold and create a...
+  install           Install a Solution from a workspace zip...
+  install-repo      Install a Solution from a repository and make Git its...
+  migrate-app       Migrate a v1 inline App directory to a scaffolded V2...
+  pull              Pull captured entities into the local .bifrost/...
+  pull-manifests    Pull captured entities into the local .bifrost/...
+  scaffold-app      Scaffold a standalone_v2 React app (package.json,...
+  sdk               Manage the app's vendored Bifrost SDK.
+  start             Run the app's dev server + local workflows on one...
+  swap-slugs        Atomically exchange two apps' slugs (v1→v2 migration...
+  sync              Update a Git-connected Solution from its configured ref.
+  update            Edit install-local fields (name, scope, access gates)...
 ```
 
 ### `solution bind`
@@ -2064,8 +2254,12 @@ Options:
   --name TEXT                     Display name (defaults to slug).
   --version TEXT                  Bundle version recorded on the install at
                                   deploy time.  [default: 0.1.0]
-  --global-repo-access / --no-global-repo-access
-                                  [default: no-global-repo-access]
+  --allow-outbound-access / --no-allow-outbound-access
+                                  Let the install fall back to shared _repo
+                                  resources.
+  --allow-inbound-access / --no-allow-inbound-access
+                                  Let other installs target this one via per-
+                                  call solution refs.
   --url TEXT                      Bifrost instance URL (default: current
                                   profile).
   --global                        Target global scope (org=NULL). Alias for
@@ -2120,6 +2314,70 @@ Options:
   --help                   Show this message and exit.
 ```
 
+### `solution git`
+
+```
+Usage: solution git [OPTIONS] COMMAND [ARGS]...
+
+  Connect or disconnect a managed Solution repository.
+
+Options:
+  --help  Show this message and exit.
+
+Commands:
+  connect     Connect an existing install; repository updates become its...
+  disconnect  Disconnect Git so future updates are manual Solution...
+```
+
+#### `solution git connect`
+
+```
+Usage: solution git connect [OPTIONS] SOLUTION_REF REPOSITORY_URL
+
+  Connect an existing install; repository updates become its sole writer.
+
+Options:
+  --subpath TEXT  Solution workspace path inside the repository.
+  --ref TEXT      Git ref to update from.  [default: main]
+  --help          Show this message and exit.
+```
+
+#### `solution git disconnect`
+
+```
+Usage: solution git disconnect [OPTIONS] SOLUTION_REF
+
+  Disconnect Git so future updates are manual Solution deployments.
+
+Options:
+  --help  Show this message and exit.
+```
+
+### `solution import-workspace`
+
+```
+Usage: solution import-workspace [OPTIONS] [ARCHIVE]
+
+  Import a Solution package as unattached workspace content (one-time
+  snapshot).
+
+Options:
+  --repo TEXT       Solution git repository URL (snapshot import; mutually
+                    exclusive with ARCHIVE).
+  --ref TEXT        Git ref to import (default branch when omitted).
+  --path TEXT       Package subfolder within the repository.
+  --org TEXT        Target organization name or UUID for scoped definitions.
+                    Omit for global workspace content.
+  --global          Target global workspace content (the default).
+  --keep-all        Keep every conflicting destination item.
+  --replace-all     Replace every conflicting destination item.
+  --decisions FILE
+  --preview         Print the staged collision preview without queuing an
+                    import.
+  --json            Emit raw preview and terminal job JSON.
+  --help            Show this message and exit.
+```
+
 ### `solution init`
 
 ```
@@ -2133,8 +2391,12 @@ Options:
   --name TEXT                     Display name (defaults to slug).
   --version TEXT                  Bundle version recorded on the install at
                                   deploy time.  [default: 0.1.0]
-  --global-repo-access / --no-global-repo-access
-                                  [default: no-global-repo-access]
+  --allow-outbound-access / --no-allow-outbound-access
+                                  Let the install fall back to shared _repo
+                                  resources.
+  --allow-inbound-access / --no-allow-inbound-access
+                                  Let other installs target this one via per-
+                                  call solution refs.
   --url TEXT                      Bifrost instance URL (default: current
                                   profile).
   --global                        Target global scope (org=NULL). Alias for
@@ -2174,6 +2436,19 @@ Options:
   --help                          Show this message and exit.
 ```
 
+### `solution install-repo`
+
+```
+Usage: solution install-repo [OPTIONS] REPOSITORY_URL
+
+  Install a Solution from a repository and make Git its sole writer.
+
+Options:
+  --subpath TEXT  Solution workspace path inside the repository.
+  --ref TEXT      Git ref to install.  [default: main]
+  --help          Show this message and exit.
+```
+
 ### `solution migrate-app`
 
 ```
@@ -2192,6 +2467,25 @@ Options:
 
 ```
 Usage: solution pull [OPTIONS] [PATH]
+
+  Pull captured entities into the local .bifrost/ manifest (does not touch
+  source code).
+
+Options:
+  --solution TEXT                 Target install id (override when ambiguous).
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
+  --help                          Show this message and exit.
+```
+
+### `solution pull-manifests`
+
+```
+Usage: solution pull-manifests [OPTIONS] [PATH]
 
   Pull captured entities into the local .bifrost/ manifest (does not touch
   source code).
@@ -2301,6 +2595,46 @@ Usage: solution swap-slugs [OPTIONS] APP_A APP_B
 
 Options:
   --help  Show this message and exit.
+```
+
+### `solution sync`
+
+```
+Usage: solution sync [OPTIONS] SOLUTION_REF
+
+  Update a Git-connected Solution from its configured ref.
+
+Options:
+  --help  Show this message and exit.
+```
+
+### `solution update`
+
+```
+Usage: solution update [OPTIONS] [PATH]
+
+  Edit install-local fields (name, scope, access gates) of an existing
+  install.
+
+Options:
+  --solution TEXT                 Install id or unique slug (default:
+                                  workspace binding or descriptor slug).
+  --name TEXT                     New display name.
+  --allow-outbound-access / --no-allow-outbound-access
+                                  Let the install fall back to shared _repo
+                                  resources.
+  --allow-inbound-access / --no-allow-inbound-access
+                                  Let other installs target this one via per-
+                                  call solution refs.
+  --url TEXT                      Bifrost instance URL (default: current
+                                  profile).
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
+  --help                          Show this message and exit.
 ```
 
 ## `tables`
@@ -2668,9 +3002,9 @@ Usage: workflows replace [OPTIONS] REF
 
   ``REF`` is a UUID or workflow name (use ``bifrost workflows list-orphaned``
   to find orphaned UUIDs). The target file must exist in the workspace and
-  contain a ``@workflow``, ``@tool``, or ``@data_provider`` decorated function
-  with the given name. The workflow UUID is preserved so form/agent references
-  remain intact.
+  contain a ``@workflow``, ``@tool``, ``@data_provider``, or ``@service``
+  decorated function with the given name. The workflow UUID is preserved so
+  form/agent references remain intact.
 
 Options:
   --path TEXT           Workspace-relative path to the .py file containing the

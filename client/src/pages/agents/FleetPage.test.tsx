@@ -10,7 +10,13 @@ import { useLocation } from "react-router-dom";
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { renderWithProviders, screen, within, waitFor } from "@/test-utils";
+import {
+	fireEvent,
+	renderWithProviders,
+	screen,
+	within,
+	waitFor,
+} from "@/test-utils";
 
 // -----------------------------------------------------------------------------
 // Mocks
@@ -232,7 +238,7 @@ describe("FleetPage — agent cards (grid)", () => {
 			isLoading: false,
 		});
 		const { user } = await renderPage();
-		await user.click(screen.getByRole("button", { name: /^Alpha$/ }));
+		await user.click(screen.getByRole("link", { name: /^Alpha$/ }));
 		expect(screen.getByLabelText("location")).toHaveTextContent(
 			"/agents/alpha-id",
 		);
@@ -445,4 +451,31 @@ describe("FleetPage — empty state", () => {
 		await renderPage();
 		expect(screen.getByText(/no agents yet/i)).toBeInTheDocument();
 	});
+});
+
+it("opens an agent row in another tab without navigating the current page", async () => {
+	mockUseAgents.mockReturnValue({ data: [makeAgent()], isLoading: false });
+	const open = vi.spyOn(window, "open").mockReturnValue(null);
+	const { user } = await renderPage();
+	await user.click(screen.getByLabelText(/table view/i));
+	fireEvent.mouseUp(screen.getByText("Triages support tickets"), {
+		button: 1,
+	});
+	expect(open).toHaveBeenCalledExactlyOnceWith("/agents/agent-1", "_blank");
+	expect(screen.getByLabelText("location")).toHaveTextContent(/^\/$/);
+	open.mockRestore();
+});
+
+it("keeps agent editing in the table action menu", async () => {
+	mockUseAuth.mockReturnValue({ isPlatformAdmin: true });
+	mockUseAgents.mockReturnValue({ data: [makeAgent()], isLoading: false });
+	const { user } = await renderPage();
+	await user.click(screen.getByLabelText(/table view/i));
+	await user.click(
+		screen.getByRole("button", { name: "Tier-1 Triage actions" }),
+	);
+	expect(
+		screen.getByRole("menuitem", { name: "Edit Agent" }),
+	).toHaveAttribute("href", "/agents/agent-1?tab=settings");
+	expect(screen.getByLabelText("location")).toHaveTextContent(/^\/$/);
 });

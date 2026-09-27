@@ -17,6 +17,14 @@ MAX_KNOWLEDGE_SEARCHES_PER_TURN = 8
 MAX_KNOWLEDGE_EVIDENCE_CHARS_PER_TURN = 40_000
 MIN_KNOWLEDGE_EVIDENCE_CHARS = 512
 MAX_KNOWLEDGE_METADATA_CHARS = 2_000
+KNOWLEDGE_DEFAULT_EXCERPT_CHARS = 500
+"""Bounded excerpt per document for the compact default payload.
+
+Full document content is withheld unless the model explicitly follows up with
+``include_full_content=True`` or a cached ``doc_id``. Five excerpts at this
+size keep the default turn payload near ~3-4K chars instead of ~20K, while the
+40K envelope above remains the hard ceiling.
+"""
 
 _KNOWLEDGE_METADATA_PRIORITY = (
     "title",
@@ -84,6 +92,10 @@ class KnowledgeSearchBudget:
         self._queries: set[str] = set()
         self._evidence_ids: set[str] = set()
         self._evidence_chars = 0
+        # Full document payloads cached within the run so an explicit
+        # follow-up (doc_id + include_full_content) can fetch the complete
+        # content without re-embedding or re-searching.
+        self._doc_cache: dict[str, dict[str, Any]] = {}
 
     @property
     def searches_used(self) -> int:
@@ -113,6 +125,15 @@ class KnowledgeSearchBudget:
         self._queries.clear()
         self._evidence_ids.clear()
         self._evidence_chars = 0
+        self._doc_cache.clear()
+
+    def cache_document(self, evidence_id: str, payload: dict[str, Any]) -> None:
+        """Cache the full document payload for an explicit follow-up fetch."""
+        self._doc_cache[str(evidence_id)] = payload
+
+    def cached_document(self, evidence_id: str) -> dict[str, Any] | None:
+        """Return the cached full payload for a follow-up, if present."""
+        return self._doc_cache.get(str(evidence_id))
 
     def reserve(self, query: str) -> KnowledgeSearchDecision:
         """Reserve a unique query or explain why it should not execute."""
@@ -212,6 +233,70 @@ def compact_knowledge_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
             compacted[key] = metadata[key]
 
     return compacted
+
+
+KNOWLEDGE_FULL_CONTENT_HINT = (
+    "Results are compact by default (ranked id + title + confidence + "
+    "bounded excerpt). Re-call search_knowledge with doc_id and "
+    "include_full_content=true to fetch one full document from the run cache."
+)
+
+
+def compact_knowledge_excerpt(
+    content: str,
+    max_chars: int = KNOWLEDGE_DEFAULT_EXCERPT_CHARS,
+) -> str:
+    """Return a bounded head excerpt with an explicit truncation marker."""
+    text = content or ""
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars].rstrip() + (
+        f"\n\n[…excerpt truncated: {len(text) - max_chars} of "
+        f"{len(text)} characters withheld; request full content explicitly]"
+    )
+
+
+def build_compact_knowledge_document(
+    evidence_id: str,
+    *,
+    content: str,
+    namespace: Any,
+    score: float | None,
+    key: Any,
+    metadata: dict[str, Any],
+    excerpt_chars: int = KNOWLEDGE_DEFAULT_EXCERPT_CHARS,
+    include_full: bool = False,
+) -> dict[str, Any]:
+    """Build the compact default payload: id + title + confidence + excerpt.
+
+    Full ``content`` is included only when ``include_full`` is True (explicit
+    model follow-up). ``title`` is lifted from compacted metadata for ranking
+    readability; ``confidence`` mirrors the retrieval score.
+    """
+    full_text = content or ""
+    document: dict[str, Any] = {
+        "id": evidence_id,
+        "title": metadata.get("title"),
+        "namespace": namespace,
+        "confidence": score,
+        "key": key,
+        "excerpt": compact_knowledge_excerpt(full_text, excerpt_chars),
+        "excerpt_chars": min(len(full_text), excerpt_chars),
+        "full_chars": len(full_text),
+        "has_more_content": len(full_text) > excerpt_chars,
+        "metadata": metadata,
+    }
+    if include_full:
+        document["content"] = full_text
+    return document
+
+
+def parse_knowledge_followup(arguments: dict[str, Any]) -> tuple[str | None, bool]:
+    """Parse an explicit full-content follow-up: (doc_id, include_full)."""
+    raw_doc_id = arguments.get("doc_id")
+    doc_id = str(raw_doc_id).strip() if raw_doc_id else None
+    include_full = arguments.get("include_full_content") is True
+    return (doc_id or None), include_full
 
 
 def select_novel_knowledge_evidence(

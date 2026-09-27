@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bifrost-scheduler
+  namespace: bifrost
+spec:
+  template:
+    spec:
+      serviceAccountName: bifrost-build-controller
+      automountServiceAccountToken: true
+      containers:
+        - name: scheduler
+          envFrom:
+            - configMapRef:
+                name: bifrost-config
+            - secretRef:
+                name: bifrost-secrets
+            - configMapRef:
+                name: bifrost-build-jobs-config
+

@@ -5,8 +5,9 @@ GitHub integration contract models for Bifrost.
 from datetime import datetime
 from enum import Enum
 from typing import Literal
+from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 # ==================== GIT & GITHUB MODELS ====================
@@ -48,12 +49,45 @@ class ValidateTokenRequest(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class GitHubConfigRequest(BaseModel):
-    """Request to configure GitHub integration - token must already be saved via /validate"""
-    repo_url: str = Field(..., min_length=1, description="GitHub repository URL (e.g., https://github.com/user/repo)")
-    branch: str = Field(default="main", description="Branch to sync with")
+class GitConnectItem(BaseModel):
+    """One path compared during a first workspace Git connection preview."""
 
-    model_config = ConfigDict(from_attributes=True)
+    path: str
+    classification: Literal["local_only", "remote_only", "identical", "conflict"]
+    local_sha256: str | None = None
+    remote_sha256: str | None = None
+
+
+class GitConnectPreviewRequest(BaseModel):
+    """Repository and branch to compare against the detached workspace."""
+
+    repository_url: str = Field(..., min_length=1)
+    branch: str = Field(default="main", min_length=1)
+
+
+class GitConnectPreview(BaseModel):
+    """Requester-bound, short-lived first-connect reconciliation preview."""
+
+    token: str
+    repository_url: str
+    branch: str
+    state: Literal["ready", "requires_reconciliation"]
+    items: list[GitConnectItem] = Field(default_factory=list)
+
+
+class GitConnectRequest(BaseModel):
+    """Approved strategy and path decisions for a reviewed connect preview."""
+
+    preview_token: str = Field(..., min_length=1)
+    strategy: Literal["publish_local", "start_from_remote", "reconcile"]
+    decisions: dict[str, Literal["local", "remote"]] = Field(default_factory=dict)
+    confirm_destructive: bool = False
+
+    @model_validator(mode="after")
+    def _destructive_confirmation_is_strategy_scoped(self) -> "GitConnectRequest":
+        if self.strategy != "start_from_remote" and self.confirm_destructive:
+            raise ValueError("confirm_destructive is only valid for start_from_remote")
+        return self
 
 
 class GitHubConfigResponse(BaseModel):
@@ -185,17 +219,6 @@ class CommitAndPushResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class GitHubSetupResponse(BaseModel):
-    """Response after configuring GitHub integration"""
-    job_id: str | None = Field(default=None, description="Job ID for tracking the setup operation (deprecated)")
-    notification_id: str | None = Field(default=None, description="Notification ID for watching progress via WebSocket (deprecated)")
-    status: str = Field(default="configured", description="Configuration status")
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-
-
 class CommitInfo(BaseModel):
     """Information about a single commit"""
     sha: str = Field(..., description="Commit SHA")
@@ -305,8 +328,8 @@ class GitJobResponse(BaseModel):
 
 
 class GitOpRequest(BaseModel):
-    """Base request for git operations. Accepts optional client-generated job_id."""
-    job_id: str | None = Field(default=None, description="Client-generated job ID (avoids WebSocket race condition)")
+    """Base request for Git operations with optional durable idempotency key."""
+    job_id: UUID | None = Field(default=None, description="Client-generated platform job ID")
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -314,6 +337,13 @@ class GitOpRequest(BaseModel):
 class SyncRequest(GitOpRequest):
     """Request to sync (pull + push + entity import)."""
     confirm_deletes: bool = Field(default=False, description="Confirm pending entity deletions and proceed with sync")
+    retry_job_id: UUID | None = Field(
+        default=None,
+        description=(
+            "ID of this caller's failed workspace git job whose server-stored "
+            "publication retry plan should be retried"
+        ),
+    )
 
 
 class CommitRequest(GitOpRequest):
@@ -385,8 +415,50 @@ class EntityChange(BaseModel):
     action: Literal["added", "updated", "removed", "keep"] = Field(..., description="Type of change")
     entity_type: str = Field(..., description="Entity type: workflow, form, agent, app, integration, config, table, event, organization, role")
     name: str = Field(..., description="Entity display name")
+    entity_id: str | None = Field(
+        default=None,
+        description="Stable entity UUID for actions that must be confirmed exactly",
+    )
     path: str | None = Field(default=None, description="File path (for file-backed entities)")
     reason: str | None = Field(default=None, description="Reason for removal, e.g. 'file not found: workflows/contacts.py'")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class WorkspaceFileChange(BaseModel):
+    """A file mutation included in a planned workspace synchronization."""
+
+    path: str = Field(..., description="Relative path from workspace root")
+    action: Literal["create", "update", "delete"] = Field(
+        ..., description="Workspace mutation to apply"
+    )
+    sha256: str | None = Field(
+        default=None, description="Content digest for created or updated files"
+    )
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class WorkspaceSyncPlan(BaseModel):
+    """A reviewed, deterministic workspace synchronization plan."""
+
+    base_sha: str | None = Field(default=None, description="Workspace base commit SHA")
+    merge_sha: str = Field(..., description="Commit SHA used to calculate the plan")
+    workspace_fingerprint: str = Field(
+        default="",
+        description="Content fingerprint of the workspace used to calculate the plan",
+    )
+    db_applied: bool = Field(
+        default=False,
+        description="Whether this plan's import and approved deletions are already committed",
+    )
+    checkpoint_id: str | None = Field(
+        default=None,
+        description="Durable workspace checkpoint used for publication-only retry",
+    )
+    pending_deletes: list[EntityChange] = Field(default_factory=list)
+    entity_changes: list[EntityChange] = Field(default_factory=list)
+    file_changes: list[WorkspaceFileChange] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -437,7 +509,7 @@ class ResolveResult(BaseModel):
 
 class SyncResult(BaseModel):
     """Result of a combined sync (pull + push) operation."""
-    success: bool = Field(..., description="Whether sync succeeded")
+    success: bool = Field(default=False, description="Whether sync succeeded")
     pull_success: bool = Field(default=True, description="Whether pull phase succeeded")
     push_success: bool = Field(default=True, description="Whether push phase succeeded")
     pulled: int = Field(default=0, description="Number of entities imported")
@@ -449,6 +521,17 @@ class SyncResult(BaseModel):
     entity_changes: list[EntityChange] = Field(default_factory=list, description="Entity-level changes during sync")
     needs_delete_confirmation: bool = Field(default=False, description="Whether sync is blocked pending delete confirmation")
     pending_deletes: list[EntityChange] = Field(default_factory=list, description="Entities that will be deleted if confirmed")
+    requires_action: Literal["confirm_deletes"] | None = Field(
+        default=None, description="Required user action before sync can continue"
+    )
+    retryable: bool = Field(
+        default=False,
+        description="Whether a post-import publication failure can be retried using retry_plan",
+    )
+    retry_plan: WorkspaceSyncPlan | None = Field(
+        default=None,
+        description="Exact validated plan to retry after a publication failure",
+    )
 
     model_config = ConfigDict(from_attributes=True)
 

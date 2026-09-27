@@ -82,7 +82,7 @@ export function Combobox({
 					aria-describedby={describedBy}
 					aria-invalid={invalid}
 					className={cn(
-						"h-auto min-h-11 w-full min-w-0 justify-between py-2 font-normal sm:min-h-10",
+						"h-11 w-full min-w-0 justify-between overflow-hidden py-2 font-normal sm:h-10",
 						className,
 					)}
 					disabled={disabled || isLoading}
@@ -99,7 +99,7 @@ export function Combobox({
 						</>
 					) : (
 						<>
-							<span className="flex min-w-0 items-center gap-2">
+							<span className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
 								{SelectedIcon ? (
 									<SelectedIcon
 										aria-hidden="true"
@@ -108,7 +108,7 @@ export function Combobox({
 								) : null}
 								<span
 									className={cn(
-										"min-w-0 whitespace-normal text-left [overflow-wrap:anywhere]",
+										"min-w-0 truncate text-left",
 										!value && "text-muted-foreground",
 									)}
 								>
@@ -144,7 +144,10 @@ export function Combobox({
 										key={option.value}
 										value={option.value}
 										className="min-h-11"
-										keywords={[option.label]}
+										keywords={[
+											option.label,
+											option.description ?? "",
+										]}
 										data-checked={value === option.value}
 										onSelect={() => {
 											onValueChange?.(

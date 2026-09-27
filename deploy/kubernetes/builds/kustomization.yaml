@@ -1,0 +1,13 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: bifrost
+
+resources:
+  - ../../../k8s
+  - serviceaccounts.yaml
+  - rbac.yaml
+  - build-config.yaml
+
+patches:
+  - path: api-env-patch.yaml
+  - path: scheduler-controller-patch.yaml

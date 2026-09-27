@@ -5,6 +5,7 @@ Tests HMAC-SHA256 signature verification and the GenericWebhookAdapter
 request handling logic.
 """
 
+import base64
 import hashlib
 import hmac
 import json
@@ -17,13 +18,14 @@ import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 
+from bifrost.webhooks import WebhookAdapter as SdkWebhookAdapter
+from src.services.webhooks import registry as webhook_registry
 from src.services.webhooks.adapters.generic import GenericWebhookAdapter
 from src.services.webhooks.adapters.local_fixture import LocalFixtureWebhookAdapter
 from src.services.webhooks.adapters.microsoft_bot_framework import (
     MicrosoftBotFrameworkAdapter,
 )
 from src.services.webhooks.adapters.microsoft_graph import MicrosoftGraphAdapter
-from src.services.webhooks import registry as webhook_registry
 from src.services.webhooks.protocol import (
     Deliver,
     Rejected,
@@ -364,6 +366,48 @@ class TestVerifyHmacSha256:
             WebhookAdapter.verify_hmac_sha256(b"body", "secret", None) is False
         )
 
+    def test_base64_signature_with_whitespace_after_prefix(self):
+        body = b"hello world"
+        secret = "mysecret"
+        digest = hmac.new(secret.encode(), body, hashlib.sha256).digest()
+        signature = base64.b64encode(digest).decode("ascii")
+
+        assert (
+            WebhookAdapter.verify_hmac_sha256(
+                body,
+                secret,
+                f"  sha256= {signature}  ",
+                prefix="sha256=",
+            )
+            is True
+        )
+
+    def test_whitespace_within_base64_signature_is_rejected(self):
+        body = b"hello world"
+        secret = "mysecret"
+        digest = hmac.new(secret.encode(), body, hashlib.sha256).digest()
+        signature = base64.b64encode(digest).decode("ascii")
+        signature = f"{signature[:10]} {signature[10:]}"
+
+        assert (
+            WebhookAdapter.verify_hmac_sha256(body, secret, signature) is False
+        )
+
+    def test_sdk_helper_accepts_base64_with_whitespace_after_prefix(self):
+        body = b"hello world"
+        secret = "mysecret"
+        digest = hmac.new(secret.encode(), body, hashlib.sha256).digest()
+        signature = base64.b64encode(digest).decode("ascii")
+
+        assert (
+            SdkWebhookAdapter.verify_hmac_sha256(
+                body,
+                secret,
+                f"sha256= {signature}",
+            )
+            is True
+        )
+
 
 # =============================================================================
 # TestGenericWebhookAdapterHandleRequest
@@ -395,6 +439,24 @@ class TestGenericWebhookAdapterHandleRequest:
         request = _make_request(
             body=body,
             headers={"x-signature-256": sig},
+        )
+        result = await adapter.handle_request(
+            request, config={}, state={"secret": secret}
+        )
+
+        assert isinstance(result, Deliver)
+
+    @pytest.mark.asyncio
+    async def test_base64_signature_with_whitespace_accepted(self, adapter):
+        """A base64 HMAC separated from its prefix by whitespace is valid."""
+        body = b'{"event": "push"}'
+        secret = "test-secret"
+        digest = hmac.new(secret.encode(), body, hashlib.sha256).digest()
+        signature = base64.b64encode(digest).decode("ascii")
+
+        request = _make_request(
+            body=body,
+            headers={"x-signature-256": f"sha256= {signature}"},
         )
         result = await adapter.handle_request(
             request, config={}, state={"secret": secret}

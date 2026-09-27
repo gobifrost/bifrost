@@ -102,7 +102,9 @@ export function ChatRunActivity({
 							: "pointer-events-none grid-rows-[0fr] opacity-0 duration-200 ease-out",
 					)}
 				>
-					<div className="min-h-0 overflow-hidden">
+					{/* Keep focus/scrollIntoView from scrolling the clipped content
+					 * while the grid expands and moving a tool under the pointer. */}
+					<div className="min-h-0 overflow-clip">
 						<div className="mt-2 w-full rounded-[var(--bf-radius-surface)] border border-border/70 bg-background/70 p-3 text-sm leading-6 text-foreground">
 							{children}
 						</div>

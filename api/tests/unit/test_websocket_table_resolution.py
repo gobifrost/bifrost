@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import uuid
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -138,6 +140,171 @@ class TestLoadPoliciesForTableByName:
         db.add_all([live, managed])
         await db.flush()
 
-        policies = await ws_mod._load_policies_for_table(name)
+        policies = await ws_mod._load_policies_for_table(name, _org_user(org))
         assert policies == TablePolicies()
+
+
+class TestFreshTablePolicyClaims:
+    """Per-table evaluation must resolve custom claims afresh.
+
+    Websocket principals live across tables and policy changes; custom claims
+    are solution-scoped and mutable. Each evaluation therefore receives a
+    shallow copy of the principal with an empty claims dict so that values
+    resolved for one table never leak into another subscription's check.
+    """
+
+    def test_fresh_copy_drops_stale_claims_without_touching_principal(self) -> None:
+        org = uuid.uuid4()
+        user = _org_user(org)
+        user.claims = {"allowed_campus_ids": ["north"]}  # type: ignore[attr-defined]
+
+        fresh = ws_mod._fresh_table_policy_user(user)
+
+        assert fresh is not user
+        assert fresh.claims == {}
+        assert user.claims == {"allowed_campus_ids": ["north"]}
+
+    async def test_handle_table_message_evaluates_with_fresh_claims(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Mutating claims between two evaluations must not leak values."""
+        org = uuid.uuid4()
+        user = _org_user(org)
+        user.claims = {"allowed_campus_ids": ["north"]}  # type: ignore[attr-defined]
+        seen: list = []
+
+        async def fake_load(table_id: str, policy_user) -> None:
+            seen.append(policy_user)
+            return None
+
+        monkeypatch.setattr(ws_mod, "_load_policies_for_table", fake_load)
+        websocket = SimpleNamespace(
+            state=SimpleNamespace(table_subscriptions={"t1": {"filter": None}}),
+            send_json=AsyncMock(),
+        )
+
+        await ws_mod._handle_table_message(
+            websocket, user, "table:t1", {"type": "document_change"}
+        )
+        assert len(seen) == 1
+        assert seen[0] is not user
+        assert seen[0].claims == {}
+
+        # Claims mutated after the first evaluation still start fresh.
+        user.claims = {"allowed_campus_ids": ["south"]}
+        await ws_mod._handle_table_message(
+            websocket, user, "table:t1", {"type": "document_change"}
+        )
+        assert len(seen) == 2
+        assert seen[1] is not user
+        assert seen[1].claims == {}
+
+
+class TestClaimGatedSubscriptionVisibility:
+    """A DB-backed custom claim must control subscription visibility end to end.
+
+    Seeds a source table with a membership document, a list claim selecting
+    the member's campus, and a policy table whose read rule references the
+    claim. A document_change for a matching row must be delivered; after the
+    claim source changes so the member no longer matches, the same message
+    must be suppressed. This exercises the real loader, preresolution, and
+    authorization — not mocks.
+    """
+
+    async def test_claim_source_change_flips_visibility(self, patched_db) -> None:
+        from src.models.orm.custom_claims import CustomClaim as CustomClaimORM
+        from src.models.orm.tables import Document
+
+        db = patched_db
+        org = await _make_org(db)
+        suffix = uuid.uuid4().hex[:8]
+
+        # Source table holding membership facts (open read so the claim
+        # query itself is authorized; claims fail closed without it).
+        source = _table(
+            f"memberships_{suffix}",
+            org_id=org,
+            access={"policies": [{"name": "open_read", "actions": ["read"]}]},
+        )
+        db.add(source)
+        await db.flush()
+        member_email = f"member-{suffix}@x.test"
+        user = _org_user(org)
+        user.email = member_email
+        db.add(
+            Document(
+                table_id=source.id,
+                data={"email": member_email, "campus_id": "north"},
+            )
+        )
+
+        # List claim: campuses for the calling user.
+        db.add(
+            CustomClaimORM(
+                id=uuid.uuid4(),
+                organization_id=org,
+                name="allowed_campus_ids",
+                type="list",
+                query={
+                    "table": source.name,
+                    "where": {"eq": [{"row": "email"}, {"user": "email"}]},
+                    "select": "campus_id",
+                },
+            )
+        )
+
+        # Policy table whose read rule references the claim.
+        policy_table = _table(
+            f"rosters_{suffix}",
+            org_id=org,
+            access={
+                "policies": [
+                    {
+                        "name": "campus_read",
+                        "actions": ["read"],
+                        "when": {
+                            "in": [
+                                {"row": "campus_id"},
+                                {"claims": "allowed_campus_ids"},
+                            ]
+                        },
+                    }
+                ]
+            },
+        )
+        db.add(policy_table)
+        await db.flush()
+
+        websocket = SimpleNamespace(
+            state=SimpleNamespace(
+                table_subscriptions={str(policy_table.id): {"filter": None}}
+            ),
+            send_json=AsyncMock(),
+        )
+        payload = {
+            "type": "document_change",
+            "old_row": None,
+            "new_row": {"id": "r1", "campus_id": "north"},
+        }
+
+        await ws_mod._handle_table_message(
+            websocket, user, f"table:{policy_table.id}", payload
+        )
+        assert websocket.send_json.await_count == 1
+        sent = websocket.send_json.await_args.args[0]
+        assert sent["action"] == "insert"
+
+        # The claim source changes: the member moves off campus "north".
+        await db.execute(
+            Document.__table__.update()
+            .where(Document.table_id == source.id)
+            .values(data={"email": member_email, "campus_id": "south"})
+        )
+        await db.flush()
+        websocket.send_json.reset_mock()
+
+        await ws_mod._handle_table_message(
+            websocket, user, f"table:{policy_table.id}", payload
+        )
+        websocket.send_json.assert_not_awaited()
 

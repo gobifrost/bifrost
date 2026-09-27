@@ -118,8 +118,8 @@ async def test_chat_stream_contract_is_driven_by_pydantic_runtime(
         new_callable=AsyncMock,
         return_value=client,
     ), patch(
-        "src.services.agent_executor.create_agent_model",
-        return_value=CountingTestModel(custom_output_text="Hello from Pydantic"),
+            "src.services.agent_runtime.model_factory.create_agent_model",
+            return_value=CountingTestModel(custom_output_text="Hello from Pydantic",),
     ):
         chunks = [
             chunk
@@ -172,8 +172,8 @@ async def test_chat_resolves_explicit_model_profile_id(
         patch("src.services.agent_executor.AIModelService.resolve_chat_profile", resolver),
         patch("src.services.agent_executor.get_llm_client", new=AsyncMock(return_value=client)) as client_factory,
         patch(
-            "src.services.agent_executor.create_agent_model",
-            return_value=CountingTestModel(custom_output_text="Hello"),
+            "src.services.agent_runtime.model_factory.create_agent_model",
+            return_value=CountingTestModel(custom_output_text="Hello",),
         ),
     ):
         _ = [
@@ -227,8 +227,8 @@ async def test_chat_omitted_model_profile_uses_default_resolution(
         "src.services.agent_executor.get_llm_client",
         new=AsyncMock(return_value=client),
     ), patch(
-        "src.services.agent_executor.create_agent_model",
-        return_value=CountingTestModel(custom_output_text="Hello"),
+            "src.services.agent_runtime.model_factory.create_agent_model",
+            return_value=CountingTestModel(custom_output_text="Hello",),
     ):
         _ = [
             chunk
@@ -269,8 +269,8 @@ async def test_chat_reapplies_agent_instructions_when_stored_history_exists(
         new_callable=AsyncMock,
         return_value=client,
     ), patch(
-        "src.services.agent_executor.create_agent_model",
-        return_value=model,
+            "src.services.agent_runtime.model_factory.create_agent_model",
+            return_value=model,
     ):
         _ = [
             chunk
@@ -366,8 +366,8 @@ async def test_unknown_capabilities_still_offer_agent_tools(
         "src.services.agent_executor.get_llm_client",
         new=AsyncMock(return_value=llm_client),
     ), patch(
-        "src.services.agent_executor.create_agent_model",
-        return_value=CountingTestModel(custom_output_text="Hello from Pydantic"),
+            "src.services.agent_runtime.model_factory.create_agent_model",
+            return_value=CountingTestModel(custom_output_text="Hello from Pydantic",),
     ), patch(
         "src.services.agent_executor.PydanticAgent",
         new=FakePydanticAgent,
@@ -442,8 +442,8 @@ async def test_chat_maps_pydantic_tool_events_to_existing_bifrost_contract(
         new_callable=AsyncMock,
         return_value=client,
     ), patch(
-        "src.services.agent_executor.create_agent_model",
-        return_value=CountingTestModel(
+            "src.services.agent_runtime.model_factory.create_agent_model",
+            return_value=CountingTestModel(
             call_tools=["get_ticket"],
             custom_output_text="Ticket checked",
         ),
@@ -500,8 +500,8 @@ async def test_chat_uses_persisted_user_message_without_duplication(
         new_callable=AsyncMock,
         return_value=client,
     ), patch(
-        "src.services.agent_executor.create_agent_model",
-        return_value=CountingTestModel(custom_output_text="Hello from Pydantic"),
+            "src.services.agent_runtime.model_factory.create_agent_model",
+            return_value=CountingTestModel(custom_output_text="Hello from Pydantic",),
     ):
         chunks = [
             chunk

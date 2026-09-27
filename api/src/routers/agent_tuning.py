@@ -21,6 +21,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
+from shared.scope_resolver import has_scope_bypass
 from src.core.auth import CurrentActiveUser
 from src.core.database import get_session_factory
 from src.core.db_deps import DbSession
@@ -32,6 +33,7 @@ from src.models.contracts.agent_tuning import (
     ConsolidatedProposalResponse,
     DryRunPerRun,
 )
+from src.models.enums import AgentAccessLevel
 from src.models.orm.agents import Agent
 from src.services.execution.tuning_service import (
     apply_consolidated_tuning,
@@ -47,12 +49,18 @@ router = APIRouter(prefix="/api/agents", tags=["Agent Tuning"])
 async def _load_agent_with_access(
     agent_id: UUID, db: DbSession, user: CurrentActiveUser
 ) -> Agent:
-    """Fetch an agent and enforce org scoping for non-superusers.
+    """Fetch an agent and enforce tuning-write scope.
 
-    Org users can only tune agents in their own org (or global agents,
-    where ``organization_id is None``). Platform admins can tune any.
+    Bypass (platform admin or provider-org member) may tune any agent.
+    A non-bypass caller may only tune an agent they own that is PRIVATE —
+    tuning mutates the agent's prompt and clears verdicts on other users'
+    flagged runs, so it follows the same "own PRIVATE agent only" rule as
+    every other non-bypass agent write.
     """
-    is_admin = user.has_platform_admin_grant()
+    is_bypass = has_scope_bypass(
+        is_platform_admin=user.has_platform_admin_grant(),
+        is_provider_org=user.is_provider_org,
+    )
 
     agent = (
         await db.execute(select(Agent).where(Agent.id == agent_id))
@@ -63,10 +71,10 @@ async def _load_agent_with_access(
             detail=f"Agent {agent_id} not found",
         )
 
-    if not is_admin:
+    if not is_bypass:
         if (
-            agent.organization_id is not None
-            and agent.organization_id != user.organization_id
+            agent.access_level != AgentAccessLevel.PRIVATE
+            or agent.owner_user_id != user.user_id
         ):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

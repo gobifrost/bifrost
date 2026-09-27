@@ -363,6 +363,7 @@ export function Events() {
 										<DataTableRow
 											key={source.id}
 											clickable
+											href={`/event-sources/${source.id}`}
 											onClick={() =>
 												navigate(
 													`/event-sources/${source.id}`,

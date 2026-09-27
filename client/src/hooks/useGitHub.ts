@@ -14,7 +14,11 @@ import type { components } from "@/lib/v1";
 // Types - Auto-generated from OpenAPI spec
 // =============================================================================
 
-export type GitHubConnectRequest = components["schemas"]["GitHubConfigRequest"];
+export type GitConnectPreviewRequest =
+	components["schemas"]["GitConnectPreviewRequest"];
+export type GitConnectPreview = components["schemas"]["GitConnectPreview"];
+export type GitConnectRequest = components["schemas"]["GitConnectRequest"];
+export type PlatformJobAccepted = components["schemas"]["PlatformJobAccepted"];
 export type GitHubConfigResponse =
 	components["schemas"]["GitHubConfigResponse"];
 export type GitHubRepoInfo = components["schemas"]["GitHubRepoInfo"];
@@ -28,6 +32,9 @@ export type CommitInfo = components["schemas"]["CommitInfo"];
 export type ConflictInfo = components["schemas"]["ConflictInfo"];
 export type CommitHistoryResponse =
 	components["schemas"]["CommitHistoryResponse"];
+export type GitSyncOptions = Partial<
+	Omit<components["schemas"]["SyncRequest"], "job_id">
+>;
 
 // Preflight types - used by CommitResult
 export interface PreflightIssue {
@@ -103,21 +110,6 @@ export interface CommitResult {
 	entity_changes?: EntityChange[];
 }
 
-export interface PullResult {
-	success: boolean;
-	pulled: number;
-	commit_sha?: string | null;
-	conflicts: MergeConflict[];
-	error?: string | null;
-}
-
-export interface PushResult {
-	success: boolean;
-	commit_sha?: string | null;
-	pushed_commits: number;
-	error?: string | null;
-}
-
 export interface ResolveResult {
 	success: boolean;
 	pulled: number;
@@ -145,6 +137,7 @@ export interface SyncResult {
 	entity_changes?: EntityChange[];
 	needs_delete_confirmation?: boolean;
 	pending_deletes?: EntityChange[];
+	retryable?: boolean;
 }
 
 export interface AbortMergeResult {
@@ -240,24 +233,6 @@ export function useValidateGitHubToken() {
 }
 
 /**
- * Configure GitHub integration
- */
-export function useConfigureGitHub() {
-	const queryClient = useQueryClient();
-	return $api.useMutation("post", "/api/github/configure", {
-		onSuccess: () => {
-			// Invalidate related queries after configuration
-			queryClient.invalidateQueries({
-				queryKey: ["get", "/api/github/config"],
-			});
-			queryClient.invalidateQueries({
-				queryKey: ["get", "/api/github/status"],
-			});
-		},
-	});
-}
-
-/**
  * Create a new GitHub repository
  */
 export function useCreateGitHubRepository() {
@@ -340,28 +315,6 @@ export function useCommit() {
 }
 
 /**
- * Queue a git pull operation - returns job_id for WebSocket tracking
- */
-export function usePull() {
-	return {
-		mutateAsync: async (jobId?: string): Promise<GitJobResponse> =>
-			gitPost("/api/github/pull", jobId ?? generateUUID(), undefined, "Failed to queue pull"),
-		isPending: false,
-	};
-}
-
-/**
- * Queue a git push operation - returns job_id for WebSocket tracking
- */
-export function usePush() {
-	return {
-		mutateAsync: async (jobId?: string): Promise<GitJobResponse> =>
-			gitPost("/api/github/push", jobId ?? generateUUID(), undefined, "Failed to queue push"),
-		isPending: false,
-	};
-}
-
-/**
  * Queue a working tree status check - returns job_id for WebSocket tracking
  */
 export function useWorkingTreeChanges() {
@@ -413,8 +366,8 @@ export function useFileDiff() {
  */
 export function useSync() {
 	return {
-		mutateAsync: async (jobId?: string, opts?: { confirm_deletes?: boolean }): Promise<GitJobResponse> =>
-			gitPost("/api/github/sync", jobId ?? generateUUID(), opts ? { confirm_deletes: opts.confirm_deletes } : undefined, "Failed to queue sync"),
+		mutateAsync: async (jobId?: string, opts?: GitSyncOptions): Promise<GitJobResponse> =>
+			gitPost("/api/github/sync", jobId ?? generateUUID(), opts, "Failed to queue sync"),
 		isPending: false,
 	};
 }
@@ -469,4 +422,33 @@ export async function listGitHubBranches(repoFullName: string) {
 
 	const data = response.data as { branches: GitHubBranchInfo[] };
 	return data.branches;
+}
+
+/** Compare a selected repository with the detached workspace before connecting it. */
+export async function previewGitHubConnect(
+	body: GitConnectPreviewRequest,
+): Promise<GitConnectPreview> {
+	const { data, error } = await apiClient.POST(
+		"/api/github/connect/preview",
+		{
+			body,
+		},
+	);
+	if (error || !data) {
+		throw new Error("Failed to preview the workspace connection");
+	}
+	return data;
+}
+
+/** Queue the reviewed first-connect plan through the shared PlatformJob transport. */
+export async function enqueueGitHubConnect(
+	body: GitConnectRequest,
+): Promise<PlatformJobAccepted> {
+	const { data, error } = await apiClient.POST("/api/github/connect", {
+		body,
+	});
+	if (error || !data) {
+		throw new Error("Failed to queue the workspace connection");
+	}
+	return data;
 }

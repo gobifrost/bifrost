@@ -10,7 +10,7 @@ from src.core.principal import UserPrincipal
 from src.models.enums import ExecutionStatus
 from src.models.orm.executions import Execution
 from src.models.orm.users import User
-from src.routers.executions import ExecutionRepository, _decode_history_cursor
+from shared.sdk_execution_reads import decode_history_cursor, list_sdk_executions
 
 pytestmark = pytest.mark.e2e
 
@@ -43,6 +43,7 @@ def _execution(
 async def test_history_pages_use_the_display_timeline_without_gaps(db_session):
     now = datetime(2026, 8, 27, 18, 0, tzinfo=timezone.utc)
     user_id = uuid4()
+    workflow_name = f"history-pagination-{uuid4().hex}"
     db_session.add(
         User(
             id=user_id,
@@ -53,7 +54,7 @@ async def test_history_pages_use_the_display_timeline_without_gaps(db_session):
     )
     recent = [
         _execution(
-            name=f"recent-{index:02d}",
+            name=workflow_name,
             status=ExecutionStatus.SUCCESS,
             created_at=now - timedelta(minutes=index, seconds=5),
             executed_by=user_id,
@@ -63,20 +64,20 @@ async def test_history_pages_use_the_display_timeline_without_gaps(db_session):
         for index in range(30)
     ]
     pending = _execution(
-        name="pending-with-created-at",
+        name=workflow_name,
         status=ExecutionStatus.PENDING,
         created_at=now - timedelta(seconds=30),
         executed_by=user_id,
     )
     future_scheduled = _execution(
-        name="future-scheduled",
+        name=workflow_name,
         status=ExecutionStatus.SCHEDULED,
         created_at=now,
         executed_by=user_id,
         scheduled_at=now + timedelta(days=1),
     )
     stale_cancelled = _execution(
-        name="stale-cancelled-scheduled",
+        name=workflow_name,
         status=ExecutionStatus.CANCELLED,
         created_at=now - timedelta(days=77, minutes=5),
         executed_by=user_id,
@@ -86,17 +87,22 @@ async def test_history_pages_use_the_display_timeline_without_gaps(db_session):
     db_session.add_all(rows)
     await db_session.flush()
 
+    # Superuser: scope resolves to ALL (no org filter) and the owner
+    # filter is off. Filter by this test's unique workflow name so prior
+    # E2E executions cannot enter the 33-row pagination universe. An org-user
+    # principal would now resolve scope to its own org (the HTTP rule),
+    # which would exclude these global rows; owner-only visibility is
+    # pinned by the shared-service unit tests instead.
     principal = UserPrincipal(
         user_id=user_id,
         email="history-admin@example.com",
         organization_id=PROVIDER_ORG_ID,
-        is_superuser=False,
+        is_superuser=True,
     )
-    repository = ExecutionRepository(db_session)
-
-    first_page, token = await repository.list_executions(
-        user=principal,
-        org_id=None,
+    first_page, token = await list_sdk_executions(
+        db_session,
+        principal,
+        workflow_name=workflow_name,
         limit=25,
     )
     assert token is not None
@@ -104,11 +110,12 @@ async def test_history_pages_use_the_display_timeline_without_gaps(db_session):
     assert first_page[0].execution_id == str(future_scheduled.id)
     assert first_page[-1].execution_id != str(stale_cancelled.id)
 
-    second_page, final_token = await repository.list_executions(
-        user=principal,
-        org_id=None,
+    second_page, final_token = await list_sdk_executions(
+        db_session,
+        principal,
+        workflow_name=workflow_name,
         limit=25,
-        cursor=_decode_history_cursor(token),
+        cursor=decode_history_cursor(token),
     )
 
     all_ids = [row.execution_id for row in [*first_page, *second_page]]

@@ -26,6 +26,7 @@ from src.services.policy_rule_service import (
     PolicyRuleReadOnly,
     PolicyRuleService,
 )
+from src.services.operation_catalog import operation_route
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,7 @@ router = APIRouter(prefix="/api/policy-rules", tags=["Policy Rules"])
     response_model=PolicyRulePublic,
     status_code=status.HTTP_201_CREATED,
     summary="Create a named policy rule",
-)
+**operation_route("policy.rules.create"))
 async def create_policy_rule(
     body: PolicyRuleCreate,
     ctx: Context,
@@ -59,7 +60,7 @@ async def create_policy_rule(
     "",
     response_model=list[PolicyRulePublic],
     summary="List policy rules",
-)
+**operation_route("policy.rules.list"))
 async def list_policy_rules(
     ctx: Context,
     user: CurrentSuperuser,
@@ -79,7 +80,7 @@ async def list_policy_rules(
     "/{domain}/{name}",
     response_model=PolicyRulePublic,
     summary="Update a named policy rule",
-)
+**operation_route("policy.rules.update"))
 async def update_policy_rule(
     domain: str,
     name: str,
@@ -104,7 +105,7 @@ async def update_policy_rule(
     "/{domain}/{name}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete a named policy rule",
-)
+**operation_route("policy.rules.delete"))
 async def delete_policy_rule(
     domain: str,
     name: str,
@@ -142,7 +143,7 @@ async def delete_policy_rule(
     "/{domain}/{name}/usages",
     response_model=PolicyRuleUsagesPublic,
     summary="Get usages of a named policy rule",
-)
+**operation_route("policy.rules.list_usages"))
 async def get_policy_rule_usages(
     domain: str,
     name: str,

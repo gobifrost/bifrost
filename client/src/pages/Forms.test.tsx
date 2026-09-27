@@ -237,7 +237,7 @@ describe("Forms — solution-managed badge (table view)", () => {
 		).toBeInTheDocument();
 	});
 
-	it("opens editable forms from the table row", async () => {
+	it("opens the form execution screen from the table row", async () => {
 		const user = await renderTable([makeForm()]);
 		const table = document.querySelector("table")!;
 
@@ -246,7 +246,7 @@ describe("Forms — solution-managed badge (table view)", () => {
 		);
 
 		expect(screen.getByLabelText("location")).toHaveTextContent(
-			"/forms/form-1/edit",
+			"/execute/form-1",
 		);
 	});
 });

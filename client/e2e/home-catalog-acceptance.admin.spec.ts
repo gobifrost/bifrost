@@ -195,7 +195,11 @@ function findResource(
 async function showAllCatalog(page: Page): Promise<void> {
 	await page.goto("/?catalog=all");
 	await expect(
-		page.getByRole("heading", { name: "Your workspace" }),
+		page.getByRole("heading", {
+			name: "Workspace",
+			exact: true,
+			level: 1,
+		}),
 	).toBeVisible({
 		timeout: 10_000,
 	});

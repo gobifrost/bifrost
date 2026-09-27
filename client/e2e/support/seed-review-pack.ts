@@ -169,8 +169,9 @@ async function main() {
 			await page.goto("/");
 			await expect(
 				page.getByRole("heading", {
-					name: "Your workspace",
+					name: "Workspace",
 					exact: true,
+					level: 1,
 				}),
 			).toBeVisible();
 			await expect(

@@ -125,6 +125,7 @@ def detect_python_entity_type_with_ast(content: bytes) -> PythonEntityDetectionR
         "@workflow" not in content_str
         and "@data_provider" not in content_str
         and "@tool" not in content_str
+        and "@service" not in content_str
     ):
         logger.info(f"Skipping AST parse - no decorator patterns found (content size: {len(content_str)} bytes)")
         return PythonEntityDetectionResult(
@@ -158,7 +159,7 @@ def detect_python_entity_type_with_ast(content: bytes) -> PythonEntityDetectionR
             decorator_info = _parse_decorator(decorator)
             if decorator_info:
                 decorator_name, _ = decorator_info
-                if decorator_name in ("workflow", "data_provider", "tool"):
+                if decorator_name in ("workflow", "data_provider", "tool", "service"):
                     return PythonEntityDetectionResult(
                         entity_type="workflow",
                         ast_tree=tree,
@@ -186,7 +187,7 @@ def _parse_decorator(decorator: ast.AST) -> tuple[str, dict[str, Any]] | None:
     """
     # Handle @workflow (no parentheses)
     if isinstance(decorator, ast.Name):
-        if decorator.id in ("workflow", "tool", "data_provider"):
+        if decorator.id in ("workflow", "tool", "data_provider", "service"):
             return decorator.id, {}
         return None
 
@@ -200,7 +201,7 @@ def _parse_decorator(decorator: ast.AST) -> tuple[str, dict[str, Any]] | None:
         else:
             return None
 
-        if decorator_name not in ("workflow", "tool", "data_provider"):
+        if decorator_name not in ("workflow", "tool", "data_provider", "service"):
             return None
 
         # Extract keyword arguments

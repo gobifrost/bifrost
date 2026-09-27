@@ -6,6 +6,41 @@ const COLLECTION_NAME = `Home E2E collection ${RUN_ID}`;
 const EDITED_COLLECTION_NAME = `${COLLECTION_NAME} edited`;
 
 test.describe("Home collections (admin)", () => {
+	test("keeps Workspace and Dashboard on one row beside the mobile chat action", async ({
+		page,
+	}) => {
+		await page.setViewportSize({ width: 320, height: 812 });
+		await page.goto("/");
+
+		const workspace = page.getByRole("link", {
+			name: "Workspace",
+			exact: true,
+		});
+		const dashboard = page.getByRole("link", {
+			name: "Dashboard",
+			exact: true,
+		});
+		const newChat = page.getByRole("link", { name: "New chat" });
+		await expect(workspace).toBeVisible({ timeout: 10000 });
+		await expect(dashboard).toBeVisible();
+		await expect(newChat).toBeVisible();
+
+		const [workspaceBox, dashboardBox, newChatBox] = await Promise.all([
+			workspace.boundingBox(),
+			dashboard.boundingBox(),
+			newChat.boundingBox(),
+		]);
+		expect(workspaceBox).not.toBeNull();
+		expect(dashboardBox).not.toBeNull();
+		expect(newChatBox).not.toBeNull();
+		expect(Math.abs(workspaceBox!.y - dashboardBox!.y)).toBeLessThan(2);
+		expect(dashboardBox!.x + dashboardBox!.width).toBeLessThanOrEqual(
+			newChatBox!.x,
+		);
+		expect(workspaceBox!.height).toBeLessThanOrEqual(44);
+		expect(dashboardBox!.height).toBeLessThanOrEqual(44);
+	});
+
 	test("creates a collection with an icon and resource, persists after reload, then removes it", async ({
 		page,
 		api,
@@ -23,21 +58,42 @@ test.describe("Home collections (admin)", () => {
 		try {
 			await page.goto("/");
 			await expect(
-				page.getByRole("heading", { name: "Your workspace" }),
+				page.getByRole("heading", {
+					name: "Workspace",
+					exact: true,
+					level: 1,
+				}),
 			).toBeVisible({ timeout: 10000 });
+			await expect(page.locator("[data-page-workspace]")).toHaveCSS(
+				"max-width",
+				"1400px",
+			);
 
 			await page
+				.getByRole("navigation", { name: "Workspace views" })
 				.getByRole("link", { name: "Dashboard", exact: true })
 				.click();
 			await expect(
-				page.getByRole("heading", { name: "Dashboard", exact: true }),
+				page.getByRole("heading", {
+					name: "Dashboard",
+					exact: true,
+					level: 1,
+				}),
 			).toBeVisible();
+			await expect(page.locator("[data-page-workspace]")).toHaveCSS(
+				"max-width",
+				"1400px",
+			);
 			await page
 				.getByRole("navigation", { name: "Workspace views" })
-				.getByRole("link", { name: "Home", exact: true })
+				.getByRole("link", { name: "Workspace", exact: true })
 				.click();
 			await expect(
-				page.getByRole("heading", { name: "Your workspace" }),
+				page.getByRole("heading", {
+					name: "Workspace",
+					exact: true,
+					level: 1,
+				}),
 			).toBeVisible({ timeout: 10000 });
 			await page.getByRole("combobox", { name: "Resource type" }).click();
 			await page.getByRole("option", { name: "Agents" }).click();

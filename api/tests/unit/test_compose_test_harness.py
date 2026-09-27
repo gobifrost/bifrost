@@ -156,7 +156,12 @@ def test_test_sh_advertises_dockerized_api_quality_lane():
 
 
 def test_pre_pr_gate_covers_every_locally_reproducible_merge_gate():
-    """A PR must not be the first place broad, reproducible checks run."""
+    """pre-pr reproduces the merge queue's broad checks locally.
+
+    It is an optional diagnostic command, not a PR prerequisite — the merge
+    queue is the authoritative complete-suite gate. This contract only pins
+    what the command must cover when someone chooses to run it.
+    """
     script = _find_repo_file("test.sh").read_text()
     pre_pr = script.split("cmd_pre_pr() {", 1)[1].split("\n}", 1)[0]
 

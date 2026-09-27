@@ -12,10 +12,12 @@ from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
 import pytest
+import pytest_asyncio
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import update
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 
 from src.models.orm import OAuthProvider, OAuthToken
 from src.models.orm.organizations import Organization
@@ -29,23 +31,47 @@ pytestmark = pytest.mark.asyncio
 # ---------------------------------------------------------------------------
 
 
+@pytest_asyncio.fixture
+async def db_connection(async_engine) -> AsyncGenerator[AsyncConnection, None]:
+    """Keep scheduler commits inside one rollback-only test transaction."""
+    async with async_engine.connect() as connection:
+        transaction = await connection.begin()
+        try:
+            yield connection
+        finally:
+            await transaction.rollback()
+
+
+@pytest_asyncio.fixture
+async def db_session(db_connection) -> AsyncGenerator[AsyncSession, None]:
+    async with AsyncSession(
+        bind=db_connection,
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    ) as session:
+        yield session
+        await session.rollback()
+
+
 @pytest.fixture(autouse=True)
-def patch_scheduler_db(monkeypatch, async_session_factory):
+def patch_scheduler_db(monkeypatch, db_connection):
     """
-    Replace get_db_context in the scheduler module with one that uses
-    the test's async_session_factory (NullPool, no loop affinity issues).
+    Replace get_db_context with sessions on the test's transaction.
 
     The scheduler calls get_db_context() twice:
     - Phase 1: load tokens to refresh
     - Phase 3: persist results
 
-    Both need to see committed test data, so we use the same factory
-    that the db_session fixture uses.
+    Both see committed savepoints, while the outer transaction rolls back.
     """
 
     @asynccontextmanager
     async def _test_db_context() -> AsyncGenerator[AsyncSession, None]:
-        async with async_session_factory() as session:
+        async with AsyncSession(
+            bind=db_connection,
+            expire_on_commit=False,
+            join_transaction_mode="create_savepoint",
+        ) as session:
             yield session
 
     monkeypatch.setattr(mod, "get_db_context", _test_db_context)
@@ -169,6 +195,14 @@ async def test_automatic_refresh_includes_client_credentials_token_without_expir
     token = await _make_token(db_session, provider, organization_id=None)
     token.encrypted_refresh_token = None
     token.expires_at = None
+    # The scheduler sweeps the whole database. Keep pre-existing fixture
+    # tokens outside this test's automatic refresh window, then roll the
+    # change back with the outer transaction.
+    await db_session.execute(
+        update(OAuthToken)
+        .where(OAuthToken.id != token.id)
+        .values(expires_at=datetime.now(timezone.utc) + timedelta(days=1))
+    )
     await db_session.commit()
 
     success_outcome = _make_success_outcome(token, provider)

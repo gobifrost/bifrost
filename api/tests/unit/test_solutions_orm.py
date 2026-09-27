@@ -41,7 +41,8 @@ def test_solution_orm_shape() -> None:
         "slug",
         "name",
         "organization_id",  # None == global scope
-        "global_repo_access",
+        "global_repo_access",  # DB column keeps its historical name; the ORM
+        # attribute was renamed to allow_outbound_access (no migration).
         "git_connected",
         "git_repo_url",
         "created_at",

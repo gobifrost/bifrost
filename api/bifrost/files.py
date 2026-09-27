@@ -36,7 +36,7 @@ from typing import Literal
 from urllib.parse import urlencode
 
 from .client import get_client, raise_for_status_with_detail
-from ._context import resolve_scope, _execution_context
+from ._context import resolve_scope, get_caller_solution, get_effective_solution
 
 Mode = Literal["local", "cloud"]
 # `location` is a free string. Special names: "workspace", "temp", "uploads".
@@ -45,13 +45,20 @@ Mode = Literal["local", "cloud"]
 
 
 def _current_context():
+    from ._context import _execution_context
+
     return _execution_context.get()
 
 
-def _solution_query() -> str:
-    ctx = _current_context()
-    solution_id = getattr(ctx, "solution_id", None) if ctx is not None else None
-    return f"?{urlencode({'solution': str(solution_id)})}" if solution_id else ""
+def _solution_query(solution: str | None = None) -> str:
+    params: dict[str, str] = {}
+    solution_id = get_effective_solution(solution)
+    if solution_id:
+        params["solution"] = str(solution_id)
+    caller = get_caller_solution()
+    if caller:
+        params["caller_solution"] = str(caller)
+    return f"?{urlencode(params)}" if params else ""
 
 
 class files:
@@ -62,6 +69,13 @@ class files:
     - local: Local filesystem (for CLI usage)
     - cloud: S3 storage (for platform execution, default)
 
+    Every operation sends the ordinary HTTP request through the shared
+    ``BifrostClient``: over the worker's private Unix socket when the
+    engine injected one, and over the network API otherwise. The worker
+    parent owns the pooled database and protected storage credentials;
+    an engine child holds neither, and a local attempt never falls back to
+    the network API after a failure.
+
     All operations are performed via HTTP API endpoints.
     """
 
@@ -71,6 +85,7 @@ class files:
         location: str = "workspace",
         mode: Mode = "cloud",
         scope: str | None = None,
+        solution: str | None = None,
     ) -> str:
         """
         Read a text file.
@@ -89,11 +104,12 @@ class files:
             >>> content = await files.read("data/customers.csv")
             >>> uploaded = await files.read("form_id/uuid/file.txt", location="uploads")
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
-        response = await client.post(
-            f"/api/files/read{_solution_query()}",
-            json={"path": path, "location": location, "mode": mode, "binary": False, "scope": effective_scope}
+        client = get_client()
+        response = await client.engine_request(
+            "POST",
+            f"/api/files/read{_solution_query(solution)}",
+            json={"path": path, "location": location, "mode": mode, "binary": False, "scope": effective_scope},
         )
         raise_for_status_with_detail(response)
         return response.json()["content"]
@@ -114,11 +130,12 @@ class files:
             mode: Storage mode (local or cloud, default: cloud)
             scope: Org scope; provider-org override allowed.
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
-        response = await client.post(
+        client = get_client()
+        response = await client.engine_request(
+            "POST",
             f"/api/files/read{_solution_query()}",
-            json={"path": path, "location": location, "mode": mode, "binary": True, "scope": effective_scope}
+            json={"path": path, "location": location, "mode": mode, "binary": True, "scope": effective_scope},
         )
         raise_for_status_with_detail(response)
         import base64
@@ -147,9 +164,10 @@ class files:
             create_only: Create a new file and fail if the path already exists.
             scope: Org scope; provider-org override allowed.
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
-        response = await client.post(
+        client = get_client()
+        response = await client.engine_request(
+            "POST",
             f"/api/files/write{_solution_query()}",
             json={
                 "path": path,
@@ -160,7 +178,7 @@ class files:
                 "expected_version": expected_version,
                 "create_only": create_only,
                 "scope": effective_scope,
-            }
+            },
         )
         raise_for_status_with_detail(response)
 
@@ -187,11 +205,12 @@ class files:
             create_only: Create a new file and fail if the path already exists.
             scope: Org scope; provider-org override allowed.
         """
-        client = get_client()
         import base64
         encoded_content = base64.b64encode(content).decode('utf-8')
         effective_scope = resolve_scope(scope)
-        response = await client.post(
+        client = get_client()
+        response = await client.engine_request(
+            "POST",
             f"/api/files/write{_solution_query()}",
             json={
                 "path": path,
@@ -202,7 +221,7 @@ class files:
                 "expected_version": expected_version,
                 "create_only": create_only,
                 "scope": effective_scope,
-            }
+            },
         )
         raise_for_status_with_detail(response)
 
@@ -233,11 +252,12 @@ class files:
             >>> for item in items:
             ...     print(item)
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
-        response = await client.post(
+        client = get_client()
+        response = await client.engine_request(
+            "POST",
             f"/api/files/list{_solution_query()}",
-            json={"directory": directory, "location": location, "mode": mode, "scope": effective_scope}
+            json={"directory": directory, "location": location, "mode": mode, "scope": effective_scope},
         )
         raise_for_status_with_detail(response)
         return response.json()["files"]
@@ -265,9 +285,10 @@ class files:
             >>> from bifrost import files
             >>> await files.delete("temp/old_file.txt", location="temp")
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
-        response = await client.post(
+        client = get_client()
+        response = await client.engine_request(
+            "POST",
             f"/api/files/delete{_solution_query()}",
             json={
                 "path": path,
@@ -275,7 +296,7 @@ class files:
                 "mode": mode,
                 "expected_version": expected_version,
                 "scope": effective_scope,
-            }
+            },
         )
         raise_for_status_with_detail(response)
 
@@ -292,9 +313,10 @@ class files:
         Returns:
             dict with keys: path, exists, version, size, last_modified, updated_by
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
-        response = await client.post(
+        client = get_client()
+        response = await client.engine_request(
+            "POST",
             f"/api/files/stat{_solution_query()}",
             json={"path": path, "location": location, "mode": mode, "scope": effective_scope},
         )
@@ -317,11 +339,12 @@ class files:
             mode: Storage mode (local or cloud, default: cloud)
             scope: Org scope; provider-org override allowed.
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
-        response = await client.post(
+        client = get_client()
+        response = await client.engine_request(
+            "POST",
             f"/api/files/exists{_solution_query()}",
-            json={"path": path, "location": location, "mode": mode, "scope": effective_scope}
+            json={"path": path, "location": location, "mode": mode, "scope": effective_scope},
         )
         raise_for_status_with_detail(response)
         return response.json()["exists"]
@@ -359,9 +382,10 @@ class files:
             ...     content_type="application/pdf",
             ... )
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
-        response = await client.post(
+        client = get_client()
+        response = await client.engine_request(
+            "POST",
             f"/api/files/signed-url{_solution_query()}",
             json={
                 "path": path,
@@ -370,7 +394,7 @@ class files:
                 "location": location,
                 "scope": effective_scope,
                 "expires_in": expires_in,
-            }
+            },
         )
         raise_for_status_with_detail(response)
         return response.json()
@@ -413,7 +437,8 @@ class files:
             ...     print(f"{r['file_path']}:{r['line']}: {r['match_text']}")
         """
         client = get_client()
-        response = await client.post(
+        response = await client.engine_request(
+            "POST",
             "/api/files/search",
             json={
                 "query": query,

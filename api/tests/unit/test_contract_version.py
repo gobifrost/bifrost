@@ -70,6 +70,7 @@ from src.models.contracts.solutions import (  # noqa: E402
     SolutionDeployJobStatus,
 )
 from src.models.contracts.policy_rule import PolicyRuleCreate, PolicyRuleUpdate  # noqa: E402
+from src.models.contracts.services import ServicePolicyUpdate  # noqa: E402
 from src.models.contracts.tables import TableCreate, TableUpdate  # noqa: E402
 from src.models.contracts.users import RoleCreate, RoleUpdate  # noqa: E402
 from src.models.contracts.workflows import WorkflowUpdateRequest  # noqa: E402
@@ -119,6 +120,7 @@ _COMMAND_DTOS: list[type] = [
     SolutionDeployJobStatus,
     PolicyRuleCreate,
     PolicyRuleUpdate,
+    ServicePolicyUpdate,
 ]
 
 #: Every request/response DTO the in-workflow SDK sends/parses against
@@ -236,7 +238,25 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     #
     # IntegrationCreate/IntegrationUpdate gained optional description
     # (2026-09-09). ADDITIVE: older clients omit it and keep existing behavior.
-    "ab0febdc63454f2a731b072c6306052853d8da53aabc7cbc04fa4b4ce0323b83"
+    #
+    # Solution access flags renamed with dual-name compat (2026-09-16, SPIKE).
+    # allow_outbound_access is canonical; global_repo_access is still accepted
+    # on input and emitted (deprecated) on output. allow_inbound_access added
+    # (default true). WorkflowExecutionRequest/EmitEventRequest gained optional
+    # caller_solution(_id). ADDITIVE: old clients use the old key / omit the
+    # new fields and keep prior behavior; fingerprint refreshed only.
+    #
+    # PlatformJobPublic gained execution_backend (2026-09-17). ADDITIVE: old
+    # clients ignore the placement detail and keep polling status as before.
+    #
+    # PlatformJobStatus gained requires_action (2026-09-21). BREAKING: older
+    # polling CLIs cannot parse the new PlatformJobPublic enum value, so
+    # MIN_CLI_VERSION was raised to 1.4.2. CONTRACT_VERSION remains frozen.
+    #
+    # ServicePolicyUpdate newly fingerprinted (2026-09-22): `bifrost services
+    # update` sends it (greenfield coverage — no old CLI sends this DTO, so
+    # nothing breaks). Fingerprint refreshed only.
+    "15581748fa3f44098bec3703c4e8c4bea8681be96dedf6dfbc419a1c5a900dec"
 )
 
 

@@ -58,6 +58,14 @@ describe("ChatRunActivity", () => {
 		const detailContent = screen.getByText("create_text_artifact").parentElement;
 		expect(detailContent).toHaveClass("w-full");
 		expect(detailContent).not.toHaveClass("border-l", "pl-3");
+		// Regression: the clipping wrapper must use overflow-clip, not
+		// overflow-hidden, so focus/scrollIntoView inside the expanding grid
+		// cannot scroll the page and move a tool control under the pointer.
+		const clipWrapper = screen
+			.getByText("create_text_artifact")
+			.closest(".min-h-0");
+		expect(clipWrapper).toHaveClass("overflow-clip");
+		expect(clipWrapper).not.toHaveClass("overflow-hidden");
 	});
 
 	it("keeps running activity collapsed until the user expands it", async () => {

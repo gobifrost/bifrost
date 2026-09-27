@@ -4,20 +4,30 @@ Provider SDK imports stay inside the selected branch. This preserves the worker 
 scheduler import boundary while giving every agent surface one model abstraction.
 """
 
+from dataclasses import replace
 from decimal import Decimal, InvalidOperation
 
 from pydantic_ai.models import Model, infer_model
 from pydantic_ai.usage import RequestUsage
 
 from src.services.agent_runtime.retry_transport import get_ai_retry_http_client
-from src.services.llm.base import LLMConfig, request_max_tokens
+from src.services.llm.base import LLMConfig, is_deepseek_family, request_max_tokens
 from src.services.model_pricing import is_openrouter_endpoint
+from src.services.opencode_go import (
+    is_opencode_go_endpoint,
+    opencode_go_extra_headers,
+    opencode_go_wire_api,
+)
 
 
 def provider_name_for_config(config: LLMConfig) -> str:
     """Return the provider that actually served and billed the request."""
 
-    return "openrouter" if is_openrouter_endpoint(config.endpoint) else config.provider
+    if is_openrouter_endpoint(config.endpoint):
+        return "openrouter"
+    if is_opencode_go_endpoint(config.endpoint):
+        return "opencode_go"
+    return config.provider
 
 
 def agent_model_settings(
@@ -25,18 +35,82 @@ def agent_model_settings(
     *,
     max_tokens: int | None,
     session_id: str,
+    agent_kind: str | None = None,
 ) -> dict[str, object]:
-    """Build per-run settings, including OpenRouter sticky cache routing."""
+    """Build per-run settings, including OpenRouter sticky cache routing and
+    OpenCode Go request identity.
+
+    ``max_tokens`` is the explicit agent override (Agent.llm_max_tokens); the
+    profile default travels on ``config.default_max_tokens`` — see
+    ``request_max_tokens``. ``agent_kind`` is accepted for backward
+    compatibility but ignored (no generic per-kind fallbacks).
+    """
 
     settings: dict[str, object] = {}
-    resolved_max_tokens = request_max_tokens(config, max_tokens)
+    resolved_max_tokens = request_max_tokens(config, max_tokens, agent_kind=agent_kind)
     if resolved_max_tokens is not None:
         settings["max_tokens"] = resolved_max_tokens
     if is_openrouter_endpoint(config.endpoint):
         settings["extra_body"] = {"session_id": session_id[:256]}
-    elif config.provider == "openai":
+    opencode_go = is_opencode_go_endpoint(config.endpoint)
+    if opencode_go:
+        settings["extra_headers"] = opencode_go_extra_headers(session_id)
+    if (
+        config.provider == "openai"
+        and not is_openrouter_endpoint(config.endpoint)
+        and not opencode_go
+    ):
         settings["openai_store"] = False
+    elif config.provider == "anthropic":
+        settings.update(
+            anthropic_prompt_cache_settings(config.anthropic_prompt_cache_supported)
+        )
     return settings
+
+
+def agent_model_settings_for_chain(
+    configs: list[LLMConfig],
+    *,
+    max_tokens: int | None,
+    session_id: str,
+    agent_kind: str | None = None,
+) -> list[dict[str, object]]:
+    """Build per-candidate settings aligned with a failover chain.
+
+    The explicit per-agent override applies to the primary only: a token cap
+    tuned for one provider may be invalid on another. Fallbacks resolve from
+    their own profile defaults.
+    """
+    return [
+        agent_model_settings(
+            config,
+            max_tokens=max_tokens if index == 0 else None,
+            session_id=session_id,
+            agent_kind=agent_kind,
+        )
+        for index, config in enumerate(configs)
+    ]
+
+
+def anthropic_prompt_cache_settings(
+    supported: bool | None = None,
+) -> dict[str, object]:
+    """Anthropic prompt-cache breakpoints for agent and client requests.
+
+    Agent requests re-send the same system prompt and tool definitions on every
+    round, and multi-turn chats re-send the growing history. Without
+    ``cache_control`` Anthropic bills and prefills all of it each time. Explicit
+    breakpoints on the instructions and the last tool definition, plus the
+    automatic moving breakpoint on the latest message, cache the stable prefix
+    (roughly 90% cheaper on reads, and noticeably lower time-to-first-token).
+    """
+    if supported is False:
+        return {}
+    return {
+        "anthropic_cache": True,
+        "anthropic_cache_instructions": True,
+        "anthropic_cache_tool_definitions": True,
+    }
 
 
 def _openrouter_usage(response: object, fallback: RequestUsage) -> RequestUsage:
@@ -153,7 +227,42 @@ def create_agent_model(config: LLMConfig, *, model: str | None = None) -> Model:
             max_retries=0,
         )
         provider = OpenAIProvider(openai_client=client)
-        if config.openai_transport == "chat_completions":
+        # Match the family guard against the actually-requested model, which
+        # may be an override rather than the profile's configured model.
+        effective_config = (
+            config if model_name == config.model else replace(config, model=model_name)
+        )
+        deepseek_direct = is_deepseek_family(
+            effective_config
+        ) and not is_openrouter_endpoint(config.endpoint)
+        opencode_go_chat = is_opencode_go_endpoint(
+            config.endpoint
+        ) and opencode_go_wire_api(model_name) == "chat_completions"
+        if (
+            config.openai_transport == "chat_completions"
+            or deepseek_direct
+            or opencode_go_chat
+        ):
+            # DeepSeek exposes Chat Completions only: force the chat adapter
+            # even when transport auto-detection picked (or would pick) the
+            # Responses API, and force the legacy plain ``max_tokens`` wire
+            # field. Pydantic AI maps generic ``max_tokens`` to
+            # ``max_completion_tokens`` on OpenAI-family paths, which DeepSeek
+            # rejects — the OpenRouter gateway already forces ``max_tokens``
+            # via its provider profile; direct DeepSeek needs the same here.
+            # OpenCode Go likewise serves most of its curated coding models
+            # through Chat Completions; its Grok/GPT Luna/Muse Spark entries
+            # use the Responses API instead.
+            if deepseek_direct:
+                from pydantic_ai.profiles import ModelProfile
+
+                return OpenAIChatModel(
+                    model_name,
+                    provider=provider,
+                    profile=ModelProfile(
+                        openai_chat_supports_max_completion_tokens=False
+                    ),
+                )
             return OpenAIChatModel(model_name, provider=provider)
         return infer_model(
             f"openai:{model_name}",
@@ -164,6 +273,25 @@ def create_agent_model(config: LLMConfig, *, model: str | None = None) -> Model:
         from anthropic import AsyncAnthropic
         from pydantic_ai.models.anthropic import AnthropicModel
         from pydantic_ai.providers.anthropic import AnthropicProvider
+        from src.services.anthropic_prompt_cache import request_with_prompt_cache_fallback
+
+        class BifrostAnthropicModel(AnthropicModel):
+            async def _messages_create(
+                self, messages, stream, model_settings, model_request_parameters
+            ):
+                parent_create = super()._messages_create
+
+                async def send(settings: dict[str, object]):
+                    return await parent_create(
+                        messages,
+                        stream,
+                        settings,  # type: ignore[arg-type]
+                        model_request_parameters,
+                    )
+
+                return await request_with_prompt_cache_fallback(
+                    send, dict(model_settings), config
+                )
 
         client = AsyncAnthropic(
             api_key=config.api_key,
@@ -172,7 +300,7 @@ def create_agent_model(config: LLMConfig, *, model: str | None = None) -> Model:
             max_retries=0,
         )
         provider = AnthropicProvider(anthropic_client=client)
-        return AnthropicModel(model_name, provider=provider)
+        return BifrostAnthropicModel(model_name, provider=provider)
 
     if config.provider == "google":
         from pydantic_ai.models.google import GoogleModel

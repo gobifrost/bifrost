@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 
 # Type discriminator for all executable types
-ExecutableType = Literal["workflow", "tool", "data_provider"]
+ExecutableType = Literal["workflow", "tool", "data_provider", "service"]
 
 
 @dataclass

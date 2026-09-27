@@ -24,6 +24,9 @@ class AIProviderConnection(Base):
     provider: Mapped[str] = mapped_column(String(50), nullable=False)
     endpoint: Mapped[str | None] = mapped_column(String(500), nullable=True)
     encrypted_api_key: Mapped[str] = mapped_column(Text, nullable=False)
+    anthropic_prompt_cache_supported: Mapped[bool | None] = mapped_column(
+        Boolean, nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
@@ -45,7 +48,7 @@ class AIProviderConnection(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "provider IN ('openai', 'anthropic', 'google', 'openrouter', 'openai_compatible')",
+            "provider IN ('openai', 'anthropic', 'google', 'openrouter', 'openai_compatible', 'opencode_go')",
             name="ck_ai_provider_connections_provider",
         ),
         Index("uq_ai_provider_connections_name_ci", text("lower(name)"), unique=True),
@@ -65,6 +68,8 @@ class AIModelProfile(Base):
     )
     model: Mapped[str] = mapped_column(String(200), nullable=False)
     openai_transport: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    wire_api: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    default_max_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     capabilities: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     enabled_for_chat: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(
@@ -80,6 +85,19 @@ class AIModelProfile(Base):
     )
 
     connection: Mapped[AIProviderConnection] = relationship(back_populates="profiles", lazy="joined")
+    failover_profile_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("ai_model_profiles.id", ondelete="RESTRICT"),
+        nullable=True,
+        default=None,
+    )
+    # Unidirectional on purpose: dependents are queried explicitly (see
+    # AIModelService._failover_dependents). selectin (not joined): a
+    # self-referential joined eager load proved unreliable to populate
+    # across request lifecycles, while the PK follow-up query is exact.
+    failover_profile: Mapped["AIModelProfile | None"] = relationship(
+        remote_side="AIModelProfile.id",
+        lazy="selectin",
+    )
     assignments: Mapped[list["AIModelAssignment"]] = relationship(back_populates="profile", lazy="selectin")
     agents: Mapped[list["Agent"]] = relationship(back_populates="llm_profile", lazy="selectin")
 
@@ -88,9 +106,18 @@ class AIModelProfile(Base):
             "openai_transport IS NULL OR openai_transport IN ('responses', 'chat_completions')",
             name="ck_ai_model_profiles_openai_transport",
         ),
+        CheckConstraint(
+            "wire_api IS NULL OR wire_api IN ('chat_completions', 'responses', 'messages')",
+            name="ck_ai_model_profiles_wire_api",
+        ),
+        CheckConstraint(
+            "default_max_tokens IS NULL OR (default_max_tokens >= 1 AND default_max_tokens <= 200000)",
+            name="ck_ai_model_profiles_default_max_tokens_range",
+        ),
         Index("uq_ai_model_profiles_name_ci", text("lower(name)"), unique=True),
         Index("ix_ai_model_profiles_connection_id", "connection_id"),
         Index("ix_ai_model_profiles_enabled_for_chat", "enabled_for_chat"),
+        Index("ix_ai_model_profiles_failover_profile_id", "failover_profile_id"),
     )
 
 

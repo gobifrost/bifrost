@@ -19,6 +19,7 @@ describe("platform-job WebSocket contract", () => {
 			priority: 100,
 			title: "Publishing Test",
 			action_url: "/apps/test/edit",
+			execution_backend: "local",
 			requested_by_user_id: "user-1",
 			requested_by_name: "Dev",
 			status: "running",
@@ -66,6 +67,7 @@ describe("platform-job WebSocket contract", () => {
 			priority: 500,
 			title: "Solution deploy",
 			action_url: "/solutions/solution-1",
+			execution_backend: "local",
 			requested_by_user_id: "user-1",
 			requested_by_name: "Dev",
 			status: "queued",
@@ -160,6 +162,63 @@ describe("chat WebSocket contract", () => {
 			type: "delta",
 			conversation_id: "conversation-strict",
 			content: "legacy",
+		});
+
+		expect(callback).not.toHaveBeenCalled();
+		unsubscribe();
+	});
+});
+
+describe("service log streaming contract", () => {
+	it("dispatches bridged attempt lines by service id", () => {
+		const callback = vi.fn();
+		const unsubscribe = webSocketService.onServiceLog(
+			"svc-1",
+			callback,
+		);
+
+		(
+			webSocketService as unknown as {
+				handleMessage(message: unknown): void;
+			}
+		).handleMessage({
+			type: "service_log",
+			service_id: "svc-1",
+			attempt_id: "att-1",
+			level: "INFO",
+			message: "bridged live",
+			timestamp: "2026-09-21T12:00:00+00:00",
+		});
+
+		expect(callback).toHaveBeenCalledOnce();
+		expect(callback).toHaveBeenCalledWith({
+			serviceId: "svc-1",
+			attemptId: "att-1",
+			timestamp: "2026-09-21T12:00:00+00:00",
+			level: "INFO",
+			message: "bridged live",
+		});
+		unsubscribe();
+	});
+
+	it("does not leak lines across services", () => {
+		const callback = vi.fn();
+		const unsubscribe = webSocketService.onServiceLog(
+			"svc-1",
+			callback,
+		);
+
+		(
+			webSocketService as unknown as {
+				handleMessage(message: unknown): void;
+			}
+		).handleMessage({
+			type: "service_log",
+			service_id: "svc-2",
+			attempt_id: "att-9",
+			level: "INFO",
+			message: "other service",
+			timestamp: "2026-09-21T12:00:00+00:00",
 		});
 
 		expect(callback).not.toHaveBeenCalled();

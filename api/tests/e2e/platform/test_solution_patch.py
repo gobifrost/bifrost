@@ -12,7 +12,6 @@ import pytest
 from sqlalchemy import select
 
 from src.models.orm.workflows import Workflow
-from tests.e2e.platform.conftest import wait_for_deploy
 
 pytestmark = pytest.mark.e2e
 
@@ -55,32 +54,17 @@ async def test_patch_scope_restamps_owned_entities(e2e_client, platform_admin, d
     slug = f"patch-scope-{uuid.uuid4().hex[:8]}"
     sid = _create_global_solution(e2e_client, headers, slug)
 
-    # Deploy one workflow into the (global) install. The deployer stamps the
-    # owned row with organization_id = install org (NULL here).
-    wf_manifest_id = str(uuid.uuid4())
-    dep = e2e_client.post(
-        f"/api/solutions/{sid}/deploy",
-        headers=headers,
-        json={
-            "python_files": {
-                "workflows/w.py": (
-                    "from bifrost import workflow\n\n"
-                    "@workflow\n"
-                    "async def go():\n"
-                    "    return 1\n"
-                ),
-            },
-            "workflows": [{
-                "id": wf_manifest_id,
-                "name": f"go_{slug}",
-                "function_name": "go",
-                "path": "workflows/w.py",
-                "type": "workflow",
-            }],
-        },
+    # Scope restamping acts on owned rows; deployment is covered separately.
+    db_session.add(
+        Workflow(
+            name=f"go_{slug}",
+            function_name="go",
+            path="workflows/w.py",
+            solution_id=UUID(sid),
+            organization_id=None,
+        )
     )
-    dep = wait_for_deploy(e2e_client, dep, headers)
-    assert dep.status_code == 200, dep.text
+    await db_session.commit()
 
     # The owned workflow currently sits on the global scope (org NULL).
     wf_before = (

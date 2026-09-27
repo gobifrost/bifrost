@@ -7,7 +7,7 @@ class TestFormatSyncResult:
 
     def test_success_no_changes(self):
         """Should report no changes on success with zero counts."""
-        result = {"status": "success", "pulled": 0, "pushed": 0, "commit_sha": None}
+        result = {"status": "success", "pulled": 0, "pushed_commits": 0, "commit_sha": None}
         lines = _format_sync_result(result)
         text = "\n".join(lines)
         assert "no changes" in text.lower()
@@ -17,7 +17,7 @@ class TestFormatSyncResult:
         result = {
             "status": "success",
             "pulled": 3,
-            "pushed": 1,
+            "pushed_commits": 1,
             "commit_sha": "abc1234def5678",
         }
         lines = _format_sync_result(result)
@@ -28,10 +28,10 @@ class TestFormatSyncResult:
 
     def test_success_completed_status(self):
         """Should also accept 'completed' as a success status."""
-        result = {"status": "completed", "pulled": 1, "pushed": 0, "commit_sha": None}
+        result = {"status": "completed", "pulled": 1, "pushed_commits": 0, "commit_sha": None}
         lines = _format_sync_result(result)
         text = "\n".join(lines)
-        assert "Push complete" in text
+        assert "Sync complete" in text
 
     def test_conflicts_shown(self):
         """Should list each conflict with path and resolve command."""

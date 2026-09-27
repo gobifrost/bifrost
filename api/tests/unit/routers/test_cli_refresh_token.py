@@ -44,6 +44,8 @@ class TestRefreshTokenClientCredentials:
         mock_user = MagicMock()
         mock_user.user_id = uuid4()
         mock_user.email = "test@example.com"
+        mock_user.organization_id = None
+        mock_user.is_superuser = True
         # SDK refresh is called by the engine sentinel / non-external
         # principal; is_external is a real bool (a MagicMock default is
         # truthy and would wrongly drop the global provider cascade).
@@ -83,7 +85,6 @@ class TestRefreshTokenClientCredentials:
         }
 
         with (
-            patch("src.routers.cli._resolve_sdk_org_id", new_callable=AsyncMock, return_value=None),
             patch("src.services.oauth_provider.OAuthProviderClient") as mock_client_class,
             patch("src.services.oauth_provider.decrypt_secret", return_value="decrypted-secret"),
             patch("src.services.oauth_provider.encrypt_secret", return_value="encrypted-new-token"),
@@ -120,6 +121,8 @@ class TestRefreshTokenClientCredentials:
         mock_user = MagicMock()
         mock_user.user_id = uuid4()
         mock_user.email = "test@example.com"
+        mock_user.organization_id = None
+        mock_user.is_superuser = True
         # SDK refresh is called by the engine sentinel / non-external
         # principal; is_external is a real bool (a MagicMock default is
         # truthy and would wrongly drop the global provider cascade).
@@ -157,7 +160,6 @@ class TestRefreshTokenClientCredentials:
         }
 
         with (
-            patch("src.routers.cli._resolve_sdk_org_id", new_callable=AsyncMock, return_value=None),
             patch("src.services.oauth_provider.OAuthProviderClient") as mock_client_class,
             patch("src.services.oauth_provider.decrypt_secret", return_value="decrypted-secret"),
             patch("src.services.oauth_provider.encrypt_secret", return_value="encrypted-new-token"),
@@ -190,6 +192,8 @@ class TestRefreshTokenAuthorizationCode:
         mock_user = MagicMock()
         mock_user.user_id = uuid4()
         mock_user.email = "test@example.com"
+        mock_user.organization_id = None
+        mock_user.is_superuser = True
         # SDK refresh is called by the engine sentinel / non-external
         # principal; is_external is a real bool (a MagicMock default is
         # truthy and would wrongly drop the global provider cascade).
@@ -236,7 +240,6 @@ class TestRefreshTokenAuthorizationCode:
         }
 
         with (
-            patch("src.routers.cli._resolve_sdk_org_id", new_callable=AsyncMock, return_value=None),
             patch("src.services.oauth_provider.OAuthProviderClient") as mock_client_class,
             patch("src.services.oauth_provider.decrypt_secret", return_value="decrypted-value"),
             patch("src.services.oauth_provider.encrypt_secret", return_value="encrypted-new-value"),
@@ -271,6 +274,8 @@ class TestRefreshTokenAuthorizationCode:
         mock_user = MagicMock()
         mock_user.user_id = uuid4()
         mock_user.email = "test@example.com"
+        mock_user.organization_id = None
+        mock_user.is_superuser = True
         # SDK refresh is called by the engine sentinel / non-external
         # principal; is_external is a real bool (a MagicMock default is
         # truthy and would wrongly drop the global provider cascade).
@@ -313,7 +318,6 @@ class TestRefreshTokenAuthorizationCode:
         }
 
         with (
-            patch("src.routers.cli._resolve_sdk_org_id", new_callable=AsyncMock, return_value=None),
             patch("src.services.oauth_provider.OAuthProviderClient") as mock_client_class,
             patch("src.services.oauth_provider.decrypt_secret", return_value="decrypted-value"),
             patch("src.services.oauth_provider.encrypt_secret", return_value="encrypted-new-value"),
@@ -344,6 +348,8 @@ class TestRefreshTokenAuthorizationCode:
         mock_user = MagicMock()
         mock_user.user_id = uuid4()
         mock_user.email = "test@example.com"
+        mock_user.organization_id = None
+        mock_user.is_superuser = True
         # SDK refresh is called by the engine sentinel / non-external
         # principal; is_external is a real bool (a MagicMock default is
         # truthy and would wrongly drop the global provider cascade).
@@ -377,7 +383,6 @@ class TestRefreshTokenAuthorizationCode:
         ])
 
         with (
-            patch("src.routers.cli._resolve_sdk_org_id", new_callable=AsyncMock, return_value=None),
             pytest.raises(HTTPException) as exc_info,
         ):
             await sdk_integrations_refresh_token(request, mock_user, mock_db)
@@ -401,6 +406,8 @@ class TestRefreshTokenErrorHandling:
         mock_user = MagicMock()
         mock_user.user_id = uuid4()
         mock_user.email = "test@example.com"
+        mock_user.organization_id = None
+        mock_user.is_superuser = True
         # SDK refresh is called by the engine sentinel / non-external
         # principal; is_external is a real bool (a MagicMock default is
         # truthy and would wrongly drop the global provider cascade).
@@ -412,7 +419,6 @@ class TestRefreshTokenErrorHandling:
         mock_db.execute = AsyncMock(return_value=provider_result)
 
         with (
-            patch("src.routers.cli._resolve_sdk_org_id", new_callable=AsyncMock, return_value=None),
             pytest.raises(HTTPException) as exc_info,
         ):
             await sdk_integrations_refresh_token(request, mock_user, mock_db)
@@ -431,6 +437,8 @@ class TestRefreshTokenErrorHandling:
         mock_user = MagicMock()
         mock_user.user_id = uuid4()
         mock_user.email = "test@example.com"
+        mock_user.organization_id = None
+        mock_user.is_superuser = True
         # SDK refresh is called by the engine sentinel / non-external
         # principal; is_external is a real bool (a MagicMock default is
         # truthy and would wrongly drop the global provider cascade).
@@ -454,7 +462,6 @@ class TestRefreshTokenErrorHandling:
         mock_db.execute = AsyncMock(return_value=provider_result)
 
         with (
-            patch("src.routers.cli._resolve_sdk_org_id", new_callable=AsyncMock, return_value=None),
             patch("src.services.oauth_provider.OAuthProviderClient") as mock_client_class,
             patch("src.services.oauth_provider.decrypt_secret", return_value="decrypted-secret"),
             pytest.raises(HTTPException) as exc_info,
@@ -499,7 +506,7 @@ class TestRefreshTokenSDKModel:
         }
 
         mock_client = MagicMock()
-        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client.engine_request = AsyncMock(return_value=mock_response)
 
         with (
             patch("bifrost.client.get_client", return_value=mock_client),
@@ -510,7 +517,8 @@ class TestRefreshTokenSDKModel:
         assert result is creds  # returns self
         assert creds.access_token == "fresh-token"
         assert creds.expires_at == "2026-03-02T00:00:00+00:00"
-        mock_client.post.assert_called_once_with(
+        mock_client.engine_request.assert_called_once_with(
+            "POST",
             "/api/sdk/integrations/refresh_token",
             json={"connection_name": "Pax8"},
         )
@@ -540,7 +548,7 @@ class TestRefreshTokenSDKModel:
         }
 
         mock_client = MagicMock()
-        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client.engine_request = AsyncMock(return_value=mock_response)
 
         with (
             patch("bifrost.client.get_client", return_value=mock_client),
@@ -572,7 +580,7 @@ class TestRefreshTokenSDKModel:
         mock_response.text = "Token refresh failed: Bad credentials"
 
         mock_client = MagicMock()
-        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client.engine_request = AsyncMock(return_value=mock_response)
 
         with (
             patch("bifrost.client.get_client", return_value=mock_client),

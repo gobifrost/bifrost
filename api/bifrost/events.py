@@ -15,7 +15,7 @@ Usage:
 from __future__ import annotations
 
 from .client import get_client, raise_for_status_with_detail
-from ._context import resolve_scope, _execution_context
+from ._context import resolve_scope, get_caller_solution, get_effective_solution
 
 
 class events:
@@ -26,9 +26,16 @@ class events:
         topic: str,
         data: dict,
         scope: str | None = None,
+        solution: str | None = None,
     ) -> dict:
         """
         Publish an event to a topic. Workflows subscribed to this topic will run.
+
+        Inside an engine child this emits through the worker's private Unix
+        socket (the parent serves the real HTTP endpoint); elsewhere it calls
+        the SDK API endpoint over the network. A local attempt never falls
+        back to HTTP — failures raise loudly (an emit may already have
+        committed, so a retry could double-emit).
 
         Args:
             topic: Lowercase string, dot-separated (e.g. "acme.deal_won").
@@ -38,6 +45,9 @@ class events:
             scope: Organization scope override. Omit to use the execution
                    context org (default). Pass an org UUID to target a specific
                    org (provider org context required, same rule as config.get).
+            solution: Target solution install (UUID or slug/name) in the
+                   resolved scope. Unset → the active execution's own
+                   install, if any. Per-call only.
 
         Returns:
             dict with keys: event_id (str), subscribers_notified (int)
@@ -50,14 +60,17 @@ class events:
             >>> result = await events.emit("acme.deal_won", {"amount": 50000})
             >>> print(result["subscribers_notified"])
         """
-        client = get_client()
         resolved = resolve_scope(scope)
-        ctx = _execution_context.get()
-        solution_id = getattr(ctx, "solution_id", None) if ctx is not None else None
+        solution_id = get_effective_solution(solution)
+        client = get_client()
         payload = {"topic": topic, "data": data, "scope": resolved}
         if solution_id:
             payload["solution"] = str(solution_id)
-        response = await client.post(
+        caller = get_caller_solution()
+        if caller:
+            payload["caller_solution"] = str(caller)
+        response = await client.engine_request(
+            "POST",
             "/api/events/emit",
             json=payload,
         )

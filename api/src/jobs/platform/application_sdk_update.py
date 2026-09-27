@@ -76,5 +76,11 @@ APPLICATION_SDK_UPDATE_DEFINITION = PlatformJobDefinition(
         max_attempts=1,
         max_concurrency=1,
         min_memory_headroom_mb=512,
+        execution_class="build",
+    ),
+    display_name="App SDK rebuilds",
+    description=(
+        "Rebuild the web SDK and republish affected apps in isolated pods "
+        "instead of the scheduler."
     ),
 )

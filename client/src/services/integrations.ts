@@ -160,6 +160,75 @@ export function useUpdateMapping() {
 }
 
 /**
+ * Decide how an org-config dialog save should persist.
+ *
+ * Overrides live on the mapping row, so saving for an org without a mapping
+ * creates one carrying the overrides (entity_id may stay empty — the backend
+ * explicitly allows this, same as the OAuth Connect flow). Returns a "noop"
+ * plan when there is nothing to persist so the caller can just close.
+ */
+export type OrgConfigSavePlan =
+	| { kind: "noop" }
+	| {
+			kind: "create";
+			body: {
+				organization_id: string;
+				entity_id: string;
+				entity_name?: string;
+				oauth_token_id?: string;
+				config: Record<string, unknown>;
+			};
+	  }
+	| {
+			kind: "update";
+			mapping_id: string;
+			body: {
+				entity_id: string;
+				entity_name?: string;
+				oauth_token_id?: string;
+				config?: Record<string, unknown>;
+			};
+	  };
+
+export function planOrgConfigSave(
+	org: {
+		id: string;
+		mapping?: { id: string } | undefined;
+		formData: {
+			entity_id: string;
+			entity_name: string;
+			oauth_token_id?: string;
+		};
+	},
+	config: Record<string, unknown>,
+): OrgConfigSavePlan {
+	const hasValues = Object.keys(config).length > 0;
+	if (!org.mapping) {
+		if (!hasValues) return { kind: "noop" };
+		return {
+			kind: "create",
+			body: {
+				organization_id: org.id,
+				entity_id: org.formData.entity_id,
+				entity_name: org.formData.entity_name || undefined,
+				oauth_token_id: org.formData.oauth_token_id || undefined,
+				config,
+			},
+		};
+	}
+	return {
+		kind: "update",
+		mapping_id: org.mapping.id,
+		body: {
+			entity_id: org.formData.entity_id,
+			entity_name: org.formData.entity_name || undefined,
+			oauth_token_id: org.formData.oauth_token_id || undefined,
+			config: hasValues ? config : undefined,
+		},
+	};
+}
+
+/**
  * Hook to delete an integration mapping
  */
 export function useDeleteMapping() {

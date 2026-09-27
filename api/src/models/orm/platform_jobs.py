@@ -57,6 +57,21 @@ class PlatformJob(Base):
         PG_UUID(as_uuid=True), nullable=True
     )
     memory_profile_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    execution_backend: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="local", server_default="local"
+    )
+    kubernetes_job_name: Mapped[str | None] = mapped_column(
+        String(253), nullable=True
+    )
+    kubernetes_namespace: Mapped[str | None] = mapped_column(String(63), nullable=True)
+    kubernetes_job_uid: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    kubernetes_pod_uid: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    kubernetes_launch_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    runner_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     status: Mapped[str] = mapped_column(
         String(30), nullable=False, default="queued", index=True
@@ -140,6 +155,7 @@ class PlatformJob(Base):
         ),
         Index(
             "ix_platform_jobs_claimable",
+            "execution_backend",
             "status",
             "available_at",
             "created_at",

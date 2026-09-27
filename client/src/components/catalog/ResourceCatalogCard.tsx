@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 
 export function ResourceCatalogCard({
 	icon,
@@ -9,6 +9,7 @@ export function ResourceCatalogCard({
 	footer,
 	children,
 	onOpen,
+	href,
 	disabled = false,
 	compact = false,
 	titleClassName = "",
@@ -22,11 +23,14 @@ export function ResourceCatalogCard({
 	footer?: ReactNode;
 	children?: ReactNode;
 	onOpen: () => void;
+	href?: string;
 	disabled?: boolean;
 	compact?: boolean;
 	titleClassName?: string;
 	titleInteractive?: boolean;
 }) {
+	const titleId = useId();
+
 	return (
 		<article
 			data-slot="card"
@@ -39,7 +43,33 @@ export function ResourceCatalogCard({
 						compact ? "min-w-0 flex-1" : "min-w-0 w-full order-2"
 					}
 				>
-					{titleInteractive ? (
+					{titleInteractive && href && !disabled ? (
+						<>
+							<a
+								href={href}
+								aria-labelledby={titleId}
+								className="absolute inset-0 z-[1] rounded-[var(--bf-radius-surface)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+								onClick={(event) => {
+									if (
+										event.button !== 0 ||
+										event.metaKey ||
+										event.ctrlKey ||
+										event.shiftKey ||
+										event.altKey
+									)
+										return;
+									event.preventDefault();
+									onOpen();
+								}}
+							/>
+							<span
+								id={titleId}
+								className={`block text-left text-base leading-snug font-semibold [overflow-wrap:anywhere] ${titleClassName}`}
+							>
+								{title}
+							</span>
+						</>
+					) : titleInteractive ? (
 						<button
 							type="button"
 							className={`text-left text-base leading-snug font-semibold after:absolute after:inset-0 after:rounded-[var(--bf-radius-surface)] focus-visible:outline-none focus-visible:after:outline-2 focus-visible:after:outline-ring disabled:cursor-not-allowed [overflow-wrap:anywhere] ${titleClassName}`}

@@ -4,8 +4,8 @@ Solution export — serialize Solution workspace zips.
 ``POST /api/solutions/{id}/export`` calls
 :func:`build_workspace_zip` on every request so the zip always reflects
 current ownership unless the install has a deploy-time source artifact. In that
-case shareable export returns the stored artifact, and full export overlays the
-encrypted runtime payload onto that artifact.
+case export copies the stored source, overlays the current README, and adds
+encrypted runtime content for full backups.
 
 The zip is the same shape ``preview_zip``/``install_zip`` consume:
 ``bifrost.solution.yaml`` + ``.bifrost/*.yaml`` manifests + Python source +
@@ -101,7 +101,8 @@ def build_workspace_zip(bundle: "SolutionBundle", *, password: str | None = None
         # No ``scope`` in the descriptor — install kind is the installer's
         # deploy-time choice (--org/--global), derived server-side from
         # organization_id. The exported descriptor is pure definition.
-        descriptor["global_repo_access"] = bool(solution.global_repo_access)
+        descriptor["allow_outbound_access"] = bool(solution.allow_outbound_access)
+        descriptor["allow_inbound_access"] = bool(solution.allow_inbound_access)
         if bundle.logo_b64 and bundle.logo_content_type in _LOGO_EXTENSIONS:
             logo_name = f"solution-logo{_LOGO_EXTENSIONS[bundle.logo_content_type]}"
             descriptor["logo"] = logo_name
@@ -360,6 +361,37 @@ async def build_workspace_zip_for_export(
             )
 
 
+def _copy_source_members(
+    src: zipfile.ZipFile,
+    dst: zipfile.ZipFile,
+    *,
+    readme: str | None,
+    exclude_runtime: bool,
+) -> None:
+    """Copy immutable source members while replacing the editable README."""
+    for name in src.namelist():
+        if name == "README.md" or (
+            exclude_runtime
+            and (name == ".bifrost/secrets.enc" or name.startswith(".bifrost/file-payloads/"))
+        ):
+            continue
+        info = zipfile.ZipInfo(name, date_time=_ZIP_EPOCH)
+        info.compress_type = zipfile.ZIP_DEFLATED
+        with src.open(name, "r") as inp, dst.open(info, "w") as out:
+            while chunk := inp.read(8 * 1024 * 1024):
+                out.write(chunk)
+    if readme:
+        _put_zip_member(dst, "README.md", readme)
+
+
+def copy_workspace_zip_with_readme(source_zip: Path, dest: Path, readme: str | None) -> None:
+    """Export stored source with the install's current editable README."""
+    with zipfile.ZipFile(source_zip, "r") as src, zipfile.ZipFile(
+        dest, "w", zipfile.ZIP_DEFLATED
+    ) as dst:
+        _copy_source_members(src, dst, readme=readme, exclude_runtime=False)
+
+
 async def add_live_content_to_workspace_zip_file(
     source_zip: Path,
     bundle: "SolutionBundle",
@@ -368,20 +400,11 @@ async def add_live_content_to_workspace_zip_file(
     *,
     password: str,
 ) -> None:
-    """Copy a stored source artifact and overlay live encrypted runtime data."""
+    """Overlay live README and encrypted runtime data onto stored source."""
     with zipfile.ZipFile(source_zip, "r") as src, zipfile.ZipFile(
         dest, "w", zipfile.ZIP_DEFLATED
     ) as dst:
-        for name in src.namelist():
-            if name == ".bifrost/secrets.enc" or name.startswith(
-                ".bifrost/file-payloads/"
-            ):
-                continue
-            info = zipfile.ZipInfo(name, date_time=_ZIP_EPOCH)
-            info.compress_type = zipfile.ZIP_DEFLATED
-            with src.open(name, "r") as inp, dst.open(info, "w") as out:
-                while chunk := inp.read(8 * 1024 * 1024):
-                    out.write(chunk)
+        _copy_source_members(src, dst, readme=bundle.readme, exclude_runtime=True)
 
         file_sidecar_entries: list[dict[str, Any]] = []
         if bundle.solution_files:

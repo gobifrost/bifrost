@@ -29,6 +29,10 @@ class AuditLogEntry(BaseModel):
     resource_id: UUID | None = Field(None, description="Target entity ID")
     outcome: str = Field(..., description="'success' or 'failure'")
     source: str = Field(..., description="Event source: 'http', 'sso_sync', 'scheduler', 'cli', ...")
+    execution_id: UUID | None = Field(
+        None,
+        description="Workflow execution that produced the event, when supported",
+    )
     actor: AuditLogActor = Field(..., description="Who performed the action")
     ip_address: str | None = Field(None)
     user_agent: str | None = Field(None)

@@ -4,6 +4,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -12,10 +13,16 @@ import pytest
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from src.jobs.platform.application_deploy import (
+    APPLICATION_DEPLOY_DEFINITION,
+    ApplicationDeployPayload,
+)
+from src.jobs.platform.base import PlatformJobDefinition
 from src.jobs.platform.application_publish import (
     APPLICATION_PUBLISH_DEFINITION,
     ApplicationPublishPayload,
 )
+from src.jobs.platform.kubernetes_client import _lease_token_fingerprint
 from src.jobs.schedulers import platform_jobs as scheduler
 from src.models.orm.platform_jobs import PlatformJob
 from src.services.platform_jobs import enqueue_platform_job
@@ -44,6 +51,69 @@ async def _queued_job(db_session: AsyncSession) -> PlatformJob:
     return job
 
 
+async def _queued_remote_build_job(
+    db_session: AsyncSession,
+    *,
+    clear_existing: bool = True,
+) -> PlatformJob:
+    if clear_existing:
+        await db_session.execute(delete(PlatformJob))
+        await db_session.commit()
+    app_id = uuid4()
+    job, _ = await enqueue_platform_job(
+        db_session,
+        APPLICATION_DEPLOY_DEFINITION,
+        ApplicationDeployPayload(
+            application_id=app_id,
+            deployment_id=uuid4(),
+            input_sha256="a" * 64,
+        ),
+        dedupe_key=str(app_id),
+        organization_id=None,
+        requested_by_user_id=uuid4(),
+        requested_by_email="dev@example.com",
+        requested_by_name="Dev",
+        resource_type="application",
+        resource_id=str(app_id),
+        title="Deploying Test",
+        action_url=None,
+    )
+    job.execution_backend = "kubernetes"
+    await db_session.flush()
+    return job
+
+
+def _unlimited_deploy() -> PlatformJobDefinition:
+    """Deploy definition with the concurrency cap lifted.
+
+    Production serializes deploys (max_concurrency=1). Tests exercising
+    replica contention, lock fairness, and starvation need parallel
+    same-type claims, so they lift the cap through the same lookup the
+    scheduler uses instead of switching job types.
+    """
+    return replace(
+        APPLICATION_DEPLOY_DEFINITION,
+        policy=replace(
+            APPLICATION_DEPLOY_DEFINITION.policy, max_concurrency=None
+        ),
+    )
+
+
+def _lift_deploy_concurrency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_definition = scheduler.get_platform_job_definition
+    monkeypatch.setattr(
+        scheduler,
+        "get_platform_job_definition",
+        lambda job_type: (
+            _unlimited_deploy()
+            if job_type == APPLICATION_DEPLOY_DEFINITION.job_type
+            else real_definition(job_type)
+        ),
+    )
+
+
 async def _future_jobs(
     session_factory: async_sessionmaker[AsyncSession],
     count: int,
@@ -56,8 +126,12 @@ async def _future_jobs(
             app_id = uuid4()
             job, _ = await enqueue_platform_job(
                 session,
-                APPLICATION_PUBLISH_DEFINITION,
-                ApplicationPublishPayload(application_id=app_id),
+                APPLICATION_DEPLOY_DEFINITION,
+                ApplicationDeployPayload(
+                    application_id=app_id,
+                    deployment_id=uuid4(),
+                    input_sha256="a" * 64,
+                ),
                 dedupe_key=str(app_id),
                 organization_id=None,
                 requested_by_user_id=uuid4(),
@@ -65,8 +139,8 @@ async def _future_jobs(
                 requested_by_name="Dev",
                 resource_type="application",
                 resource_id=str(app_id),
-                title=f"Publishing Test {index}",
-                action_url="/apps/test/edit",
+                title=f"Deploying Test {index}",
+                action_url=None,
             )
             job.available_at = available_at
             jobs.append(job)
@@ -90,6 +164,200 @@ def patch_context(
         AsyncMock(),
     )
     monkeypatch.setattr(scheduler, "get_cgroup_memory", lambda: (-1, -1))
+    monkeypatch.setattr(
+        scheduler,
+        "get_settings",
+        lambda: SimpleNamespace(kubernetes_build_namespace="test"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_default_claim_ignores_kubernetes_backend_jobs(
+    db_session: AsyncSession,
+) -> None:
+    job = await _queued_remote_build_job(db_session)
+
+    assert await scheduler.claim_platform_job() is None
+    await db_session.refresh(job)
+    assert job.status == "queued"
+    assert job.lease_token is None
+
+
+@pytest.mark.asyncio
+async def test_remote_claim_sets_kubernetes_launch_metadata(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = await _queued_remote_build_job(db_session)
+    job.memory_required_bytes = 512 * 1024 * 1024
+    monkeypatch.setattr(
+        scheduler,
+        "get_cgroup_memory",
+        lambda: (900 * 1024 * 1024, 1024 * 1024 * 1024),
+    )
+
+    claim = await scheduler.claim_platform_job(
+        backend="kubernetes",
+        remote_limit=2,
+        remote_memory_bytes=1024 * 1024 * 1024,
+    )
+
+    assert claim is not None
+    assert claim.id == job.id
+    assert claim.job_type == "application.deploy"
+    await db_session.refresh(job)
+    assert job.status == "running"
+    assert job.phase == "Waiting for Kubernetes capacity"
+    assert job.kubernetes_job_name == (
+        f"bifrost-job-{job.id.hex}-{_lease_token_fingerprint(claim.lease_token)[:12]}"
+    )
+    assert claim.lease_token.hex not in (job.kubernetes_job_name or "")
+    assert job.kubernetes_launch_started_at is not None
+    assert job.kubernetes_namespace == "test"
+    assert job.kubernetes_job_uid is None
+    assert job.kubernetes_pod_uid is None
+    assert job.runner_started_at is None
+    assert job.memory_limit_bytes == 1024 * 1024 * 1024
+
+
+@pytest.mark.asyncio
+async def test_remote_claim_respects_global_remote_limit(
+    db_session: AsyncSession,
+) -> None:
+    first = await _queued_remote_build_job(db_session)
+    second = await _queued_remote_build_job(db_session, clear_existing=False)
+
+    first_claim = await scheduler.claim_platform_job(
+        backend="kubernetes",
+        remote_limit=1,
+        remote_memory_bytes=1024 * 1024 * 1024,
+    )
+    second_claim = await scheduler.claim_platform_job(
+        backend="kubernetes",
+        remote_limit=1,
+        remote_memory_bytes=1024 * 1024 * 1024,
+    )
+
+    assert first_claim is not None
+    assert first_claim.id in {first.id, second.id}
+    assert second_claim is None
+    await db_session.refresh(first)
+    await db_session.refresh(second)
+    running = [job for job in (first, second) if job.status == "running"]
+    queued = [job for job in (first, second) if job.status == "queued"]
+    assert len(running) == 1
+    assert len(queued) == 1
+    assert running[0].kubernetes_job_name is not None
+    assert running[0].kubernetes_namespace == "test"
+    assert queued[0].kubernetes_job_name is None
+    assert queued[0].kubernetes_namespace is None
+
+
+@pytest.mark.asyncio
+async def test_type_concurrency_limit_counts_opposite_backend_jobs(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    active = await _queued_remote_build_job(db_session)
+    active.status = "running"
+    active.lease_token = uuid4()
+    active.lease_expires_at = datetime.now(timezone.utc) + timedelta(minutes=1)
+    queued = await _queued_remote_build_job(db_session, clear_existing=False)
+    queued.execution_backend = "local"
+    limited = replace(
+        APPLICATION_DEPLOY_DEFINITION,
+        policy=replace(APPLICATION_DEPLOY_DEFINITION.policy, max_concurrency=1),
+    )
+    monkeypatch.setattr(scheduler, "get_platform_job_definition", lambda _type: limited)
+
+    assert await scheduler.claim_platform_job(backend="local") is None
+    await db_session.refresh(queued)
+    assert queued.status == "queued"
+    assert queued.lease_token is None
+
+
+@pytest.mark.asyncio
+async def test_resource_lock_counts_opposite_backend_jobs(
+    db_session: AsyncSession,
+) -> None:
+    active = await _queued_remote_build_job(db_session)
+    active.status = "running"
+    active.resource_lock_key = "application:shared"
+    active.lease_token = uuid4()
+    active.lease_expires_at = datetime.now(timezone.utc) + timedelta(minutes=1)
+    queued = await _queued_remote_build_job(db_session, clear_existing=False)
+    queued.execution_backend = "local"
+    queued.resource_lock_key = "application:shared"
+
+    assert await scheduler.claim_platform_job(backend="local") is None
+    await db_session.refresh(queued)
+    assert queued.status == "queued"
+    assert queued.lease_token is None
+
+
+@pytest.mark.asyncio
+async def test_remote_claim_waits_when_job_exceeds_pod_memory_budget(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = await _queued_remote_build_job(db_session)
+    job.memory_required_bytes = 2 * 1024 * 1024 * 1024
+    monkeypatch.setattr(
+        scheduler,
+        "get_cgroup_memory",
+        lambda: (1, 1),
+    )
+
+    claim = await scheduler.claim_platform_job(
+        backend="kubernetes",
+        remote_limit=2,
+        remote_memory_bytes=1024 * 1024 * 1024,
+    )
+
+    assert claim is None
+    await db_session.refresh(job)
+    assert job.status == "queued"
+    assert job.phase == "Waiting for Kubernetes capacity"
+    assert job.lease_token is None
+
+
+@pytest.mark.asyncio
+async def test_remote_claim_does_not_reclaim_pending_kubernetes_job(
+    db_session: AsyncSession,
+) -> None:
+    job = await _queued_remote_build_job(db_session)
+    job.kubernetes_job_name = "bifrost-job-existing"
+
+    assert await scheduler.claim_platform_job(backend="kubernetes") is None
+    await db_session.refresh(job)
+    assert job.status == "queued"
+    assert job.lease_token is None
+
+
+@pytest.mark.asyncio
+async def test_expired_recovery_ignores_kubernetes_backend_jobs(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    wall_clock_now = datetime.now(timezone.utc)
+    monkeypatch.setattr(
+        scheduler,
+        "_now",
+        lambda: wall_clock_now + timedelta(days=2),
+    )
+    job = await _queued_remote_build_job(db_session)
+    job.status = "running"
+    job.attempt = 1
+    job.lease_token = uuid4()
+    job.lease_expires_at = wall_clock_now + timedelta(days=1)
+    await db_session.commit()
+
+    recovered, failed = await scheduler.recover_expired_platform_jobs()
+
+    assert (recovered, failed) == (0, 0)
+    await db_session.refresh(job)
+    assert job.status == "running"
+    assert job.lease_token is not None
 
 
 @pytest.mark.asyncio
@@ -118,6 +386,7 @@ async def test_concurrent_replicas_claim_each_row_once(
     job_count: int,
 ) -> None:
     jobs = await _future_jobs(async_session_factory, job_count)
+    _lift_deploy_concurrency(monkeypatch)
 
     @asynccontextmanager
     async def independent_context() -> AsyncGenerator[AsyncSession, None]:
@@ -255,14 +524,21 @@ async def test_claims_highest_priority_first(db_session: AsyncSession) -> None:
 
 
 @pytest.mark.asyncio
-async def test_resource_lock_serializes_matching_jobs(db_session: AsyncSession) -> None:
+async def test_resource_lock_serializes_matching_jobs(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _lift_deploy_concurrency(monkeypatch)
     first = await _queued_job(db_session)
     first.resource_lock_key = "solution:one"
     second_id = uuid4()
     second, _ = await enqueue_platform_job(
         db_session,
-        APPLICATION_PUBLISH_DEFINITION,
-        ApplicationPublishPayload(application_id=second_id),
+        APPLICATION_DEPLOY_DEFINITION,
+        ApplicationDeployPayload(
+            application_id=second_id,
+            deployment_id=uuid4(),
+            input_sha256="a" * 64,
+        ),
         dedupe_key=str(second_id),
         resource_lock_key="solution:one",
         organization_id=None,
@@ -285,8 +561,9 @@ async def test_resource_lock_serializes_matching_jobs(db_session: AsyncSession) 
 
 @pytest.mark.asyncio
 async def test_blocked_jobs_do_not_starve_runnable_job_beyond_first_twenty(
-    db_session: AsyncSession,
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _lift_deploy_concurrency(monkeypatch)
     blocker = await _queued_job(db_session)
     blocker.status = "running"
     blocker.resource_lock_key = "solution:blocked"
@@ -295,8 +572,12 @@ async def test_blocked_jobs_do_not_starve_runnable_job_beyond_first_twenty(
         app_id = uuid4()
         await enqueue_platform_job(
             db_session,
-            APPLICATION_PUBLISH_DEFINITION,
-            ApplicationPublishPayload(application_id=app_id),
+            APPLICATION_DEPLOY_DEFINITION,
+            ApplicationDeployPayload(
+                application_id=app_id,
+                deployment_id=uuid4(),
+                input_sha256="a" * 64,
+            ),
             dedupe_key=str(app_id),
             resource_lock_key="solution:blocked",
             organization_id=None,
@@ -312,8 +593,12 @@ async def test_blocked_jobs_do_not_starve_runnable_job_beyond_first_twenty(
     runnable_id = uuid4()
     runnable, _ = await enqueue_platform_job(
         db_session,
-        APPLICATION_PUBLISH_DEFINITION,
-        ApplicationPublishPayload(application_id=runnable_id),
+        APPLICATION_DEPLOY_DEFINITION,
+        ApplicationDeployPayload(
+            application_id=runnable_id,
+            deployment_id=uuid4(),
+            input_sha256="a" * 64,
+        ),
         dedupe_key=str(runnable_id),
         resource_lock_key="solution:runnable",
         organization_id=None,
@@ -358,6 +643,33 @@ async def test_type_concurrency_limit_is_enforced(
         policy=replace(APPLICATION_PUBLISH_DEFINITION.policy, max_concurrency=1),
     )
     monkeypatch.setattr(scheduler, "get_platform_job_definition", lambda _type: limited)
+
+    assert await scheduler.claim_platform_job() is not None
+    assert await scheduler.claim_platform_job() is None
+
+
+@pytest.mark.asyncio
+async def test_publish_jobs_serialize_at_concurrency_one_by_default(
+    db_session: AsyncSession,
+) -> None:
+    """Candidate heavy jobs serialize unless a policy says otherwise."""
+    await db_session.execute(delete(PlatformJob))
+    for index in range(2):
+        app_id = uuid4()
+        await enqueue_platform_job(
+            db_session,
+            APPLICATION_PUBLISH_DEFINITION,
+            ApplicationPublishPayload(application_id=app_id),
+            dedupe_key=str(app_id),
+            organization_id=None,
+            requested_by_user_id=uuid4(),
+            requested_by_email="dev@example.com",
+            requested_by_name="Dev",
+            resource_type="application",
+            resource_id=str(app_id),
+            title=f"Publishing Test {index}",
+            action_url=None,
+        )
 
     assert await scheduler.claim_platform_job() is not None
     assert await scheduler.claim_platform_job() is None
@@ -543,3 +855,62 @@ async def test_cancelling_worker_stops_active_child(
         _ = await task
     terminate.assert_awaited_once()
     handle_loss.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_settings_concurrency_override_replaces_policy_default(
+    db_session: AsyncSession,
+) -> None:
+    from src.jobs.platform.application_deploy import (
+        ApplicationDeployPayload,
+    )
+    from src.services.kubernetes_execution import KubernetesExecutionService
+
+    async def _enqueue_deploy() -> None:
+        app_id = uuid4()
+        await enqueue_platform_job(
+            db_session,
+            APPLICATION_DEPLOY_DEFINITION,
+            ApplicationDeployPayload(
+                application_id=app_id,
+                deployment_id=uuid4(),
+                input_sha256="a" * 64,
+            ),
+            dedupe_key=str(app_id),
+            organization_id=None,
+            requested_by_user_id=uuid4(),
+            requested_by_email="dev@example.com",
+            requested_by_name="Dev",
+            resource_type="application",
+            resource_id=str(app_id),
+            title="Deploying Test",
+            action_url=None,
+        )
+
+    await db_session.execute(delete(PlatformJob))
+    await _enqueue_deploy()
+    await _enqueue_deploy()
+
+    service = KubernetesExecutionService(db_session)
+    await service.set_job_type_concurrency(
+        "application.deploy", 2, updated_by="test"
+    )
+
+    assert await scheduler.claim_platform_job() is not None
+    assert await scheduler.claim_platform_job() is not None
+
+    await db_session.execute(delete(PlatformJob))
+    await _enqueue_deploy()
+    await _enqueue_deploy()
+    await service.set_job_type_concurrency(
+        "application.deploy", 1, updated_by="test"
+    )
+
+    assert await scheduler.claim_platform_job() is not None
+    assert await scheduler.claim_platform_job() is None
+
+    # Restore the code default so later suites see a pristine state.
+    await service.set_job_type_concurrency(
+        "application.deploy", None, updated_by="test"
+    )
+    await db_session.commit()

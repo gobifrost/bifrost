@@ -65,7 +65,12 @@ class WorkflowIndexer:
             return None
 
         # Fast regex check - if no decorator-like patterns, skip AST parsing
-        if "@workflow" not in content_str and "@data_provider" not in content_str:
+        if (
+            "@workflow" not in content_str
+            and "@data_provider" not in content_str
+            and "@tool" not in content_str
+            and "@service" not in content_str
+        ):
             return None
 
         # AST verification - confirm decorators are actually used
@@ -82,7 +87,7 @@ class WorkflowIndexer:
                 decorator_info = self._parse_decorator(decorator)
                 if decorator_info:
                     decorator_name, _ = decorator_info
-                    if decorator_name in ("workflow", "data_provider", "tool"):
+                    if decorator_name in ("workflow", "data_provider", "tool", "service"):
                         return {"has_decorators": True}
 
         return None
@@ -134,7 +139,7 @@ class WorkflowIndexer:
 
                 decorator_name, kwargs = decorator_info
 
-                if decorator_name in ("workflow", "tool"):
+                if decorator_name in ("workflow", "tool", "service"):
                     if decorator_name == "tool":
                         kwargs["is_tool"] = True
 
@@ -181,8 +186,36 @@ class WorkflowIndexer:
                             docstring_description = docstring.strip().split("\n")[0].strip()
 
                     is_tool = kwargs.get("is_tool", False)
-                    workflow_type = "tool" if is_tool else "workflow"
+                    if decorator_name == "service":
+                        workflow_type = "service"
+                    else:
+                        workflow_type = "tool" if is_tool else "workflow"
                     parameters_schema = self._extract_parameters_from_ast(node)
+
+                    # Service lifecycle sync: service rows ensure a definition
+                    # (covering every write path — API, git sync, deploy — not
+                    # just explicit registration) and pin the source revision
+                    # that Slice 3 compares at launch. Rows converting away
+                    # from service keep history but are parked.
+                    if workflow_type == "service" or existing_workflow.type == "service":
+                        from src.services.service_lifecycle import (
+                            note_source_revision,
+                            sync_definition_for_registration,
+                        )
+
+                        synced_row = existing_workflow
+                        synced_row.type = workflow_type
+                        definition = await sync_definition_for_registration(
+                            self.db, synced_row, created_by="system:indexer"
+                        )
+                        if workflow_type == "service" and definition is not None:
+                            import hashlib
+
+                            await note_source_revision(
+                                self.db,
+                                definition,
+                                hashlib.sha256(content_str.encode()).hexdigest(),
+                            )
 
                     # Only update code-derived fields and valid decorator params.
                     # Operational settings (execution_mode, timeout_seconds,
@@ -239,8 +272,10 @@ class WorkflowIndexer:
                     )
                     workflow = result.scalar_one()
 
-                    # Refresh endpoint registration if endpoint_enabled
-                    if workflow.endpoint_enabled:
+                    # Refresh endpoint registration if endpoint_enabled.
+                    # Services are never endpoint-executable (repository guards
+                    # reject them), so they never refresh dynamic routes.
+                    if workflow.endpoint_enabled and workflow.type != "service":
                         await self.refresh_workflow_endpoint(workflow)
 
                     # Update Redis caches with merged values from DB
@@ -256,6 +291,7 @@ class WorkflowIndexer:
                             time_saved=workflow.time_saved,
                             value=workflow.value,
                             execution_mode=workflow.execution_mode,
+                            type=workflow.type or "workflow",
                         )
                     except Exception as e:
                         logger.warning(f"Failed to update caches for workflow {log_safe(workflow_name)}: {log_safe(e)}")
@@ -368,7 +404,7 @@ class WorkflowIndexer:
         """
         # Handle @workflow (no parentheses)
         if isinstance(decorator, ast.Name):
-            if decorator.id in ("workflow", "tool", "data_provider"):
+            if decorator.id in ("workflow", "tool", "data_provider", "service"):
                 return decorator.id, {}
             return None
 
@@ -382,7 +418,7 @@ class WorkflowIndexer:
             else:
                 return None
 
-            if decorator_name not in ("workflow", "tool", "data_provider"):
+            if decorator_name not in ("workflow", "tool", "data_provider", "service"):
                 return None
 
             # Extract keyword arguments
@@ -944,6 +980,24 @@ class WorkflowIndexer:
         # Scope to _repo/ rows (solution_id IS NULL): deleting a WORKSPACE file
         # must never deactivate a solution-managed workflow that happens to share
         # the path — solution rows are written only by deploy (Codex #14).
+        #
+        # Park service definitions first so a live attempt is asked to stop
+        # promptly (the claim join on type/is_active is the ultimate guard).
+        affected = await self.db.execute(
+            select(Workflow.id).where(
+                Workflow.path == path,
+                Workflow.is_active == True,  # noqa: E712
+                Workflow.solution_id.is_(None),
+                Workflow.type == "service",
+            )
+        )
+        affected_ids = list(affected.scalars().all())
+        if affected_ids:
+            from src.services.service_lifecycle import park_definitions_for_workflows
+
+            await park_definitions_for_workflows(
+                self.db, affected_ids, reason="source file deleted"
+            )
         stmt = (
             update(Workflow)
             .where(

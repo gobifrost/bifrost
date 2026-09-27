@@ -8,7 +8,12 @@ Uses real multiprocessing (not mocks) since fork behavior can't be mocked.
 import logging
 import os
 import signal
+import subprocess
+import sys
+import textwrap
 import time
+from contextlib import suppress
+from pathlib import Path
 
 import pytest
 
@@ -41,7 +46,7 @@ def _wait_for_pid_to_die(pid: int, timeout: float = 5.0) -> None:
             os.kill(pid, 0)
             time.sleep(0.05)
         except OSError:
-            return  # Process is gone
+            break  # Process is gone
     # Best-effort — don't raise if still alive (zombie will be reaped by template)
 
 
@@ -63,6 +68,13 @@ def _wait_for_pid_to_disappear(pid: int, timeout: float = 5.0) -> None:
     )
 
 
+def _fd_count() -> int:
+    try:
+        return len(os.listdir("/proc/self/fd"))
+    except FileNotFoundError:
+        pytest.skip("/proc is required for fd cleanup assertions")
+
+
 class TestTemplateProcessLifecycle:
     """Tests for template process startup and shutdown."""
 
@@ -73,6 +85,8 @@ class TestTemplateProcessLifecycle:
         try:
             assert template.is_alive()
             assert template.pid is not None
+            assert template.start_method == "spawn"
+            assert template.process_name == "template-process"
         finally:
             template.shutdown()
 
@@ -81,9 +95,12 @@ class TestTemplateProcessLifecycle:
         template = TemplateProcess()
         template.start()
         pid = template.pid
+        pipe = template._pipe
         template.shutdown()
 
         assert not template.is_alive()
+        assert pipe is not None
+        assert pipe.closed
         # Process should be gone
         with pytest.raises(OSError):
             os.kill(pid, 0)
@@ -103,6 +120,132 @@ class TestTemplateProcessLifecycle:
         """Shutting down before starting should not raise."""
         template = TemplateProcess()
         template.shutdown()  # Should not raise
+
+    def test_start_does_not_launch_resource_tracker(self):
+        """A fresh interpreter should start/fork/shutdown without a tracker."""
+        api_root = Path(__file__).resolve().parents[3]
+        script = textwrap.dedent(
+            """
+            import os
+            import signal
+            import time
+            from multiprocessing import resource_tracker
+
+            from src.services.execution.template_process import TemplateProcess
+
+            def tracker_descendants(root_pid):
+                children_by_parent = {}
+                cmdlines = {}
+                for name in os.listdir("/proc"):
+                    if not name.isdigit():
+                        continue
+                    pid = int(name)
+                    try:
+                        with open(f"/proc/{name}/stat") as stat_file:
+                            stat = stat_file.read()
+                        ppid = int(stat.rsplit(")", 1)[1].split()[1])
+                        with open(f"/proc/{name}/cmdline", "rb") as cmdline_file:
+                            cmdline = cmdline_file.read().replace(b"\\x00", b" ")
+                    except (FileNotFoundError, ProcessLookupError, PermissionError, OSError):
+                        continue
+                    children_by_parent.setdefault(ppid, []).append(pid)
+                    cmdlines[pid] = cmdline
+
+                found = []
+                stack = list(children_by_parent.get(root_pid, []))
+                while stack:
+                    pid = stack.pop()
+                    if b"multiprocessing.resource_tracker" in cmdlines.get(pid, b""):
+                        found.append(pid)
+                    stack.extend(children_by_parent.get(pid, []))
+                return found
+
+            template = TemplateProcess()
+            template.start()
+            child_pid, work_queue, result_queue = template.fork()
+            work_queue.close()
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                try:
+                    os.kill(child_pid, 0)
+                except OSError:
+                    break
+                time.sleep(0.05)
+            result_queue.close()
+            template.shutdown()
+
+            assert resource_tracker._resource_tracker._pid is None
+            assert tracker_descendants(os.getpid()) == []
+            """
+        )
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(api_root)
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=api_root,
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=150,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+
+    def test_start_after_shutdown_launches_fresh_template(self):
+        """A stopped wrapper should be reusable for a fresh template process."""
+        template = TemplateProcess()
+        template.start()
+        first_pid = template.pid
+        template.shutdown()
+
+        template.start()
+        try:
+            assert template.is_alive()
+            assert template.pid is not None
+            assert template.pid != first_pid
+        finally:
+            template.shutdown()
+
+    def test_start_failure_cleans_up_and_remains_reusable(self, monkeypatch):
+        """A failed subprocess launch should close state and allow a later start."""
+        from src.services.execution import template_process
+
+        template = TemplateProcess()
+        before_fds = _fd_count()
+        monkeypatch.setattr(template_process.sys, "executable", "/bin/false")
+
+        with pytest.raises((BrokenPipeError, ConnectionResetError, EOFError, RuntimeError)):
+            template.start()
+
+        assert template.pid is None
+        assert template._pipe is None
+        assert template._process is None
+        assert not template.is_alive()
+        assert _fd_count() == before_fds
+
+        monkeypatch.undo()
+        template.start()
+        try:
+            assert template.is_alive()
+        finally:
+            template.shutdown()
+
+    def test_start_missing_executable_cleans_up_file_descriptors(self, monkeypatch):
+        """Popen failure should close both control pipe ends."""
+        from src.services.execution import template_process
+
+        template = TemplateProcess()
+        before_fds = _fd_count()
+        monkeypatch.setattr(template_process.sys, "executable", "/definitely/not/bifrost-python")
+
+        with pytest.raises(OSError):
+            template.start()
+
+        assert template.pid is None
+        assert template._pipe is None
+        assert template._process is None
+        assert not template.is_alive()
+        assert _fd_count() == before_fds
 
 
 class TestTemplateProcessFork:
@@ -183,6 +326,31 @@ class TestTemplateProcessFork:
                 except ProcessLookupError:
                     # Expected once the template has already reaped the child.
                     pass
+            template.shutdown()
+
+    def test_repeated_fork_exit_statuses_are_collected(self):
+        """Repeated fork/exit cycles should return every one-shot child status."""
+        template = TemplateProcess()
+        template.start()
+        children = []
+        try:
+            for i in range(3):
+                child_pid, work_queue, result_queue = template.fork(worker_id=f"exit-{i}")
+                children.append((child_pid, work_queue, result_queue))
+                work_queue.close()
+
+            for child_pid, _, _ in children:
+                _wait_for_pid_to_disappear(child_pid)
+
+            statuses = template.collect_child_exit_statuses()
+            for child_pid, _, _ in children:
+                assert statuses[child_pid] == 0
+        finally:
+            for child_pid, work_queue, result_queue in children:
+                work_queue.close()
+                result_queue.close()
+                with suppress(ProcessLookupError):
+                    os.kill(child_pid, signal.SIGKILL)
             template.shutdown()
 
     def test_forked_child_can_execute_and_return_result(self):

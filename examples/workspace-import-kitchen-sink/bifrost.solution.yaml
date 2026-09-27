@@ -1,0 +1,5 @@
+slug: kitchen-sink
+name: Workspace Import Kitchen Sink
+version: 1.0.0
+allow_outbound_access: false
+allow_inbound_access: false

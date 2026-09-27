@@ -47,18 +47,13 @@ def _prepare_asyncpg_url(url: str) -> tuple[str, dict]:
         sslmode = query_params.pop("sslmode")[0]
 
         if sslmode in ("require", "verify-ca", "verify-full"):
-            # Create SSL context for secure connections
-            ssl_context = ssl.create_default_context()
-
-            if sslmode == "require":
-                # Don't verify certificate (common for managed databases like DigitalOcean)
-                ssl_context.check_hostname = False
-                ssl_context.verify_mode = ssl.CERT_NONE
-            elif sslmode == "verify-ca":
-                ssl_context.check_hostname = False
-                ssl_context.verify_mode = ssl.CERT_REQUIRED
-            # verify-full uses default (check_hostname=True, CERT_REQUIRED)
-
+            # Bifrost strengthens every encrypted mode to authenticated TLS.
+            # Encryption without certificate and hostname verification still
+            # permits an active network attacker to impersonate PostgreSQL.
+            # PROTOCOL_TLS_CLIENT requires certificate validation and hostname
+            # checks; the assertions in test_database_tls.py lock this down.
+            ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)  # NOSONAR
+            ssl_context.load_default_certs()
             connect_args["ssl"] = ssl_context
         elif sslmode == "prefer":
             # Try SSL but don't require it

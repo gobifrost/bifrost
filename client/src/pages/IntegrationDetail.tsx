@@ -31,6 +31,7 @@ import {
 	useAuthorizeMapping,
 	useDisconnectMapping,
 	useRefreshMapping,
+	planOrgConfigSave,
 	type IntegrationTestResponse,
 } from "@/services/integrations";
 import { $api } from "@/lib/api-client";
@@ -529,30 +530,29 @@ export function IntegrationDetail() {
 	const handleSaveOrgConfig = async (config: Record<string, unknown>) => {
 		if (!selectedOrgForConfig || !integrationId) return;
 
-		// Only save if mapping exists (config is per-mapping)
-		if (!selectedOrgForConfig.mapping) {
-			toast.error("Save the mapping first before configuring");
-			throw new Error("No mapping exists");
-		}
-
-		await updateMutation.mutateAsync({
-			params: {
-				path: {
-					integration_id: integrationId,
-					mapping_id: selectedOrgForConfig.mapping.id,
+		const plan = planOrgConfigSave(selectedOrgForConfig, config);
+		if (plan.kind === "noop") return;
+		if (plan.kind === "create") {
+			// No mapping row yet — create one carrying the overrides so
+			// unmapped orgs can still hold per-org config (entity_id may
+			// stay empty until the org is mapped to an external entity).
+			await createMappingMutation.mutateAsync({
+				params: { path: { integration_id: integrationId } },
+				body: plan.body,
+			});
+		} else {
+			await updateMutation.mutateAsync({
+				params: {
+					path: {
+						integration_id: integrationId,
+						mapping_id: plan.mapping_id,
+					},
 				},
-			},
-			body: {
-				entity_id: selectedOrgForConfig.formData.entity_id,
-				entity_name:
-					selectedOrgForConfig.formData.entity_name || undefined,
-				oauth_token_id:
-					selectedOrgForConfig.formData.oauth_token_id || undefined,
-				config: Object.keys(config).length > 0 ? config : undefined,
-			},
-		});
+				body: plan.body,
+			});
+		}
 		toast.success(`Configuration saved for ${selectedOrgForConfig.name}`);
-		// Cache invalidation in useUpdateMapping handles refetch
+		// Cache invalidation in useCreateMapping/useUpdateMapping handles refetch
 	};
 
 	// Configuration Defaults Dialog handlers
@@ -829,7 +829,7 @@ export function IntegrationDetail() {
 				{/* Tabs for Mappings and Config Overrides */}
 				<Tabs
 					defaultValue="mappings"
-					className="flex min-h-0 flex-col gap-4 lg:min-h-96 lg:flex-1"
+					className="flex min-h-0 flex-col gap-4"
 				>
 					<TabsList
 						aria-label="Integration views"
@@ -851,9 +851,9 @@ export function IntegrationDetail() {
 
 					<TabsContent
 						value="mappings"
-						className="flex min-h-0 flex-1 flex-col"
+						className="flex min-h-0 flex-col"
 					>
-						<div className="min-w-0 lg:flex lg:min-h-0 lg:flex-1 lg:flex-col">
+						<div className="min-w-0">
 							{mappingSaveError && (
 								<div
 									role="alert"
@@ -881,7 +881,7 @@ export function IntegrationDetail() {
 							)}
 							<fieldset
 								disabled={batchMutation.isPending}
-								className="min-w-0 lg:flex lg:min-h-0 lg:flex-1 lg:flex-col"
+								className="min-w-0"
 							>
 								{batchMutation.isPending && (
 									<p

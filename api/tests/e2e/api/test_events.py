@@ -9,6 +9,7 @@ Tests the full event lifecycle:
 - Delivery retry
 """
 
+import base64
 import hashlib
 import hmac
 import uuid
@@ -1148,6 +1149,12 @@ def _hmac_sign(body: bytes, secret: str, prefix: str = "sha256=") -> str:
     return f"{prefix}{sig}"
 
 
+def _hmac_sign_base64(body: bytes, secret: str, prefix: str = "sha256= ") -> str:
+    """Compute a base64-encoded HMAC-SHA256 signature."""
+    digest = hmac.new(secret.encode(), body, hashlib.sha256).digest()
+    return f"{prefix}{base64.b64encode(digest).decode('ascii')}"
+
+
 @pytest.mark.e2e
 class TestWebhookAuthentication:
     """Tests for webhook HMAC signature verification."""
@@ -1229,6 +1236,29 @@ class TestWebhookAuthentication:
             },
         )
         assert response.status_code == 202, f"Expected 202, got {response.status_code}: {response.text}"
+
+    def test_webhook_with_spaced_base64_hmac_accepted(
+        self, e2e_client, secret_source
+    ):
+        """A base64 HMAC separated from its prefix by a space is accepted."""
+        callback_url = secret_source["webhook"]["callback_url"]
+        from urllib.parse import urlparse
+
+        path = urlparse(callback_url).path
+        body = b'{"event": "test", "encoding": "base64"}'
+        signature = _hmac_sign_base64(body, secret_source["_secret"])
+
+        response = e2e_client.post(
+            path,
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Signature-256": signature,
+            },
+        )
+        assert response.status_code == 202, (
+            f"Expected 202, got {response.status_code}: {response.text}"
+        )
 
     def test_webhook_with_invalid_hmac_rejected(self, e2e_client, secret_source):
         """Invalid HMAC signature → 401."""
@@ -1357,7 +1387,9 @@ class TestTopicEmitEndpoints:
         assert "user.invited" in curated_topics
         assert "test.e2e_emit" in body["in_use"]
 
-    def test_topics_registry_no_auth_required(self, e2e_client):
-        """GET /api/events/topics is accessible without authentication."""
-        response = e2e_client.get("/api/events/topics")
-        assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
+    def test_topics_registry_requires_platform_admin(self, e2e_client, org1_user):
+        """GET /api/events/topics lists topics across organizations, so it is admin-only."""
+        anonymous = e2e_client.get("/api/events/topics")
+        assert anonymous.status_code in (401, 403), anonymous.text
+        regular = e2e_client.get("/api/events/topics", headers=org1_user.headers)
+        assert regular.status_code == 403, regular.text

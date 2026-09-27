@@ -207,6 +207,87 @@ class TestChatAttachments:
         missing = e2e_client.get(content_url, headers=platform_admin.headers)
         assert missing.status_code == 404
 
+    def test_sdk_artifacts_surface_keeps_attachments_owner_scoped(
+        self,
+        e2e_client,
+        platform_admin,
+        org1_user,
+        org2_user,
+    ):
+        """A regular user's chat uploads are invisible to another regular
+        user through the SDK artifacts surface (list and read by id), not
+        just through the chat-specific attachment endpoints."""
+        agent = e2e_client.post(
+            "/api/agents",
+            json={
+                "name": f"Owner-scoped attachments agent {org1_user.user_id}",
+                "description": "Agent for owner-scoped attachment E2E testing",
+                "system_prompt": "You are a helpful test assistant.",
+                "channels": ["chat"],
+                "access_level": "private",
+            },
+            headers=org1_user.headers,
+        )
+        assert agent.status_code == 201, agent.text
+        agent_id = agent.json()["id"]
+
+        conversation = e2e_client.post(
+            "/api/chat/conversations",
+            json={
+                "agent_id": agent_id,
+                "channel": "chat",
+                "title": "Owner-scoped attachments",
+            },
+            headers=org1_user.headers,
+        )
+        assert conversation.status_code == 201, conversation.text
+        conversation_id = conversation.json()["id"]
+
+        try:
+            upload = e2e_client.post(
+                f"/api/chat/conversations/{conversation_id}/attachments",
+                files=[("files", ("owner-only.txt", b"owner-only content", "text/plain"))],
+                headers={"Authorization": org1_user.headers["Authorization"]},
+            )
+            assert upload.status_code == 200, upload.text
+            artifact_id = upload.json()["attachments"][0]["id"]
+
+            # Owner can list and read via the SDK surface.
+            owner_list = e2e_client.get(
+                "/api/sdk/artifacts",
+                params={"workspace_id": conversation_id},
+                headers=org1_user.headers,
+            )
+            assert owner_list.status_code == 200, owner_list.text
+            assert any(item["id"] == artifact_id for item in owner_list.json())
+
+            owner_read = e2e_client.get(
+                f"/api/sdk/artifacts/{artifact_id}/content",
+                headers=org1_user.headers,
+            )
+            assert owner_read.status_code == 200, owner_read.text
+
+            # A different regular user gets neither the listing nor the content.
+            other_list = e2e_client.get(
+                "/api/sdk/artifacts",
+                params={"workspace_id": conversation_id},
+                headers=org2_user.headers,
+            )
+            assert other_list.status_code == 200, other_list.text
+            assert other_list.json() == []
+
+            other_read = e2e_client.get(
+                f"/api/sdk/artifacts/{artifact_id}/content",
+                headers=org2_user.headers,
+            )
+            assert other_read.status_code == 404, other_read.text
+        finally:
+            e2e_client.delete(
+                f"/api/chat/conversations/{conversation_id}",
+                headers=org1_user.headers,
+            )
+            e2e_client.delete(f"/api/agents/{agent_id}", headers=org1_user.headers)
+
     def test_html_attachment_content_is_always_downloaded(
         self,
         e2e_client,

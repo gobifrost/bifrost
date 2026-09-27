@@ -15,6 +15,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import func, or_, select, text
 
+from src.config import get_settings
 from src.core.database import get_db_context
 from src.jobs.platform.base import PlatformJobPolicy
 from src.jobs.platform.registry import get_platform_job_definition
@@ -81,6 +82,7 @@ async def recover_expired_platform_jobs() -> tuple[int, int]:
                 await db.execute(
                     select(PlatformJob)
                     .where(
+                        PlatformJob.execution_backend == "local",
                         PlatformJob.status.in_(("running", "cancel_requested")),
                         or_(
                             PlatformJob.lease_expires_at.is_(None),
@@ -131,9 +133,24 @@ class ClaimedPlatformJob:
     lease_token: UUID
     timeout_seconds: int
     hard_memory_ratio: float
+    job_type: str = ""
 
 
-async def claim_platform_job() -> ClaimedPlatformJob | None:
+def _remote_job_name(job_id: UUID, lease_token: UUID) -> str:
+    # Must stay identical to kubernetes_client._job_name: the controller
+    # re-renders the manifest from the persisted attempt to verify ownership.
+    # The fingerprint (not the bearer token) goes into the name.
+    from src.jobs.platform.kubernetes_client import _lease_token_fingerprint
+
+    return f"bifrost-job-{job_id.hex}-{_lease_token_fingerprint(lease_token)[:12]}"
+
+
+async def claim_platform_job(
+    *,
+    backend: str = "local",
+    remote_limit: int = 2,
+    remote_memory_bytes: int = 1024 * 1024 * 1024,
+) -> ClaimedPlatformJob | None:
     """Claim one admissible queued job using row locking and a fenced lease."""
     updated: list[PlatformJob] = []
     async with get_db_context() as db:
@@ -142,6 +159,7 @@ async def claim_platform_job() -> ClaimedPlatformJob | None:
                 await db.execute(
                     select(PlatformJob.id)
                     .where(
+                        PlatformJob.execution_backend == backend,
                         PlatformJob.status == "queued",
                         PlatformJob.available_at <= _now(),
                     )
@@ -157,6 +175,7 @@ async def claim_platform_job() -> ClaimedPlatformJob | None:
                     select(PlatformJob)
                     .where(
                         PlatformJob.id == candidate_id,
+                        PlatformJob.execution_backend == backend,
                         PlatformJob.status == "queued",
                         PlatformJob.available_at <= _now(),
                     )
@@ -164,6 +183,8 @@ async def claim_platform_job() -> ClaimedPlatformJob | None:
                 )
             ).scalar_one_or_none()
             if job is None:
+                continue
+            if backend == "kubernetes" and job.kubernetes_job_name is not None:
                 continue
             definition = get_platform_job_definition(job.job_type)
             if definition is None:
@@ -176,7 +197,17 @@ async def claim_platform_job() -> ClaimedPlatformJob | None:
                 job.revision += 1
                 updated.append(job)
                 continue
-            if definition.policy.max_concurrency is not None:
+            # Product concurrency overrides (Settings UI) replace the code
+            # policy default when set. Read per claim so changes apply
+            # without restarts; the row is a single indexed lookup.
+            from src.services.kubernetes_execution import (
+                KubernetesExecutionService,
+            )
+
+            max_concurrency = await KubernetesExecutionService(
+                db
+            ).effective_max_concurrency(definition)
+            if max_concurrency is not None:
                 handler_lock = (
                     await db.execute(
                         text("SELECT pg_try_advisory_xact_lock(hashtext(:key))"),
@@ -193,7 +224,7 @@ async def claim_platform_job() -> ClaimedPlatformJob | None:
                         )
                     )
                 ).scalar_one()
-                if running_count >= definition.policy.max_concurrency:
+                if running_count >= max_concurrency:
                     continue
             if job.resource_lock_key is not None:
                 resource_lock = (
@@ -216,7 +247,38 @@ async def claim_platform_job() -> ClaimedPlatformJob | None:
                 ).scalar_one()
                 if resource_busy:
                     continue
-            if not _memory_allows_start(
+            if backend == "kubernetes":
+                kubernetes_namespace = get_settings().kubernetes_build_namespace
+                if not kubernetes_namespace:
+                    raise RuntimeError(
+                        "BIFROST_KUBERNETES_BUILD_NAMESPACE is required "
+                        "to claim Kubernetes platform jobs."
+                    )
+                backend_lock = (
+                    await db.execute(
+                        text("SELECT pg_try_advisory_xact_lock(hashtext(:key))"),
+                        {"key": "bifrost:platform-job-backend:kubernetes"},
+                    )
+                ).scalar_one()
+                if not backend_lock:
+                    continue
+                remote_running_count = (
+                    await db.execute(
+                        select(func.count(PlatformJob.id)).where(
+                            PlatformJob.execution_backend == "kubernetes",
+                            PlatformJob.status.in_(("running", "cancel_requested")),
+                        )
+                    )
+                ).scalar_one()
+                if remote_running_count >= remote_limit:
+                    continue
+                if job.memory_required_bytes > remote_memory_bytes:
+                    if job.phase != "Waiting for Kubernetes capacity":
+                        job.phase = "Waiting for Kubernetes capacity"
+                        job.revision += 1
+                        updated.append(job)
+                    continue
+            elif not _memory_allows_start(
                 definition.policy,
                 memory_required_bytes=job.memory_required_bytes,
             ):
@@ -229,7 +291,11 @@ async def claim_platform_job() -> ClaimedPlatformJob | None:
             now = _now()
             token = uuid4()
             job.status = "running"
-            job.phase = "Starting"
+            job.phase = (
+                "Waiting for Kubernetes capacity"
+                if backend == "kubernetes"
+                else "Starting"
+            )
             job.attempt += 1
             job.started_at = job.started_at or now
             job.lease_owner = f"{socket.gethostname()}:{os.getpid()}"
@@ -239,10 +305,21 @@ async def claim_platform_job() -> ClaimedPlatformJob | None:
             job.error_code = None
             job.error_message = None
             job.error_retryable = None
-            current_memory, memory_limit = get_cgroup_memory()
-            job.memory_start_bytes = current_memory if current_memory >= 0 else None
-            job.memory_peak_bytes = current_memory if current_memory >= 0 else None
-            job.memory_limit_bytes = memory_limit if memory_limit > 0 else None
+            if backend == "kubernetes":
+                job.kubernetes_job_name = _remote_job_name(job.id, token)
+                job.kubernetes_namespace = kubernetes_namespace
+                job.kubernetes_job_uid = None
+                job.kubernetes_pod_uid = None
+                job.kubernetes_launch_started_at = now
+                job.runner_started_at = None
+                job.memory_start_bytes = None
+                job.memory_peak_bytes = None
+                job.memory_limit_bytes = remote_memory_bytes
+            else:
+                current_memory, memory_limit = get_cgroup_memory()
+                job.memory_start_bytes = current_memory if current_memory >= 0 else None
+                job.memory_peak_bytes = current_memory if current_memory >= 0 else None
+                job.memory_limit_bytes = memory_limit if memory_limit > 0 else None
             job.revision += 1
             await db.commit()
             claimed = ClaimedPlatformJob(
@@ -250,6 +327,7 @@ async def claim_platform_job() -> ClaimedPlatformJob | None:
                 lease_token=token,
                 timeout_seconds=job.timeout_seconds,
                 hard_memory_ratio=definition.policy.hard_memory_ratio,
+                job_type=job.job_type,
             )
             for changed_job in updated:
                 await publish_platform_job_update(changed_job)
@@ -416,7 +494,7 @@ async def run_claimed_platform_job(claim: ClaimedPlatformJob) -> bool:
                     claim.lease_token,
                     error_code="memory_pressure",
                     error_message=(
-                        "Platform job was stopped before the scheduler container "
+                        "Platform job was stopped before the runner container "
                         "exceeded its memory limit."
                     ),
                 )
@@ -439,7 +517,12 @@ async def run_claimed_platform_job(claim: ClaimedPlatformJob) -> bool:
 
     async with get_db_context() as db:
         job = await db.get(PlatformJob, claim.id)
-        if job is not None and job.status in ("succeeded", "failed", "cancelled"):
+        if job is not None and job.status in (
+            "succeeded",
+            "failed",
+            "cancelled",
+            "requires_action",
+        ):
             return job.status == "succeeded"
 
     await _handle_runner_loss(
@@ -457,7 +540,7 @@ async def run_claimed_platform_job(claim: ClaimedPlatformJob) -> bool:
 async def process_platform_jobs() -> tuple[int, int]:
     """Recover expired leases, then run at most one queued platform job."""
     recovered, recovery_failures = await recover_expired_platform_jobs()
-    claim = await claim_platform_job()
+    claim = await claim_platform_job(backend="local")
     if claim is None:
         return recovered, recovery_failures
     succeeded = await run_claimed_platform_job(claim)

@@ -7,7 +7,8 @@ import { GitHub } from "./GitHub";
 const {
 	mockUseGitHubConfig,
 	mockUseGitHubRepositories,
-	mockConfigureMutateAsync,
+	mockPreviewConnect,
+	mockEnqueueConnect,
 	mockCreateRepoMutateAsync,
 	mockDisconnectMutateAsync,
 	mockValidateGitHubToken,
@@ -15,7 +16,8 @@ const {
 } = vi.hoisted(() => ({
 	mockUseGitHubConfig: vi.fn(),
 	mockUseGitHubRepositories: vi.fn(),
-	mockConfigureMutateAsync: vi.fn(),
+	mockPreviewConnect: vi.fn(),
+	mockEnqueueConnect: vi.fn(),
 	mockCreateRepoMutateAsync: vi.fn(),
 	mockDisconnectMutateAsync: vi.fn(),
 	mockValidateGitHubToken: vi.fn(),
@@ -26,11 +28,8 @@ vi.mock("@/hooks/useGitHub", () => ({
 	useGitHubConfig: () => mockUseGitHubConfig(),
 	useGitHubRepositories: (enabled?: boolean) =>
 		mockUseGitHubRepositories(enabled),
-	useConfigureGitHub: () => ({
-		mutateAsync: mockConfigureMutateAsync,
-		isError: false,
-		isSuccess: false,
-	}),
+	previewGitHubConnect: (...args: unknown[]) => mockPreviewConnect(...args),
+	enqueueGitHubConnect: (...args: unknown[]) => mockEnqueueConnect(...args),
 	useCreateGitHubRepository: () => ({
 		mutateAsync: mockCreateRepoMutateAsync,
 		isError: false,
@@ -71,9 +70,22 @@ beforeEach(() => {
 		isFetching: false,
 		refetch: vi.fn(),
 	});
-	mockConfigureMutateAsync.mockResolvedValue({
-		job_id: "job-1",
+	mockPreviewConnect.mockResolvedValue({
+		token: "review-token",
+		repository_url: "https://github.com/fixture-owner/app",
+		branch: "preview",
+		state: "requires_reconciliation",
+		items: [
+			{ path: "apps/local.tsx", classification: "local_only" },
+			{ path: "apps/remote.tsx", classification: "remote_only" },
+			{ path: "apps/same.tsx", classification: "identical" },
+			{ path: "apps/shared.tsx", classification: "conflict" },
+		],
+	});
+	mockEnqueueConnect.mockResolvedValue({
+		job_id: "connect-job",
 		status: "queued",
+		notification_id: "notification-1",
 	});
 	mockCreateRepoMutateAsync.mockResolvedValue({
 		full_name: "fixture-owner/new-repo",
@@ -94,7 +106,7 @@ beforeEach(() => {
 });
 
 describe("GitHub settings", () => {
-	it("validates a token, selects repository and branch, then submits the actual configure contract", async () => {
+	it("previews a selected repository and queues an explicit reconcile decision", async () => {
 		const { user } = renderWithProviders(<GitHub />);
 
 		await user.type(
@@ -125,12 +137,38 @@ describe("GitHub settings", () => {
 			await screen.findByRole("option", { name: /^preview$/i }),
 		);
 		await user.click(
-			screen.getByRole("button", { name: "Configure GitHub" }),
+			screen.getByRole("button", { name: "Review connection" }),
 		);
 
 		await waitFor(() =>
-			expect(mockConfigureMutateAsync).toHaveBeenCalledWith({
-				body: { repo_url: "fixture-owner/app", branch: "preview" },
+			expect(mockPreviewConnect).toHaveBeenCalledWith({
+				repository_url: "fixture-owner/app",
+				branch: "preview",
+			}),
+		);
+		const review = await screen.findByRole("region", {
+			name: "Review workspace connection",
+		});
+		expect(
+			within(review).getByLabelText("Connection summary"),
+		).toHaveTextContent("1 conflict");
+		await user.click(
+			within(review).getByRole("radio", { name: /reconcile both/i }),
+		);
+		await user.click(
+			within(review).getByRole("radio", {
+				name: /keep local.*apps\/shared.tsx/i,
+			}),
+		);
+		await user.click(
+			within(review).getByRole("button", { name: "Connect GitHub" }),
+		);
+		await waitFor(() =>
+			expect(mockEnqueueConnect).toHaveBeenCalledWith({
+				preview_token: "review-token",
+				strategy: "reconcile",
+				decisions: { "apps/shared.tsx": "local" },
+				confirm_destructive: false,
 			}),
 		);
 	});

@@ -28,7 +28,11 @@ test.describe("Home launch acceptance (admin)", () => {
 		try {
 			await page.goto("/");
 			await expect(
-				page.getByRole("heading", { name: "Your workspace" }),
+				page.getByRole("heading", {
+					name: "Workspace",
+					exact: true,
+					level: 1,
+				}),
 			).toBeVisible({ timeout: 10000 });
 			await expect(
 				page.getByRole("region", { name: "Browse resources" }),

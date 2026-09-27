@@ -46,6 +46,9 @@ async def test_store_returns_opaque_reference_and_persists_bytes() -> None:
 async def test_store_places_logical_file_in_workspace_prefix() -> None:
     db = MagicMock()
     db.flush = AsyncMock()
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = None
+    db.execute = AsyncMock(return_value=result)
     storage = AsyncMock()
     workspace_id = uuid4()
 
@@ -109,5 +112,56 @@ async def test_get_authorized_hides_missing_or_out_of_scope_artifact() -> None:
         await ArtifactService(db).get_authorized(
             uuid4(),
             user_id=uuid4(),
-            organization_id=uuid4(),
         )
+
+
+@pytest.mark.asyncio
+async def test_store_rejects_writing_into_another_users_existing_workspace() -> None:
+    """A regular caller cannot inject a file into a workspace it doesn't own."""
+    db = MagicMock()
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = uuid4()  # existing, different owner
+    db.execute = AsyncMock(return_value=result)
+    storage = AsyncMock()
+
+    with patch(
+        "src.services.artifacts.get_file_storage_service",
+        return_value=storage,
+    ), pytest.raises(ArtifactAccessError):
+        await ArtifactService(db).store(
+            filename="Portrait.png",
+            content_type="image/png",
+            content=b"png-data",
+            created_by_user_id=uuid4(),
+            organization_id=uuid4(),
+            workspace_id=uuid4(),
+            logical_path="images/Portrait.png",
+        )
+    storage.write_raw_to_s3.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_store_bypass_ignores_existing_workspace_owner() -> None:
+    """A bypass caller (platform admin / provider org) may write into any workspace."""
+    db = MagicMock()
+    db.flush = AsyncMock()
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = uuid4()  # existing, different owner
+    db.execute = AsyncMock(return_value=result)
+    storage = AsyncMock()
+
+    with patch(
+        "src.services.artifacts.get_file_storage_service",
+        return_value=storage,
+    ):
+        artifact = await ArtifactService(db).store(
+            filename="Portrait.png",
+            content_type="image/png",
+            content=b"png-data",
+            created_by_user_id=uuid4(),
+            organization_id=uuid4(),
+            workspace_id=uuid4(),
+            logical_path="images/Portrait.png",
+            bypass=True,
+        )
+    assert artifact.logical_path == "images/Portrait.png"

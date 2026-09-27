@@ -216,6 +216,24 @@ SIGNATURE_PARITY_SPECS: list[dict] = [
         "extra_args": {"workflow_ref"},
         "field_renames": {},
     },
+    {
+        "model_path": "src.models.contracts.agents:AgentCreate",
+        "tool_path": "src.services.mcp_server.tools.agents:bifrost_agent_create",
+        # ``organization_id`` is excluded from DTO flags (AgentCreate is in
+        # _ORG_TARGET_EXCLUDE), so it never reaches the rename lookup below —
+        # the tool exposes org targeting as ``scope`` (global / org ref /
+        # omitted), listed here as an extra_arg for that reason. The rename
+        # entry documents the intended mapping even though the exclude
+        # short-circuits it first.
+        "extra_args": {"scope"},
+        "field_renames": {"organization_id": "scope"},
+    },
+    {
+        "model_path": "src.models.contracts.agents:AgentUpdate",
+        "tool_path": "src.services.mcp_server.tools.agents:bifrost_agent_update",
+        "extra_args": {"agent_ref", "scope"},
+        "field_renames": {"organization_id": "scope"},
+    },
 ]
 
 
@@ -714,3 +732,149 @@ class TestMcpParityWorkflow:
         # The delete endpoint returns either a plain dict (deleted OK) or a
         # 409 we surface as error. Happy path: no "error" in structured.
         assert delete_result.structured_content is not None
+
+
+# =============================================================================
+# Agents
+# =============================================================================
+
+
+@pytest.fixture
+def org_user_context(org1_user, mcp_bridge_env) -> MockMCPContext:
+    """``MCPContext`` for a regular (non-admin) org1 user."""
+    return MockMCPContext(
+        user_id=str(org1_user.user_id),
+        user_email=org1_user.email,
+        is_platform_admin=False,
+        org_id=str(org1_user.organization_id),
+        user_name=org1_user.name,
+    )
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+class TestMcpParityAgents:
+    async def test_agents_crud_roundtrip(
+        self, admin_context, e2e_client, platform_admin
+    ) -> None:
+        from src.services.mcp_server.tools.agents import (
+            bifrost_agent_create,
+            bifrost_agent_delete,
+            bifrost_agent_get,
+            bifrost_agent_list,
+            bifrost_agent_update,
+        )
+
+        # list
+        list_result = await bifrost_agent_list(admin_context)
+        assert list_result.structured_content is not None
+        assert list_result.structured_content.get("count", -1) >= 0
+
+        # create
+        name = f"mcp-parity-agent-{uuid4().hex[:8]}"
+        create_result = await bifrost_agent_create(
+            admin_context,
+            name=name,
+            system_prompt="You are a test assistant.",
+            access_level="authenticated",
+        )
+        created = create_result.structured_content or {}
+        assert "error" not in created, created
+        agent_id = str(created["id"])
+
+        # get by UUID
+        get_result = await bifrost_agent_get(admin_context, agent_ref=agent_id)
+        fetched = get_result.structured_content or {}
+        assert "error" not in fetched, fetched
+        assert fetched.get("id") == agent_id
+
+        # get by name
+        get_by_name_result = await bifrost_agent_get(admin_context, agent_ref=name)
+        by_name = get_by_name_result.structured_content or {}
+        assert "error" not in by_name, by_name
+        assert by_name.get("id") == agent_id
+
+        # update
+        renamed = f"mcp-parity-agent-renamed-{uuid4().hex[:8]}"
+        update_result = await bifrost_agent_update(
+            admin_context, agent_ref=agent_id, name=renamed
+        )
+        updated = update_result.structured_content or {}
+        assert "error" not in updated, updated
+        assert updated.get("name") == renamed
+
+        # Confirm via REST.
+        get_resp = e2e_client.get(
+            f"/api/agents/{agent_id}", headers=platform_admin.headers
+        )
+        assert get_resp.status_code == 200
+        assert get_resp.json()["name"] == renamed
+
+        # delete
+        delete_result = await bifrost_agent_delete(admin_context, agent_ref=agent_id)
+        assert delete_result.structured_content is not None
+        assert delete_result.structured_content.get("deleted") == agent_id
+        get_after = e2e_client.get(
+            f"/api/agents/{agent_id}", headers=platform_admin.headers
+        )
+        assert get_after.status_code == 404
+
+    async def test_regular_user_create_private_agent_succeeds(
+        self, org_user_context: MockMCPContext, e2e_client, org1_user
+    ) -> None:
+        """A regular org user creating a private Agent must succeed.
+
+        Proves the thin wrapper only sends keys the caller actually passed —
+        if it defaulted ``organization_id``/list/budget fields onto the wire,
+        this would trip the new non-admin 403 gates in ``routers/agents.py``.
+        """
+        from src.services.mcp_server.tools.agents import (
+            bifrost_agent_create,
+            bifrost_agent_delete,
+        )
+
+        name = f"mcp-parity-private-agent-{uuid4().hex[:8]}"
+        create_result = await bifrost_agent_create(
+            org_user_context,
+            name=name,
+            system_prompt="You are a private test assistant.",
+            access_level="private",
+        )
+        created = create_result.structured_content or {}
+        assert "error" not in created, created
+        agent_id = str(created["id"])
+        assert created.get("organization_id") == str(org1_user.organization_id)
+
+        delete_result = await bifrost_agent_delete(
+            org_user_context, agent_ref=agent_id
+        )
+        assert delete_result.structured_content is not None
+        assert delete_result.structured_content.get("deleted") == agent_id
+
+    async def test_regular_user_update_of_someone_elses_agent_is_403(
+        self, admin_context, org_user_context: MockMCPContext, e2e_client
+    ) -> None:
+        from src.services.mcp_server.tools.agents import (
+            bifrost_agent_create,
+            bifrost_agent_delete,
+            bifrost_agent_update,
+        )
+
+        create_result = await bifrost_agent_create(
+            admin_context,
+            name=f"mcp-parity-not-yours-{uuid4().hex[:8]}",
+            system_prompt="You are an admin-owned assistant.",
+            access_level="authenticated",
+        )
+        created = create_result.structured_content or {}
+        assert "error" not in created, created
+        agent_id = str(created["id"])
+
+        try:
+            update_result = await bifrost_agent_update(
+                org_user_context, agent_ref=agent_id, name="hijacked"
+            )
+            payload = update_result.structured_content or {}
+            assert payload.get("status_code") == 403, payload
+        finally:
+            await bifrost_agent_delete(admin_context, agent_ref=agent_id)

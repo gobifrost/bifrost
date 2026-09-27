@@ -10,7 +10,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from .client import get_client, raise_for_status_with_detail
+from .client import (
+    get_client,
+    raise_for_status_with_detail,
+)
 from .models import ConfigData
 from ._context import resolve_scope
 
@@ -34,7 +37,11 @@ class config:
         """
         Get configuration value with automatic secret decryption.
 
-        Calls SDK API endpoint to retrieve configuration.
+        Sends the ordinary HTTP request through the shared ``BifrostClient``:
+        over the worker's private Unix socket when the engine injected one,
+        and over the network API otherwise. Same path, body, bearer token,
+        timeout, and error handling as every other SDK request; a local
+        failure raises and never falls back to the network API.
 
         Args:
             key: Configuration key
@@ -60,18 +67,24 @@ class config:
             >>> timeout = await config.get("timeout", default=30)
             >>> org_setting = await config.get("key", scope="org-uuid-here")
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
-        response = await client.post(
+        # The shared BifrostClient sends the ordinary HTTP request over the
+        # worker's private Unix socket when the engine injected one, and over
+        # the network otherwise. Same path, body, bearer token, timeout, and
+        # error handling as every other SDK request; a local failure raises
+        # and never falls back to the network API.
+        client = get_client()
+        response = await client.engine_request(
+            "POST",
             "/api/sdk/config/get",
-            json={"key": key, "scope": effective_scope}
+            json={"key": key, "scope": effective_scope},
         )
-
         # A missing key comes back as 200 with a null body; anything else
-        # (permission denied, server error, transport) must surface, not be
-        # silently collapsed into the caller's default.
+        # (permission denied, server error, transport) must surface, not
+        # be silently collapsed into the caller's default.
         raise_for_status_with_detail(response)
         result = response.json()
+
         if result is None:
             return default
         value = result.get("value", default)
@@ -90,7 +103,11 @@ class config:
         """
         Set configuration value.
 
-        Calls SDK API endpoint to store configuration (writes directly to database).
+        Sends the ordinary HTTP request through the shared ``BifrostClient``:
+        over the worker's private Unix socket when the engine injected one,
+        and over the network API otherwise. A local failure raises and never
+        falls back to the network API (a write may already have committed, so
+        a retry could double-apply).
 
         Args:
             key: Configuration key
@@ -110,16 +127,17 @@ class config:
             >>> await config.set("api_key", "secret123", is_secret=True)
             >>> await config.set("org_setting", "value", scope="org-uuid-here")
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
-        response = await client.post(
+        client = get_client()
+        response = await client.engine_request(
+            "POST",
             "/api/sdk/config/set",
             json={
                 "key": key,
                 "value": value,
                 "is_secret": is_secret,
                 "scope": effective_scope,
-            }
+            },
         )
         raise_for_status_with_detail(response)
 
@@ -128,7 +146,12 @@ class config:
         """
         List configuration key-value pairs.
 
-        Note: Secret values are shown as the decrypted value (or "[SECRET]" on error).
+        Sends the ordinary HTTP request through the shared ``BifrostClient``:
+        over the worker's private Unix socket when the engine injected one,
+        and over the network API otherwise. A local failure raises and never
+        falls back to the network API.
+
+        Note: Secret values are redacted as "[SECRET]".
 
         Args:
             scope: Organization scope override. Omit to use the execution
@@ -154,11 +177,12 @@ class config:
             >>> timeout = cfg.timeout or 30
             >>> org_cfg = await config.list(scope="org-uuid-here")
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
-        response = await client.post(
+        client = get_client()
+        response = await client.engine_request(
+            "POST",
             "/api/sdk/config/list",
-            json={"scope": effective_scope}
+            json={"scope": effective_scope},
         )
         raise_for_status_with_detail(response)
         return ConfigData.model_validate({"data": response.json()})
@@ -168,7 +192,10 @@ class config:
         """
         Delete configuration value.
 
-        Calls SDK API endpoint to delete configuration (deletes directly from database).
+        Sends the ordinary HTTP request through the shared ``BifrostClient``:
+        over the worker's private Unix socket when the engine injected one,
+        and over the network API otherwise. A local failure raises and never
+        falls back to the network API.
 
         Args:
             key: Configuration key
@@ -188,11 +215,12 @@ class config:
             >>> await config.delete("old_api_url")
             >>> await config.delete("old_api_url")
         """
-        client = get_client()
         effective_scope = resolve_scope(scope)
-        response = await client.post(
+        client = get_client()
+        response = await client.engine_request(
+            "POST",
             "/api/sdk/config/delete",
-            json={"key": key, "scope": effective_scope}
+            json={"key": key, "scope": effective_scope},
         )
         raise_for_status_with_detail(response)
         return response.json()
