@@ -1209,28 +1209,55 @@ def test_canonical_catalog_mcp_names_are_all_valid() -> None:
 
 
 # Domains whose registered MCP tool ids are already reconciled with the
-# catalog's ``bifrost_<noun>..._<verb>`` names (RBAC R1b: agents; later
-# batches add their domain here as each is migrated to a thin wrapper).
-CANONICAL_MCP_DOMAINS = {"agents"}
+# catalog's ``bifrost_<noun>..._<verb>`` names (RBAC R1b: agents; batch 2
+# adds executions, roles, platform, claims, files; later batches add their
+# domain here as each is migrated to a thin wrapper).
+#
+# The domain key is ``operation_id.split(".")[0]``. This only ever pulls in
+# operations that both belong to the domain AND declare an MCP binding
+# (``operation.mcp is not None`` below) — sibling operations in the same
+# top-level domain that have no MCP tool (e.g. ``roles.users.*``,
+# ``roles.forms.*``, ``files.structure.list``) are excluded by that filter,
+# not by narrowing the domain set, so no *new* tool registration is implied
+# by adding a domain here.
+CANONICAL_MCP_DOMAINS = {"agents", "executions", "roles", "platform", "claims", "files"}
+
+# Tool module for each canonical MCP domain, keyed the same as the domain
+# prefix above. Each module's ``TOOLS`` list (the same list
+# ``register_tools`` feeds into FastMCP) is compared against the catalog's
+# MCP names for that domain — this is the tripwire that would catch a tool
+# module rename drifting from the catalog rename.
+_CANONICAL_MCP_TOOL_MODULES = {
+    "agents": "src.services.mcp_server.tools.agents",
+    "executions": "src.services.mcp_server.tools.execution",
+    "roles": "src.services.mcp_server.tools.roles",
+    "platform": "src.services.mcp_server.tools.platform_jobs",
+    "claims": "src.services.mcp_server.tools.claims",
+    "files": "src.services.mcp_server.tools.files",
+}
 
 
-def test_registered_agent_mcp_tool_ids_match_the_catalog() -> None:
-    """Every registered Agent MCP tool id equals its catalog MCP name.
+def test_registered_mcp_tool_ids_match_the_catalog() -> None:
+    """Every registered MCP tool id in a canonical domain equals its catalog name.
 
-    Reads the actually-registered tool ids from the ``agents`` tool module's
-    ``TOOLS`` list (the same list ``register_tools`` feeds into FastMCP),
-    not just the catalog metadata — this is the tripwire that would catch a
-    tool module rename drifting from the catalog rename.
+    Reads the actually-registered tool ids from each domain's tool module
+    ``TOOLS`` list and compares against the catalog's MCP names for that
+    domain (operations with no MCP binding are not counted on either side).
     """
-    from src.services.mcp_server.tools import agents as agents_mod
+    import importlib
 
-    registered_ids = {tool_id for tool_id, _name, _description in agents_mod.TOOLS}
-    catalog_names = {
-        operation.mcp.name
-        for operation in OPERATION_CATALOG
-        if operation.operation_id.split(".")[0] in CANONICAL_MCP_DOMAINS
-        and operation.mcp is not None
-    }
-    assert registered_ids == catalog_names
+    for domain in sorted(CANONICAL_MCP_DOMAINS):
+        module = importlib.import_module(_CANONICAL_MCP_TOOL_MODULES[domain])
+        registered_ids = {tool_id for tool_id, _name, _description in module.TOOLS}
+        catalog_names = {
+            operation.mcp.name
+            for operation in OPERATION_CATALOG
+            if operation.operation_id.split(".")[0] == domain
+            and operation.mcp is not None
+        }
+        assert registered_ids == catalog_names, (
+            f"domain {domain!r}: registered={sorted(registered_ids)} "
+            f"catalog={sorted(catalog_names)}"
+        )
 
 

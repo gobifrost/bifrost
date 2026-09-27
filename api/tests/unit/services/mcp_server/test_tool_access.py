@@ -587,8 +587,8 @@ class TestSystemToolMetadata:
             # Workflow and execution tools
             "validate_workflow",
             "get_workflow",
-            "list_executions",
-            "get_execution",
+            "bifrost_execution_list",
+            "bifrost_execution_get",
         ]
 
         for tool_id in expected_tools:

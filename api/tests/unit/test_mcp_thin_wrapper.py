@@ -1,8 +1,8 @@
 """Guardrail tests for MCP parity tools (Task 6 + Task 11).
 
 Task 11 adds solution-scope forwarding to the file policy MCP tools —
-``list_file_policies``, ``get_file_policy``, ``set_file_policy``,
-``delete_file_policy`` — each accepts an optional ``solution`` param that
+``bifrost_file_policy_list``, ``bifrost_file_policy_get``, ``bifrost_file_policy_set``,
+``bifrost_file_policy_delete`` — each accepts an optional ``solution`` param that
 is forwarded as ``?solution=<uuid>`` to the REST endpoint via ``call_rest``.
 Tests for that behaviour live at the bottom of this file under
 ``test_file_policy_solution_scope_*``.
@@ -48,11 +48,13 @@ from src.services.mcp_server.tools import (  # noqa: E402
     agents as agents_mod,
     claims as claims_mod,
     configs as configs_mod,
+    execution as execution_mod,
     files as files_mod,
     gateway as gateway_mod,
     integrations as integrations_mod,
     organizations as organizations_mod,
     apps as apps_mod,
+    platform_jobs as platform_jobs_mod,
     policy_rules as policy_rules_mod,
     roles as roles_mod,
     workflow as workflow_mod,
@@ -67,7 +69,7 @@ PARITY_HANDLERS: dict[str, set[str]] = {
         "bifrost_agent_update",
         "bifrost_agent_delete",
     },
-    "roles": {"list_roles", "create_role", "update_role", "delete_role"},
+    "roles": {"bifrost_role_list", "bifrost_role_create", "bifrost_role_update", "bifrost_role_delete"},
     "configs": {
         "list_configs",
         "create_config",
@@ -75,11 +77,11 @@ PARITY_HANDLERS: dict[str, set[str]] = {
         "delete_config",
     },
     "claims": {
-        "list_claims",
-        "get_claim",
-        "create_claim",
-        "update_claim",
-        "delete_claim",
+        "bifrost_claim_list",
+        "bifrost_claim_get",
+        "bifrost_claim_create",
+        "bifrost_claim_update",
+        "bifrost_claim_delete",
     },
     "organizations": {
         "list_organizations",
@@ -101,12 +103,14 @@ PARITY_HANDLERS: dict[str, set[str]] = {
         "revoke_workflow_role",
     },
     "files": {
-        "list_file_policies",
-        "get_file_policy",
-        "set_file_policy",
-        "delete_file_policy",
+        "bifrost_file_policy_list",
+        "bifrost_file_policy_get",
+        "bifrost_file_policy_set",
+        "bifrost_file_policy_delete",
     },
-    "apps": {"publish_app", "get_app_publish_status"},
+    "apps": {"publish_app"},
+    "platform_jobs": {"bifrost_platform_job_get"},
+    "execution": {"bifrost_execution_list", "bifrost_execution_get"},
     "policy_rules": {
         "list_policy_rules",
         "create_policy_rule",
@@ -135,6 +139,8 @@ MODULES = {
     "files": files_mod,
     "policy_rules": policy_rules_mod,
     "apps": apps_mod,
+    "platform_jobs": platform_jobs_mod,
+    "execution": execution_mod,
     "gateway": gateway_mod,
 }
 
@@ -283,12 +289,12 @@ async def test_get_app_publish_status_requires_action_is_an_error() -> None:
         },
     }
 
-    with patch.object(apps_mod, "call_rest", AsyncMock(return_value=(200, response))):
-        result = await apps_mod.get_app_publish_status(ctx, "publish-job-id")
+    with patch.object(platform_jobs_mod, "call_rest", AsyncMock(return_value=(200, response))):
+        result = await platform_jobs_mod.bifrost_platform_job_get(ctx, "publish-job-id")
 
     assert result.structured_content is not None
     assert result.structured_content["error"] == (
-        "Application publish requires_action: Confirm deletes"
+        "Platform job requires_action: Confirm deletes"
     )
     assert result.structured_content["status"] == "requires_action"
     assert result.structured_content["result"] == {"requires_action": "confirm_deletes"}
@@ -375,15 +381,15 @@ async def test_update_integration_forwards_description_when_provided() -> None:
 
 @pytest.mark.asyncio
 async def test_file_policy_solution_scope_forwarded_list() -> None:
-    """list_file_policies forwards ?solution= to the REST endpoint."""
-    from src.services.mcp_server.tools.files import list_file_policies
+    """bifrost_file_policy_list forwards ?solution= to the REST endpoint."""
+    from src.services.mcp_server.tools.files import bifrost_file_policy_list
 
     mock_call_rest, captures = _call_rest_capturing_params()
     ctx = _make_mcp_context()
     install_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
     with patch("src.services.mcp_server.tools.files.call_rest", mock_call_rest):
-        await list_file_policies(ctx, location="solutions", solution=install_id)
+        await bifrost_file_policy_list(ctx, location="solutions", solution=install_id)
 
     assert len(captures) == 1
     assert captures[0]["params"].get("solution") == install_id
@@ -391,8 +397,8 @@ async def test_file_policy_solution_scope_forwarded_list() -> None:
 
 @pytest.mark.asyncio
 async def test_file_policy_solution_scope_forwarded_get() -> None:
-    """get_file_policy forwards ?solution= to the REST endpoint."""
-    from src.services.mcp_server.tools.files import get_file_policy
+    """bifrost_file_policy_get forwards ?solution= to the REST endpoint."""
+    from src.services.mcp_server.tools.files import bifrost_file_policy_get
 
     mock_call_rest, captures = _call_rest_capturing_params()
     ctx = _make_mcp_context()
@@ -403,7 +409,7 @@ async def test_file_policy_solution_scope_forwarded_get() -> None:
 
     install_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
     with patch("src.services.mcp_server.tools.files.call_rest", AsyncMock(side_effect=_fake)):
-        await get_file_policy(ctx, path="data/", location="solutions", solution=install_id)
+        await bifrost_file_policy_get(ctx, path="data/", location="solutions", solution=install_id)
 
     assert captures[0]["params"].get("solution") == install_id
 
@@ -411,13 +417,13 @@ async def test_file_policy_solution_scope_forwarded_get() -> None:
 @pytest.mark.asyncio
 async def test_file_policy_solution_scope_omitted_when_none() -> None:
     """When solution is None the ?solution= key is absent from the REST call."""
-    from src.services.mcp_server.tools.files import list_file_policies
+    from src.services.mcp_server.tools.files import bifrost_file_policy_list
 
     mock_call_rest, captures = _call_rest_capturing_params()
     ctx = _make_mcp_context()
 
     with patch("src.services.mcp_server.tools.files.call_rest", mock_call_rest):
-        await list_file_policies(ctx, location="workspace", solution=None)
+        await bifrost_file_policy_list(ctx, location="workspace", solution=None)
 
     assert len(captures) == 1
     assert "solution" not in captures[0]["params"]
@@ -427,13 +433,13 @@ def test_file_policy_tools_accept_solution_param() -> None:
     """All four file policy tools declare an optional ``solution`` keyword argument."""
     import inspect as _inspect
     from src.services.mcp_server.tools.files import (
-        delete_file_policy,
-        get_file_policy,
-        list_file_policies,
-        set_file_policy,
+        bifrost_file_policy_delete,
+        bifrost_file_policy_get,
+        bifrost_file_policy_list,
+        bifrost_file_policy_set,
     )
 
-    for fn in (list_file_policies, get_file_policy, set_file_policy, delete_file_policy):
+    for fn in (bifrost_file_policy_list, bifrost_file_policy_get, bifrost_file_policy_set, bifrost_file_policy_delete):
         sig = _inspect.signature(fn)
         assert "solution" in sig.parameters, (
             f"{fn.__name__} does not accept a 'solution' parameter (Task 11)"
