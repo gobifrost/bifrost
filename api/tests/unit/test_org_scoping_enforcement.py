@@ -65,7 +65,6 @@ _INLINE_ORG_RE = re.compile(
 # be rare and obvious in code review. Removing an entry signals migration
 # progress.
 ALLOW_LIST_INLINE_ORG: set[tuple[str, str, str]] = {
-    ('routers/agents.py', 'MCPConnection.organization_id == agent_data.organization_id,', 'agents MCPConnection lookup; phase 6 migrates via MCPConnectionRepository'),
     # ApplicationRepository entries removed in phase 6 — repository relocated
     # from routers/applications.py to repositories/applications.py.
     ('routers/claims.py', 'Table.organization_id == org_id,', 'claims inline lookups; phase 6 migrates via CustomClaimRepository'),
