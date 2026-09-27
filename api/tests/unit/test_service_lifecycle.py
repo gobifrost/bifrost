@@ -529,6 +529,18 @@ async def test_list_attempts_paginates(db_session):
     assert total == 2
     assert items[0].created_at >= items[1].created_at
 
+    page, total = await service_lifecycle.list_attempts(
+        db_session, definition.id, limit=1, offset=1
+    )
+    assert [a.id for a in page] == [items[1].id]
+    assert total == 2
+
+    past_end, total = await service_lifecycle.list_attempts(
+        db_session, definition.id, offset=5
+    )
+    assert past_end == []
+    assert total == 2
+
 
 # --- Codex review fixes ---
 

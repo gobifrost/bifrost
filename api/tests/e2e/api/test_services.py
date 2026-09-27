@@ -36,6 +36,13 @@ def service_workflow(e2e_client, platform_admin):
     assert result["type"] == "service"
     yield result
 
+    # Park before deleting the file: the definition survives file deletion,
+    # and an enabled/running-desired row stays eligible for the worker-pull
+    # claim loop (claim_eligible_service claims ANY eligible row) — leaking
+    # into other tests that assume they own the only eligible service.
+    service_id = _service_id(e2e_client, platform_admin.headers, result["id"])
+    e2e_client.post(f"/api/services/{service_id}/stop", headers=platform_admin.headers)
+    e2e_client.post(f"/api/services/{service_id}/disable", headers=platform_admin.headers)
     e2e_client.delete(
         f"/api/files/editor?path={SERVICE_PATH}",
         headers=platform_admin.headers,

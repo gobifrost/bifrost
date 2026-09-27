@@ -8,6 +8,7 @@ capacity, the org gate, and shutdown handover.
 
 import json
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
@@ -44,6 +45,23 @@ class FakeRedis:
         for key in keys:
             self.values.pop(key, None)
         return len(keys)
+
+
+# The test stack's worker container runs a real claim loop against this same
+# database. Services created here become eligible a day ahead of wall-clock
+# time, and this process's lifecycle clock runs two days ahead, so only the
+# loop under test can ever claim them.
+_ELIGIBLE_AHEAD = timedelta(days=1)
+_CLOCK_AHEAD = timedelta(days=2)
+
+
+@pytest.fixture(autouse=True)
+def _clock_ahead_of_stack_worker():
+    real_now = service_lifecycle._now
+    with patch.object(
+        service_lifecycle, "_now", lambda: real_now() + _CLOCK_AHEAD
+    ):
+        yield
 
 
 @asynccontextmanager
@@ -150,6 +168,7 @@ async def _ensure_service(db_session, org=None, **overrides):
     definition = await service_lifecycle.ensure_definition_for_workflow(
         db_session, wf, created_by="tester"
     )
+    definition.restart_eligible_at = datetime.now(timezone.utc) + _ELIGIBLE_AHEAD
     for key, value in overrides.items():
         setattr(definition, key, value)
     await db_session.flush()
@@ -441,7 +460,7 @@ async def test_instant_child_outcome_completes_claimed_attempt(db_session):
     """A fast result must observe the committed claim (commit-before-fork)."""
     from src.models.orm.services import ServiceAttempt
 
-    await _ensure_service(db_session)
+    definition, _, _ = await _ensure_service(db_session)
     await db_session.commit()
     pool = StubPool()
     loop = _loop(pool)
@@ -462,10 +481,17 @@ async def test_instant_child_outcome_completes_claimed_attempt(db_session):
     pool.route_service.side_effect = _instant_route
     await loop.tick()
 
-    # Find the claimed attempt through a fresh read.
+    # Find the claimed attempt through a fresh read, scoped to this test's
+    # own service: the shared test DB can carry attempt history from other
+    # services (e.g. real e2e service runs), which is legitimate data, not
+    # state this test owns.
     from sqlalchemy import select as sa_select
 
-    rows = (await db_session.execute(sa_select(ServiceAttempt))).scalars().all()
+    rows = (
+        await db_session.execute(
+            sa_select(ServiceAttempt).where(ServiceAttempt.service_id == definition.id)
+        )
+    ).scalars().all()
     assert len(rows) == 1
     assert rows[0].state == "failed"
     assert rows[0].error == "boom"
@@ -482,9 +508,15 @@ async def test_route_failure_completes_without_accounting(db_session):
     loop = _loop(pool)
     await loop.tick()
 
+    # Scoped to this test's own service — see test_instant_child_outcome_*
+    # for why a whole-table select isn't safe in a shared test DB.
     from sqlalchemy import select as sa_select
 
-    rows = (await db_session.execute(sa_select(ServiceAttempt))).scalars().all()
+    rows = (
+        await db_session.execute(
+            sa_select(ServiceAttempt).where(ServiceAttempt.service_id == definition.id)
+        )
+    ).scalars().all()
     assert len(rows) == 1
     assert rows[0].state == "stopped"
     assert rows[0].exit_reason == "route_failed"
@@ -494,8 +526,6 @@ async def test_route_failure_completes_without_accounting(db_session):
 
 async def test_startup_grace_breach_fails_unready_attempt(db_session):
     """An attempt that never reports ready fails once its grace elapses."""
-    from datetime import datetime, timedelta, timezone
-
     from src.models.orm.services import ServiceAttempt
 
     definition, _, _ = await _ensure_service(db_session)

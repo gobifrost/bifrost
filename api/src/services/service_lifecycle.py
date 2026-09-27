@@ -376,23 +376,32 @@ async def list_attempts(
     limit: int = 100,
     offset: int = 0,
 ) -> tuple[list[ServiceAttempt], int]:
-    """Attempts newest-first with a total count."""
-    total = (
-        await db.scalar(
-            select(func.count(ServiceAttempt.id)).where(
-                ServiceAttempt.service_id == service_id
-            )
+    """Attempts newest-first with a total count.
+
+    The page and its total come from one statement so they describe the same
+    snapshot; a claim committed between two separate queries would otherwise
+    return a total that disagrees with the rows.
+    """
+    rows = (
+        await db.execute(
+            select(ServiceAttempt, func.count().over())
+            .where(ServiceAttempt.service_id == service_id)
+            .order_by(ServiceAttempt.created_at.desc(), ServiceAttempt.id.desc())
+            .limit(limit)
+            .offset(offset)
         )
-        or 0
+    ).all()
+    if rows:
+        return [attempt for attempt, _ in rows], rows[0][1]
+    if offset == 0:
+        return [], 0
+    # A page past the end has no rows to carry the window count.
+    total = await db.scalar(
+        select(func.count(ServiceAttempt.id)).where(
+            ServiceAttempt.service_id == service_id
+        )
     )
-    result = await db.execute(
-        select(ServiceAttempt)
-        .where(ServiceAttempt.service_id == service_id)
-        .order_by(ServiceAttempt.created_at.desc(), ServiceAttempt.id.desc())
-        .limit(limit)
-        .offset(offset)
-    )
-    return list(result.scalars().all()), total
+    return [], total or 0
 
 
 async def get_last_terminal_attempt(
