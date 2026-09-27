@@ -28,7 +28,6 @@ describe("useExecutions", () => {
 						query: {
 							scope: "org-1",
 							status: "Running",
-							excludeLocal: "true",
 							continuationToken: "first",
 						},
 					},
@@ -36,24 +35,18 @@ describe("useExecutions", () => {
 			],
 		};
 
-		useExecutions(
-			"org-1",
-			{ status: "Running", excludeLocal: true },
-			"second",
-			{ preservePageData: true },
-		);
+		useExecutions("org-1", { status: "Running" }, "second", {
+			preservePageData: true,
+		});
 
 		const options = mockUseQuery.mock.calls[0][3];
 		expect(options.placeholderData(previousData, previousQuery)).toBe(
 			previousData,
 		);
 
-		useExecutions(
-			"org-2",
-			{ status: "Running", excludeLocal: true },
-			"second",
-			{ preservePageData: true },
-		);
+		useExecutions("org-2", { status: "Running" }, "second", {
+			preservePageData: true,
+		});
 
 		expect(
 			mockUseQuery.mock.calls[1][3].placeholderData(
@@ -62,12 +55,9 @@ describe("useExecutions", () => {
 			),
 		).toBeUndefined();
 
-		useExecutions(
-			"org-1",
-			{ status: "Failed", excludeLocal: true },
-			"second",
-			{ preservePageData: true },
-		);
+		useExecutions("org-1", { status: "Failed" }, "second", {
+			preservePageData: true,
+		});
 
 		expect(
 			mockUseQuery.mock.calls[2][3].placeholderData(

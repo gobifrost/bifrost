@@ -256,7 +256,21 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # ServicePolicyUpdate newly fingerprinted (2026-09-22): `bifrost services
     # update` sends it (greenfield coverage — no old CLI sends this DTO, so
     # nothing breaks). Fingerprint refreshed only.
-    "15581748fa3f44098bec3703c4e8c4bea8681be96dedf6dfbc419a1c5a900dec"
+    #
+    # Local-runner removal (2026-09-27): the 10 CLISession*/CLIRegisteredWorkflow
+    # DTOs (only ever sent by the now-deleted `bifrost run --interactive`
+    # session flow, which has been unreachable since the CLI-session web UI
+    # was deleted in bd4483e9a on 2026-06-05) are removed from
+    # src.models.contracts.cli, dropping out of _SDK_DTOS. An old CLI running
+    # --interactive now 404s loudly registering the session instead of
+    # reaching an already-dead browser page — a clean failure. Separately,
+    # executions drop ``session_id``; SDKs <= 1.4.1 declare it as a required
+    # (nullable, no default) field on WorkflowExecution and would fail to parse
+    # execution reads. The existing MIN_CLI_VERSION = 1.4.2 floor (unreleased
+    # at the time of this change) already hard-blocks those CLIs, so no
+    # further bump — this must ship in 1.4.2 or MIN_CLI_VERSION must move to
+    # the first release that contains it.
+    "1e0e5e0c36976261ffbad24affb51d44a790bfaeb9dd2858a5eee01f31548a6b"
 )
 
 

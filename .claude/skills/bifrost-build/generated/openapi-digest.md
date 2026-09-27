@@ -478,15 +478,6 @@
 | GET | `/api/sdk/modules-resolve` |
 | GET | `/api/sdk/modules/{path}` |
 | GET | `/api/sdk/requirements` |
-| GET | `/api/sdk/sessions` |
-| POST | `/api/sdk/sessions` |
-| DELETE | `/api/sdk/sessions/{session_id}` |
-| GET | `/api/sdk/sessions/{session_id}` |
-| POST | `/api/sdk/sessions/{session_id}/continue` |
-| POST | `/api/sdk/sessions/{session_id}/executions/{execution_id}/log` |
-| POST | `/api/sdk/sessions/{session_id}/executions/{execution_id}/result` |
-| POST | `/api/sdk/sessions/{session_id}/heartbeat` |
-| GET | `/api/sdk/sessions/{session_id}/pending` |
 | POST | `/api/sdk/tables/create` |
 | POST | `/api/sdk/tables/list` |
 | GET | `/api/services` |

@@ -15,7 +15,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from websockets.asyncio.client import connect
 
 from src.models.orm.agent_runs import AgentRun
-from src.models.orm.cli import CLISession
 
 pytestmark = pytest.mark.asyncio
 
@@ -131,56 +130,6 @@ class TestEventSourceChannelVisibility:
             await asyncio.wait_for(ws.recv(), timeout=5)
             resp = await _subscribe(ws, f"event-source:{source_id}")
             assert resp["type"] == "subscribed", resp
-
-
-@pytest.mark.e2e
-class TestCliSessionChannelVisibility:
-    async def test_owner_can_subscribe_others_denied(
-        self,
-        e2e_ws_url,
-        platform_admin,
-        org1_user,
-        org2_user,
-        db_session: AsyncSession,
-    ):
-        session_id = uuid4()
-        cli_session = CLISession(
-            id=session_id,
-            user_id=org1_user.user_id,
-            file_path="workflows/example.py",
-            workflows={},
-        )
-        db_session.add(cli_session)
-        await db_session.commit()
-
-        ws_url = f"{e2e_ws_url}/ws/connect"
-        try:
-            async with connect(
-                ws_url,
-                additional_headers={"Authorization": f"Bearer {org1_user.access_token}"},
-            ) as ws:
-                await asyncio.wait_for(ws.recv(), timeout=5)
-                resp = await _subscribe(ws, f"cli-session:{session_id}")
-                assert resp["type"] == "subscribed", resp
-
-            async with connect(
-                ws_url,
-                additional_headers={"Authorization": f"Bearer {org2_user.access_token}"},
-            ) as ws:
-                await asyncio.wait_for(ws.recv(), timeout=5)
-                resp = await _subscribe(ws, f"cli-session:{session_id}")
-                assert resp["type"] == "error", resp
-
-            async with connect(
-                ws_url,
-                additional_headers={"Authorization": f"Bearer {platform_admin.access_token}"},
-            ) as ws:
-                await asyncio.wait_for(ws.recv(), timeout=5)
-                resp = await _subscribe(ws, f"cli-session:{session_id}")
-                assert resp["type"] == "subscribed", resp
-        finally:
-            await db_session.execute(delete(CLISession).where(CLISession.id == session_id))
-            await db_session.commit()
 
 
 @pytest.mark.e2e

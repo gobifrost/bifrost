@@ -34,7 +34,6 @@ from src.models.contracts.policies import Expr, TablePolicies
 from src.models.contracts.policies import FileAction
 from src.models.orm import Agent
 from src.models.orm.agent_runs import AgentRun
-from src.models.orm.cli import CLISession
 from src.models.orm.tables import Table as TableOrm
 from src.repositories.applications import ApplicationRepository
 from src.services.audit import emit_file_policy_deny, emit_table_policy_deny
@@ -946,34 +945,6 @@ async def can_access_agent_run(user: UserPrincipal, run_id: str) -> bool:
         return row == str(user.user_id)
 
 
-async def can_access_cli_session(user: UserPrincipal, session_id: str) -> bool:
-    """Check if a user may subscribe to a CLI debugging session's channel.
-
-    CLI sessions carry an owning ``user_id``; only the owner or a platform
-    admin may subscribe.
-    """
-    if user.is_superuser:
-        return True
-
-    try:
-        session_uuid = UUID(session_id)
-    except ValueError:
-        return False
-
-    async with get_db_context() as db:
-        result = await db.execute(
-            select(CLISession.user_id).where(CLISession.id == session_uuid)
-        )
-        row = result.scalar_one_or_none()
-
-        if row is None:
-            # Session doesn't exist - allow subscription anyway (they won't
-            # receive anything; avoids leaking existence via timing).
-            return True
-
-        return row == user.user_id
-
-
 router = APIRouter(prefix="/ws", tags=["WebSocket"])
 
 
@@ -1066,23 +1037,6 @@ async def websocket_connect(
             if channel == f"history:user:{user.user_id}":
                 allowed_channels.append(channel)
             elif channel == "history:GLOBAL" and user.is_superuser:
-                allowed_channels.append(channel)
-        elif channel.startswith("local-runner:"):
-            # Local runner channels - users can subscribe to their own
-            if channel == f"local-runner:{user.user_id}":
-                allowed_channels.append(channel)
-        elif channel.startswith("devrun:"):
-            # Legacy dev run channels - users can subscribe to their own
-            if channel == f"devrun:{user.user_id}":
-                allowed_channels.append(channel)
-        elif channel.startswith("cli-session:"):
-            # CLI session channels - owner (or platform admin) only
-            session_id = channel.split(":", 1)[1]
-            if await can_access_cli_session(user, session_id):
-                allowed_channels.append(channel)
-        elif channel.startswith("cli-sessions:"):
-            # CLI sessions list channel - users can subscribe to their own
-            if channel == f"cli-sessions:{user.user_id}":
                 allowed_channels.append(channel)
         elif channel.startswith("event-source:"):
             # Event source channels for real-time event updates - bypass-only,
@@ -1210,22 +1164,6 @@ async def websocket_connect(
                             "type": "subscribed",
                             "channel": channel
                         })
-                    elif channel.startswith("cli-session:"):
-                        session_id = channel.split(":", 1)[1]
-                        if await can_access_cli_session(user, session_id):
-                            if channel not in manager.connections:
-                                manager.connections[channel] = set()
-                            manager.connections[channel].add(websocket)
-                            await websocket.send_json({
-                                "type": "subscribed",
-                                "channel": channel
-                            })
-                        else:
-                            await websocket.send_json({
-                                "type": "error",
-                                "channel": channel,
-                                "message": "Access denied"
-                            })
                     elif channel.startswith("event-source:"):
                         # Event source channels - bypass-only, matching the
                         # REST events router.

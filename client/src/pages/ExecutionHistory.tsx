@@ -265,21 +265,18 @@ export function ExecutionHistory() {
 		return org?.name || orgId;
 	};
 
-	// Build filters including date range and local executions toggle.
+	// Build filters including date range.
 	// The Failed tab means the whole failure group (Failed, Timeout, Stuck,
 	// CompletedWithErrors) — the same set the dashboard's "N failed" link
 	// counts — so it sends the comma-separated group to the server's
 	// match-any status filter instead of a single exact status.
 	const filters = useMemo(() => {
-		const baseFilters: Record<string, string | boolean> = {};
+		const baseFilters: Record<string, string> = {};
 		if (statusFilter === "Failed") {
 			baseFilters.status = Array.from(FAILURE_STATUSES).join(",");
 		} else if (statusFilter !== "all") {
 			baseFilters.status = statusFilter;
 		}
-
-		// Retain the default exclusion for legacy local-runner records.
-		baseFilters.excludeLocal = true;
 
 		// Workflow IDs are implementation details; only admins get this filter.
 		if (isPlatformAdmin && workflowIdFilter) {

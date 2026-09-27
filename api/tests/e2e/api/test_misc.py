@@ -678,27 +678,15 @@ class TestMetrics:
             )
             for offset, status in enumerate(previous_statuses, start=1)
         )
-        executions.extend(
-            [
-                Execution(
-                    workflow_name=workflow_name,
-                    status=ExecutionStatus.RUNNING,
-                    started_at=now - timedelta(seconds=1),
-                    executed_by=platform_admin.user_id,
-                    executed_by_name=platform_admin.name,
-                    organization_id=organization.id,
-                ),
-                Execution(
-                    workflow_name=workflow_name,
-                    status=ExecutionStatus.SUCCESS,
-                    started_at=now - timedelta(seconds=1),
-                    completed_at=now,
-                    executed_by=platform_admin.user_id,
-                    executed_by_name=platform_admin.name,
-                    organization_id=organization.id,
-                    is_local_execution=True,
-                ),
-            ]
+        executions.append(
+            Execution(
+                workflow_name=workflow_name,
+                status=ExecutionStatus.RUNNING,
+                started_at=now - timedelta(seconds=1),
+                executed_by=platform_admin.user_id,
+                executed_by_name=platform_admin.name,
+                organization_id=organization.id,
+            )
         )
         db_session.add_all(executions)
         await db_session.commit()

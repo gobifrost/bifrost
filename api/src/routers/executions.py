@@ -52,7 +52,6 @@ _EXECUTION_QUERY_PARAM_ALIASES: dict[str, tuple[str, ...]] = {
     "workflowId": ("workflow_id",),
     "startDate": ("start_date",),
     "endDate": ("end_date",),
-    "excludeLocal": ("exclude_local",),
     "continuationToken": ("continuation_token",),
 }
 
@@ -63,7 +62,6 @@ _EXECUTION_QUERY_PARAM_NAMES = {
     "status",
     "startDate",
     "endDate",
-    "excludeLocal",
     "limit",
     "continuationToken",
     *{alias for aliases in _EXECUTION_QUERY_PARAM_ALIASES.values() for alias in aliases},
@@ -330,7 +328,6 @@ class ExecutionRepository:
             logs=None,  # Fetched separately via /logs endpoint
             variables=execution.variables if is_admin else None,
             execution_context=execution.execution_context if is_admin else None,
-            session_id=str(execution.session_id) if execution.session_id else None,
         )
 
 
@@ -358,7 +355,6 @@ async def list_executions(
     status_filter: str | None = Query(None, alias="status", description="Filter by execution status (comma-separated values match any)"),
     startDate: str | None = Query(None, description="Filter by start date (ISO format)"),
     endDate: str | None = Query(None, description="Filter by end date (ISO format)"),
-    excludeLocal: bool = Query(True, description="Exclude local runner executions"),
     limit: int = Query(25, ge=1, le=1000, description="Maximum number of results"),
     continuationToken: str | None = Query(None, description="Continuation token"),
 ) -> ExecutionsListResponse:
@@ -411,18 +407,6 @@ async def list_executions(
         "endDate",
     )
     workflow_name_value = _query_param(request, "workflowName") or workflowName
-    exclude_local_value = _query_param(request, "excludeLocal")
-    if exclude_local_value is None:
-        parsed_exclude_local = excludeLocal
-    elif exclude_local_value.casefold() in {"1", "true", "yes", "on"}:
-        parsed_exclude_local = True
-    elif exclude_local_value.casefold() in {"0", "false", "no", "off"}:
-        parsed_exclude_local = False
-    else:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="excludeLocal must be a boolean",
-        )
 
     try:
         executions, next_token = await list_sdk_executions(
@@ -434,7 +418,6 @@ async def list_executions(
             status_filter=status_filter,
             start_date=start_date_value,
             end_date=end_date_value,
-            exclude_local=parsed_exclude_local,
             limit=limit,
             offset=offset,
             cursor=cursor,

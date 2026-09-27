@@ -171,24 +171,6 @@ export interface PackageProgress {
 	}[];
 }
 
-export interface LocalRunnerStateUpdate {
-	file_path: string;
-	workflows: Array<{
-		name: string;
-		description: string;
-		parameters: Array<{
-			name: string;
-			type: string;
-			label: string | null;
-			required: boolean;
-			default_value: unknown;
-		}>;
-	}>;
-	selected_workflow: string | null;
-	pending: boolean;
-	execution_id: string | null;
-}
-
 // Event source update types for real-time event streaming
 export interface EventSourceEvent {
 	id: string;
@@ -389,14 +371,6 @@ type WebSocketMessage =
 			}[];
 	  }
 	| {
-			type: "devrun_state_update";
-			state: LocalRunnerStateUpdate | null;
-	  }
-	| {
-			type: "local_runner_state_update";
-			state: LocalRunnerStateUpdate | null;
-	  }
-	| {
 			type: "event_created" | "event_updated";
 			event: EventSourceEvent;
 	  }
@@ -432,7 +406,6 @@ type ServiceLogCallback = (log: ServiceLog) => void;
 type NewExecutionCallback = (execution: NewExecution) => void;
 type HistoryUpdateCallback = (update: HistoryUpdate) => void;
 type PackageProgressCallback = (p: PackageProgress) => void;
-type LocalRunnerStateCallback = (state: LocalRunnerStateUpdate | null) => void;
 type EventSourceUpdateCallback = (update: EventSourceUpdate) => void;
 type ChatStreamCallback = (event: ChatStreamEnvelope) => void;
 type AppDraftUpdateCallback = (update: AppDraftUpdate) => void;
@@ -482,7 +455,6 @@ class WebSocketService {
 	private newExecutionCallbacks = new Set<NewExecutionCallback>();
 	private historyUpdateCallbacks = new Set<HistoryUpdateCallback>();
 	private packageProgressCallbacks = new Set<PackageProgressCallback>();
-	private localRunnerStateCallbacks = new Set<LocalRunnerStateCallback>();
 	private eventSourceUpdateCallbacks = new Map<
 		string,
 		Set<EventSourceUpdateCallback>
@@ -768,20 +740,6 @@ class WebSocketService {
 						failed: message.failed,
 						failures: message.failures,
 					}),
-				);
-				break;
-
-			case "devrun_state_update":
-				// Dev run state update from CLI (legacy)
-				this.localRunnerStateCallbacks.forEach((cb) =>
-					cb(message.state),
-				);
-				break;
-
-			case "local_runner_state_update":
-				// Local runner state update from CLI
-				this.localRunnerStateCallbacks.forEach((cb) =>
-					cb(message.state),
 				);
 				break;
 
@@ -1207,16 +1165,6 @@ class WebSocketService {
 		this.packageProgressCallbacks.add(callback);
 		return () => {
 			this.packageProgressCallbacks.delete(callback);
-		};
-	}
-
-	/**
-	 * Subscribe to local runner state updates
-	 */
-	onLocalRunnerState(callback: LocalRunnerStateCallback): () => void {
-		this.localRunnerStateCallbacks.add(callback);
-		return () => {
-			this.localRunnerStateCallbacks.delete(callback);
 		};
 	}
 

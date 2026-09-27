@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Any
 _REPOSITORY_EXPORTS = {
     "AccessDeniedError": ("src.core.exceptions", "AccessDeniedError"),
     "BaseRepository": ("src.repositories.base", "BaseRepository"),
-    "CLISessionRepository": ("src.repositories.cli_sessions", "CLISessionRepository"),
     "ConfigRepository": ("src.repositories.config", "ConfigRepository"),
     "DataProviderRepository": ("src.repositories.data_providers", "DataProviderRepository"),
     "ExecutionLogRepository": ("src.repositories.execution_logs", "ExecutionLogRepository"),
@@ -38,7 +37,6 @@ _REPOSITORY_EXPORTS = {
 if TYPE_CHECKING:
     from src.core.exceptions import AccessDeniedError as AccessDeniedError
     from src.repositories.base import BaseRepository as BaseRepository
-    from src.repositories.cli_sessions import CLISessionRepository as CLISessionRepository
     from src.repositories.config import ConfigRepository as ConfigRepository
     from src.repositories.data_providers import DataProviderRepository as DataProviderRepository
     from src.repositories.execution_logs import ExecutionLogRepository as ExecutionLogRepository
@@ -68,7 +66,6 @@ if TYPE_CHECKING:
 __all__ = [
     "AccessDeniedError",
     "BaseRepository",
-    "CLISessionRepository",
     "ConfigRepository",
     "DataProviderRepository",
     "ExecutionLogRepository",

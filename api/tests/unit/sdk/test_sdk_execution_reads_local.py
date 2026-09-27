@@ -54,7 +54,6 @@ def _sdk_summary(**overrides):
         "completed_at": None,
         "scheduled_at": None,
         "created_at": None,
-        "session_id": None,
         "peak_memory_bytes": None,
         "process_rss_bytes": None,
         "cpu_total_seconds": None,
@@ -134,7 +133,6 @@ class TestEngineRequestFacade:
                 workflow_id=str(uuid4()),
                 workflow_name="ignored",
                 status="Success",
-                exclude_local=False,
                 limit=5000,
                 continuation_token="tok-0",
             )
@@ -148,7 +146,6 @@ class TestEngineRequestFacade:
         assert params["workflow_id"] is not None
         assert "workflow_name" not in params
         assert params["status"] == "Success"
-        assert params["exclude_local"] == "false"
         assert params["limit"] == 1000
         assert params["continuation_token"] == "tok-0"
         assert "timeout" not in call.kwargs

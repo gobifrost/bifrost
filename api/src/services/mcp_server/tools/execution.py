@@ -13,8 +13,6 @@ report for the full persona table):
 * A platform admin now sees executions across all orgs by default (REST's
   ``scope`` query param, exposed here as an optional ``scope`` argument),
   not just their own org.
-* REST excludes local-runner executions (``excludeLocal=true`` default); the
-  old MCP path included them.
 * Non-admin filtering (``executed_by == caller``) is unchanged — enforced by
   the shared read service, not by this tool.
 """

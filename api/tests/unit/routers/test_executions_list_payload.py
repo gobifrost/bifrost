@@ -24,7 +24,6 @@ def _summary_row() -> SimpleNamespace:
         completed_at=datetime.now(timezone.utc),
         scheduled_at=None,
         created_at=datetime.now(timezone.utc),
-        session_id=None,
     )
 
 

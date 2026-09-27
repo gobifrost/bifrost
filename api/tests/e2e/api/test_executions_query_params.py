@@ -83,7 +83,6 @@ async def test_executions_accept_snake_case_aliases_and_camel_case_paging(
             "workflow_id": str(workflow_id),
             "workflow_name": "ignored-because-id-wins",
             "start_date": start_date,
-            "exclude_local": "true",
             "limit": 1,
         },
         headers=platform_admin.headers,
@@ -146,6 +145,31 @@ async def test_executions_rejects_unknown_query_params(
     assert "bogus" in response.text
 
 
+@pytest.mark.parametrize("parameter", ["exclude_local", "excludeLocal"])
+async def test_executions_rejects_removed_exclude_local_param(
+    e2e_client,
+    platform_admin,
+    seeded_execution_history,
+    parameter,
+):
+    """The local-runner-era excludeLocal/exclude_local filter was removed
+    end-to-end (no CLI-created execution can ever be local anymore); the
+    server now rejects it like any other unknown query param instead of
+    silently accepting and ignoring it.
+    """
+    response = e2e_client.get(
+        "/api/executions",
+        params={
+            "workflow_id": str(seeded_execution_history["workflow_id"]),
+            parameter: "true",
+        },
+        headers=platform_admin.headers,
+    )
+
+    assert response.status_code == 422, response.text
+    assert parameter in response.text
+
+
 @pytest.mark.parametrize(
     ("parameter", "value"),
     [
@@ -153,7 +177,6 @@ async def test_executions_rejects_unknown_query_params(
         ("start_date", "not-a-date"),
         ("continuation_token", "not-a-cursor"),
         ("continuation_token", "-1"),
-        ("exclude_local", "sometimes"),
     ],
 )
 async def test_executions_rejects_invalid_filter_values(
