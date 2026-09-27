@@ -454,51 +454,6 @@ async def publish_app(context: Any, app_id: str) -> ToolResult:
     )
 
 
-async def get_app_publish_status(
-    context: Any,
-    publish_job_id: str,
-) -> ToolResult:
-    """Read durable publish progress through the canonical REST endpoint."""
-    logger.info(
-        "MCP get_app_publish_status (HTTP bridge) job=%s",
-        publish_job_id,
-    )
-    status_code, body = await call_rest(
-        context,
-        "GET",
-        f"/api/platform-jobs/{publish_job_id}",
-    )
-    if status_code != 200 or not isinstance(body, dict):
-        return error_result(
-            f"get_app_publish_status failed: HTTP {status_code}",
-            {"body": body},
-        )
-    status_value = body.get("status", "unknown")
-    progress = body.get("progress") or {}
-    phase = progress.get("phase")
-    description = f"Application publish {status_value}"
-    if phase:
-        description += f": {phase}"
-    if status_value == "requires_action":
-        result = body.get("result")
-        action = result.get("requires_action") if isinstance(result, dict) else None
-        safe_result = {"requires_action": action} if isinstance(action, str) else {}
-        return error_result(
-            description,
-            {
-                "status": status_value,
-                "result": safe_result,
-            },
-        )
-    if status_value in ("failed", "cancelled"):
-        error = body.get("error") or {}
-        return error_result(
-            error.get("message") or description,
-            body,
-        )
-    return success_result(description, body)
-
-
 async def replace_app(
     context: Any,
     app_id: str,
@@ -1218,7 +1173,6 @@ TOOLS = [
     ("get_app", "Get Application", "Get application metadata and file list."),
     ("update_app", "Update Application", "Update application metadata (name, description)."),
     ("publish_app", "Publish Application", "Queue a rebuild and publish; returns a durable publish job ID."),
-    ("get_app_publish_status", "Get Application Publish Status", "Get progress, result, or error for an application publish job."),
     ("replace_app", "Replace Application Source Path", "Repoint an application's repo_path after source files have been moved/renamed."),
     ("validate_app", "Validate Application", "Build and validate an app: compiles all files, checks for missing/unused dependencies, unknown components, and bad workflow IDs."),
     ("push_files", "Push Files", "Push multiple files to _repo/ in a single batch. Useful for creating or updating entire apps or workflow sets."),
@@ -1237,7 +1191,6 @@ def register_tools(mcp: Any, get_context_fn: Any) -> None:
         "get_app": get_app,
         "update_app": update_app,
         "publish_app": publish_app,
-        "get_app_publish_status": get_app_publish_status,
         "replace_app": replace_app,
         "validate_app": validate_app,
         "push_files": push_files,
