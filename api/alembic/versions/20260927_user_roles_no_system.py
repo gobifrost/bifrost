@@ -1,14 +1,15 @@
 """guard: user_roles cannot reference the system account
 
 Revision ID: 20260927_no_sys_role
-Revises: 20260927_r1b_mcp_names_b2
+Revises: 20260927_drop_local_runner
 Create Date: 2026-09-27
 """
 
+import sqlalchemy as sa
 from alembic import op
 
 revision: str = "20260927_no_sys_role"
-down_revision: str | None = "20260927_r1b_mcp_names_b2"
+down_revision: str | None = "20260927_drop_local_runner"
 branch_labels = None
 depends_on = None
 
@@ -22,11 +23,14 @@ def upgrade() -> None:
     # account is never a valid target for a role assignment, so make it
     # unrepresentable at the schema level too.
     op.execute(
-        f"DELETE FROM user_roles WHERE user_id = '{SYSTEM_USER_UUID}'"
+        sa.text("DELETE FROM user_roles WHERE user_id = :system_user_id").bindparams(
+            system_user_id=SYSTEM_USER_UUID
+        )
     )
     op.create_check_constraint(
         CONSTRAINT_NAME,
         "user_roles",
+        # DDL can't take bound parameters; SYSTEM_USER_UUID is a fixed constant.
         f"user_id <> '{SYSTEM_USER_UUID}'",
     )
 
