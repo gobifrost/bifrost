@@ -215,6 +215,28 @@ class TestRoleService:
         listed = await list_role_users(db_session, role_id=role.id)
         assert listed.total == 2
 
+    async def test_assign_users_refuses_system_account(self, db_session):
+        from src.core.constants import SYSTEM_USER_ID
+        from shared.sdk_roles import assign_users_to_role, create_role, list_role_users
+
+        role = await create_role(
+            db_session, name="Crew", description=None,
+            permissions=None, actor_email="a@t.local",
+        )
+
+        with pytest.raises(RoleServiceError) as exc_info:
+            await assign_users_to_role(
+                db_session,
+                role_id=role.id,
+                user_ids=[SYSTEM_USER_ID],
+                actor_email="a@t.local",
+            )
+        assert exc_info.value.status_code == 422
+        assert "system account" in exc_info.value.detail.lower()
+
+        listed = await list_role_users(db_session, role_id=role.id)
+        assert listed.total == 0
+
     async def test_list_users_unknown_role_is_empty_not_404(self, db_session):
         from shared.sdk_roles import list_role_users
 

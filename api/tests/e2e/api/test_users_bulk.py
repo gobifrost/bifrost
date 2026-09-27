@@ -291,6 +291,32 @@ class TestBulkSystemUserGuard:
         reason = next(f["reason"] for f in body["failed"] if f["user_id"] == SYSTEM_USER_ID)
         assert "system user" in reason.lower()
 
+    def test_system_user_replace_roles_fails(self, e2e_client, platform_admin, org1):
+        """replace_roles never grants the system account a role."""
+        role_id = _create_role(e2e_client, platform_admin, "SystemGuard")
+        normal_id = _create_user(e2e_client, platform_admin, org1["id"], "withSystemRole")
+
+        resp = e2e_client.patch(
+            "/api/users/bulk",
+            headers=platform_admin.headers,
+            json={
+                "user_ids": [SYSTEM_USER_ID, normal_id],
+                "operation": "replace_roles",
+                "role_ids": [role_id],
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert normal_id in body["succeeded"]
+        failed_ids = [f["user_id"] for f in body["failed"]]
+        assert SYSTEM_USER_ID in failed_ids
+        reason = next(f["reason"] for f in body["failed"] if f["user_id"] == SYSTEM_USER_ID)
+        assert "system account" in reason.lower() or "system user" in reason.lower()
+
+        roles_resp = e2e_client.get(f"/api/roles/{role_id}/users", headers=platform_admin.headers)
+        assert roles_resp.status_code == 200, roles_resp.text
+        assert SYSTEM_USER_ID not in roles_resp.json()["user_ids"]
+
 
 @pytest.mark.e2e
 class TestBulkValidation:

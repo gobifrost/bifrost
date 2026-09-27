@@ -223,6 +223,10 @@ async def _apply_user_role_change(db: "AsyncSession", change: dict[str, Any]) ->
     """Apply user-role assignment."""
     from sqlalchemy import and_
     from src.models import UserRole
+    from shared.system_account_guard import (
+        SYSTEM_ACCOUNT_ROLE_MESSAGE,
+        is_system_account,
+    )
 
     role_id = change.get("entity_id")
     data = change.get("data", {})
@@ -231,6 +235,8 @@ async def _apply_user_role_change(db: "AsyncSession", change: dict[str, Any]) ->
 
     for user_id in data.get("user_ids", []):
         user_uuid = UUID(user_id)
+        if is_system_account(user_uuid):
+            raise SyncError(SYSTEM_ACCOUNT_ROLE_MESSAGE)
         result = await db.execute(
             select(UserRole).where(and_(UserRole.role_id == role_uuid, UserRole.user_id == user_uuid))
         )

@@ -163,6 +163,27 @@ class TestRoleCRUD:
         assert searched.json()["total"] == 1
         assert searched.json()["users"][0]["email"] == org2_user.email
 
+    def test_assign_role_to_system_account_refused(
+        self, e2e_client, platform_admin, test_role
+    ):
+        """The system (sentinel) account can never be assigned a role."""
+        from src.core.constants import SYSTEM_USER_ID
+
+        response = e2e_client.post(
+            f"/api/roles/{test_role['id']}/users",
+            headers=platform_admin.headers,
+            json={"user_ids": [SYSTEM_USER_ID]},
+        )
+        assert response.status_code == 422, response.text
+        assert "system account" in response.text.lower()
+
+        assigned = e2e_client.get(
+            f"/api/roles/{test_role['id']}/users",
+            headers=platform_admin.headers,
+        )
+        assert assigned.status_code == 200, assigned.text
+        assert SYSTEM_USER_ID not in assigned.json()["user_ids"]
+
     def test_delete_assigned_role_cascades(
         self, e2e_client, platform_admin, org1_user, test_role
     ):

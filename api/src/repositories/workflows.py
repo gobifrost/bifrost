@@ -323,7 +323,15 @@ class WorkflowRepository(OrgScopedRepository[Workflow]):
         filter_org_id: UUID | None,
         active_only: bool = True,
     ) -> Sequence[Workflow]:
-        """List workflow tools for an already-resolved organization filter."""
+        """List workflow tools for an already-resolved organization filter.
+
+        Platform admins (``self.is_superuser``) see every tool workflow in
+        scope, unchanged. Everyone else is further filtered to the tools
+        they could actually attach to an agent — the same rule
+        ``_validate_user_tool_access`` enforces at save time (see
+        ``shared.workflow_access.user_can_access_workflow``) — so the agent
+        editor's tool picker never offers a tool the save would reject.
+        """
         stmt = (
             select(Workflow)
             .where(Workflow.type == "tool")
@@ -354,7 +362,53 @@ class WorkflowRepository(OrgScopedRepository[Workflow]):
 
         stmt = stmt.order_by(Workflow.name)
         result = await self.session.execute(stmt)
-        return list(result.scalars().all())
+        workflows = list(result.scalars().all())
+
+        if self.is_superuser:
+            return workflows
+
+        return await self._filter_tools_by_access(workflows)
+
+    async def _filter_tools_by_access(
+        self, workflows: list[Workflow]
+    ) -> list[Workflow]:
+        """Filter tool workflows to the ones a non-bypass caller can use.
+
+        Two extra queries regardless of result size: the caller's role ids,
+        then a single IN-filtered join for the role assignments of every
+        role_based candidate in the input.
+        """
+        from src.models.orm.users import UserRole
+        from shared.workflow_access import user_can_access_workflow
+
+        user_role_ids: set[UUID] = set()
+        if self.user_id is not None:
+            result = await self.session.execute(
+                select(UserRole.role_id).where(UserRole.user_id == self.user_id)
+            )
+            user_role_ids = set(result.scalars().all())
+
+        role_based_ids = [w.id for w in workflows if w.access_level == "role_based"]
+        workflow_role_ids: dict[UUID, set[UUID]] = {}
+        if role_based_ids:
+            result = await self.session.execute(
+                select(WorkflowRole.workflow_id, WorkflowRole.role_id).where(
+                    WorkflowRole.workflow_id.in_(role_based_ids)
+                )
+            )
+            for workflow_id, role_id in result.all():
+                workflow_role_ids.setdefault(workflow_id, set()).add(role_id)
+
+        return [
+            w
+            for w in workflows
+            if user_can_access_workflow(
+                access_level=w.access_level,
+                is_external=self.is_external,
+                user_role_ids=user_role_ids,
+                workflow_role_ids=workflow_role_ids.get(w.id, set()),
+            )
+        ]
 
     async def get_workflows_only(
         self,
