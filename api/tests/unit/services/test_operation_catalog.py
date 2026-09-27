@@ -14,86 +14,86 @@ from src.services.operation_catalog import (
 
 
 AGENT_OPERATIONS = {
-    "agents.list": ("GET", "/api/agents", ("agents", "list"), "bifrost_list_agents"),
+    "agents.list": ("GET", "/api/agents", ("agents", "list"), "bifrost_agent_list"),
     "agents.get": (
         "GET",
         "/api/agents/{agent_id}",
         ("agents", "get"),
-        "bifrost_get_agent",
+        "bifrost_agent_get",
     ),
     "agents.create": (
         "POST",
         "/api/agents",
         ("agents", "create"),
-        "bifrost_create_agent",
+        "bifrost_agent_create",
     ),
     "agents.update": (
         "PUT",
         "/api/agents/{agent_id}",
         ("agents", "update"),
-        "bifrost_update_agent",
+        "bifrost_agent_update",
     ),
     "agents.delete": (
         "DELETE",
         "/api/agents/{agent_id}",
         ("agents", "delete"),
-        "bifrost_delete_agent",
+        "bifrost_agent_delete",
     ),
 }
 
 FORM_OPERATIONS = {
-    "forms.list": ("GET", "/api/forms", ("forms", "list"), "bifrost_list_forms"),
+    "forms.list": ("GET", "/api/forms", ("forms", "list"), "bifrost_form_list"),
     "forms.get": (
         "GET",
         "/api/forms/{form_id}",
         ("forms", "get"),
-        "bifrost_get_form",
+        "bifrost_form_get",
     ),
     "forms.create": (
         "POST",
         "/api/forms",
         ("forms", "create"),
-        "bifrost_create_form",
+        "bifrost_form_create",
     ),
     "forms.update": (
         "PATCH",
         "/api/forms/{form_id}",
         ("forms", "update"),
-        "bifrost_update_form",
+        "bifrost_form_update",
     ),
     "forms.delete": (
         "DELETE",
         "/api/forms/{form_id}",
         ("forms", "delete"),
-        "bifrost_delete_form",
+        "bifrost_form_delete",
     ),
 }
 
 TABLE_OPERATIONS = {
-    "tables.list": ("GET", "/api/tables", ("tables", "list"), "bifrost_list_tables"),
+    "tables.list": ("GET", "/api/tables", ("tables", "list"), "bifrost_table_list"),
     "tables.get": (
         "GET",
         "/api/tables/{table_id}",
         ("tables", "get"),
-        "bifrost_get_table",
+        "bifrost_table_get",
     ),
     "tables.create": (
         "POST",
         "/api/tables",
         ("tables", "create"),
-        "bifrost_create_table",
+        "bifrost_table_create",
     ),
     "tables.update": (
         "PATCH",
         "/api/tables/{table_id}",
         ("tables", "update"),
-        "bifrost_update_table",
+        "bifrost_table_update",
     ),
     "tables.delete": (
         "DELETE",
         "/api/tables/{table_id}",
         ("tables", "delete"),
-        "bifrost_delete_table",
+        "bifrost_table_delete",
     ),
 }
 
@@ -102,61 +102,61 @@ APP_OPERATIONS = {
         "GET",
         "/api/applications",
         ("apps", "list"),
-        "bifrost_list_apps",
+        "bifrost_app_list",
     ),
     "apps.get": (
         "GET",
         "/api/applications/{slug}",
         ("apps", "get"),
-        "bifrost_get_app",
+        "bifrost_app_get",
     ),
     "apps.create": (
         "POST",
         "/api/applications",
         ("apps", "create"),
-        "bifrost_create_app",
+        "bifrost_app_create",
     ),
     "apps.update": (
         "PATCH",
         "/api/applications/{app_id}",
         ("apps", "update"),
-        "bifrost_update_app",
+        "bifrost_app_update",
     ),
     "apps.delete": (
         "DELETE",
         "/api/applications/{app_id}",
         ("apps", "delete"),
-        "bifrost_delete_app",
+        "bifrost_app_delete",
     ),
     "apps.dependencies.get": (
         "GET",
         "/api/applications/{app_id}/dependencies",
         ("apps", "get-dependencies"),
-        "bifrost_get_app_dependencies",
+        "bifrost_app_dependencies_get",
     ),
     "apps.dependencies.update": (
         "PUT",
         "/api/applications/{app_id}/dependencies",
         ("apps", "update-dependencies"),
-        "bifrost_update_app_dependencies",
+        "bifrost_app_dependencies_update",
     ),
     "apps.validate": (
         "POST",
         "/api/applications/{app_id}/validate",
         ("apps", "validate"),
-        "bifrost_validate_app",
+        "bifrost_app_validate",
     ),
     "apps.publish": (
         "POST",
         "/api/applications/{app_id}/publish",
         ("apps", "publish"),
-        "bifrost_publish_app",
+        "bifrost_app_publish",
     ),
     "apps.replace": (
         "POST",
         "/api/applications/{app_id}/replace",
         ("apps", "replace"),
-        "bifrost_replace_app",
+        "bifrost_app_replace",
     ),
 }
 
@@ -165,49 +165,49 @@ WORKFLOW_OPERATIONS = {
         "GET",
         "/api/workflows",
         ("workflows", "list"),
-        "bifrost_list_workflows",
+        "bifrost_workflow_list",
     ),
     "workflows.validate": (
         "POST",
         "/api/workflows/validate",
         ("workflows", "validate"),
-        "bifrost_validate_workflow",
+        "bifrost_workflow_validate",
     ),
     "workflows.register": (
         "POST",
         "/api/workflows/register",
         ("workflows", "register"),
-        "bifrost_register_workflow",
+        "bifrost_workflow_register",
     ),
     "workflows.execute": (
         "POST",
         "/api/workflows/execute",
         ("workflows", "execute"),
-        "bifrost_execute_workflow",
+        "bifrost_workflow_execute",
     ),
     "workflows.update": (
         "PATCH",
         "/api/workflows/{workflow_id}",
         ("workflows", "update"),
-        "bifrost_update_workflow",
+        "bifrost_workflow_update",
     ),
     "workflows.delete": (
         "DELETE",
         "/api/workflows/{workflow_id}",
         ("workflows", "delete"),
-        "bifrost_delete_workflow",
+        "bifrost_workflow_delete",
     ),
     "workflows.roles.grant": (
         "POST",
         "/api/workflows/{workflow_id}/roles",
         ("workflows", "grant-role"),
-        "bifrost_grant_workflow_role",
+        "bifrost_workflow_role_grant",
     ),
     "workflows.roles.revoke": (
         "DELETE",
         "/api/workflows/{workflow_id}/roles/{role_id}",
         ("workflows", "revoke-role"),
-        "bifrost_revoke_workflow_role",
+        "bifrost_workflow_role_revoke",
     ),
 }
 
@@ -216,13 +216,13 @@ EXECUTION_OPERATIONS = {
         "GET",
         "/api/executions",
         ("workflows", "list-executions"),
-        "bifrost_list_workflow_executions",
+        "bifrost_execution_list",
     ),
     "executions.get": (
         "GET",
         "/api/executions/{execution_id}",
         ("workflows", "get-execution"),
-        "bifrost_get_workflow_execution",
+        "bifrost_execution_get",
     ),
 }
 
@@ -231,42 +231,42 @@ KNOWLEDGE_OPERATIONS = {
         "GET",
         "/api/knowledge-sources",
         ("knowledge", "list-namespaces"),
-        "bifrost_list_knowledge_namespaces",
+        "bifrost_knowledge_namespace_list",
         True,
     ),
     "knowledge.documents.list": (
         "GET",
         "/api/knowledge-sources/documents",
         ("knowledge", "list-documents"),
-        "bifrost_list_knowledge_documents",
+        "bifrost_knowledge_document_list",
         True,
     ),
     "knowledge.documents.get": (
         "GET",
         "/api/knowledge-sources/{namespace}/documents/{doc_id}",
         ("knowledge", "get-document"),
-        "bifrost_get_knowledge_document",
+        "bifrost_knowledge_document_get",
         True,
     ),
     "knowledge.documents.create": (
         "POST",
         "/api/knowledge-sources/{namespace}/documents",
         ("knowledge", "create-document"),
-        "bifrost_create_knowledge_document",
+        "bifrost_knowledge_document_create",
         True,
     ),
     "knowledge.documents.update": (
         "PUT",
         "/api/knowledge-sources/{namespace}/documents/{doc_id}",
         ("knowledge", "update-document"),
-        "bifrost_update_knowledge_document",
+        "bifrost_knowledge_document_update",
         True,
     ),
     "knowledge.documents.delete": (
         "DELETE",
         "/api/knowledge-sources/{namespace}/documents/{doc_id}",
         ("knowledge", "delete-document"),
-        "bifrost_delete_knowledge_document",
+        "bifrost_knowledge_document_delete",
         True,
     ),
 }
@@ -276,7 +276,7 @@ PLATFORM_JOB_OPERATIONS = {
         "GET",
         "/api/platform-jobs/{job_id}",
         ("platform-jobs", "get"),
-        "bifrost_get_platform_job",
+        "bifrost_platform_job_get",
     ),
 }
 
@@ -285,42 +285,42 @@ SOLUTION_OPERATIONS = {
         "GET",
         "/api/solutions",
         None,
-        "bifrost_list_solutions",
+        "bifrost_solution_list",
         True,
     ),
     "solutions.get": (
         "GET",
         "/api/solutions/{solution_id}",
         None,
-        "bifrost_get_solution",
+        "bifrost_solution_get",
         True,
     ),
     "solutions.create": (
         "POST",
         "/api/solutions",
         ("solution", "create"),
-        "bifrost_create_solution",
+        "bifrost_solution_create",
         True,
     ),
     "solutions.update": (
         "PATCH",
         "/api/solutions/{solution_id}",
         None,
-        "bifrost_update_solution",
+        "bifrost_solution_update",
         True,
     ),
     "solutions.delete": (
         "DELETE",
         "/api/solutions/{solution_id}",
         None,
-        "bifrost_delete_solution",
+        "bifrost_solution_delete",
         True,
     ),
     "solutions.sync": (
         "POST",
         "/api/solutions/{solution_id}/sync",
         None,
-        "bifrost_sync_solution",
+        "bifrost_solution_sync",
         True,
     ),
     "solutions.export": (
@@ -358,31 +358,31 @@ ROLE_OPERATIONS = {
         "GET",
         "/api/roles",
         ("roles", "list"),
-        "bifrost_list_roles",
+        "bifrost_role_list",
     ),
     "roles.get": (
         "GET",
         "/api/roles/{role_id}",
         ("roles", "get"),
-        "bifrost_get_role",
+        "bifrost_role_get",
     ),
     "roles.create": (
         "POST",
         "/api/roles",
         ("roles", "create"),
-        "bifrost_create_role",
+        "bifrost_role_create",
     ),
     "roles.update": (
         "PATCH",
         "/api/roles/{role_id}",
         ("roles", "update"),
-        "bifrost_update_role",
+        "bifrost_role_update",
     ),
     "roles.delete": (
         "DELETE",
         "/api/roles/{role_id}",
         ("roles", "delete"),
-        "bifrost_delete_role",
+        "bifrost_role_delete",
     ),
 }
 
@@ -597,31 +597,31 @@ POLICY_RULE_OPERATIONS = {
         "GET",
         "/api/policy-rules",
         ("policy-rules", "list"),
-        "bifrost_list_policy_rules",
+        "bifrost_policy_rule_list",
     ),
     "policy.rules.create": (
         "POST",
         "/api/policy-rules",
         ("policy-rules", "create"),
-        "bifrost_create_policy_rule",
+        "bifrost_policy_rule_create",
     ),
     "policy.rules.update": (
         "PUT",
         "/api/policy-rules/{domain}/{name}",
         ("policy-rules", "update"),
-        "bifrost_update_policy_rule",
+        "bifrost_policy_rule_update",
     ),
     "policy.rules.delete": (
         "DELETE",
         "/api/policy-rules/{domain}/{name}",
         ("policy-rules", "delete"),
-        "bifrost_delete_policy_rule",
+        "bifrost_policy_rule_delete",
     ),
     "policy.rules.list_usages": (
         "GET",
         "/api/policy-rules/{domain}/{name}/usages",
         ("policy-rules", "list-usages"),
-        "bifrost_list_policy_rule_usages",
+        "bifrost_policy_rule_usage_list",
     ),
 }
 
@@ -630,25 +630,25 @@ CONFIG_OPERATIONS = {
         "GET",
         "/api/config",
         ("configs", "list"),
-        "bifrost_list_configs",
+        "bifrost_config_list",
     ),
     "configs.create": (
         "POST",
         "/api/config",
         ("configs", "create"),
-        "bifrost_create_config",
+        "bifrost_config_create",
     ),
     "configs.update": (
         "PUT",
         "/api/config/{config_id}",
         ("configs", "update"),
-        "bifrost_update_config",
+        "bifrost_config_update",
     ),
     "configs.delete": (
         "DELETE",
         "/api/config/{config_id}",
         ("configs", "delete"),
-        "bifrost_delete_config",
+        "bifrost_config_delete",
     ),
 }
 
@@ -657,31 +657,31 @@ CLAIM_OPERATIONS = {
         "GET",
         "/api/claims",
         ("claims", "list"),
-        "bifrost_list_claims",
+        "bifrost_claim_list",
     ),
     "claims.get": (
         "GET",
         "/api/claims/{name}",
         ("claims", "get"),
-        "bifrost_get_claim",
+        "bifrost_claim_get",
     ),
     "claims.create": (
         "POST",
         "/api/claims",
         ("claims", "create"),
-        "bifrost_create_claim",
+        "bifrost_claim_create",
     ),
     "claims.update": (
         "PATCH",
         "/api/claims/{name}",
         ("claims", "update"),
-        "bifrost_update_claim",
+        "bifrost_claim_update",
     ),
     "claims.delete": (
         "DELETE",
         "/api/claims/{name}",
         ("claims", "delete"),
-        "bifrost_delete_claim",
+        "bifrost_claim_delete",
     ),
 }
 
@@ -690,25 +690,25 @@ FILE_POLICY_OPERATIONS = {
         "GET",
         "/api/files/policies",
         ("files", "policies", "list"),
-        "bifrost_list_file_policies",
+        "bifrost_file_policy_list",
     ),
     "files.policies.get": (
         "GET",
         "/api/files/policies/{policy_path}",
         ("files", "policies", "get"),
-        "bifrost_get_file_policy",
+        "bifrost_file_policy_get",
     ),
     "files.policies.set": (
         "PUT",
         "/api/files/policies/{policy_path}",
         ("files", "policies", "set"),
-        "bifrost_set_file_policy",
+        "bifrost_file_policy_set",
     ),
     "files.policies.delete": (
         "DELETE",
         "/api/files/policies/{policy_path}",
         ("files", "policies", "delete"),
-        "bifrost_delete_file_policy",
+        "bifrost_file_policy_delete",
     ),
     "files.policies.test": (
         "POST",
@@ -731,61 +731,61 @@ EVENT_OPERATIONS = {
         "GET",
         "/api/events/sources",
         ("events", "list-sources"),
-        "bifrost_list_event_sources",
+        "bifrost_event_source_list",
     ),
     "events.sources.get": (
         "GET",
         "/api/events/sources/{source_id}",
         ("events", "get-source"),
-        "bifrost_get_event_source",
+        "bifrost_event_source_get",
     ),
     "events.sources.create": (
         "POST",
         "/api/events/sources",
         ("events", "create-source"),
-        "bifrost_create_event_source",
+        "bifrost_event_source_create",
     ),
     "events.sources.update": (
         "PATCH",
         "/api/events/sources/{source_id}",
         ("events", "update-source"),
-        "bifrost_update_event_source",
+        "bifrost_event_source_update",
     ),
     "events.sources.delete": (
         "DELETE",
         "/api/events/sources/{source_id}",
         ("events", "delete-source"),
-        "bifrost_delete_event_source",
+        "bifrost_event_source_delete",
     ),
     "events.subscriptions.list": (
         "GET",
         "/api/events/sources/{source_id}/subscriptions",
         ("events", "list-subscriptions"),
-        "bifrost_list_event_subscriptions",
+        "bifrost_event_subscription_list",
     ),
     "events.subscriptions.create": (
         "POST",
         "/api/events/sources/{source_id}/subscriptions",
         ("events", "create-subscription"),
-        "bifrost_create_event_subscription",
+        "bifrost_event_subscription_create",
     ),
     "events.subscriptions.update": (
         "PATCH",
         "/api/events/sources/{source_id}/subscriptions/{subscription_id}",
         ("events", "update-subscription"),
-        "bifrost_update_event_subscription",
+        "bifrost_event_subscription_update",
     ),
     "events.subscriptions.delete": (
         "DELETE",
         "/api/events/sources/{source_id}/subscriptions/{subscription_id}",
         ("events", "delete-subscription"),
-        "bifrost_delete_event_subscription",
+        "bifrost_event_subscription_delete",
     ),
     "events.webhook_adapters.list": (
         "GET",
         "/api/events/adapters",
         ("events", "list-webhook-adapters"),
-        "bifrost_list_event_webhook_adapters",
+        "bifrost_event_webhook_adapter_list",
     ),
 }
 
@@ -794,31 +794,31 @@ ORGANIZATION_OPERATIONS = {
         "GET",
         "/api/organizations",
         ("organizations", "list"),
-        "bifrost_list_organizations",
+        "bifrost_organization_list",
     ),
     "organizations.get": (
         "GET",
         "/api/organizations/{org_id}",
         ("organizations", "get"),
-        "bifrost_get_organization",
+        "bifrost_organization_get",
     ),
     "organizations.create": (
         "POST",
         "/api/organizations",
         ("organizations", "create"),
-        "bifrost_create_organization",
+        "bifrost_organization_create",
     ),
     "organizations.update": (
         "PATCH",
         "/api/organizations/{org_id}",
         ("organizations", "update"),
-        "bifrost_update_organization",
+        "bifrost_organization_update",
     ),
     "organizations.delete": (
         "DELETE",
         "/api/organizations/{org_id}",
         ("organizations", "delete"),
-        "bifrost_delete_organization",
+        "bifrost_organization_delete",
     ),
 }
 
@@ -827,25 +827,25 @@ INTEGRATION_OPERATIONS = {
         "GET",
         "/api/integrations",
         ("integrations", "list"),
-        "bifrost_list_integrations",
+        "bifrost_integration_list",
     ),
     "integrations.get": (
         "GET",
         "/api/integrations/{integration_id}",
         ("integrations", "get"),
-        "bifrost_get_integration",
+        "bifrost_integration_get",
     ),
     "integrations.create": (
         "POST",
         "/api/integrations",
         ("integrations", "create"),
-        "bifrost_create_integration",
+        "bifrost_integration_create",
     ),
     "integrations.update": (
         "PUT",
         "/api/integrations/{integration_id}",
         ("integrations", "update"),
-        "bifrost_update_integration",
+        "bifrost_integration_update",
     ),
     "integrations.delete": (
         "DELETE",
@@ -879,13 +879,13 @@ INTEGRATION_OPERATIONS = {
         "POST",
         "/api/integrations/{integration_id}/mappings",
         ("integrations", "create-mapping"),
-        "bifrost_create_integration_mapping",
+        "bifrost_integration_mapping_create",
     ),
     "integrations.mappings.update": (
         "PUT",
         "/api/integrations/{integration_id}/mappings/{mapping_id}",
         ("integrations", "update-mapping"),
-        "bifrost_update_integration_mapping",
+        "bifrost_integration_mapping_update",
     ),
     "integrations.config.get": (
         "GET",
@@ -985,43 +985,43 @@ WORKSPACE_FILE_OPERATIONS = {
         "POST",
         "/api/files/list",
         ("files", "list"),
-        "bifrost_list_files",
+        "bifrost_file_list",
     ),
     "workspace.files.search": (
         "POST",
         "/api/files/search",
         ("files", "search"),
-        "bifrost_search_files",
+        "bifrost_file_search",
     ),
     "workspace.files.read": (
         "POST",
         "/api/files/read",
         ("files", "read"),
-        "bifrost_read_file",
+        "bifrost_file_read",
     ),
     "workspace.files.stat": (
         "POST",
         "/api/files/stat",
         ("files", "stat"),
-        "bifrost_stat_file",
+        "bifrost_file_stat",
     ),
     "workspace.files.exists": (
         "POST",
         "/api/files/exists",
         ("files", "exists"),
-        "bifrost_exists_file",
+        "bifrost_file_exists",
     ),
     "workspace.files.write": (
         "POST",
         "/api/files/write",
         ("files", "write"),
-        "bifrost_write_file",
+        "bifrost_file_write",
     ),
     "workspace.files.delete": (
         "POST",
         "/api/files/delete",
         ("files", "delete"),
-        "bifrost_delete_file",
+        "bifrost_file_delete",
     ),
     "workspace.files.pull": (
         "POST",
@@ -1170,5 +1170,67 @@ def test_catalog_rejects_duplicate_operation_ids() -> None:
     )
     with pytest.raises(ValueError, match="duplicate operation ID"):
         validate_operation_catalog((*OPERATION_CATALOG, duplicate))
+
+
+def _with_mcp_name(operation: OperationDefinition, name: str) -> OperationDefinition:
+    """Return a copy of ``operation`` with a different ``operation_id``/MCP name.
+
+    A distinct ``operation_id`` avoids tripping the duplicate-operation-ID
+    check, which would otherwise mask the MCP-naming assertion under test.
+    """
+    dumped = deepcopy(operation.model_dump())
+    dumped["operation_id"] = f"{dumped['operation_id']}.test_variant"
+    dumped["mcp"]["name"] = name
+    return OperationDefinition.model_validate(dumped)
+
+
+def test_catalog_rejects_verb_first_mcp_names() -> None:
+    """MCP names are noun-first, verb-last — ``bifrost_list_agents`` is rejected."""
+    bad = _with_mcp_name(get_operation("agents.list"), "bifrost_list_agents")
+    with pytest.raises(ValueError, match="bifrost_list_agents"):
+        validate_operation_catalog((*OPERATION_CATALOG, bad))
+
+
+def test_catalog_rejects_mcp_names_with_unknown_trailing_verb() -> None:
+    bad = _with_mcp_name(get_operation("agents.list"), "bifrost_agent_frobnicate")
+    with pytest.raises(ValueError, match="frobnicate"):
+        validate_operation_catalog((*OPERATION_CATALOG, bad))
+
+
+def test_catalog_rejects_mcp_names_over_length_limit() -> None:
+    bad = _with_mcp_name(get_operation("agents.list"), "bifrost_" + "a" * 60 + "_list")
+    with pytest.raises(ValueError, match="does not match"):
+        validate_operation_catalog((*OPERATION_CATALOG, bad))
+
+
+def test_canonical_catalog_mcp_names_are_all_valid() -> None:
+    """No rewiring needed — the real catalog already satisfies its own rule."""
+    validate_operation_catalog(OPERATION_CATALOG)
+
+
+# Domains whose registered MCP tool ids are already reconciled with the
+# catalog's ``bifrost_<noun>..._<verb>`` names (RBAC R1b: agents; later
+# batches add their domain here as each is migrated to a thin wrapper).
+CANONICAL_MCP_DOMAINS = {"agents"}
+
+
+def test_registered_agent_mcp_tool_ids_match_the_catalog() -> None:
+    """Every registered Agent MCP tool id equals its catalog MCP name.
+
+    Reads the actually-registered tool ids from the ``agents`` tool module's
+    ``TOOLS`` list (the same list ``register_tools`` feeds into FastMCP),
+    not just the catalog metadata — this is the tripwire that would catch a
+    tool module rename drifting from the catalog rename.
+    """
+    from src.services.mcp_server.tools import agents as agents_mod
+
+    registered_ids = {tool_id for tool_id, _name, _description in agents_mod.TOOLS}
+    catalog_names = {
+        operation.mcp.name
+        for operation in OPERATION_CATALOG
+        if operation.operation_id.split(".")[0] in CANONICAL_MCP_DOMAINS
+        and operation.mcp is not None
+    }
+    assert registered_ids == catalog_names
 
 

@@ -14,8 +14,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": "list_agents",
-          "status": "divergent_behavior"
+          "name": "bifrost_agent_list",
+          "status": "exact_parity"
         },
         "rest": {
           "operation_id": "agents.list",
@@ -45,7 +45,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_list_agents"
+          "name": "bifrost_agent_list"
         },
         "native_builder": true,
         "operation_id": "agents.list",
@@ -74,8 +74,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": "get_agent",
-          "status": "divergent_behavior"
+          "name": "bifrost_agent_get",
+          "status": "exact_parity"
         },
         "rest": {
           "operation_id": "agents.get",
@@ -105,7 +105,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_get_agent"
+          "name": "bifrost_agent_get"
         },
         "native_builder": true,
         "operation_id": "agents.get",
@@ -134,8 +134,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": "create_agent",
-          "status": "divergent_behavior"
+          "name": "bifrost_agent_create",
+          "status": "exact_parity"
         },
         "rest": {
           "operation_id": "agents.create",
@@ -167,7 +167,7 @@
           "entity": "agents"
         },
         "mcp": {
-          "name": "bifrost_create_agent"
+          "name": "bifrost_agent_create"
         },
         "native_builder": true,
         "operation_id": "agents.create",
@@ -200,8 +200,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": "update_agent",
-          "status": "divergent_behavior"
+          "name": "bifrost_agent_update",
+          "status": "exact_parity"
         },
         "rest": {
           "operation_id": "agents.update",
@@ -233,7 +233,7 @@
           "entity": "agents"
         },
         "mcp": {
-          "name": "bifrost_update_agent"
+          "name": "bifrost_agent_update"
         },
         "native_builder": true,
         "operation_id": "agents.update",
@@ -266,8 +266,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": "delete_agent",
-          "status": "divergent_behavior"
+          "name": "bifrost_agent_delete",
+          "status": "exact_parity"
         },
         "rest": {
           "operation_id": "agents.delete",
@@ -299,7 +299,7 @@
           "entity": "agents"
         },
         "mcp": {
-          "name": "bifrost_delete_agent"
+          "name": "bifrost_agent_delete"
         },
         "native_builder": true,
         "operation_id": "agents.delete",
@@ -331,8 +331,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": "list_forms",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "forms.list",
@@ -362,7 +362,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_list_forms"
+          "name": "bifrost_form_list"
         },
         "native_builder": true,
         "operation_id": "forms.list",
@@ -391,8 +391,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": "get_form",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "forms.get",
@@ -422,7 +422,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_get_form"
+          "name": "bifrost_form_get"
         },
         "native_builder": true,
         "operation_id": "forms.get",
@@ -451,8 +451,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": "create_form",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "forms.create",
@@ -484,7 +484,7 @@
           "entity": "forms"
         },
         "mcp": {
-          "name": "bifrost_create_form"
+          "name": "bifrost_form_create"
         },
         "native_builder": true,
         "operation_id": "forms.create",
@@ -518,8 +518,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": "update_form",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "forms.update",
@@ -551,7 +551,7 @@
           "entity": "forms"
         },
         "mcp": {
-          "name": "bifrost_update_form"
+          "name": "bifrost_form_update"
         },
         "native_builder": true,
         "operation_id": "forms.update",
@@ -618,7 +618,7 @@
           "entity": "forms"
         },
         "mcp": {
-          "name": "bifrost_delete_form"
+          "name": "bifrost_form_delete"
         },
         "native_builder": true,
         "operation_id": "forms.delete",
@@ -651,8 +651,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": "list_tables",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "tables.list",
@@ -682,7 +682,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_list_tables"
+          "name": "bifrost_table_list"
         },
         "native_builder": true,
         "operation_id": "tables.list",
@@ -711,8 +711,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": "get_table",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "tables.get",
@@ -742,7 +742,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_get_table"
+          "name": "bifrost_table_get"
         },
         "native_builder": true,
         "operation_id": "tables.get",
@@ -771,8 +771,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": "create_table",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "tables.create",
@@ -804,7 +804,7 @@
           "entity": "tables"
         },
         "mcp": {
-          "name": "bifrost_create_table"
+          "name": "bifrost_table_create"
         },
         "native_builder": true,
         "operation_id": "tables.create",
@@ -836,8 +836,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": "update_table",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "tables.update",
@@ -869,7 +869,7 @@
           "entity": "tables"
         },
         "mcp": {
-          "name": "bifrost_update_table"
+          "name": "bifrost_table_update"
         },
         "native_builder": true,
         "operation_id": "tables.update",
@@ -902,8 +902,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": "delete_table",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "tables.delete",
@@ -935,7 +935,7 @@
           "entity": "tables"
         },
         "mcp": {
-          "name": "bifrost_delete_table"
+          "name": "bifrost_table_delete"
         },
         "native_builder": true,
         "operation_id": "tables.delete",
@@ -967,8 +967,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": "list_apps",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "apps.list",
@@ -998,7 +998,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_list_apps"
+          "name": "bifrost_app_list"
         },
         "native_builder": true,
         "operation_id": "apps.list",
@@ -1027,8 +1027,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": "get_app",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "apps.get",
@@ -1058,7 +1058,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_get_app"
+          "name": "bifrost_app_get"
         },
         "native_builder": true,
         "operation_id": "apps.get",
@@ -1087,8 +1087,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": "create_app",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "apps.create",
@@ -1120,7 +1120,7 @@
           "entity": "apps"
         },
         "mcp": {
-          "name": "bifrost_create_app"
+          "name": "bifrost_app_create"
         },
         "native_builder": true,
         "operation_id": "apps.create",
@@ -1153,8 +1153,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": "update_app",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "apps.update",
@@ -1186,7 +1186,7 @@
           "entity": "apps"
         },
         "mcp": {
-          "name": "bifrost_update_app"
+          "name": "bifrost_app_update"
         },
         "native_builder": true,
         "operation_id": "apps.update",
@@ -1252,7 +1252,7 @@
           "entity": "apps"
         },
         "mcp": {
-          "name": "bifrost_delete_app"
+          "name": "bifrost_app_delete"
         },
         "native_builder": true,
         "operation_id": "apps.delete",
@@ -1284,8 +1284,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": "get_app_dependencies",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "apps.dependencies.get",
@@ -1315,7 +1315,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_get_app_dependencies"
+          "name": "bifrost_app_dependencies_get"
         },
         "native_builder": true,
         "operation_id": "apps.dependencies.get",
@@ -1344,8 +1344,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": "update_app_dependencies",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "apps.dependencies.update",
@@ -1377,7 +1377,7 @@
           "entity": "apps"
         },
         "mcp": {
-          "name": "bifrost_update_app_dependencies"
+          "name": "bifrost_app_dependencies_update"
         },
         "native_builder": true,
         "operation_id": "apps.dependencies.update",
@@ -1410,8 +1410,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": "validate_app",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "apps.validate",
@@ -1441,7 +1441,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_validate_app"
+          "name": "bifrost_app_validate"
         },
         "native_builder": true,
         "operation_id": "apps.validate",
@@ -1470,8 +1470,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": "publish_app",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "apps.publish",
@@ -1501,7 +1501,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_publish_app"
+          "name": "bifrost_app_publish"
         },
         "native_builder": true,
         "operation_id": "apps.publish",
@@ -1561,7 +1561,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_get_platform_job"
+          "name": "bifrost_platform_job_get"
         },
         "native_builder": true,
         "operation_id": "platform.jobs.get",
@@ -1590,8 +1590,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": "replace_app",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "apps.replace",
@@ -1623,7 +1623,7 @@
           "entity": "apps"
         },
         "mcp": {
-          "name": "bifrost_replace_app"
+          "name": "bifrost_app_replace"
         },
         "native_builder": true,
         "operation_id": "apps.replace",
@@ -1678,7 +1678,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_list_solutions"
+          "name": "bifrost_solution_list"
         },
         "native_builder": true,
         "operation_id": "solutions.list",
@@ -1731,7 +1731,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_get_solution"
+          "name": "bifrost_solution_get"
         },
         "native_builder": true,
         "operation_id": "solutions.get",
@@ -1791,7 +1791,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_create_solution"
+          "name": "bifrost_solution_create"
         },
         "native_builder": true,
         "operation_id": "solutions.create",
@@ -1846,7 +1846,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_update_solution"
+          "name": "bifrost_solution_update"
         },
         "native_builder": true,
         "operation_id": "solutions.update",
@@ -1902,7 +1902,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_delete_solution"
+          "name": "bifrost_solution_delete"
         },
         "native_builder": true,
         "operation_id": "solutions.delete",
@@ -1958,7 +1958,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_sync_solution"
+          "name": "bifrost_solution_sync"
         },
         "native_builder": true,
         "operation_id": "solutions.sync",
@@ -2240,8 +2240,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": "list_workflows",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "workflows.list",
@@ -2271,7 +2271,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_list_workflows"
+          "name": "bifrost_workflow_list"
         },
         "native_builder": true,
         "operation_id": "workflows.list",
@@ -2300,8 +2300,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": "validate_workflow",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "workflows.validate",
@@ -2331,7 +2331,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_validate_workflow"
+          "name": "bifrost_workflow_validate"
         },
         "native_builder": true,
         "operation_id": "workflows.validate",
@@ -2360,8 +2360,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": "register_workflow",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "workflows.register",
@@ -2394,7 +2394,7 @@
           "entity": "workflows"
         },
         "mcp": {
-          "name": "bifrost_register_workflow"
+          "name": "bifrost_workflow_register"
         },
         "native_builder": true,
         "operation_id": "workflows.register",
@@ -2427,8 +2427,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": "execute_workflow",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "workflows.execute",
@@ -2460,7 +2460,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_execute_workflow"
+          "name": "bifrost_workflow_execute"
         },
         "native_builder": true,
         "operation_id": "workflows.execute",
@@ -2491,8 +2491,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": "update_workflow",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "workflows.update",
@@ -2524,7 +2524,7 @@
           "entity": "workflows"
         },
         "mcp": {
-          "name": "bifrost_update_workflow"
+          "name": "bifrost_workflow_update"
         },
         "native_builder": true,
         "operation_id": "workflows.update",
@@ -2558,8 +2558,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": "delete_workflow",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "workflows.delete",
@@ -2592,7 +2592,7 @@
           "entity": "workflows"
         },
         "mcp": {
-          "name": "bifrost_delete_workflow"
+          "name": "bifrost_workflow_delete"
         },
         "native_builder": true,
         "operation_id": "workflows.delete",
@@ -2626,8 +2626,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": "grant_workflow_role",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "workflows.roles.grant",
@@ -2660,7 +2660,7 @@
           "entity": "workflows"
         },
         "mcp": {
-          "name": "bifrost_grant_workflow_role"
+          "name": "bifrost_workflow_role_grant"
         },
         "native_builder": true,
         "operation_id": "workflows.roles.grant",
@@ -2692,8 +2692,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": "revoke_workflow_role",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "workflows.roles.revoke",
@@ -2726,7 +2726,7 @@
           "entity": "workflows"
         },
         "mcp": {
-          "name": "bifrost_revoke_workflow_role"
+          "name": "bifrost_workflow_role_revoke"
         },
         "native_builder": true,
         "operation_id": "workflows.roles.revoke",
@@ -2758,8 +2758,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": "list_integrations",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "integrations.list",
@@ -2789,7 +2789,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_list_integrations"
+          "name": "bifrost_integration_list"
         },
         "native_builder": true,
         "operation_id": "integrations.list",
@@ -2818,8 +2818,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": "get_integration",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "integrations.get",
@@ -2849,7 +2849,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_get_integration"
+          "name": "bifrost_integration_get"
         },
         "native_builder": true,
         "operation_id": "integrations.get",
@@ -2878,8 +2878,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": "create_integration",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "integrations.create",
@@ -2911,7 +2911,7 @@
           "entity": "integrations"
         },
         "mcp": {
-          "name": "bifrost_create_integration"
+          "name": "bifrost_integration_create"
         },
         "native_builder": true,
         "operation_id": "integrations.create",
@@ -2943,8 +2943,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": "update_integration",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "integrations.update",
@@ -2976,7 +2976,7 @@
           "entity": "integrations"
         },
         "mcp": {
-          "name": "bifrost_update_integration"
+          "name": "bifrost_integration_update"
         },
         "native_builder": true,
         "operation_id": "integrations.update",
@@ -3193,7 +3193,7 @@
         "exclusions": {
           "cli": "Used internally by integrations update-mapping.",
           "manifest": "The read does not mutate the Integration manifest.",
-          "mcp": "Used internally by bifrost_update_integration_mapping.",
+          "mcp": "Used internally by bifrost_integration_mapping_update.",
           "native_builder": "Used internally by the Integration mapping update operation.",
           "sdk": "Integration administration is separate from the application SDK's runtime mapping lookup."
         },
@@ -3259,7 +3259,7 @@
           "entity": "integrations"
         },
         "mcp": {
-          "name": "bifrost_create_integration_mapping"
+          "name": "bifrost_integration_mapping_create"
         },
         "native_builder": true,
         "operation_id": "integrations.mappings.create",
@@ -3291,8 +3291,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": "update_integration_mapping",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "integrations.mappings.update",
@@ -3324,7 +3324,7 @@
           "entity": "integrations"
         },
         "mcp": {
-          "name": "bifrost_update_integration_mapping"
+          "name": "bifrost_integration_mapping_update"
         },
         "native_builder": true,
         "operation_id": "integrations.mappings.update",
@@ -4076,7 +4076,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_list_workflow_executions"
+          "name": "bifrost_execution_list"
         },
         "native_builder": true,
         "operation_id": "executions.list",
@@ -4136,7 +4136,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_get_workflow_execution"
+          "name": "bifrost_execution_get"
         },
         "native_builder": true,
         "operation_id": "executions.get",
@@ -4196,7 +4196,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_list_knowledge_namespaces"
+          "name": "bifrost_knowledge_namespace_list"
         },
         "native_builder": true,
         "operation_id": "knowledge.namespaces.list",
@@ -4256,7 +4256,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_list_knowledge_documents"
+          "name": "bifrost_knowledge_document_list"
         },
         "native_builder": true,
         "operation_id": "knowledge.documents.list",
@@ -4316,7 +4316,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_get_knowledge_document"
+          "name": "bifrost_knowledge_document_get"
         },
         "native_builder": true,
         "operation_id": "knowledge.documents.get",
@@ -4376,7 +4376,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_create_knowledge_document"
+          "name": "bifrost_knowledge_document_create"
         },
         "native_builder": true,
         "operation_id": "knowledge.documents.create",
@@ -4439,7 +4439,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_update_knowledge_document"
+          "name": "bifrost_knowledge_document_update"
         },
         "native_builder": true,
         "operation_id": "knowledge.documents.update",
@@ -4502,7 +4502,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_delete_knowledge_document"
+          "name": "bifrost_knowledge_document_delete"
         },
         "native_builder": true,
         "operation_id": "knowledge.documents.delete",
@@ -4533,8 +4533,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": "list_roles",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "roles.list",
@@ -4564,7 +4564,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_list_roles"
+          "name": "bifrost_role_list"
         },
         "native_builder": true,
         "operation_id": "roles.list",
@@ -4593,8 +4593,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": "get_role",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "roles.get",
@@ -4624,7 +4624,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_get_role"
+          "name": "bifrost_role_get"
         },
         "native_builder": true,
         "operation_id": "roles.get",
@@ -4653,8 +4653,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": "create_role",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "roles.create",
@@ -4686,7 +4686,7 @@
           "entity": "roles"
         },
         "mcp": {
-          "name": "bifrost_create_role"
+          "name": "bifrost_role_create"
         },
         "native_builder": true,
         "operation_id": "roles.create",
@@ -4719,8 +4719,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": "update_role",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "roles.update",
@@ -4752,7 +4752,7 @@
           "entity": "roles"
         },
         "mcp": {
-          "name": "bifrost_update_role"
+          "name": "bifrost_role_update"
         },
         "native_builder": true,
         "operation_id": "roles.update",
@@ -4785,8 +4785,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": "delete_role",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "roles.delete",
@@ -4818,7 +4818,7 @@
           "entity": "roles"
         },
         "mcp": {
-          "name": "bifrost_delete_role"
+          "name": "bifrost_role_delete"
         },
         "native_builder": true,
         "operation_id": "roles.delete",
@@ -6675,8 +6675,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": "list_claims",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "claims.list",
@@ -6706,7 +6706,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_list_claims"
+          "name": "bifrost_claim_list"
         },
         "native_builder": true,
         "operation_id": "claims.list",
@@ -6735,8 +6735,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": "get_claim",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "claims.get",
@@ -6766,7 +6766,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_get_claim"
+          "name": "bifrost_claim_get"
         },
         "native_builder": true,
         "operation_id": "claims.get",
@@ -6795,8 +6795,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": "create_claim",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "claims.create",
@@ -6828,7 +6828,7 @@
           "entity": "claims"
         },
         "mcp": {
-          "name": "bifrost_create_claim"
+          "name": "bifrost_claim_create"
         },
         "native_builder": true,
         "operation_id": "claims.create",
@@ -6861,8 +6861,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": "update_claim",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "claims.update",
@@ -6894,7 +6894,7 @@
           "entity": "claims"
         },
         "mcp": {
-          "name": "bifrost_update_claim"
+          "name": "bifrost_claim_update"
         },
         "native_builder": true,
         "operation_id": "claims.update",
@@ -6927,8 +6927,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": "delete_claim",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "claims.delete",
@@ -6960,7 +6960,7 @@
           "entity": "claims"
         },
         "mcp": {
-          "name": "bifrost_delete_claim"
+          "name": "bifrost_claim_delete"
         },
         "native_builder": true,
         "operation_id": "claims.delete",
@@ -6993,8 +6993,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": "list_file_policies",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "files.policies.list",
@@ -7025,7 +7025,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_list_file_policies"
+          "name": "bifrost_file_policy_list"
         },
         "native_builder": true,
         "operation_id": "files.policies.list",
@@ -7055,8 +7055,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": "get_file_policy",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "files.policies.get",
@@ -7087,7 +7087,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_get_file_policy"
+          "name": "bifrost_file_policy_get"
         },
         "native_builder": true,
         "operation_id": "files.policies.get",
@@ -7117,8 +7117,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": "set_file_policy",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "files.policies.set",
@@ -7149,7 +7149,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_set_file_policy"
+          "name": "bifrost_file_policy_set"
         },
         "native_builder": true,
         "operation_id": "files.policies.set",
@@ -7184,8 +7184,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": "delete_file_policy",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "files.policies.delete",
@@ -7216,7 +7216,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_delete_file_policy"
+          "name": "bifrost_file_policy_delete"
         },
         "native_builder": true,
         "operation_id": "files.policies.delete",
@@ -7355,8 +7355,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": "list_configs",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "configs.list",
@@ -7386,7 +7386,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_list_configs"
+          "name": "bifrost_config_list"
         },
         "native_builder": true,
         "operation_id": "configs.list",
@@ -7417,8 +7417,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": "create_config",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "configs.create",
@@ -7448,7 +7448,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_create_config"
+          "name": "bifrost_config_create"
         },
         "native_builder": true,
         "operation_id": "configs.create",
@@ -7481,8 +7481,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": "update_config",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "configs.update",
@@ -7512,7 +7512,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_update_config"
+          "name": "bifrost_config_update"
         },
         "native_builder": true,
         "operation_id": "configs.update",
@@ -7547,8 +7547,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": "delete_config",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "configs.delete",
@@ -7578,7 +7578,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_delete_config"
+          "name": "bifrost_config_delete"
         },
         "native_builder": true,
         "operation_id": "configs.delete",
@@ -7610,8 +7610,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": "list_policy_rules",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "policy.rules.list",
@@ -7641,7 +7641,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_list_policy_rules"
+          "name": "bifrost_policy_rule_list"
         },
         "native_builder": true,
         "operation_id": "policy.rules.list",
@@ -7670,8 +7670,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": "create_policy_rule",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "policy.rules.create",
@@ -7701,7 +7701,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_create_policy_rule"
+          "name": "bifrost_policy_rule_create"
         },
         "native_builder": true,
         "operation_id": "policy.rules.create",
@@ -7764,7 +7764,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_update_policy_rule"
+          "name": "bifrost_policy_rule_update"
         },
         "native_builder": true,
         "operation_id": "policy.rules.update",
@@ -7798,8 +7798,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": "delete_policy_rule",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "policy.rules.delete",
@@ -7829,7 +7829,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_delete_policy_rule"
+          "name": "bifrost_policy_rule_delete"
         },
         "native_builder": true,
         "operation_id": "policy.rules.delete",
@@ -7894,7 +7894,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_list_policy_rule_usages"
+          "name": "bifrost_policy_rule_usage_list"
         },
         "native_builder": true,
         "operation_id": "policy.rules.list_usages",
@@ -7923,8 +7923,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": "list_organizations",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "organizations.list",
@@ -7955,7 +7955,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_list_organizations"
+          "name": "bifrost_organization_list"
         },
         "native_builder": false,
         "operation_id": "organizations.list",
@@ -7984,8 +7984,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": "get_organization",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "organizations.get",
@@ -8016,7 +8016,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_get_organization"
+          "name": "bifrost_organization_get"
         },
         "native_builder": false,
         "operation_id": "organizations.get",
@@ -8045,8 +8045,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": "create_organization",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "organizations.create",
@@ -8077,7 +8077,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_create_organization"
+          "name": "bifrost_organization_create"
         },
         "native_builder": false,
         "operation_id": "organizations.create",
@@ -8109,8 +8109,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": "update_organization",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "organizations.update",
@@ -8141,7 +8141,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_update_organization"
+          "name": "bifrost_organization_update"
         },
         "native_builder": false,
         "operation_id": "organizations.update",
@@ -8172,8 +8172,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": "delete_organization",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "organizations.delete",
@@ -8204,7 +8204,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_delete_organization"
+          "name": "bifrost_organization_delete"
         },
         "native_builder": false,
         "operation_id": "organizations.delete",
@@ -8236,8 +8236,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": "list_event_sources",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "events.sources.list",
@@ -8267,7 +8267,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_list_event_sources"
+          "name": "bifrost_event_source_list"
         },
         "native_builder": true,
         "operation_id": "events.sources.list",
@@ -8296,8 +8296,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": "get_event_source",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "events.sources.get",
@@ -8327,7 +8327,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_get_event_source"
+          "name": "bifrost_event_source_get"
         },
         "native_builder": true,
         "operation_id": "events.sources.get",
@@ -8356,8 +8356,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": "create_event_source",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "events.sources.create",
@@ -8389,7 +8389,7 @@
           "entity": "events"
         },
         "mcp": {
-          "name": "bifrost_create_event_source"
+          "name": "bifrost_event_source_create"
         },
         "native_builder": true,
         "operation_id": "events.sources.create",
@@ -8422,8 +8422,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": "update_event_source",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "events.sources.update",
@@ -8455,7 +8455,7 @@
           "entity": "events"
         },
         "mcp": {
-          "name": "bifrost_update_event_source"
+          "name": "bifrost_event_source_update"
         },
         "native_builder": true,
         "operation_id": "events.sources.update",
@@ -8488,8 +8488,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": "delete_event_source",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "events.sources.delete",
@@ -8521,7 +8521,7 @@
           "entity": "events"
         },
         "mcp": {
-          "name": "bifrost_delete_event_source"
+          "name": "bifrost_event_source_delete"
         },
         "native_builder": true,
         "operation_id": "events.sources.delete",
@@ -8554,8 +8554,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": "list_event_subscriptions",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "events.subscriptions.list",
@@ -8585,7 +8585,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_list_event_subscriptions"
+          "name": "bifrost_event_subscription_list"
         },
         "native_builder": true,
         "operation_id": "events.subscriptions.list",
@@ -8614,8 +8614,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": "create_event_subscription",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "events.subscriptions.create",
@@ -8647,7 +8647,7 @@
           "entity": "events"
         },
         "mcp": {
-          "name": "bifrost_create_event_subscription"
+          "name": "bifrost_event_subscription_create"
         },
         "native_builder": true,
         "operation_id": "events.subscriptions.create",
@@ -8679,8 +8679,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": "update_event_subscription",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "events.subscriptions.update",
@@ -8712,7 +8712,7 @@
           "entity": "events"
         },
         "mcp": {
-          "name": "bifrost_update_event_subscription"
+          "name": "bifrost_event_subscription_update"
         },
         "native_builder": true,
         "operation_id": "events.subscriptions.update",
@@ -8744,8 +8744,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": "delete_event_subscription",
-          "status": "divergent_behavior"
+          "name": null,
+          "status": "missing_surface"
         },
         "rest": {
           "operation_id": "events.subscriptions.delete",
@@ -8777,7 +8777,7 @@
           "entity": "events"
         },
         "mcp": {
-          "name": "bifrost_delete_event_subscription"
+          "name": "bifrost_event_subscription_delete"
         },
         "native_builder": true,
         "operation_id": "events.subscriptions.delete",
@@ -8840,7 +8840,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_list_event_webhook_adapters"
+          "name": "bifrost_event_webhook_adapter_list"
         },
         "native_builder": true,
         "operation_id": "events.webhook_adapters.list",
@@ -8902,7 +8902,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_list_files"
+          "name": "bifrost_file_list"
         },
         "native_builder": true,
         "operation_id": "workspace.files.list",
@@ -8962,7 +8962,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_search_files"
+          "name": "bifrost_file_search"
         },
         "native_builder": true,
         "operation_id": "workspace.files.search",
@@ -9024,7 +9024,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_read_file"
+          "name": "bifrost_file_read"
         },
         "native_builder": true,
         "operation_id": "workspace.files.read",
@@ -9084,7 +9084,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_stat_file"
+          "name": "bifrost_file_stat"
         },
         "native_builder": true,
         "operation_id": "workspace.files.stat",
@@ -9147,7 +9147,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_exists_file"
+          "name": "bifrost_file_exists"
         },
         "native_builder": true,
         "operation_id": "workspace.files.exists",
@@ -9209,7 +9209,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_write_file"
+          "name": "bifrost_file_write"
         },
         "native_builder": true,
         "operation_id": "workspace.files.write",
@@ -9275,7 +9275,7 @@
         },
         "manifest": null,
         "mcp": {
-          "name": "bifrost_delete_file"
+          "name": "bifrost_file_delete"
         },
         "native_builder": true,
         "operation_id": "workspace.files.delete",
@@ -10633,13 +10633,163 @@
       },
       {
         "hidden": false,
+        "name": "create_app",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "create_claim",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "create_config",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "create_event_source",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "create_event_subscription",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "create_form",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "create_integration",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "create_organization",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "create_policy_rule",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "create_role",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "create_table",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "delete_claim",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "delete_config",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
         "name": "delete_content",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
       {
         "hidden": false,
+        "name": "delete_event_source",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "delete_event_subscription",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "delete_file_policy",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "delete_organization",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "delete_policy_rule",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "delete_role",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "delete_table",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "delete_workflow",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "execute_workflow",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "get_app",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "get_app_dependencies",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
         "name": "get_app_publish_status",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "get_claim",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -10663,7 +10813,49 @@
       },
       {
         "hidden": false,
+        "name": "get_event_source",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
         "name": "get_execution",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "get_file_policy",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "get_form",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "get_integration",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "get_organization",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "get_role",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "get_table",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -10675,7 +10867,43 @@
       },
       {
         "hidden": false,
+        "name": "grant_workflow_role",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "list_apps",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "list_claims",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "list_configs",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
         "name": "list_content",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "list_event_sources",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "list_event_subscriptions",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -10687,13 +10915,67 @@
       },
       {
         "hidden": false,
+        "name": "list_file_policies",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "list_forms",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "list_integrations",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "list_organizations",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "list_policy_rules",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "list_roles",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "list_tables",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
         "name": "list_webhook_adapters",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
       {
         "hidden": false,
+        "name": "list_workflows",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
         "name": "patch_content",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "publish_app",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -10711,7 +10993,25 @@
       },
       {
         "hidden": false,
+        "name": "register_workflow",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "replace_app",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
         "name": "replace_content",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "revoke_workflow_role",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -10724,6 +11024,102 @@
       {
         "hidden": false,
         "name": "search_knowledge",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "set_file_policy",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "update_app",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "update_app_dependencies",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "update_claim",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "update_config",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "update_event_source",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "update_event_subscription",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "update_form",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "update_integration",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "update_integration_mapping",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "update_organization",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "update_role",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "update_table",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "update_workflow",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "validate_app",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": false,
+        "name": "validate_workflow",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       }
