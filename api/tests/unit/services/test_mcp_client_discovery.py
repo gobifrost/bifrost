@@ -298,9 +298,8 @@ async def test_discovery_uses_path_aware_resource_url(server_url, resource_url):
 
     A vendor whose MCP endpoint is ``https://host/path/to/mcp`` exposes its
     protected-resource metadata at
-    ``https://host/.well-known/oauth-protected-resource/path/to/mcp`` — not
-    at the host root. A doc served only at the host-root URL must not be
-    picked up.
+    ``https://host/.well-known/oauth-protected-resource/path/to/mcp``. When
+    that document exists, the host-root URL is not requested.
     """
     authz_url = "https://vendor.example.com/.well-known/oauth-authorization-server"
     host_root_resource_url = (
@@ -334,6 +333,42 @@ async def test_discovery_uses_path_aware_resource_url(server_url, resource_url):
     assert host_root_resource_url not in requested
     assert result is not None
     assert result["protected_resource_metadata"] == {"resource": "y"}
+
+
+@pytest.mark.asyncio
+async def test_discovery_falls_back_to_host_root_resource_url(server_url, resource_url):
+    """MCP spec: path-inserted URL first, then the host root when it's absent."""
+    authz_url = "https://vendor.example.com/.well-known/oauth-authorization-server"
+    host_root_resource_url = (
+        "https://vendor.example.com/.well-known/oauth-protected-resource"
+    )
+    requested: list[str] = []
+
+    class _RecordingClient(_FakeClient):
+        async def get(self, url):
+            requested.append(url)
+            return await super().get(url)
+
+    fake_client = _RecordingClient(
+        {
+            authz_url: _make_response(status_code=200, body={"issuer": "x"}),
+            resource_url: _make_response(status_code=404),
+            host_root_resource_url: _make_response(
+                status_code=200, body={"resource": "root"}
+            ),
+        }
+    )
+
+    with patch(
+        "src.services.mcp_client.discovery.httpx.AsyncClient",
+        return_value=fake_client,
+    ):
+        result = await discover_oauth_metadata(server_url)
+
+    assert requested.index(resource_url) < requested.index(host_root_resource_url)
+    assert result is not None
+    assert result["protected_resource_metadata"] == {"resource": "root"}
+    assert result["resource"] == "root"
 
 
 @pytest.mark.asyncio

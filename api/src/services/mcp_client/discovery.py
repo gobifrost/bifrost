@@ -124,8 +124,8 @@ async def discover_oauth_metadata(server_url: str) -> dict[str, Any] | None:
     """Discover OAuth metadata for an MCP server via ``/.well-known``.
 
     Fetches ``/.well-known/oauth-authorization-server`` from the server host
-    and the RFC 9728 path-aware protected-resource metadata URL, then
-    preserves them separately. Flattened compatibility fields are also
+    and the RFC 9728 path-aware protected-resource metadata URL (falling back
+    to the host-root URL), then preserves them separately. Flattened compatibility fields are also
     returned for the form; the protected-resource document takes precedence
     for resource-scoped fields.
 
@@ -147,8 +147,13 @@ async def discover_oauth_metadata(server_url: str) -> dict[str, Any] | None:
     timeout = httpx.Timeout(_DISCOVERY_TIMEOUT_SECONDS)
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
         authz_doc = await _fetch_well_known(client, base + _AUTHZ_SERVER_PATH)
+        # MCP authorization spec: try the path-inserted RFC 9728 URL first,
+        # then fall back to the host root.
         resource_url = _protected_resource_metadata_url(server_url)
         resource_doc = await _fetch_well_known(client, resource_url)
+        root_resource_url = base + _PROTECTED_RESOURCE_PATH
+        if resource_doc is None and resource_url != root_resource_url:
+            resource_doc = await _fetch_well_known(client, root_resource_url)
 
     if authz_doc is None and resource_doc is None:
         return None
