@@ -1,162 +1,128 @@
-"""
-Execution MCP Tools
+"""Execution MCP Tools — thin wrappers around the REST API.
 
-Tools for listing and viewing workflow execution history.
+RBAC R1b batch 2. ``bifrost_execution_list`` / ``bifrost_execution_get`` call
+``GET /api/executions`` and ``GET /api/executions/{id}`` through the
+in-process HTTP bridge (:mod:`_http_bridge`), same as ``tools/roles.py`` /
+``tools/agents.py``. No ORM, no repositories, no ``AsyncSession`` — MCP now
+enforces exactly what REST enforces (see ``shared/sdk_execution_reads.py``
+for the shared scope/authorization logic both surfaces call into).
+
+Known behavior changes vs. the old ORM-backed tools (see the R1b batch 2
+report for the full persona table):
+
+* A platform admin now sees executions across all orgs by default (REST's
+  ``scope`` query param, exposed here as an optional ``scope`` argument),
+  not just their own org.
+* REST excludes local-runner executions (``excludeLocal=true`` default); the
+  old MCP path included them.
+* Non-admin filtering (``executed_by == caller``) is unchanged — enforced by
+  the shared read service, not by this tool.
 """
+
+from __future__ import annotations
 
 import logging
 from typing import Any
-from uuid import UUID
 
 from fastmcp.tools import ToolResult
 
-from src.core.principal import UserPrincipal
 from src.services.mcp_server.tool_result import error_result, success_result
-from src.services.mcp_server.tools.db import get_tool_db
-
-# MCPContext is imported where needed to avoid circular imports
+from src.services.mcp_server.tools._http_bridge import call_rest
 
 logger = logging.getLogger(__name__)
 
-
-def _context_to_user_principal(context: Any) -> UserPrincipal:
-    """Convert MCPContext to UserPrincipal for repository calls."""
-    user_id = context.user_id
-    if isinstance(user_id, str):
-        user_id = UUID(user_id)
-
-    org_id = context.org_id
-    if isinstance(org_id, str):
-        org_id = UUID(org_id)
-
-    return UserPrincipal(
-        user_id=user_id,
-        email=getattr(context, "user_email", ""),
-        organization_id=org_id,
-        name=getattr(context, "user_name", ""),
-        is_superuser=getattr(context, "is_platform_admin", False),
-    )
+# Old, larger executions could carry thousands of structured log lines; keep
+# the response body reasonable for a model by trimming to the most recent
+# entries. Trimmed from the REST response, never a second query.
+_MAX_LOGS = 20
 
 
-async def list_executions(
+async def bifrost_execution_list(
     context: Any,
     workflow_name: str | None = None,
     status: str | None = None,
     limit: int = 20,
+    scope: str | None = None,
 ) -> ToolResult:
-    """List recent workflow executions."""
-    from src.repositories.executions import ExecutionRepository
+    """List recent workflow executions — thin wrapper over ``GET /api/executions``.
 
-    logger.info(f"MCP list_executions called with workflow={workflow_name}, status={status}")
+    ``scope`` forwards to REST: omit for the caller's default (all orgs for
+    a platform admin, own org otherwise), ``"global"`` for global-only, or an
+    org UUID for that org + global.
+    """
+    logger.info(
+        "MCP bifrost_execution_list (HTTP bridge) workflow=%s status=%s",
+        workflow_name,
+        status,
+    )
 
-    try:
-        async with get_tool_db(context) as db:
-            repo = ExecutionRepository(db)
+    params: dict[str, Any] = {"limit": limit}
+    if workflow_name:
+        params["workflowName"] = workflow_name
+    if status:
+        params["status"] = status
+    if scope is not None:
+        params["scope"] = scope
 
-            # Convert context to UserPrincipal
-            user = _context_to_user_principal(context)
+    status_code, body = await call_rest(context, "GET", "/api/executions", params=params)
+    if status_code != 200 or not isinstance(body, dict):
+        return error_result(
+            f"bifrost_execution_list failed: HTTP {status_code}", {"body": body}
+        )
 
-            # Get org_id as UUID if present
-            org_id = None
-            if context.org_id:
-                org_id = UUID(str(context.org_id)) if isinstance(context.org_id, str) else context.org_id
-
-            # Call repository with correct signature
-            executions, _ = await repo.list_executions(
-                user=user,
-                org_id=org_id,
-                workflow_name=workflow_name,
-                status_filter=status,
-                limit=limit,
-            )
-
-            if not executions:
-                return success_result("No executions found", {"executions": [], "count": 0})
-
-            execution_list = []
-            for ex in executions:
-                execution_data = {
-                    "id": ex.execution_id,
-                    "workflow_name": ex.workflow_name or "Unknown",
-                    "status": ex.status.value if hasattr(ex.status, "value") else ex.status,
-                    "duration_ms": ex.duration_ms,
-                    "created_at": ex.started_at.isoformat() if ex.started_at else None,
-                    "error": ex.error_message[:100] + "..." if ex.error_message and len(ex.error_message) > 100 else ex.error_message,
-                }
-                execution_list.append(execution_data)
-
-            display_text = f"Found {len(execution_list)} execution(s)"
-            return success_result(display_text, {"executions": execution_list, "count": len(execution_list)})
-
-    except Exception as e:
-        logger.exception(f"Error listing executions via MCP: {e}")
-        return error_result(f"Error listing executions: {str(e)}")
+    executions = body.get("executions", [])
+    return success_result(
+        f"Found {len(executions)} execution(s)",
+        {
+            "executions": executions,
+            "count": len(executions),
+            "continuation_token": body.get("continuation_token"),
+        },
+    )
 
 
-async def get_execution(context: Any, execution_id: str) -> ToolResult:
-    """Get details and logs for a specific workflow execution."""
-    from src.repositories.executions import ExecutionRepository
-
-    logger.info(f"MCP get_execution called with id={execution_id}")
+async def bifrost_execution_get(context: Any, execution_id: str) -> ToolResult:
+    """Get details and logs for a specific workflow execution — thin wrapper
+    over ``GET /api/executions/{execution_id}``.
+    """
+    logger.info("MCP bifrost_execution_get (HTTP bridge) id=%s", execution_id)
 
     if not execution_id:
         return error_result("execution_id is required")
 
-    try:
-        async with get_tool_db(context) as db:
-            repo = ExecutionRepository(db)
+    status_code, body = await call_rest(
+        context, "GET", f"/api/executions/{execution_id}"
+    )
+    if status_code == 404:
+        return error_result(f"Execution not found: {execution_id}")
+    if status_code == 403:
+        return error_result("Access denied")
+    if status_code != 200 or not isinstance(body, dict):
+        return error_result(
+            f"bifrost_execution_get failed: HTTP {status_code}", {"body": body}
+        )
 
-            # Convert context to UserPrincipal
-            user = _context_to_user_principal(context)
+    logs = body.get("logs")
+    if isinstance(logs, list) and len(logs) > _MAX_LOGS:
+        body = {**body, "logs": logs[-_MAX_LOGS:]}
 
-            # Get execution with authorization check built in
-            execution, error_code = await repo.get_execution(
-                execution_id=UUID(execution_id),
-                user=user,
-            )
-
-            if error_code == "NotFound":
-                return error_result(f"Execution not found: {execution_id}")
-            if error_code == "Forbidden":
-                return error_result("Access denied")
-            if not execution:
-                return error_result(f"Execution not found: {execution_id}")
-
-            # Build execution data from WorkflowExecution pydantic model
-            execution_data: dict[str, Any] = {
-                "id": execution.execution_id,
-                "workflow_name": execution.workflow_name or "Unknown",
-                "status": execution.status.value if hasattr(execution.status, "value") else execution.status,
-                "duration_ms": execution.duration_ms,
-                "created_at": execution.started_at.isoformat() if execution.started_at else None,
-                "completed_at": execution.completed_at.isoformat() if execution.completed_at else None,
-                "error": execution.error_message,
-                "result": execution.result,
-            }
-
-            # Logs are included in the execution response from get_execution
-            if execution.logs:
-                execution_data["logs"] = [
-                    {"level": log.get("level", "info"), "message": log.get("message", "")}
-                    for log in execution.logs[-20:]  # Last 20 logs
-                ]
-            else:
-                execution_data["logs"] = []
-
-            workflow_name = execution.workflow_name or "Unknown"
-            status_str = execution.status.value if hasattr(execution.status, "value") else str(execution.status)
-            display_text = f"Execution: {workflow_name} ({status_str})"
-            return success_result(display_text, execution_data)
-
-    except Exception as e:
-        logger.exception(f"Error getting execution via MCP: {e}")
-        return error_result(f"Error getting execution: {str(e)}")
+    workflow_name = body.get("workflow_name") or "Unknown"
+    status_value = body.get("status") or "unknown"
+    return success_result(f"Execution: {workflow_name} ({status_value})", body)
 
 
 # Tool metadata for registration
 TOOLS = [
-    ("list_executions", "List Executions", "List recent workflow executions."),
-    ("get_execution", "Get Execution", "Get details and logs for a specific workflow execution."),
+    (
+        "bifrost_execution_list",
+        "List Executions",
+        "List recent workflow executions.",
+    ),
+    (
+        "bifrost_execution_get",
+        "Get Execution",
+        "Get details and logs for a specific workflow execution.",
+    ),
 ]
 
 
@@ -165,9 +131,17 @@ def register_tools(mcp: Any, get_context_fn: Any) -> None:
     from src.services.mcp_server.generators.fastmcp_generator import register_tool_with_context
 
     tool_funcs = {
-        "list_executions": list_executions,
-        "get_execution": get_execution,
+        "bifrost_execution_list": bifrost_execution_list,
+        "bifrost_execution_get": bifrost_execution_get,
     }
 
     for tool_id, name, description in TOOLS:
         register_tool_with_context(mcp, tool_funcs[tool_id], tool_id, description, get_context_fn)
+
+
+__all__ = [
+    "TOOLS",
+    "bifrost_execution_get",
+    "bifrost_execution_list",
+    "register_tools",
+]

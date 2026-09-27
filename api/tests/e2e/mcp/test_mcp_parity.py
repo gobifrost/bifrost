@@ -4,7 +4,7 @@ Covers the thin-wrapper surface added in
 ``docs/plans/2026-04-18-cli-mutation-surface-and-mcp-parity.md`` (lines
 350-390):
 
-* Roles: ``list_roles``, ``create_role``, ``update_role``, ``delete_role``.
+* Roles: ``bifrost_role_list``, ``bifrost_role_create``, ``bifrost_role_update``, ``bifrost_role_delete``.
 * Configs: ``list_configs``, ``create_config``, ``update_config``,
   ``delete_config``.
 * Integrations: ``create_integration``, ``update_integration``,
@@ -14,6 +14,16 @@ Covers the thin-wrapper surface added in
 * Workflow lifecycle: ``update_workflow``, ``delete_workflow``,
   ``grant_workflow_role``, ``revoke_workflow_role``
   (``list`` / ``register`` / ``execute`` already existed and are not touched).
+
+RBAC R1b batch 2 (renames + thin-wrapper conversion, see
+``docs/plans/2026-09-26-r1-domain-triage.md``) adds parity classes for:
+
+* Executions: ``bifrost_execution_list``, ``bifrost_execution_get`` — now
+  thin REST wrappers (previously ORM-backed).
+* Platform jobs: ``bifrost_platform_job_get`` (moved out of ``tools/apps.py``,
+  formerly ``get_app_publish_status``).
+* Claims: ``bifrost_claim_list`` / ``_get`` / ``_create`` / ``_update`` / ``_delete``.
+* File policies: ``bifrost_file_policy_list`` / ``_get`` / ``_set`` / ``_delete``.
 
 Each tool is invoked directly (bypassing FastMCP transport) with a
 ``MockMCPContext`` that carries the platform admin's identity. The
@@ -118,13 +128,13 @@ def admin_context(platform_admin, mcp_bridge_env) -> MockMCPContext:
 SIGNATURE_PARITY_SPECS: list[dict] = [
     {
         "model_path": "src.models.contracts.users:RoleCreate",
-        "tool_path": "src.services.mcp_server.tools.roles:create_role",
+        "tool_path": "src.services.mcp_server.tools.roles:bifrost_role_create",
         "extra_args": set(),
         "field_renames": {},
     },
     {
         "model_path": "src.models.contracts.users:RoleUpdate",
-        "tool_path": "src.services.mcp_server.tools.roles:update_role",
+        "tool_path": "src.services.mcp_server.tools.roles:bifrost_role_update",
         "extra_args": {"role_ref"},
         "field_renames": {},
     },
@@ -146,7 +156,7 @@ SIGNATURE_PARITY_SPECS: list[dict] = [
     },
     {
         "model_path": "src.models.contracts.claims:CustomClaimCreate",
-        "tool_path": "src.services.mcp_server.tools.claims:create_claim",
+        "tool_path": "src.services.mcp_server.tools.claims:bifrost_claim_create",
         # `scope` is an org-targeting query param, not a DTO field — mirrors
         # the same convention used by other org-scoped router endpoints.
         "extra_args": {"scope"},
@@ -154,7 +164,7 @@ SIGNATURE_PARITY_SPECS: list[dict] = [
     },
     {
         "model_path": "src.models.contracts.claims:CustomClaimUpdate",
-        "tool_path": "src.services.mcp_server.tools.claims:update_claim",
+        "tool_path": "src.services.mcp_server.tools.claims:bifrost_claim_update",
         "extra_args": {"name", "scope"},
         "field_renames": {},
     },
@@ -315,8 +325,8 @@ class TestMcpParityRoles:
     async def test_get_role_by_uuid(
         self, admin_context, e2e_client, platform_admin
     ) -> None:
-        """``get_role`` thin-wrapper round-trips a created role via UUID ref."""
-        from src.services.mcp_server.tools.roles import get_role
+        """``bifrost_role_get`` thin-wrapper round-trips a created role via UUID ref."""
+        from src.services.mcp_server.tools.roles import bifrost_role_get
 
         name = f"mcp-parity-get-role-{uuid4().hex[:8]}"
         create_resp = e2e_client.post(
@@ -328,7 +338,7 @@ class TestMcpParityRoles:
         role_id = create_resp.json()["id"]
 
         try:
-            result = await get_role(admin_context, role_ref=role_id)
+            result = await bifrost_role_get(admin_context, role_ref=role_id)
             payload = result.structured_content or {}
             assert "error" not in payload, payload
             assert str(payload.get("id")) == str(role_id)
@@ -342,21 +352,21 @@ class TestMcpParityRoles:
         self, admin_context, e2e_client, platform_admin
     ) -> None:
         from src.services.mcp_server.tools.roles import (
-            create_role,
-            delete_role,
-            list_roles,
-            update_role,
+            bifrost_role_create,
+            bifrost_role_delete,
+            bifrost_role_list,
+            bifrost_role_update,
         )
 
         # list
-        list_result = await list_roles(admin_context)
+        list_result = await bifrost_role_list(admin_context)
         assert list_result.structured_content is not None
         assert list_result.structured_content.get("count", -1) >= 0
 
         # create
         name = f"mcp-parity-role-{uuid4().hex[:8]}"
         perms = {"workflows.read": True}
-        create_result = await create_role(
+        create_result = await bifrost_role_create(
             admin_context,
             name=name,
             description="created by test_mcp_parity",
@@ -368,7 +378,7 @@ class TestMcpParityRoles:
 
         # update (by name ref)
         renamed = f"mcp-parity-role-renamed-{uuid4().hex[:8]}"
-        update_result = await update_role(
+        update_result = await bifrost_role_update(
             admin_context,
             role_ref=name,
             name=renamed,
@@ -384,7 +394,7 @@ class TestMcpParityRoles:
         assert get_resp.status_code == 200
 
         # delete (by renamed ref)
-        delete_result = await delete_role(admin_context, role_ref=renamed)
+        delete_result = await bifrost_role_delete(admin_context, role_ref=renamed)
         assert delete_result.structured_content is not None
         assert delete_result.structured_content.get("deleted") == role_id
         get_after = e2e_client.get(
@@ -878,3 +888,297 @@ class TestMcpParityAgents:
             assert payload.get("status_code") == 403, payload
         finally:
             await bifrost_agent_delete(admin_context, agent_ref=agent_id)
+
+
+# =============================================================================
+# Executions
+# =============================================================================
+
+
+def _register_workflow(
+    e2e_client, headers, *, access_level: str = "everyone", organization_id=None
+) -> str:
+    """Register a trivial workflow via the editor + register endpoints."""
+    suffix = uuid4().hex[:6]
+    function_name = f"mcp_parity_noop_{suffix}"
+    path = f"apps/mcp_parity/exec_{suffix}.py"
+    content = (
+        "from bifrost import workflow\n"
+        "\n"
+        "@workflow(description='mcp parity execution test')\n"
+        f"def {function_name}(x: str = '') -> str:\n"
+        "    return x\n"
+    )
+    write_resp = e2e_client.put(
+        "/api/files/editor/content",
+        headers=headers,
+        json={"path": path, "content": content, "encoding": "utf-8"},
+    )
+    assert write_resp.status_code in (200, 201), write_resp.text
+    body = {
+        "path": path,
+        "function_name": function_name,
+        "access_level": access_level,
+    }
+    if organization_id is not None:
+        body["organization_id"] = organization_id
+    register_resp = e2e_client.post(
+        "/api/workflows/register",
+        headers=headers,
+        json=body,
+    )
+    assert register_resp.status_code in (200, 201), register_resp.text
+    return register_resp.json()["id"]
+
+
+def _execute_sync(e2e_client, headers, workflow_id: str) -> str:
+    response = e2e_client.post(
+        "/api/workflows/execute",
+        headers=headers,
+        json={"workflow_id": workflow_id, "input_data": {"x": "hi"}, "sync": True},
+    )
+    assert response.status_code in (200, 201), response.text
+    return response.json()["execution_id"]
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+class TestMcpParityExecutions:
+    async def test_admin_list_and_get(
+        self, admin_context, e2e_client, platform_admin
+    ) -> None:
+        from src.services.mcp_server.tools.execution import (
+            bifrost_execution_get,
+            bifrost_execution_list,
+        )
+
+        workflow_id = _register_workflow(e2e_client, platform_admin.headers)
+        execution_id = _execute_sync(e2e_client, platform_admin.headers, workflow_id)
+
+        list_result = await bifrost_execution_list(admin_context, limit=50)
+        payload = list_result.structured_content or {}
+        assert "error" not in payload, payload
+        assert any(
+            e.get("execution_id") == execution_id for e in payload.get("executions", [])
+        ), payload
+
+        get_result = await bifrost_execution_get(
+            admin_context, execution_id=execution_id
+        )
+        fetched = get_result.structured_content or {}
+        assert "error" not in fetched, fetched
+        assert fetched.get("execution_id") == execution_id
+
+    async def test_org_user_sees_own_run_not_anothers(
+        self, e2e_client, platform_admin, org1_user, org1, mcp_bridge_env
+    ) -> None:
+        """A regular org user's get is scoped to their own executions.
+
+        Registers the workflow in org1_user's own org (access_level=everyone
+        is irrelevant to same-org access) so org1_user can execute it
+        directly, then has the platform admin execute the *same* workflow —
+        producing a second execution with a different ``executed_by`` — to
+        prove org1_user's non-superuser get is denied for someone else's run
+        (``shared/sdk_execution_reads.py``: non-superuser restricted to
+        ``executed_by == principal.user_id``).
+        """
+        from src.services.mcp_server.tools.execution import bifrost_execution_get
+
+        workflow_id = _register_workflow(
+            e2e_client, platform_admin.headers, organization_id=org1["id"]
+        )
+        own_execution_id = _execute_sync(e2e_client, org1_user.headers, workflow_id)
+        other_execution_id = _execute_sync(
+            e2e_client, platform_admin.headers, workflow_id
+        )
+
+        org1_context = MockMCPContext(
+            user_id=str(org1_user.user_id),
+            user_email=org1_user.email,
+            is_platform_admin=False,
+            org_id=str(org1_user.organization_id),
+            user_name=org1_user.name,
+        )
+
+        own_result = await bifrost_execution_get(
+            org1_context, execution_id=own_execution_id
+        )
+        own_payload = own_result.structured_content or {}
+        assert own_payload.get("execution_id") == own_execution_id, own_payload
+
+        other_result = await bifrost_execution_get(
+            org1_context, execution_id=other_execution_id
+        )
+        other_payload = other_result.structured_content or {}
+        assert other_payload.get("error") == "Access denied", other_payload
+
+
+# =============================================================================
+# Platform jobs
+# =============================================================================
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+class TestMcpParityPlatformJobs:
+    async def test_requester_sees_job_other_user_denied(
+        self, admin_context, org_user_context, e2e_client, platform_admin
+    ) -> None:
+        from src.services.mcp_server.tools.platform_jobs import (
+            bifrost_platform_job_get,
+        )
+
+        create_resp = e2e_client.post(
+            "/api/applications",
+            headers=platform_admin.headers,
+            json={
+                "name": f"mcp-parity-pubjob-{uuid4().hex[:8]}",
+                "slug": f"mcp-parity-pubjob-{uuid4().hex[:8]}",
+                "app_model": "inline_v1",
+                "organization_id": None,
+            },
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        app_id = create_resp.json()["id"]
+
+        publish_resp = e2e_client.post(
+            f"/api/applications/{app_id}/publish",
+            headers=platform_admin.headers,
+        )
+        assert publish_resp.status_code == 202, publish_resp.text
+        job_id = publish_resp.json()["job_id"]
+
+        # The REST PlatformJobPublic body itself carries an "error" field
+        # (job failure info, None on a healthy job) — check job_type/status
+        # for the success case rather than mere key-presence of "error".
+        requester_result = await bifrost_platform_job_get(admin_context, job_id=job_id)
+        payload = requester_result.structured_content or {}
+        assert payload.get("job_type") == "application.publish", payload
+        assert payload.get("status") in ("queued", "running", "succeeded"), payload
+
+        other_result = await bifrost_platform_job_get(org_user_context, job_id=job_id)
+        other_payload = other_result.structured_content or {}
+        assert isinstance(other_payload.get("error"), str), other_payload
+        assert "job_type" not in other_payload, other_payload
+
+
+# =============================================================================
+# Claims
+# =============================================================================
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+class TestMcpParityClaims:
+    async def test_claims_crud_roundtrip(
+        self, admin_context, e2e_client, platform_admin, org1
+    ) -> None:
+        from src.services.mcp_server.tools.claims import (
+            bifrost_claim_create,
+            bifrost_claim_delete,
+            bifrost_claim_get,
+            bifrost_claim_list,
+            bifrost_claim_update,
+        )
+
+        table_resp = e2e_client.post(
+            "/api/tables",
+            headers=platform_admin.headers,
+            json={
+                "name": f"mcp_parity_claims_{uuid4().hex[:8]}",
+                "description": "mcp parity claims e2e table",
+                "organization_id": org1["id"],
+            },
+        )
+        assert table_resp.status_code == 201, table_resp.text
+        table_name = table_resp.json()["name"]
+
+        name = f"mcp_parity_claim_{uuid4().hex[:8]}"
+        create_result = await bifrost_claim_create(
+            admin_context,
+            name=name,
+            query={"table": table_name, "select": "campus_id"},
+            scope=org1["id"],
+        )
+        created = create_result.structured_content or {}
+        assert "error" not in created, created
+
+        list_result = await bifrost_claim_list(admin_context, scope=org1["id"])
+        listed = list_result.structured_content or {}
+        assert name in {c.get("name") for c in listed.get("claims", [])}, listed
+
+        get_result = await bifrost_claim_get(
+            admin_context, name=name, scope=org1["id"]
+        )
+        fetched = get_result.structured_content or {}
+        assert "error" not in fetched, fetched
+        assert fetched.get("query", {}).get("table") == table_name
+
+        update_result = await bifrost_claim_update(
+            admin_context,
+            name=name,
+            description="updated via MCP parity",
+            scope=org1["id"],
+        )
+        updated = update_result.structured_content or {}
+        assert "error" not in updated, updated
+
+        delete_result = await bifrost_claim_delete(
+            admin_context, name=name, scope=org1["id"]
+        )
+        assert delete_result.structured_content is not None
+        assert delete_result.structured_content.get("deleted") == name
+
+
+# =============================================================================
+# File policies
+# =============================================================================
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+class TestMcpParityFilePolicies:
+    async def test_file_policy_crud_roundtrip(
+        self, admin_context, e2e_client, platform_admin, org1
+    ) -> None:
+        from src.services.mcp_server.tools.files import (
+            bifrost_file_policy_delete,
+            bifrost_file_policy_get,
+            bifrost_file_policy_list,
+            bifrost_file_policy_set,
+        )
+
+        path = f"mcp-parity/{uuid4().hex[:8]}"
+        policies = [
+            {"name": "r", "actions": ["read"], "when": {"user": "is_platform_admin"}}
+        ]
+
+        set_result = await bifrost_file_policy_set(
+            admin_context,
+            path=path,
+            policies=policies,
+            location="workspace",
+            scope=org1["id"],
+        )
+        set_payload = set_result.structured_content or {}
+        assert "error" not in set_payload, set_payload
+
+        try:
+            list_result = await bifrost_file_policy_list(
+                admin_context, location="workspace", scope=org1["id"]
+            )
+            listed = list_result.structured_content or {}
+            assert any(
+                p.get("path") == path for p in listed.get("file_policies", [])
+            ), listed
+
+            get_result = await bifrost_file_policy_get(
+                admin_context, path=path, location="workspace", scope=org1["id"]
+            )
+            fetched = get_result.structured_content or {}
+            assert "error" not in fetched, fetched
+        finally:
+            delete_result = await bifrost_file_policy_delete(
+                admin_context, path=path, location="workspace", scope=org1["id"]
+            )
+            assert delete_result.structured_content is not None

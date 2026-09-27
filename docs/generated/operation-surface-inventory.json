@@ -1532,8 +1532,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": null,
-          "status": "missing_surface"
+          "name": "bifrost_platform_job_get",
+          "status": "exact_parity"
         },
         "rest": {
           "operation_id": "platform.jobs.get",
@@ -4045,8 +4045,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": null,
-          "status": "missing_surface"
+          "name": "bifrost_execution_list",
+          "status": "exact_parity"
         },
         "rest": {
           "operation_id": "executions.list",
@@ -4105,8 +4105,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": null,
-          "status": "missing_surface"
+          "name": "bifrost_execution_get",
+          "status": "exact_parity"
         },
         "rest": {
           "operation_id": "executions.get",
@@ -4533,8 +4533,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": null,
-          "status": "missing_surface"
+          "name": "bifrost_role_list",
+          "status": "exact_parity"
         },
         "rest": {
           "operation_id": "roles.list",
@@ -4593,8 +4593,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": null,
-          "status": "missing_surface"
+          "name": "bifrost_role_get",
+          "status": "exact_parity"
         },
         "rest": {
           "operation_id": "roles.get",
@@ -4653,8 +4653,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": null,
-          "status": "missing_surface"
+          "name": "bifrost_role_create",
+          "status": "exact_parity"
         },
         "rest": {
           "operation_id": "roles.create",
@@ -4719,8 +4719,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": null,
-          "status": "missing_surface"
+          "name": "bifrost_role_update",
+          "status": "exact_parity"
         },
         "rest": {
           "operation_id": "roles.update",
@@ -4785,8 +4785,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": null,
-          "status": "missing_surface"
+          "name": "bifrost_role_delete",
+          "status": "exact_parity"
         },
         "rest": {
           "operation_id": "roles.delete",
@@ -6675,8 +6675,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": null,
-          "status": "missing_surface"
+          "name": "bifrost_claim_list",
+          "status": "exact_parity"
         },
         "rest": {
           "operation_id": "claims.list",
@@ -6735,8 +6735,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": null,
-          "status": "missing_surface"
+          "name": "bifrost_claim_get",
+          "status": "exact_parity"
         },
         "rest": {
           "operation_id": "claims.get",
@@ -6795,8 +6795,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": null,
-          "status": "missing_surface"
+          "name": "bifrost_claim_create",
+          "status": "exact_parity"
         },
         "rest": {
           "operation_id": "claims.create",
@@ -6861,8 +6861,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": null,
-          "status": "missing_surface"
+          "name": "bifrost_claim_update",
+          "status": "exact_parity"
         },
         "rest": {
           "operation_id": "claims.update",
@@ -6927,8 +6927,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": null,
-          "status": "missing_surface"
+          "name": "bifrost_claim_delete",
+          "status": "exact_parity"
         },
         "rest": {
           "operation_id": "claims.delete",
@@ -6993,8 +6993,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": null,
-          "status": "missing_surface"
+          "name": "bifrost_file_policy_list",
+          "status": "exact_parity"
         },
         "rest": {
           "operation_id": "files.policies.list",
@@ -7055,8 +7055,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": null,
-          "status": "missing_surface"
+          "name": "bifrost_file_policy_get",
+          "status": "exact_parity"
         },
         "rest": {
           "operation_id": "files.policies.get",
@@ -7117,8 +7117,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": null,
-          "status": "missing_surface"
+          "name": "bifrost_file_policy_set",
+          "status": "exact_parity"
         },
         "rest": {
           "operation_id": "files.policies.set",
@@ -7184,8 +7184,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": null,
-          "status": "missing_surface"
+          "name": "bifrost_file_policy_delete",
+          "status": "exact_parity"
         },
         "rest": {
           "operation_id": "files.policies.delete",
@@ -10639,12 +10639,6 @@
       },
       {
         "hidden": false,
-        "name": "create_claim",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
         "name": "create_config",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -10687,19 +10681,7 @@
       },
       {
         "hidden": false,
-        "name": "create_role",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
         "name": "create_table",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "delete_claim",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -10729,12 +10711,6 @@
       },
       {
         "hidden": false,
-        "name": "delete_file_policy",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
         "name": "delete_organization",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -10742,12 +10718,6 @@
       {
         "hidden": false,
         "name": "delete_policy_rule",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "delete_role",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -10783,18 +10753,6 @@
       },
       {
         "hidden": false,
-        "name": "get_app_publish_status",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "get_claim",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
         "name": "get_config",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -10819,18 +10777,6 @@
       },
       {
         "hidden": false,
-        "name": "get_execution",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "get_file_policy",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
         "name": "get_form",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -10844,12 +10790,6 @@
       {
         "hidden": false,
         "name": "get_organization",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "get_role",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -10879,12 +10819,6 @@
       },
       {
         "hidden": false,
-        "name": "list_claims",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
         "name": "list_configs",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -10909,18 +10843,6 @@
       },
       {
         "hidden": false,
-        "name": "list_executions",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "list_file_policies",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
         "name": "list_forms",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -10940,12 +10862,6 @@
       {
         "hidden": false,
         "name": "list_policy_rules",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "list_roles",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -11029,12 +10945,6 @@
       },
       {
         "hidden": false,
-        "name": "set_file_policy",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
         "name": "update_app",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -11042,12 +10952,6 @@
       {
         "hidden": false,
         "name": "update_app_dependencies",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "update_claim",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -11090,12 +10994,6 @@
       {
         "hidden": false,
         "name": "update_organization",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "update_role",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
