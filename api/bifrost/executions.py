@@ -49,7 +49,6 @@ class executions:
         limit: int = 50,
         *,
         workflow_id: str | None = None,
-        exclude_local: bool | None = None,
         continuation_token: str | None = None,
     ) -> ExecutionList:
         """
@@ -64,7 +63,6 @@ class executions:
             status: Filter by status (optional)
             start_date: Filter by start date in ISO format (optional)
             end_date: Filter by end date in ISO format (optional)
-            exclude_local: Exclude local-only runs (optional)
             continuation_token: Pagination token for the next page (optional)
             limit: Maximum number of results (default: 50, max: 1000)
 
@@ -85,7 +83,6 @@ class executions:
                 - error_message: str | None - Error if failed
                 - duration_ms: int | None - Execution duration
                 - started_at, completed_at: datetime | None
-                - session_id: str | None - CLI session ID
                 - peak_memory_bytes, cpu_total_seconds: Resource metrics
 
         Raises:
@@ -112,8 +109,6 @@ class executions:
             params["start_date"] = start_date
         if end_date:
             params["end_date"] = end_date
-        if exclude_local is not None:
-            params["exclude_local"] = str(exclude_local).lower()
         if continuation_token:
             params["continuation_token"] = continuation_token
         params["limit"] = min(limit, 1000)

@@ -132,7 +132,6 @@ class WorkflowExecution(BaseModel):
     completed_at: datetime | None
     logs: list[dict] | None = None
     variables: dict | None = None
-    session_id: str | None
     peak_memory_bytes: int | None
     process_rss_bytes: int | None
     cpu_total_seconds: float | None

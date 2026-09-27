@@ -45,8 +45,6 @@ export function useExecutions(
 	if (filters?.start_date) queryParams["startDate"] = filters.start_date;
 	if (filters?.end_date) queryParams["endDate"] = filters.end_date;
 	if (filters?.limit) queryParams["limit"] = filters.limit.toString();
-	if (filters?.excludeLocal !== undefined)
-		queryParams["excludeLocal"] = filters.excludeLocal.toString();
 	if (continuationToken) queryParams["continuationToken"] = continuationToken;
 
 	return $api.useQuery(
