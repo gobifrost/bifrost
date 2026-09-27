@@ -75,6 +75,17 @@ and #810 (engine SDK over a worker-local HTTP socket — router logic moved into
 | **R3c** Platform ops | Integrations/OAuth, MCP, GitHub, schedules, jobs, diagnostics, AI settings, usage, and main's new `home`, `kubernetes`, `services` routers plus ~115 inline legacy checks added on main since #620. | Same. |
 | **R4** Lock-down | Remove provider-membership bypass; structural gate forbids `CurrentSuperuser`/`get_current_superuser`/`RequirePlatformAdmin` **and** inline `is_superuser`/`is_platform_admin`/`is_provider` checks in routers/services; only exception: execution-token path. | Deliberate tightening. |
 
+Jack's rules (2026-09-26), apply in every slice:
+- Only platform-org principals (bypass) may write global entities or `_repo`, ever. V1 apps have no regular-user write path.
+- MCP must match REST exactly. System tools stay locked down.
+- Solutions shared with people or roles (Builder collaborators and Solution Role grants from #620) must protect every read and write path of their entities with the same scoping rules. No side doors via app, file, table or MCP routes.
+
+- Regular (non-bypass) users mutate nothing platform-managed except their own private agents. Allowed personal state: own profile/MFA/sessions, chats, Home pins/personal collections, notifications, memory, own OAuth credentials, and executing what they're permitted to run.
+
+**Route access control list (R2 requirement, Jack 2026-09-26):** a checked-in manifest declaring an access class for EVERY HTTP route and MCP tool (personal / execute / table-policy / own-private-agent / embed-public / capability+boundary). CI fails on any unclassified route or tool, or a mismatch between the declared class and the code. Seed it from the 2026-09-26 mutation-route audit. No route or tool can be added without an explicit access decision. R3 slices convert routes by changing their manifest entries, and the persona tests assert each entry.
+
+**Workflow execution identity (Jack, 2026-09-26):** workflows run with a superuser engine token that has no org claim, so inside a workflow only SDK-side scoping applies, never the invoking user's permissions. Jack's decision: solve this in RBAC through the delegated-execution phase (workflows act with the invoking user's permissions, plus explicit grants), not with an interim org-scoped engine token.
+
 Invariant for every R3 slice: a persona × operation matrix (Platform Admin, Operator, Platform Builder,
 Builder, org member, external user, other-org user × catalog operations) asserts **legacy decision ==
 new decision**; intended differences are listed in a table in the PR for Jack to approve.
