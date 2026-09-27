@@ -15,7 +15,7 @@ columns (schema only) — any session/local-execution data that existed before
 the upgrade is NOT restored.
 
 Revision ID: 20260927_drop_local_runner
-Revises: 20260825_delivery_attempt
+Revises: 20260927_r1b_mcp_names_b2
 Create Date: 2026-09-27 00:00:00.000000+00:00
 
 """
@@ -27,7 +27,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "20260927_drop_local_runner"
-down_revision: Union[str, None] = "20260825_delivery_attempt"
+down_revision: Union[str, None] = "20260927_r1b_mcp_names_b2"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
