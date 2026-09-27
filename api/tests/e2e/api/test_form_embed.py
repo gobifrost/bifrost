@@ -347,14 +347,17 @@ class TestEmbedFormCrossTenantBinding:
     """EXT-1 NEW-I (HIGH, cross-tenant code execution): the embed short-circuits
     in get_form / execute_form / execute_startup_workflow / generate_upload_url
     skipped access control for ANY embed token with no binding between the
-    token's form_id/app_id and the path form. An embed token minted for one
-    resource in org H could READ and EXECUTE any form in any other org — a
-    workflow run as sentinel in the victim's org, output returned to the
-    attacker. The fix binds every embed short-circuit to the path form
-    (form_id match, or app-embed → same-org only).
+    token's form_id and the path form. A form-embed token minted for one form
+    could READ and EXECUTE any other form in any other org — a workflow run
+    as sentinel in the victim's org, output returned to the attacker. The fix
+    binds every embed short-circuit to a form-embed token's own form_id.
+    App-embed tokens have no form_id claim at all, so they are never
+    form-bound and are denied every form path outright (no runtime app uses
+    forms).
 
-    These tests exercise all four sites with both attack vectors (form-embed
-    token and app-embed token) and confirm the legitimate paths still work.
+    These tests exercise all four sites for the form-embed attack vector and
+    confirm app-embed tokens are denied outright, while the legitimate
+    form-embed path still works.
     """
 
     @pytest.fixture
@@ -524,10 +527,11 @@ class TestEmbedFormCrossTenantBinding:
                 f"/api/forms/{form['id']}", headers=platform_admin.headers
             )
 
-    def test_app_embed_can_read_same_org_form(
+    def test_app_embed_cannot_read_same_org_form(
         self, e2e_client, platform_admin, org1
     ):
-        # An app-embed token in org1 CAN read a form in org1 (same-org binding).
+        # An app-embed token has no form binding at all: it must be denied a
+        # form in its OWN org too, not just a cross-org one.
         _app, token = _mint_app_embed_token(
             e2e_client, platform_admin, organization_id=org1["id"]
         )
@@ -545,8 +549,8 @@ class TestEmbedFormCrossTenantBinding:
         try:
             headers = {"Authorization": f"Bearer {token}"}
             r = e2e_client.get(f"/api/forms/{form['id']}/runtime", headers=headers)
-            assert r.status_code == 200, (
-                f"app-embed token (org1) must read an org1 form: "
+            assert r.status_code in (403, 404), (
+                f"app-embed token (org1) must not read an org1 form: "
                 f"{r.status_code} {r.text}"
             )
         finally:

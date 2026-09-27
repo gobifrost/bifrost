@@ -26,14 +26,6 @@ _APP_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("GET", re.compile(r"^/api/applications/[^/]+/dependencies$")),
     ("POST", re.compile(r"^/api/workflows/execute$")),
     ("GET", re.compile(r"^/api/executions/[0-9a-f-]{36}(?:/.*)?$")),
-    ("GET", re.compile(r"^/api/forms/[0-9a-f-]{36}/runtime$")),
-    ("POST", re.compile(r"^/api/forms/[0-9a-f-]{36}/startup$")),
-    ("POST", re.compile(r"^/api/forms/[0-9a-f-]{36}/upload$")),
-    ("POST", re.compile(r"^/api/forms/[0-9a-f-]{36}/submissions$")),
-    (
-        "POST",
-        re.compile(r"^/api/forms/[0-9a-f-]{36}/fields/[^/]+/options$"),
-    ),
 )
 
 _FORM_RUNTIME_RE = re.compile(
