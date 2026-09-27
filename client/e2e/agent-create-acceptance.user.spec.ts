@@ -6,6 +6,15 @@ const AGENT_DESCRIPTION = `Member-owned acceptance agent ${UNIQUE}`;
 const AGENT_PROMPT =
 	"You are a private acceptance agent. Keep answers concise and only use chat.";
 
+const ADMIN_ONLY_FIELDS = [
+	"organization_id",
+	"system_tools",
+	"knowledge_sources",
+	"delegated_agent_ids",
+	"role_ids",
+	"mcp_connection_ids",
+];
+
 async function expectOk(
 	response: Pick<Awaited<ReturnType<AuthedApi["get"]>>, "ok" | "text">,
 ) {
@@ -63,28 +72,22 @@ test(
 				.getByRole("button", { name: "Create agent", exact: true })
 				.click();
 
-			const requestBody = (await createRequest).postDataJSON() as {
-				name: string;
-				description: string;
-				system_prompt: string;
-				channels: string[];
-				access_level: string;
-				role_ids: string[];
-				system_tools: string[];
-				knowledge_sources: string[];
-				delegated_agent_ids: string[];
-			};
+			const requestBody = (await createRequest).postDataJSON() as Record<
+				string,
+				unknown
+			>;
 			expect(requestBody).toMatchObject({
 				name: AGENT_NAME,
 				description: AGENT_DESCRIPTION,
 				system_prompt: AGENT_PROMPT,
 				channels: ["chat"],
 				access_level: "private",
-				role_ids: [],
-				system_tools: [],
-				knowledge_sources: [],
-				delegated_agent_ids: [],
 			});
+			// Non-admins may not set these; the API refuses them instead of
+			// silently dropping them, so the editor must not send them.
+			for (const field of ADMIN_ONLY_FIELDS) {
+				expect(requestBody).not.toHaveProperty(field);
+			}
 
 			const response = await createResponse;
 			await expectOk(response);
@@ -145,6 +148,30 @@ test(
 				page.getByText(/Could not load available roles/i),
 			).toHaveCount(0);
 
+			const UPDATED_DESCRIPTION = `${AGENT_DESCRIPTION} (edited)`;
+			await page.getByLabel("Description").fill(UPDATED_DESCRIPTION);
+			const updateRequest = page.waitForRequest(
+				(request) =>
+					request.url().includes(`/api/agents/${agentId}`) &&
+					request.method() === "PUT",
+			);
+			const updateResponse = page.waitForResponse(
+				(response) =>
+					response.url().includes(`/api/agents/${agentId}`) &&
+					response.request().method() === "PUT",
+			);
+			await page
+				.getByRole("button", { name: "Save changes", exact: true })
+				.click();
+			const updateBody = (await updateRequest).postDataJSON() as Record<
+				string,
+				unknown
+			>;
+			for (const field of ADMIN_ONLY_FIELDS) {
+				expect(updateBody).not.toHaveProperty(field);
+			}
+			await expectOk(await updateResponse);
+
 			const fetched = await api.get(`/api/agents/${agentId}`);
 			await expectOk(fetched);
 			const persisted = (await fetched.json()) as {
@@ -158,7 +185,7 @@ test(
 			};
 			expect(persisted).toMatchObject({
 				name: AGENT_NAME,
-				description: AGENT_DESCRIPTION,
+				description: UPDATED_DESCRIPTION,
 				system_prompt: AGENT_PROMPT,
 				channels: ["chat"],
 				access_level: "private",
