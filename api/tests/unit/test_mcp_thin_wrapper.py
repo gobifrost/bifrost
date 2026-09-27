@@ -60,7 +60,13 @@ from src.services.mcp_server.tools import (  # noqa: E402
 
 
 PARITY_HANDLERS: dict[str, set[str]] = {
-    "agents": {"create_agent"},
+    "agents": {
+        "bifrost_agent_list",
+        "bifrost_agent_get",
+        "bifrost_agent_create",
+        "bifrost_agent_update",
+        "bifrost_agent_delete",
+    },
     "roles": {"list_roles", "create_role", "update_role", "delete_role"},
     "configs": {
         "list_configs",
