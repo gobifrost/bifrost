@@ -26,7 +26,6 @@ from pydantic import BaseModel
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 
-from shared.scope_resolver import has_scope_bypass
 from src.core.auth import Context, CurrentSuperuser, CurrentUser
 from src.core.log_safety import log_safe
 from src.core.org_filter import resolve_org_filter
@@ -437,20 +436,15 @@ async def get_application_for_write_or_404(
     """Get application by UUID, enforcing write scope.
 
     Read access is resolved exactly as ``get_application_by_id_or_404``
-    (unchanged). Mutating an application requires scope bypass (platform
-    admin or provider-org member), for every application — own-org included.
-    Regular org members can read their org's apps but cannot write to any
-    application, own-org or global.
+    (unchanged). Mutating an application requires a platform admin, for every
+    application — own-org included. Everyone else (provider-org members
+    included) can read the apps they have access to but cannot write to any.
 
     Raises the identical 404 the read helper uses, so a caller cannot tell
     "exists but no write access" apart from "does not exist".
     """
     application = await get_application_by_id_or_404(ctx, app_id)
-    is_bypass = has_scope_bypass(
-        is_platform_admin=ctx.user.is_platform_admin,
-        is_provider_org=ctx.user.is_provider_org,
-    )
-    if is_bypass:
+    if ctx.user.is_platform_admin:
         return application
     raise HTTPException(
         status_code=status.HTTP_404_NOT_FOUND,
@@ -475,13 +469,10 @@ async def create_application(
     user: CurrentUser,
 ) -> ApplicationPublic:
     """Create a new application."""
-    if not has_scope_bypass(
-        is_platform_admin=user.is_platform_admin,
-        is_provider_org=user.is_provider_org,
-    ):
+    if not user.is_platform_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only a platform admin or provider-org member can create applications.",
+            detail="Only a platform admin can create applications.",
         )
     # Use organization_id from request body if explicitly provided, else default to current org
     if "organization_id" in (data.model_fields_set or set()):

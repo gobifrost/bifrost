@@ -3,8 +3,7 @@
 ``get_application_for_write_or_404`` in ``app_code_files.py`` gates
 ``write_app_file``, ``delete_app_file``, and ``put_dependencies``. It
 mirrors the applications router's write-scope rule: writing to ANY
-application (own-org included) requires scope bypass (platform admin or
-provider-org member). An embed principal has no organization and no
+application (own-org included) requires a platform admin. An embed principal has no organization and no
 bypass flags, so it can never satisfy this rule — embed tokens only ever
 get read access.
 """
@@ -97,7 +96,7 @@ async def test_platform_admin_allowed_for_global_app():
 
 
 @pytest.mark.asyncio
-async def test_provider_org_non_admin_allowed_for_global_app():
+async def test_provider_org_non_admin_denied_for_global_app():
     app_id = uuid4()
     application = SimpleNamespace(id=app_id, organization_id=None)
     ctx = _ctx(org_id=uuid4(), is_provider_org=True)
@@ -106,6 +105,7 @@ async def test_provider_org_non_admin_allowed_for_global_app():
         "src.routers.app_code_files.get_application_or_404",
         new=AsyncMock(return_value=application),
     ):
-        result = await get_application_for_write_or_404(ctx, app_id)
+        with pytest.raises(HTTPException) as exc:
+            await get_application_for_write_or_404(ctx, app_id)
 
-    assert result is application
+    assert exc.value.status_code == 404

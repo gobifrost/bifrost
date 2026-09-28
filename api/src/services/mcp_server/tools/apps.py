@@ -148,8 +148,8 @@ async def bifrost_app_create(
     access_level: str | None = None,
     role_ids: list[str] | None = None,
 ) -> ToolResult:
-    """Create an Application — thin wrapper over ``POST /api/applications`` (requires
-    scope bypass: platform admin or provider-org member).
+    """Create an Application — thin wrapper over ``POST /api/applications`` (platform
+    admin only).
 
     ``slug`` is auto-generated from ``name`` if omitted (lowercased,
     non-alphanumeric runs collapsed to ``-``). ``scope='global'`` omits
@@ -215,7 +215,7 @@ async def bifrost_app_update(
     role_ids: list[str] | None = None,
 ) -> ToolResult:
     """Update Application metadata — thin wrapper over ``PATCH /api/applications/{uuid}``
-    (requires scope bypass; refused for a Solution-managed app).
+    (platform admin only; refused for a Solution-managed app).
 
     ``app_ref`` is a UUID, slug, or name. Only fields explicitly passed are
     sent. ``scope`` is ``'global'`` or an organization UUID/name (platform
@@ -268,7 +268,7 @@ async def bifrost_app_update(
 
 async def bifrost_app_delete(context: Any, app_ref: str) -> ToolResult:
     """Delete an Application — thin wrapper over ``DELETE /api/applications/{uuid}``
-    (requires scope bypass; refused for a Solution-managed app)."""
+    (platform admin only; refused for a Solution-managed app)."""
     if not app_ref:
         return error_result("app_ref is required")
     try:
@@ -399,7 +399,7 @@ async def bifrost_app_dependencies_update(
     dependencies: dict[str, str],
 ) -> ToolResult:
     """Replace npm dependencies for an app — thin wrapper over
-    ``PUT /api/applications/{app_id}/dependencies`` (requires scope bypass;
+    ``PUT /api/applications/{app_id}/dependencies`` (platform admin only;
     refused for a Solution-managed app).
 
     ``dependencies`` is a dict of ``{package_name: version}``. Pass an empty
@@ -585,7 +585,6 @@ async def push_files(
     """
     import hashlib
 
-    from shared.scope_resolver import has_scope_bypass
     from sqlalchemy import select
 
     from src.models.orm.applications import Application
@@ -598,12 +597,6 @@ async def push_files(
     )
 
     logger.info(f"MCP push_files called with {len(files)} file(s)")
-
-    def _write_scope_bypass(ctx: Any) -> bool:
-        return has_scope_bypass(
-            is_platform_admin=getattr(ctx, "is_platform_admin", False),
-            is_provider_org=getattr(ctx, "is_provider_org", False),
-        )
 
     try:
         async with get_tool_db(context) as db:
@@ -659,11 +652,10 @@ async def push_files(
                 existing_paths = {row[0] for row in existing_files.all()}
                 delete_prefix_paths = existing_paths - set(files.keys())
 
-            # Write scope: writing or deleting any `_repo/` path requires
-            # scope bypass (platform admin or provider-org member) — this
-            # matches REST, where `_repo/` writes have no non-admin path at
-            # all (files.py's editor routes are CurrentSuperuser).
-            if not _write_scope_bypass(context):
+            # Write scope: writing or deleting any `_repo/` path requires a
+            # platform admin — matching REST, where `_repo/` writes are
+            # CurrentSuperuser (files.py's editor routes).
+            if not getattr(context, "is_platform_admin", False):
                 return error_result(
                     "You don't have permission to write one or more of these paths.",
                     {"denied_paths": sorted(set(files.keys()) | delete_prefix_paths)},
