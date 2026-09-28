@@ -19,8 +19,8 @@ Common entity patterns are:
 - `list_content`, `search_content`, `read_content_lines`, and `get_content` for `_repo` files;
 - `patch_content` for focused source edits;
 - `replace_content` for complete replacement;
-- `register_workflow`, `validate_workflow`, and `execute_workflow` for loose workflows;
-- `validate_app`, publish/status tools, and dependency tools for v1 apps.
+- `bifrost_workflow_register`, `bifrost_workflow_validate`, and `bifrost_workflow_execute` for loose workflows;
+- `bifrost_app_validate`, publish/status tools, and dependency tools for v1 apps.
 
 Always read the current entity/file before mutation. Prefer `patch_content` when it can express the change safely; use full replacement only after preserving unrelated content. Read back and validate after writing.
 

@@ -76,6 +76,7 @@ from src.services.application_sdk_status import (
     sdk_source_available,
 )
 from src.services.application_source_artifact import ApplicationSourceArtifactStorage
+from src.services.audit import emit_audit
 from src.services.solutions.guard import assert_entity_id_not_solution_managed
 from src.core.exceptions import AccessDeniedError
 from shared.logo_processing import (
@@ -503,6 +504,17 @@ async def create_application(
             repo,
             current_sdk=current_sdk,
         )
+        await emit_audit(
+            ctx.db,
+            "app.create",
+            resource_type="application",
+            resource_id=application.id,
+            details={
+                "name": application.name,
+                "slug": application.slug,
+                "organization_id": str(application.organization_id) if application.organization_id else None,
+            },
+        )
         # The default request-scoped database dependency commits during
         # teardown, after the response may already have been sent.  A caller
         # that immediately uses the returned ID can therefore race that commit
@@ -718,6 +730,14 @@ async def update_application(
         entity_id=str(application.id),
     )
 
+    await emit_audit(
+        ctx.db,
+        "app.update",
+        resource_type="application",
+        resource_id=application.id,
+        details={"name": application.name, "slug": application.slug},
+    )
+
     current_sdk = await load_current_sdk_metadata()
     return await application_to_public(application, repo, current_sdk=current_sdk)
 
@@ -750,6 +770,13 @@ async def delete_application(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Application '{app_id}' not found",
         )
+    await emit_audit(
+        ctx.db,
+        "app.delete",
+        resource_type="application",
+        resource_id=app_id,
+        details={"name": application.name, "slug": application.slug},
+    )
     await ctx.db.commit()
     try:
         await ApplicationSourceArtifactStorage().delete_application_artifacts(app_id)
@@ -1114,6 +1141,15 @@ async def publish_application(
                 exc_info=True,
             )
 
+    if not reused:
+        await emit_audit(
+            ctx.db,
+            "app.publish",
+            resource_type="application",
+            resource_id=application.id,
+            details={"name": application.name, "job_id": str(job.id)},
+        )
+
     # Make the durable row visible to the scheduler only after its optional
     # notification ID is attached. This removes the claim-before-notification
     # race while still allowing publishes to proceed when Redis is unavailable.
@@ -1182,6 +1218,14 @@ async def replace_application_endpoint(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Application '{app_id}' not found",
         )
+
+    await emit_audit(
+        ctx.db,
+        "app.replace",
+        resource_type="application",
+        resource_id=application.id,
+        details={"name": application.name, "repo_path": application.repo_path},
+    )
 
     current_sdk = await load_current_sdk_metadata()
     return await application_to_public(application, repo, current_sdk=current_sdk)

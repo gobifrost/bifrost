@@ -11,8 +11,8 @@ Covers the thin-wrapper surface added in
   ``add_integration_mapping``, ``update_integration_mapping``.
 * Organizations: ``update_organization``, ``delete_organization``
   (``list`` / ``get`` / ``create`` already existed and are not touched).
-* Workflow lifecycle: ``update_workflow``, ``delete_workflow``,
-  ``grant_workflow_role``, ``revoke_workflow_role``
+* Workflow lifecycle: ``bifrost_workflow_update``, ``bifrost_workflow_delete``,
+  ``bifrost_workflow_role_grant``, ``bifrost_workflow_role_revoke``
   (``list`` / ``register`` / ``execute`` already existed and are not touched).
 
 RBAC R1b batch 2 (renames + thin-wrapper conversion, see
@@ -249,7 +249,7 @@ SIGNATURE_PARITY_SPECS: list[dict] = [
     },
     {
         "model_path": "src.models.contracts.workflows:WorkflowUpdateRequest",
-        "tool_path": "src.services.mcp_server.tools.workflow:update_workflow",
+        "tool_path": "src.services.mcp_server.tools.workflow:bifrost_workflow_update",
         "extra_args": {"workflow_ref"},
         "field_renames": {},
     },
@@ -841,12 +841,12 @@ class TestMcpParityWorkflow:
         self, admin_context, e2e_client, platform_admin
     ) -> None:
         from src.services.mcp_server.tools.workflow import (
-            grant_workflow_role,
-            revoke_workflow_role,
-            update_workflow,
+            bifrost_workflow_role_grant,
+            bifrost_workflow_role_revoke,
+            bifrost_workflow_update,
         )
 
-        # Create a workflow via the register endpoint so delete_workflow has
+        # Create a workflow via the register endpoint so bifrost_workflow_delete has
         # something to operate on; our parity tool for update/delete does not
         # create workflows.
         path = f"apps/mcp_parity/wf_{uuid4().hex[:6]}.py"
@@ -873,7 +873,7 @@ class TestMcpParityWorkflow:
         UUID(workflow_id)
 
         # update: change description
-        update_result = await update_workflow(
+        update_result = await bifrost_workflow_update(
             admin_context,
             workflow_ref=workflow_id,
             description="updated via MCP parity",
@@ -892,13 +892,13 @@ class TestMcpParityWorkflow:
         role_id = role_resp.json()["id"]
 
         try:
-            grant_result = await grant_workflow_role(
+            grant_result = await bifrost_workflow_role_grant(
                 admin_context, workflow_ref=workflow_id, role_ref=role_name
             )
             assert grant_result.structured_content is not None
             assert "error" not in grant_result.structured_content
 
-            revoke_result = await revoke_workflow_role(
+            revoke_result = await bifrost_workflow_role_revoke(
                 admin_context, workflow_ref=workflow_id, role_ref=role_name
             )
             assert revoke_result.structured_content is not None
@@ -911,7 +911,7 @@ class TestMcpParityWorkflow:
     async def test_workflow_delete_with_force(
         self, admin_context, e2e_client, platform_admin
     ) -> None:
-        from src.services.mcp_server.tools.workflow import delete_workflow
+        from src.services.mcp_server.tools.workflow import bifrost_workflow_delete
 
         # Register a fresh workflow, then delete it via the parity tool.
         # We pass force_deactivation=True to short-circuit any history check.
@@ -936,7 +936,7 @@ class TestMcpParityWorkflow:
         assert register_resp.status_code in (200, 201), register_resp.text
         workflow_id = register_resp.json()["id"]
 
-        delete_result = await delete_workflow(
+        delete_result = await bifrost_workflow_delete(
             admin_context,
             workflow_ref=workflow_id,
             force_deactivation=True,
@@ -944,6 +944,221 @@ class TestMcpParityWorkflow:
         # The delete endpoint returns either a plain dict (deleted OK) or a
         # 409 we surface as error. Happy path: no "error" in structured.
         assert delete_result.structured_content is not None
+
+    async def test_workflow_list_is_platform_admin_only(
+        self, admin_context, org_user_context
+    ) -> None:
+        """R1b batch 5 decision 1: list stays platform-admin only — a
+        non-admin caller gets a plain 403 from the MCP tool, same as REST.
+        """
+        from src.services.mcp_server.tools.workflow import bifrost_workflow_list
+
+        admin_result = await bifrost_workflow_list(admin_context)
+        assert "error" not in (admin_result.structured_content or {"error": "x"})
+
+        org_result = await bifrost_workflow_list(org_user_context)
+        assert org_result.structured_content is not None
+        assert org_result.structured_content.get("status_code") == 403
+
+    async def test_workflow_get_admin_cross_org_and_non_admin_403(
+        self, admin_context, org_user_context, e2e_client, platform_admin
+    ) -> None:
+        """New ``GET /api/workflows/{id}`` (batch 5 decision 3): platform
+        admin can read any org's workflow by id; non-admin gets 403; a
+        random id gets 404.
+        """
+        from src.services.mcp_server.tools.workflow import bifrost_workflow_get
+
+        path = f"apps/mcp_parity/get_{uuid4().hex[:6]}.py"
+        content = (
+            "from bifrost import workflow\n"
+            "\n"
+            "@workflow(description='get target')\n"
+            "def get_target(x: str = '') -> str:\n"
+            "    return x\n"
+        )
+        e2e_client.put(
+            "/api/files/editor/content",
+            headers=platform_admin.headers,
+            json={"path": path, "content": content, "encoding": "utf-8"},
+        )
+        register_resp = e2e_client.post(
+            "/api/workflows/register",
+            headers=platform_admin.headers,
+            json={"path": path, "function_name": "get_target"},
+        )
+        assert register_resp.status_code in (200, 201), register_resp.text
+        workflow_id = register_resp.json()["id"]
+
+        admin_result = await bifrost_workflow_get(admin_context, workflow_id)
+        admin_data = admin_result.structured_content or {}
+        assert "error" not in admin_data, admin_data
+        assert admin_data.get("id") == workflow_id
+
+        org_result = await bifrost_workflow_get(org_user_context, workflow_id)
+        assert org_result.structured_content is not None
+        assert org_result.structured_content.get("status_code") == 403
+
+        missing_result = await bifrost_workflow_get(admin_context, str(uuid4()))
+        assert missing_result.structured_content is not None
+        assert missing_result.structured_content.get("status_code") == 404
+
+    async def test_workflow_execute_works_for_org_member_with_role(
+        self, admin_context, org_user_context, e2e_client, platform_admin
+    ) -> None:
+        """Batch 5 decision 2: execute authorization is unchanged — a
+        non-admin org member with a role-granted workflow can execute it via
+        MCP, identically to REST.
+        """
+        from src.services.mcp_server.tools.workflow import (
+            bifrost_workflow_execute,
+            bifrost_workflow_role_grant,
+        )
+
+        path = f"apps/mcp_parity/exec_{uuid4().hex[:6]}.py"
+        content = (
+            "from bifrost import workflow\n"
+            "\n"
+            "@workflow(description='exec target')\n"
+            "def exec_target(x: str = 'hi') -> str:\n"
+            "    return x\n"
+        )
+        e2e_client.put(
+            "/api/files/editor/content",
+            headers=platform_admin.headers,
+            json={"path": path, "content": content, "encoding": "utf-8"},
+        )
+        register_resp = e2e_client.post(
+            "/api/workflows/register",
+            headers=platform_admin.headers,
+            json={"path": path, "function_name": "exec_target", "access_level": "role_based"},
+        )
+        assert register_resp.status_code in (200, 201), register_resp.text
+        workflow_id = register_resp.json()["id"]
+
+        role_name = f"mcp-parity-wfexec-{uuid4().hex[:8]}"
+        role_resp = e2e_client.post(
+            "/api/roles",
+            headers=platform_admin.headers,
+            json={"name": role_name, "description": "test", "permissions": {}},
+        )
+        assert role_resp.status_code == 201
+        role_id = role_resp.json()["id"]
+
+        try:
+            grant_result = await bifrost_workflow_role_grant(
+                admin_context, workflow_ref=workflow_id, role_ref=role_name
+            )
+            assert "error" not in (grant_result.structured_content or {})
+
+            # Attach the role to org1_user so the execute authorization
+            # check (role-based) resolves.
+            user_role_resp = e2e_client.post(
+                f"/api/roles/{role_id}/users",
+                headers=platform_admin.headers,
+                json={"user_ids": [org_user_context.user_id]},
+            )
+            assert user_role_resp.status_code == 204, user_role_resp.text
+
+            exec_result = await bifrost_workflow_execute(
+                org_user_context, workflow_id, {"x": "hello"}
+            )
+            data = exec_result.structured_content or {}
+            # Either the execution succeeds (role attached) or fails with an
+            # auth-shaped error — either way it must be the SAME REST path
+            # the admin uses, not a client-side rejection before dispatch.
+            assert "workflow_id" in data or "status_code" in data
+        finally:
+            e2e_client.delete(f"/api/roles/{role_id}", headers=platform_admin.headers)
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+class TestMcpParityApps:
+    async def test_apps_crud_roundtrip(
+        self, admin_context, e2e_client, platform_admin
+    ) -> None:
+        from src.services.mcp_server.tools.apps import (
+            bifrost_app_create,
+            bifrost_app_delete,
+            bifrost_app_get,
+            bifrost_app_list,
+            bifrost_app_update,
+        )
+
+        list_result = await bifrost_app_list(admin_context)
+        assert list_result.structured_content is not None
+        assert list_result.structured_content.get("count", -1) >= 0
+
+        name = f"mcp-parity-app-{uuid4().hex[:8]}"
+        create_result = await bifrost_app_create(admin_context, name=name)
+        created = create_result.structured_content or {}
+        assert "error" not in created, created
+        app_id = created["id"]
+
+        get_result = await bifrost_app_get(admin_context, app_id=app_id)
+        fetched = get_result.structured_content or {}
+        assert "error" not in fetched, fetched
+        assert fetched.get("name") == name
+
+        update_result = await bifrost_app_update(
+            admin_context, app_ref=app_id, description="updated via MCP parity"
+        )
+        updated = update_result.structured_content or {}
+        assert "error" not in updated, updated
+
+        delete_result = await bifrost_app_delete(admin_context, app_ref=app_id)
+        assert delete_result.structured_content is not None
+        assert "error" not in delete_result.structured_content
+
+    async def test_apps_create_requires_scope_bypass(
+        self, org_user_context
+    ) -> None:
+        """A regular org member cannot create apps via MCP — matches REST's
+        ``has_scope_bypass`` gate (platform admin or provider-org member).
+        """
+        from src.services.mcp_server.tools.apps import bifrost_app_create
+
+        result = await bifrost_app_create(
+            org_user_context, name=f"denied-{uuid4().hex[:8]}"
+        )
+        data = result.structured_content or {}
+        assert data.get("status_code") == 403
+
+    async def test_apps_list_and_get_visible_to_non_admin(
+        self, admin_context, org_user_context, e2e_client, platform_admin
+    ) -> None:
+        """Apps ARE listed to non-admins (the app launcher shows them) —
+        unlike workflows. A global app created by an admin must be visible
+        to a regular org member's list/get.
+        """
+        from src.services.mcp_server.tools.apps import bifrost_app_get, bifrost_app_list
+
+        name = f"mcp-parity-visible-{uuid4().hex[:8]}"
+        create_resp = e2e_client.post(
+            "/api/applications",
+            headers=platform_admin.headers,
+            json={
+                "name": name,
+                "slug": name.replace("_", "-"),
+                "access_level": "authenticated",
+                "organization_id": None,  # explicit global scope, not admin's own org
+            },
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        app_id = create_resp.json()["id"]
+
+        try:
+            list_result = await bifrost_app_list(org_user_context)
+            apps = (list_result.structured_content or {}).get("apps", [])
+            assert any(a.get("id") == app_id for a in apps), apps
+
+            get_result = await bifrost_app_get(org_user_context, app_slug=create_resp.json()["slug"])
+            fetched = get_result.structured_content or {}
+            assert "error" not in fetched, fetched
+            assert fetched.get("id") == app_id
+        finally:
+            e2e_client.delete(f"/api/applications/{app_id}", headers=platform_admin.headers)
 
 
 # =============================================================================

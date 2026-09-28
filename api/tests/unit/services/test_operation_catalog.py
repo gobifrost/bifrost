@@ -167,6 +167,12 @@ WORKFLOW_OPERATIONS = {
         ("workflows", "list"),
         "bifrost_workflow_list",
     ),
+    "workflows.get": (
+        "GET",
+        "/api/workflows/{workflow_id}",
+        ("workflows", "get"),
+        "bifrost_workflow_get",
+    ),
     "workflows.validate": (
         "POST",
         "/api/workflows/validate",
@@ -1249,6 +1255,7 @@ CANONICAL_MCP_DOMAINS = {
     "configs",
     "policy",
     "integrations",
+    "workflows",
 }
 
 # Tool module for each canonical MCP domain, keyed the same as the domain
@@ -1267,6 +1274,7 @@ _CANONICAL_MCP_TOOL_MODULES = {
     "configs": "src.services.mcp_server.tools.configs",
     "policy": "src.services.mcp_server.tools.policy_rules",
     "integrations": "src.services.mcp_server.tools.integrations",
+    "workflows": "src.services.mcp_server.tools.workflow",
 }
 
 

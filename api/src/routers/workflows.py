@@ -64,6 +64,7 @@ from src.services.solutions.guard import (
 from src.core.auth import Context, CurrentActiveUser, CurrentSuperuser
 from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
+from src.services.audit import emit_audit
 from src.services.operation_catalog import operation_route
 
 logger = logging.getLogger(__name__)
@@ -777,6 +778,20 @@ async def register_workflow(
 
     await sync_definition_for_registration(db, workflow, created_by=user.email)
 
+    await emit_audit(
+        db,
+        "workflow.register",
+        resource_type="workflow",
+        resource_id=workflow.id,
+        details={
+            "name": workflow.name,
+            "path": workflow.path,
+            "function_name": workflow.function_name,
+            "type": workflow.type,
+            "organization_id": str(workflow.organization_id) if workflow.organization_id else None,
+        },
+    )
+
     # Commit before refreshing MCP tools. refresh_workflow_tools() opens its
     # own session via get_db_context(), and at READ COMMITTED it cannot see
     # this request's still-uncommitted INSERT — leaving the freshly-registered
@@ -1051,6 +1066,17 @@ async def update_workflow(
             logger.warning(f"Failed to refresh MCP workflow tools: {e}")
 
         logger.info(f"Updated workflow '{log_safe(workflow.name)}' organization_id={log_safe(workflow.organization_id)}, access_level={log_safe(workflow.access_level)}")
+        await emit_audit(
+            db,
+            "workflow.update",
+            resource_type="workflow",
+            resource_id=workflow.id,
+            details={
+                "name": workflow.name,
+                "organization_id": str(workflow.organization_id) if workflow.organization_id else None,
+                "access_level": workflow.access_level,
+            },
+        )
         role_ids = (await _get_workflow_role_ids(db, [workflow.id])).get(workflow.id, [])
         return _convert_workflow_orm_to_schema(workflow, role_ids=role_ids)
 
@@ -1529,6 +1555,13 @@ async def assign_roles_to_workflow(
         db.add(workflow_role)
 
     await db.flush()
+    await emit_audit(
+        db,
+        "workflow.roles.grant",
+        resource_type="workflow",
+        resource_id=workflow_id,
+        details={"role_ids": request.role_ids},
+    )
     logger.info(f"Assigned roles to workflow {log_safe(workflow_id)}")
 
 
@@ -1567,7 +1600,51 @@ async def remove_role_from_workflow(
             detail="Workflow-role assignment not found",
         )
 
+    await emit_audit(
+        db,
+        "workflow.roles.revoke",
+        resource_type="workflow",
+        resource_id=workflow_id,
+        details={"role_id": str(role_id)},
+    )
     logger.info(f"Removed role {log_safe(role_id)} from workflow {log_safe(workflow_id)}")
+
+
+@router.get(
+    "/{workflow_id}",
+    response_model=WorkflowMetadata,
+    summary="Get a workflow by ID",
+    description="Get one workflow's metadata by ID, from any organization (Platform admin only)",
+**operation_route("workflows.get"))
+async def get_workflow(
+    workflow_id: UUID,
+    user: CurrentSuperuser,
+    db: DbSession,
+) -> WorkflowMetadata:
+    """Get a single workflow by ID, regardless of organization.
+
+    Same gate as list (platform admin only): admins can read any org's
+    workflow by id. There is no name-cascade lookup here — id lookups are
+    exact. Registered after the static single-segment GET routes (``/orphaned``,
+    ``/usage-stats``) so ``/{workflow_id}`` doesn't shadow them.
+    """
+    result = await db.execute(
+        select(WorkflowORM).where(WorkflowORM.id == workflow_id)
+    )
+    workflow = result.scalar_one_or_none()
+    if not workflow:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Workflow with ID '{workflow_id}' not found",
+        )
+
+    used_by_counts = await _compute_used_by_counts(db, [workflow.id])
+    role_ids = (await _get_workflow_role_ids(db, [workflow.id])).get(workflow.id, [])
+    return _convert_workflow_orm_to_schema(
+        workflow,
+        used_by_count=used_by_counts.get(workflow.id, 0),
+        role_ids=role_ids,
+    )
 
 
 @router.delete(
@@ -1719,6 +1796,13 @@ async def delete_workflow(
     except FileNotFoundError:
         # File already gone — just deactivate the workflow record
         workflow.is_active = False
+        await emit_audit(
+            db,
+            "workflow.delete",
+            resource_type="workflow",
+            resource_id=workflow.id,
+            details={"name": workflow.name, "path": workflow.path},
+        )
         await db.commit()
         return {"status": "deleted", "detail": "Source file not found, workflow deactivated"}
 
@@ -1738,6 +1822,13 @@ async def delete_workflow(
         )
         logger.info(f"Removed function '{workflow.function_name}' from {workflow.path}")
 
+    await emit_audit(
+        db,
+        "workflow.delete",
+        resource_type="workflow",
+        resource_id=workflow.id,
+        details={"name": workflow.name, "path": workflow.path},
+    )
     await db.commit()
 
     # Refresh MCP tool registry so deleted tools disappear immediately

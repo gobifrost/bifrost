@@ -29,6 +29,7 @@ from shared.scope_resolver import has_scope_bypass
 from src.core.auth import Context, CurrentUser
 from src.core.exceptions import AccessDeniedError
 from src.core.log_safety import log_safe
+from src.services.audit import emit_audit
 from src.services.solutions.guard import assert_entity_id_not_solution_managed
 from src.models.contracts.applications import (
     AppFileUpdate,
@@ -983,6 +984,13 @@ async def put_dependencies(
 
     # Update DB
     app.dependencies = deps if deps else None
+    await emit_audit(
+        ctx.db,
+        "app.dependencies.update",
+        resource_type="application",
+        resource_id=app.id,
+        details={"dependencies": deps},
+    )
     await ctx.db.commit()
 
     # Invalidate render cache
