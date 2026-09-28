@@ -185,6 +185,7 @@ export function Forms() {
 				params: { path: { form_id: selectedForm.id } },
 				body: {
 					is_active: !selectedForm.isActive,
+					clear_roles: false,
 				},
 			});
 			setIsDisableDialogOpen(false);
