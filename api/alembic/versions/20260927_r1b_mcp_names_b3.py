@@ -1,7 +1,7 @@
 """rename persisted batch-3 MCP tool identifiers to the noun-first convention
 
 Revision ID: 20260927_r1b_mcp_names_b3
-Revises: 20260927_drop_local_runner
+Revises: 20260927_no_sys_role
 
 RBAC R1b batch 3 renames the registered organizations/configs/policy-rules/
 integrations MCP tools to the catalog's ``bifrost_<noun>_<verb>`` names (see
@@ -28,7 +28,7 @@ from alembic import op
 _TOOL_LIST_KEYS = ("allowed_tool_ids", "blocked_tool_ids")
 
 revision: str = "20260927_r1b_mcp_names_b3"
-down_revision: str | None = "20260927_drop_local_runner"
+down_revision: str | None = "20260927_no_sys_role"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
