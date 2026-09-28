@@ -107,6 +107,14 @@ class PolicyRuleService:
             raise PolicyRuleNotFoundError(name)
         return row
 
+    async def get(self, name: str, domain: str, *, org_id: UUID | None) -> PolicyRule:
+        """Get a named policy rule by domain and name.
+
+        Solution-managed rules are readable here (writes stay blocked by
+        :func:`assert_not_solution_managed` in :meth:`update` / :meth:`delete`).
+        """
+        return await self._get(name, domain, org_id)
+
     async def update(
         self,
         name: str,

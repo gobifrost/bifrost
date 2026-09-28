@@ -364,7 +364,7 @@ describe("CreateIntegrationDialog — save recovery", () => {
 });
 
 describe("CreateIntegrationDialog — edit safeguards", () => {
-	it("requires field-removal confirmation after rename and sends an empty schema", async () => {
+	it("shows the server's 409 field-removal confirmation, then retries with force_remove_keys", async () => {
 		mockIntegration = {
 			id: "int-1",
 			name: "Original",
@@ -372,6 +372,18 @@ describe("CreateIntegrationDialog — edit safeguards", () => {
 				{ key: "removed_key", type: "string", required: false },
 			],
 		};
+		// First call (no force flag) — server refuses because the dropped
+		// key has a saved Config value. Second call (force_remove_keys=true)
+		// on the confirm dialog's "Delete Fields" — succeeds.
+		mockUpdate.mockRejectedValueOnce({
+			detail: {
+				code: "integration_schema_removal_requires_confirmation",
+				removed_keys: ["removed_key"],
+				affected_config_values: 2,
+			},
+		});
+		mockUpdate.mockResolvedValueOnce({});
+
 		const { user } = renderWithProviders(
 			<CreateIntegrationDialog
 				open
@@ -389,15 +401,26 @@ describe("CreateIntegrationDialog — edit safeguards", () => {
 			screen.getByRole("button", { name: "Update Integration" }),
 		);
 		await user.click(screen.getByRole("button", { name: "Rename Anyway" }));
-		expect(mockUpdate).not.toHaveBeenCalled();
+
+		// The rename-confirmed save fires immediately and hits the server's
+		// 409 — no client-side guess about which keys have saved values.
+		await waitFor(() => expect(mockUpdate).toHaveBeenCalledTimes(1));
+		expect(mockUpdate.mock.calls[0][0].params.query).toEqual({
+			force_remove_keys: false,
+		});
 		expect(
-			screen.getByRole("heading", {
+			await screen.findByRole("heading", {
 				name: "Remove Configuration Fields?",
 			}),
 		).toBeInTheDocument();
+		expect(screen.getByText(/2 saved config values/)).toBeInTheDocument();
+
 		await user.click(screen.getByRole("button", { name: "Delete Fields" }));
-		await waitFor(() => expect(mockUpdate).toHaveBeenCalledTimes(1));
-		expect(mockUpdate.mock.calls[0][0].body.config_schema).toEqual([]);
+		await waitFor(() => expect(mockUpdate).toHaveBeenCalledTimes(2));
+		expect(mockUpdate.mock.calls[1][0].params.query).toEqual({
+			force_remove_keys: true,
+		});
+		expect(mockUpdate.mock.calls[1][0].body.config_schema).toEqual([]);
 	});
 
 	it("does not expose an empty edit form when loading has failed", () => {

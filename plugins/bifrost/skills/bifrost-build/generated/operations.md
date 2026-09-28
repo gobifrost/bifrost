@@ -131,11 +131,13 @@ harness.
 | `files.policies.test` | — | — | `filepolicies.read` |
 | `files.structure.list` | — | — | `filepolicies.read` |
 | `configs.list` | `bifrost configs list` | `bifrost_config_list` | `configs.read` |
+| `configs.get` | `bifrost configs get` | `bifrost_config_get` | `configs.read` |
 | `configs.create` | `bifrost configs create` | `bifrost_config_create` | `configs.readwrite` |
 | `configs.update` | `bifrost configs update` | `bifrost_config_update` | `configs.readwrite` |
 | `configs.delete` | `bifrost configs delete` | `bifrost_config_delete` | `configs.readwrite` |
 | `policy.rules.list` | `bifrost policy-rules list` | `bifrost_policy_rule_list` | `policyrules.read` |
 | `policy.rules.create` | `bifrost policy-rules create` | `bifrost_policy_rule_create` | `policyrules.readwrite` |
+| `policy.rules.get` | `bifrost policy-rules get` | `bifrost_policy_rule_get` | `policyrules.read` |
 | `policy.rules.update` | `bifrost policy-rules update` | `bifrost_policy_rule_update` | `policyrules.readwrite` |
 | `policy.rules.delete` | `bifrost policy-rules delete` | `bifrost_policy_rule_delete` | `policyrules.readwrite` |
 | `policy.rules.list_usages` | `bifrost policy-rules list-usages` | `bifrost_policy_rule_usage_list` | `policyrules.read` |

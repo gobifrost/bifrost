@@ -2687,6 +2687,26 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
         },
     ),
     OperationDefinition(
+        operation_id="configs.get",
+        summary="Get a Config value by ID",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="GET",
+            path="/api/config/{config_id}",
+            response_model="ConfigResponse",
+        ),
+        cli=CliOperationBinding(path=("configs", "get")),
+        mcp=McpOperationBinding(name="bifrost_config_get"),
+        native_builder=True,
+        action_scopes=("configs.read",),
+        authorization_resolver="configs.read at the Platform boundary (no org cascade on an ID lookup)",
+        side_effects=("mask secret-type values as [SECRET]",),
+        exclusions={
+            "manifest": _CONFIG_MANIFEST_EXCLUSION,
+            "sdk": _CONFIG_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
         operation_id="configs.create",
         summary="Set a Config value in a scope",
         target_kind=OperationTargetKind.COLLECTION,
@@ -2802,6 +2822,26 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
             "validate the rule body against its domain's action vocabulary",
             "persist the policy rule under the (name, domain) natural key",
         ),
+        exclusions={
+            "manifest": _POLICY_RULE_MANIFEST_EXCLUSION,
+            "sdk": _POLICY_RULE_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
+        operation_id="policy.rules.get",
+        summary="Get a named Policy Rule by domain and name",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="GET",
+            path="/api/policy-rules/{domain}/{name}",
+            response_model="PolicyRulePublic",
+        ),
+        cli=CliOperationBinding(path=("policy-rules", "get")),
+        mcp=McpOperationBinding(name="bifrost_policy_rule_get"),
+        native_builder=True,
+        action_scopes=("policyrules.read",),
+        authorization_resolver="policyrules.read plus the persisted Policy Rule organization boundary",
+        side_effects=("read a solution-managed rule (writes to it stay blocked)",),
         exclusions={
             "manifest": _POLICY_RULE_MANIFEST_EXCLUSION,
             "sdk": _POLICY_RULE_SDK_EXCLUSION,

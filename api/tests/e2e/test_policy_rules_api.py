@@ -118,6 +118,47 @@ class TestPolicyRulesCRUD:
         )
 
 
+class TestPolicyRuleGet:
+    def test_get_returns_the_rule(self, e2e_client, platform_admin):
+        e2e_client.post(
+            "/api/policy-rules",
+            headers=platform_admin.headers,
+            json={"name": "get_target_e2e", "domain": "file", "body": {"actions": ["read"], "when": None}},
+        )
+        try:
+            r = e2e_client.get(
+                "/api/policy-rules/file/get_target_e2e", headers=platform_admin.headers
+            )
+            assert r.status_code == 200, r.text
+            assert r.json()["name"] == "get_target_e2e"
+        finally:
+            e2e_client.delete(
+                "/api/policy-rules/file/get_target_e2e", headers=platform_admin.headers
+            )
+
+    def test_get_unknown_returns_404(self, e2e_client, platform_admin):
+        r = e2e_client.get(
+            "/api/policy-rules/file/does_not_exist_e2e", headers=platform_admin.headers
+        )
+        assert r.status_code == 404, r.text
+
+    def test_non_admin_get_is_401_or_403(self, e2e_client, platform_admin, org1_user):
+        e2e_client.post(
+            "/api/policy-rules",
+            headers=platform_admin.headers,
+            json={"name": "get_403_e2e", "domain": "file", "body": {"actions": ["read"], "when": None}},
+        )
+        try:
+            r = e2e_client.get(
+                "/api/policy-rules/file/get_403_e2e", headers=org1_user.headers
+            )
+            assert r.status_code in (401, 403), f"Expected 401/403, got {r.status_code}: {r.text}"
+        finally:
+            e2e_client.delete(
+                "/api/policy-rules/file/get_403_e2e", headers=platform_admin.headers
+            )
+
+
 class TestFilePolicyMissingRef:
     def test_file_policy_missing_ref_is_structured_422(self, e2e_client, platform_admin):
         """Setting a file policy with an unresolvable $ref returns 422 with structured errors."""

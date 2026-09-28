@@ -140,7 +140,7 @@ SIGNATURE_PARITY_SPECS: list[dict] = [
     },
     {
         "model_path": "src.models.contracts.config:ConfigCreate",
-        "tool_path": "src.services.mcp_server.tools.configs:create_config",
+        "tool_path": "src.services.mcp_server.tools.configs:bifrost_config_create",
         # ``organization_id`` is excluded from the DTO flags (CLI targets org via
         # the unified --org/--global standard), but the MCP create_config tool
         # exposes it as a tool-side REF input (a UUID/name string resolved via
@@ -150,7 +150,7 @@ SIGNATURE_PARITY_SPECS: list[dict] = [
     },
     {
         "model_path": "src.models.contracts.config:ConfigUpdate",
-        "tool_path": "src.services.mcp_server.tools.configs:update_config",
+        "tool_path": "src.services.mcp_server.tools.configs:bifrost_config_update",
         "extra_args": {"config_ref"},
         "field_renames": {},
     },
@@ -169,9 +169,34 @@ SIGNATURE_PARITY_SPECS: list[dict] = [
         "field_renames": {},
     },
     {
+        "model_path": "src.models.contracts.policy_rule:PolicyRuleCreate",
+        "tool_path": (
+            "src.services.mcp_server.tools.policy_rules:bifrost_policy_rule_create"
+        ),
+        # ``organization_id`` is excluded from the DTO flags (CLI targets
+        # org via the unified --org/--global standard, mirroring
+        # ConfigCreate above), but the MCP tool still exposes it directly
+        # as an optional scope param — so it's an extra_arg here.
+        "extra_args": {"organization_id"},
+        "field_renames": {},
+    },
+    {
+        "model_path": "src.models.contracts.policy_rule:PolicyRuleUpdate",
+        "tool_path": (
+            "src.services.mcp_server.tools.policy_rules:bifrost_policy_rule_update"
+        ),
+        # ``domain``/``name`` identify the target rule (path params), and
+        # ``organization_id`` scopes the lookup (query param) — none are
+        # PolicyRuleUpdate body fields.
+        "extra_args": {"domain", "name", "organization_id"},
+        # The DTO's ``name`` field (a rename) is exposed as ``new_name`` on
+        # the tool since ``name`` is already taken by the lookup arg.
+        "field_renames": {"name": "new_name"},
+    },
+    {
         "model_path": "src.models.contracts.organizations:OrganizationUpdate",
         "tool_path": (
-            "src.services.mcp_server.tools.organizations:update_organization"
+            "src.services.mcp_server.tools.organizations:bifrost_organization_update"
         ),
         "extra_args": {"organization_ref"},
         "field_renames": {},
@@ -179,7 +204,7 @@ SIGNATURE_PARITY_SPECS: list[dict] = [
     {
         "model_path": "src.models.contracts.integrations:IntegrationCreate",
         "tool_path": (
-            "src.services.mcp_server.tools.integrations:create_integration"
+            "src.services.mcp_server.tools.integrations:bifrost_integration_create"
         ),
         "extra_args": set(),
         "field_renames": {},
@@ -187,9 +212,11 @@ SIGNATURE_PARITY_SPECS: list[dict] = [
     {
         "model_path": "src.models.contracts.integrations:IntegrationUpdate",
         "tool_path": (
-            "src.services.mcp_server.tools.integrations:update_integration"
+            "src.services.mcp_server.tools.integrations:bifrost_integration_update"
         ),
-        "extra_args": {"integration_ref"},
+        # ``force_remove_keys`` is a REST query param (the schema-removal
+        # confirmation guard), not an IntegrationUpdate body field.
+        "extra_args": {"integration_ref", "force_remove_keys"},
         # ``list_entities_data_provider_id`` is a workflow ref the tool
         # accepts as a name/UUID/path::func and resolves to a UUID before
         # POSTing — it is exposed under the shorter ``_data_provider`` name.
@@ -202,7 +229,7 @@ SIGNATURE_PARITY_SPECS: list[dict] = [
             "src.models.contracts.integrations:IntegrationMappingCreate"
         ),
         "tool_path": (
-            "src.services.mcp_server.tools.integrations:add_integration_mapping"
+            "src.services.mcp_server.tools.integrations:bifrost_integration_mapping_create"
         ),
         "extra_args": {"integration_ref"},
         # ``organization_id`` is a UUID on the DTO but the MCP tool accepts
@@ -215,7 +242,7 @@ SIGNATURE_PARITY_SPECS: list[dict] = [
         ),
         "tool_path": (
             "src.services.mcp_server.tools.integrations:"
-            "update_integration_mapping"
+            "bifrost_integration_mapping_update"
         ),
         "extra_args": {"integration_ref", "mapping_id"},
         "field_renames": {},
@@ -412,19 +439,19 @@ class TestMcpParityRoles:
 @pytest.mark.asyncio
 class TestMcpParityConfigs:
     async def test_get_config_by_uuid(self, admin_context) -> None:
-        """``get_config`` round-trips a created config via UUID ref.
+        """``bifrost_config_get`` round-trips a created config via UUID ref.
 
-        The server has no per-id GET endpoint for configs; the tool resolves
-        the ref then locates the row in the list payload.
+        Thin wrapper over ``GET /api/config/{uuid}``: resolves the ref, then
+        reads the per-id endpoint directly.
         """
         from src.services.mcp_server.tools.configs import (
-            create_config,
-            delete_config,
-            get_config,
+            bifrost_config_create,
+            bifrost_config_delete,
+            bifrost_config_get,
         )
 
         key = f"mcp_parity_get_{uuid4().hex[:8]}"
-        create_result = await create_config(
+        create_result = await bifrost_config_create(
             admin_context,
             key=key,
             value="hello",
@@ -435,30 +462,30 @@ class TestMcpParityConfigs:
         config_id = str(created["id"])
 
         try:
-            result = await get_config(admin_context, config_ref=config_id)
+            result = await bifrost_config_get(admin_context, config_ref=config_id)
             payload = result.structured_content or {}
             assert "error" not in payload, payload
             assert str(payload.get("id")) == config_id
             assert payload.get("key") == key
             assert payload.get("value") == "hello"
         finally:
-            await delete_config(admin_context, config_ref=config_id)
+            await bifrost_config_delete(admin_context, config_ref=config_id)
 
     async def test_configs_crud_roundtrip(self, admin_context) -> None:
         from src.services.mcp_server.tools.configs import (
-            create_config,
-            delete_config,
-            list_configs,
-            update_config,
+            bifrost_config_create,
+            bifrost_config_delete,
+            bifrost_config_list,
+            bifrost_config_update,
         )
 
         # list
-        list_result = await list_configs(admin_context)
+        list_result = await bifrost_config_list(admin_context)
         assert list_result.structured_content is not None
 
         # create (global, plain string type via config_type)
         key = f"mcp_parity_{uuid4().hex[:8]}"
-        create_result = await create_config(
+        create_result = await bifrost_config_create(
             admin_context,
             key=key,
             value="initial",
@@ -470,7 +497,7 @@ class TestMcpParityConfigs:
         config_id = str(created["id"])
 
         # update value by UUID ref
-        update_result = await update_config(
+        update_result = await bifrost_config_update(
             admin_context,
             config_ref=config_id,
             value="updated",
@@ -479,9 +506,20 @@ class TestMcpParityConfigs:
         assert "error" not in update_result.structured_content
 
         # delete by UUID
-        delete_result = await delete_config(admin_context, config_ref=config_id)
+        delete_result = await bifrost_config_delete(admin_context, config_ref=config_id)
         assert delete_result.structured_content is not None
         assert delete_result.structured_content.get("deleted") == config_id
+
+    async def test_non_admin_list_configs_is_403(
+        self, org_user_context: "MockMCPContext"
+    ) -> None:
+        """Configs are platform-admin only in REST; the thin wrapper inherits it."""
+        from src.services.mcp_server.tools.configs import bifrost_config_list
+
+        result = await bifrost_config_list(org_user_context)
+        payload = result.structured_content or {}
+        assert "error" in payload, payload
+        assert "HTTP 403" in payload["error"]
 
 
 # =============================================================================
@@ -496,12 +534,11 @@ class TestMcpParityOrganizations:
         self, admin_context, e2e_client, platform_admin
     ) -> None:
         from src.services.mcp_server.tools.organizations import (
-            delete_organization,
-            update_organization,
+            bifrost_organization_delete,
+            bifrost_organization_update,
         )
 
-        # Create an org via REST (create_organization is the existing ORM tool;
-        # the parity surface only adds update + delete).
+        # Create an org via REST — this test only exercises update + delete.
         name = f"mcp-parity-org-{uuid4().hex[:8]}"
         create_resp = e2e_client.post(
             "/api/organizations",
@@ -512,18 +549,30 @@ class TestMcpParityOrganizations:
         org_id = create_resp.json()["id"]
 
         renamed = f"mcp-parity-org-renamed-{uuid4().hex[:8]}"
-        update_result = await update_organization(
+        update_result = await bifrost_organization_update(
             admin_context, organization_ref=org_id, name=renamed
         )
         updated = update_result.structured_content or {}
         assert "error" not in updated, updated
         assert updated.get("name") == renamed
 
-        delete_result = await delete_organization(
+        delete_result = await bifrost_organization_delete(
             admin_context, organization_ref=org_id
         )
         assert delete_result.structured_content is not None
         assert delete_result.structured_content.get("deleted") == org_id
+
+    async def test_non_admin_list_organizations_is_403(
+        self, org_user_context: "MockMCPContext"
+    ) -> None:
+        """Organizations are platform-admin only in REST; the thin wrapper
+        inherits that gate exactly."""
+        from src.services.mcp_server.tools.organizations import bifrost_organization_list
+
+        result = await bifrost_organization_list(org_user_context)
+        payload = result.structured_content or {}
+        assert "error" in payload, payload
+        assert "HTTP 403" in payload["error"]
 
 
 # =============================================================================
@@ -534,11 +583,53 @@ class TestMcpParityOrganizations:
 @pytest.mark.e2e
 @pytest.mark.asyncio
 class TestMcpParityIntegrations:
+    async def test_list_integrations_platform_admin(
+        self, admin_context, e2e_client, platform_admin
+    ) -> None:
+        """``bifrost_integration_list`` is a thin wrapper over ``GET /api/integrations``."""
+        from src.services.mcp_server.tools.integrations import bifrost_integration_list
+
+        name = f"mcp-parity-list-int-{uuid4().hex[:8]}"
+        create_resp = e2e_client.post(
+            "/api/integrations",
+            headers=platform_admin.headers,
+            json={"name": name},
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        integration_id = create_resp.json()["id"]
+
+        try:
+            result = await bifrost_integration_list(admin_context)
+            payload = result.structured_content or {}
+            assert "error" not in payload, payload
+            names = {item["name"] for item in payload["integrations"]}
+            assert name in names
+        finally:
+            e2e_client.delete(
+                f"/api/integrations/{integration_id}",
+                headers=platform_admin.headers,
+            )
+
+    async def test_non_admin_list_integrations_is_403(
+        self, org_user_context: "MockMCPContext"
+    ) -> None:
+        """Integrations list is platform-admin only in REST (Jack's 2026-09-27
+        decision: no widening for non-admin org members). The old ORM-backed
+        tool returned a non-admin's org-mapped integrations; the thin
+        wrapper now returns 403 like REST.
+        """
+        from src.services.mcp_server.tools.integrations import bifrost_integration_list
+
+        result = await bifrost_integration_list(org_user_context)
+        payload = result.structured_content or {}
+        assert "error" in payload, payload
+        assert "HTTP 403" in payload["error"]
+
     async def test_get_integration_by_uuid(
         self, admin_context, e2e_client, platform_admin
     ) -> None:
-        """``get_integration`` thin-wrapper round-trips a created integration."""
-        from src.services.mcp_server.tools.integrations import get_integration
+        """``bifrost_integration_get`` thin-wrapper round-trips a created integration."""
+        from src.services.mcp_server.tools.integrations import bifrost_integration_get
 
         name = f"mcp-parity-get-int-{uuid4().hex[:8]}"
         create_resp = e2e_client.post(
@@ -550,7 +641,7 @@ class TestMcpParityIntegrations:
         integration_id = create_resp.json()["id"]
 
         try:
-            result = await get_integration(
+            result = await bifrost_integration_get(
                 admin_context, integration_ref=integration_id
             )
             payload = result.structured_content or {}
@@ -569,15 +660,15 @@ class TestMcpParityIntegrations:
         self, admin_context, e2e_client, platform_admin, org1
     ) -> None:
         from src.services.mcp_server.tools.integrations import (
-            add_integration_mapping,
-            create_integration,
-            update_integration,
-            update_integration_mapping,
+            bifrost_integration_mapping_create,
+            bifrost_integration_create,
+            bifrost_integration_update,
+            bifrost_integration_mapping_update,
         )
 
         # create integration
         name = f"mcp-parity-int-{uuid4().hex[:8]}"
-        create_result = await create_integration(
+        create_result = await bifrost_integration_create(
             admin_context,
             name=name,
             entity_id_name="Tenant",
@@ -588,14 +679,14 @@ class TestMcpParityIntegrations:
 
         # update integration (rename)
         renamed = f"mcp-parity-int-renamed-{uuid4().hex[:8]}"
-        update_result = await update_integration(
+        update_result = await bifrost_integration_update(
             admin_context, integration_ref=integration_id, name=renamed
         )
         updated = update_result.structured_content or {}
         assert "error" not in updated, updated
 
         # add mapping (by org name ref)
-        add_result = await add_integration_mapping(
+        add_result = await bifrost_integration_mapping_create(
             admin_context,
             integration_ref=renamed,
             organization=org1["name"],
@@ -607,7 +698,7 @@ class TestMcpParityIntegrations:
         mapping_id = str(mapping["id"])
 
         # update mapping
-        update_m_result = await update_integration_mapping(
+        update_m_result = await bifrost_integration_mapping_update(
             admin_context,
             integration_ref=renamed,
             mapping_id=mapping_id,
@@ -625,6 +716,89 @@ class TestMcpParityIntegrations:
             f"/api/integrations/{integration_id}",
             headers=platform_admin.headers,
         )
+
+
+# =============================================================================
+# Policy Rules
+# =============================================================================
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+class TestMcpParityPolicyRules:
+    async def test_policy_rule_crud_roundtrip(self, admin_context) -> None:
+        from src.services.mcp_server.tools.policy_rules import (
+            bifrost_policy_rule_create,
+            bifrost_policy_rule_delete,
+            bifrost_policy_rule_get,
+            bifrost_policy_rule_list,
+            bifrost_policy_rule_update,
+            bifrost_policy_rule_usage_list,
+        )
+
+        name = f"mcp-parity-rule-{uuid4().hex[:8]}"
+
+        # create
+        create_result = await bifrost_policy_rule_create(
+            admin_context,
+            name=name,
+            domain="file",
+            body={"actions": ["read"], "when": None},
+        )
+        created = create_result.structured_content or {}
+        assert "error" not in created, created
+
+        # list
+        list_result = await bifrost_policy_rule_list(admin_context, domain="file")
+        assert list_result.structured_content is not None
+        listed_names = {r["name"] for r in list_result.structured_content["policy_rules"]}
+        assert name in listed_names
+
+        # get
+        get_result = await bifrost_policy_rule_get(admin_context, domain="file", name=name)
+        fetched = get_result.structured_content or {}
+        assert "error" not in fetched, fetched
+        assert fetched.get("name") == name
+
+        # usages (should be empty — nothing references it yet)
+        usages_result = await bifrost_policy_rule_usage_list(
+            admin_context, domain="file", name=name
+        )
+        assert usages_result.structured_content is not None
+        assert usages_result.structured_content.get("total") == 0
+
+        # update
+        update_result = await bifrost_policy_rule_update(
+            admin_context,
+            domain="file",
+            name=name,
+            description="updated via MCP parity",
+        )
+        updated = update_result.structured_content or {}
+        assert "error" not in updated, updated
+        assert updated.get("description") == "updated via MCP parity"
+
+        # delete
+        delete_result = await bifrost_policy_rule_delete(
+            admin_context, domain="file", name=name
+        )
+        assert delete_result.structured_content is not None
+        assert delete_result.structured_content.get("deleted") == f"file/{name}"
+
+        # confirm gone
+        get_after = await bifrost_policy_rule_get(admin_context, domain="file", name=name)
+        after_payload = get_after.structured_content or {}
+        assert "error" in after_payload, after_payload
+
+    async def test_non_admin_list_policy_rules_is_403(
+        self, org_user_context: "MockMCPContext"
+    ) -> None:
+        from src.services.mcp_server.tools.policy_rules import bifrost_policy_rule_list
+
+        result = await bifrost_policy_rule_list(org_user_context)
+        payload = result.structured_content or {}
+        assert "error" in payload, payload
+        assert "HTTP 403" in payload["error"]
 
 
 # =============================================================================

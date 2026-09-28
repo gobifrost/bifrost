@@ -1,14 +1,15 @@
 """
 Integration MCP Tools
 
-Tools for listing available integrations, plus thin-wrapper parity tools
-for ``create_integration``, ``update_integration``, ``add_integration_mapping``,
-and ``update_integration_mapping`` (Task 6 of the CLI mutation surface + MCP
-parity plan).
+Thin wrappers over the REST API for listing, getting, creating, and updating
+integrations, plus creating and updating integration↔organization mappings
+(Task 6 of the CLI mutation surface + MCP parity plan).
 
-The parity wrappers route through the in-process REST bridge (no ORM /
-repositories / ``AsyncSession``); ``list_integrations`` predates this plan
-and is explicitly left untouched.
+Every tool here routes through the in-process REST bridge (no ORM /
+repositories / ``AsyncSession``). ``GET /api/integrations`` is platform-admin
+only (``CurrentSuperuser``) in REST, so ``bifrost_integration_list`` inherits
+that gate exactly — it no longer widens the list to a non-admin's mapped
+integrations the way the old ORM-backed tool did.
 """
 
 import logging
@@ -18,9 +19,6 @@ from fastmcp.tools import ToolResult
 
 from src.services.mcp_server.tool_result import error_result, success_result
 from src.services.mcp_server.tools._http_bridge import call_rest, rest_client
-from src.services.mcp_server.tools.db import get_tool_db
-
-# MCPContext is imported where needed to avoid circular imports
 
 logger = logging.getLogger(__name__)
 
@@ -35,50 +33,32 @@ def _ref_error_payload(exc: Exception) -> dict[str, Any]:
     return {"detail": str(exc)}
 
 
-async def list_integrations(context: Any) -> ToolResult:
-    """List all available integrations."""
-    from sqlalchemy import select
+async def bifrost_integration_list(context: Any) -> ToolResult:
+    """List all integrations — thin wrapper over ``GET /api/integrations``.
 
-    from src.models.orm.integrations import Integration, IntegrationMapping
+    Platform-admin only, matching REST (``CurrentSuperuser``).
+    """
+    logger.info("MCP bifrost_integration_list (HTTP bridge)")
 
-    logger.info("MCP list_integrations called")
-
-    try:
-        async with get_tool_db(context) as db:
-            if context.is_platform_admin or not context.org_id:
-                result = await db.execute(
-                    select(Integration)
-                    .where(Integration.is_deleted.is_(False))
-                    .order_by(Integration.name)
-                )
-                integrations = result.scalars().all()
-            else:
-                result = await db.execute(
-                    select(Integration)
-                    .join(IntegrationMapping)
-                    .where(IntegrationMapping.organization_id == context.org_id)
-                    .where(Integration.is_deleted.is_(False))
-                    .order_by(Integration.name)
-                )
-                integrations = result.scalars().all()
-
-            integration_list = [
-                {
-                    "name": integration.name,
-                    "has_oauth": integration.has_oauth_config,
-                    "entity_id_name": integration.entity_id_name,
-                }
-                for integration in integrations
-            ]
-
-            display_text = f"Found {len(integration_list)} integration(s)"
-            return success_result(
-                display_text, {"integrations": integration_list, "count": len(integration_list)}
-            )
-
-    except Exception as e:
-        logger.exception(f"Error listing integrations via MCP: {e}")
-        return error_result(f"Error listing integrations: {str(e)}")
+    status_code, body = await call_rest(context, "GET", "/api/integrations")
+    if status_code != 200:
+        return error_result(
+            f"bifrost_integration_list failed: HTTP {status_code}", {"body": body}
+        )
+    items = body.get("items", []) if isinstance(body, dict) else []
+    integration_list = [
+        {
+            "id": item.get("id"),
+            "name": item.get("name"),
+            "has_oauth": item.get("has_oauth_config"),
+            "entity_id_name": item.get("entity_id_name"),
+        }
+        for item in items
+    ]
+    display_text = f"Found {len(integration_list)} integration(s)"
+    return success_result(
+        display_text, {"integrations": integration_list, "count": len(integration_list)}
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +100,7 @@ async def _assemble_integration_body(
         )
 
 
-async def get_integration(context: Any, integration_ref: str) -> ToolResult:
+async def bifrost_integration_get(context: Any, integration_ref: str) -> ToolResult:
     """Get a single integration — thin wrapper over ``GET /api/integrations/{uuid}``.
 
     ``integration_ref`` is a UUID or integration name. Returns the integration
@@ -146,7 +126,7 @@ async def get_integration(context: Any, integration_ref: str) -> ToolResult:
     )
     if status_code != 200:
         return error_result(
-            f"get_integration failed: HTTP {status_code}", {"body": body}
+            f"bifrost_integration_get failed: HTTP {status_code}", {"body": body}
         )
     return success_result(
         f"Integration: {body.get('name') if isinstance(body, dict) else integration_uuid}",
@@ -154,7 +134,7 @@ async def get_integration(context: Any, integration_ref: str) -> ToolResult:
     )
 
 
-async def create_integration(
+async def bifrost_integration_create(
     context: Any,
     name: str,
     description: str | None = None,
@@ -191,7 +171,7 @@ async def create_integration(
     )
     if status_code not in (200, 201):
         return error_result(
-            f"create_integration failed: HTTP {status_code}", {"body": resp}
+            f"bifrost_integration_create failed: HTTP {status_code}", {"body": resp}
         )
     return success_result(
         f"Created integration: {name}",
@@ -199,7 +179,7 @@ async def create_integration(
     )
 
 
-async def update_integration(
+async def bifrost_integration_update(
     context: Any,
     integration_ref: str,
     name: str | None = None,
@@ -209,6 +189,7 @@ async def update_integration(
     entity_id: str | None = None,
     entity_id_name: str | None = None,
     default_entity_id: str | None = None,
+    force_remove_keys: bool = False,
 ) -> ToolResult:
     """Update an integration — ``PUT /api/integrations/{uuid}``.
 
@@ -216,6 +197,10 @@ async def update_integration(
     ``list_entities_data_provider`` is a workflow ref (UUID, name, or
     ``path::func``); it maps to the ``list_entities_data_provider_id``
     field on the REST payload via :func:`assemble_body`.
+
+    If the new ``config_schema`` drops keys that have saved ``Config``
+    values, REST returns 409 ``integration_schema_removal_requires_confirmation``
+    with the affected count unless ``force_remove_keys=True``.
     """
     if not integration_ref:
         return error_result("integration_ref is required")
@@ -248,12 +233,13 @@ async def update_integration(
     except Exception as exc:
         return error_result(f"invalid input: {exc}", _ref_error_payload(exc))
 
-    status_code, resp = await call_rest(
-        context, "PUT", f"/api/integrations/{integration_uuid}", json_body=body
-    )
+    url = f"/api/integrations/{integration_uuid}"
+    if force_remove_keys:
+        url = f"{url}?force_remove_keys=true"
+    status_code, resp = await call_rest(context, "PUT", url, json_body=body)
     if status_code != 200:
         return error_result(
-            f"update_integration failed: HTTP {status_code}", {"body": resp}
+            f"bifrost_integration_update failed: HTTP {status_code}", {"body": resp}
         )
     return success_result(
         f"Updated integration {integration_uuid}",
@@ -261,7 +247,7 @@ async def update_integration(
     )
 
 
-async def add_integration_mapping(
+async def bifrost_integration_mapping_create(
     context: Any,
     integration_ref: str,
     organization: str,
@@ -315,7 +301,7 @@ async def add_integration_mapping(
     )
     if status_code not in (200, 201):
         return error_result(
-            f"add_integration_mapping failed: HTTP {status_code}", {"body": resp}
+            f"bifrost_integration_mapping_create failed: HTTP {status_code}", {"body": resp}
         )
     return success_result(
         f"Created mapping for integration {integration_uuid}",
@@ -323,7 +309,7 @@ async def add_integration_mapping(
     )
 
 
-async def update_integration_mapping(
+async def bifrost_integration_mapping_update(
     context: Any,
     integration_ref: str,
     mapping_id: str,
@@ -380,7 +366,7 @@ async def update_integration_mapping(
     )
     if status_code != 200:
         return error_result(
-            f"update_integration_mapping failed: HTTP {status_code}", {"body": resp}
+            f"bifrost_integration_mapping_update failed: HTTP {status_code}", {"body": resp}
         )
     return success_result(
         f"Updated mapping {mapping_id}",
@@ -390,12 +376,12 @@ async def update_integration_mapping(
 
 # Tool metadata for registration
 TOOLS = [
-    ("list_integrations", "List Integrations", "List available integrations that can be used in workflows."),
-    ("get_integration", "Get Integration", "Get integration detail (mappings, OAuth config, schema) by UUID or name."),
-    ("create_integration", "Create Integration", "Create a new integration (platform admin)."),
-    ("update_integration", "Update Integration", "Update an integration by UUID or name."),
-    ("add_integration_mapping", "Add Integration Mapping", "Create an integration↔organization mapping."),
-    ("update_integration_mapping", "Update Integration Mapping", "Update an integration mapping by ID."),
+    ("bifrost_integration_list", "List Integrations", "List available integrations that can be used in workflows."),
+    ("bifrost_integration_get", "Get Integration", "Get integration detail (mappings, OAuth config, schema) by UUID or name."),
+    ("bifrost_integration_create", "Create Integration", "Create a new integration (platform admin)."),
+    ("bifrost_integration_update", "Update Integration", "Update an integration by UUID or name."),
+    ("bifrost_integration_mapping_create", "Add Integration Mapping", "Create an integration↔organization mapping."),
+    ("bifrost_integration_mapping_update", "Update Integration Mapping", "Update an integration mapping by ID."),
 ]
 
 
@@ -404,12 +390,12 @@ def register_tools(mcp: Any, get_context_fn: Any) -> None:
     from src.services.mcp_server.generators.fastmcp_generator import register_tool_with_context
 
     tool_funcs = {
-        "list_integrations": list_integrations,
-        "get_integration": get_integration,
-        "create_integration": create_integration,
-        "update_integration": update_integration,
-        "add_integration_mapping": add_integration_mapping,
-        "update_integration_mapping": update_integration_mapping,
+        "bifrost_integration_list": bifrost_integration_list,
+        "bifrost_integration_get": bifrost_integration_get,
+        "bifrost_integration_create": bifrost_integration_create,
+        "bifrost_integration_update": bifrost_integration_update,
+        "bifrost_integration_mapping_create": bifrost_integration_mapping_create,
+        "bifrost_integration_mapping_update": bifrost_integration_mapping_update,
     }
 
     for tool_id, name, description in TOOLS:

@@ -69,6 +69,35 @@ async def get_config(
     return await repo.list_configs(filter_type)
 
 
+@router.get(
+    "/api/config/{config_id}",
+    response_model=ConfigResponse,
+    summary="Get a configuration value by ID",
+    description="Get a single configuration value by its UUID",
+**operation_route("configs.get"))
+async def get_config_by_id(
+    config_id: UUID,
+    ctx: Context,
+    user: CurrentSuperuser,
+) -> ConfigResponse:
+    """Get one configuration by UUID.
+
+    No org cascade — an ID lookup resolves directly, matching
+    ``update_config`` and ``delete_config`` (also id-only), so a platform
+    admin can read any org's config by id. Secret values are masked as
+    ``[SECRET]``, matching the list endpoint.
+    """
+    repo = ConfigRepository(ctx.db, org_id=ctx.org_id, is_superuser=True)
+
+    config = await repo.get_config_by_id(config_id)
+    if config is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Configuration not found",
+        )
+    return config
+
+
 @router.post(
     "/api/config",
     response_model=ConfigResponse,

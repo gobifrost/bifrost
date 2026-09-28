@@ -6,7 +6,6 @@ Tests the MCP tools for the Bifrost platform:
 - list_workflows: Lists registered workflows
 - list_forms: Lists forms with org scoping
 - search_knowledge: Searches the knowledge base
-- list_integrations: Lists available integrations
 - execute_workflow: Executes workflows and returns results
 
 Uses mocked database access for fast, isolated testing.
@@ -23,7 +22,6 @@ import pytest
 
 from src.services.mcp_server.server import MCPContext
 from src.services.mcp_server.tools.forms import list_forms
-from src.services.mcp_server.tools.integrations import list_integrations
 from src.services.mcp_server.tools.knowledge import search_knowledge
 from src.services.mcp_server.tools.workflow import execute_workflow, list_workflows
 
@@ -447,100 +445,6 @@ class TestSearchKnowledge:
         assert "Error searching knowledge" in data["error"]
 
 
-# ==================== list_integrations Tests ====================
-
-
-@pytest.fixture
-def mock_integration():
-    """Create a mock integration ORM object."""
-    mock = MagicMock()
-    mock.id = uuid4()
-    mock.name = "Microsoft Graph"
-    mock.is_deleted = False
-    mock.has_oauth_config = True
-    mock.entity_id_name = "Tenant ID"
-    return mock
-
-
-class TestListIntegrations:
-    """Tests for the list_integrations MCP tool."""
-
-    @pytest.mark.asyncio
-    async def test_lists_integrations_for_platform_admin(
-        self, platform_admin_context, mock_integration
-    ):
-        """Should list all active integrations for platform admin."""
-        with patch("src.core.database.get_db_context") as mock_db_ctx:
-            mock_session = AsyncMock()
-            mock_result = MagicMock()
-            mock_result.scalars.return_value.all.return_value = [mock_integration]
-            mock_session.execute = AsyncMock(return_value=mock_result)
-            mock_db_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            result = await list_integrations(platform_admin_context)
-
-        # Result is a ToolResult with structured_content
-        data = result.structured_content
-        assert "integrations" in data
-        assert len(data["integrations"]) == 1
-        assert data["integrations"][0]["name"] == "Microsoft Graph"
-        assert data["integrations"][0]["has_oauth"] is True
-        assert data["integrations"][0]["entity_id_name"] == "Tenant ID"
-        assert data["count"] == 1
-
-    @pytest.mark.asyncio
-    async def test_lists_integrations_for_org_user(
-        self, org_user_context, mock_integration
-    ):
-        """Should list org-mapped integrations for org user."""
-        with patch("src.core.database.get_db_context") as mock_db_ctx:
-            mock_session = AsyncMock()
-            mock_result = MagicMock()
-            mock_result.scalars.return_value.all.return_value = [mock_integration]
-            mock_session.execute = AsyncMock(return_value=mock_result)
-            mock_db_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            result = await list_integrations(org_user_context)
-
-        data = result.structured_content
-        assert "integrations" in data
-        assert data["integrations"][0]["name"] == "Microsoft Graph"
-
-    @pytest.mark.asyncio
-    async def test_returns_empty_list(self, org_user_context):
-        """Should return empty list when no integrations found."""
-        with patch("src.core.database.get_db_context") as mock_db_ctx:
-            mock_session = AsyncMock()
-            mock_result = MagicMock()
-            mock_result.scalars.return_value.all.return_value = []
-            mock_session.execute = AsyncMock(return_value=mock_result)
-            mock_db_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            result = await list_integrations(org_user_context)
-
-        data = result.structured_content
-        assert data["integrations"] == []
-        assert data["count"] == 0
-
-    @pytest.mark.asyncio
-    async def test_handles_database_error(self, org_user_context):
-        """Should return error message on database failure."""
-        with patch("src.core.database.get_db_context") as mock_db_ctx:
-            mock_db_ctx.return_value.__aenter__ = AsyncMock(
-                side_effect=Exception("Database connection failed")
-            )
-            mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            result = await list_integrations(org_user_context)
-
-        data = result.structured_content
-        assert "error" in data
-        assert "Error listing integrations" in data["error"]
-
-
 # ==================== execute_workflow Tests ====================
 
 
@@ -852,7 +756,7 @@ class TestGetSystemToolIds:
         expected = [
             "execute_workflow",
             "list_workflows",
-            "list_integrations",
+            "bifrost_integration_list",
             "list_forms",
             "get_docs",
             "search_knowledge",

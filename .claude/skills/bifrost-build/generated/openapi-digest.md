@@ -148,6 +148,7 @@
 | GET | `/api/config` |
 | POST | `/api/config` |
 | DELETE | `/api/config/{config_id}` |
+| GET | `/api/config/{config_id}` |
 | PUT | `/api/config/{config_id}` |
 | GET | `/api/decorator-properties` |
 | PUT | `/api/decorator-properties` |
@@ -402,6 +403,7 @@
 | GET | `/api/policy-rules` |
 | POST | `/api/policy-rules` |
 | DELETE | `/api/policy-rules/{domain}/{name}` |
+| GET | `/api/policy-rules/{domain}/{name}` |
 | PUT | `/api/policy-rules/{domain}/{name}` |
 | GET | `/api/policy-rules/{domain}/{name}/usages` |
 | GET | `/api/profile` |

@@ -145,7 +145,8 @@ class TestCliIntegrations:
         schema_yaml_path,
         schema_yaml_one_key,
     ):
-        """Removed schema keys require explicit ``--force-remove-keys``."""
+        """Removed schema keys with a saved Config value require explicit
+        ``--force-remove-keys``."""
         name = f"cli-integ-rm-{uuid4().hex[:8]}"
         create_resp = e2e_client.post(
             "/api/integrations",
@@ -160,6 +161,13 @@ class TestCliIntegrations:
         )
         assert create_resp.status_code == 201, create_resp.text
         integration_id = create_resp.json()["id"]
+        # The guard only fires when the dropped key has a saved value.
+        set_resp = e2e_client.put(
+            f"/api/integrations/{integration_id}/config",
+            headers=platform_admin.headers,
+            json={"config": {"api_endpoint": "https://example.com", "timeout_seconds": "30"}},
+        )
+        assert set_resp.status_code == 200, set_resp.text
 
         try:
             # Without --force-remove-keys → refused (non-zero exit).

@@ -107,17 +107,18 @@ function CreateIntegrationForm({
 	const originalName = existingIntegration?.name || "";
 	const originalDataProviderId =
 		existingIntegration?.list_entities_data_provider_id || null;
-	const originalConfigSchemaKeys = new Set(
-		existingIntegration?.config_schema?.map((f) => f.key) || [],
-	);
 
 	// Confirmation dialog states
 	const [showDataProviderConfirm, setShowDataProviderConfirm] =
 		useState(false);
 	const [showNameChangeConfirm, setShowNameChangeConfirm] = useState(false);
-	const [showConfigFieldRemovalConfirm, setShowConfigFieldRemovalConfirm] =
-		useState(false);
-	const [removedFieldNames, setRemovedFieldNames] = useState<string[]>([]);
+	// Populated from the server's 409 `integration_schema_removal_requires_confirmation`
+	// response — the removed keys and affected-value count are authoritative
+	// (computed server-side), not guessed client-side.
+	const [schemaRemovalConfirm, setSchemaRemovalConfirm] = useState<{
+		removedKeys: string[];
+		affectedConfigValues: number;
+	} | null>(null);
 
 	// Entity ID source reset state
 	const [showResetEntityIdSource, setShowResetEntityIdSource] =
@@ -164,32 +165,27 @@ function CreateIntegrationForm({
 				}
 			}
 
-			// Check 3: Config field removal warning
-			const currentKeys = new Set(
-				configSchema.map((f) => f.key).filter((k) => k.trim()),
-			);
-			const removedKeys = Array.from(originalConfigSchemaKeys).filter(
-				(k) => !currentKeys.has(k),
-			);
-			if (stage < 3 && removedKeys.length > 0) {
-				setRemovedFieldNames(removedKeys);
-				setShowConfigFieldRemovalConfirm(true);
-				return;
-			}
+			// Config-schema key removal is confirmed server-side (see
+			// performSave's 409 handling below) — the server knows which
+			// keys actually have saved values, so there's nothing to guess
+			// here.
 		}
 
 		// Proceed with save
-		await performSave();
+		await performSave(false);
 	};
 
-	const performSave = async () => {
+	const performSave = async (forceRemoveKeys: boolean) => {
 		if (isLoading) return;
 		setIsSaving(true);
 		setSaveError(null);
 		try {
 			if (isEditing && editIntegrationId) {
 				await updateMutation.mutateAsync({
-					params: { path: { integration_id: editIntegrationId } },
+					params: {
+						path: { integration_id: editIntegrationId },
+						query: { force_remove_keys: forceRemoveKeys },
+					},
 					body: {
 						name,
 						description: description.trim() || null,
@@ -216,7 +212,26 @@ function CreateIntegrationForm({
 			// Invalidate queries to refresh the list
 			queryClient.invalidateQueries({ queryKey: ["integrations"] });
 			onOpenChange(false);
-		} catch {
+		} catch (err) {
+			const detail = (
+				err as {
+					detail?: {
+						code?: string;
+						removed_keys?: string[];
+						affected_config_values?: number;
+					};
+				}
+			)?.detail;
+			if (
+				detail?.code ===
+				"integration_schema_removal_requires_confirmation"
+			) {
+				setSchemaRemovalConfirm({
+					removedKeys: detail.removed_keys ?? [],
+					affectedConfigValues: detail.affected_config_values ?? 0,
+				});
+				return;
+			}
 			setSaveError(
 				isEditing
 					? "Could not update integration. Your changes are preserved. Try again."
@@ -565,10 +580,14 @@ function CreateIntegrationForm({
 				</AlertDialogContent>
 			</AlertDialog>
 
-			{/* Config Field Removal Confirmation */}
+			{/* Config Field Removal Confirmation — driven by the server's 409
+			    integration_schema_removal_requires_confirmation response, so
+			    the key list and affected-value count are authoritative. */}
 			<AlertDialog
-				open={showConfigFieldRemovalConfirm}
-				onOpenChange={setShowConfigFieldRemovalConfirm}
+				open={schemaRemovalConfirm !== null}
+				onOpenChange={(open) => {
+					if (!open) setSchemaRemovalConfirm(null);
+				}}
 			>
 				<AlertDialogContent>
 					<AlertDialogHeader>
@@ -576,8 +595,15 @@ function CreateIntegrationForm({
 							Remove Configuration Fields?
 						</AlertDialogTitle>
 						<AlertDialogDescription className="[overflow-wrap:anywhere]">
-							Removing config field(s) will delete all stored
-							values for: {removedFieldNames.join(", ")}. This
+							Removing{" "}
+							{schemaRemovalConfirm?.removedKeys.join(", ")} will
+							delete{" "}
+							{schemaRemovalConfirm?.affectedConfigValues}{" "}
+							saved config{" "}
+							{schemaRemovalConfirm?.affectedConfigValues === 1
+								? "value"
+								: "values"}{" "}
+							(defaults and per-organization overrides). This
 							cannot be undone.
 						</AlertDialogDescription>
 					</AlertDialogHeader>
@@ -585,8 +611,8 @@ function CreateIntegrationForm({
 						<AlertDialogCancel>Cancel</AlertDialogCancel>
 						<AlertDialogAction
 							onClick={() => {
-								setShowConfigFieldRemovalConfirm(false);
-								performSave();
+								setSchemaRemovalConfirm(null);
+								void performSave(true);
 							}}
 							className="min-h-11 bg-destructive text-destructive-foreground hover:bg-destructive/90"
 						>

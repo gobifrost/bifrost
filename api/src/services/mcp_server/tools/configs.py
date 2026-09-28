@@ -1,7 +1,7 @@
 """Config MCP Tools — thin wrappers around the REST API.
 
 Implements Task 6 of the CLI mutation surface + MCP parity plan:
-``list_configs``, ``create_config``, ``update_config``, ``delete_config``.
+``bifrost_config_list``, ``bifrost_config_create``, ``bifrost_config_update``, ``bifrost_config_delete``.
 
 Same rules as :mod:`roles`: validate minimal inputs, resolve refs, then
 call the REST endpoint via the in-process HTTP bridge. No ORM, no
@@ -35,12 +35,12 @@ def _ref_error_payload(exc: Exception) -> dict[str, Any]:
     return {"detail": str(exc)}
 
 
-async def list_configs(context: Any) -> ToolResult:
+async def bifrost_config_list(context: Any) -> ToolResult:
     """List configs visible to the caller — ``GET /api/config``."""
-    logger.info("MCP list_configs (HTTP bridge)")
+    logger.info("MCP bifrost_config_list (HTTP bridge)")
     status_code, body = await call_rest(context, "GET", "/api/config")
     if status_code != 200:
-        return error_result(f"list_configs failed: HTTP {status_code}", {"body": body})
+        return error_result(f"bifrost_config_list failed: HTTP {status_code}", {"body": body})
     items = body if isinstance(body, list) else []
     return success_result(
         f"Found {len(items)} config(s)",
@@ -48,12 +48,13 @@ async def list_configs(context: Any) -> ToolResult:
     )
 
 
-async def get_config(context: Any, config_ref: str) -> ToolResult:
-    """Get a single config by UUID or key.
+async def bifrost_config_get(context: Any, config_ref: str) -> ToolResult:
+    """Get a single config by UUID or key — thin wrapper over
+    ``GET /api/config/{uuid}``.
 
-    The server has no per-id GET endpoint for configs, so this resolves
-    the ref via the shared :class:`RefResolver` then locates the matching
-    row in the ``GET /api/config`` list payload.
+    Resolves the ref via the shared :class:`RefResolver`, then reads the
+    per-id endpoint directly (no more list-and-filter). Secret values stay
+    masked exactly as in the list.
     """
     if not config_ref:
         return error_result("config_ref is required")
@@ -70,22 +71,16 @@ async def get_config(context: Any, config_ref: str) -> ToolResult:
                 _ref_error_payload(exc),
             )
 
-    status_code, body = await call_rest(context, "GET", "/api/config")
+    status_code, body = await call_rest(context, "GET", f"/api/config/{config_uuid}")
     if status_code != 200:
-        return error_result(f"get_config failed: HTTP {status_code}", {"body": body})
-    items = body if isinstance(body, list) else []
-    for item in items:
-        if isinstance(item, dict) and str(item.get("id")) == config_uuid:
-            return success_result(
-                f"Config: {item.get('key')}",
-                item,
-            )
-    return error_result(
-        f"config {config_ref!r} resolved to {config_uuid} but is not in the accessible list"
+        return error_result(f"bifrost_config_get failed: HTTP {status_code}", {"body": body})
+    return success_result(
+        f"Config: {body.get('key') if isinstance(body, dict) else config_uuid}",
+        body if isinstance(body, dict) else {"body": body},
     )
 
 
-async def create_config(
+async def bifrost_config_create(
     context: Any,
     key: str,
     value: str,
@@ -131,14 +126,14 @@ async def create_config(
 
     status_code, resp = await call_rest(context, "POST", "/api/config", json_body=body)
     if status_code not in (200, 201):
-        return error_result(f"create_config failed: HTTP {status_code}", {"body": resp})
+        return error_result(f"bifrost_config_create failed: HTTP {status_code}", {"body": resp})
     return success_result(
         f"Created config: {key}",
         resp if isinstance(resp, dict) else {"body": resp},
     )
 
 
-async def update_config(
+async def bifrost_config_update(
     context: Any,
     config_ref: str,
     value: str | None = None,
@@ -167,7 +162,7 @@ async def update_config(
                 _ref_error_payload(exc),
             )
 
-    # Same DTO/wire-shape mismatch as create_config — build the body
+    # Same DTO/wire-shape mismatch as bifrost_config_create — build the body
     # manually. Unset fields are omitted so the server's omit-unset
     # semantics preserve the stored value (critical for secret configs).
     body: dict[str, Any] = {}
@@ -182,14 +177,14 @@ async def update_config(
         context, "PUT", f"/api/config/{config_uuid}", json_body=body
     )
     if status_code != 200:
-        return error_result(f"update_config failed: HTTP {status_code}", {"body": resp})
+        return error_result(f"bifrost_config_update failed: HTTP {status_code}", {"body": resp})
     return success_result(
         f"Updated config {config_uuid}",
         resp if isinstance(resp, dict) else {"body": resp},
     )
 
 
-async def delete_config(context: Any, config_ref: str) -> ToolResult:
+async def bifrost_config_delete(context: Any, config_ref: str) -> ToolResult:
     """Delete a config — ``DELETE /api/config/{uuid}``.
 
     ``config_ref`` is a UUID or config key. No ``--confirm`` guard here:
@@ -215,16 +210,16 @@ async def delete_config(context: Any, config_ref: str) -> ToolResult:
         context, "DELETE", f"/api/config/{config_uuid}"
     )
     if status_code not in (200, 204):
-        return error_result(f"delete_config failed: HTTP {status_code}", {"body": resp})
+        return error_result(f"bifrost_config_delete failed: HTTP {status_code}", {"body": resp})
     return success_result(f"Deleted config {config_uuid}", {"deleted": config_uuid})
 
 
 TOOLS = [
-    ("list_configs", "List Configs", "List configuration values for the caller's scope."),
-    ("get_config", "Get Config", "Get a single configuration value by UUID or key."),
-    ("create_config", "Create Config", "Create a configuration value."),
-    ("update_config", "Update Config", "Update a configuration value by UUID or key."),
-    ("delete_config", "Delete Config", "Delete a configuration value by UUID or key."),
+    ("bifrost_config_list", "List Configs", "List configuration values for the caller's scope."),
+    ("bifrost_config_get", "Get Config", "Get a single configuration value by UUID or key."),
+    ("bifrost_config_create", "Create Config", "Create a configuration value."),
+    ("bifrost_config_update", "Update Config", "Update a configuration value by UUID or key."),
+    ("bifrost_config_delete", "Delete Config", "Delete a configuration value by UUID or key."),
 ]
 
 
@@ -235,11 +230,11 @@ def register_tools(mcp: Any, get_context_fn: Any) -> None:
     )
 
     tool_funcs = {
-        "list_configs": list_configs,
-        "get_config": get_config,
-        "create_config": create_config,
-        "update_config": update_config,
-        "delete_config": delete_config,
+        "bifrost_config_list": bifrost_config_list,
+        "bifrost_config_get": bifrost_config_get,
+        "bifrost_config_create": bifrost_config_create,
+        "bifrost_config_update": bifrost_config_update,
+        "bifrost_config_delete": bifrost_config_delete,
     }
 
     for tool_id, _name, description in TOOLS:
@@ -250,10 +245,10 @@ def register_tools(mcp: Any, get_context_fn: Any) -> None:
 
 __all__ = [
     "TOOLS",
-    "create_config",
-    "delete_config",
-    "get_config",
-    "list_configs",
+    "bifrost_config_create",
+    "bifrost_config_delete",
+    "bifrost_config_get",
+    "bifrost_config_list",
     "register_tools",
-    "update_config",
+    "bifrost_config_update",
 ]

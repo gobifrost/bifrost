@@ -52,6 +52,7 @@ from src.services.oauth_provider import (
     get_url_resolution_defaults,
     resolve_url_template,
 )
+from src.services.audit import emit_audit
 from src.services.oauth_state import encode_state, remember_nonce
 from shared.logo_processing import (
     LogoProcessingError,
@@ -831,6 +832,14 @@ async def create_integration(
     integration = await repo.create_integration(request)
     logger.info(f"Created integration: {log_safe(integration.name)}")
 
+    await emit_audit(
+        ctx.db,
+        "integration.create",
+        resource_type="integration",
+        resource_id=integration.id,
+        details={"name": integration.name},
+    )
+
     response = _integration_to_response(integration)
     await ctx.db.commit()
     return response
@@ -1001,9 +1010,53 @@ async def update_integration(
     request: IntegrationUpdate,
     ctx: Context,
     user: CurrentSuperuser,
+    force_remove_keys: bool = Query(
+        False,
+        description="Confirm deletion of config-schema keys and their stored values",
+    ),
 ) -> IntegrationResponse:
-    """Update an integration."""
+    """Update an integration.
+
+    If the new ``config_schema`` drops keys that have saved ``Config``
+    values, this refuses with 409 ``integration_schema_removal_requires_confirmation``
+    (reporting the affected count) unless ``force_remove_keys=true``.
+    """
     repo = IntegrationsRepository(ctx.db)
+
+    current = await repo.get_integration_by_id(integration_id)
+    if not current:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Integration not found",
+        )
+
+    if request.config_schema is not None:
+        current_by_key = {item.key: item for item in current.config_schema}
+        incoming_keys = {item.key for item in request.config_schema}
+        removed_keys = sorted(set(current_by_key) - incoming_keys)
+        if removed_keys and not force_remove_keys:
+            removed_ids = [current_by_key[key].id for key in removed_keys]
+            affected_values = await ctx.db.scalar(
+                select(func.count())
+                .select_from(ConfigModel)
+                .where(ConfigModel.config_schema_id.in_(removed_ids))
+            )
+            affected_count = int(affected_values or 0)
+            if affected_count > 0:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "code": "integration_schema_removal_requires_confirmation",
+                        "message": (
+                            "Removing integration config-schema keys deletes stored "
+                            "default and organization values"
+                        ),
+                        "removed_keys": removed_keys,
+                        "affected_config_values": affected_count,
+                        "force_remove_keys": True,
+                    },
+                )
+
     integration = await repo.update_integration(integration_id, request)
 
     if not integration:
@@ -1013,6 +1066,15 @@ async def update_integration(
         )
 
     logger.info(f"Updated integration: {log_safe(integration.name)}")
+    changed_fields = sorted(request.model_dump(exclude_unset=True))
+    await emit_audit(
+        ctx.db,
+        "integration.update",
+        resource_type="integration",
+        resource_id=integration.id,
+        details={"name": integration.name, "changed_fields": changed_fields},
+    )
+    await ctx.db.commit()
     return _integration_to_response(integration)
 
 
@@ -1329,6 +1391,16 @@ async def create_mapping(
     logger.info(
         f"Created mapping for integration {log_safe(integration_id)} in org {log_safe(request.organization_id)}"
     )
+    await emit_audit(
+        ctx.db,
+        "integration_mapping.create",
+        resource_type="integration_mapping",
+        resource_id=mapping.id,
+        details={
+            "integration_id": str(integration_id),
+            "organization_id": str(request.organization_id),
+        },
+    )
 
     # Get org-specific overrides only (not merged with defaults)
     org_config = await repo.get_org_config_overrides(integration_id, request.organization_id)
@@ -1446,6 +1518,13 @@ async def update_mapping(
         )
 
     logger.info(f"Updated mapping {log_safe(mapping_id)} for integration {log_safe(integration_id)}")
+    await emit_audit(
+        ctx.db,
+        "integration_mapping.update",
+        resource_type="integration_mapping",
+        resource_id=mapping.id,
+        details={"integration_id": str(integration_id)},
+    )
 
     # Get org-specific overrides only (not merged with defaults)
     org_config = await repo.get_org_config_overrides(integration_id, mapping.organization_id)

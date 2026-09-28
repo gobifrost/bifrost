@@ -124,6 +124,70 @@ class TestConfigSecurity:
 
 
 @pytest.mark.e2e
+class TestConfigGetById:
+    """Test GET /api/config/{config_id}."""
+
+    def test_admin_can_read_any_org_config_by_id(self, e2e_client, platform_admin, org2):
+        """A platform admin can read a config scoped to a different org by id.
+
+        No org cascade on an ID lookup — matches PUT/DELETE, which also key
+        on ``id`` alone (see ``ConfigRepository.get_config_by_id``).
+        """
+        created = _create_config(
+            e2e_client, platform_admin.headers,
+            "e2e_get_by_id_other_org", "other-org-value", "string",
+            organization_id=org2["id"],
+        )
+        try:
+            response = e2e_client.get(
+                f"/api/config/{created['id']}", headers=platform_admin.headers
+            )
+            assert response.status_code == 200, response.text
+            body = response.json()
+            assert body["id"] == created["id"]
+            assert body["key"] == "e2e_get_by_id_other_org"
+            assert body["value"] == "other-org-value"
+        finally:
+            _delete_config(e2e_client, platform_admin.headers, created["id"])
+
+    def test_get_by_id_masks_secret(self, e2e_client, platform_admin):
+        """A secret-type config's value stays masked through the by-id read."""
+        created = _create_config(
+            e2e_client, platform_admin.headers,
+            "e2e_get_by_id_secret", "super-secret-value", "secret",
+        )
+        try:
+            response = e2e_client.get(
+                f"/api/config/{created['id']}", headers=platform_admin.headers
+            )
+            assert response.status_code == 200, response.text
+            assert response.json()["value"] == "[SECRET]"
+        finally:
+            _delete_config(e2e_client, platform_admin.headers, created["id"])
+
+    def test_get_by_id_not_found(self, e2e_client, platform_admin):
+        response = e2e_client.get(
+            "/api/config/00000000-0000-0000-0000-000000000000",
+            headers=platform_admin.headers,
+        )
+        assert response.status_code == 404
+
+    def test_org_user_cannot_get_config_by_id(self, e2e_client, platform_admin, org1_user):
+        """Config routes are superuser-only — the new GET is no exception."""
+        created = _create_config(
+            e2e_client, platform_admin.headers,
+            "e2e_get_by_id_org_user", "value", "string",
+        )
+        try:
+            response = e2e_client.get(
+                f"/api/config/{created['id']}", headers=org1_user.headers
+            )
+            assert response.status_code == 403
+        finally:
+            _delete_config(e2e_client, platform_admin.headers, created["id"])
+
+
+@pytest.mark.e2e
 class TestConfigAccess:
     """Test configuration access control."""
 

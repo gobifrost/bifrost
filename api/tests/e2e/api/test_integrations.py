@@ -172,6 +172,100 @@ class TestIntegrationsCRUD:
 
 
 @pytest.mark.e2e
+class TestIntegrationSchemaRemovalGuard:
+    """PUT /api/integrations/{id} refuses to drop config-schema keys that
+    have saved Config values, unless ?force_remove_keys=true."""
+
+    @pytest.fixture
+    def integration_two_keys(self, e2e_client, platform_admin):
+        name = f"e2e_schema_guard_{uuid4().hex[:8]}"
+        response = e2e_client.post(
+            "/api/integrations",
+            headers=platform_admin.headers,
+            json={
+                "name": name,
+                "config_schema": [
+                    {"key": "endpoint", "type": "string", "required": True},
+                    {"key": "timeout", "type": "string", "required": False},
+                ],
+            },
+        )
+        assert response.status_code == 201, response.text
+        return response.json()
+
+    def test_409_when_removed_key_has_saved_value(
+        self, e2e_client, platform_admin, integration_two_keys
+    ):
+        integration_id = integration_two_keys["id"]
+        # Set a default value for the "timeout" key (which we'll then drop).
+        set_resp = e2e_client.put(
+            f"/api/integrations/{integration_id}/config",
+            headers=platform_admin.headers,
+            json={"config": {"endpoint": "https://example.com", "timeout": "30"}},
+        )
+        assert set_resp.status_code == 200, set_resp.text
+
+        response = e2e_client.put(
+            f"/api/integrations/{integration_id}",
+            headers=platform_admin.headers,
+            json={
+                "config_schema": [
+                    {"key": "endpoint", "type": "string", "required": True},
+                ],
+            },
+        )
+        assert response.status_code == 409, response.text
+        detail = response.json()["detail"]
+        assert detail["code"] == "integration_schema_removal_requires_confirmation"
+        assert detail["removed_keys"] == ["timeout"]
+        assert detail["affected_config_values"] >= 1
+
+    def test_200_with_force_remove_keys(
+        self, e2e_client, platform_admin, integration_two_keys
+    ):
+        integration_id = integration_two_keys["id"]
+        set_resp = e2e_client.put(
+            f"/api/integrations/{integration_id}/config",
+            headers=platform_admin.headers,
+            json={"config": {"endpoint": "https://example.com", "timeout": "30"}},
+        )
+        assert set_resp.status_code == 200, set_resp.text
+
+        response = e2e_client.put(
+            f"/api/integrations/{integration_id}",
+            headers=platform_admin.headers,
+            params={"force_remove_keys": "true"},
+            json={
+                "config_schema": [
+                    {"key": "endpoint", "type": "string", "required": True},
+                ],
+            },
+        )
+        assert response.status_code == 200, response.text
+        keys = {i["key"] for i in response.json().get("config_schema") or []}
+        assert keys == {"endpoint"}
+
+    def test_200_without_force_when_no_saved_values(
+        self, e2e_client, platform_admin, integration_two_keys
+    ):
+        """Dropping a key with no saved Config values needs no confirmation."""
+        integration_id = integration_two_keys["id"]
+
+        response = e2e_client.put(
+            f"/api/integrations/{integration_id}",
+            headers=platform_admin.headers,
+            json={
+                "config_schema": [
+                    {"key": "endpoint", "type": "string", "required": True},
+                ],
+            },
+        )
+        assert response.status_code == 200, response.text
+        keys = {i["key"] for i in response.json().get("config_schema") or []}
+        assert keys == {"endpoint"}
+
+
+@pytest.mark.e2e
 class TestIntegrationMappingsCRUD:
     """Test IntegrationMapping CRUD operations."""
 

@@ -8,9 +8,11 @@ parity follow-up:
 * ``bifrost integrations create`` → ``POST /api/integrations`` (body from
   :class:`IntegrationCreate`).
 * ``bifrost integrations update <ref>`` → ``PUT /api/integrations/{uuid}``
-  (body from :class:`IntegrationUpdate`). Removed-key detection runs against
-  the current server state before the PUT fires; the command refuses unless
-  ``--force-remove-keys`` is set.
+  (body from :class:`IntegrationUpdate`). The server refuses with 409 when
+  the new ``config_schema`` drops keys that have saved ``Config`` values;
+  the command surfaces that error and instructs the caller to pass
+  ``--force-remove-keys`` (forwarded as the ``force_remove_keys`` query
+  param) to proceed.
 * ``bifrost integrations add-mapping <integration-ref>`` →
   ``POST /api/integrations/{id}/mappings`` (body from
   :class:`IntegrationMappingCreate`). ``--organization`` is a ref.
@@ -28,13 +30,10 @@ parity follow-up:
   popping the collected value out of ``fields`` and loading it via
   :func:`load_schema_file` (YAML or JSON, top-level list or ``{schema: [...]}``
   dict) before the body is assembled.
-* On ``update``, the command first fetches the current integration via
-  ``GET /api/integrations/{id}`` and compares the keys in the incoming
-  schema to the keys on the server. Removed keys cascade-delete related
-  ``Config`` rows, so the command refuses unless ``--force-remove-keys`` is
-  set. The downstream impact count is computed client-side from the detail
-  response's ``mappings[*].config`` blobs so we don't rely on a dedicated
-  server-side counter.
+* On ``update``, removed-key detection and the affected-value count are
+  computed server-side (409 ``integration_schema_removal_requires_confirmation``);
+  the command surfaces that response rather than re-deriving the count
+  client-side.
 """
 
 from __future__ import annotations
@@ -220,33 +219,6 @@ async def create_integration(
     output_result(response.json(), ctx=ctx)
 
 
-def _current_schema_keys(current: dict[str, Any]) -> set[str]:
-    schema = current.get("config_schema") or []
-    return {item.get("key") for item in schema if item.get("key")}
-
-
-def _downstream_config_count(current: dict[str, Any], removed_keys: set[str]) -> int:
-    """Count config values that will cascade-delete when ``removed_keys`` go.
-
-    Uses the detail response's ``config_defaults`` (integration-level) and
-    ``mappings[*].config`` (per-org overrides) — both are FK-linked to the
-    schema row via ``config_schema_id`` on the ``Config`` table. The count is
-    informational; the refusal guard fires purely on the presence of removed
-    keys, not on the count.
-    """
-    count = 0
-    defaults = current.get("config_defaults") or {}
-    for key in removed_keys:
-        if key in defaults:
-            count += 1
-    for mapping in current.get("mappings") or []:
-        org_config = mapping.get("config") or {}
-        for key in removed_keys:
-            if key in org_config:
-                count += 1
-    return count
-
-
 @integrations_group.command("update")
 @click.argument("ref")
 @click.option(
@@ -273,43 +245,39 @@ async def update_integration(
 ) -> None:
     """Update an integration.
 
-    ``REF`` is a UUID or integration name. When ``--config-schema`` replaces
-    the existing schema with one that drops keys, the command refuses unless
-    ``--force-remove-keys`` is passed — removed keys cascade-delete related
-    ``Config`` rows (integration-level defaults and per-org overrides).
+    ``REF`` is a UUID or integration name. When ``--config-schema`` drops
+    keys that have saved ``Config`` values, the server refuses with 409
+    unless ``--force-remove-keys`` is passed — removed keys cascade-delete
+    related ``Config`` rows (integration-level defaults and per-org
+    overrides).
     """
     integration_uuid = await resolver.resolve("integration", ref)
     schema_items = _extract_config_schema(fields)
     body = await assemble_body(IntegrationUpdate, fields, resolver=resolver)
-
     if schema_items is not None:
-        detail_resp = await client.get(f"/api/integrations/{integration_uuid}")
-        detail_resp.raise_for_status()
-        current = detail_resp.json()
-        existing_keys = _current_schema_keys(current)
-        new_keys = {item.get("key") for item in schema_items if item.get("key")}
-        removed = existing_keys - new_keys
-        if removed and not force_remove_keys:
-            impact = _downstream_config_count(current, removed)
+        body["config_schema"] = schema_items
+
+    params = {"force_remove_keys": "true"} if force_remove_keys else {}
+    response = await client.put(
+        f"/api/integrations/{integration_uuid}", json=body, params=params
+    )
+    if response.status_code == 409:
+        detail = response.json().get("detail", {})
+        if isinstance(detail, dict) and detail.get("code") == (
+            "integration_schema_removal_requires_confirmation"
+        ):
             click.echo(
-                f"Refusing to update {current.get('name', integration_uuid)}: "
-                f"--config-schema drops {len(removed)} key(s) "
-                f"({', '.join(sorted(removed))}).",
+                f"Refusing to update {ref}: --config-schema drops "
+                f"{len(detail.get('removed_keys', []))} key(s) "
+                f"({', '.join(detail.get('removed_keys', []))}).",
                 err=True,
             )
             click.echo(
-                f"This will cascade-delete approximately {impact} Config row(s) "
-                f"(integration defaults + per-org overrides).",
-                err=True,
-            )
-            click.echo(
-                "Pass --force-remove-keys to proceed.",
+                f"This will delete {detail.get('affected_config_values', 0)} "
+                "stored Config value(s). Pass --force-remove-keys to proceed.",
                 err=True,
             )
             sys.exit(1)
-        body["config_schema"] = schema_items
-
-    response = await client.put(f"/api/integrations/{integration_uuid}", json=body)
     response.raise_for_status()
     output_result(response.json(), ctx=ctx)
 
