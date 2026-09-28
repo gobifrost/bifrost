@@ -31,6 +31,7 @@ from src.core.rate_limit import RateLimiter, get_client_ip
 from src.models.enums import FormAccessLevel
 from src.repositories.forms import FormRepository
 from src.repositories.workflows import WorkflowRepository
+from src.services.audit import emit_audit
 from src.models import Execution as ExecutionORM
 from src.models import Form as FormORM, FormField as FormFieldORM, FormRole as FormRoleORM
 from src.models import FormPublication as FormPublicationORM
@@ -324,6 +325,11 @@ async def _replace_form_roles(
     form and inserts the new set. Empty list clears all assignments.
     """
     if role_ids:
+        if len(role_ids) != len(set(role_ids)):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="role_ids contains duplicate references",
+            )
         existing = await db.execute(
             select(RoleORM.id).where(RoleORM.id.in_(role_ids))
         )
@@ -497,6 +503,24 @@ async def create_form(
     if CACHE_INVALIDATION_AVAILABLE and invalidate_form:
         org_id = str(form.organization_id) if form.organization_id else None
         await invalidate_form(org_id, str(form.id))
+
+    await emit_audit(
+        db,
+        "form.create",
+        resource_type="form",
+        resource_id=form.id,
+        details={
+            "name": form.name,
+            "organization_id": (
+                str(form.organization_id) if form.organization_id else None
+            ),
+            "access_level": (
+                form.access_level.value
+                if isinstance(form.access_level, FormAccessLevel)
+                else form.access_level
+            ),
+        },
+    )
 
     form.role_ids = await _load_form_role_ids(db, form.id)  # type: ignore[attr-defined]
     return attach_form_logo_fields(FormPublic.model_validate(form), form, include_inline_logo=True)
@@ -813,7 +837,7 @@ async def update_form(
         form.description = request.description
     if request.confirmation_markdown is not None:
         form.confirmation_markdown = request.confirmation_markdown
-    if request.workflow_id is not None:
+    if "workflow_id" in request.model_fields_set:
         form.workflow_id = request.workflow_id
     if "launch_workflow_id" in request.model_fields_set:
         form.launch_workflow_id = request.launch_workflow_id
@@ -885,6 +909,17 @@ async def update_form(
     if CACHE_INVALIDATION_AVAILABLE and invalidate_form:
         org_id = str(form.organization_id) if form.organization_id else None
         await invalidate_form(org_id, str(form_id))
+
+    await emit_audit(
+        db,
+        "form.update",
+        resource_type="form",
+        resource_id=form.id,
+        details={
+            "name": form.name,
+            "fields": sorted(request.model_fields_set),
+        },
+    )
 
     form.role_ids = await _load_form_role_ids(db, form_id)  # type: ignore[attr-defined]
     return attach_form_logo_fields(FormPublic.model_validate(form), form, include_inline_logo=True)
@@ -1074,6 +1109,8 @@ async def delete_form(
 
     # Solution-managed forms are read-only here; deploy is the writer.
     assert_not_solution_managed(form)
+    form_name = form.name
+    form_org_id = form.organization_id
 
     if purge:
         if form.is_active:
@@ -1105,8 +1142,16 @@ async def delete_form(
 
     # Invalidate cache
     if CACHE_INVALIDATION_AVAILABLE and invalidate_form:
-        org_id = str(form.organization_id) if form.organization_id else None
+        org_id = str(form_org_id) if form_org_id else None
         await invalidate_form(org_id, str(form_id))
+
+    await emit_audit(
+        db,
+        "form.delete",
+        resource_type="form",
+        resource_id=form_id,
+        details={"name": form_name, "purged": purge},
+    )
 
 
 # =============================================================================

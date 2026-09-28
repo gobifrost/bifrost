@@ -212,7 +212,7 @@ class TestMCPToolsEndpoint:
                     "execute_workflow",
                     "list_workflows",
                     "list_integrations",
-                    "list_forms",
+                    "bifrost_form_list",
                     "get_docs",
                     "search_knowledge",
                 ],
@@ -290,7 +290,7 @@ class TestMCPToolsEndpoint:
             "execute_workflow",
             "list_workflows",
             "list_integrations",
-            "list_forms",
+            "bifrost_form_list",
             "get_docs",
             "search_knowledge",
         ]

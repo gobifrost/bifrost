@@ -463,53 +463,35 @@ async def test_mcp_create_app_allows_repo_slug_shadowing_solution(db_session, mo
     assert "Created application" in text, text
 
 
-async def _managed_form_with_field(db) -> uuid.UUID:
-    from src.models.orm.forms import Form, FormField
-    from src.models.orm.solutions import Solution
-
-    sol = Solution(id=uuid.uuid4(), slug=f"mcp-{uuid.uuid4().hex[:8]}", name="MCP", organization_id=None)
-    db.add(sol)
-    await db.flush()
-    fid = uuid.uuid4()
-    db.add(Form(
-        id=fid, name=f"f_{uuid.uuid4().hex[:8]}", organization_id=None, solution_id=sol.id,
-        created_by="test",
-    ))
-    await db.flush()
-    db.add(FormField(id=uuid.uuid4(), form_id=fid, name="field1", type="text", label="F1", position=0))
-    await db.flush()
-    return fid
-
-
-async def test_mcp_update_form_refuses_managed_without_deleting_fields(db_session, monkeypatch):
-    """Codex #13: update_form on a solution-managed form returns the read-only
-    error AND does NOT bulk-delete its FormField rows."""
-    from contextlib import asynccontextmanager
-
-    from sqlalchemy import func, select
-
-    from src.models.orm.forms import FormField
+async def test_mcp_update_form_forwards_managed_refusal_from_rest(monkeypatch):
+    """``bifrost_form_update`` is a thin REST wrapper (no ORM access at all —
+    enforced structurally by ``test_mcp_thin_wrapper.py``). The solution-managed
+    guard now lives exclusively in the REST handler (``assert_not_solution_managed``
+    in ``src/routers/forms.py``, 409). This test only asserts the wrapper forwards
+    that REST failure cleanly instead of masking it as a generic error.
+    """
     from src.services.mcp_server.tools import forms as mcp_forms
 
-    fid = await _managed_form_with_field(db_session)
+    fid = uuid.uuid4()
 
-    @asynccontextmanager
-    async def _fake_tool_db(_context):
-        yield db_session
+    async def _fake_call_rest(_context, method, path, **_kwargs):
+        assert method == "PATCH"
+        assert path == f"/api/forms/{fid}"
+        return 409, {"detail": SOLUTION_MANAGED_MESSAGE}
 
-    monkeypatch.setattr(mcp_forms, "get_tool_db", _fake_tool_db)
+    monkeypatch.setattr(mcp_forms, "call_rest", _fake_call_rest)
+
+    async def _fake_resolve_ref(_context, kind, value):
+        assert kind == "form"
+        return value
+
+    monkeypatch.setattr(mcp_forms, "_resolve_ref", _fake_resolve_ref)
 
     context = SimpleNamespace(is_platform_admin=True, org_id=None, user_id=uuid.uuid4())
-    result = await mcp_forms.update_form(
-        context, form_id=str(fid), fields=[{"name": "new", "field_type": "text", "label": "New"}]
-    )
+    result = await mcp_forms.bifrost_form_update(context, form_ref=str(fid), name="new name")
 
     text = str(result.model_dump() if hasattr(result, "model_dump") else result)
     assert SOLUTION_MANAGED_MESSAGE in text, text
-    count = (await db_session.execute(
-        select(func.count()).select_from(FormField).where(FormField.form_id == fid)
-    )).scalar()
-    assert count == 1
 
 
 # ── audit M-MCP: legacy tools that lacked the EARLY guard ────────────────────

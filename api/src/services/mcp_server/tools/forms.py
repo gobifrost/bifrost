@@ -1,84 +1,235 @@
 """
-Form MCP Tools
+Form MCP Tools — thin wrappers around the REST API.
 
-Tools for listing, creating, validating, and managing forms.
+``bifrost_form_list``, ``bifrost_form_get``, ``bifrost_form_create``,
+``bifrost_form_update``, ``bifrost_form_delete``.
+
+These tools are thin wrappers: they resolve human refs, assemble the shared
+Form DTO via ``bifrost/dto_flags.py``, then call the corresponding REST
+endpoint through the in-process HTTP bridge (``_http_bridge``). No ORM, no
+repositories, no ``AsyncSession`` — all side effects (audit logs, cache
+invalidation, role sync, reference validation) happen behind the REST
+handler, matching the CLI's path exactly.
 """
 
-import logging
-from datetime import datetime, timezone
+from __future__ import annotations
+
 from typing import Any
-from uuid import UUID
 
 from fastmcp.tools import ToolResult
 
+from shared.form_runtime import DEFAULT_FORM_CONFIRMATION_MARKDOWN
 from src.services.mcp_server.tool_result import error_result, success_result
-from src.services.mcp_server.tools._http_bridge import call_rest
-from src.services.mcp_server.tools.db import get_tool_db
-from shared.form_runtime import (
-    DEFAULT_FORM_CONFIRMATION_MARKDOWN,
-    MAX_FORM_CONFIRMATION_MARKDOWN_LENGTH,
-)
+from src.services.mcp_server.tools._http_bridge import call_rest, rest_client
 
-# MCPContext is imported where needed to avoid circular imports
+def _ref_error_payload(exc: Exception) -> dict[str, Any]:
+    """Format a ref-resolution error for the ToolResult structured body."""
+    from bifrost.refs import AmbiguousRefError, RefNotFoundError
 
-logger = logging.getLogger(__name__)
+    if isinstance(exc, AmbiguousRefError):
+        return {"kind": exc.kind, "value": exc.value, "candidates": exc.candidates}
+    if isinstance(exc, RefNotFoundError):
+        return {"kind": exc.kind, "value": exc.value}
+    return {"detail": str(exc)}
 
 
-async def list_forms(context: Any) -> ToolResult:
-    """List all forms."""
-    from src.repositories.forms import FormRepository
+def _rest_error(action: str, status_code: int, body: Any) -> ToolResult:
+    detail = body.get("detail") if isinstance(body, dict) else None
+    if isinstance(detail, dict):
+        message = detail.get("message") or detail.get("detail")
+    else:
+        message = detail
+    return error_result(
+        str(message) if message else f"{action} failed: HTTP {status_code}",
+        {"status_code": status_code, "body": body},
+    )
 
-    logger.info("MCP list_forms called")
+
+async def _resolve_ref(context: Any, kind: str, value: str) -> str:
+    from bifrost.refs import RefResolver
+
+    async with rest_client(context) as http:
+        return await RefResolver(http).resolve(kind, value)  # type: ignore[arg-type]
+
+
+async def _assemble_form_body(
+    context: Any,
+    fields: dict[str, Any],
+    *,
+    is_update: bool,
+    scope: str | None,
+) -> dict[str, Any]:
+    """Assemble a shared Form DTO payload and resolve every supported ref.
+
+    Only keys the caller actually passed are sent — omitted fields never
+    appear in the assembled body (``assemble_body`` drops ``None`` values),
+    which is how ``update_form`` distinguishes an omitted field (unchanged)
+    from an explicit ``null`` (clears the field, e.g. ``description``) —
+    see ``FormUpdate`` / ``update_form`` in ``src/routers/forms.py``. This
+    thin wrapper never sends a spurious ``null`` for a field the caller
+    didn't set.
+    """
+    from bifrost.dto_flags import assemble_body
+    from bifrost.refs import RefResolver
+    from src.models.contracts.forms import FormCreate, FormUpdate
+
+    model_cls = FormUpdate if is_update else FormCreate
+    async with rest_client(context) as http:
+        resolver = RefResolver(http)
+        body = await assemble_body(model_cls, fields, resolver=resolver)
+        if scope is not None:
+            if scope == "global":
+                body["organization_id"] = None
+            else:
+                body["organization_id"] = await resolver.resolve("org", scope)
+    return body
+
+
+async def bifrost_form_list(context: Any) -> ToolResult:
+    """List Forms visible to the caller — thin wrapper over ``GET /api/forms``."""
+    status_code, body = await call_rest(context, "GET", "/api/forms")
+    if status_code != 200:
+        return _rest_error("List Forms", status_code, body)
+    forms = body if isinstance(body, list) else []
+    return success_result(
+        f"Found {len(forms)} form(s)",
+        {"forms": forms, "count": len(forms)},
+    )
+
+
+async def bifrost_form_get(context: Any, form_ref: str) -> ToolResult:
+    """Get one Form by UUID or accessible name — thin wrapper over ``GET /api/forms/{uuid}``."""
+    if not form_ref:
+        return error_result("form_ref is required")
+    try:
+        form_id = await _resolve_ref(context, "form", form_ref)
+    except Exception as exc:
+        return error_result(f"could not resolve form {form_ref!r}", _ref_error_payload(exc))
+
+    status_code, body = await call_rest(context, "GET", f"/api/forms/{form_id}")
+    if status_code != 200:
+        return _rest_error("Get Form", status_code, body)
+    payload = body if isinstance(body, dict) else {"body": body}
+    return success_result(f"Form: {payload.get('name', form_id)}", payload)
+
+
+async def bifrost_form_create(
+    context: Any,
+    name: str,
+    workflow_id: str,
+    fields: list[dict[str, Any]],
+    description: str | None = None,
+    confirmation_markdown: str = DEFAULT_FORM_CONFIRMATION_MARKDOWN,
+    launch_workflow_id: str | None = None,
+    access_level: str | None = None,
+    role_ids: list[str] | None = None,
+    scope: str | None = None,
+) -> ToolResult:
+    """Create a Form through ``POST /api/forms`` (platform admin only).
+
+    ``workflow_id`` / ``launch_workflow_id`` accept UUIDs or human refs.
+    ``scope`` is ``global``, an organization UUID/name, or omitted for the
+    caller's home organization.
+    """
+    body_fields = {
+        "name": name,
+        "description": description,
+        "confirmation_markdown": confirmation_markdown,
+        "workflow_id": workflow_id,
+        "launch_workflow_id": launch_workflow_id,
+        "form_schema": {"fields": fields} if fields is not None else None,
+        "access_level": access_level or "role_based",
+        "role_ids": role_ids,
+    }
+    try:
+        body = await _assemble_form_body(context, body_fields, is_update=False, scope=scope)
+    except Exception as exc:
+        return error_result(f"invalid Form input: {exc}", _ref_error_payload(exc))
+
+    status_code, resp = await call_rest(context, "POST", "/api/forms", json_body=body)
+    if status_code not in (200, 201):
+        return _rest_error("Create Form", status_code, resp)
+    payload = resp if isinstance(resp, dict) else {"body": resp}
+    return success_result(f"Created form: {payload.get('name', name)}", payload)
+
+
+async def bifrost_form_update(
+    context: Any,
+    form_ref: str,
+    name: str | None = None,
+    description: str | None = None,
+    confirmation_markdown: str | None = None,
+    workflow_id: str | None = None,
+    launch_workflow_id: str | None = None,
+    fields: list[dict[str, Any]] | None = None,
+    is_active: bool | None = None,
+    access_level: str | None = None,
+    role_ids: list[str] | None = None,
+    clear_roles: bool | None = None,
+    scope: str | None = None,
+) -> ToolResult:
+    """Update a Form through ``PATCH /api/forms/{uuid}`` (platform admin only).
+
+    Only fields explicitly passed are sent to the server; the REST handler
+    treats an explicit ``null`` (e.g. ``description=None`` passed by name)
+    as "clear this field" and an omitted field as "leave unchanged" — this
+    wrapper's underlying ``assemble_body`` call omits any kwarg the caller
+    didn't pass, so it can never accidentally clear a field the caller
+    meant to leave alone.
+    """
+    if not form_ref:
+        return error_result("form_ref is required")
+    try:
+        form_id = await _resolve_ref(context, "form", form_ref)
+    except Exception as exc:
+        return error_result(f"could not resolve form {form_ref!r}", _ref_error_payload(exc))
+
+    body_fields: dict[str, Any] = {
+        "name": name,
+        "description": description,
+        "confirmation_markdown": confirmation_markdown,
+        "workflow_id": workflow_id,
+        "launch_workflow_id": launch_workflow_id,
+        "form_schema": {"fields": fields} if fields is not None else None,
+        "is_active": is_active,
+        "access_level": access_level,
+        "role_ids": role_ids,
+        "clear_roles": clear_roles,
+    }
 
     try:
-        async with get_tool_db(context) as db:
-            # Determine org_id and user context based on context
-            if context.is_platform_admin:
-                # Platform admins see all forms (no org filtering)
-                repo = FormRepository(
-                    session=db,
-                    org_id=None,
-                    is_superuser=True,
-                )
-                forms = await repo.list_all_in_scope(active_only=True)
-            elif context.org_id:
-                # Org users see their org's forms + global forms
-                org_id = UUID(str(context.org_id)) if isinstance(context.org_id, str) else context.org_id
-                user_id = UUID(str(context.user_id)) if context.user_id else None
-                repo = FormRepository(
-                    session=db,
-                    org_id=org_id,
-                    user_id=user_id,
-                    is_superuser=False,
-                )
-                forms = await repo.list_forms(active_only=True)
-            else:
-                # No org context - only global forms
-                repo = FormRepository(
-                    session=db,
-                    org_id=None,
-                    user_id=None,
-                    is_superuser=False,
-                )
-                forms = await repo.list_forms(active_only=True)
+        body = await _assemble_form_body(context, body_fields, is_update=True, scope=scope)
+    except Exception as exc:
+        return error_result(f"invalid Form input: {exc}", _ref_error_payload(exc))
+    if not body:
+        return error_result("No updates provided")
 
-            forms_data = [
-                {
-                    "id": str(form.id),
-                    "name": form.name,
-                    "description": form.description,
-                    "workflow_id": str(form.workflow_id) if form.workflow_id else None,
-                    "url": f"/forms/{form.id}",
-                }
-                for form in forms
-            ]
+    status_code, resp = await call_rest(context, "PATCH", f"/api/forms/{form_id}", json_body=body)
+    if status_code != 200:
+        return _rest_error("Update Form", status_code, resp)
+    payload = resp if isinstance(resp, dict) else {"body": resp}
+    return success_result(f"Updated form: {payload.get('name', form_id)}", payload)
 
-            display_text = f"Found {len(forms_data)} form(s)"
-            return success_result(display_text, {"forms": forms_data, "count": len(forms_data)})
 
-    except Exception as e:
-        logger.exception(f"Error listing forms via MCP: {e}")
-        return error_result(f"Error listing forms: {str(e)}")
+async def bifrost_form_delete(context: Any, form_ref: str, purge: bool = False) -> ToolResult:
+    """Delete a Form — thin wrapper over ``DELETE /api/forms/{uuid}`` (platform admin only).
+
+    Soft-deletes (sets ``is_active=False``) by default; ``purge=True``
+    permanently removes an already-inactive form.
+    """
+    if not form_ref:
+        return error_result("form_ref is required")
+    try:
+        form_id = await _resolve_ref(context, "form", form_ref)
+    except Exception as exc:
+        return error_result(f"could not resolve form {form_ref!r}", _ref_error_payload(exc))
+
+    status_code, resp = await call_rest(
+        context, "DELETE", f"/api/forms/{form_id}", params={"purge": purge} if purge else None
+    )
+    if status_code not in (200, 204):
+        return _rest_error("Delete Form", status_code, resp)
+    return success_result(f"Deleted form {form_id}", {"deleted": form_id})
 
 
 async def get_form_schema(context: Any) -> ToolResult:
@@ -178,468 +329,38 @@ async def process_upload(document: str) -> dict:
     return success_result("Form schema documentation", {"schema": schema_doc})
 
 
-async def create_form(
-    context: Any,
-    name: str,
-    workflow_id: str,
-    fields: list[dict[str, Any]],
-    description: str | None = None,
-    confirmation_markdown: str = DEFAULT_FORM_CONFIRMATION_MARKDOWN,
-    launch_workflow_id: str | None = None,
-    scope: str = "organization",
-    organization_id: str | None = None,
-) -> ToolResult:
-    """Create a new form with fields linked to a workflow.
-
-    Args:
-        context: MCP context with user permissions
-        name: Form name (1-200 chars)
-        workflow_id: UUID of workflow to execute on form submit
-        fields: Array of field definitions
-        description: Optional form description
-        confirmation_markdown: Markdown shown after an embedded submission
-        launch_workflow_id: Optional UUID of workflow to run before form display
-        scope: 'global' (visible to all orgs) or 'organization' (default)
-        organization_id: Override context.org_id when scope='organization'
-
-    Returns:
-        ToolResult with form details
-    """
-    logger.info(f"MCP create_form called: name={name}, workflow_id={workflow_id}, scope={scope}")
-
-    if not name:
-        return error_result("name is required")
-    if not workflow_id:
-        return error_result("workflow_id is required")
-    if not fields:
-        return error_result("fields array is required")
-    if len(name) > 200:
-        return error_result("name must be 200 characters or less")
-    if len(confirmation_markdown) > MAX_FORM_CONFIRMATION_MARKDOWN_LENGTH:
-        return error_result("confirmation_markdown must be 20000 characters or less")
-    if scope not in ("global", "organization"):
-        return error_result("scope must be 'global' or 'organization'")
-
-    effective_org_id: str | None = None
-    if scope == "organization":
-        if organization_id:
-            effective_org_id = organization_id
-        elif context.org_id:
-            effective_org_id = str(context.org_id)
-        else:
-            return error_result("organization_id is required when scope='organization' and no context org_id is set")
-
-    try:
-        UUID(workflow_id)
-    except ValueError:
-        return error_result(f"workflow_id '{workflow_id}' is not a valid UUID")
-    if launch_workflow_id:
-        try:
-            UUID(launch_workflow_id)
-        except ValueError:
-            return error_result(f"launch_workflow_id '{launch_workflow_id}' is not a valid UUID")
-
-    # Thin wrapper over POST /forms: REST (CurrentSuperuser, platform-admin
-    # only) owns workflow-reference validation, form-schema validation, and
-    # persistence — MCP does not re-implement any of that.
-    body = {
-        "name": name,
-        "description": description,
-        "confirmation_markdown": confirmation_markdown,
-        "workflow_id": workflow_id,
-        "launch_workflow_id": launch_workflow_id,
-        "form_schema": {"fields": fields},
-        "access_level": "role_based",
-        "organization_id": effective_org_id,
-    }
-
-    status_code, resp = await call_rest(context, "POST", "/api/forms", json_body=body)
-    if status_code not in (200, 201):
-        return error_result(f"create_form failed: HTTP {status_code}", {"body": resp})
-
-    form = resp if isinstance(resp, dict) else {"body": resp}
-    display_text = f"Created form: {form.get('name', name)}"
-    return success_result(display_text, {"success": True, **form})
-
-
-async def get_form(
-    context: Any,
-    form_id: str | None = None,
-    form_name: str | None = None,
-) -> ToolResult:
-    """Get detailed information about a specific form.
-
-    Args:
-        context: MCP context with user permissions
-        form_id: Form UUID (preferred)
-        form_name: Form name (alternative to ID)
-
-    Returns:
-        ToolResult with form details
-    """
-    from uuid import UUID as UUID_TYPE
-
-    from shared.scope_resolver import has_scope_bypass
-    from sqlalchemy import select
-    from src.models import Form as FormORM
-    from src.repositories.forms import FormRepository
-    from src.repositories.workflows import WorkflowRepository
-
-    logger.info(f"MCP get_form called: form_id={form_id}, form_name={form_name}")
-
-    if not form_id and not form_name:
-        return error_result("Either form_id or form_name is required")
-
-    try:
-        async with get_tool_db(context) as db:
-            ctx_org_id = UUID_TYPE(str(context.org_id)) if context.org_id else None
-            ctx_user_id = UUID_TYPE(str(context.user_id)) if context.user_id else None
-            is_bypass = has_scope_bypass(
-                is_platform_admin=getattr(context, "is_platform_admin", False),
-                is_provider_org=getattr(context, "is_provider_org", False),
-            )
-            form_repo = FormRepository(
-                db,
-                org_id=ctx_org_id,
-                user_id=ctx_user_id,
-                is_superuser=is_bypass,
-                is_external=getattr(context, "is_external", False),
-            )
-
-            if form_id:
-                try:
-                    uuid_id = UUID_TYPE(form_id)
-                except ValueError:
-                    return error_result(f"'{form_id}' is not a valid UUID")
-                # Same access-check REST uses for GET /api/forms/{id}: org
-                # cascade + role-based/access-level enforcement.
-                form = await form_repo.get_form_with_access_check(uuid_id)
-            else:
-                # Name-based lookup: resolve the candidate id via the same
-                # org-cascade priority, then re-verify it through the
-                # identical access check so a name lookup can't read a
-                # role-gated form the caller lacks the role for.
-                name_query = select(FormORM.id).where(FormORM.name == form_name)
-                if form_repo.org_id is not None:
-                    name_query = name_query.order_by(
-                        FormORM.organization_id.desc().nulls_last()
-                    )
-                elif not form_repo.is_superuser:
-                    name_query = name_query.where(FormORM.organization_id.is_(None))
-                candidate_id = (await db.execute(name_query.limit(1))).scalar_one_or_none()
-                form = (
-                    await form_repo.get_form_with_access_check(candidate_id)
-                    if candidate_id is not None
-                    else None
-                )
-
-            if form is not None and not form.is_active and not is_bypass:
-                # Inactive forms are hidden from non-bypass callers, matching
-                # the REST get_sdk_form rule.
-                form = None
-
-            if not form:
-                identifier = form_id or form_name
-                return error_result(f"Form '{identifier}' not found. Use list_forms to see available forms.")
-
-            # Get workflow names with proper scoping
-            workflow_repo = WorkflowRepository(
-                db,
-                org_id=ctx_org_id,
-                user_id=ctx_user_id,
-                is_superuser=is_bypass,
-                is_external=getattr(context, "is_external", False),
-            )
-            workflow_name = None
-            launch_workflow_name = None
-
-            if form.workflow_id:
-                try:
-                    workflow = await workflow_repo.get(id=UUID_TYPE(form.workflow_id))
-                    workflow_name = workflow.name if workflow else None
-                except (ValueError, AttributeError) as e:
-                    # Non-UUID portable ref or workflow lookup failed — name stays None
-                    logger.debug(f"could not resolve workflow {form.workflow_id!r} for form {form.id}: {e}")
-
-            if form.launch_workflow_id:
-                try:
-                    launch_workflow = await workflow_repo.get(id=UUID_TYPE(form.launch_workflow_id))
-                    launch_workflow_name = launch_workflow.name if launch_workflow else None
-                except (ValueError, AttributeError) as e:
-                    # Non-UUID portable ref or workflow lookup failed — name stays None
-                    logger.debug(f"could not resolve launch workflow {form.launch_workflow_id!r} for form {form.id}: {e}")
-
-            # Sort fields by position
-            sorted_fields = sorted(form.fields, key=lambda f: f.position) if form.fields else []
-
-            form_data = {
-                "id": str(form.id),
-                "name": form.name,
-                "description": form.description,
-                "confirmation_markdown": form.confirmation_markdown,
-                "url": f"/forms/{form.id}",
-                "is_active": form.is_active,
-                "access_level": form.access_level or "role_based",
-                "organization_id": str(form.organization_id) if form.organization_id else None,
-                "workflow_id": form.workflow_id,
-                "workflow_name": workflow_name,
-                "launch_workflow_id": form.launch_workflow_id,
-                "launch_workflow_name": launch_workflow_name,
-                "fields": [
-                    {
-                        "name": field.name,
-                        "type": field.type,
-                        "label": field.label,
-                        "required": field.required,
-                        "placeholder": field.placeholder,
-                        "help_text": field.help_text,
-                        "default_value": field.default_value,
-                        "options": field.options,
-                        "data_provider_id": field.data_provider_id,
-                        "data_provider_inputs": field.data_provider_inputs,
-                        "visibility_expression": field.visibility_expression,
-                        "validation": field.validation,
-                        "allowed_types": field.allowed_types,
-                        "multiple": field.multiple,
-                        "max_size_mb": field.max_size_mb,
-                        "content": field.content,
-                        "auto_fill": field.auto_fill,
-                        "position": field.position,
-                    }
-                    for field in sorted_fields
-                ],
-            }
-
-            display_text = f"Form: {form.name}"
-            return success_result(display_text, form_data)
-
-    except Exception as e:
-        logger.exception(f"Error getting form via MCP: {e}")
-        return error_result(f"Error getting form: {str(e)}")
-
-
-async def update_form(
-    context: Any,
-    form_id: str,
-    name: str | None = None,
-    description: str | None = None,
-    confirmation_markdown: str | None = None,
-    workflow_id: str | None = None,
-    launch_workflow_id: str | None = None,
-    fields: list[dict[str, Any]] | None = None,
-    is_active: bool | None = None,
-) -> ToolResult:
-    """Update an existing form.
-
-    Args:
-        context: MCP context with user permissions
-        form_id: Form UUID (required)
-        name: New form name
-        description: New description
-        confirmation_markdown: New embedded-submission Markdown
-        workflow_id: New workflow UUID
-        launch_workflow_id: New launch workflow UUID
-        fields: New field definitions (replaces all fields)
-        is_active: Enable/disable the form
-
-    Returns:
-        ToolResult with update confirmation
-    """
-    from uuid import UUID as UUID_TYPE
-
-    from sqlalchemy import delete, select
-    from sqlalchemy.orm import selectinload
-
-    from src.models import Form as FormORM, FormField as FormFieldORM
-    from src.models import FormSchema
-    from src.repositories.workflows import WorkflowRepository
-    from src.routers.forms import _form_schema_to_fields
-
-    logger.info(f"MCP update_form called: form_id={form_id}")
-
-    if not context.is_platform_admin:
-        return error_result("Only platform admins can update forms")
-
-    if not form_id:
-        return error_result("form_id is required")
-
-    # Validate form_id is a valid UUID
-    try:
-        uuid_id = UUID_TYPE(form_id)
-    except ValueError:
-        return error_result(f"'{form_id}' is not a valid UUID")
-
-    try:
-        async with get_tool_db(context) as db:
-            # Get existing form
-            result = await db.execute(
-                select(FormORM)
-                .options(selectinload(FormORM.fields))
-                .where(FormORM.id == uuid_id)
-            )
-            form = result.scalar_one_or_none()
-
-            if not form:
-                return error_result(f"Form '{form_id}' not found. Use list_forms to see available forms.")
-
-            # Solution-managed forms are read-only (criterion 6). Refuse BEFORE
-            # any mutation: this tool issues a Core bulk delete of FormField rows
-            # that bypasses the ORM-flush backstop, and the agent executor commits
-            # even after an error_result — so a late guard would leave the field
-            # delete persisted (Codex #13).
-            from src.services.solutions.guard import (
-                SOLUTION_MANAGED_MESSAGE,
-                is_solution_managed,
-            )
-
-            if is_solution_managed(form):
-                return error_result(SOLUTION_MANAGED_MESSAGE)
-
-            updates_made = []
-
-            # Apply updates
-            if name is not None:
-                if len(name) > 200:
-                    return error_result("name must be 200 characters or less")
-                form.name = name
-                updates_made.append("name")
-
-            if description is not None:
-                form.description = description
-                updates_made.append("description")
-
-            if confirmation_markdown is not None:
-                if len(confirmation_markdown) > MAX_FORM_CONFIRMATION_MARKDOWN_LENGTH:
-                    return error_result(
-                        "confirmation_markdown must be 20000 characters or less"
-                    )
-                form.confirmation_markdown = confirmation_markdown
-                updates_made.append("confirmation_markdown")
-
-            if workflow_id is not None:
-                try:
-                    UUID_TYPE(workflow_id)
-                except ValueError:
-                    return error_result(f"workflow_id '{workflow_id}' is not a valid UUID")
-
-                ctx_org_id = UUID_TYPE(str(context.org_id)) if context.org_id else None
-                ctx_user_id = UUID_TYPE(str(context.user_id)) if context.user_id else None
-                workflow_repo = WorkflowRepository(
-                    db,
-                    org_id=ctx_org_id,
-                    user_id=ctx_user_id,
-                    is_superuser=context.is_platform_admin,
-                    is_external=context.is_external,
-                )
-                workflow = await workflow_repo.get(id=UUID_TYPE(workflow_id))
-                if not workflow:
-                    return error_result(f"Workflow '{workflow_id}' not found.")
-                form.workflow_id = workflow_id
-                updates_made.append("workflow_id")
-
-            if launch_workflow_id is not None:
-                if launch_workflow_id == "":
-                    # Clear launch workflow
-                    form.launch_workflow_id = None
-                    updates_made.append("launch_workflow_id")
-                else:
-                    try:
-                        UUID_TYPE(launch_workflow_id)
-                    except ValueError:
-                        return error_result(f"launch_workflow_id '{launch_workflow_id}' is not a valid UUID")
-
-                    ctx_org_id = UUID_TYPE(str(context.org_id)) if context.org_id else None
-                    ctx_user_id = UUID_TYPE(str(context.user_id)) if context.user_id else None
-                    workflow_repo = WorkflowRepository(
-                        db,
-                        org_id=ctx_org_id,
-                        user_id=ctx_user_id,
-                        is_superuser=context.is_platform_admin,
-                        is_external=context.is_external,
-                    )
-                    launch_workflow = await workflow_repo.get(id=UUID_TYPE(launch_workflow_id))
-                    if not launch_workflow:
-                        return error_result(f"Launch workflow '{launch_workflow_id}' not found.")
-                    form.launch_workflow_id = launch_workflow_id
-                    updates_made.append("launch_workflow_id")
-
-            if is_active is not None:
-                form.is_active = is_active
-                updates_made.append("is_active")
-
-            if fields is not None:
-                # Validate new fields using Pydantic model
-                from pydantic import ValidationError
-
-                try:
-                    FormSchema.model_validate({"fields": fields})
-                except ValidationError as e:
-                    errors_str = "; ".join(f"{'.'.join(str(x) for x in err['loc'])}: {err['msg']}" for err in e.errors())
-                    return error_result(f"Invalid form schema: {errors_str}")
-                except Exception as e:
-                    return error_result(f"Error validating form schema: {str(e)}")
-
-                # Delete existing fields
-                await db.execute(
-                    delete(FormFieldORM).where(FormFieldORM.form_id == form.id)
-                )
-
-                # Add new fields
-                field_records = _form_schema_to_fields({"fields": fields}, form.id)
-                for field in field_records:
-                    db.add(field)
-
-                updates_made.append("fields")
-
-            if not updates_made:
-                return error_result("No updates provided. Specify at least one field to update.")
-
-            form.updated_at = datetime.now(timezone.utc)
-            await db.flush()
-
-            # Reload form with fields
-            result = await db.execute(
-                select(FormORM)
-                .options(selectinload(FormORM.fields))
-                .where(FormORM.id == form.id)
-            )
-            form = result.scalar_one()
-
-            logger.info(f"Updated form {form.id}: {', '.join(updates_made)}")
-
-            display_text = f"Updated form: {form.name} ({', '.join(updates_made)})"
-            return success_result(display_text, {
-                "success": True,
-                "id": str(form.id),
-                "name": form.name,
-                "confirmation_markdown": form.confirmation_markdown,
-                "updates": updates_made,
-            })
-
-    except Exception as e:
-        logger.exception(f"Error updating form via MCP: {e}")
-        return error_result(f"Error updating form: {str(e)}")
-
-
-# Tool metadata for registration
 TOOLS = [
-    ("list_forms", "List Forms", "List all forms with their URLs."),
-("create_form", "Create Form", "Create a new form with fields linked to a workflow."),
-    ("get_form", "Get Form", "Get detailed information about a specific form including all fields."),
-    ("update_form", "Update Form", "Update an existing form's properties or fields."),
+    ("bifrost_form_list", "List Forms", "List all Forms visible to the caller."),
+    ("bifrost_form_get", "Get Form", "Get a Form by UUID or accessible name."),
+    ("bifrost_form_create", "Create Form", "Create a new Form with fields linked to a workflow."),
+    ("bifrost_form_update", "Update Form", "Update an existing Form's properties or fields."),
+    ("bifrost_form_delete", "Delete Form", "Delete (or purge) a Form."),
 ]
 
 
 def register_tools(mcp: Any, get_context_fn: Any) -> None:
-    """Register all forms tools with FastMCP."""
+    """Register all Form tools with FastMCP."""
     from src.services.mcp_server.generators.fastmcp_generator import register_tool_with_context
 
     tool_funcs = {
-        "list_forms": list_forms,
-"create_form": create_form,
-        "get_form": get_form,
-        "update_form": update_form,
+        "bifrost_form_list": bifrost_form_list,
+        "bifrost_form_get": bifrost_form_get,
+        "bifrost_form_create": bifrost_form_create,
+        "bifrost_form_update": bifrost_form_update,
+        "bifrost_form_delete": bifrost_form_delete,
     }
 
-    for tool_id, name, description in TOOLS:
+    for tool_id, _name, description in TOOLS:
         register_tool_with_context(mcp, tool_funcs[tool_id], tool_id, description, get_context_fn)
+
+
+__all__ = [
+    "TOOLS",
+    "bifrost_form_create",
+    "bifrost_form_delete",
+    "bifrost_form_get",
+    "bifrost_form_list",
+    "bifrost_form_update",
+    "get_form_schema",
+    "register_tools",
+]

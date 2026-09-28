@@ -4,7 +4,7 @@ Unit tests for MCP Tools.
 Tests the MCP tools for the Bifrost platform:
 - get_docs: Returns unified platform documentation
 - list_workflows: Lists registered workflows
-- list_forms: Lists forms with org scoping
+- bifrost_form_list: Lists Forms visible to the caller
 - search_knowledge: Searches the knowledge base
 - execute_workflow: Executes workflows and returns results
 
@@ -21,7 +21,6 @@ from uuid import UUID, uuid4
 import pytest
 
 from src.services.mcp_server.server import MCPContext
-from src.services.mcp_server.tools.forms import list_forms
 from src.services.mcp_server.tools.knowledge import search_knowledge
 from src.services.mcp_server.tools.workflow import execute_workflow, list_workflows
 
@@ -67,30 +66,6 @@ def mock_workflow():
     mock.path = "/tmp/bifrost/workspace/workflows/test_workflow.py"
     mock.is_active = True
     mock.parameters_schema = []
-    return mock
-
-
-@pytest.fixture
-def mock_form():
-    """Create a mock form ORM object."""
-    mock = MagicMock()
-    mock.id = uuid4()
-    mock.name = "Test Form"
-    mock.description = "A test form"
-    mock.workflow_id = str(uuid4())
-    mock.launch_workflow_id = None
-    mock.is_active = True
-    mock.access_level = MagicMock(value="authenticated")
-
-    # Mock fields
-    field = MagicMock()
-    field.name = "email"
-    field.label = "Email Address"
-    field.type = "email"
-    field.required = True
-    field.position = 0
-    mock.fields = [field]
-
     return mock
 
 
@@ -207,92 +182,6 @@ class TestListWorkflows:
         data = result.structured_content
         assert "error" in data
         assert "Error listing workflows" in data["error"]
-
-
-# ==================== list_forms Tests ====================
-
-
-class TestListForms:
-    """Tests for the list_forms MCP tool."""
-
-    @pytest.mark.asyncio
-    async def test_lists_forms_for_org_user(self, org_user_context, mock_form):
-        """Should list forms for org user."""
-        with patch("src.core.database.get_db_context") as mock_db_ctx:
-            mock_session = AsyncMock()
-            mock_db_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            with patch("src.repositories.forms.FormRepository") as mock_repo_cls:
-                mock_repo = MagicMock()
-                mock_repo.list_forms = AsyncMock(return_value=[mock_form])
-                mock_repo_cls.return_value = mock_repo
-
-                result = await list_forms(org_user_context)
-
-        # Result is a ToolResult with structured_content
-        data = result.structured_content
-        assert "forms" in data
-        assert len(data["forms"]) == 1
-        assert data["forms"][0]["name"] == "Test Form"
-        assert data["forms"][0]["description"] == "A test form"
-        assert data["count"] == 1
-
-    @pytest.mark.asyncio
-    async def test_lists_forms_for_platform_admin(
-        self, platform_admin_context, mock_form
-    ):
-        """Should list all forms for platform admin."""
-        with patch("src.core.database.get_db_context") as mock_db_ctx:
-            mock_session = AsyncMock()
-            mock_db_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            with patch("src.repositories.forms.FormRepository") as mock_repo_cls:
-                mock_repo = MagicMock()
-                # Platform admins use list_all_in_scope instead of list_forms
-                mock_repo.list_all_in_scope = AsyncMock(return_value=[mock_form])
-                mock_repo_cls.return_value = mock_repo
-
-                result = await list_forms(platform_admin_context)
-
-        data = result.structured_content
-        assert "forms" in data
-        assert data["forms"][0]["name"] == "Test Form"
-
-    @pytest.mark.asyncio
-    async def test_returns_empty_list(self, org_user_context):
-        """Should return empty list when no forms found."""
-        with patch("src.core.database.get_db_context") as mock_db_ctx:
-            mock_session = AsyncMock()
-            mock_db_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            with patch("src.repositories.forms.FormRepository") as mock_repo_cls:
-                mock_repo = MagicMock()
-                mock_repo.list_forms = AsyncMock(return_value=[])
-                mock_repo_cls.return_value = mock_repo
-
-                result = await list_forms(org_user_context)
-
-        data = result.structured_content
-        assert data["forms"] == []
-        assert data["count"] == 0
-
-    @pytest.mark.asyncio
-    async def test_handles_database_error(self, org_user_context):
-        """Should return error message on database failure."""
-        with patch("src.core.database.get_db_context") as mock_db_ctx:
-            mock_db_ctx.return_value.__aenter__ = AsyncMock(
-                side_effect=Exception("Database connection failed")
-            )
-            mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            result = await list_forms(org_user_context)
-
-        data = result.structured_content
-        assert "error" in data
-        assert "Error listing forms" in data["error"]
 
 
 # ==================== search_knowledge Tests ====================
@@ -757,7 +646,7 @@ class TestGetSystemToolIds:
             "execute_workflow",
             "list_workflows",
             "bifrost_integration_list",
-            "list_forms",
+            "bifrost_form_list",
             "get_docs",
             "search_knowledge",
         ]
