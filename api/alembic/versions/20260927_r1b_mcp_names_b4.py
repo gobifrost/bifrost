@@ -1,7 +1,7 @@
 """rename persisted batch-4 MCP tool identifiers to the noun-first convention
 
 Revision ID: 20260927_r1b_mcp_names_b4
-Revises: 20260927_no_sys_role
+Revises: 20260927_r1b_mcp_names_b3
 
 RBAC R1b batch 4 renames the registered forms/tables/events MCP tools to the
 catalog's ``bifrost_<noun>_<verb>`` names (see ``operation_catalog.py``).
@@ -28,7 +28,7 @@ from alembic import op
 _TOOL_LIST_KEYS = ("allowed_tool_ids", "blocked_tool_ids")
 
 revision: str = "20260927_r1b_mcp_names_b4"
-down_revision: str | None = "20260927_no_sys_role"
+down_revision: str | None = "20260927_r1b_mcp_names_b3"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
