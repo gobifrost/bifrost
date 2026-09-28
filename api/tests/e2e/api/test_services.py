@@ -280,7 +280,8 @@ def test_subscription_rejects_service_target(e2e_client, platform_admin, service
             json={"target_type": "workflow", "workflow_id": service_workflow["id"]},
             headers=platform_admin.headers,
         )
-        assert response.status_code == 400
+        # Target validation reports every invalid target as 422 (was 400).
+        assert response.status_code == 422
         assert "service" in response.json()["detail"]
     finally:
         e2e_client.delete(
