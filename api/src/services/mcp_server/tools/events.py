@@ -1,932 +1,471 @@
-"""
-Events MCP Tools
+"""Event MCP Tools — thin wrappers around the REST API.
 
-Tools for managing event sources (webhooks, schedules), subscriptions,
-and webhook adapters.
+``bifrost_event_source_list``, ``bifrost_event_source_get``,
+``bifrost_event_source_create``, ``bifrost_event_source_update``,
+``bifrost_event_source_delete``, ``bifrost_event_subscription_list``,
+``bifrost_event_subscription_get``, ``bifrost_event_subscription_create``,
+``bifrost_event_subscription_update``, ``bifrost_event_subscription_delete``,
+``bifrost_event_webhook_adapter_list``.
+
+These tools are thin wrappers: they resolve human refs, assemble the shared
+Event Source / Event Subscription DTOs via ``bifrost/dto_flags.py``, then
+call the corresponding REST endpoint through the in-process HTTP bridge
+(``_http_bridge``). No ORM, no repositories, no ``AsyncSession`` — all side
+effects (audit logs, target/scope validation, provider subscribe/unsubscribe)
+happen behind the REST handler, matching the CLI's path exactly.
 """
 
-import logging
-from datetime import datetime, timezone as _tz
+from __future__ import annotations
+
 from typing import Any
-from uuid import UUID
 
 from fastmcp.tools import ToolResult
-from sqlalchemy import select
-from sqlalchemy.orm import joinedload
 
 from src.services.mcp_server.tool_result import error_result, success_result
-from src.services.mcp_server.tools.db import get_tool_db
-
-logger = logging.getLogger(__name__)
+from src.services.mcp_server.tools._http_bridge import call_rest, rest_client
 
 
-def _build_callback_url(source_id: UUID) -> str:
-    """Build callback URL path from event source ID."""
-    return f"/api/hooks/{source_id}"
+def _ref_error_payload(exc: Exception) -> dict[str, Any]:
+    from bifrost.refs import AmbiguousRefError, RefNotFoundError
+
+    if isinstance(exc, AmbiguousRefError):
+        return {"kind": exc.kind, "value": exc.value, "candidates": exc.candidates}
+    if isinstance(exc, RefNotFoundError):
+        return {"kind": exc.kind, "value": exc.value}
+    return {"detail": str(exc)}
 
 
-def _source_in_scope(context: Any, source_org_id: UUID | None) -> bool:
-    """Whether the MCP caller may touch an event source in ``source_org_id``.
-
-    REST reserves ALL event-source/webhook/schedule/subscription
-    administration for platform admins, even within the caller's own org
-    (every route in ``routers/events.py`` is ``CurrentSuperuser``). This
-    supersedes the earlier per-org cascade: ``source_org_id`` is accepted
-    only to keep the call sites' shape (and because a future admin-only
-    per-org filter may want it), but the rule is simply "platform admin".
-    """
-    del source_org_id
-    return bool(getattr(context, "is_platform_admin", False))
+def _rest_error(action: str, status_code: int, body: Any) -> ToolResult:
+    detail = body.get("detail") if isinstance(body, dict) else None
+    if isinstance(detail, dict):
+        message = detail.get("message") or detail.get("detail")
+    else:
+        message = detail
+    return error_result(
+        str(message) if message else f"{action} failed: HTTP {status_code}",
+        {"status_code": status_code, "body": body},
+    )
 
 
-def _source_write_in_scope(context: Any, source_org_id: UUID | None) -> bool:
-    """Whether the MCP caller may MUTATE an event source's own fields.
+async def _resolve_ref(context: Any, kind: str, value: str) -> str:
+    from bifrost.refs import RefResolver
 
-    Same rule as ``_source_in_scope`` — REST gates every event-source
-    write on ``CurrentSuperuser`` regardless of org, so this is platform
-    admin only, not ``has_scope_bypass``'s broader provider-org allowance.
-    """
-    del source_org_id
-    return bool(getattr(context, "is_platform_admin", False))
+    async with rest_client(context) as http:
+        return await RefResolver(http).resolve(kind, value)  # type: ignore[arg-type]
 
 
-async def _reject_service_target(db: Any, workflow_id: str) -> ToolResult | None:
-    """Reject service workflows as subscription targets.
-
-    Services run under supervision and cannot be one-shot event targets.
-    Returns an error result when rejected, None when the target is fine
-    (including when the workflow row does not exist — the FK owns that).
-    """
-    from src.models.orm.workflows import Workflow as WorkflowORM
-
-    try:
-        target = await db.get(WorkflowORM, UUID(workflow_id))
-    except (ValueError, AttributeError):
+def _build_schedule_config(
+    cron_expression: str | None,
+    timezone: str | None,
+    enabled: bool | None,
+) -> dict[str, Any] | None:
+    if cron_expression is None and timezone is None and enabled is None:
         return None
-    if target is not None and target.type == "service":
-        return error_result(
-            f"Workflow '{target.name}' is a long-lived service "
-            "(type='service') and cannot be an event subscription target. "
-            "Services emit events; workflows and agents consume them."
-        )
-    return None
+    config: dict[str, Any] = {}
+    if cron_expression is not None:
+        config["cron_expression"] = cron_expression
+    if timezone is not None:
+        config["timezone"] = timezone
+    if enabled is not None:
+        config["enabled"] = enabled
+    return config
 
 
-async def list_event_sources(
+async def _build_webhook_config(
     context: Any,
-    source_type: str | None = None,
-    organization_id: str | None = None,
-    limit: int = 50,
+    adapter_name: str | None,
+    integration_ref: str | None,
+    config: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if adapter_name is None and integration_ref is None and config is None:
+        return None
+    webhook: dict[str, Any] = {}
+    if adapter_name is not None:
+        webhook["adapter_name"] = adapter_name
+    if integration_ref is not None:
+        webhook["integration_id"] = await _resolve_ref(context, "integration", integration_ref)
+    if config is not None:
+        webhook["config"] = config
+    return webhook
+
+
+async def _assemble_event_source_body(
+    context: Any,
+    fields: dict[str, Any],
+    *,
+    is_update: bool,
+    scope: str | None,
+) -> dict[str, Any]:
+    from bifrost.dto_flags import assemble_body
+    from src.models.contracts.events import EventSourceCreate, EventSourceUpdate
+
+    model_cls = EventSourceUpdate if is_update else EventSourceCreate
+    async with rest_client(context) as http:
+        from bifrost.refs import RefResolver
+
+        resolver = RefResolver(http)
+        body = await assemble_body(model_cls, fields, resolver=resolver)
+        if not is_update and scope is not None:
+            if scope == "global":
+                body["organization_id"] = None
+            else:
+                body["organization_id"] = await resolver.resolve("org", scope)
+    return body
+
+
+async def bifrost_event_source_list(
+    context: Any, source_type: str | None = None, scope: str | None = None
 ) -> ToolResult:
-    """List event sources with optional filters."""
-    from src.models.enums import EventSourceType
-    from src.repositories.events import EventSourceRepository, EventSubscriptionRepository
+    """List Event Sources — thin wrapper over ``GET /api/events/sources``
+    (platform admin only)."""
+    params: dict[str, Any] = {}
+    if source_type is not None:
+        params["source_type"] = source_type
+    if scope is not None:
+        params["scope"] = scope
+    status_code, body = await call_rest(context, "GET", "/api/events/sources", params=params)
+    if status_code != 200:
+        return _rest_error("List Event Sources", status_code, body)
+    items = body.get("items") if isinstance(body, dict) else None
+    items = items if isinstance(items, list) else []
+    return success_result(f"Found {len(items)} event source(s)", {"sources": items, "count": len(items)})
 
-    logger.info(f"MCP list_event_sources called with type={source_type}, org={organization_id}")
 
-    if not context.is_platform_admin:
-        return error_result("Only platform admins can list event sources")
-
+async def bifrost_event_source_get(context: Any, source_ref: str) -> ToolResult:
+    """Get one Event Source by UUID or accessible name — thin wrapper over
+    ``GET /api/events/sources/{uuid}`` (platform admin only)."""
+    if not source_ref:
+        return error_result("source_ref is required")
     try:
-        # Parse source_type enum
-        source_type_enum = None
-        if source_type:
-            try:
-                source_type_enum = EventSourceType(source_type)
-            except ValueError:
-                return error_result(
-                    f"Invalid source_type: {source_type}. Valid values: webhook, schedule, topic"
-                )
+        source_id = await _resolve_ref(context, "event_source", source_ref)
+    except Exception as exc:
+        return error_result(f"could not resolve event source {source_ref!r}", _ref_error_payload(exc))
 
-        # Only a platform admin reaches this point (gated above), so they
-        # may target any org via organization_id, or global (omitted).
-        org_id = UUID(organization_id) if organization_id else None
-        include_global = org_id is None
-
-        async with get_tool_db(context) as db:
-            repo = EventSourceRepository(db)
-            sub_repo = EventSubscriptionRepository(db)
-
-            sources = await repo.get_by_organization(
-                organization_id=org_id,
-                source_type=source_type_enum,
-                include_global=include_global,
-                limit=limit,
-            )
-
-            if not sources:
-                return success_result("No event sources found", {"sources": [], "count": 0})
-
-            source_list = []
-            for s in sources:
-                data: dict[str, Any] = {
-                    "id": str(s.id),
-                    "name": s.name,
-                    "source_type": s.source_type.value if hasattr(s.source_type, "value") else str(s.source_type),
-                    "organization_id": str(s.organization_id) if s.organization_id else None,
-                    "is_active": s.is_active,
-                    "subscription_count": await sub_repo.count_by_source(s.id, active_only=True),
-                }
-
-                if s.source_type == EventSourceType.WEBHOOK and s.webhook_source:
-                    data["adapter_name"] = s.webhook_source.adapter_name or "generic"
-                    data["callback_url"] = _build_callback_url(s.id)
-
-                if s.source_type == EventSourceType.SCHEDULE and s.schedule_source:
-                    data["cron_expression"] = s.schedule_source.cron_expression
-                    data["timezone"] = s.schedule_source.timezone
-                    data["schedule_enabled"] = s.schedule_source.enabled
-
-                source_list.append(data)
-
-            display_text = f"Found {len(source_list)} event source(s)"
-            return success_result(display_text, {"sources": source_list, "count": len(source_list)})
-
-    except Exception as e:
-        logger.exception(f"Error listing event sources via MCP: {e}")
-        return error_result(f"Error listing event sources: {str(e)}")
+    status_code, body = await call_rest(context, "GET", f"/api/events/sources/{source_id}")
+    if status_code != 200:
+        return _rest_error("Get Event Source", status_code, body)
+    payload = body if isinstance(body, dict) else {"body": body}
+    return success_result(f"Event source: {payload.get('name', source_id)}", payload)
 
 
-async def create_event_source(
+async def bifrost_event_source_create(
     context: Any,
     name: str,
     source_type: str,
-    organization_id: str | None = None,
-    # Webhook params (flat)
-    adapter_name: str | None = None,
-    integration_id: str | None = None,
-    webhook_config: dict | None = None,
-    # Schedule params (flat)
-    cron_expression: str | None = None,
-    timezone: str = "UTC",
-    schedule_enabled: bool = True,
-    # Auto-subscription shortcut
-    workflow_id: str | None = None,
-) -> ToolResult:
-    """Create a new event source (webhook or schedule).
-
-    If workflow_id is provided, automatically creates a subscription linking
-    the event source to that workflow. If an active event source with the same
-    name, source_type, and organization already exists, reuses it and ensures
-    a subscription to the workflow exists.
-    """
-    from src.models.enums import EventSourceType
-    from src.models.orm.events import EventSource, EventSubscription, ScheduleSource, WebhookSource
-    from src.services.webhooks.registry import get_adapter_registry
-
-    logger.info(f"MCP create_event_source called: name={name}, type={source_type}, workflow_id={workflow_id}")
-
-    if not context.is_platform_admin:
-        return error_result("Only platform admins can create event sources")
-
-    try:
-        source_type_enum = EventSourceType(source_type)
-    except ValueError:
-        return error_result(
-            f"Invalid source_type: {source_type}. Valid values: webhook, schedule, topic"
-        )
-
-    # Validate type-specific params
-    if source_type_enum == EventSourceType.WEBHOOK:
-        pass  # adapter_name is optional (defaults to generic)
-    elif source_type_enum == EventSourceType.SCHEDULE:
-        if not cron_expression:
-            return error_result("cron_expression is required for schedule source type")
-
-    # Validate workflow_id format if provided
-    if workflow_id:
-        try:
-            UUID(workflow_id)
-        except ValueError:
-            return error_result(f"Invalid workflow_id: {workflow_id}. Must be a valid UUID.")
-
-    try:
-        now = datetime.now(_tz.utc)
-        user_email = getattr(context, "user_email", "") or getattr(context, "email", "mcp")
-
-        async with get_tool_db(context) as db:
-            # Only a platform admin reaches this point (gated above), so
-            # they may target any org, or global (organization_id omitted).
-            org_uuid = UUID(organization_id) if organization_id else None
-
-            # Upsert logic: if workflow_id provided, check for existing matching source
-            existing_source = None
-            if workflow_id:
-                query = (
-                    select(EventSource)
-                    .options(
-                        joinedload(EventSource.webhook_source),
-                        joinedload(EventSource.schedule_source),
-                    )
-                    .where(
-                        EventSource.name == name,
-                        EventSource.source_type == source_type_enum,
-                        EventSource.is_active.is_(True),
-                    )
-                )
-                if org_uuid:
-                    query = query.where(EventSource.organization_id == org_uuid)
-                else:
-                    query = query.where(EventSource.organization_id.is_(None))
-
-                result = await db.execute(query)
-                existing_source = result.unique().scalar_one_or_none()
-
-            if existing_source:
-                source = existing_source
-                callback_url = _build_callback_url(source.id) if source_type_enum == EventSourceType.WEBHOOK else None
-            else:
-                # Create base event source
-                source = EventSource(
-                    name=name,
-                    source_type=source_type_enum,
-                    organization_id=org_uuid,
-                    is_active=True,
-                    created_by=user_email,
-                    created_at=now,
-                    updated_at=now,
-                )
-                db.add(source)
-                await db.flush()
-
-                callback_url = None
-
-                # Handle webhook
-                if source_type_enum == EventSourceType.WEBHOOK:
-                    registry = get_adapter_registry()
-                    adapter = registry.get(adapter_name)
-                    if adapter_name and not adapter:
-                        return error_result(f"Unknown webhook adapter: {adapter_name}")
-
-                    webhook_source = WebhookSource(
-                        event_source_id=source.id,
-                        adapter_name=adapter_name,
-                        integration_id=UUID(integration_id) if integration_id else None,
-                        config=webhook_config or {},
-                        created_at=now,
-                        updated_at=now,
-                    )
-
-                    callback_url = _build_callback_url(source.id)
-
-                    if adapter:
-                        try:
-                            result = await adapter.subscribe(
-                                callback_url=callback_url,
-                                config=webhook_config or {},
-                                integration=None,  # TODO: load integration if needed
-                            )
-                            webhook_source.external_id = result.external_id
-                            webhook_source.state = result.state
-                            webhook_source.expires_at = result.expires_at
-                        except Exception as e:
-                            logger.error(f"Failed to subscribe webhook: {e}", exc_info=True)
-                            source.error_message = str(e)
-
-                    db.add(webhook_source)
-                    await db.flush()
-
-                # Handle schedule
-                if source_type_enum == EventSourceType.SCHEDULE:
-                    schedule_source = ScheduleSource(
-                        event_source_id=source.id,
-                        cron_expression=cron_expression,
-                        timezone=timezone,
-                        enabled=schedule_enabled,
-                        created_at=now,
-                        updated_at=now,
-                    )
-                    db.add(schedule_source)
-                    await db.flush()
-
-            # Auto-create subscription if workflow_id provided
-            subscription_data = None
-            if workflow_id:
-                service_rejection = await _reject_service_target(db, workflow_id)
-                if service_rejection is not None:
-                    return service_rejection
-                # Check if subscription already exists
-                existing_sub = await db.execute(
-                    select(EventSubscription)
-                    .options(joinedload(EventSubscription.workflow))
-                    .where(
-                        EventSubscription.event_source_id == source.id,
-                        EventSubscription.workflow_id == UUID(workflow_id),
-                        EventSubscription.is_active.is_(True),
-                    )
-                )
-                existing_sub_row = existing_sub.unique().scalar_one_or_none()
-
-                if existing_sub_row:
-                    subscription_data = {
-                        "subscription_id": str(existing_sub_row.id),
-                        "workflow_id": workflow_id,
-                        "workflow_name": existing_sub_row.workflow.name if existing_sub_row.workflow else None,
-                        "already_existed": True,
-                    }
-                else:
-                    subscription = EventSubscription(
-                        event_source_id=source.id,
-                        workflow_id=UUID(workflow_id),
-                        is_active=True,
-                        created_by=user_email,
-                        created_at=now,
-                        updated_at=now,
-                    )
-                    db.add(subscription)
-                    await db.flush()
-
-                    # Reload with workflow name
-                    sub_result = await db.execute(
-                        select(EventSubscription)
-                        .options(joinedload(EventSubscription.workflow))
-                        .where(EventSubscription.id == subscription.id)
-                    )
-                    subscription = sub_result.unique().scalar_one()
-
-                    subscription_data = {
-                        "subscription_id": str(subscription.id),
-                        "workflow_id": workflow_id,
-                        "workflow_name": subscription.workflow.name if subscription.workflow else None,
-                        "already_existed": False,
-                    }
-
-            response: dict[str, Any] = {
-                "id": str(source.id),
-                "name": source.name,
-                "source_type": source_type,
-                "organization_id": organization_id,
-                "is_active": True,
-            }
-
-            if existing_source:
-                response["already_existed"] = True
-
-            if callback_url:
-                response["callback_url"] = callback_url
-            if source.error_message:
-                response["error_message"] = source.error_message
-            if source_type_enum == EventSourceType.SCHEDULE:
-                response["cron_expression"] = cron_expression
-                response["timezone"] = timezone
-                response["schedule_enabled"] = schedule_enabled
-            if subscription_data:
-                response["subscription"] = subscription_data
-
-            display_text = f"Created event source '{name}' ({source_type})"
-            if existing_source:
-                display_text = f"Reused existing event source '{name}' ({source_type})"
-            if callback_url:
-                display_text += f" - callback: {callback_url}"
-            if subscription_data:
-                wf_name = subscription_data.get("workflow_name") or workflow_id
-                display_text += f" -> {wf_name}"
-
-            return success_result(display_text, response)
-
-    except Exception as e:
-        logger.exception(f"Error creating event source via MCP: {e}")
-        return error_result(f"Error creating event source: {str(e)}")
-
-
-async def get_event_source(
-    context: Any,
-    source_id: str,
-) -> ToolResult:
-    """Get details of a specific event source."""
-    from src.models.enums import EventSourceType
-    from src.repositories.events import EventSourceRepository, EventSubscriptionRepository
-
-    logger.info(f"MCP get_event_source called with id={source_id}")
-
-    if not source_id:
-        return error_result("source_id is required")
-
-    try:
-        async with get_tool_db(context) as db:
-            repo = EventSourceRepository(db)
-            source = await repo.get_by_id_with_details(UUID(source_id))
-
-            if not source:
-                return error_result(f"Event source not found: {source_id}")
-
-            # Org gate (EXT-1 NEW-2): a by-id touch must respect the caller's
-            # scope — 404-style denial for out-of-scope sources (don't reveal
-            # existence cross-org / global-to-external).
-            if not _source_in_scope(context, source.organization_id):
-                return error_result(f"Event source not found: {source_id}")
-
-            sub_repo = EventSubscriptionRepository(db)
-            subscription_count = await sub_repo.count_by_source(source.id, active_only=True)
-
-            data: dict[str, Any] = {
-                "id": str(source.id),
-                "name": source.name,
-                "source_type": source.source_type.value if hasattr(source.source_type, "value") else str(source.source_type),
-                "organization_id": str(source.organization_id) if source.organization_id else None,
-                "is_active": source.is_active,
-                "error_message": source.error_message,
-                "subscription_count": subscription_count,
-                "created_by": source.created_by,
-                "created_at": source.created_at.isoformat() if source.created_at else None,
-            }
-
-            if source.source_type == EventSourceType.WEBHOOK and source.webhook_source:
-                ws = source.webhook_source
-                data["adapter_name"] = ws.adapter_name or "generic"
-                data["callback_url"] = _build_callback_url(source.id)
-                data["integration_id"] = str(ws.integration_id) if ws.integration_id else None
-                data["external_id"] = ws.external_id
-                if ws.expires_at:
-                    data["expires_at"] = ws.expires_at.isoformat()
-
-            if source.source_type == EventSourceType.SCHEDULE and source.schedule_source:
-                ss = source.schedule_source
-                data["cron_expression"] = ss.cron_expression
-                data["timezone"] = ss.timezone
-                data["schedule_enabled"] = ss.enabled
-
-            display_text = f"Event source: {source.name} ({data['source_type']})"
-            return success_result(display_text, data)
-
-    except Exception as e:
-        logger.exception(f"Error getting event source via MCP: {e}")
-        return error_result(f"Error getting event source: {str(e)}")
-
-
-async def update_event_source(
-    context: Any,
-    source_id: str,
-    name: str | None = None,
-    is_active: bool | None = None,
-    # Schedule updates
+    event_type: str | None = None,
     cron_expression: str | None = None,
     timezone: str | None = None,
     schedule_enabled: bool | None = None,
+    adapter_name: str | None = None,
+    integration_ref: str | None = None,
+    webhook_config: dict[str, Any] | None = None,
+    scope: str | None = None,
 ) -> ToolResult:
-    """Update an existing event source."""
-    from src.models.enums import EventSourceType
-    from src.models.orm.events import EventSource, WebhookSource
-    from src.repositories.events import EventSourceRepository
-
-    logger.info(f"MCP update_event_source called with id={source_id}")
-
-    if not source_id:
-        return error_result("source_id is required")
-
+    """Create an Event Source through ``POST /api/events/sources`` (platform
+    admin only). ``source_type`` is ``webhook``, ``schedule``, or ``topic``.
+    """
+    fields = {"name": name, "source_type": source_type, "event_type": event_type}
     try:
-        async with get_tool_db(context) as db:
-            repo = EventSourceRepository(db)
-            source = await repo.get_by_id_with_details(UUID(source_id))
+        body = await _assemble_event_source_body(context, fields, is_update=False, scope=scope)
+        schedule = _build_schedule_config(cron_expression, timezone, schedule_enabled)
+        if schedule is not None:
+            body["schedule"] = schedule
+        webhook = await _build_webhook_config(context, adapter_name, integration_ref, webhook_config)
+        if webhook is not None:
+            body["webhook"] = webhook
+    except Exception as exc:
+        return error_result(f"invalid Event Source input: {exc}", _ref_error_payload(exc))
 
-            if not source:
-                return error_result(f"Event source not found: {source_id}")
-
-            # Org gate (EXT-1 NEW-2): a by-id touch must respect the caller's
-            # scope — 404-style denial for out-of-scope sources (don't reveal
-            # existence cross-org / global-to-external).
-            if not _source_write_in_scope(context, source.organization_id):
-                return error_result(f"Event source not found: {source_id}")
-
-            # Update basic fields
-            if name is not None:
-                source.name = name
-            if is_active is not None:
-                source.is_active = is_active
-                if is_active:
-                    source.error_message = None
-
-            source.updated_at = datetime.now(_tz.utc)
-
-            # Update schedule fields
-            if source.source_type == EventSourceType.SCHEDULE and source.schedule_source:
-                ss = source.schedule_source
-                if cron_expression is not None:
-                    ss.cron_expression = cron_expression
-                if timezone is not None:
-                    ss.timezone = timezone
-                if schedule_enabled is not None:
-                    ss.enabled = schedule_enabled
-                ss.updated_at = datetime.now(_tz.utc)
-
-            await db.flush()
-
-            # Reload
-            result = await db.execute(
-                select(EventSource)
-                .options(
-                    joinedload(EventSource.webhook_source).joinedload(WebhookSource.integration),
-                    joinedload(EventSource.schedule_source),
-                    joinedload(EventSource.organization),
-                )
-                .where(EventSource.id == UUID(source_id))
-            )
-            source = result.unique().scalar_one()
-
-            data: dict[str, Any] = {
-                "id": str(source.id),
-                "name": source.name,
-                "source_type": source.source_type.value if hasattr(source.source_type, "value") else str(source.source_type),
-                "is_active": source.is_active,
-            }
-
-            if source.source_type == EventSourceType.SCHEDULE and source.schedule_source:
-                data["cron_expression"] = source.schedule_source.cron_expression
-                data["timezone"] = source.schedule_source.timezone
-                data["schedule_enabled"] = source.schedule_source.enabled
-
-            display_text = f"Updated event source: {source.name}"
-            return success_result(display_text, data)
-
-    except Exception as e:
-        logger.exception(f"Error updating event source via MCP: {e}")
-        return error_result(f"Error updating event source: {str(e)}")
+    status_code, resp = await call_rest(context, "POST", "/api/events/sources", json_body=body)
+    if status_code not in (200, 201):
+        return _rest_error("Create Event Source", status_code, resp)
+    payload = resp if isinstance(resp, dict) else {"body": resp}
+    return success_result(f"Created event source: {payload.get('name', name)}", payload)
 
 
-async def delete_event_source(
+async def bifrost_event_source_update(
     context: Any,
-    source_id: str,
+    source_ref: str,
+    name: str | None = None,
+    is_active: bool | None = None,
+    cron_expression: str | None = None,
+    timezone: str | None = None,
+    schedule_enabled: bool | None = None,
+    adapter_name: str | None = None,
+    integration_ref: str | None = None,
+    webhook_config: dict[str, Any] | None = None,
+    scope: str | None = None,
 ) -> ToolResult:
-    """Soft delete an event source."""
-    from src.models.enums import EventSourceType
-    from src.repositories.events import EventSourceRepository
-    from src.services.webhooks.registry import get_adapter_registry
+    """Update an Event Source through ``PATCH /api/events/sources/{uuid}``
+    (platform admin only).
 
-    logger.info(f"MCP delete_event_source called with id={source_id}")
-
-    if not source_id:
-        return error_result("source_id is required")
-
+    Changing ``adapter_name``, ``integration_ref``, or ``webhook_config``
+    resubscribes the webhook with the provider: the new subscription is
+    created first, and only unsubscribes the old one after that succeeds —
+    a provider failure on the new subscribe leaves the Event Source
+    unchanged and returns a clear error.
+    """
+    if not source_ref:
+        return error_result("source_ref is required")
     try:
-        async with get_tool_db(context) as db:
-            repo = EventSourceRepository(db)
-            source = await repo.get_by_id_with_details(UUID(source_id))
+        source_id = await _resolve_ref(context, "event_source", source_ref)
+        fields = {"name": name, "is_active": is_active}
+        body = await _assemble_event_source_body(context, fields, is_update=True, scope=scope)
+        schedule = _build_schedule_config(cron_expression, timezone, schedule_enabled)
+        if schedule is not None:
+            body["schedule"] = schedule
+        webhook = await _build_webhook_config(context, adapter_name, integration_ref, webhook_config)
+        if webhook is not None:
+            body["webhook"] = webhook
+    except Exception as exc:
+        return error_result(f"invalid Event Source input: {exc}", _ref_error_payload(exc))
+    if not body:
+        return error_result("No updates provided")
 
-            if not source:
-                return error_result(f"Event source not found: {source_id}")
-
-            # Org gate (EXT-1 NEW-2): a by-id touch must respect the caller's
-            # scope — 404-style denial for out-of-scope sources (don't reveal
-            # existence cross-org / global-to-external).
-            if not _source_write_in_scope(context, source.organization_id):
-                return error_result(f"Event source not found: {source_id}")
-
-            # Unsubscribe webhooks
-            if source.source_type == EventSourceType.WEBHOOK and source.webhook_source:
-                ws = source.webhook_source
-                adapter = get_adapter_registry().get(ws.adapter_name)
-                if adapter:
-                    try:
-                        await adapter.unsubscribe(
-                            external_id=ws.external_id,
-                            state=ws.state or {},
-                            integration=ws.integration,
-                        )
-                    except Exception as e:
-                        logger.warning(f"Failed to unsubscribe webhook: {e}")
-
-            source.is_active = False
-            source.updated_at = datetime.now(_tz.utc)
-            await db.flush()
-
-            display_text = f"Deleted event source: {source.name}"
-            return success_result(display_text, {"id": source_id, "deleted": True})
-
-    except Exception as e:
-        logger.exception(f"Error deleting event source via MCP: {e}")
-        return error_result(f"Error deleting event source: {str(e)}")
+    status_code, resp = await call_rest(
+        context, "PATCH", f"/api/events/sources/{source_id}", json_body=body
+    )
+    if status_code != 200:
+        return _rest_error("Update Event Source", status_code, resp)
+    payload = resp if isinstance(resp, dict) else {"body": resp}
+    return success_result(f"Updated event source: {payload.get('name', source_id)}", payload)
 
 
-async def list_event_subscriptions(
-    context: Any,
-    source_id: str,
-) -> ToolResult:
-    """List subscriptions for an event source."""
-    from src.repositories.events import (
-        EventDeliveryRepository,
-        EventSourceRepository,
-        EventSubscriptionRepository,
+async def bifrost_event_source_delete(context: Any, source_ref: str) -> ToolResult:
+    """Delete an Event Source — thin wrapper over
+    ``DELETE /api/events/sources/{uuid}`` (platform admin only)."""
+    if not source_ref:
+        return error_result("source_ref is required")
+    try:
+        source_id = await _resolve_ref(context, "event_source", source_ref)
+    except Exception as exc:
+        return error_result(f"could not resolve event source {source_ref!r}", _ref_error_payload(exc))
+
+    status_code, resp = await call_rest(context, "DELETE", f"/api/events/sources/{source_id}")
+    if status_code not in (200, 204):
+        return _rest_error("Delete Event Source", status_code, resp)
+    return success_result(f"Deleted event source {source_id}", {"deleted": source_id})
+
+
+async def bifrost_event_subscription_list(context: Any, source_ref: str) -> ToolResult:
+    """List subscriptions for an Event Source — thin wrapper over
+    ``GET /api/events/sources/{uuid}/subscriptions`` (platform admin only)."""
+    if not source_ref:
+        return error_result("source_ref is required")
+    try:
+        source_id = await _resolve_ref(context, "event_source", source_ref)
+    except Exception as exc:
+        return error_result(f"could not resolve event source {source_ref!r}", _ref_error_payload(exc))
+
+    status_code, body = await call_rest(
+        context, "GET", f"/api/events/sources/{source_id}/subscriptions"
+    )
+    if status_code != 200:
+        return _rest_error("List Event Subscriptions", status_code, body)
+    items = body.get("items") if isinstance(body, dict) else None
+    items = items if isinstance(items, list) else []
+    return success_result(
+        f"Found {len(items)} subscription(s)", {"subscriptions": items, "count": len(items)}
     )
 
-    logger.info(f"MCP list_event_subscriptions called with source_id={source_id}")
 
-    if not source_id:
-        return error_result("source_id is required")
-
-    try:
-        async with get_tool_db(context) as db:
-            from src.models.enums import EventDeliveryStatus
-
-            source_repo = EventSourceRepository(db)
-            source = await source_repo.get_by_id(UUID(source_id))
-
-            if not source:
-                return error_result(f"Event source not found: {source_id}")
-
-            # Org gate (EXT-1 OPEN-C): subscriptions are reached through their
-            # SOURCE, so the by-id source fetch must respect the caller's scope
-            # — 404-style denial for out-of-scope sources (don't reveal
-            # existence cross-org / global-to-external).
-            if not _source_in_scope(context, source.organization_id):
-                return error_result(f"Event source not found: {source_id}")
-
-            sub_repo = EventSubscriptionRepository(db)
-            subscriptions = await sub_repo.get_by_source(UUID(source_id), active_only=False)
-
-            if not subscriptions:
-                return success_result(
-                    "No subscriptions found",
-                    {"source_id": source_id, "subscriptions": [], "count": 0},
-                )
-
-            delivery_repo = EventDeliveryRepository(db)
-            sub_list = []
-            for s in subscriptions:
-                total = await delivery_repo.count_by_subscription(s.id)
-                success = await delivery_repo.count_by_subscription(s.id, status=EventDeliveryStatus.SUCCESS)
-                failed = await delivery_repo.count_by_subscription(s.id, status=EventDeliveryStatus.FAILED)
-
-                sub_list.append({
-                    "id": str(s.id),
-                    "workflow_id": str(s.workflow_id),
-                    "workflow_name": s.workflow.name if s.workflow else None,
-                    "event_type": s.event_type,
-                    "input_mapping": s.input_mapping,
-                    "is_active": s.is_active,
-                    "delivery_count": total,
-                    "success_count": success,
-                    "failed_count": failed,
-                })
-
-            display_text = f"Found {len(sub_list)} subscription(s) for source {source.name}"
-            return success_result(
-                display_text,
-                {"source_id": source_id, "subscriptions": sub_list, "count": len(sub_list)},
-            )
-
-    except Exception as e:
-        logger.exception(f"Error listing subscriptions via MCP: {e}")
-        return error_result(f"Error listing subscriptions: {str(e)}")
-
-
-async def create_event_subscription(
-    context: Any,
-    source_id: str,
-    workflow_id: str,
-    event_type: str | None = None,
-    input_mapping: dict | None = None,
+async def bifrost_event_subscription_get(
+    context: Any, source_ref: str, subscription_id: str
 ) -> ToolResult:
-    """Create a subscription linking an event source to a workflow."""
-    from src.models.orm.events import EventSubscription
-    from src.repositories.events import EventSourceRepository
+    """Get one Event Subscription — thin wrapper over
+    ``GET /api/events/sources/{uuid}/subscriptions/{uuid}`` (platform admin only)."""
+    if not source_ref:
+        return error_result("source_ref is required")
+    if not subscription_id:
+        return error_result("subscription_id is required")
+    try:
+        source_id = await _resolve_ref(context, "event_source", source_ref)
+    except Exception as exc:
+        return error_result(f"could not resolve event source {source_ref!r}", _ref_error_payload(exc))
 
-    logger.info(f"MCP create_event_subscription called: source={source_id}, workflow={workflow_id}")
+    status_code, body = await call_rest(
+        context, "GET", f"/api/events/sources/{source_id}/subscriptions/{subscription_id}"
+    )
+    if status_code != 200:
+        return _rest_error("Get Event Subscription", status_code, body)
+    payload = body if isinstance(body, dict) else {"body": body}
+    return success_result(f"Event subscription {subscription_id}", payload)
 
-    if not source_id:
-        return error_result("source_id is required")
-    if not workflow_id:
-        return error_result("workflow_id is required")
+
+async def bifrost_event_subscription_create(
+    context: Any,
+    source_ref: str,
+    target_type: str = "workflow",
+    workflow_id: str | None = None,
+    agent_id: str | None = None,
+    event_type: str | None = None,
+    filter_expression: str | None = None,
+    input_mapping: dict[str, Any] | None = None,
+) -> ToolResult:
+    """Create an Event Subscription through
+    ``POST /api/events/sources/{uuid}/subscriptions`` (platform admin only).
+    """
+    if not source_ref:
+        return error_result("source_ref is required")
+    from bifrost.dto_flags import assemble_body
+    from bifrost.refs import RefResolver
+    from src.models.contracts.events import EventSubscriptionCreate
 
     try:
-        now = datetime.now(_tz.utc)
-        user_email = getattr(context, "user_email", "") or getattr(context, "email", "mcp")
+        source_id = await _resolve_ref(context, "event_source", source_ref)
+        fields = {
+            "target_type": target_type,
+            "workflow_id": workflow_id,
+            "agent_id": agent_id,
+            "event_type": event_type,
+            "filter_expression": filter_expression,
+            "input_mapping": input_mapping,
+        }
+        async with rest_client(context) as http:
+            resolver = RefResolver(http)
+            body = await assemble_body(EventSubscriptionCreate, fields, resolver=resolver)
+    except Exception as exc:
+        return error_result(f"invalid Event Subscription input: {exc}", _ref_error_payload(exc))
 
-        async with get_tool_db(context) as db:
-            # Verify source exists
-            source_repo = EventSourceRepository(db)
-            source = await source_repo.get_by_id(UUID(source_id))
-
-            if not source:
-                return error_result(f"Event source not found: {source_id}")
-
-            # Org gate (EXT-1 OPEN-C): a caller must not wire a workflow onto
-            # a foreign-org source by id, and an external gets no global tier.
-            if not _source_in_scope(context, source.organization_id):
-                return error_result(f"Event source not found: {source_id}")
-
-            # Services run under supervision and cannot be one-shot targets.
-            service_rejection = await _reject_service_target(db, workflow_id)
-            if service_rejection is not None:
-                return service_rejection
-
-            subscription = EventSubscription(
-                event_source_id=UUID(source_id),
-                workflow_id=UUID(workflow_id),
-                event_type=event_type,
-                input_mapping=input_mapping,
-                is_active=True,
-                created_by=user_email,
-                created_at=now,
-                updated_at=now,
-            )
-            db.add(subscription)
-            await db.flush()
-
-            # Reload with workflow
-            result = await db.execute(
-                select(EventSubscription)
-                .options(joinedload(EventSubscription.workflow))
-                .where(EventSubscription.id == subscription.id)
-            )
-            subscription = result.unique().scalar_one()
-
-            data = {
-                "id": str(subscription.id),
-                "source_id": source_id,
-                "workflow_id": workflow_id,
-                "workflow_name": subscription.workflow.name if subscription.workflow else None,
-                "event_type": event_type,
-                "input_mapping": input_mapping,
-                "is_active": True,
-            }
-
-            workflow_name = subscription.workflow.name if subscription.workflow else workflow_id
-            display_text = f"Created subscription: {source.name} -> {workflow_name}"
-            return success_result(display_text, data)
-
-    except Exception as e:
-        logger.exception(f"Error creating subscription via MCP: {e}")
-        return error_result(f"Error creating subscription: {str(e)}")
+    status_code, resp = await call_rest(
+        context, "POST", f"/api/events/sources/{source_id}/subscriptions", json_body=body
+    )
+    if status_code not in (200, 201):
+        return _rest_error("Create Event Subscription", status_code, resp)
+    payload = resp if isinstance(resp, dict) else {"body": resp}
+    return success_result(f"Created event subscription {payload.get('id', '')}", payload)
 
 
-async def update_event_subscription(
+async def bifrost_event_subscription_update(
     context: Any,
-    source_id: str,
+    source_ref: str,
     subscription_id: str,
     event_type: str | None = None,
-    input_mapping: dict | None = None,
+    filter_expression: str | None = None,
     is_active: bool | None = None,
+    input_mapping: dict[str, Any] | None = None,
 ) -> ToolResult:
-    """Update an event subscription."""
-    from src.models.orm.events import EventSubscription
-    from src.repositories.events import EventSourceRepository
-
-    logger.info(f"MCP update_event_subscription called: sub={subscription_id}")
-
-    if not source_id or not subscription_id:
-        return error_result("source_id and subscription_id are required")
+    """Update an Event Subscription through
+    ``PATCH /api/events/sources/{uuid}/subscriptions/{uuid}`` (platform admin only).
+    """
+    if not source_ref:
+        return error_result("source_ref is required")
+    if not subscription_id:
+        return error_result("subscription_id is required")
+    from bifrost.dto_flags import assemble_body
+    from bifrost.refs import RefResolver
+    from src.models.contracts.events import EventSubscriptionUpdate
 
     try:
-        async with get_tool_db(context) as db:
-            # Org gate (EXT-1 OPEN-C): (subscription_id, source_id) alone is
-            # no org scope — fetch the SOURCE and gate on it, or any caller
-            # could tamper with a cross-org subscription by id.
-            source_repo = EventSourceRepository(db)
-            source = await source_repo.get_by_id(UUID(source_id))
-            if not source or not _source_in_scope(context, source.organization_id):
-                return error_result(f"Event source not found: {source_id}")
+        source_id = await _resolve_ref(context, "event_source", source_ref)
+        fields = {
+            "event_type": event_type,
+            "filter_expression": filter_expression,
+            "is_active": is_active,
+            "input_mapping": input_mapping,
+        }
+        async with rest_client(context) as http:
+            resolver = RefResolver(http)
+            body = await assemble_body(EventSubscriptionUpdate, fields, resolver=resolver)
+    except Exception as exc:
+        return error_result(f"invalid Event Subscription input: {exc}", _ref_error_payload(exc))
+    if not body:
+        return error_result("No updates provided")
 
-            result = await db.execute(
-                select(EventSubscription)
-                .options(joinedload(EventSubscription.workflow))
-                .where(
-                    EventSubscription.id == UUID(subscription_id),
-                    EventSubscription.event_source_id == UUID(source_id),
-                )
-            )
-            subscription = result.unique().scalar_one_or_none()
-
-            if not subscription:
-                return error_result(f"Subscription not found: {subscription_id}")
-
-            if event_type is not None:
-                subscription.event_type = event_type
-            if input_mapping is not None:
-                subscription.input_mapping = input_mapping
-            if is_active is not None:
-                subscription.is_active = is_active
-
-            subscription.updated_at = datetime.now(_tz.utc)
-            await db.flush()
-
-            data = {
-                "id": str(subscription.id),
-                "source_id": source_id,
-                "workflow_id": str(subscription.workflow_id),
-                "workflow_name": subscription.workflow.name if subscription.workflow else None,
-                "event_type": subscription.event_type,
-                "input_mapping": subscription.input_mapping,
-                "is_active": subscription.is_active,
-            }
-
-            display_text = f"Updated subscription {subscription_id}"
-            return success_result(display_text, data)
-
-    except Exception as e:
-        logger.exception(f"Error updating subscription via MCP: {e}")
-        return error_result(f"Error updating subscription: {str(e)}")
+    status_code, resp = await call_rest(
+        context,
+        "PATCH",
+        f"/api/events/sources/{source_id}/subscriptions/{subscription_id}",
+        json_body=body,
+    )
+    if status_code != 200:
+        return _rest_error("Update Event Subscription", status_code, resp)
+    payload = resp if isinstance(resp, dict) else {"body": resp}
+    return success_result(f"Updated event subscription {subscription_id}", payload)
 
 
-async def delete_event_subscription(
-    context: Any,
-    source_id: str,
-    subscription_id: str,
+async def bifrost_event_subscription_delete(
+    context: Any, source_ref: str, subscription_id: str
 ) -> ToolResult:
-    """Soft delete an event subscription."""
-    from src.models.orm.events import EventSubscription
-    from src.repositories.events import EventSourceRepository
-
-    logger.info(f"MCP delete_event_subscription called: sub={subscription_id}")
-
-    if not source_id or not subscription_id:
-        return error_result("source_id and subscription_id are required")
-
+    """Delete an Event Subscription — thin wrapper over
+    ``DELETE /api/events/sources/{uuid}/subscriptions/{uuid}`` (platform admin only)."""
+    if not source_ref:
+        return error_result("source_ref is required")
+    if not subscription_id:
+        return error_result("subscription_id is required")
     try:
-        async with get_tool_db(context) as db:
-            # Org gate (EXT-1 OPEN-C): same rule as update — the source's org
-            # scopes the subscription; no cross-org/global-to-external deletes.
-            source_repo = EventSourceRepository(db)
-            source = await source_repo.get_by_id(UUID(source_id))
-            if not source or not _source_in_scope(context, source.organization_id):
-                return error_result(f"Event source not found: {source_id}")
+        source_id = await _resolve_ref(context, "event_source", source_ref)
+    except Exception as exc:
+        return error_result(f"could not resolve event source {source_ref!r}", _ref_error_payload(exc))
 
-            result = await db.execute(
-                select(EventSubscription).where(
-                    EventSubscription.id == UUID(subscription_id),
-                    EventSubscription.event_source_id == UUID(source_id),
-                )
-            )
-            subscription = result.scalar_one_or_none()
-
-            if not subscription:
-                return error_result(f"Subscription not found: {subscription_id}")
-
-            subscription.is_active = False
-            subscription.updated_at = datetime.now(_tz.utc)
-            await db.flush()
-
-            display_text = f"Deleted subscription {subscription_id}"
-            return success_result(display_text, {"id": subscription_id, "deleted": True})
-
-    except Exception as e:
-        logger.exception(f"Error deleting subscription via MCP: {e}")
-        return error_result(f"Error deleting subscription: {str(e)}")
+    status_code, resp = await call_rest(
+        context, "DELETE", f"/api/events/sources/{source_id}/subscriptions/{subscription_id}"
+    )
+    if status_code not in (200, 204):
+        return _rest_error("Delete Event Subscription", status_code, resp)
+    return success_result(f"Deleted event subscription {subscription_id}", {"deleted": subscription_id})
 
 
-async def list_webhook_adapters(
-    context: Any,
-) -> ToolResult:
-    """List available webhook adapters."""
-    from src.services.webhooks.registry import get_adapter_registry
-
-    logger.info("MCP list_webhook_adapters called")
-
-    if not context.is_platform_admin:
-        return error_result("Only platform admins can list webhook adapters")
-
-    try:
-        registry = get_adapter_registry()
-        adapters_info = registry.list_adapters()
-
-        adapter_list = []
-        for info in adapters_info:
-            adapter_list.append({
-                "name": info["name"],
-                "display_name": info["display_name"],
-                "description": info.get("description"),
-                "requires_integration": info.get("requires_integration"),
-                "supports_renewal": info.get("supports_renewal", False),
-            })
-
-        display_text = f"Found {len(adapter_list)} webhook adapter(s)"
-        return success_result(display_text, {"adapters": adapter_list, "count": len(adapter_list)})
-
-    except Exception as e:
-        logger.exception(f"Error listing webhook adapters via MCP: {e}")
-        return error_result(f"Error listing webhook adapters: {str(e)}")
+async def bifrost_event_webhook_adapter_list(context: Any) -> ToolResult:
+    """List available webhook adapters — thin wrapper over
+    ``GET /api/events/adapters`` (platform admin only)."""
+    status_code, body = await call_rest(context, "GET", "/api/events/adapters")
+    if status_code != 200:
+        return _rest_error("List Webhook Adapters", status_code, body)
+    adapters = body.get("adapters") if isinstance(body, dict) else None
+    adapters = adapters if isinstance(adapters, list) else []
+    return success_result(f"Found {len(adapters)} webhook adapter(s)", {"adapters": adapters})
 
 
-# Tool metadata for registration
 TOOLS = [
-    ("list_event_sources", "List Event Sources", "List event sources with optional filters by type and organization."),
-    ("create_event_source", "Create Event Source", "Create a new event source (webhook or schedule). Optionally pass workflow_id to auto-create a subscription in one call."),
-    ("get_event_source", "Get Event Source", "Get details of a specific event source."),
-    ("update_event_source", "Update Event Source", "Update an existing event source."),
-    ("delete_event_source", "Delete Event Source", "Soft delete an event source."),
-    ("list_event_subscriptions", "List Event Subscriptions", "List subscriptions for an event source."),
-    ("create_event_subscription", "Create Event Subscription", "Create a subscription linking an event source to a workflow."),
-    ("update_event_subscription", "Update Event Subscription", "Update an event subscription."),
-    ("delete_event_subscription", "Delete Event Subscription", "Soft delete an event subscription."),
-    ("list_webhook_adapters", "List Webhook Adapters", "List available webhook adapters."),
+    ("bifrost_event_source_list", "List Event Sources", "List event sources with optional filters by type and scope."),
+    ("bifrost_event_source_get", "Get Event Source", "Get an Event Source by UUID or accessible name."),
+    ("bifrost_event_source_create", "Create Event Source", "Create a new event source (webhook, schedule, or topic)."),
+    ("bifrost_event_source_update", "Update Event Source", "Update an existing event source, resubscribing the webhook when the adapter/integration/config changes."),
+    ("bifrost_event_source_delete", "Delete Event Source", "Delete an event source."),
+    ("bifrost_event_subscription_list", "List Event Subscriptions", "List subscriptions for an event source."),
+    ("bifrost_event_subscription_get", "Get Event Subscription", "Get a single event subscription by ID."),
+    ("bifrost_event_subscription_create", "Create Event Subscription", "Create a subscription linking an event source to a workflow or agent."),
+    ("bifrost_event_subscription_update", "Update Event Subscription", "Update an event subscription."),
+    ("bifrost_event_subscription_delete", "Delete Event Subscription", "Delete an event subscription."),
+    ("bifrost_event_webhook_adapter_list", "List Webhook Adapters", "List available webhook adapters."),
 ]
 
 
 def register_tools(mcp: Any, get_context_fn: Any) -> None:
-    """Register all event tools with FastMCP."""
+    """Register all Event tools with FastMCP."""
     from src.services.mcp_server.generators.fastmcp_generator import register_tool_with_context
 
     tool_funcs = {
-        "list_event_sources": list_event_sources,
-        "create_event_source": create_event_source,
-        "get_event_source": get_event_source,
-        "update_event_source": update_event_source,
-        "delete_event_source": delete_event_source,
-        "list_event_subscriptions": list_event_subscriptions,
-        "create_event_subscription": create_event_subscription,
-        "update_event_subscription": update_event_subscription,
-        "delete_event_subscription": delete_event_subscription,
-        "list_webhook_adapters": list_webhook_adapters,
+        "bifrost_event_source_list": bifrost_event_source_list,
+        "bifrost_event_source_get": bifrost_event_source_get,
+        "bifrost_event_source_create": bifrost_event_source_create,
+        "bifrost_event_source_update": bifrost_event_source_update,
+        "bifrost_event_source_delete": bifrost_event_source_delete,
+        "bifrost_event_subscription_list": bifrost_event_subscription_list,
+        "bifrost_event_subscription_get": bifrost_event_subscription_get,
+        "bifrost_event_subscription_create": bifrost_event_subscription_create,
+        "bifrost_event_subscription_update": bifrost_event_subscription_update,
+        "bifrost_event_subscription_delete": bifrost_event_subscription_delete,
+        "bifrost_event_webhook_adapter_list": bifrost_event_webhook_adapter_list,
     }
 
-    for tool_id, name, description in TOOLS:
+    for tool_id, _name, description in TOOLS:
         register_tool_with_context(mcp, tool_funcs[tool_id], tool_id, description, get_context_fn)
+
+
+__all__ = [
+    "TOOLS",
+    "bifrost_event_source_create",
+    "bifrost_event_source_delete",
+    "bifrost_event_source_get",
+    "bifrost_event_source_list",
+    "bifrost_event_source_update",
+    "bifrost_event_subscription_create",
+    "bifrost_event_subscription_delete",
+    "bifrost_event_subscription_get",
+    "bifrost_event_subscription_list",
+    "bifrost_event_subscription_update",
+    "bifrost_event_webhook_adapter_list",
+    "register_tools",
+]

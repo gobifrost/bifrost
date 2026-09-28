@@ -184,15 +184,7 @@ export function Forms() {
 			await updateForm.mutateAsync({
 				params: { path: { form_id: selectedForm.id } },
 				body: {
-					name: null,
-					description: null,
-					workflow_id: null,
-					form_schema: null,
 					is_active: !selectedForm.isActive,
-					access_level: null,
-					launch_workflow_id: null,
-					allowed_query_params: null,
-					default_launch_params: null,
 					clear_roles: false,
 				},
 			});

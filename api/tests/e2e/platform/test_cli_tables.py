@@ -161,3 +161,43 @@ class TestCliTables:
             assert name in names
         finally:
             _invoke(["--json", "delete", str(table_id)])
+
+    def test_update_org_rescopes_table(
+        self, cli_client, _invoke, e2e_client, platform_admin, org1
+    ) -> None:
+        """``tables update <ref> --org <id>`` rescopes a global table into an org."""
+        name = f"cli_tbl_rescope_{uuid4().hex[:8]}"
+        table_id = _create_table_via_api(e2e_client, platform_admin.headers, name)
+        try:
+            result = _invoke(["--json", "update", table_id, "--org", org1["id"]])
+            assert result.exit_code == 0, result.output
+            payload = json.loads(result.stdout)
+            assert payload["organization_id"] == org1["id"]
+
+            get_resp = e2e_client.get(
+                f"/api/tables/{table_id}", headers=platform_admin.headers
+            )
+            assert get_resp.status_code == 200
+            assert get_resp.json()["organization_id"] == org1["id"]
+        finally:
+            _invoke(["--json", "delete", table_id])
+
+    def test_update_global_rescopes_table_to_global(
+        self, cli_client, _invoke, e2e_client, platform_admin, org1
+    ) -> None:
+        """``tables update <ref> --global`` moves an org table back to global."""
+        name = f"cli_tbl_unscope_{uuid4().hex[:8]}"
+        create_resp = e2e_client.post(
+            "/api/tables",
+            headers=platform_admin.headers,
+            json={"name": name, "organization_id": org1["id"]},
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        table_id = create_resp.json()["id"]
+        try:
+            result = _invoke(["--json", "update", table_id, "--global"])
+            assert result.exit_code == 0, result.output
+            payload = json.loads(result.stdout)
+            assert payload["organization_id"] is None
+        finally:
+            _invoke(["--json", "delete", table_id])

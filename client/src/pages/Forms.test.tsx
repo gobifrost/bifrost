@@ -157,6 +157,31 @@ describe("Forms — solution-managed badge (grid view)", () => {
 		).toBeInTheDocument();
 	});
 
+	it("sends only is_active (+ clear_roles: false, its required default) when disabling a form — not a full-field null payload", async () => {
+		const mutateAsync = vi.fn().mockResolvedValue({});
+		mockUseUpdateForm.mockReturnValue({ mutateAsync, isPending: false });
+		mockUseForms.mockReturnValue({
+			data: [makeForm()],
+			isLoading: false,
+			refetch: vi.fn(),
+		});
+		const { user } = await renderPage();
+		await user.click(
+			screen.getByRole("button", { name: "Onboarding actions" }),
+		);
+		await user.click(screen.getByRole("menuitem", { name: "Disable Form" }));
+
+		const dialog = screen.getByRole("alertdialog");
+		await user.click(
+			within(dialog).getByRole("button", { name: "Disable Form" }),
+		);
+
+		expect(mutateAsync).toHaveBeenCalledWith({
+			params: { path: { form_id: "form-1" } },
+			body: { is_active: false, clear_roles: false },
+		});
+	});
+
 	it("opens the shared Share dialog from a form card", async () => {
 		mockUseForms.mockReturnValue({
 			data: [makeForm()],

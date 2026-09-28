@@ -7946,7 +7946,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * Get subscription
+         * @description Get a specific event subscription by ID (Platform admin only).
+         */
+        get: operations["events.subscriptions.get"];
         put?: never;
         post?: never;
         /**
@@ -26794,6 +26798,11 @@ export interface components {
             schema?: {
                 [key: string]: unknown;
             } | null;
+            /**
+             * Organization Id
+             * @description Organization ID. Null for global table.
+             */
+            organization_id?: string | null;
             /** @description Optional row-level access policies. See docs/superpowers/specs/2026-04-30-table-policies-design.md. */
             policies?: components["schemas"]["TablePolicies"] | null;
         };
@@ -43269,6 +43278,38 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventSubscriptionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "events.subscriptions.get": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: string;
+                subscription_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };

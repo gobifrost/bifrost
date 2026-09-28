@@ -331,8 +331,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": null,
-          "status": "missing_surface"
+          "name": "bifrost_form_list",
+          "status": "exact_parity"
         },
         "rest": {
           "operation_id": "forms.list",
@@ -391,8 +391,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": null,
-          "status": "missing_surface"
+          "name": "bifrost_form_get",
+          "status": "exact_parity"
         },
         "rest": {
           "operation_id": "forms.get",
@@ -451,8 +451,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": null,
-          "status": "missing_surface"
+          "name": "bifrost_form_create",
+          "status": "exact_parity"
         },
         "rest": {
           "operation_id": "forms.create",
@@ -518,8 +518,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": null,
-          "status": "missing_surface"
+          "name": "bifrost_form_update",
+          "status": "exact_parity"
         },
         "rest": {
           "operation_id": "forms.update",
@@ -585,8 +585,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": null,
-          "status": "missing_surface"
+          "name": "bifrost_form_delete",
+          "status": "exact_parity"
         },
         "rest": {
           "operation_id": "forms.delete",
@@ -651,8 +651,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": null,
-          "status": "missing_surface"
+          "name": "bifrost_table_list",
+          "status": "exact_parity"
         },
         "rest": {
           "operation_id": "tables.list",
@@ -711,8 +711,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": null,
-          "status": "missing_surface"
+          "name": "bifrost_table_get",
+          "status": "exact_parity"
         },
         "rest": {
           "operation_id": "tables.get",
@@ -771,8 +771,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": null,
-          "status": "missing_surface"
+          "name": "bifrost_table_create",
+          "status": "exact_parity"
         },
         "rest": {
           "operation_id": "tables.create",
@@ -836,8 +836,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": null,
-          "status": "missing_surface"
+          "name": "bifrost_table_update",
+          "status": "exact_parity"
         },
         "rest": {
           "operation_id": "tables.update",
@@ -902,8 +902,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": null,
-          "status": "missing_surface"
+          "name": "bifrost_table_delete",
+          "status": "exact_parity"
         },
         "rest": {
           "operation_id": "tables.delete",
@@ -8360,8 +8360,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": null,
-          "status": "missing_surface"
+          "name": "bifrost_event_source_list",
+          "status": "exact_parity"
         },
         "rest": {
           "operation_id": "events.sources.list",
@@ -8420,8 +8420,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": null,
-          "status": "missing_surface"
+          "name": "bifrost_event_source_get",
+          "status": "exact_parity"
         },
         "rest": {
           "operation_id": "events.sources.get",
@@ -8480,8 +8480,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": null,
-          "status": "missing_surface"
+          "name": "bifrost_event_source_create",
+          "status": "exact_parity"
         },
         "rest": {
           "operation_id": "events.sources.create",
@@ -8546,8 +8546,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": null,
-          "status": "missing_surface"
+          "name": "bifrost_event_source_update",
+          "status": "exact_parity"
         },
         "rest": {
           "operation_id": "events.sources.update",
@@ -8612,8 +8612,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": null,
-          "status": "missing_surface"
+          "name": "bifrost_event_source_delete",
+          "status": "exact_parity"
         },
         "rest": {
           "operation_id": "events.sources.delete",
@@ -8678,8 +8678,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": null,
-          "status": "missing_surface"
+          "name": "bifrost_event_subscription_list",
+          "status": "exact_parity"
         },
         "rest": {
           "operation_id": "events.subscriptions.list",
@@ -8729,6 +8729,66 @@
         "cli": {
           "path": [
             "events",
+            "get-subscription"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_event_subscription_get",
+          "status": "exact_parity"
+        },
+        "rest": {
+          "operation_id": "events.subscriptions.get",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "events.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "events.read and parent Event Source visibility",
+        "cli": {
+          "path": [
+            "events",
+            "get-subscription"
+          ]
+        },
+        "exclusions": {
+          "manifest": "The read does not mutate Event Subscription manifest state.",
+          "sdk": "Event source and subscription administration is not available to application SDKs."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_event_subscription_get"
+        },
+        "native_builder": true,
+        "operation_id": "events.subscriptions.get",
+        "rest": {
+          "method": "GET",
+          "path": "/api/events/sources/{source_id}/subscriptions/{subscription_id}",
+          "request_model": null,
+          "response_model": "EventSubscriptionResponse"
+        },
+        "side_effects": [],
+        "summary": "Get one Event Subscription",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "events",
             "create-subscription"
           ],
           "status": "missing_surface"
@@ -8738,8 +8798,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": null,
-          "status": "missing_surface"
+          "name": "bifrost_event_subscription_create",
+          "status": "exact_parity"
         },
         "rest": {
           "operation_id": "events.subscriptions.create",
@@ -8803,8 +8863,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": null,
-          "status": "missing_surface"
+          "name": "bifrost_event_subscription_update",
+          "status": "exact_parity"
         },
         "rest": {
           "operation_id": "events.subscriptions.update",
@@ -8868,8 +8928,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": null,
-          "status": "missing_surface"
+          "name": "bifrost_event_subscription_delete",
+          "status": "exact_parity"
         },
         "rest": {
           "operation_id": "events.subscriptions.delete",
@@ -8933,8 +8993,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": null,
-          "status": "missing_surface"
+          "name": "bifrost_event_webhook_adapter_list",
+          "status": "exact_parity"
         },
         "rest": {
           "operation_id": "events.webhook_adapters.list",
@@ -9957,8 +10017,8 @@
   "counts": {
     "cli": 154,
     "manifest": 16,
-    "mcp": 91,
-    "rest": 649,
+    "mcp": 93,
+    "rest": 650,
     "sdk": 19
   },
   "schema_version": 1,
@@ -10069,15 +10129,6 @@
         "path": [
           "events",
           "create-graph-source"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "events",
-          "get-subscription"
         ],
         "reason": "CLI operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -10748,49 +10799,7 @@
       },
       {
         "hidden": false,
-        "name": "create_event_source",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "create_event_subscription",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "create_form",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "create_table",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
         "name": "delete_content",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "delete_event_source",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "delete_event_subscription",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "delete_table",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -10832,24 +10841,6 @@
       },
       {
         "hidden": false,
-        "name": "get_event_source",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "get_form",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "get_table",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
         "name": "get_workflow",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -10869,36 +10860,6 @@
       {
         "hidden": false,
         "name": "list_content",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "list_event_sources",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "list_event_subscriptions",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "list_forms",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "list_tables",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "list_webhook_adapters",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -10977,30 +10938,6 @@
       {
         "hidden": false,
         "name": "update_app_dependencies",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "update_event_source",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "update_event_subscription",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "update_form",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "update_table",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },

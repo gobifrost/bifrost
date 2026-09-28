@@ -5,6 +5,8 @@ Tests form CRUD operations, access levels, and role-based access.
 """
 
 import logging
+import uuid
+
 import pytest
 
 from tests.e2e.conftest import write_and_register
@@ -99,6 +101,82 @@ class TestFormCRUD:
         self, e2e_client, platform_admin, test_form
     ):
         assert test_form["confirmation_markdown"] == "## Form submitted\n\nThank you!"
+
+    def test_update_form_omitted_field_is_unchanged(
+        self, e2e_client, platform_admin, test_form
+    ):
+        """A PATCH that omits `description` leaves the existing value alone."""
+        response = e2e_client.patch(
+            f"/api/forms/{test_form['id']}",
+            headers=platform_admin.headers,
+            json={"is_active": False},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["description"] == test_form["description"]
+
+    def test_update_form_explicit_null_clears_description(
+        self, e2e_client, platform_admin, test_form
+    ):
+        """A PATCH that explicitly sends `description: null` clears the field —
+        distinct from omitting it (model_fields_set, src/routers/forms.py)."""
+        assert test_form["description"] is not None
+        response = e2e_client.patch(
+            f"/api/forms/{test_form['id']}",
+            headers=platform_admin.headers,
+            json={"description": None},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["description"] is None
+
+    def test_update_form_explicit_null_clears_workflow_id(
+        self, e2e_client, platform_admin
+    ):
+        """Same explicit-null-clears semantics for `workflow_id` (the field
+        that still used `is not None` before this fix)."""
+        create = e2e_client.post(
+            "/api/forms",
+            headers=platform_admin.headers,
+            json={
+                "name": f"Clear WF Test {uuid.uuid4().hex[:8]}",
+                "workflow_id": None,
+                "form_schema": {"fields": []},
+                "access_level": "role_based",
+            },
+        )
+        assert create.status_code == 201, create.text
+        form_id = create.json()["id"]
+        try:
+            resp = e2e_client.patch(
+                f"/api/forms/{form_id}",
+                headers=platform_admin.headers,
+                json={"workflow_id": None},
+            )
+            assert resp.status_code == 200, resp.text
+            assert resp.json()["workflow_id"] is None
+        finally:
+            e2e_client.delete(f"/api/forms/{form_id}", headers=platform_admin.headers)
+
+    def test_update_form_duplicate_role_ids_returns_422(
+        self, e2e_client, platform_admin, test_form
+    ):
+        create_role = e2e_client.post(
+            "/api/roles",
+            headers=platform_admin.headers,
+            json={"name": f"e2e-dup-role-{uuid.uuid4().hex[:8]}"},
+        )
+        assert create_role.status_code == 201, create_role.text
+        role_id = create_role.json()["id"]
+
+        try:
+            response = e2e_client.patch(
+                f"/api/forms/{test_form['id']}",
+                headers=platform_admin.headers,
+                json={"role_ids": [role_id, role_id]},
+            )
+            assert response.status_code == 422, response.text
+            assert "duplicate" in response.text.lower()
+        finally:
+            e2e_client.delete(f"/api/roles/{role_id}", headers=platform_admin.headers)
 
         custom = "## We received it\n\n![Done](https://example.com/done.png)"
         response = e2e_client.patch(

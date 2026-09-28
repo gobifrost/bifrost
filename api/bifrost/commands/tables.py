@@ -134,12 +134,15 @@ async def create_table(
 @tables_group.command("update")
 @click.argument("ref")
 @_apply_flags(_UPDATE_FLAGS)
+@org_option
 @click.pass_context
 @pass_resolver
 @run_async
 async def update_table(
     ctx: click.Context,
     ref: str,
+    org: str | None,
+    is_global: bool,
     *,
     client: BifrostClient,
     resolver: RefResolver,
@@ -156,6 +159,9 @@ async def update_table(
     printed to stderr — workflow SDK code that looks up tables by name will
     break on rename. No confirmation is required; the warning just nudges
     the caller to grep their workspace before committing.
+
+    Passing ``--org``/``--global`` re-scopes the table (HOME leaves the
+    scope unchanged, since omitting org sends no ``organization_id``).
     """
     table_uuid = await resolver.resolve("table", ref)
 
@@ -165,6 +171,9 @@ async def update_table(
     current_name = current_resp.json().get("name")
 
     body = await assemble_body(TableUpdate, fields, resolver=resolver)
+    target = await resolve_org_target(org, is_global, resolver)
+    if target.is_set:
+        body["organization_id"] = target.organization_id
 
     new_name = body.get("name")
     if new_name is not None and current_name is not None and new_name != current_name:

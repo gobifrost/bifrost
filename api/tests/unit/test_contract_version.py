@@ -270,7 +270,12 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # at the time of this change) already hard-blocks those CLIs, so no
     # further bump — this must ship in 1.4.2 or MIN_CLI_VERSION must move to
     # the first release that contains it.
-    "1e0e5e0c36976261ffbad24affb51d44a790bfaeb9dd2858a5eee01f31548a6b"
+    #
+    # TableUpdate gained optional organization_id (2026-09-27, RBAC R1b batch
+    # 4): rescoping a table is now supported via PATCH. ADDITIVE: old CLIs
+    # simply never send it and retain the prior no-rescope behavior.
+    # Fingerprint refreshed only.
+    "345fe13bd2a3699b5fc750b269eff6fbb745e7acb9de80c03d3ec2101171129e"
 )
 
 

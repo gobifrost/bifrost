@@ -46,8 +46,10 @@ from src.services.mcp_server.tools import (  # noqa: E402
     agents as agents_mod,
     claims as claims_mod,
     configs as configs_mod,
+    events as events_mod,
     execution as execution_mod,
     files as files_mod,
+    forms as forms_mod,
     gateway as gateway_mod,
     integrations as integrations_mod,
     organizations as organizations_mod,
@@ -55,6 +57,7 @@ from src.services.mcp_server.tools import (  # noqa: E402
     platform_jobs as platform_jobs_mod,
     policy_rules as policy_rules_mod,
     roles as roles_mod,
+    tables as tables_mod,
     workflow as workflow_mod,
 )
 
@@ -129,6 +132,33 @@ PARITY_HANDLERS: dict[str, set[str]] = {
         "bifrost_save_memory",
         "bifrost_remove_memory",
     },
+    "forms": {
+        "bifrost_form_list",
+        "bifrost_form_get",
+        "bifrost_form_create",
+        "bifrost_form_update",
+        "bifrost_form_delete",
+    },
+    "tables": {
+        "bifrost_table_list",
+        "bifrost_table_get",
+        "bifrost_table_create",
+        "bifrost_table_update",
+        "bifrost_table_delete",
+    },
+    "events": {
+        "bifrost_event_source_list",
+        "bifrost_event_source_get",
+        "bifrost_event_source_create",
+        "bifrost_event_source_update",
+        "bifrost_event_source_delete",
+        "bifrost_event_subscription_list",
+        "bifrost_event_subscription_get",
+        "bifrost_event_subscription_create",
+        "bifrost_event_subscription_update",
+        "bifrost_event_subscription_delete",
+        "bifrost_event_webhook_adapter_list",
+    },
 }
 
 
@@ -146,6 +176,9 @@ MODULES = {
     "platform_jobs": platform_jobs_mod,
     "execution": execution_mod,
     "gateway": gateway_mod,
+    "forms": forms_mod,
+    "tables": tables_mod,
+    "events": events_mod,
 }
 
 

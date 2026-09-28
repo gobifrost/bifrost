@@ -44,12 +44,17 @@ def test_workflow(e2e_client, platform_admin):
 
     Writes the workflow file, registers the function, and cleans up after tests.
     """
+    # Global (organization_id=None): this workflow is used as a subscription
+    # target for both global and org-scoped event sources across this
+    # module's tests. A global target satisfies _validate_subscription_scope
+    # (routers/events.py) for every source.
     result = write_and_register(
         e2e_client,
         platform_admin.headers,
         "e2e_events_test_workflow.py",
         TEST_WORKFLOW_CONTENT,
         "e2e_events_test_workflow",
+        organization_id=None,
     )
 
     yield result

@@ -271,6 +271,34 @@ SIGNATURE_PARITY_SPECS: list[dict] = [
         "extra_args": {"agent_ref", "scope"},
         "field_renames": {"organization_id": "scope"},
     },
+    {
+        "model_path": "src.models.contracts.forms:FormCreate",
+        "tool_path": "src.services.mcp_server.tools.forms:bifrost_form_create",
+        # ``organization_id`` is excluded (FormCreate is in _ORG_TARGET_EXCLUDE);
+        # the tool exposes org targeting as ``scope`` instead.
+        "extra_args": {"scope"},
+        "field_renames": {"form_schema": "fields"},
+    },
+    {
+        "model_path": "src.models.contracts.forms:FormUpdate",
+        "tool_path": "src.services.mcp_server.tools.forms:bifrost_form_update",
+        "extra_args": {"form_ref", "scope"},
+        "field_renames": {"form_schema": "fields"},
+    },
+    {
+        "model_path": "src.models.contracts.tables:TableCreate",
+        "tool_path": "src.services.mcp_server.tools.tables:bifrost_table_create",
+        "extra_args": {"scope"},
+        "field_renames": {},
+    },
+    {
+        "model_path": "src.models.contracts.tables:TableUpdate",
+        "tool_path": "src.services.mcp_server.tools.tables:bifrost_table_update",
+        # ``organization_id`` is excluded (TableUpdate is now in
+        # _ORG_TARGET_EXCLUDE); the tool exposes org (re)targeting as ``scope``.
+        "extra_args": {"table_ref", "scope"},
+        "field_renames": {},
+    },
 ]
 
 
@@ -1069,10 +1097,19 @@ class TestMcpParityAgents:
 # =============================================================================
 
 
+_UNSET_ORG = object()
+
+
 def _register_workflow(
-    e2e_client, headers, *, access_level: str = "everyone", organization_id=None
+    e2e_client, headers, *, access_level: str = "everyone", organization_id=_UNSET_ORG
 ) -> str:
-    """Register a trivial workflow via the editor + register endpoints."""
+    """Register a trivial workflow via the editor + register endpoints.
+
+    ``organization_id`` OMITTED (default) leaves it off the register body, so
+    the workflow HOME-defaults to the caller's own org. Pass
+    ``organization_id=None`` explicitly to register a GLOBAL workflow (a bare
+    ``None`` default here could never be distinguished from "not passed").
+    """
     suffix = uuid4().hex[:6]
     function_name = f"mcp_parity_noop_{suffix}"
     path = f"apps/mcp_parity/exec_{suffix}.py"
@@ -1094,7 +1131,7 @@ def _register_workflow(
         "function_name": function_name,
         "access_level": access_level,
     }
-    if organization_id is not None:
+    if organization_id is not _UNSET_ORG:
         body["organization_id"] = organization_id
     register_resp = e2e_client.post(
         "/api/workflows/register",
@@ -1356,3 +1393,263 @@ class TestMcpParityFilePolicies:
                 admin_context, path=path, location="workspace", scope=org1["id"]
             )
             assert delete_result.structured_content is not None
+
+
+# =============================================================================
+# Forms (RBAC R1b batch 4)
+# =============================================================================
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+class TestMcpParityForms:
+    async def test_forms_crud_roundtrip(
+        self, admin_context, e2e_client, platform_admin
+    ) -> None:
+        from src.services.mcp_server.tools.forms import (
+            bifrost_form_create,
+            bifrost_form_delete,
+            bifrost_form_get,
+            bifrost_form_list,
+            bifrost_form_update,
+        )
+
+        workflow_id = _register_workflow(e2e_client, platform_admin.headers)
+
+        list_result = await bifrost_form_list(admin_context)
+        assert list_result.structured_content is not None
+        assert list_result.structured_content.get("count", -1) >= 0
+
+        name = f"mcp-parity-form-{uuid4().hex[:8]}"
+        create_result = await bifrost_form_create(
+            admin_context,
+            name=name,
+            workflow_id=workflow_id,
+            fields=[],
+            description="original",
+            access_level="authenticated",
+        )
+        created = create_result.structured_content or {}
+        assert "error" not in created, created
+        form_id = str(created["id"])
+
+        get_result = await bifrost_form_get(admin_context, form_ref=form_id)
+        fetched = get_result.structured_content or {}
+        assert "error" not in fetched, fetched
+        assert fetched.get("id") == form_id
+
+        # Explicit-null-clears semantics reach the server unchanged through
+        # this thin wrapper: omitting `description` here leaves it untouched.
+        update_result = await bifrost_form_update(
+            admin_context, form_ref=form_id, is_active=False
+        )
+        updated = update_result.structured_content or {}
+        assert "error" not in updated, updated
+        assert updated.get("description") == "original"
+        assert updated.get("is_active") is False
+
+        delete_result = await bifrost_form_delete(admin_context, form_ref=form_id)
+        assert delete_result.structured_content is not None
+        assert delete_result.structured_content.get("deleted") == form_id
+
+    async def test_regular_user_cannot_create_form(
+        self, org_user_context: MockMCPContext
+    ) -> None:
+        """Forms are admin-managed; a regular org user's create is forwarded
+        as REST's 403, not silently allowed or masked as a 500."""
+        from src.services.mcp_server.tools.forms import bifrost_form_create
+
+        result = await bifrost_form_create(
+            org_user_context,
+            name=f"mcp-parity-form-denied-{uuid4().hex[:8]}",
+            workflow_id=str(uuid4()),
+            fields=[],
+        )
+        payload = result.structured_content or {}
+        assert payload.get("status_code") == 403, payload
+
+
+# =============================================================================
+# Tables (RBAC R1b batch 4)
+# =============================================================================
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+class TestMcpParityTables:
+    async def test_tables_crud_roundtrip(self, admin_context) -> None:
+        from src.services.mcp_server.tools.tables import (
+            bifrost_table_create,
+            bifrost_table_delete,
+            bifrost_table_get,
+            bifrost_table_list,
+            bifrost_table_update,
+        )
+
+        list_result = await bifrost_table_list(admin_context)
+        assert list_result.structured_content is not None
+        assert list_result.structured_content.get("count", -1) >= 0
+
+        name = f"mcp_parity_table_{uuid4().hex[:8]}"
+        create_result = await bifrost_table_create(admin_context, name=name)
+        created = create_result.structured_content or {}
+        assert "error" not in created, created
+        table_id = str(created["id"])
+
+        get_result = await bifrost_table_get(admin_context, table_ref=table_id)
+        fetched = get_result.structured_content or {}
+        assert "error" not in fetched, fetched
+        assert fetched.get("id") == table_id
+
+        update_result = await bifrost_table_update(
+            admin_context, table_ref=table_id, description="updated"
+        )
+        updated = update_result.structured_content or {}
+        assert "error" not in updated, updated
+        assert updated.get("description") == "updated"
+
+        delete_result = await bifrost_table_delete(admin_context, table_ref=table_id)
+        assert delete_result.structured_content is not None
+        assert delete_result.structured_content.get("deleted") == table_id
+
+    async def test_table_rescope_via_scope_param(
+        self, admin_context, org1
+    ) -> None:
+        """``bifrost_table_update(scope=...)`` rescopes a table (RBAC R1b
+        batch 4 revision 2 — table rescoping restored on all surfaces)."""
+        from src.services.mcp_server.tools.tables import (
+            bifrost_table_create,
+            bifrost_table_delete,
+            bifrost_table_update,
+        )
+
+        name = f"mcp_parity_table_rescope_{uuid4().hex[:8]}"
+        create_result = await bifrost_table_create(admin_context, name=name)
+        created = create_result.structured_content or {}
+        assert "error" not in created, created
+        table_id = str(created["id"])
+
+        try:
+            to_org = await bifrost_table_update(
+                admin_context, table_ref=table_id, scope=org1["id"]
+            )
+            to_org_payload = to_org.structured_content or {}
+            assert "error" not in to_org_payload, to_org_payload
+            assert to_org_payload.get("organization_id") == org1["id"]
+
+            to_global = await bifrost_table_update(
+                admin_context, table_ref=table_id, scope="global"
+            )
+            to_global_payload = to_global.structured_content or {}
+            assert "error" not in to_global_payload, to_global_payload
+            assert to_global_payload.get("organization_id") is None
+        finally:
+            await bifrost_table_delete(admin_context, table_ref=table_id)
+
+    async def test_regular_user_cannot_list_tables(
+        self, org_user_context: MockMCPContext
+    ) -> None:
+        """Tables are platform-admin only, even within the caller's own org."""
+        from src.services.mcp_server.tools.tables import bifrost_table_list
+
+        result = await bifrost_table_list(org_user_context)
+        payload = result.structured_content or {}
+        assert payload.get("status_code") == 403, payload
+
+
+# =============================================================================
+# Events (RBAC R1b batch 4)
+# =============================================================================
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+class TestMcpParityEvents:
+    async def test_event_source_and_subscription_crud_roundtrip(
+        self, admin_context, e2e_client, platform_admin
+    ) -> None:
+        from src.services.mcp_server.tools.events import (
+            bifrost_event_source_create,
+            bifrost_event_source_delete,
+            bifrost_event_source_get,
+            bifrost_event_source_list,
+            bifrost_event_subscription_create,
+            bifrost_event_subscription_delete,
+            bifrost_event_subscription_get,
+            bifrost_event_subscription_list,
+            bifrost_event_webhook_adapter_list,
+        )
+
+        adapters_result = await bifrost_event_webhook_adapter_list(admin_context)
+        assert adapters_result.structured_content is not None
+
+        # Global workflow so it satisfies the subscription scope cascade
+        # against a global (organization_id=None) Event Source.
+        workflow_id = _register_workflow(
+            e2e_client, platform_admin.headers, organization_id=None
+        )
+
+        name = f"mcp-parity-event-source-{uuid4().hex[:8]}"
+        create_result = await bifrost_event_source_create(
+            admin_context,
+            name=name,
+            source_type="webhook",
+            adapter_name="generic",
+            webhook_config={},
+            scope="global",
+        )
+        created = create_result.structured_content or {}
+        assert "error" not in created, created
+        source_id = str(created["id"])
+
+        try:
+            list_result = await bifrost_event_source_list(admin_context)
+            assert list_result.structured_content is not None
+
+            get_result = await bifrost_event_source_get(admin_context, source_ref=source_id)
+            fetched = get_result.structured_content or {}
+            assert "error" not in fetched, fetched
+
+            sub_create = await bifrost_event_subscription_create(
+                admin_context, source_ref=source_id, workflow_id=workflow_id
+            )
+            sub_created = sub_create.structured_content or {}
+            assert "error" not in sub_created, sub_created
+            subscription_id = str(sub_created["id"])
+
+            sub_list = await bifrost_event_subscription_list(
+                admin_context, source_ref=source_id
+            )
+            assert sub_list.structured_content is not None
+            assert sub_list.structured_content.get("count", -1) >= 1
+
+            # The new bifrost_event_subscription_get tool — no server-side
+            # per-subscription GET existed before this batch.
+            sub_get = await bifrost_event_subscription_get(
+                admin_context, source_ref=source_id, subscription_id=subscription_id
+            )
+            sub_fetched = sub_get.structured_content or {}
+            assert "error" not in sub_fetched, sub_fetched
+            assert sub_fetched.get("id") == subscription_id
+
+            sub_delete = await bifrost_event_subscription_delete(
+                admin_context, source_ref=source_id, subscription_id=subscription_id
+            )
+            assert sub_delete.structured_content is not None
+            assert sub_delete.structured_content.get("deleted") == subscription_id
+        finally:
+            delete_result = await bifrost_event_source_delete(
+                admin_context, source_ref=source_id
+            )
+            assert delete_result.structured_content is not None
+            assert delete_result.structured_content.get("deleted") == source_id
+
+    async def test_regular_user_cannot_list_event_sources(
+        self, org_user_context: MockMCPContext
+    ) -> None:
+        """Event source/subscription administration is platform-admin only."""
+        from src.services.mcp_server.tools.events import bifrost_event_source_list
+
+        result = await bifrost_event_source_list(org_user_context)
+        payload = result.structured_content or {}
+        assert payload.get("status_code") == 403, payload

@@ -918,9 +918,6 @@ Usage: events get-subscription [OPTIONS] SOURCE_REF SUBSCRIPTION_ID
 
   Get a single subscription by source ref + subscription UUID.
 
-  The server has no per-subscription GET endpoint, so this lists the source's
-  subscriptions and filters client-side.
-
 Options:
   --json  Emit JSON instead of human-readable output.
   --help  Show this message and exit.
@@ -2795,13 +2792,24 @@ Usage: tables update [OPTIONS] REF
   break on rename. No confirmation is required; the warning just nudges the
   caller to grep their workspace before committing.
 
+  Passing ``--org``/``--global`` re-scopes the table (HOME leaves the scope
+  unchanged, since omitting org sends no ``organization_id``).
+
 Options:
-  --name TEXT         name
-  --description TEXT  description
-  --schema TEXT       schema as JSON literal or @path to a YAML/JSON file.
-  --policies TEXT     policies as JSON literal or @path to a YAML/JSON file.
-  --json              Emit JSON instead of human-readable output.
-  --help              Show this message and exit.
+  --name TEXT                     name
+  --description TEXT              description
+  --schema TEXT                   schema as JSON literal or @path to a
+                                  YAML/JSON file.
+  --policies TEXT                 policies as JSON literal or @path to a
+                                  YAML/JSON file.
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
 ```
 
 ## `workflows`

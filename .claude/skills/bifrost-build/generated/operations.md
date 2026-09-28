@@ -152,6 +152,7 @@ harness.
 | `events.sources.update` | `bifrost events update-source` | `bifrost_event_source_update` | `events.readwrite` |
 | `events.sources.delete` | `bifrost events delete-source` | `bifrost_event_source_delete` | `events.readwrite` |
 | `events.subscriptions.list` | `bifrost events list-subscriptions` | `bifrost_event_subscription_list` | `events.read` |
+| `events.subscriptions.get` | `bifrost events get-subscription` | `bifrost_event_subscription_get` | `events.read` |
 | `events.subscriptions.create` | `bifrost events create-subscription` | `bifrost_event_subscription_create` | `events.readwrite` |
 | `events.subscriptions.update` | `bifrost events update-subscription` | `bifrost_event_subscription_update` | `events.readwrite` |
 | `events.subscriptions.delete` | `bifrost events delete-subscription` | `bifrost_event_subscription_delete` | `events.readwrite` |
