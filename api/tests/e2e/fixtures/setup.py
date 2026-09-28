@@ -448,6 +448,41 @@ def provider_org_user(
     return user
 
 
+@pytest.fixture(scope="session")
+def second_platform_admin(
+    e2e_client: httpx.Client,
+    platform_admin: E2EUser,
+) -> E2EUser:
+    """A second platform admin, for flows that need a different requester
+    who still holds platform-admin write access (e.g. publish dedupe)."""
+    user = E2EUser(
+        email="second-admin@provider.gobifrost.com",
+        password="SecondAdmin123!",
+        name="Second Platform Admin",
+        organization_id=PROVIDER_ORG_ID,
+    )
+
+    response = e2e_client.post(
+        "/api/users",
+        headers=platform_admin.headers,
+        json={
+            "email": user.email,
+            "name": user.name,
+            "organization_id": str(PROVIDER_ORG_ID),
+            "is_superuser": True,
+        },
+    )
+    assert response.status_code == 201, f"Create second admin failed: {response.text}"
+    user.user_id = UUID(response.json()["id"])
+
+    user = _register_and_authenticate_user(e2e_client, user, skip_registration=False)
+    user.organization_id = PROVIDER_ORG_ID
+    user.is_superuser = True
+
+    logger.info(f"Created second_platform_admin: {user.email}")
+    return user
+
+
 # =============================================================================
 # Helper Fixtures (function-scoped)
 # =============================================================================

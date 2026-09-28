@@ -996,6 +996,25 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
         },
     ),
     OperationDefinition(
+        operation_id="workflows.get",
+        summary="Get a Workflow by ID, from any organization",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="GET",
+            path="/api/workflows/{workflow_id}",
+            response_model="WorkflowMetadata",
+        ),
+        cli=CliOperationBinding(path=("workflows", "get")),
+        mcp=McpOperationBinding(name="bifrost_workflow_get"),
+        native_builder=True,
+        action_scopes=("workflows.read",),
+        authorization_resolver="Platform-admin only; exact id lookup, no cascade",
+        exclusions={
+            "manifest": "Manifests reconcile Workflow state; they do not perform resource reads.",
+            "sdk": _WORKFLOW_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
         operation_id="workflows.update",
         summary="Update Workflow metadata and access",
         target_kind=OperationTargetKind.RESOURCE,

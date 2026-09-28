@@ -25,10 +25,10 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Path, status
 
-from shared.scope_resolver import has_scope_bypass
 from src.core.auth import Context, CurrentUser
 from src.core.exceptions import AccessDeniedError
 from src.core.log_safety import log_safe
+from src.services.audit import emit_audit
 from src.services.solutions.guard import assert_entity_id_not_solution_managed
 from src.models.contracts.applications import (
     AppFileUpdate,
@@ -270,20 +270,15 @@ async def get_application_for_write_or_404(ctx: Context, app_id: UUID) -> Applic
 
     Read access (including the embed-token binding above) resolves exactly
     as ``get_application_or_404``. Writing to an application's files
-    requires scope bypass (platform admin or provider-org member), for
-    every application — own-org included. An embed principal has no
-    organization and no bypass flags, so it can never satisfy this rule —
-    embed tokens only ever get read access to app files.
+    requires a platform admin, for every application — own-org included.
+    An embed principal is never a platform admin, so embed tokens only ever
+    get read access to app files.
 
     Raises the identical 404 the read helper uses, so a caller cannot tell
     "exists but no write access" apart from "does not exist".
     """
     app = await get_application_or_404(ctx, app_id)
-    is_bypass = has_scope_bypass(
-        is_platform_admin=ctx.user.is_platform_admin,
-        is_provider_org=ctx.user.is_provider_org,
-    )
-    if is_bypass:
+    if ctx.user.is_platform_admin:
         return app
     raise HTTPException(
         status_code=status.HTTP_404_NOT_FOUND,
@@ -704,13 +699,9 @@ async def get_bundle_manifest(
                 needs_rebuild = True
 
     if needs_rebuild:
-        bypass = has_scope_bypass(
-            is_platform_admin=ctx.user.is_superuser,
-            is_provider_org=ctx.user.is_provider_org,
-        )
-        if not bypass:
-            # A GET must never trigger a _repo build/write for a non-bypass
-            # caller. Serve the existing (possibly stale-schema) manifest
+        if not ctx.user.is_platform_admin:
+            # A GET must never trigger a _repo build/write for anyone who
+            # can't write the app (platform admins only). Serve the existing (possibly stale-schema) manifest
             # as-is, or 404 if there is none yet — never build here.
             if manifest_bytes is None:
                 raise HTTPException(
@@ -983,6 +974,13 @@ async def put_dependencies(
 
     # Update DB
     app.dependencies = deps if deps else None
+    await emit_audit(
+        ctx.db,
+        "app.dependencies.update",
+        resource_type="application",
+        resource_id=app.id,
+        details={"dependencies": deps},
+    )
     await ctx.db.commit()
 
     # Invalidate render cache

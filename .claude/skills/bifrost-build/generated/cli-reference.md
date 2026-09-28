@@ -2891,9 +2891,9 @@ Usage: workflows get [OPTIONS] REF
 
   Get a single workflow by UUID, name, or ``path::func`` ref.
 
-  The server does not expose a per-record GET endpoint for workflows, so this
-  resolves the ref via :class:`RefResolver` and locates the entry in the ``GET
-  /api/workflows`` list payload.
+  Resolves ``REF`` via :class:`RefResolver`, then calls ``GET
+  /api/workflows/{uuid}`` directly (platform admin only; admins can read any
+  org's workflow by id).
 
 Options:
   --json  Emit JSON instead of human-readable output.

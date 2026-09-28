@@ -103,21 +103,14 @@ async def get_workflow(
 ) -> None:
     """Get a single workflow by UUID, name, or ``path::func`` ref.
 
-    The server does not expose a per-record GET endpoint for workflows, so
-    this resolves the ref via :class:`RefResolver` and locates the entry in
-    the ``GET /api/workflows`` list payload.
+    Resolves ``REF`` via :class:`RefResolver`, then calls
+    ``GET /api/workflows/{uuid}`` directly (platform admin only; admins can
+    read any org's workflow by id).
     """
     workflow_uuid = await resolver.resolve("workflow", ref)
-    list_response = await client.get("/api/workflows")
-    list_response.raise_for_status()
-    items = list_response.json()
-    for item in items:
-        if str(item.get("id")) == workflow_uuid:
-            output_result(item, ctx=ctx)
-            return
-    raise click.ClickException(
-        f"workflow {ref!r} resolved to {workflow_uuid} but is not in the accessible list"
-    )
+    response = await client.get(f"/api/workflows/{workflow_uuid}")
+    response.raise_for_status()
+    output_result(response.json(), ctx=ctx)
 
 
 @workflows_group.command("register")

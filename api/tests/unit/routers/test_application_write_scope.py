@@ -4,8 +4,8 @@
 by every mutating route in ``applications.py``. These tests exercise the
 gate directly: read access is unchanged (delegated to
 ``get_application_by_id_or_404``), but writing to ANY application requires
-scope bypass (platform admin or provider-org member) — own-org membership
-alone is no longer sufficient.
+a platform admin — own-org or provider-org membership alone is not
+sufficient.
 """
 
 from types import SimpleNamespace
@@ -111,9 +111,9 @@ async def test_platform_admin_allowed_for_own_org_app():
 
 
 @pytest.mark.asyncio
-async def test_provider_org_non_admin_allowed_for_global_app():
-    """Bypass is is_platform_admin OR is_provider_org — either flag alone
-    must be sufficient to write a global application."""
+async def test_provider_org_non_admin_denied_for_global_app():
+    """Writing an application is platform-admin only; provider-org
+    membership alone does not grant it."""
     app_id = uuid4()
     application = SimpleNamespace(id=app_id, organization_id=None)
     ctx = _ctx(org_id=uuid4(), is_platform_admin=False, is_provider_org=True)
@@ -122,13 +122,14 @@ async def test_provider_org_non_admin_allowed_for_global_app():
         "src.routers.applications.get_application_by_id_or_404",
         new=AsyncMock(return_value=application),
     ):
-        result = await get_application_for_write_or_404(ctx, app_id)
+        with pytest.raises(HTTPException) as exc:
+            await get_application_for_write_or_404(ctx, app_id)
 
-    assert result is application
+    assert exc.value.status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_provider_org_non_admin_allowed_for_own_org_app():
+async def test_provider_org_non_admin_denied_for_own_org_app():
     app_id = uuid4()
     org_id = uuid4()
     application = SimpleNamespace(id=app_id, organization_id=org_id)
@@ -138,6 +139,7 @@ async def test_provider_org_non_admin_allowed_for_own_org_app():
         "src.routers.applications.get_application_by_id_or_404",
         new=AsyncMock(return_value=application),
     ):
-        result = await get_application_for_write_or_404(ctx, app_id)
+        with pytest.raises(HTTPException) as exc:
+            await get_application_for_write_or_404(ctx, app_id)
 
-    assert result is application
+    assert exc.value.status_code == 404

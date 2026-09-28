@@ -46,6 +46,7 @@ harness.
 | `workflows.validate` | `bifrost workflows validate` | `bifrost_workflow_validate` | `workflows.read` |
 | `workflows.register` | `bifrost workflows register` | `bifrost_workflow_register` | `workflows.readwrite`, `repository.read` |
 | `workflows.execute` | `bifrost workflows execute` | `bifrost_workflow_execute` | `workflows.execute` |
+| `workflows.get` | `bifrost workflows get` | `bifrost_workflow_get` | `workflows.read` |
 | `workflows.update` | `bifrost workflows update` | `bifrost_workflow_update` | `workflows.readwrite` |
 | `workflows.delete` | `bifrost workflows delete` | `bifrost_workflow_delete` | `workflows.readwrite`, `repository.readwrite` |
 | `workflows.roles.grant` | `bifrost workflows grant-role` | `bifrost_workflow_role_grant` | `workflows.readwrite`, `roles.readwrite` |

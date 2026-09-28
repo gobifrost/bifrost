@@ -18,6 +18,7 @@ read-only message the REST guard returns, not a generic 500.
 from __future__ import annotations
 
 import uuid
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -102,38 +103,6 @@ def _fake_db_cm(db_session):
 
     return _cm
 
-
-async def test_mcp_publish_app_refuses_managed_without_s3_write(db_session, monkeypatch):
-    """publish_app delegates the managed-app guard to canonical REST."""
-    from src.services.app_storage import AppStorageService
-    from src.services.mcp_server.tools import apps as mcp_apps
-
-    aid = await _managed_app(db_session, repo_path="apps/managed-pub")
-
-    # Sentinel: publish() (the preview→live S3 copy) must never be invoked.
-    published = {"called": False}
-
-    async def _boom_publish(self, app_id):  # noqa: ANN001
-        published["called"] = True
-        raise AssertionError("S3 publish must not run for a solution-managed app")
-
-    monkeypatch.setattr(AppStorageService, "publish", _boom_publish)
-
-    async def _guarded_rest(context, method, path, *, json_body=None):  # noqa: ANN001
-        assert method == "POST"
-        assert path == f"/api/applications/{aid}/publish"
-        assert json_body == {}
-        return 409, {"detail": SOLUTION_MANAGED_MESSAGE}
-
-    monkeypatch.setattr(mcp_apps, "call_rest", _guarded_rest)
-
-    context = SimpleNamespace(is_platform_admin=True, org_id=None, user_id=uuid.uuid4())
-    result = await mcp_apps.publish_app(context, app_id=str(aid))
-
-    payload = result.model_dump() if hasattr(result, "model_dump") else result
-    text = str(payload)
-    assert SOLUTION_MANAGED_MESSAGE in text, text
-    assert published["called"] is False
 
 
 async def test_mcp_push_files_refuses_managed_without_s3_write(db_session, monkeypatch):
@@ -363,107 +332,7 @@ async def _two_install_apps(db, slug: str) -> tuple[uuid.UUID, uuid.UUID, uuid.U
     return org_a.id, org_b.id, app_ids[0], app_ids[1]
 
 
-async def test_mcp_get_app_multi_install_slug_does_not_error(db_session, monkeypatch):
-    """A slug held by two installs must resolve to ONE app for a platform admin
-    (prefer caller-org row), not blow up with MultipleResultsFound."""
-    from src.services.app_storage import AppStorageService
-    from src.services.mcp_server.tools import apps as mcp_apps
 
-    slug = f"multi-{uuid.uuid4().hex[:8]}"
-    org_a, _org_b, app_a, app_b = await _two_install_apps(db_session, slug)
-
-    monkeypatch.setattr(mcp_apps, "get_tool_db", _fake_db_cm(db_session))
-
-    async def _no_files(self, app_id, target):  # noqa: ANN001
-        return []
-
-    monkeypatch.setattr(AppStorageService, "list_files", _no_files)
-
-    context = SimpleNamespace(is_platform_admin=True, org_id=org_a, user_id=uuid.uuid4())
-    result = await mcp_apps.get_app(context, app_slug=slug)
-
-    text = str(result.model_dump() if hasattr(result, "model_dump") else result)
-    assert "Multiple rows" not in text, text
-    assert "Error getting app" not in text, text
-    # Caller-org row preferred over the other install's row.
-    assert str(app_a) in text, text
-    assert str(app_b) not in text, text
-
-
-async def test_mcp_get_app_dependencies_multi_install_slug_does_not_error(db_session, monkeypatch):
-    """Same multi-install seed for get_app_dependencies: one deterministic app,
-    no MultipleResultsFound."""
-    from src.services.mcp_server.tools import apps as mcp_apps
-
-    slug = f"multi-{uuid.uuid4().hex[:8]}"
-    org_a, _org_b, app_a, app_b = await _two_install_apps(db_session, slug)
-
-    monkeypatch.setattr(mcp_apps, "get_tool_db", _fake_db_cm(db_session))
-
-    context = SimpleNamespace(is_platform_admin=True, org_id=org_a, user_id=uuid.uuid4())
-    result = await mcp_apps.get_app_dependencies(context, app_slug=slug)
-
-    text = str(result.model_dump() if hasattr(result, "model_dump") else result)
-    assert "Multiple rows" not in text, text
-    assert "Error getting dependencies" not in text, text
-    assert str(app_a) in text, text
-    assert str(app_b) not in text, text
-
-
-async def test_mcp_create_app_allows_repo_slug_shadowing_solution(db_session, monkeypatch):
-    """A SOLUTION-managed row (another org's install) holding slug X must not
-    block create_app(slug=X) — the partial unique index only constrains the
-    solution_id IS NULL namespace."""
-    from src.models.orm.organizations import Organization
-    from src.models.orm.solutions import Solution
-    from src.models.orm.applications import Application
-    from src.services.file_storage import FileStorageService
-    from src.services.mcp_server.tools import apps as mcp_apps
-
-    slug = f"shadow-{uuid.uuid4().hex[:8]}"
-
-    org_a = Organization(id=uuid.uuid4(), name=f"A-{uuid.uuid4().hex[:6]}", created_by="dev@x")
-    org_b = Organization(id=uuid.uuid4(), name=f"B-{uuid.uuid4().hex[:6]}", created_by="dev@x")
-    db_session.add_all([org_a, org_b])
-    await db_session.flush()
-    sol = Solution(
-        id=uuid.uuid4(), slug=f"mcp-{uuid.uuid4().hex[:8]}", name="MCP",
-        organization_id=org_b.id,
-    )
-    db_session.add(sol)
-    await db_session.flush()
-    db_session.add(Application(
-        id=uuid.uuid4(),
-        name=f"app_{uuid.uuid4().hex[:8]}",
-        slug=slug,
-        organization_id=org_b.id,
-        solution_id=sol.id,
-        repo_path=f"solutions/{sol.slug}/apps/{slug}",
-        created_by="system",
-    ))
-    await db_session.flush()
-
-    monkeypatch.setattr(mcp_apps, "get_tool_db", _fake_db_cm(db_session))
-
-    async def _noop_write(self, *args, **kwargs):  # noqa: ANN001
-        pass
-
-    monkeypatch.setattr(FileStorageService, "write_file", _noop_write)
-
-    context = SimpleNamespace(
-        is_platform_admin=True, org_id=org_a.id, user_id=uuid.uuid4()
-    )
-    result = await mcp_apps.create_app(
-        context,
-        name=f"Shadow {slug}",
-        slug=slug,
-        scope="organization",
-        organization_id=str(org_a.id),
-    )
-
-    text = str(result.model_dump() if hasattr(result, "model_dump") else result)
-    assert "already exists" not in text, text
-    assert "Created application" in text, text
 
 
 async def test_mcp_update_form_forwards_managed_refusal_from_rest(monkeypatch):
@@ -537,45 +406,44 @@ async def test_mcp_delete_table_refuses_managed(monkeypatch):
     assert SOLUTION_MANAGED_MESSAGE in text, text
 
 
-async def test_mcp_update_app_refuses_managed(db_session, monkeypatch):
-    from sqlalchemy import select
+# ── Apps: thin REST wrappers forward REST's Solution-managed refusal ─────────
+# The guard lives in the REST handlers (e2e: tests/e2e/platform/
+# test_solution_readonly_full.py covers update/publish/replace/rollback/files/
+# dependencies). Multi-install slug resolution is the shared
+# ApplicationRepository.get_by_slug_global used by GET /api/applications/{slug}.
 
-    from src.models.orm.applications import Application
+
+@asynccontextmanager
+async def _no_http(_context):  # noqa: ANN001
+    yield object()
+
+
+@pytest.mark.parametrize(
+    ("tool", "method", "path_suffix", "kwargs"),
+    [
+        ("bifrost_app_update", "PATCH", "", {"name": "renamed"}),
+        ("bifrost_app_publish", "POST", "/publish", {}),
+        ("bifrost_app_dependencies_update", "PUT", "/dependencies", {"dependencies": {"left-pad": "1.0.0"}}),
+    ],
+)
+async def test_mcp_app_write_forwards_managed_refusal_from_rest(
+    monkeypatch, tool, method, path_suffix, kwargs
+):
     from src.services.mcp_server.tools import apps as mcp_apps
 
-    aid = await _managed_app(db_session, repo_path="apps/managed-upd")
+    app_id = str(uuid.uuid4())
 
-    monkeypatch.setattr(mcp_apps, "get_tool_db", _fake_db_cm(db_session))
+    async def _fake_call_rest(_context, m, path, **_kwargs):
+        assert m == method
+        assert path == f"/api/applications/{app_id}{path_suffix}"
+        return 409, {"detail": SOLUTION_MANAGED_MESSAGE}
+
+    monkeypatch.setattr(mcp_apps, "call_rest", _fake_call_rest)
+    monkeypatch.setattr(mcp_apps, "rest_client", _no_http)
 
     context = SimpleNamespace(is_platform_admin=True, org_id=None, user_id=uuid.uuid4())
-    result = await mcp_apps.update_app(context, app_id=str(aid), name="hijacked")
+    ref_kw = "app_ref" if tool == "bifrost_app_update" else "app_id"
+    result = await getattr(mcp_apps, tool)(context, **{ref_kw: app_id}, **kwargs)
 
     text = str(result.model_dump() if hasattr(result, "model_dump") else result)
     assert SOLUTION_MANAGED_MESSAGE in text, text
-    name = (await db_session.execute(
-        select(Application.name).where(Application.id == aid)
-    )).scalar_one()
-    assert name != "hijacked"
-
-
-async def test_mcp_update_app_dependencies_refuses_managed(db_session, monkeypatch):
-    from sqlalchemy import select
-
-    from src.models.orm.applications import Application
-    from src.services.mcp_server.tools import apps as mcp_apps
-
-    aid = await _managed_app(db_session, repo_path="apps/managed-deps")
-
-    monkeypatch.setattr(mcp_apps, "get_tool_db", _fake_db_cm(db_session))
-
-    context = SimpleNamespace(is_platform_admin=True, org_id=None, user_id=uuid.uuid4())
-    result = await mcp_apps.update_app_dependencies(
-        context, app_id=str(aid), dependencies={"left-pad": "1.0.0"}
-    )
-
-    text = str(result.model_dump() if hasattr(result, "model_dump") else result)
-    assert SOLUTION_MANAGED_MESSAGE in text, text
-    deps = (await db_session.execute(
-        select(Application.dependencies).where(Application.id == aid)
-    )).scalar_one()
-    assert deps != {"left-pad": "1.0.0"}

@@ -1,10 +1,9 @@
-"""Write-scope enforcement for the apps MCP tools (update_app, push_files).
+"""Write-scope enforcement for the apps MCP ``push_files`` tool (the other app
+write tools are thin REST wrappers; REST enforces their scope).
 
 Mirrors the REST rule enforced by ``get_application_for_write_or_404``:
-writing to ANY app — own-org included — requires scope bypass (platform
-admin or provider-org member). A global app (``organization_id is None``)
-is likewise bypass-only for writes, even though it is still readable by
-any org member.
+writing to ANY app — own-org or global — requires a platform admin, even
+though org members can still read the apps they have access to.
 """
 
 import re
@@ -100,65 +99,6 @@ def _app(*, organization_id, repo_path=None):
         name="App",
         slug="app",
     )
-
-
-# =============================================================================
-# update_app
-# =============================================================================
-
-
-@pytest.mark.asyncio
-class TestUpdateAppWriteScope:
-    async def test_non_bypass_caller_denied_for_global_app(self):
-        app = _app(organization_id=None)
-        session = FakeSession()
-        session.execute = AsyncMock(return_value=FakeResult([app]))
-        ctx = _ctx(org_id=uuid4(), session=session)
-
-        result = await apps_tool.update_app(ctx, str(app.id), name="New Name")
-
-        assert _is_error(result)
-        assert "not found" in result.structured_content["error"].lower()
-        assert app.name == "App"
-
-    async def test_non_bypass_caller_denied_for_own_org_app(self):
-        """Own-org membership alone no longer grants write access."""
-        org_id = uuid4()
-        app = _app(organization_id=org_id)
-        session = FakeSession()
-        session.execute = AsyncMock(return_value=FakeResult([app]))
-        ctx = _ctx(org_id=org_id, session=session)
-
-        with patch("src.services.mcp_server.tools.apps.publish_app_draft_update", new=AsyncMock()):
-            result = await apps_tool.update_app(ctx, str(app.id), name="New Name")
-
-        assert _is_error(result)
-        assert app.name == "App"
-
-    async def test_platform_admin_allowed_for_global_app(self):
-        app = _app(organization_id=None)
-        session = FakeSession()
-        session.execute = AsyncMock(return_value=FakeResult([app]))
-        ctx = _ctx(org_id=uuid4(), is_platform_admin=True, session=session)
-
-        with patch("src.services.mcp_server.tools.apps.publish_app_draft_update", new=AsyncMock()):
-            result = await apps_tool.update_app(ctx, str(app.id), name="Admin Renamed")
-
-        assert not _is_error(result)
-        assert app.name == "Admin Renamed"
-
-    async def test_platform_admin_allowed_for_own_org_app(self):
-        org_id = uuid4()
-        app = _app(organization_id=org_id)
-        session = FakeSession()
-        session.execute = AsyncMock(return_value=FakeResult([app]))
-        ctx = _ctx(org_id=org_id, is_platform_admin=True, session=session)
-
-        with patch("src.services.mcp_server.tools.apps.publish_app_draft_update", new=AsyncMock()):
-            result = await apps_tool.update_app(ctx, str(app.id), name="Admin Renamed")
-
-        assert not _is_error(result)
-        assert app.name == "Admin Renamed"
 
 
 # =============================================================================
@@ -280,3 +220,25 @@ class TestPushFilesWriteScope:
 
         assert not _is_error(result)
         write_file.assert_awaited()
+
+
+
+@pytest.mark.asyncio
+async def test_push_files_denied_for_provider_org_non_admin():
+    """Provider-org membership alone doesn't grant ``_repo/`` writes (REST's
+    editor routes are platform-admin only)."""
+    org_id = uuid4()
+    app = _app(organization_id=org_id, repo_path="apps/org-app")
+    ctx = _ctx(org_id=org_id, is_provider_org=True, session=FakeSession(apps=[app]))
+
+    write_file = AsyncMock()
+    with patch(
+        "src.services.file_storage.FileStorageService.write_file",
+        new=write_file,
+    ):
+        result = await apps_tool.push_files(
+            ctx, {"apps/org-app/pages/index.tsx": "content"}
+        )
+
+    assert _is_error(result)
+    write_file.assert_not_awaited()

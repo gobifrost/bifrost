@@ -13,6 +13,8 @@ async def test_delete_application_removes_all_retained_application_artifacts() -
     active_deployment_id = uuid4()
     application = SimpleNamespace(
         id=app_id,
+        name="Retained Artifacts App",
+        slug="retained-artifacts-app",
         active_deployment_id=active_deployment_id,
         organization_id=uuid4(),
     )

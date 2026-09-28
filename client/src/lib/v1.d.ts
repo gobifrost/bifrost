@@ -2158,7 +2158,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * Get a workflow by ID
+         * @description Get one workflow's metadata by ID, from any organization (Platform admin only)
+         */
+        get: operations["workflows.get"];
         put?: never;
         post?: never;
         /**
@@ -32603,6 +32607,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RegisterWorkflowResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "workflows.get": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workflow_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowMetadata"];
                 };
             };
             /** @description Validation Error */

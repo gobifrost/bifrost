@@ -1,441 +1,291 @@
 """
-App Builder MCP Tools - Application Level
+App Builder MCP Tools — thin wrappers around the REST API.
 
-Tools for listing, creating, getting, updating, publishing apps,
-plus schema documentation.
+``bifrost_app_list``, ``bifrost_app_get``, ``bifrost_app_create``,
+``bifrost_app_update``, ``bifrost_app_delete``, ``bifrost_app_publish``,
+``bifrost_app_replace``, ``bifrost_app_validate``,
+``bifrost_app_dependencies_get``, ``bifrost_app_dependencies_update``.
 
-Applications use code-based files (TSX/TypeScript) stored in file_index table.
+These tools are thin wrappers: they resolve human refs, assemble request
+bodies from the shared Application DTOs, then call the corresponding REST
+endpoint through the in-process HTTP bridge (``_http_bridge``). No ORM, no
+repositories, no ``AsyncSession`` — all side effects (audit logs, cache
+invalidation, Solution-managed guards, write-scope checks) happen behind the
+REST handler, matching the CLI's path exactly.
 
-Note: `get_app_schema` provides a concise platform overview and component index.
+Applications are listed/read for any authenticated user (cascade + role
+scoping via ``ApplicationRepository`` — the same rows the app launcher
+shows). All mutations (create/update/delete/dependencies) require scope
+bypass (platform admin or provider-org member) — enforced by REST's
+``get_application_for_write_or_404`` / the create handler's explicit check,
+not narrowed further here.
+
+``push_files`` has no catalog REST operation (it is a batch ``_repo/``
+write spanning many files, not one Application resource) and keeps its
+existing name and ORM-backed implementation.
 """
+
+from __future__ import annotations
 
 import logging
 from typing import Any
 
 from fastmcp.tools import ToolResult
 
-from shared.scope_resolver import has_scope_bypass
-from src.core.pubsub import publish_app_draft_update
 from src.services.mcp_server.tool_result import error_result, success_result
-from src.services.mcp_server.tools._http_bridge import call_rest
-from src.services.mcp_server.tools._org_scope import apply_mcp_org_scope
+from src.services.mcp_server.tools._http_bridge import call_rest, rest_client
 from src.services.mcp_server.tools.db import get_tool_db
 
 logger = logging.getLogger(__name__)
 
 
-def _write_scope_bypass(context: Any) -> bool:
-    return has_scope_bypass(
-        is_platform_admin=getattr(context, "is_platform_admin", False),
-        is_provider_org=getattr(context, "is_provider_org", False),
+def _ref_error_payload(exc: Exception) -> dict[str, Any]:
+    from bifrost.refs import AmbiguousRefError, RefNotFoundError
+
+    if isinstance(exc, AmbiguousRefError):
+        return {"kind": exc.kind, "value": exc.value, "candidates": exc.candidates}
+    if isinstance(exc, RefNotFoundError):
+        return {"kind": exc.kind, "value": exc.value}
+    return {"detail": str(exc)}
+
+
+def _rest_error(action: str, status_code: int, body: Any) -> ToolResult:
+    detail = body.get("detail") if isinstance(body, dict) else None
+    if isinstance(detail, dict):
+        message = detail.get("message") or detail.get("detail")
+    else:
+        message = detail
+    return error_result(
+        str(message) if message else f"{action} failed: HTTP {status_code}",
+        {"status_code": status_code, "body": body},
     )
 
 
-def _app_write_denied(context: Any, app: Any) -> bool:
-    """Whether the caller lacks write scope for ``app``.
+async def _resolve_app_ref(context: Any, app_ref: str) -> str:
+    """Resolve an app UUID/slug/name ref to its UUID via :class:`RefResolver`."""
+    from bifrost.refs import RefResolver
 
-    Writing to any application — own-org included — requires scope bypass
-    (platform admin or provider-org member), matching REST's
-    ``get_application_for_write_or_404``.
+    async with rest_client(context) as http:
+        return await RefResolver(http).resolve("app", app_ref)  # type: ignore[arg-type]
+
+
+async def bifrost_app_list(context: Any) -> ToolResult:
+    """List Applications visible to the caller — thin wrapper over ``GET /api/applications``."""
+    status_code, body = await call_rest(context, "GET", "/api/applications")
+    if status_code != 200:
+        return _rest_error("List Applications", status_code, body)
+    apps = body.get("applications") if isinstance(body, dict) else None
+    apps = apps if isinstance(apps, list) else []
+    apps_data = [
+        {
+            "id": a.get("id"),
+            "name": a.get("name"),
+            "slug": a.get("slug"),
+            "description": a.get("description"),
+            "status": "published" if a.get("is_published") else "draft",
+            "is_published": a.get("is_published"),
+            "has_unpublished_changes": a.get("has_unpublished_changes"),
+            "url": f"/apps/{a.get('slug')}",
+        }
+        for a in apps
+    ]
+    return success_result(
+        f"Found {len(apps_data)} application(s)",
+        {"apps": apps_data, "count": len(apps_data)},
+    )
+
+
+async def bifrost_app_get(
+    context: Any,
+    app_id: str | None = None,
+    app_slug: str | None = None,
+) -> ToolResult:
+    """Get one Application by UUID, slug, or name.
+
+    The public per-record endpoint (``GET /api/applications/{slug}``) is
+    keyed by slug. For a slug ref this is a single round-trip; for a UUID
+    or name ref, resolves to a UUID via :class:`RefResolver` then locates
+    the record in the ``GET /api/applications`` list payload — mirroring
+    ``bifrost apps get``, since the per-record endpoint does not accept
+    UUIDs.
     """
-    del app  # write scope no longer depends on the app's org
-    return not _write_scope_bypass(context)
+    if not app_id and not app_slug:
+        return error_result("Either app_id or app_slug is required")
 
+    ref = app_slug or app_id or ""
 
-def _pick_slug_row(rows: list[Any], org_id: Any) -> Any | None:
-    """Disambiguate multiple Application rows sharing one slug.
+    # Try the slug endpoint first — works directly for slug refs.
+    status_code, body = await call_rest(context, "GET", f"/api/applications/{ref}")
+    if status_code == 200 and isinstance(body, dict):
+        return success_result(f"Application: {body.get('name', ref)}", body)
+    if status_code not in (403, 404):
+        return _rest_error("Get Application", status_code, body)
 
-    Slug uniqueness is per-install (partial unique indexes: global for
-    ``solution_id IS NULL``, ``(solution_id, slug)`` for installs), so a bare
-    ``scalar_one_or_none`` raises ``MultipleResultsFound`` for platform-admin
-    contexts. Resolve like ``ApplicationRepository.get_by_slug_global``:
-    prefer the caller-org row, then the global (NULL-org) row, then a
-    deterministic lowest-id pick.
-    """
-    if not rows:
-        return None
-    if len(rows) == 1:
-        return rows[0]
-    if org_id is not None:
-        for row in rows:
-            # str() on both sides: MCP context.org_id may be a string UUID
-            # while the ORM column is a UUID object.
-            if row.organization_id is not None and str(row.organization_id) == str(org_id):
-                return row
-    for row in rows:
-        if row.organization_id is None:
-            return row
-    return sorted(rows, key=lambda row: str(row.id))[0]
-
-
-async def list_apps(context: Any) -> ToolResult:
-    """List all applications with file summaries."""
-    from sqlalchemy import select
-
-    from src.models.orm.applications import Application
-    from src.services.app_storage import AppStorageService
-
-    logger.info("MCP list_apps called")
-
+    # Fall through: resolve via UUID/name then locate in the list payload.
     try:
-        async with get_tool_db(context) as db:
-            query = select(Application)
+        app_uuid = await _resolve_app_ref(context, ref)
+    except Exception as exc:
+        return error_result(f"could not resolve app {ref!r}", _ref_error_payload(exc))
 
-            # Org cascade (external-aware): externals get no global tier.
-            query = apply_mcp_org_scope(query, Application, context)
-
-            result = await db.execute(query.order_by(Application.name))
-            apps = result.scalars().all()
-
-            apps_data = []
-            for app in apps:
-                app_storage = AppStorageService()
-                preview_files = await app_storage.list_files(str(app.id), "preview")
-                count = len(preview_files)
-
-                apps_data.append({
-                    "id": str(app.id),
-                    "name": app.name,
-                    "slug": app.slug,
-                    "description": app.description,
-                    "status": "published" if app.is_published else "draft",
-                    "is_published": app.is_published,
-                    "has_unpublished_changes": app.has_unpublished_changes,
-                    "file_count": count,
-                    "url": f"/apps/{app.slug}",
-                })
-
-            display_text = f"Found {len(apps_data)} application(s)"
-            return success_result(display_text, {"apps": apps_data, "count": len(apps_data)})
-
-    except Exception as e:
-        logger.exception(f"Error listing apps via MCP: {e}")
-        return error_result(f"Error listing apps: {str(e)}")
+    list_status, list_body = await call_rest(context, "GET", "/api/applications")
+    if list_status != 200:
+        return _rest_error("Get Application", list_status, list_body)
+    items = list_body.get("applications") if isinstance(list_body, dict) else None
+    items = items if isinstance(items, list) else []
+    for item in items:
+        if str(item.get("id")) == app_uuid:
+            return success_result(f"Application: {item.get('name', app_uuid)}", item)
+    return error_result(f"application {ref!r} resolved to {app_uuid} but is not in the accessible list")
 
 
-async def create_app(
+async def bifrost_app_create(
     context: Any,
     name: str,
     description: str | None = None,
     slug: str | None = None,
     scope: str = "organization",
     organization_id: str | None = None,
+    access_level: str | None = None,
+    role_ids: list[str] | None = None,
 ) -> ToolResult:
-    """
-    Create a new application with scaffold files.
+    """Create an Application — thin wrapper over ``POST /api/applications`` (platform
+    admin only).
 
-    Args:
-        name: Application name (required)
-        description: Application description
-        slug: URL slug (auto-generated from name if not provided)
-        scope: 'global' (visible to all orgs) or 'organization' (default)
-        organization_id: Override context.org_id when scope='organization'
-
-    Returns:
-        ToolResult with app details
+    ``slug`` is auto-generated from ``name`` if omitted (lowercased,
+    non-alphanumeric runs collapsed to ``-``). ``scope='global'`` omits
+    ``organization_id`` from the payload as an explicit null; ``scope=
+    'organization'`` uses ``organization_id`` if given, else the caller's
+    default org.
     """
     import re
-    from uuid import UUID, uuid4
-
-    from sqlalchemy import select
-
-    from src.models.orm.applications import Application
-    from src.services.file_storage import FileStorageService
-
-    logger.info(f"MCP create_app called with name={name}, scope={scope}")
-
-    if not _write_scope_bypass(context):
-        return error_result(
-            "Only a platform admin or provider-org member can create applications."
-        )
 
     if not name:
         return error_result("name is required")
-
     if scope not in ("global", "organization"):
         return error_result("scope must be 'global' or 'organization'")
-
-    effective_org_id: UUID | None = None
-    if scope == "global":
-        effective_org_id = None
-    else:
-        if organization_id:
-            try:
-                effective_org_id = UUID(organization_id)
-            except ValueError:
-                return error_result(f"organization_id '{organization_id}' is not a valid UUID")
-        elif context.org_id:
-            effective_org_id = UUID(str(context.org_id)) if isinstance(context.org_id, str) else context.org_id
-        else:
-            return error_result("organization_id is required when scope='organization' and no context org_id is set")
 
     if not slug:
         slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
 
-    try:
-        async with get_tool_db(context) as db:
-            # Scope the duplicate check to the namespace the new row will
-            # occupy: the partial unique index is global on slug only WHERE
-            # solution_id IS NULL, so solution-managed rows (any org's
-            # installs) never block an ad-hoc _repo app.
-            existing = await db.execute(
-                select(Application.id).where(
-                    Application.slug == slug,
-                    Application.solution_id.is_(None),
-                )
-            )
-            if existing.first():
-                return error_result(f"Application with slug '{slug}' already exists")
-
-            app = Application(
-                id=uuid4(),
-                name=name,
-                slug=slug,
-                description=description,
-                organization_id=effective_org_id,
-                created_by=str(context.user_id),
-                repo_path=f"apps/{slug}",
-            )
-            db.add(app)
-            await db.flush()
-
-            # Write scaffold files via FileStorageService — but only if no
-            # files already exist under apps/{slug}/. Authors who created
-            # the source dir locally first should not lose their work to
-            # the default Welcome scaffold.
-            from src.models.orm.file_index import FileIndex
-
-            prefix = f"apps/{slug}/"
-            existing_files = await db.execute(
-                select(FileIndex.path).where(FileIndex.path.startswith(prefix)).limit(1)
-            )
-            scaffolded = 0
-            if existing_files.first() is None:
-                file_storage = FileStorageService(db)
-
-                layout_source = '''import { Outlet } from "bifrost";
-
-export default function RootLayout() {
-  return (
-    <div className="min-h-screen bg-background">
-      <Outlet />
-    </div>
-  );
-}
-'''
-                index_source = '''export default function HomePage() {
-  return (
-    <div className="p-8">
-      <h1 className="text-3xl font-bold mb-4">Welcome</h1>
-      <p className="text-muted-foreground">
-        Start building your app by editing this page or adding new files.
-      </p>
-    </div>
-  );
-}
-'''
-                await file_storage.write_file(
-                    path=f"apps/{slug}/_layout.tsx",
-                    content=layout_source.encode("utf-8"),
-                    updated_by="system",
-                )
-                await file_storage.write_file(
-                    path=f"apps/{slug}/pages/index.tsx",
-                    content=index_source.encode("utf-8"),
-                    updated_by="system",
-                )
-                scaffolded = 2
-
-            await db.commit()
-
-            display_text = f"Created application: {app.name}"
-            return success_result(display_text, {
-                "success": True,
-                "id": str(app.id),
-                "name": app.name,
-                "slug": app.slug,
-                "file_count": scaffolded,
-                "url": f"/apps/{app.slug}",
-            })
-
-    except Exception as e:
-        logger.exception(f"Error creating app via MCP: {e}")
-        return error_result(f"Error creating app: {str(e)}")
-
-
-async def get_app(
-    context: Any,
-    app_id: str | None = None,
-    app_slug: str | None = None,
-) -> ToolResult:
-    """
-    Get application metadata and file list.
-
-    Returns app info and a summary of files.
-    """
-    from uuid import UUID
-
-    from sqlalchemy import select
-
-    from src.models.orm.applications import Application
-    from src.services.app_storage import AppStorageService
-
-    logger.info(f"MCP get_app called with id={app_id}, slug={app_slug}")
-
-    if not app_id and not app_slug:
-        return error_result("Either app_id or app_slug is required")
+    body: dict[str, Any] = {"name": name, "slug": slug}
+    if description is not None:
+        body["description"] = description
+    if access_level is not None:
+        body["access_level"] = access_level
 
     try:
-        async with get_tool_db(context) as db:
-            query = select(Application)
+        async with rest_client(context) as http:
+            from bifrost.refs import RefResolver
 
-            if app_id:
-                try:
-                    query = query.where(Application.id == UUID(app_id))
-                except ValueError:
-                    return error_result(f"Invalid app_id format: {app_id}")
-            else:
-                query = query.where(Application.slug == app_slug)
+            resolver = RefResolver(http)
+            if scope == "global":
+                body["organization_id"] = None
+            elif organization_id:
+                body["organization_id"] = await resolver.resolve("org", organization_id)
+            if role_ids:
+                body["role_ids"] = [await resolver.resolve("role", r) for r in role_ids]
+    except Exception as exc:
+        return error_result(f"invalid input: {exc}", _ref_error_payload(exc))
 
-            # Org cascade (external-aware): externals get no global tier.
-            query = apply_mcp_org_scope(query, Application, context)
-
-            result = await db.execute(query)
-            if app_id:
-                app = result.scalar_one_or_none()
-            else:
-                # Slugs are unique per install, not globally — disambiguate.
-                app = _pick_slug_row(list(result.scalars().all()), context.org_id)
-
-            if not app:
-                return error_result(f"Application not found: {app_id or app_slug}")
-
-            # List files from S3 preview
-            app_storage = AppStorageService()
-            preview_files = await app_storage.list_files(str(app.id), "preview")
-
-            app_data = {
-                "id": str(app.id),
-                "name": app.name,
-                "slug": app.slug,
-                "description": app.description,
-                "is_published": app.is_published,
-                "has_unpublished_changes": app.has_unpublished_changes,
-                "url": f"/apps/{app.slug}",
-                "files": [
-                    {"path": p}
-                    for p in sorted(preview_files)
-                ],
-            }
-
-            display_text = f"Application: {app.name}"
-            return success_result(display_text, app_data)
-
-    except Exception as e:
-        logger.exception(f"Error getting app via MCP: {e}")
-        return error_result(f"Error getting app: {str(e)}")
+    status_code, resp = await call_rest(context, "POST", "/api/applications", json_body=body)
+    if status_code not in (200, 201):
+        return _rest_error("Create Application", status_code, resp)
+    payload = resp if isinstance(resp, dict) else {"body": resp}
+    return success_result(
+        f"Created application: {payload.get('name', name)}",
+        {
+            "success": True,
+            "id": payload.get("id"),
+            "name": payload.get("name"),
+            "slug": payload.get("slug"),
+            "url": f"/apps/{payload.get('slug')}",
+        },
+    )
 
 
-async def update_app(
+async def bifrost_app_update(
     context: Any,
-    app_id: str,
+    app_ref: str,
     name: str | None = None,
     description: str | None = None,
+    slug: str | None = None,
+    icon: str | None = None,
+    scope: str | None = None,
+    access_level: str | None = None,
+    role_ids: list[str] | None = None,
 ) -> ToolResult:
+    """Update Application metadata — thin wrapper over ``PATCH /api/applications/{uuid}``
+    (platform admin only; refused for a Solution-managed app).
+
+    ``app_ref`` is a UUID, slug, or name. Only fields explicitly passed are
+    sent. ``scope`` is ``'global'`` or an organization UUID/name (platform
+    admin only, per ``ApplicationUpdate.scope``).
     """
-    Update application metadata.
+    if not app_ref:
+        return error_result("app_ref is required")
 
-    Args:
-        app_id: Application UUID (required)
-        name: New application name
-        description: New description
-
-    Returns:
-        ToolResult with updated fields
-    """
-    from uuid import UUID
-
-    from sqlalchemy import select
-
-    from src.models.orm.applications import Application
-
-    logger.info(f"MCP update_app called with id={app_id}")
+    body: dict[str, Any] = {}
+    if name is not None:
+        body["name"] = name
+    if description is not None:
+        body["description"] = description
+    if slug is not None:
+        body["slug"] = slug
+    if icon is not None:
+        body["icon"] = icon
+    if access_level is not None:
+        body["access_level"] = access_level
 
     try:
-        app_uuid = UUID(app_id)
-    except ValueError:
-        return error_result(f"Invalid app_id format: {app_id}")
+        async with rest_client(context) as http:
+            from bifrost.refs import RefResolver
 
+            resolver = RefResolver(http)
+            try:
+                app_uuid = await resolver.resolve("app", app_ref)
+            except Exception as exc:
+                return error_result(
+                    f"could not resolve app {app_ref!r}", _ref_error_payload(exc)
+                )
+            if scope is not None:
+                body["scope"] = "global" if scope == "global" else await resolver.resolve("org", scope)
+            if role_ids is not None:
+                body["role_ids"] = [await resolver.resolve("role", r) for r in role_ids]
+    except Exception as exc:
+        return error_result(f"invalid input: {exc}", _ref_error_payload(exc))
+
+    if not body:
+        return error_result("No updates provided")
+
+    status_code, resp = await call_rest(
+        context, "PATCH", f"/api/applications/{app_uuid}", json_body=body
+    )
+    if status_code != 200:
+        return _rest_error("Update Application", status_code, resp)
+    payload = resp if isinstance(resp, dict) else {"body": resp}
+    return success_result(f"Updated application: {payload.get('name', app_uuid)}", payload)
+
+
+async def bifrost_app_delete(context: Any, app_ref: str) -> ToolResult:
+    """Delete an Application — thin wrapper over ``DELETE /api/applications/{uuid}``
+    (platform admin only; refused for a Solution-managed app)."""
+    if not app_ref:
+        return error_result("app_ref is required")
     try:
-        async with get_tool_db(context) as db:
-            query = select(Application).where(Application.id == app_uuid)
+        app_uuid = await _resolve_app_ref(context, app_ref)
+    except Exception as exc:
+        return error_result(f"could not resolve app {app_ref!r}", _ref_error_payload(exc))
 
-            # Org cascade (external-aware): externals get no global tier.
-            query = apply_mcp_org_scope(query, Application, context)
-
-            result = await db.execute(query)
-            app = result.scalar_one_or_none()
-
-            if not app:
-                return error_result(f"Application not found: {app_id}")
-
-            # Writing requires scope bypass — the same rule the REST router
-            # enforces via get_application_for_write_or_404. Report the same
-            # not-found message as the lookup above so a caller can't
-            # distinguish "no write access" from "doesn't exist".
-            if _app_write_denied(context, app):
-                return error_result(f"Application not found: {app_id}")
-
-            # Solution-managed apps are read-only (criterion 6) — refuse before
-            # mutating so the caller gets the clean locked message, not a 500 from
-            # the before_flush backstop (audit M-MCP).
-            from src.services.solutions.guard import (
-                SOLUTION_MANAGED_MESSAGE,
-                is_solution_managed,
-            )
-
-            if is_solution_managed(app):
-                return error_result(SOLUTION_MANAGED_MESSAGE)
-
-            updates_made = []
-
-            if name is not None:
-                app.name = name
-                updates_made.append("name")
-
-            if description is not None:
-                app.description = description
-                updates_made.append("description")
-
-            if not updates_made:
-                return error_result("No updates specified")
-
-            await db.commit()
-
-            await publish_app_draft_update(
-                app_id=app_id,
-                user_id=str(context.user_id),
-                user_name=context.user_name or context.user_email or "Unknown",
-                entity_type="app",
-                entity_id=app_id,
-            )
-
-            display_text = f"Updated application: {app.name} ({', '.join(updates_made)})"
-            return success_result(display_text, {
-                "success": True,
-                "id": str(app.id),
-                "name": app.name,
-                "updates": updates_made,
-            })
-
-    except Exception as e:
-        logger.exception(f"Error updating app via MCP: {e}")
-        return error_result(f"Error updating app: {str(e)}")
+    status_code, resp = await call_rest(context, "DELETE", f"/api/applications/{app_uuid}")
+    if status_code not in (200, 204):
+        return _rest_error("Delete Application", status_code, resp)
+    return success_result(f"Deleted application {app_uuid}", {"deleted": app_uuid})
 
 
-async def publish_app(context: Any, app_id: str) -> ToolResult:
-    """Queue publishing through the canonical REST build-and-promote path."""
-    logger.info("MCP publish_app (HTTP bridge) id=%s", app_id)
+async def bifrost_app_publish(context: Any, app_id: str) -> ToolResult:
+    """Queue publishing through the canonical REST build-and-promote path —
+    thin wrapper over ``POST /api/applications/{app_id}/publish``."""
+    logger.info("MCP bifrost_app_publish id=%s", app_id)
     status_code, body = await call_rest(
         context,
         "POST",
@@ -443,18 +293,12 @@ async def publish_app(context: Any, app_id: str) -> ToolResult:
         json_body={},
     )
     if status_code != 202 or not isinstance(body, dict):
-        return error_result(
-            f"publish_app failed: HTTP {status_code}",
-            {"body": body},
-        )
+        return _rest_error("Publish Application", status_code, body)
     job_id = body.get("job_id")
-    return success_result(
-        f"Application publish queued: {job_id}",
-        body,
-    )
+    return success_result(f"Application publish queued: {job_id}", body)
 
 
-async def replace_app(
+async def bifrost_app_replace(
     context: Any,
     app_id: str,
     repo_path: str,
@@ -478,13 +322,104 @@ async def replace_app(
         context, "POST", f"/api/applications/{app_id}/replace", json_body=body
     )
     if status_code != 200:
-        return error_result(
-            f"replace_app failed: HTTP {status_code}", {"body": resp}
-        )
+        return _rest_error("Replace Application Source", status_code, resp)
     return success_result(
         f"Repointed application {app_id} to {repo_path}",
         resp if isinstance(resp, dict) else {"body": resp},
     )
+
+
+async def bifrost_app_validate(context: Any, app_id: str) -> ToolResult:
+    """Validate application files — thin wrapper over
+    ``POST /api/applications/{app_id}/validate``.
+
+    Compiles all files and checks for missing/unused dependencies, unknown
+    components, invalid workflow IDs, and missing required files.
+    """
+    if not app_id:
+        return error_result("app_id is required")
+
+    status_code, resp = await call_rest(
+        context, "POST", f"/api/applications/{app_id}/validate"
+    )
+    if status_code != 200:
+        return _rest_error("Validate Application", status_code, resp)
+    payload = resp if isinstance(resp, dict) else {"body": resp}
+
+    errors = payload.get("errors") or []
+    warnings = payload.get("warnings") or []
+    lines = []
+    if errors:
+        lines.append(f"Found {len(errors)} error(s):")
+        for e in errors:
+            line_info = f" (line {e['line']})" if e.get("line") else ""
+            lines.append(f"  ✗ [{e.get('file')}{line_info}] {e.get('message')}")
+    if warnings:
+        lines.append(f"\nFound {len(warnings)} warning(s):")
+        for w in warnings:
+            lines.append(f"  ⚠ [{w.get('file')}] {w.get('message')}")
+    if not errors and not warnings:
+        lines.append("✓ No issues found")
+
+    return success_result("\n".join(lines), payload)
+
+
+async def bifrost_app_dependencies_get(
+    context: Any,
+    app_id: str | None = None,
+    app_slug: str | None = None,
+) -> ToolResult:
+    """Get npm dependencies declared for an app — thin wrapper over
+    ``GET /api/applications/{app_id}/dependencies``."""
+    if not app_id and not app_slug:
+        return error_result("Either app_id or app_slug is required")
+
+    try:
+        app_uuid = await _resolve_app_ref(context, app_id or app_slug)  # type: ignore[arg-type]
+    except Exception as exc:
+        return error_result(
+            f"could not resolve app {(app_id or app_slug)!r}", _ref_error_payload(exc)
+        )
+
+    status_code, resp = await call_rest(
+        context, "GET", f"/api/applications/{app_uuid}/dependencies"
+    )
+    if status_code != 200:
+        return _rest_error("Get App Dependencies", status_code, resp)
+    deps = resp if isinstance(resp, dict) else {}
+    if not deps:
+        return success_result("No dependencies declared", {"dependencies": {}, "app_id": app_uuid})
+    dep_list = ", ".join(f"{k}@{v}" for k, v in deps.items())
+    return success_result(f"Dependencies: {dep_list}", {"dependencies": deps, "app_id": app_uuid})
+
+
+async def bifrost_app_dependencies_update(
+    context: Any,
+    app_id: str,
+    dependencies: dict[str, str],
+) -> ToolResult:
+    """Replace npm dependencies for an app — thin wrapper over
+    ``PUT /api/applications/{app_id}/dependencies`` (platform admin only;
+    refused for a Solution-managed app).
+
+    ``dependencies`` is a dict of ``{package_name: version}``. Pass an empty
+    dict to remove all.
+    """
+    if not app_id:
+        return error_result("app_id is required")
+
+    status_code, resp = await call_rest(
+        context, "PUT", f"/api/applications/{app_id}/dependencies", json_body=dependencies
+    )
+    if status_code != 200:
+        return _rest_error("Update App Dependencies", status_code, resp)
+    deps = resp if isinstance(resp, dict) else {}
+    if deps:
+        dep_list = ", ".join(f"{k}@{v}" for k, v in deps.items())
+        display_text = f"Updated dependencies: {dep_list}"
+    else:
+        display_text = "Removed all dependencies"
+    return success_result(display_text, {"dependencies": deps, "app_id": app_id})
 
 
 async def get_app_schema(context: Any) -> ToolResult:  # noqa: ARG001
@@ -507,7 +442,7 @@ Applications in Bifrost use TypeScript/TSX files.
 
 ## Tool Hierarchy
 
-**App Level**: `list_apps`, `get_app`, `update_app`, `publish_app`
+**App Level**: `bifrost_app_list`, `bifrost_app_get`, `bifrost_app_update`, `bifrost_app_publish`
 **File Level**: `code_list_files`, `code_get_file`, `code_create_file`, `code_update_file`, `code_delete_file`
 
 ## File Structure & Paths
@@ -549,7 +484,7 @@ Everything from `"bifrost"` is also available in scope without importing (for ba
 Apps can use npm packages loaded at runtime from esm.sh CDN.
 
 ### Managing dependencies:
-- Use `get_app_dependencies` / `update_app_dependencies` tools
+- Use `bifrost_app_dependencies_get` / `bifrost_app_dependencies_update` tools
 - Or use the REST API: `GET/PUT /api/applications/{app_id}/dependencies`
 - Dependencies are stored in `.bifrost/apps.yaml` and synced via git
 
@@ -575,7 +510,7 @@ import dayjs from "dayjs";
 
 ## Workflow Hooks
 
-**CRITICAL: Always use workflow UUIDs, not names.** Get IDs via `list_workflows` first.
+**CRITICAL: Always use workflow UUIDs, not names.** Get IDs via `bifrost_workflow_list` first.
 
 ### useWorkflowQuery(workflowId, params?, options?)
 
@@ -631,161 +566,6 @@ const { data } = useWorkflowQuery("workflow-uuid", { id }, { enabled: !!id });
     return success_result("App Builder schema documentation", {"schema": schema_doc})
 
 
-async def validate_app(context: Any, app_id: str) -> ToolResult:
-    """
-    Validate application files for common issues.
-
-    Compiles all files and runs static analysis checking for:
-    - Compilation errors (syntax, JSX, TypeScript)
-    - Missing dependencies (imported but not declared)
-    - Unused dependencies (declared but not imported)
-    - Unknown components
-    - Invalid workflow IDs
-    - Missing required files (_layout.tsx)
-
-    Args:
-        app_id: Application UUID (required)
-    """
-    import re
-    from uuid import UUID
-
-    from sqlalchemy import select
-
-    from src.models.orm.applications import Application
-    from src.models.orm.file_index import FileIndex
-    from src.models.orm.workflows import Workflow
-    from src.routers.applications import extract_external_deps
-
-    logger.info(f"MCP validate_app called with id={app_id}")
-
-    try:
-        app_uuid = UUID(app_id)
-    except ValueError:
-        return error_result(f"Invalid app_id format: {app_id}")
-
-    try:
-        async with get_tool_db(context) as db:
-            # Get the app
-            result = await db.execute(
-                select(Application).where(Application.id == app_uuid)
-            )
-            app = result.scalar_one_or_none()
-            if not app:
-                return error_result(f"Application not found: {app_id}")
-
-            prefix = app.repo_prefix
-
-            # Get all app files
-            fi_result = await db.execute(
-                select(FileIndex.path, FileIndex.content).where(
-                    FileIndex.path.startswith(prefix)
-                )
-            )
-            files = {row.path: row.content or "" for row in fi_result.all()}
-
-            errors: list[dict] = []
-            warnings: list[dict] = []
-
-            # Check required structure
-            if f"{prefix}_layout.tsx" not in files:
-                errors.append({"severity": "error", "file": "_layout.tsx", "message": "Missing required _layout.tsx"})
-            if f"{prefix}pages/index.tsx" not in files:
-                warnings.append({"severity": "warning", "file": "pages/index.tsx", "message": "Missing pages/index.tsx"})
-
-            # Get declared dependencies from DB
-            declared_deps = app.dependencies or {}
-            referenced_deps: set[str] = set()
-
-            # Collect TSX/TS files for compilation
-            compilable_files = []
-            for full_path, content in files.items():
-                rel_path = full_path[len(prefix):]
-                if not (rel_path.endswith(".tsx") or rel_path.endswith(".ts")):
-                    continue
-                compilable_files.append({"path": rel_path, "source": content, "full_path": full_path})
-
-            # Compile all files via the server-side compiler
-            if compilable_files:
-                from src.services.app_compiler import AppCompilerService
-                compiler = AppCompilerService()
-                compile_inputs = [{"path": f["path"], "source": f["source"]} for f in compilable_files]
-                compile_results = await compiler.compile_batch(compile_inputs)
-
-                for comp_file, comp_result in zip(compilable_files, compile_results):
-                    rel_path = comp_file["path"]
-                    content = comp_file["source"]
-
-                    if not comp_result.success:
-                        errors.append({"severity": "error", "file": rel_path, "message": f"Compilation failed: {comp_result.error}"})
-
-                    # Check for missing default export in pages and components
-                    if comp_result.success and comp_result.default_export is None:
-                        if rel_path.startswith("pages/") or rel_path.startswith("components/"):
-                            errors.append({"severity": "error", "file": rel_path, "message": "Missing default export. Pages and components must have a default export (e.g., export default function MyComponent() { ... })"})
-
-                    # Check _layout.tsx uses <Outlet /> not {children}
-                    if rel_path == "_layout.tsx":
-                        if "{children}" in content and "Outlet" not in content:
-                            errors.append({"severity": "error", "file": rel_path, "message": "Layout uses {children} but should use <Outlet /> for page routing. Replace {children} with <Outlet />."})
-
-                    # Handle scoped packages: @scope/pkg → @scope/pkg
-                    referenced_deps |= extract_external_deps(content)
-
-                    # Check workflow IDs
-                    wf_refs = re.findall(r'(?:useWorkflowQuery|useWorkflowMutation)\s*\(\s*["\']([^"\']+)["\']', content)
-                    for wf_ref in wf_refs:
-                        try:
-                            wf_uuid = UUID(wf_ref)
-                            wf_result = await db.execute(
-                                select(Workflow.id).where(Workflow.id == wf_uuid, Workflow.is_active == True)  # noqa: E712
-                            )
-                            if not wf_result.scalar_one_or_none():
-                                errors.append({"severity": "error", "file": rel_path, "message": f"Workflow '{wf_ref}' not found"})
-                        except ValueError:
-                            errors.append({"severity": "error", "file": rel_path, "message": f"'{wf_ref}' is not a valid UUID"})
-
-            # Check for missing/unused dependencies. Host-provided modules
-            # (DEFAULT_EXTERNALS — react, lucide-react, sonner, etc.) are
-            # resolved by the host import map and never need to appear in
-            # `app.dependencies`.
-            from src.services.app_bundler import DEFAULT_EXTERNALS
-
-            host_provided = set(DEFAULT_EXTERNALS)
-            user_referenced = referenced_deps - host_provided
-            for dep in user_referenced:
-                if dep not in declared_deps:
-                    errors.append({"severity": "error", "file": "dependencies", "message": f"Missing dependency: '{dep}' is imported but not declared in app dependencies"})
-            for dep in declared_deps:
-                if dep not in user_referenced:
-                    warnings.append({"severity": "warning", "file": "dependencies", "message": f"Unused dependency: '{dep}' is declared but not imported by any file"})
-
-            # Build result
-            lines = []
-            if errors:
-                lines.append(f"Found {len(errors)} error(s):")
-                for e in errors:
-                    line_info = f" (line {e['line']})" if e.get('line') else ""
-                    lines.append(f"  ✗ [{e['file']}{line_info}] {e['message']}")
-            if warnings:
-                lines.append(f"\nFound {len(warnings)} warning(s):")
-                for w in warnings:
-                    lines.append(f"  ⚠ [{w['file']}] {w['message']}")
-            if not errors and not warnings:
-                lines.append("✓ No issues found")
-
-            display_text = "\n".join(lines)
-            return success_result(display_text, {
-                "valid": len(errors) == 0,
-                "errors": errors,
-                "warnings": warnings,
-                "app_name": app.name,
-            })
-
-    except Exception as e:
-        logger.exception(f"Error validating app: {e}")
-        return error_result(f"Error validating app: {str(e)}")
-
-
 async def push_files(
     context: Any,
     files: dict[str, str],
@@ -795,7 +575,9 @@ async def push_files(
     Push multiple files to _repo/ in a single batch.
 
     Useful for creating or updating multiple files at once (e.g., pushing
-    an entire app or workflow set).
+    an entire app or workflow set). No catalog REST operation exists for
+    this batch shape (it spans many files/apps, not one Application
+    resource), so this tool keeps its ORM-backed implementation and name.
 
     Args:
         files: Map of repo_path to content, e.g. {"apps/my-app/pages/index.tsx": "..."}
@@ -870,11 +652,10 @@ async def push_files(
                 existing_paths = {row[0] for row in existing_files.all()}
                 delete_prefix_paths = existing_paths - set(files.keys())
 
-            # Write scope: writing or deleting any `_repo/` path requires
-            # scope bypass (platform admin or provider-org member) — this
-            # matches REST, where `_repo/` writes have no non-admin path at
-            # all (files.py's editor routes are CurrentSuperuser).
-            if not _write_scope_bypass(context):
+            # Write scope: writing or deleting any `_repo/` path requires a
+            # platform admin — matching REST, where `_repo/` writes are
+            # CurrentSuperuser (files.py's editor routes).
+            if not getattr(context, "is_platform_admin", False):
                 return error_result(
                     "You don't have permission to write one or more of these paths.",
                     {"denied_paths": sorted(set(files.keys()) | delete_prefix_paths)},
@@ -1006,178 +787,19 @@ async def push_files(
         return error_result(f"Error pushing files: {str(e)}")
 
 
-async def get_app_dependencies(
-    context: Any,
-    app_id: str | None = None,
-    app_slug: str | None = None,
-) -> ToolResult:
-    """
-    Get npm dependencies declared for an app.
-
-    Args:
-        app_id: Application UUID
-        app_slug: Application slug (alternative to app_id)
-
-    Returns:
-        ToolResult with dependencies dict {package_name: version}
-    """
-    from uuid import UUID
-
-    from sqlalchemy import select
-
-    from src.models.orm.applications import Application
-
-    if not app_id and not app_slug:
-        return error_result("Either app_id or app_slug is required")
-
-    try:
-        async with get_tool_db(context) as db:
-            if app_id:
-                try:
-                    app_uuid = UUID(app_id)
-                except ValueError:
-                    return error_result(f"Invalid app_id format: {app_id}")
-                query = select(Application).where(Application.id == app_uuid)
-            else:
-                query = select(Application).where(Application.slug == app_slug)
-
-            # Org cascade (external-aware): externals get no global tier.
-            query = apply_mcp_org_scope(query, Application, context)
-
-            result = await db.execute(query)
-            if app_id:
-                app = result.scalar_one_or_none()
-            else:
-                # Slugs are unique per install, not globally — disambiguate.
-                app = _pick_slug_row(list(result.scalars().all()), context.org_id)
-            if not app:
-                return error_result(f"Application not found: {app_id or app_slug}")
-
-            deps = app.dependencies or {}
-
-            if not deps:
-                return success_result(
-                    f"No dependencies declared for {app.name}",
-                    {"dependencies": {}, "app_id": str(app.id), "app_name": app.name},
-                )
-
-            dep_list = ", ".join(f"{k}@{v}" for k, v in deps.items())
-            return success_result(
-                f"{app.name} dependencies: {dep_list}",
-                {"dependencies": deps, "app_id": str(app.id), "app_name": app.name},
-            )
-
-    except Exception as e:
-        logger.exception(f"Error getting app dependencies: {e}")
-        return error_result(f"Error getting dependencies: {str(e)}")
-
-
-async def update_app_dependencies(
-    context: Any,
-    app_id: str,
-    dependencies: dict[str, str],
-) -> ToolResult:
-    """
-    Update npm dependencies for an app.
-
-    Args:
-        app_id: Application UUID (required)
-        dependencies: Dict of {package_name: version}. Pass empty dict to remove all.
-            Package names: lowercase, hyphens, optional @scope/ prefix.
-            Versions: semver with optional ^ or ~ (e.g., "2.12", "^1.5.3").
-            Max 20 packages.
-
-    Returns:
-        ToolResult with updated dependencies
-    """
-    import re
-    from uuid import UUID
-
-    from sqlalchemy import select
-
-    from src.models.orm.applications import Application
-    from src.services.app_storage import AppStorageService
-
-    MAX_DEPS = 20
-    PKG_NAME_RE = re.compile(r"^(@[a-z0-9-]+/)?[a-z0-9][a-z0-9._-]*$")
-    VERSION_RE = re.compile(r"^\^?~?\d+(\.\d+){0,2}$")
-
-    try:
-        app_uuid = UUID(app_id)
-    except ValueError:
-        return error_result(f"Invalid app_id format: {app_id}")
-
-    if len(dependencies) > MAX_DEPS:
-        return error_result(f"Too many dependencies (max {MAX_DEPS})")
-
-    for name, version in dependencies.items():
-        if not PKG_NAME_RE.match(name):
-            return error_result(f"Invalid package name: {name}")
-        if not VERSION_RE.match(version):
-            return error_result(f"Invalid version for {name}: {version}")
-
-    try:
-        async with get_tool_db(context) as db:
-            query = select(Application).where(Application.id == app_uuid)
-            # Org cascade (external-aware): externals get no global tier.
-            query = apply_mcp_org_scope(query, Application, context)
-
-            result = await db.execute(query)
-            app = result.scalar_one_or_none()
-            if not app:
-                return error_result(f"Application not found: {app_id}")
-
-            # Writing requires scope bypass (see _app_write_denied).
-            if _app_write_denied(context, app):
-                return error_result(f"Application not found: {app_id}")
-
-            # Solution-managed apps are read-only (criterion 6) — refuse before
-            # mutating so the caller gets the clean locked message, not a 500 from
-            # the before_flush backstop (audit M-MCP).
-            from src.services.solutions.guard import (
-                SOLUTION_MANAGED_MESSAGE,
-                is_solution_managed,
-            )
-
-            if is_solution_managed(app):
-                return error_result(SOLUTION_MANAGED_MESSAGE)
-
-            app.dependencies = dependencies if dependencies else None
-            await db.commit()
-
-            # Invalidate render cache
-            app_storage = AppStorageService()
-            await app_storage.invalidate_render_cache(str(app.id))
-
-            if dependencies:
-                dep_list = ", ".join(f"{k}@{v}" for k, v in dependencies.items())
-                display_text = f"Updated {app.name} dependencies: {dep_list}"
-            else:
-                display_text = f"Removed all dependencies from {app.name}"
-
-            return success_result(display_text, {
-                "dependencies": dependencies,
-                "app_id": str(app.id),
-                "app_name": app.name,
-            })
-
-    except Exception as e:
-        logger.exception(f"Error updating app dependencies: {e}")
-        return error_result(f"Error updating dependencies: {str(e)}")
-
-
 # Tool metadata for registration
 TOOLS = [
-    ("list_apps", "List Applications", "List all App Builder applications with file counts and URLs."),
-    ("create_app", "Create Application", "Create a new App Builder application with scaffold files."),
-    ("get_app", "Get Application", "Get application metadata and file list."),
-    ("update_app", "Update Application", "Update application metadata (name, description)."),
-    ("publish_app", "Publish Application", "Queue a rebuild and publish; returns a durable publish job ID."),
-    ("replace_app", "Replace Application Source Path", "Repoint an application's repo_path after source files have been moved/renamed."),
-    ("validate_app", "Validate Application", "Build and validate an app: compiles all files, checks for missing/unused dependencies, unknown components, and bad workflow IDs."),
+    ("bifrost_app_list", "List Applications", "List all App Builder applications with file counts and URLs."),
+    ("bifrost_app_create", "Create Application", "Create a new App Builder application with scaffold files."),
+    ("bifrost_app_get", "Get Application", "Get application metadata and file list."),
+    ("bifrost_app_update", "Update Application", "Update application metadata (name, description, slug, icon, scope, access, roles)."),
+    ("bifrost_app_delete", "Delete Application", "Delete an application."),
+    ("bifrost_app_publish", "Publish Application", "Queue a rebuild and publish; returns a durable publish job ID."),
+    ("bifrost_app_replace", "Replace Application Source Path", "Repoint an application's repo_path after source files have been moved/renamed."),
+    ("bifrost_app_validate", "Validate Application", "Build and validate an app: compiles all files, checks for missing/unused dependencies, unknown components, and bad workflow IDs."),
     ("push_files", "Push Files", "Push multiple files to _repo/ in a single batch. Useful for creating or updating entire apps or workflow sets."),
-("get_app_dependencies", "Get App Dependencies", "Get npm dependencies declared for an app."),
-    ("update_app_dependencies", "Update App Dependencies", "Update npm dependencies for an app. Pass a dict of {package: version}."),
+    ("bifrost_app_dependencies_get", "Get App Dependencies", "Get npm dependencies declared for an app."),
+    ("bifrost_app_dependencies_update", "Update App Dependencies", "Update npm dependencies for an app. Pass a dict of {package: version}."),
 ]
 
 
@@ -1186,17 +808,36 @@ def register_tools(mcp: Any, get_context_fn: Any) -> None:
     from src.services.mcp_server.generators.fastmcp_generator import register_tool_with_context
 
     tool_funcs = {
-        "list_apps": list_apps,
-        "create_app": create_app,
-        "get_app": get_app,
-        "update_app": update_app,
-        "publish_app": publish_app,
-        "replace_app": replace_app,
-        "validate_app": validate_app,
+        "bifrost_app_list": bifrost_app_list,
+        "bifrost_app_create": bifrost_app_create,
+        "bifrost_app_get": bifrost_app_get,
+        "bifrost_app_update": bifrost_app_update,
+        "bifrost_app_delete": bifrost_app_delete,
+        "bifrost_app_publish": bifrost_app_publish,
+        "bifrost_app_replace": bifrost_app_replace,
+        "bifrost_app_validate": bifrost_app_validate,
         "push_files": push_files,
-"get_app_dependencies": get_app_dependencies,
-        "update_app_dependencies": update_app_dependencies,
+        "bifrost_app_dependencies_get": bifrost_app_dependencies_get,
+        "bifrost_app_dependencies_update": bifrost_app_dependencies_update,
     }
 
-    for tool_id, name, description in TOOLS:
+    for tool_id, _name, description in TOOLS:
         register_tool_with_context(mcp, tool_funcs[tool_id], tool_id, description, get_context_fn)
+
+
+__all__ = [
+    "TOOLS",
+    "bifrost_app_create",
+    "bifrost_app_delete",
+    "bifrost_app_dependencies_get",
+    "bifrost_app_dependencies_update",
+    "bifrost_app_get",
+    "bifrost_app_list",
+    "bifrost_app_publish",
+    "bifrost_app_replace",
+    "bifrost_app_update",
+    "bifrost_app_validate",
+    "get_app_schema",
+    "push_files",
+    "register_tools",
+]

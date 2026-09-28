@@ -48,8 +48,8 @@ class TestMCPProtocol:
                 "system_prompt": "Test agent for MCP protocol",
                 "channels": ["chat"],
                 "system_tools": [
-                    "execute_workflow",
-                    "list_workflows",
+                    "bifrost_workflow_execute",
+                    "bifrost_workflow_list",
                     "list_integrations",
                     "bifrost_form_list",
                     "get_docs",
