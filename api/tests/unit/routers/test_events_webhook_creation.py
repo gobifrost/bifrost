@@ -19,6 +19,11 @@ def _session_that_assigns_ids() -> tuple[MagicMock, list[object]]:
     db.commit = AsyncMock()
     db.delete = AsyncMock()
     db.execute = AsyncMock()
+    # _validate_target_organization (routers/events.py) does `await
+    # db.get(Organization, organization_id)` — simulate the target org
+    # always existing so this transaction-ordering test isn't coupled to
+    # that unrelated validation.
+    db.get = AsyncMock(return_value=SimpleNamespace(id=uuid4()))
     added: list[object] = []
 
     def add(entity: object) -> None:

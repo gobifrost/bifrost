@@ -918,9 +918,6 @@ Usage: events get-subscription [OPTIONS] SOURCE_REF SUBSCRIPTION_ID
 
   Get a single subscription by source ref + subscription UUID.
 
-  The server has no per-subscription GET endpoint, so this lists the source's
-  subscriptions and filters client-side.
-
 Options:
   --json  Emit JSON instead of human-readable output.
   --help  Show this message and exit.
