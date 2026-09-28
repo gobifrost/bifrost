@@ -335,25 +335,13 @@ async def get_subscription(
     client: BifrostClient,
     resolver: RefResolver,
 ) -> None:
-    """Get a single subscription by source ref + subscription UUID.
-
-    The server has no per-subscription GET endpoint, so this lists the
-    source's subscriptions and filters client-side.
-    """
+    """Get a single subscription by source ref + subscription UUID."""
     source_uuid = await resolver.resolve("event_source", source_ref)
     response = await client.get(
-        f"/api/events/sources/{source_uuid}/subscriptions"
+        f"/api/events/sources/{source_uuid}/subscriptions/{subscription_id}"
     )
     response.raise_for_status()
-    data = response.json()
-    items = data.get("items", []) if isinstance(data, dict) else data
-    for item in items:
-        if str(item.get("id")) == subscription_id:
-            output_result(item, ctx=ctx)
-            return
-    raise click.ClickException(
-        f"subscription {subscription_id!r} not found on source {source_ref!r}"
-    )
+    output_result(response.json(), ctx=ctx)
 
 
 @events_group.command("create-source")

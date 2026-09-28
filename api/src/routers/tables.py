@@ -15,6 +15,7 @@ from uuid import UUID
 from fastapi import APIRouter, Body, HTTPException, Query, status
 from pydantic import ValidationError
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.claims.registry import referenced_claim_names
@@ -65,7 +66,9 @@ from src.models.contracts.tables import (
     TableUpdate,
 )
 from src.models.orm.custom_claims import CustomClaim as CustomClaimORM
+from src.models.orm.organizations import Organization
 from src.models.orm.tables import Table
+from src.services.audit import emit_audit
 from src.services.solutions.guard import assert_entity_id_not_solution_managed
 from src.repositories.tables import TableRepository
 from src.core.pubsub import (
@@ -139,6 +142,29 @@ async def _validate_table_policy_claim_refs(
         _validate_policy_claim_refs(policy.when, known)
 
 
+async def _validate_table_target_org(
+    db: AsyncSession,
+    organization_id: UUID | None,
+) -> None:
+    """Reject a non-existent target organization before a foreign-key flush."""
+    if organization_id is None:
+        return
+    exists = await db.scalar(
+        select(Organization.id).where(Organization.id == organization_id)
+    )
+    if exists is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": "Invalid Table target",
+                "errors": [
+                    f"organization_id '{organization_id}' does not reference "
+                    "an existing organization"
+                ],
+            },
+        )
+
+
 # =============================================================================
 # Table Endpoints
 # =============================================================================
@@ -173,6 +199,7 @@ async def create_table(
         target_org_id = _resolve_target_org_safe(ctx, scope)
     else:
         target_org_id = ctx.org_id
+    await _validate_table_target_org(ctx.db, target_org_id)
     try:
         await _validate_table_policy_claim_refs(ctx.db, target_org_id, data.policies)
     except ValueError as e:
@@ -184,12 +211,25 @@ async def create_table(
     repo = TableRepository(ctx.db, target_org_id, is_superuser=True)
     try:
         table = await repo.create_table(data, created_by=user.email)
-        return TablePublic.model_validate(table)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(e),
         )
+
+    await emit_audit(
+        ctx.db,
+        "table.create",
+        resource_type="table",
+        resource_id=table.id,
+        details={
+            "name": table.name,
+            "organization_id": (
+                str(table.organization_id) if table.organization_id else None
+            ),
+        },
+    )
+    return TablePublic.model_validate(table)
 
 
 @router.get(
@@ -433,15 +473,15 @@ async def update_table(
     Row DATA (documents) stays editable — that's runtime state (criterion 7).
     """
     await assert_entity_id_not_solution_managed(ctx.db, Table, table_id)
+    existing_table = (
+        await ctx.db.execute(select(Table).where(Table.id == table_id))
+    ).scalar_one_or_none()
+    if existing_table is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Table '{table_id}' not found",
+        )
     if "policies" in data.model_fields_set:
-        existing_table = (
-            await ctx.db.execute(select(Table).where(Table.id == table_id))
-        ).scalar_one_or_none()
-        if existing_table is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Table '{table_id}' not found",
-            )
         try:
             await _validate_table_policy_claim_refs(
                 ctx.db,
@@ -458,10 +498,16 @@ async def update_table(
     repo = TableRepository(ctx.db, ctx.org_id, is_superuser=True)
     try:
         table = await repo.update_table(table_id, data)
-    except ValueError as e:
+    except (IntegrityError, ValueError) as e:
+        await ctx.db.rollback()
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(e),
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Table '{data.name or existing_table.name}' already exists "
+                "in the target scope"
+                if isinstance(e, IntegrityError)
+                else str(e)
+            ),
         )
 
     if not table:
@@ -469,6 +515,14 @@ async def update_table(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Table '{table_id}' not found",
         )
+
+    await emit_audit(
+        ctx.db,
+        "table.update",
+        resource_type="table",
+        resource_id=table.id,
+        details={"name": table.name, "fields": sorted(data.model_fields_set)},
+    )
 
     if "policies" in data.model_fields_set:
         # Subscribers re-read policies on a separate database connection when
@@ -493,6 +547,11 @@ async def delete_table(
     """Delete a table and all its documents by ID (platform admin only)."""
     from shared.sdk_table_metadata import SDKTableMetadataError, delete_sdk_table
 
+    existing_table = (
+        await ctx.db.execute(select(Table).where(Table.id == table_id))
+    ).scalar_one_or_none()
+    table_name = existing_table.name if existing_table else None
+
     try:
         success = await delete_sdk_table(
             ctx.db, table_id=table_id, org_id=ctx.org_id
@@ -508,6 +567,14 @@ async def delete_table(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Table '{table_id}' not found",
         )
+
+    await emit_audit(
+        ctx.db,
+        "table.delete",
+        resource_type="table",
+        resource_id=table_id,
+        details={"name": table_name},
+    )
 
 
 # =============================================================================

@@ -3155,6 +3155,25 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
         },
     ),
     OperationDefinition(
+        operation_id="events.subscriptions.get",
+        summary="Get one Event Subscription",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="GET",
+            path="/api/events/sources/{source_id}/subscriptions/{subscription_id}",
+            response_model="EventSubscriptionResponse",
+        ),
+        cli=CliOperationBinding(path=("events", "get-subscription")),
+        mcp=McpOperationBinding(name="bifrost_event_subscription_get"),
+        native_builder=True,
+        action_scopes=("events.read",),
+        authorization_resolver="events.read and parent Event Source visibility",
+        exclusions={
+            "manifest": "The read does not mutate Event Subscription manifest state.",
+            "sdk": _EVENT_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
         operation_id="events.subscriptions.create",
         summary="Create an Event Subscription",
         target_kind=OperationTargetKind.COLLECTION,

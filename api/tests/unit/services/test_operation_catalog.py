@@ -775,6 +775,12 @@ EVENT_OPERATIONS = {
         ("events", "list-subscriptions"),
         "bifrost_event_subscription_list",
     ),
+    "events.subscriptions.get": (
+        "GET",
+        "/api/events/sources/{source_id}/subscriptions/{subscription_id}",
+        ("events", "get-subscription"),
+        "bifrost_event_subscription_get",
+    ),
     "events.subscriptions.create": (
         "POST",
         "/api/events/sources/{source_id}/subscriptions",
