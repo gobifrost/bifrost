@@ -1141,6 +1141,13 @@ def get_client() -> BifrostClient:
     return BifrostClient.get_instance()
 
 
+def _install_cached_access_token(api_url: str, access_token: str) -> None:
+    """Update clients already held by this process without creating a new one."""
+    cached = getattr(_thread_local, "bifrost_client", None)
+    if cached is not None and cached.api_url == api_url.rstrip("/"):
+        cached.install_access_token(access_token)
+
+
 def has_credentials() -> bool:
     """Check if API credentials are available (without triggering login flow).
 
