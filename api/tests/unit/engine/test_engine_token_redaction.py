@@ -41,7 +41,7 @@ def _request(func, **overrides):
         "caller": _caller(),
         "organization": _org(),
         "func": func,
-        "name": "leaky_workflow",
+        "name": "engine_token_workflow",
         "engine_token": _ENGINE_TOKEN,
     }
     args.update(overrides)
@@ -49,11 +49,11 @@ def _request(func, **overrides):
 
 
 async def test_engine_token_redacted_from_result():
-    async def leaky():
+    async def uses_engine_token():
         import os
         return {"token": os.environ.get("BIFROST_ACCESS_TOKEN", _ENGINE_TOKEN)}
 
-    result = await execute(_request(leaky))
+    result = await execute(_request(uses_engine_token))
     assert result.status == ExecutionStatus.SUCCESS
     assert result.result["token"] == "[REDACTED]"
 
@@ -61,31 +61,31 @@ async def test_engine_token_redacted_from_result():
 async def test_engine_token_redacted_from_logs():
     import logging
 
-    async def leaky():
+    async def uses_engine_token():
         logging.getLogger(__name__).info("using token %s", _ENGINE_TOKEN)
         return "ok"
 
-    result = await execute(_request(leaky))
+    result = await execute(_request(uses_engine_token))
     assert result.status == ExecutionStatus.SUCCESS
     assert result.logs, "expected the log line to be captured"
     assert _ENGINE_TOKEN not in json.dumps(result.logs)
 
 
 async def test_engine_token_redacted_from_error_message():
-    async def leaky():
+    async def uses_engine_token():
         raise RuntimeError(f"auth failed for {_ENGINE_TOKEN}")
 
-    result = await execute(_request(leaky))
+    result = await execute(_request(uses_engine_token))
     assert result.status == ExecutionStatus.FAILED
     assert _ENGINE_TOKEN not in (result.error_message or "")
 
 
 async def test_engine_token_redacted_from_variables():
-    async def leaky():
-        captured_token = _ENGINE_TOKEN  # noqa: F841 - captured via variable tracing
-        return "ok"
+    async def holds_token_in_local():
+        captured_token = _ENGINE_TOKEN  # traced as a local variable
+        return "ok" if captured_token else "missing"
 
-    result = await execute(_request(leaky))
+    result = await execute(_request(holds_token_in_local))
     assert result.status == ExecutionStatus.SUCCESS
     assert _ENGINE_TOKEN not in json.dumps(result.variables or {})
 
