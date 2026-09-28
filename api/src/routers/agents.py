@@ -85,6 +85,7 @@ async def _validate_user_tool_access(
 
     from src.models.orm.users import UserRole
     from src.models.orm.workflow_roles import WorkflowRole
+    from shared.workflow_access import user_can_access_workflow
 
     # Get user's role IDs
     result = await db.execute(
@@ -107,18 +108,17 @@ async def _validate_user_tool_access(
         if not workflow.is_active:
             raise HTTPException(422, f"Tool '{workflow.name}' is inactive")
 
-        if workflow.access_level == "everyone":
-            continue
-
-        if workflow.access_level == "authenticated" and not is_external:
-            continue
-
         result = await db.execute(
             select(WorkflowRole.role_id).where(WorkflowRole.workflow_id == workflow_uuid)
         )
         workflow_role_ids = set(result.scalars().all())
 
-        if not workflow_role_ids or not workflow_role_ids.intersection(user_role_ids):
+        if not user_can_access_workflow(
+            access_level=workflow.access_level,
+            is_external=is_external,
+            user_role_ids=user_role_ids,
+            workflow_role_ids=workflow_role_ids,
+        ):
             raise HTTPException(403, f"You do not have role access to tool '{workflow.name}'")
 
 

@@ -155,6 +155,7 @@ class TestValidateUserToolAccessExternal:
         db.execute.side_effect = [
             _rows_result([]),  # user's roles: none
             _scalar_result(_workflow("authenticated")),
+            _rows_result([]),  # workflow's roles: none (unused — access_level grants first)
         ]
         await _validate_user_tool_access(db, uuid4(), [tool_id])
 

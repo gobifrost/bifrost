@@ -38,11 +38,15 @@ def _register_tool(e2e_client, headers, organization_id: str | None) -> dict:
     assert register_resp.status_code in (200, 201), register_resp.text
     workflow = register_resp.json()
 
-    # Pin org scope (endpoint distinguishes unset from explicit null via model_fields_set)
+    # Pin org scope (endpoint distinguishes unset from explicit null via
+    # model_fields_set). access_level="everyone" keeps these fixtures
+    # visible to any authenticated caller regardless of role, so these
+    # tests exercise org scope only — not the separate access_level filter
+    # covered by test_tools_access_filter.py.
     patch_resp = e2e_client.patch(
         f"/api/workflows/{workflow['id']}",
         headers=headers,
-        json={"organization_id": organization_id},
+        json={"organization_id": organization_id, "access_level": "everyone"},
     )
     assert patch_resp.status_code == 200, patch_resp.text
     return {**patch_resp.json(), "_path": path}

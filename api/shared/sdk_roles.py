@@ -423,6 +423,10 @@ async def assign_users_to_role(
     from src.models import User as UserORM
     from src.models import UserRole as UserRoleORM
     from src.services.audit import emit_audit
+    from shared.system_account_guard import (
+        SYSTEM_ACCOUNT_ROLE_MESSAGE,
+        is_system_account,
+    )
 
     now = datetime.now(timezone.utc)
     # Track newly-assigned users so we can invalidate the per-user role cache.
@@ -441,6 +445,9 @@ async def assign_users_to_role(
             if not user_uuid:
                 logger.warning(f"User {log_safe(user_id_str)} not found, skipping")
                 continue
+
+        if is_system_account(user_uuid):
+            raise RoleServiceError(422, SYSTEM_ACCOUNT_ROLE_MESSAGE)
 
         # Check if already assigned
         existing = await session.execute(

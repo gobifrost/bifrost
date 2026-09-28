@@ -372,20 +372,38 @@ async def e2e_external_users_global_tool(q: str = "x") -> str:
 
 
 class TestExternalToolsCatalog:
-    """The tools catalog is org-cascade scoped the same for every principal —
-    an external sees global tool metadata like any org user."""
+    """The tools catalog lists only tools the caller can use: an external sees
+    a global tool at the ``everyone`` tier, not a ``role_based`` one without a
+    matching role."""
 
-    def test_external_user_sees_global_tool(
-        self, e2e_client, external_user, global_tool
-    ):
+    def _external_tool_ids(self, e2e_client, external_user) -> set[str]:
         resp = e2e_client.get(
             "/api/tools?type=workflow", headers=external_user.headers
         )
         assert resp.status_code == 200, resp.text
-        tools = resp.json()["tools"]
-        assert global_tool["id"] in {t["id"] for t in tools}, (
-            "external user lists global tools like any org user"
+        return {t["id"] for t in resp.json()["tools"]}
+
+    def test_external_user_sees_everyone_tier_global_tool(
+        self, e2e_client, platform_admin, external_user, global_tool
+    ):
+        patch = e2e_client.patch(
+            f"/api/workflows/{global_tool['id']}",
+            headers=platform_admin.headers,
+            json={"access_level": "everyone"},
         )
+        assert patch.status_code == 200, patch.text
+        assert global_tool["id"] in self._external_tool_ids(e2e_client, external_user)
+
+    def test_external_user_does_not_see_role_based_global_tool_without_role(
+        self, e2e_client, platform_admin, external_user, global_tool
+    ):
+        patch = e2e_client.patch(
+            f"/api/workflows/{global_tool['id']}",
+            headers=platform_admin.headers,
+            json={"access_level": "role_based"},
+        )
+        assert patch.status_code == 200, patch.text
+        assert global_tool["id"] not in self._external_tool_ids(e2e_client, external_user)
 
 
 @pytest.fixture

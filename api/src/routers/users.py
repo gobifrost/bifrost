@@ -19,6 +19,7 @@ from src.core.db_deps import DbSession
 from src.services.audit import emit_audit
 from src.services.events import emit_event
 from src.services.user_invite_service import UserInviteService
+from shared.system_account_guard import SYSTEM_ACCOUNT_ROLE_MESSAGE, is_system_account
 from src.models import User as UserORM, UserRole as UserRoleORM, FormRole as FormRoleORM
 from src.models import (
     BulkUserFailure,
@@ -178,6 +179,9 @@ async def bulk_update_users(
         elif request.operation == "replace_roles":
             if uid == actor_id:
                 failed.append(BulkUserFailure(user_id=uid, reason="Cannot change your own roles via bulk action"))
+                continue
+            if is_system_account(uid):
+                failed.append(BulkUserFailure(user_id=uid, reason=SYSTEM_ACCOUNT_ROLE_MESSAGE))
                 continue
             await db.execute(
                 UserRoleORM.__table__.delete().where(UserRoleORM.user_id == uid)
