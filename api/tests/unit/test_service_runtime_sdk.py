@@ -69,11 +69,16 @@ def test_rotated_service_credentials_update_cached_sdk_client(monkeypatch):
     )
 
     monkeypatch.setenv("BIFROST_API_URL", "http://service-test.invalid")
+    # install_service_credentials mutates both variables directly; register
+    # them with monkeypatch so later SDK tests see their original environment.
+    monkeypatch.setenv("BIFROST_ACCESS_TOKEN", "test-placeholder")
+    monkeypatch.setenv("BIFROST_REFRESH_TOKEN", "test-placeholder")
     previous = getattr(_thread_local, "bifrost_client", None)
     _thread_local.bifrost_client = None
     _install_engine_socket("/tmp/service-test.sock")
     try:
         assert install_service_credentials("initial-token")
+        assert getattr(_thread_local, "bifrost_client", None) is None
         client = get_client()
         assert client._get_engine_async_client().headers["Authorization"] == "Bearer initial-token"
 
