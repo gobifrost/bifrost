@@ -294,7 +294,9 @@ SIGNATURE_PARITY_SPECS: list[dict] = [
     {
         "model_path": "src.models.contracts.tables:TableUpdate",
         "tool_path": "src.services.mcp_server.tools.tables:bifrost_table_update",
-        "extra_args": {"table_ref"},
+        # ``organization_id`` is excluded (TableUpdate is now in
+        # _ORG_TARGET_EXCLUDE); the tool exposes org (re)targeting as ``scope``.
+        "extra_args": {"table_ref", "scope"},
         "field_renames": {},
     },
 ]
@@ -1509,6 +1511,40 @@ class TestMcpParityTables:
         delete_result = await bifrost_table_delete(admin_context, table_ref=table_id)
         assert delete_result.structured_content is not None
         assert delete_result.structured_content.get("deleted") == table_id
+
+    async def test_table_rescope_via_scope_param(
+        self, admin_context, org1
+    ) -> None:
+        """``bifrost_table_update(scope=...)`` rescopes a table (RBAC R1b
+        batch 4 revision 2 — table rescoping restored on all surfaces)."""
+        from src.services.mcp_server.tools.tables import (
+            bifrost_table_create,
+            bifrost_table_delete,
+            bifrost_table_update,
+        )
+
+        name = f"mcp_parity_table_rescope_{uuid4().hex[:8]}"
+        create_result = await bifrost_table_create(admin_context, name=name)
+        created = create_result.structured_content or {}
+        assert "error" not in created, created
+        table_id = str(created["id"])
+
+        try:
+            to_org = await bifrost_table_update(
+                admin_context, table_ref=table_id, scope=org1["id"]
+            )
+            to_org_payload = to_org.structured_content or {}
+            assert "error" not in to_org_payload, to_org_payload
+            assert to_org_payload.get("organization_id") == org1["id"]
+
+            to_global = await bifrost_table_update(
+                admin_context, table_ref=table_id, scope="global"
+            )
+            to_global_payload = to_global.structured_content or {}
+            assert "error" not in to_global_payload, to_global_payload
+            assert to_global_payload.get("organization_id") is None
+        finally:
+            await bifrost_table_delete(admin_context, table_ref=table_id)
 
     async def test_regular_user_cannot_list_tables(
         self, org_user_context: MockMCPContext

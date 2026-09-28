@@ -481,12 +481,30 @@ async def update_table(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Table '{table_id}' not found",
         )
-    if "policies" in data.model_fields_set:
+    policy_or_scope_changed = bool(
+        {"policies", "organization_id"} & data.model_fields_set
+    )
+    if policy_or_scope_changed:
+        effective_org_id = (
+            data.organization_id
+            if "organization_id" in data.model_fields_set
+            else existing_table.organization_id
+        )
+        effective_policies = (
+            data.policies
+            if "policies" in data.model_fields_set
+            else (
+                TablePolicies.model_validate(existing_table.access)
+                if existing_table.access is not None
+                else None
+            )
+        )
+        await _validate_table_target_org(ctx.db, effective_org_id)
         try:
             await _validate_table_policy_claim_refs(
                 ctx.db,
-                existing_table.organization_id,
-                data.policies,
+                effective_org_id,
+                effective_policies,
                 existing_table.solution_id,
             )
         except ValueError as e:
@@ -494,6 +512,8 @@ async def update_table(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=str(e),
             )
+
+    original_org_id = existing_table.organization_id
 
     repo = TableRepository(ctx.db, ctx.org_id, is_superuser=True)
     try:
@@ -516,12 +536,23 @@ async def update_table(
             detail=f"Table '{table_id}' not found",
         )
 
+    audit_details: dict[str, Any] = {
+        "name": table.name,
+        "fields": sorted(data.model_fields_set),
+    }
+    if "organization_id" in data.model_fields_set:
+        audit_details["organization_id_before"] = (
+            str(original_org_id) if original_org_id else None
+        )
+        audit_details["organization_id_after"] = (
+            str(table.organization_id) if table.organization_id else None
+        )
     await emit_audit(
         ctx.db,
         "table.update",
         resource_type="table",
         resource_id=table.id,
-        details={"name": table.name, "fields": sorted(data.model_fields_set)},
+        details=audit_details,
     )
 
     if "policies" in data.model_fields_set:

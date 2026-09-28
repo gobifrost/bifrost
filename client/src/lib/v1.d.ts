@@ -26798,6 +26798,11 @@ export interface components {
             schema?: {
                 [key: string]: unknown;
             } | null;
+            /**
+             * Organization Id
+             * @description Organization ID. Null for global table.
+             */
+            organization_id?: string | null;
             /** @description Optional row-level access policies. See docs/superpowers/specs/2026-04-30-table-policies-design.md. */
             policies?: components["schemas"]["TablePolicies"] | null;
         };

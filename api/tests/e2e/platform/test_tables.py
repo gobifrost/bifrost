@@ -84,6 +84,83 @@ class TestTableUpdatePublic:
         assert resp.status_code == 409, resp.text
         assert "already exists" in resp.text
 
+    def test_update_rescope_global_to_org(self, e2e_client, platform_admin, org1):
+        table_id = _create_table(e2e_client, platform_admin.headers, f"rs_g2o_{uuid4().hex[:8]}")
+        resp = e2e_client.patch(
+            f"/api/tables/{table_id}",
+            headers=platform_admin.headers,
+            json={"organization_id": org1["id"]},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["organization_id"] == org1["id"]
+
+    def test_update_rescope_org_to_global(self, e2e_client, platform_admin, org1):
+        table_id = _create_table(
+            e2e_client, platform_admin.headers, f"rs_o2g_{uuid4().hex[:8]}", org1["id"]
+        )
+        resp = e2e_client.patch(
+            f"/api/tables/{table_id}",
+            headers=platform_admin.headers,
+            json={"organization_id": None},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["organization_id"] is None
+
+    def test_update_rescope_org_to_other_org(
+        self, e2e_client, platform_admin, org1
+    ):
+        other_org_resp = e2e_client.post(
+            "/api/organizations",
+            headers=platform_admin.headers,
+            json={"name": f"Rescope Target Org {uuid4().hex[:8]}"},
+        )
+        assert other_org_resp.status_code == 201, other_org_resp.text
+        other_org_id = other_org_resp.json()["id"]
+
+        table_id = _create_table(
+            e2e_client, platform_admin.headers, f"rs_o2o_{uuid4().hex[:8]}", org1["id"]
+        )
+        try:
+            resp = e2e_client.patch(
+                f"/api/tables/{table_id}",
+                headers=platform_admin.headers,
+                json={"organization_id": other_org_id},
+            )
+            assert resp.status_code == 200, resp.text
+            assert resp.json()["organization_id"] == other_org_id
+        finally:
+            e2e_client.delete(
+                f"/api/organizations/{other_org_id}", headers=platform_admin.headers
+            )
+
+    def test_update_rescope_nonexistent_org_returns_422(
+        self, e2e_client, platform_admin
+    ):
+        table_id = _create_table(e2e_client, platform_admin.headers, f"rs_bogus_{uuid4().hex[:8]}")
+        resp = e2e_client.patch(
+            f"/api/tables/{table_id}",
+            headers=platform_admin.headers,
+            json={"organization_id": str(uuid4())},
+        )
+        assert resp.status_code == 422, resp.text
+        assert "does not reference an existing organization" in resp.text
+
+    def test_update_rescope_name_clash_in_target_scope_returns_409(
+        self, e2e_client, platform_admin, org1
+    ):
+        """Moving a global table into an org where the name is already taken 409s."""
+        shared_name = f"rs_clash_{uuid4().hex[:8]}"
+        _create_table(e2e_client, platform_admin.headers, shared_name, org1["id"])
+        moving_id = _create_table(e2e_client, platform_admin.headers, shared_name)
+
+        resp = e2e_client.patch(
+            f"/api/tables/{moving_id}",
+            headers=platform_admin.headers,
+            json={"organization_id": org1["id"]},
+        )
+        assert resp.status_code == 409, resp.text
+        assert "already exists" in resp.text
+
 
 @pytest.mark.e2e
 class TestTableDefaultDeny:

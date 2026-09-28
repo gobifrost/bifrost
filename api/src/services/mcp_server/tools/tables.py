@@ -68,7 +68,7 @@ async def _assemble_table_body(
     async with rest_client(context) as http:
         resolver = RefResolver(http)
         body = await assemble_body(model_cls, fields, resolver=resolver)
-        if not is_update and scope is not None:
+        if scope is not None:
             if scope == "global":
                 body["organization_id"] = None
             else:
@@ -146,12 +146,12 @@ async def bifrost_table_update(
     description: str | None = None,
     schema: dict[str, Any] | None = None,
     policies: dict[str, Any] | None = None,
+    scope: str | None = None,
 ) -> ToolResult:
     """Update a Table through ``PATCH /api/tables/{uuid}`` (platform admin only).
 
-    Table rescoping (moving between organizations) is not supported through
-    this endpoint — ``organization_id`` is not a writable field on Table
-    updates.
+    ``scope`` re-scopes the table: ``global``, an organization UUID/name, or
+    omitted to leave the current scope unchanged.
     """
     if not table_ref:
         return error_result("table_ref is required")
@@ -162,7 +162,7 @@ async def bifrost_table_update(
 
     fields = {"name": name, "description": description, "schema": schema, "policies": policies}
     try:
-        body = await _assemble_table_body(context, fields, is_update=True, scope=None)
+        body = await _assemble_table_body(context, fields, is_update=True, scope=scope)
     except Exception as exc:
         return error_result(f"invalid Table input: {exc}", _ref_error_payload(exc))
     if not body:

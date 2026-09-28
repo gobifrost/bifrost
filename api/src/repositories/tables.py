@@ -115,22 +115,30 @@ class TableRepository(OrgScopedRepository[Table]):
         if not table:
             return None
 
-        if data.name is not None and data.name != table.name:
-            duplicate = await self.session.scalar(
-                select(self.model.id)
-                .where(
-                    self.model.id != table.id,
-                    self.model.name == data.name,
-                    self.model.solution_id.is_(None),
-                    self.model.organization_id.is_(table.organization_id)
-                    if table.organization_id is None
-                    else self.model.organization_id == table.organization_id,
-                )
-                .limit(1)
+        if {"name", "organization_id"} & data.model_fields_set:
+            target_name = data.name if data.name is not None else table.name
+            target_org_id = (
+                data.organization_id
+                if "organization_id" in data.model_fields_set
+                else table.organization_id
             )
+            duplicate_query = select(self.model.id).where(
+                self.model.id != table.id,
+                self.model.name == target_name,
+                self.model.solution_id.is_(None),
+            )
+            if target_org_id is None:
+                duplicate_query = duplicate_query.where(
+                    self.model.organization_id.is_(None)
+                )
+            else:
+                duplicate_query = duplicate_query.where(
+                    self.model.organization_id == target_org_id
+                )
+            duplicate = await self.session.scalar(duplicate_query.limit(1))
             if duplicate is not None:
                 raise ValueError(
-                    f"Table '{data.name}' already exists in the target scope"
+                    f"Table '{target_name}' already exists in the target scope"
                 )
 
         if data.name is not None:
@@ -139,6 +147,8 @@ class TableRepository(OrgScopedRepository[Table]):
             table.description = data.description
         if data.schema is not None:
             table.schema = data.schema
+        if "organization_id" in data.model_fields_set:
+            table.organization_id = data.organization_id
         if "policies" in data.model_fields_set:
             table.access = (
                 data.policies.model_dump(mode="json", by_alias=True)
