@@ -46,6 +46,11 @@ def install_service_credentials(token: str) -> bool:
     os.environ["BIFROST_API_URL"] = api_url
     os.environ["BIFROST_ACCESS_TOKEN"] = token
     os.environ["BIFROST_REFRESH_TOKEN"] = token
+    # The SDK caches its client after the first call. Updating only the
+    # environment leaves that client's HTTP transports using an expired token.
+    from bifrost.client import get_client
+
+    get_client().install_access_token(token)
     return True
 
 
