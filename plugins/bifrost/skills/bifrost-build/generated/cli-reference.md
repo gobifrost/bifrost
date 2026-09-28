@@ -705,9 +705,8 @@ Usage: configs get [OPTIONS] REF
 
   Get a single configuration value by UUID or key.
 
-  The server does not expose a per-record GET endpoint for configs, so this
-  resolves the ref via :class:`RefResolver` and locates the entry in the ``GET
-  /api/config`` list payload.
+  Resolves the ref via :class:`RefResolver`, then reads ``GET
+  /api/config/{uuid}`` directly.
 
 Options:
   --json  Emit JSON instead of human-readable output.
@@ -1565,8 +1564,8 @@ Usage: integrations update [OPTIONS] REF
 
   Update an integration.
 
-  ``REF`` is a UUID or integration name. When ``--config-schema`` replaces the
-  existing schema with one that drops keys, the command refuses unless
+  ``REF`` is a UUID or integration name. When ``--config-schema`` drops keys
+  that have saved ``Config`` values, the server refuses with 409 unless
   ``--force-remove-keys`` is passed — removed keys cascade-delete related
   ``Config`` rows (integration-level defaults and per-org overrides).
 
@@ -1778,8 +1777,8 @@ Usage: policy-rule get [OPTIONS] {file|table} NAME
 
   Get a single policy rule by domain and name.
 
-  Uses the usages endpoint (which 404s when not found) to confirm the rule
-  exists, then fetches the full record from the list.
+  Reads ``GET /api/policy-rules/{domain}/{name}`` directly. Solution-managed
+  rules are readable (writes stay blocked).
 
 Options:
   --scope TEXT  Organization UUID for org-scoped rules.
