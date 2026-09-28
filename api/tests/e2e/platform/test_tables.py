@@ -54,6 +54,36 @@ class TestTableUpdatePublic:
         assert get_resp.status_code == 200
         assert get_resp.json()["name"] == new_name
 
+    def test_create_with_nonexistent_target_org_returns_422(
+        self, e2e_client, platform_admin
+    ):
+        """A bogus organization_id 422s before hitting the DB FK (_validate_table_target_org)."""
+        resp = e2e_client.post(
+            "/api/tables",
+            headers=platform_admin.headers,
+            json={
+                "name": f"bogus_org_{uuid4().hex[:8]}",
+                "organization_id": str(uuid4()),
+            },
+        )
+        assert resp.status_code == 422, resp.text
+        assert "does not reference an existing organization" in resp.text
+
+    def test_rename_collision_returns_409_not_422(self, e2e_client, platform_admin):
+        """Renaming a table onto an existing name in the same scope 409s
+        (IntegrityError -> 409), not a raw 422 exception string."""
+        existing_name = f"rn_taken_{uuid4().hex[:8]}"
+        _create_table(e2e_client, platform_admin.headers, existing_name)
+        other_id = _create_table(e2e_client, platform_admin.headers, f"rn_other_{uuid4().hex[:8]}")
+
+        resp = e2e_client.patch(
+            f"/api/tables/{other_id}",
+            headers=platform_admin.headers,
+            json={"name": existing_name},
+        )
+        assert resp.status_code == 409, resp.text
+        assert "already exists" in resp.text
+
 
 @pytest.mark.e2e
 class TestTableDefaultDeny:

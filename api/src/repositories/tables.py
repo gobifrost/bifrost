@@ -115,6 +115,24 @@ class TableRepository(OrgScopedRepository[Table]):
         if not table:
             return None
 
+        if data.name is not None and data.name != table.name:
+            duplicate = await self.session.scalar(
+                select(self.model.id)
+                .where(
+                    self.model.id != table.id,
+                    self.model.name == data.name,
+                    self.model.solution_id.is_(None),
+                    self.model.organization_id.is_(table.organization_id)
+                    if table.organization_id is None
+                    else self.model.organization_id == table.organization_id,
+                )
+                .limit(1)
+            )
+            if duplicate is not None:
+                raise ValueError(
+                    f"Table '{data.name}' already exists in the target scope"
+                )
+
         if data.name is not None:
             table.name = data.name
         if data.description is not None:
