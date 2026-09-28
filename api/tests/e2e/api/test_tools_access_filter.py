@@ -77,6 +77,8 @@ def _cleanup_tool(e2e_client, headers, tool: dict) -> None:
     try:
         e2e_client.delete("/api/files/editor", headers=headers, params={"path": path})
     except Exception:
+        # Best-effort teardown: a failed delete must not mask the test's own
+        # result; each test registers under a unique path, so leftovers don't collide.
         pass
 
 
