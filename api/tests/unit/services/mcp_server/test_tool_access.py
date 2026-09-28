@@ -572,7 +572,7 @@ class TestSystemToolMetadata:
             # Original tools
             "execute_workflow",
             "list_workflows",
-            "list_integrations",
+            "bifrost_integration_list",
             "list_forms",
             "get_docs",
             "search_knowledge",

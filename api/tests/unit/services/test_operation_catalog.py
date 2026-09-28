@@ -605,6 +605,12 @@ POLICY_RULE_OPERATIONS = {
         ("policy-rules", "create"),
         "bifrost_policy_rule_create",
     ),
+    "policy.rules.get": (
+        "GET",
+        "/api/policy-rules/{domain}/{name}",
+        ("policy-rules", "get"),
+        "bifrost_policy_rule_get",
+    ),
     "policy.rules.update": (
         "PUT",
         "/api/policy-rules/{domain}/{name}",
@@ -637,6 +643,12 @@ CONFIG_OPERATIONS = {
         "/api/config",
         ("configs", "create"),
         "bifrost_config_create",
+    ),
+    "configs.get": (
+        "GET",
+        "/api/config/{config_id}",
+        ("configs", "get"),
+        "bifrost_config_get",
     ),
     "configs.update": (
         "PUT",
@@ -1220,7 +1232,18 @@ def test_canonical_catalog_mcp_names_are_all_valid() -> None:
 # ``roles.forms.*``, ``files.structure.list``) are excluded by that filter,
 # not by narrowing the domain set, so no *new* tool registration is implied
 # by adding a domain here.
-CANONICAL_MCP_DOMAINS = {"agents", "executions", "roles", "platform", "claims", "files"}
+CANONICAL_MCP_DOMAINS = {
+    "agents",
+    "executions",
+    "roles",
+    "platform",
+    "claims",
+    "files",
+    "organizations",
+    "configs",
+    "policy",
+    "integrations",
+}
 
 # Tool module for each canonical MCP domain, keyed the same as the domain
 # prefix above. Each module's ``TOOLS`` list (the same list
@@ -1234,6 +1257,10 @@ _CANONICAL_MCP_TOOL_MODULES = {
     "platform": "src.services.mcp_server.tools.platform_jobs",
     "claims": "src.services.mcp_server.tools.claims",
     "files": "src.services.mcp_server.tools.files",
+    "organizations": "src.services.mcp_server.tools.organizations",
+    "configs": "src.services.mcp_server.tools.configs",
+    "policy": "src.services.mcp_server.tools.policy_rules",
+    "integrations": "src.services.mcp_server.tools.integrations",
 }
 
 

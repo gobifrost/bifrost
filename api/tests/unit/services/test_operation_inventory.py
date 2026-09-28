@@ -20,8 +20,8 @@ def test_every_observed_surface_is_classified_with_a_reason() -> None:
     assert inventory["counts"] == {
         "cli": 154,
         "manifest": 16,
-        "mcp": 88,
-        "rest": 647,
+        "mcp": 91,
+        "rest": 649,
         "sdk": 19,
     }
     for surface, rows in inventory["uncataloged"].items():

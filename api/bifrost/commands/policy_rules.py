@@ -105,25 +105,15 @@ async def get_policy_rule(
 ) -> None:
     """Get a single policy rule by domain and name.
 
-    Uses the usages endpoint (which 404s when not found) to confirm the rule
-    exists, then fetches the full record from the list.
+    Reads ``GET /api/policy-rules/{domain}/{name}`` directly. Solution-managed
+    rules are readable (writes stay blocked).
     """
     params: dict[str, str] = {}
     if scope is not None:
         params["organization_id"] = scope
-    # Fetch via list + filter — there is no single-GET by domain+name.
-    list_params: dict[str, str] = {"domain": domain}
-    if scope is not None:
-        list_params["organization_id"] = scope
-    response = await client.get("/api/policy-rules", params=list_params)
+    response = await client.get(f"/api/policy-rules/{domain}/{name}", params=params)
     response.raise_for_status()
-    items = response.json()
-    match = next((item for item in items if item.get("name") == name), None)
-    if match is None:
-        raise click.ClickException(
-            f"policy rule '{name}' (domain={domain}) not found"
-        )
-    output_result(match, ctx=ctx)
+    output_result(response.json(), ctx=ctx)
 
 
 @policy_rule_group.command("create")

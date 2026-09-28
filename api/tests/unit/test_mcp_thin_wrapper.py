@@ -24,9 +24,7 @@ and reject any import from ``src.repositories.*``, ``src.models.orm.*``,
 or ``sqlalchemy.ext.asyncio.AsyncSession`` that is scoped to a Task 6
 handler.
 
-Existing tool handlers (``list_integrations``, ``list_organizations``,
-etc.) intentionally still use ORM — this test only inspects the Task 6
-additions. Adding new parity tools: extend ``PARITY_HANDLERS`` below.
+Adding new parity tools: extend ``PARITY_HANDLERS`` below.
 """
 
 from __future__ import annotations
@@ -71,10 +69,11 @@ PARITY_HANDLERS: dict[str, set[str]] = {
     },
     "roles": {"bifrost_role_list", "bifrost_role_create", "bifrost_role_update", "bifrost_role_delete"},
     "configs": {
-        "list_configs",
-        "create_config",
-        "update_config",
-        "delete_config",
+        "bifrost_config_list",
+        "bifrost_config_get",
+        "bifrost_config_create",
+        "bifrost_config_update",
+        "bifrost_config_delete",
     },
     "claims": {
         "bifrost_claim_list",
@@ -84,17 +83,19 @@ PARITY_HANDLERS: dict[str, set[str]] = {
         "bifrost_claim_delete",
     },
     "organizations": {
-        "list_organizations",
-        "get_organization",
-        "create_organization",
-        "update_organization",
-        "delete_organization",
+        "bifrost_organization_list",
+        "bifrost_organization_get",
+        "bifrost_organization_create",
+        "bifrost_organization_update",
+        "bifrost_organization_delete",
     },
     "integrations": {
-        "create_integration",
-        "update_integration",
-        "add_integration_mapping",
-        "update_integration_mapping",
+        "bifrost_integration_list",
+        "bifrost_integration_get",
+        "bifrost_integration_create",
+        "bifrost_integration_update",
+        "bifrost_integration_mapping_create",
+        "bifrost_integration_mapping_update",
     },
     "workflow": {
         "update_workflow",
@@ -112,9 +113,12 @@ PARITY_HANDLERS: dict[str, set[str]] = {
     "platform_jobs": {"bifrost_platform_job_get"},
     "execution": {"bifrost_execution_list", "bifrost_execution_get"},
     "policy_rules": {
-        "list_policy_rules",
-        "create_policy_rule",
-        "delete_policy_rule",
+        "bifrost_policy_rule_list",
+        "bifrost_policy_rule_get",
+        "bifrost_policy_rule_create",
+        "bifrost_policy_rule_update",
+        "bifrost_policy_rule_delete",
+        "bifrost_policy_rule_usage_list",
     },
     "gateway": {
         "bifrost_get_required_instructions",
@@ -302,9 +306,46 @@ async def test_get_app_publish_status_requires_action_is_an_error() -> None:
 
 
 @pytest.mark.asyncio
+async def test_bifrost_integration_list_is_a_thin_rest_wrapper() -> None:
+    """bifrost_integration_list reads GET /api/integrations, not the ORM.
+
+    Regression coverage for the R1b batch-3 rename: the old ``list_integrations``
+    queried ``Integration``/``IntegrationMapping`` directly and widened the
+    result for non-admin org members; the thin wrapper inherits REST's
+    platform-admin-only gate instead.
+    """
+    from src.services.mcp_server.tools import integrations as integrations_mod
+
+    ctx = _make_mcp_context()
+    response = {
+        "items": [
+            {
+                "id": "11111111-2222-3333-4444-555555555555",
+                "name": "Microsoft Graph",
+                "has_oauth_config": True,
+                "entity_id_name": "Tenant ID",
+            }
+        ],
+        "total": 1,
+    }
+
+    with patch.object(
+        integrations_mod, "call_rest", AsyncMock(return_value=(200, response))
+    ) as call_rest_mock:
+        result = await integrations_mod.bifrost_integration_list(ctx)
+
+    call_rest_mock.assert_awaited_once_with(ctx, "GET", "/api/integrations")
+    data = result.structured_content
+    assert data["count"] == 1
+    assert data["integrations"][0]["name"] == "Microsoft Graph"
+    assert data["integrations"][0]["has_oauth"] is True
+    assert data["integrations"][0]["entity_id_name"] == "Tenant ID"
+
+
+@pytest.mark.asyncio
 async def test_create_integration_forwards_description() -> None:
     """create_integration includes description in DTO assembly and REST payload."""
-    from src.services.mcp_server.tools.integrations import create_integration
+    from src.services.mcp_server.tools.integrations import bifrost_integration_create as create_integration
 
     ctx = _make_mcp_context()
     assembled_body = {
@@ -339,7 +380,7 @@ async def test_create_integration_forwards_description() -> None:
 @pytest.mark.asyncio
 async def test_update_integration_forwards_description_when_provided() -> None:
     """update_integration forwards a provided description through the REST bridge."""
-    from src.services.mcp_server.tools.integrations import update_integration
+    from src.services.mcp_server.tools.integrations import bifrost_integration_update as update_integration
 
     class _RestClient:
         async def __aenter__(self):

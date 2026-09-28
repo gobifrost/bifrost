@@ -76,6 +76,30 @@ async def list_policy_rules(
     return [PolicyRulePublic.model_validate(r) for r in rows]
 
 
+@router.get(
+    "/{domain}/{name}",
+    response_model=PolicyRulePublic,
+    summary="Get a named policy rule",
+**operation_route("policy.rules.get"))
+async def get_policy_rule(
+    domain: str,
+    name: str,
+    ctx: Context,
+    user: CurrentSuperuser,
+    organization_id: UUID | None = Query(default=None),
+) -> PolicyRulePublic:
+    """Get a single policy rule by domain and name.
+
+    Solution-managed rules are readable here (writes stay blocked).
+    """
+    svc = PolicyRuleService(ctx.db)
+    try:
+        row = await svc.get(name, domain, org_id=organization_id)
+    except PolicyRuleNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Policy rule '{name}' not found")
+    return PolicyRulePublic.model_validate(row)
+
+
 @router.put(
     "/{domain}/{name}",
     response_model=PolicyRulePublic,

@@ -2608,7 +2608,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * Get a configuration value by ID
+         * @description Get a single configuration value by its UUID
+         */
+        get: operations["configs.get"];
         /**
          * Update configuration value by ID
          * @description Update an existing configuration value, including its organization scope
@@ -10956,7 +10960,13 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * Get a named policy rule
+         * @description Get a single policy rule by domain and name.
+         *
+         *     Solution-managed rules are readable here (writes stay blocked).
+         */
+        get: operations["policy.rules.get"];
         /**
          * Update a named policy rule
          * @description Update an existing policy rule.
@@ -33656,6 +33666,37 @@ export interface operations {
             };
         };
     };
+    "configs.get": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                config_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfigResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     "configs.update": {
         parameters: {
             query?: never;
@@ -40885,7 +40926,10 @@ export interface operations {
     };
     "integrations.update": {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Confirm deletion of config-schema keys and their stored values */
+                force_remove_keys?: boolean;
+            };
             header?: never;
             path: {
                 integration_id: string;
@@ -48843,6 +48887,40 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyRulePublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "policy.rules.get": {
+        parameters: {
+            query?: {
+                organization_id?: string | null;
+            };
+            header?: never;
+            path: {
+                domain: string;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
