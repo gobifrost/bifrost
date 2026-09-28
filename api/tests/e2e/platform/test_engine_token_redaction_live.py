@@ -1,4 +1,4 @@
-"""Live E2E: the engine token installed as SDK credentials never leaks.
+"""Live E2E: the engine token installed as SDK credentials is redacted from execution output.
 
 Drives a real workflow execution through the worker pool. The workflow:
 - still succeeds end to end, proving an SDK call (config.get) works with the
@@ -52,8 +52,8 @@ def local_config(e2e_client, platform_admin, org1, local_key):
 
 
 @pytest.fixture(scope="module")
-def leaky_workflow(e2e_client, platform_admin, org1, local_key):
-    name = f"e2e_engine_token_leak_{_uid()}"
+def engine_token_workflow(e2e_client, platform_admin, org1, local_key):
+    name = f"e2e_engine_token_redaction_{_uid()}"
     path = f"{name}.py"
     content = f'''"""E2E workflow proving the SDK still works and its credential is redacted."""
 import logging
@@ -96,12 +96,12 @@ async def {name}():
 
 class TestEngineTokenRedactionLive:
     def test_execution_succeeds_and_token_is_redacted(
-        self, e2e_client, org1_user, leaky_workflow, local_config
+        self, e2e_client, org1_user, engine_token_workflow, local_config
     ):
         result = execute_workflow_sync(
             e2e_client,
             org1_user.headers,
-            leaky_workflow["id"],
+            engine_token_workflow["id"],
             max_wait=120.0,
         )
         assert result["status"] == "Success", result
