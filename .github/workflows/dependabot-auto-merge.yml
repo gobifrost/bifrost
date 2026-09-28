@@ -21,6 +21,15 @@
 # to `gh pr merge --disable-auto` then re-run `gh pr merge` by hand (this
 # stranded PRs #786, #718, #828). Do not add a strategy flag back; the queue
 # already enforces squash.
+#
+# Why a GitHub App token, not GITHUB_TOKEN: once `main` got a merge queue
+# (ruleset change 2026-06-10), auto-merge enabled by GITHUB_TOKEN stopped ever
+# entering the queue — the last automatic Dependabot merge was #365 that day.
+# Queue membership is driven by a merge_group CI run, and GitHub doesn't start
+# workflow runs for events caused by GITHUB_TOKEN. Enabling auto-merge as the
+# `bifrost-lockfile-bot` App (Dependabot secrets DEPENDABOT_LOCKFILE_APP_ID /
+# DEPENDABOT_LOCKFILE_APP_PRIVATE_KEY; App needs Contents + Pull requests:
+# read & write) makes the queue entry an App action, like a human's.
 
 name: Dependabot auto-merge
 
@@ -34,8 +43,8 @@ jobs:
     runs-on: ubuntu-latest
     if: github.actor == 'dependabot[bot]'
     permissions:
-      contents: write # required to enable auto-merge on the PR
-      pull-requests: write # required to label and merge the PR
+      contents: read
+      pull-requests: write # label majors/Docker; auto-merge itself uses the App token
     steps:
       - name: Fetch Dependabot metadata
         id: metadata
@@ -44,23 +53,38 @@ jobs:
           github-token: "${{ secrets.GITHUB_TOKEN }}"
           alert-lookup: true
 
-      - name: Auto-merge security advisory bumps (any semver level)
-        if: steps.metadata.outputs.alert-state == 'OPEN'
-        run: gh pr merge --auto "$PR_URL"
+      - name: Decide whether this PR auto-merges
+        id: eligible
         env:
-          PR_URL: ${{ github.event.pull_request.html_url }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ALERT_STATE: ${{ steps.metadata.outputs.alert-state }}
+          ECOSYSTEM: ${{ steps.metadata.outputs.package-ecosystem }}
+          UPDATE_TYPE: ${{ steps.metadata.outputs.update-type }}
+        run: |
+          if [[ "$ALERT_STATE" == "OPEN" ]]; then
+            echo "merge=true" >> "$GITHUB_OUTPUT"   # security advisory, any semver level
+          elif [[ -z "$ALERT_STATE" && "$ECOSYSTEM" != "docker" && ( "$UPDATE_TYPE" == "version-update:semver-patch" || "$UPDATE_TYPE" == "version-update:semver-minor" ) ]]; then
+            echo "merge=true" >> "$GITHUB_OUTPUT"   # non-major, non-Docker version update
+          else
+            echo "merge=false" >> "$GITHUB_OUTPUT"
+          fi
 
-      - name: Auto-merge non-major version updates (skip Docker)
-        if: |
-          steps.metadata.outputs.alert-state == '' &&
-          steps.metadata.outputs.package-ecosystem != 'docker' &&
-          (steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
-           steps.metadata.outputs.update-type == 'version-update:semver-minor')
+      - name: Mint GitHub App installation token
+        if: steps.eligible.outputs.merge == 'true'
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.DEPENDABOT_LOCKFILE_APP_ID }}
+          private-key: ${{ secrets.DEPENDABOT_LOCKFILE_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Enable auto-merge (enters the merge queue once checks pass)
+        if: steps.eligible.outputs.merge == 'true'
         run: gh pr merge --auto "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
 
       - name: Label majors and Docker for human review
         if: |

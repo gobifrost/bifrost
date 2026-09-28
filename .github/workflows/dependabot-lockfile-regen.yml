@@ -40,14 +40,13 @@
 # Ordering / token exposure: the App token is minted (and even the secrets
 # are checked) only *after* the regen step has already run, and only when
 # `requirements.lock` actually changed. The checkout step uses the ambient
-# read-only GITHUB_TOKEN with `persist-credentials: false` — the regen step's
-# `docker run` mounts the whole working tree (including `.git`) and executes
-# `pip-compile`, which can run arbitrary sdist build code from the PR's own
-# dependency set. A 1-hour, contents:write App token must not be sitting in
-# `.git/config` (or anywhere else in that tree) while untrusted build code
-# runs. The App token is also scoped to just this repository
-# (`repositories:`) and to `contents: write` only, and it's used for exactly
-# one `git push` via an explicit `http.extraheader`, never persisted to disk.
+# read-only GITHUB_TOKEN with `persist-credentials: false`, and the regen
+# step's container sees only three copied files (never the checkout or
+# `.git`) because `pip-compile` can run arbitrary sdist build code from the
+# PR's own dependency set. The App token (scoped to this repository and
+# `contents: write`) only exists after that, in a second, separate checkout
+# (`push-tree/`) that never runs package code; it commits the copied lock
+# and pushes with actions/checkout's standard persisted credentials.
 #
 # Known consequence (unavoidable, not new): once *any* non-Dependabot actor
 # pushes to a Dependabot branch — a human, github-actions[bot], or this App —
@@ -153,19 +152,29 @@ jobs:
           repositories: ${{ github.event.repository.name }}
           permission-contents: write
 
-      - name: Commit and push
+      - name: Check out the PR branch as the App
+        # A fresh checkout, separate from the tree the untrusted regen step
+        # touched, using actions/checkout's standard persisted credentials for
+        # the App token — the pattern actions/create-github-app-token
+        # documents. (A hand-built http.extraheader push from the first
+        # checkout was refused with HTTP 403 on #837.)
         if: steps.diff.outputs.changed == 'true'
-        # The App token lives only in this step's environment, never in
-        # .git/config or the command line: it's passed via `env` (not
-        # interpolated into the script text) and used solely as a git
-        # `http.extraheader` for this one push.
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.head_ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          token: ${{ steps.app-token.outputs.token }}
+          path: push-tree
+
+      - name: Commit and push the regenerated lock
+        if: steps.diff.outputs.changed == 'true'
         env:
-          APP_TOKEN: ${{ steps.app-token.outputs.token }}
           HEAD_REF: ${{ github.head_ref }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          cp requirements.lock push-tree/requirements.lock
+          cd push-tree
+          git config user.name "bifrost-lockfile-bot[bot]"
+          git config user.email "bifrost-lockfile-bot[bot]@users.noreply.github.com"
           git add requirements.lock
           git commit -m "chore(deps): regenerate requirements.lock for Dependabot bump"
-          auth_header="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$APP_TOKEN" | base64 -w0)"
-          git -c http.https://github.com/.extraheader="$auth_header" push origin "HEAD:$HEAD_REF"
+          git push origin "HEAD:$HEAD_REF"
