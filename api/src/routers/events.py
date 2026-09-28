@@ -234,8 +234,13 @@ def _validate_subscription_scope(
     source_organization_id: UUID | None,
     target_organization_id: UUID | None,
 ) -> None:
-    """Keep subscription targets within the Event Source visibility cascade."""
-    if target_organization_id is None:
+    """Keep an org Event Source's targets inside its organization.
+
+    A global source may fan out to targets in any organization (a shared
+    webhook routed to per-org workflows is a supported pattern); an org-scoped
+    source may only target its own organization or global targets.
+    """
+    if target_organization_id is None or source_organization_id is None:
         return
     if source_organization_id != target_organization_id:
         raise HTTPException(
@@ -267,7 +272,15 @@ async def _validate_subscription_target(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Workflow not found",
             )
-        if target.type != "workflow" or not target.is_active or target.is_orphaned:
+        if target.type == "service":
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"Workflow '{target.name}' is a long-lived service "
+                    "(type='service') and cannot be an event subscription target"
+                ),
+            )
+        if not target.is_active or target.is_orphaned:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Subscription target must be an active Workflow",
