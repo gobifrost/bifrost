@@ -69,12 +69,11 @@ def _poll_notification(
 
 
 def test_publish_success_deduplication_and_requester_visibility(
-    e2e_client, platform_admin, org1_user, provider_org_user
+    e2e_client, platform_admin, second_platform_admin, org1_user, provider_org_user
 ):
-    # Global scope (explicit organization_id=None) so a second bypass
-    # caller (provider_org_user) can both read and write it — a
-    # provider-org member's REST read access is global-or-own-org, not
-    # full cross-org like a platform admin's.
+    # Global scope (explicit organization_id=None) so the provider-org
+    # member can read it — their REST read access is global-or-own-org —
+    # while still being refused the publish itself.
     create_response = e2e_client.post(
         "/api/applications",
         headers=platform_admin.headers,
@@ -112,14 +111,17 @@ def test_publish_success_deduplication_and_requester_visibility(
         for response in responses
     )
     assert accepted["notification_id"]
-    # A different bypass caller (provider-org member, not the platform admin
-    # who enqueued the job) hits the same dedupe path — publish write access
-    # is bypass-only, so a plain org1 member would 404 before ever reaching
-    # the in-progress check; that denial is covered separately
-    # (TestApplicationWriteScope).
-    duplicate = e2e_client.post(
+    # A different platform admin (not the one who enqueued the job) hits the
+    # same dedupe path. Publishing is platform-admin only: a provider-org
+    # member is refused (404) before reaching the in-progress check.
+    refused = e2e_client.post(
         f"/api/applications/{app['id']}/publish",
         headers=provider_org_user.headers,
+    )
+    assert refused.status_code == 404, refused.text
+    duplicate = e2e_client.post(
+        f"/api/applications/{app['id']}/publish",
+        headers=second_platform_admin.headers,
     )
     assert duplicate.status_code == 409, duplicate.text
     assert duplicate.json()["detail"] == (
