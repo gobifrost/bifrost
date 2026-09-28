@@ -6,7 +6,7 @@
 
 # Keep the browser/system dependencies from Playwright's image, but use the
 # same Node runtime required by package.json and used by CI/client builds.
-FROM node:26-slim@sha256:14bf3eac4bf209d906d3c41256597d3ab1f926b2e93a79e9bdfe1efd32454239 AS node-runtime
+FROM node:26-slim@sha256:ec7758ee051e457b468b32bde57b0879010b325bb9862718e9615225ce4aaae1 AS node-runtime
 
 # mcr.microsoft.com/playwright:v1.56.0-jammy
 FROM mcr.microsoft.com/playwright:v1.63.0-jammy@sha256:167d0506cfbe3c294fb214b2d11737326eeee028aa611fa1ba538e5057675847
