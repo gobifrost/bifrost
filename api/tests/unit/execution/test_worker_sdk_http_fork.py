@@ -164,6 +164,8 @@ async def test_forked_child_config_crud_over_worker_socket(
         global_repo_access=True,
         timeout_seconds=120,
     )
+    from tests.helpers.engine_execution_lease import mark_engine_execution_running
+    await mark_engine_execution_running("gate-a-fork")
 
     server = WorkerSdkHttpServer()
     await server.start()
@@ -513,6 +515,8 @@ async def test_forked_child_integrations_over_worker_socket(
         global_repo_access=True,
         timeout_seconds=120,
     )
+    from tests.helpers.engine_execution_lease import mark_engine_execution_running
+    await mark_engine_execution_running("gate-c2-fork")
     organization = {"id": seed["org_id"], "name": "Fork Org"}
 
     server = WorkerSdkHttpServer()
@@ -778,6 +782,8 @@ async def test_forked_child_tables_over_worker_socket(
         global_repo_access=True,
         timeout_seconds=120,
     )
+    from tests.helpers.engine_execution_lease import mark_engine_execution_running
+    await mark_engine_execution_running("gate-c3a-fork")
     organization = {"id": org_id, "name": "Fork Tables Org"}
 
     server = WorkerSdkHttpServer()
@@ -965,6 +971,8 @@ async def test_forked_child_files_over_worker_socket(monkeypatch):
         global_repo_access=True,
         timeout_seconds=120,
     )
+    from tests.helpers.engine_execution_lease import mark_engine_execution_running
+    await mark_engine_execution_running("gate-c4a-fork")
 
     server = WorkerSdkHttpServer()
     await server.start()
@@ -1109,6 +1117,8 @@ async def test_forked_child_artifacts_over_worker_socket(monkeypatch):
         global_repo_access=True,
         timeout_seconds=120,
     )
+    from tests.helpers.engine_execution_lease import mark_engine_execution_running
+    await mark_engine_execution_running("gate-c4b-fork")
 
     server = WorkerSdkHttpServer()
     await server.start()
@@ -1291,6 +1301,8 @@ async def test_forked_child_events_and_forms_over_worker_socket(
         global_repo_access=True,
         timeout_seconds=120,
     )
+    from tests.helpers.engine_execution_lease import mark_engine_execution_running
+    await mark_engine_execution_running("gate-c5c-fork")
 
     server = WorkerSdkHttpServer()
     await server.start()

@@ -64,6 +64,19 @@ def _reset_engine_transport_globals():
     _clear_client()
 
 
+@pytest_asyncio.fixture(autouse=True)
+async def _engine_execution_is_live():
+    """Every ``_engine_token()`` in this file shares one execution_id.
+
+    Authentication now requires the execution to be live (see
+    src/core/auth.py); mark it running so these route-reuse tests exercise
+    a still-running child the way production does.
+    """
+    from tests.helpers.engine_execution_lease import mark_engine_execution_running
+
+    await mark_engine_execution_running("gate-a-route-reuse")
+
+
 @pytest_asyncio.fixture
 async def committed_config(async_session_factory):
     """Seed globally-scoped config rows in committed sessions.
@@ -3314,6 +3327,7 @@ class TestSocketErrorParityAndActorContext:
     async def test_request_context_attributes_engine_caller(self):
         from src.core.security import mint_engine_token
         from src.services.audit_context import current_actor
+        from tests.helpers.engine_execution_lease import mark_engine_execution_running
 
         caller_id = uuid4()
         org_id = uuid4()
@@ -3328,6 +3342,7 @@ class TestSocketErrorParityAndActorContext:
             caller_email="caller@example.com",
             caller_name="Caller Name",
         )
+        await mark_engine_execution_running(str(execution_id))
 
         app = build_worker_sdk_app()
 

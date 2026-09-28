@@ -192,6 +192,9 @@ class TestForkedFormsContextTransport:
             "    'had_sqlalchemy': 'sqlalchemy' in sys.modules,",
             "}",
         ]
+        from tests.helpers.engine_execution_lease import mark_engine_execution_running
+
+        await mark_engine_execution_running("gate-c5h-forms-fork")
         context = _context_for(
             _script_b64("\n".join(lines) + "\n"),
             mint_engine_token(

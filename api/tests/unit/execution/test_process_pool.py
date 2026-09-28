@@ -404,6 +404,75 @@ class TestProcessPoolManagerRouting:
         )
 
     @pytest.mark.asyncio
+    async def test_write_context_to_redis_excludes_engine_token(self):
+        """The Redis diagnostic copy must not carry the execution's credential.
+
+        The child still receives the full context (including its token)
+        over the private work pipe - only the Redis record read by queue
+        display/diagnostics is scrubbed.
+        """
+        pool = ProcessPoolManager(max_workers=5)
+        fake_redis = AsyncMock()
+
+        with patch.object(pool, "_get_redis", AsyncMock(return_value=fake_redis)):
+            context = {
+                "execution_id": "exec-secret",
+                "workflow_id": "workflow-1",
+                "name": "long_scan",
+                "engine_token": "super-secret-jwt-value",
+            }
+            await pool._write_context_to_redis("exec-secret", context)
+
+        fake_redis.setex.assert_awaited_once()
+        stored_key, stored_ttl, stored_json = fake_redis.setex.call_args.args
+        assert stored_key == "bifrost:exec:exec-secret:context"
+        assert stored_ttl == 3600
+        stored = json.loads(stored_json)
+        assert "engine_token" not in stored
+        assert stored["workflow_id"] == "workflow-1"
+        # The original context object (handed to the child) is untouched.
+        assert context["engine_token"] == "super-secret-jwt-value"
+
+    @pytest.mark.asyncio
+    async def test_route_execution_sends_full_context_to_child_despite_redis_scrub(self):
+        """route_execution must still hand the child its engine token."""
+        pool = ProcessPoolManager(max_workers=5)
+
+        new_process = MagicMock()
+        new_process.is_alive.return_value = True
+        new_process.pid = 55555
+        handle = ProcessHandle(
+            id="process-1",
+            process=new_process,
+            pid=new_process.pid,
+            state=ProcessState.BUSY,
+            work_queue=MagicMock(),
+            result_queue=MagicMock(),
+            started_at=datetime.now(timezone.utc),
+        )
+        pool.processes[handle.id] = handle
+        pool._fork_process = lambda: handle
+
+        fake_redis = AsyncMock()
+
+        with patch.object(pool, "_get_redis", AsyncMock(return_value=fake_redis)), \
+             patch.object(pool, "_register_result_reader"), \
+             patch("src.services.execution.process_pool.has_sufficient_memory_cgroup", return_value=True):
+            await pool.route_execution(
+                "exec-secret",
+                {"timeout_seconds": 300, "engine_token": "super-secret-jwt-value"},
+                _active_execution("exec-secret"),
+            )
+
+        # Redis never saw the token...
+        stored_json = fake_redis.setex.call_args.args[2]
+        assert "engine_token" not in json.loads(stored_json)
+        # ...but the child did, over its private work pipe.
+        queued_id, queued_context = handle.work_queue.put_nowait.call_args.args[0]
+        assert queued_id == "exec-secret"
+        assert queued_context["engine_token"] == "super-secret-jwt-value"
+
+    @pytest.mark.asyncio
     async def test_drain_active_executions_waits_until_child_result_clears_handle(self):
         """Graceful shutdown must track child work after queue dispatch returns."""
         pool = ProcessPoolManager(max_workers=5)

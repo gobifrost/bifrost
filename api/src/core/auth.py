@@ -178,6 +178,31 @@ async def get_current_user_optional(
     # else: superuser with no org = system account (valid)
     # else: embed token without org = valid (HMAC-verified)
 
+    # Execution-scoped engine tokens (mint_engine_token: superuser + an
+    # engine_execution_id claim) stop working once their execution is no
+    # longer running. A supervised-service token (mint_service_token) also
+    # carries engine_execution_id but is never superuser, so it is
+    # unaffected. The active-execution lease is the parent's own liveness
+    # signal for the child: written right after fork, before the child ever
+    # receives its token over the work pipe, and removed by
+    # cleanup_execution_cache on every terminal path (success, failure,
+    # timeout, cancellation, crash) - see process_pool.py::_dispatch_to_child
+    # and src.core.cache.invalidation.cleanup_execution_cache.
+    engine_execution_id = payload.get("engine_execution_id")
+    if engine_execution_id and is_superuser:
+        from src.core.redis_client import get_redis_client
+
+        try:
+            active = await get_redis_client().get_active_execution(engine_execution_id)
+        except Exception:
+            logger.exception(
+                f"Could not verify execution liveness for engine token "
+                f"(execution_id={engine_execution_id}); rejecting"
+            )
+            return None
+        if active is None:
+            return None
+
     return UserPrincipal(
         user_id=user_id,
         email=payload.get("email", ""),

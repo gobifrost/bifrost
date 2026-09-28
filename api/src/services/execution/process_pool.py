@@ -67,6 +67,12 @@ logger = logging.getLogger(__name__)
 _CLEAN_EXIT_RESULT_GRACE = timedelta(seconds=2)
 _ACTIVE_EXECUTION_REFRESH_SECONDS = 10 * 60
 
+# Context fields that must never reach the diagnostic Redis copy of an
+# execution context. The child still receives these over its private work
+# pipe (see route_execution) - only the durability/diagnostic Redis record
+# (read by queue display and other tooling) is scrubbed.
+_CONTEXT_REDIS_EXCLUDED_KEYS = frozenset({"engine_token"})
+
 
 async def _notify_requirements_failures(result: RequirementsInstallResult) -> None:
     """Publish a deduped admin notification when requirements failed to install.
@@ -1162,13 +1168,23 @@ class ProcessPoolManager:
         """
         Retain execution context in Redis for durability and diagnostics.
 
+        The stored copy excludes execution credentials (see
+        ``_CONTEXT_REDIS_EXCLUDED_KEYS``): this key is read by queue-display
+        and diagnostic tooling, not by the child, which receives the full
+        context (including its token) over its private work pipe.
+
         Args:
             execution_id: Execution ID
             context: Context data to store
         """
         r = await self._get_redis()
         context_key = f"bifrost:exec:{execution_id}:context"
-        await r.setex(context_key, 3600, json.dumps(context, default=str))
+        sanitized = {
+            key: value
+            for key, value in context.items()
+            if key not in _CONTEXT_REDIS_EXCLUDED_KEYS
+        }
+        await r.setex(context_key, 3600, json.dumps(sanitized, default=str))
 
     async def _write_active_execution_lease(self, execution: ExecutionInfo) -> None:
         """Create or recreate the compact Redis lease for one live execution."""

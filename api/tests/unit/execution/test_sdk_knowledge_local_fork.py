@@ -139,12 +139,15 @@ class TestForkedKnowledgeTransport:
         )
         monkeypatch.setenv("BIFROST_API_URL", "http://127.0.0.1:9")
 
+        from tests.helpers.engine_execution_lease import mark_engine_execution_running
+
         engine_token, _ = mint_engine_token(
             execution_id="gate-c4c-fork",
             solution_id=None,
             global_repo_access=True,
             timeout_seconds=120,
         )
+        await mark_engine_execution_running("gate-c4c-fork")
 
         server = WorkerSdkHttpServer()
         await server.start()

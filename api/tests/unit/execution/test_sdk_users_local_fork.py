@@ -153,12 +153,15 @@ class TestForkedUsersSocket:
             "    'had_sqlalchemy': 'sqlalchemy' in sys.modules,",
             "}",
         ]
+        from tests.helpers.engine_execution_lease import mark_engine_execution_running
+
         engine_token, _ = mint_engine_token(
             execution_id="gate-c5d-users-fork",
             solution_id=None,
             global_repo_access=True,
             timeout_seconds=120,
         )
+        await mark_engine_execution_running("gate-c5d-users-fork")
         context = _context_for(
             _script_b64("\n".join(lines) + "\n"),
             engine_token,
@@ -235,12 +238,15 @@ class TestForkedUsersSocket:
             "    'listed': isinstance(_listed, list),",
             "}",
         ]
+        from tests.helpers.engine_execution_lease import mark_engine_execution_running
+
         engine_token, _ = mint_engine_token(
             execution_id="gate-c5d-users-fork-nonadmin",
             solution_id=None,
             global_repo_access=True,
             timeout_seconds=120,
         )
+        await mark_engine_execution_running("gate-c5d-users-fork-nonadmin")
         context = _context_for(
             _script_b64("\n".join(lines) + "\n"),
             engine_token,

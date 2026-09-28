@@ -273,6 +273,7 @@ class TestForkedAIStream:
     ):
         """A real child streams AI over the socket with HTTP disabled."""
         from src.core.security import mint_engine_token
+        from tests.helpers.engine_execution_lease import mark_engine_execution_running
 
         execution_id = str(uuid4())
         org_id = str(uuid4())
@@ -282,6 +283,7 @@ class TestForkedAIStream:
             global_repo_access=True,
             timeout_seconds=120,
         )
+        await mark_engine_execution_running(execution_id)
         context = _context_for(
             _script_b64(_AI_SOURCE.replace("ORG_ID", repr(org_id))),
             engine_token,

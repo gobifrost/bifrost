@@ -159,6 +159,7 @@ class TestForkedExecutionReadsSocket:
         monkeypatch.setenv("BIFROST_API_URL", "http://127.0.0.1:9")
 
         from src.core.security import mint_engine_token
+        from tests.helpers.engine_execution_lease import mark_engine_execution_running
 
         engine_token, _ = mint_engine_token(
             execution_id="gate-c5a-reads-fork",
@@ -166,6 +167,7 @@ class TestForkedExecutionReadsSocket:
             global_repo_access=True,
             timeout_seconds=120,
         )
+        await mark_engine_execution_running("gate-c5a-reads-fork")
 
         server = WorkerSdkHttpServer()
         await server.start()

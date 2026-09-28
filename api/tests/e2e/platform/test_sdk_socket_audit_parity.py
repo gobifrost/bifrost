@@ -23,6 +23,7 @@ class TestSocketAuditAttribution:
         from src.models.orm.audit import AuditLog
         from src.models.orm.users import Role as RoleModel
         from src.services.execution.worker_sdk_http import build_worker_sdk_app
+        from tests.helpers.engine_execution_lease import mark_engine_execution_running
 
         caller_id = org1_user.user_id
         org_id = org1_user.organization_id
@@ -40,6 +41,7 @@ class TestSocketAuditAttribution:
             caller_email=org1_user.email,
             caller_name=org1_user.name,
         )
+        await mark_engine_execution_running(str(execution_id))
 
         app = build_worker_sdk_app()
         transport = httpx.ASGITransport(app=app)

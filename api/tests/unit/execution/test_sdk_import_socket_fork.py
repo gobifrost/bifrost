@@ -182,6 +182,8 @@ class TestForkedColdImportOverSocket:
         # so success proves the engine socket served both.
         monkeypatch.setenv("BIFROST_API_URL", "http://127.0.0.1:9")
 
+        from tests.helpers.engine_execution_lease import mark_engine_execution_running
+
         execution_id = f"exec-{tag}"
         engine_token, _ = mint_engine_token(
             execution_id=execution_id,
@@ -189,6 +191,7 @@ class TestForkedColdImportOverSocket:
             global_repo_access=True,
             timeout_seconds=120,
         )
+        await mark_engine_execution_running(execution_id)
         context = _context_for(function_name, entry_path, engine_token, execution_id)
 
         server = WorkerSdkHttpServer()
