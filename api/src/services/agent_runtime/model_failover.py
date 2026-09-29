@@ -274,6 +274,7 @@ def build_chain_model(
     from src.services.agent_runtime.model_factory import (
         agent_model_settings_for_chain,
         create_agent_model,
+        provider_name_for_config,
     )
 
     if not configs:
@@ -285,6 +286,7 @@ def build_chain_model(
             ),
             observer,
             retry_surface=retry_surface,
+            billing_provider=provider_name_for_config(config),
         )
         for index, config in enumerate(configs)
     ]

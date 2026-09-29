@@ -12,6 +12,7 @@ from pydantic_ai.usage import RequestUsage
 
 from src.services.agent_runtime.retry_transport import get_ai_retry_http_client
 from src.services.llm.base import LLMConfig, is_deepseek_family, request_max_tokens
+from src.services.model_catalog import NATIVE_PROVIDER_KINDS
 from src.services.model_pricing import is_openrouter_endpoint
 from src.services.opencode_go import (
     is_opencode_go_endpoint,
@@ -21,8 +22,17 @@ from src.services.opencode_go import (
 
 
 def provider_name_for_config(config: LLMConfig) -> str:
-    """Return the provider that actually served and billed the request."""
+    """Return the provider that actually served and billed the request.
 
+    Community catalog providers bill under their models.dev id, since they
+    share an adapter (and so a wire-level provider name) with others.
+    """
+
+    if (
+        config.catalog_provider_id
+        and config.catalog_provider_id not in NATIVE_PROVIDER_KINDS
+    ):
+        return config.catalog_provider_id
     if is_openrouter_endpoint(config.endpoint):
         return "openrouter"
     if is_opencode_go_endpoint(config.endpoint):
@@ -65,7 +75,49 @@ def agent_model_settings(
         settings.update(
             anthropic_prompt_cache_settings(config.anthropic_prompt_cache_supported)
         )
+    settings.update(reasoning_settings(config, max_tokens=resolved_max_tokens))
     return settings
+
+
+# Anthropic's documented minimum thinking budget, and the budget Pydantic AI
+# uses for a plain "on".
+_ANTHROPIC_MIN_THINKING_BUDGET = 1024
+_ANTHROPIC_DEFAULT_THINKING_BUDGET = 10_000
+
+
+def reasoning_settings(
+    config: LLMConfig, *, max_tokens: int | None
+) -> dict[str, object]:
+    """Translate a profile's reasoning choice into this adapter's setting.
+
+    Effort levels come from the model's catalog entry and are sent verbatim
+    through the adapter's own field, because Pydantic AI's unified
+    ``thinking`` setting rounds some levels (for example ``xhigh`` becomes
+    ``high`` on OpenRouter). "on"/"off" use the unified setting, which each
+    adapter maps to its provider's toggle or default budget; for Anthropic
+    with an output cap, "on" sizes the budget to fit under the cap.
+    """
+
+    choice = config.reasoning_effort
+    if choice is None:
+        return {}
+    if choice == "on" and config.provider == "anthropic" and max_tokens is not None:
+        # Anthropic rejects a thinking budget that is not below max_tokens, so
+        # a capped profile gets the largest budget that fits under its cap.
+        budget = max(
+            _ANTHROPIC_MIN_THINKING_BUDGET,
+            min(_ANTHROPIC_DEFAULT_THINKING_BUDGET, max_tokens - 1),
+        )
+        return {"anthropic_thinking": {"type": "enabled", "budget_tokens": budget}}
+    if choice in ("on", "off"):
+        return {"thinking": choice == "on"}
+    if is_openrouter_endpoint(config.endpoint):
+        return {"openrouter_reasoning": {"effort": choice}}
+    if config.provider == "anthropic":
+        return {"anthropic_effort": choice}
+    if config.provider == "google":
+        return {"thinking": choice}
+    return {"openai_reasoning_effort": choice}
 
 
 def agent_model_settings_for_chain(

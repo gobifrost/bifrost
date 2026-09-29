@@ -15,6 +15,37 @@ beforeEach(() => {
 });
 
 describe("PricingEditDialog", () => {
+	it("edits optional cache prices without requiring them", async () => {
+		const onChange = vi.fn();
+		const onSave = vi.fn();
+		renderWithProviders(
+			<PricingEditDialog
+				open
+				editing
+				draft={{
+					provider: "anthropic",
+					model: "Claude Haiku 4.5",
+					inputPrice: "1",
+					outputPrice: "5",
+					cacheReadPrice: "",
+					cacheWritePrice: "",
+				}}
+				pending={false}
+				failed={false}
+				onChange={onChange}
+				onClose={vi.fn()}
+				onSave={onSave}
+			/>,
+		);
+
+		await userEvent.type(screen.getByLabelText("Cache read price (optional)"), "1");
+		expect(onChange).toHaveBeenLastCalledWith(
+			expect.objectContaining({ cacheReadPrice: "1" }),
+		);
+		await userEvent.click(screen.getByRole("button", { name: /save/i }));
+		expect(onSave).toHaveBeenCalled();
+	});
+
 	it("locks the form while pending and focuses persistent errors", async () => {
 		const onClose = vi.fn();
 		const onSave = vi.fn();
@@ -27,6 +58,8 @@ describe("PricingEditDialog", () => {
 					model: "gpt-4.1",
 					inputPrice: "5.00",
 					outputPrice: "15.00",
+					cacheReadPrice: "",
+					cacheWritePrice: "",
 				}}
 				pending
 				failed
@@ -70,6 +103,8 @@ describe("PricingEditDialog", () => {
 							model: "gpt-4.1",
 							inputPrice: "5.00",
 							outputPrice: "15.00",
+							cacheReadPrice: "",
+							cacheWritePrice: "",
 						}}
 						pending={false}
 						failed={false}

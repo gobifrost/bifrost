@@ -1,6 +1,11 @@
 import { ProfileCreateDialog } from "@/components/ai/ProfileCreateDialog";
 import { ProviderCreateDialog } from "@/components/ai/ProviderCreateDialog";
-import { providerOption, providerLabel } from "@/components/ai/providerOptions";
+import { providerLabel } from "@/components/ai/providerOptions";
+import { CUSTOM_PROVIDER, useModelCatalog } from "@/components/ai/ProviderCatalogField";
+import {
+	connectionRequestFields,
+	type ProviderConnectionDraft,
+} from "@/components/ai/ProviderConnectionFields";
 import { ProviderEditDialog, type ProviderEditDraft } from "@/components/ai/ProviderEditDialog";
 import { ModelProfileEditDialog, type ModelProfileEditDraft } from "@/components/ai/ModelProfileEditDialog";
 import { ModelProfileMergeDialog } from "@/components/ai/ModelProfileMergeDialog";
@@ -26,6 +31,7 @@ import { toast } from "sonner";
 import { ProviderDeleteDialog } from "@/components/ai/ProviderDeleteDialog";
 import { ModelSettingsReadError } from "@/components/ai/ModelSettingsReadError";
 import { ProviderConnectionCard } from "@/components/ai/ProviderConnectionCard";
+import { ModelCatalogStatus } from "@/components/ai/ModelCatalogStatus";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -45,7 +51,6 @@ import {
 	type AIModelAssignmentKey,
 	type AIModelAssignment,
 	type AIModelProfile,
-	type AIProviderKind,
 	type AIProviderConnection,
 } from "@/services/aiModels";
 
@@ -138,14 +143,19 @@ function reflectAssignmentOnProfiles(
 
 class ProviderVerificationError extends Error {}
 
+const DEFAULT_PROVIDER_DRAFT: ProviderConnectionDraft = {
+	catalogProviderId: "openai",
+	provider: "openai",
+	endpoint: "https://api.openai.com/v1",
+};
+
 export function AIModelSettings() {
 	const queryClient = useQueryClient();
 	const [providerCreateOpen, setProviderCreateOpen] = useState(false);
 	const [profileCreateOpen, setProfileCreateOpen] = useState(false);
 	const [providerName, setProviderName] = useState("OpenAI");
-	const [providerKind, setProviderKind] = useState<AIProviderKind>("openai");
-	const [providerEndpoint, setProviderEndpoint] = useState(
-		providerOption("openai").endpoint,
+	const [providerDraft, setProviderDraft] = useState<ProviderConnectionDraft>(
+		DEFAULT_PROVIDER_DRAFT,
 	);
 	const [providerKey, setProviderKey] = useState("");
 	const [profileName, setProfileName] = useState("");
@@ -153,6 +163,7 @@ export function AIModelSettings() {
 	const [profileModel, setProfileModel] = useState("");
 	const [profileChatEnabled, setProfileChatEnabled] = useState(false);
 	const [profileFailoverId, setProfileFailoverId] = useState<string | null>(null);
+	const [profileReasoning, setProfileReasoning] = useState<string | null>(null);
 	const [profileSelectionMode, setProfileSelectionMode] = useState(false);
 	const [selectedProfileIds, setSelectedProfileIds] = useState<Set<string>>(
 		() => new Set(),
@@ -162,6 +173,7 @@ export function AIModelSettings() {
 	const [providerEdit, setProviderEdit] = useState<ProviderEditDraft | null>(null);
 	const [profileEdit, setProfileEdit] = useState<ModelProfileEditDraft | null>(null);
 
+	const catalogQuery = useModelCatalog();
 	const providersQuery = useQuery({
 		queryKey: PROVIDER_QUERY_KEY,
 		queryFn: listProviderConnections,
@@ -195,8 +207,7 @@ export function AIModelSettings() {
 
 	const resetProviderCreate = () => {
 		setProviderName("OpenAI");
-		setProviderKind("openai");
-		setProviderEndpoint(providerOption("openai").endpoint);
+		setProviderDraft(DEFAULT_PROVIDER_DRAFT);
 		setProviderKey("");
 	};
 
@@ -204,23 +215,30 @@ export function AIModelSettings() {
 		setProfileName("");
 		setProfileConnectionId("");
 		setProfileModel("");
+		setProfileReasoning(null);
 		setProfileChatEnabled(false);
 		setProfileFailoverId(null);
 	};
 
-	const changeProviderKind = (nextKind: AIProviderKind) => {
-		const previous = providerOption(providerKind);
-		const next = providerOption(nextKind);
-		setProviderKind(nextKind);
-		if (!providerName.trim() || providerName === previous.label) {
-			setProviderName(next.label);
+	const catalogProviders = useMemo(
+		() =>
+			new Map(
+				(catalogQuery.data?.providers ?? []).map((provider) => [
+					provider.id,
+					provider,
+				]),
+			),
+		[catalogQuery.data],
+	);
+	const catalogName = (id: string | null | undefined) =>
+		(id ? catalogProviders.get(id)?.name : undefined) ?? "Custom endpoint";
+	const changeProviderDraft = (next: ProviderConnectionDraft) => {
+		// Follow the provider with the name until the user types their own.
+		const previousName = catalogName(providerDraft.catalogProviderId);
+		if (!providerName.trim() || providerName === previousName) {
+			setProviderName(catalogName(next.catalogProviderId));
 		}
-		if (
-			!providerEndpoint.trim() ||
-			providerEndpoint === previous.endpoint
-		) {
-			setProviderEndpoint(next.endpoint);
-		}
+		setProviderDraft(next);
 	};
 
 	const openProfileCreate = () => {
@@ -315,8 +333,7 @@ export function AIModelSettings() {
 		mutationFn: (edit: NonNullable<typeof providerEdit>) =>
 			updateProviderConnection(edit.id, {
 				name: edit.name.trim(),
-				provider: edit.provider,
-				endpoint: edit.endpoint.trim() || null,
+				...connectionRequestFields(edit),
 				...(edit.apiKey.trim() ? { api_key: edit.apiKey } : {}),
 			}),
 		onSuccess: () => {
@@ -384,6 +401,7 @@ export function AIModelSettings() {
 				model: edit.model.trim(),
 				default_max_tokens: edit.defaultMaxTokens,
 				failover_profile_id: edit.failoverProfileId,
+				reasoning_effort: edit.reasoningEffort,
 			}),
 		onSuccess: () => {
 			setProfileEdit(null);
@@ -530,7 +548,7 @@ export function AIModelSettings() {
 	});
 
 	const providerReady =
-		Boolean(providerName.trim() && providerKey.trim() && providerEndpoint.trim());
+		Boolean(providerName.trim() && providerKey.trim() && providerDraft.endpoint.trim());
 	const profileReady =
 		Boolean(profileName.trim() && profileConnectionId && profileModel.trim());
 
@@ -566,6 +584,7 @@ export function AIModelSettings() {
 							Save credentials once, then reuse the connection
 							across profiles.
 						</p>
+						<ModelCatalogStatus />
 					</div>
 					<Button
 						type="button"
@@ -601,7 +620,7 @@ export function AIModelSettings() {
 							</span>
 						</button>
 					)}
-					{providers.map((provider) => <ProviderConnectionCard key={provider.id} provider={provider} providerLabel={providerLabel(provider.provider)} testing={testProviderMutation.isPending && testProviderMutation.variables === provider.id} onEdit={() => { updateProviderMutation.reset(); setProviderEdit({ id: provider.id, name: provider.name, provider: provider.provider, endpoint: provider.endpoint ?? "", apiKey: "" }); }} onTest={() => testProviderMutation.mutate(provider.id)} onDelete={() => { deleteProviderMutation.reset(); setDeletingProvider(provider); }} />)}
+					{providers.map((provider) => <ProviderConnectionCard key={provider.id} provider={provider} catalogProvider={provider.catalog_provider_id ? catalogProviders.get(provider.catalog_provider_id) : undefined} testing={testProviderMutation.isPending && testProviderMutation.variables === provider.id} onEdit={() => { updateProviderMutation.reset(); setProviderEdit({ id: provider.id, name: provider.name, catalogProviderId: provider.catalog_provider_id ?? CUSTOM_PROVIDER, provider: provider.provider, endpoint: provider.endpoint ?? "", apiKey: "" }); }} onTest={() => testProviderMutation.mutate(provider.id)} onDelete={() => { deleteProviderMutation.reset(); setDeletingProvider(provider); }} />)}
 				</div>
 			</section>
 
@@ -703,7 +722,7 @@ export function AIModelSettings() {
 						defaultPending={assignMutation.isPending && assignMutation.variables?.assignmentKey === "primary" && assignMutation.variables.profileId === profile.id}
 						defaultDisabled={assignmentsQuery.isLoading || assignmentsQuery.isError || assignMutation.isPending}
 						onSelect={(selected) => toggleProfileSelection(profile.id, selected)}
-						onEdit={() => { editProfileMutation.reset(); setProfileEdit({ id: profile.id, name: profile.name, connectionId: profile.connection_id, model: profile.model, defaultMaxTokens: profile.default_max_tokens ?? null, failoverProfileId: profile.failover_profile_id ?? null }); }}
+						onEdit={() => { editProfileMutation.reset(); setProfileEdit({ id: profile.id, name: profile.name, connectionId: profile.connection_id, model: profile.model, defaultMaxTokens: profile.default_max_tokens ?? null, failoverProfileId: profile.failover_profile_id ?? null, reasoningEffort: profile.reasoning_effort ?? null }); }}
 						onDelete={() => { deleteProfileMutation.reset(); setDeletingProfile(profile); }}
 						onChatChange={(enabledForChat) => updateProfileMutation.mutate({ profileId: profile.id, enabledForChat })}
 						onSetDefault={() => assignMutation.mutate({ assignmentKey: "primary", profileId: profile.id })}
@@ -732,16 +751,15 @@ export function AIModelSettings() {
 				</div>
 			</section>
 
-			<ProviderCreateDialog providerCreateOpen={providerCreateOpen} providerName={providerName} providerKind={providerKind} providerEndpoint={providerEndpoint} providerKey={providerKey} providerReady={providerReady} setProviderName={setProviderName} changeProviderKind={changeProviderKind} setProviderEndpoint={setProviderEndpoint} setProviderKey={setProviderKey} pending={createProviderMutation.isPending} error={createProviderMutation.error} onClose={() => { setProviderCreateOpen(false); resetProviderCreate(); }} onSubmit={() =>
+			<ProviderCreateDialog providerCreateOpen={providerCreateOpen} providerName={providerName} providerDraft={providerDraft} providerKey={providerKey} providerReady={providerReady} setProviderName={setProviderName} changeProviderDraft={changeProviderDraft} setProviderKey={setProviderKey} pending={createProviderMutation.isPending} error={createProviderMutation.error} onClose={() => { setProviderCreateOpen(false); resetProviderCreate(); }} onSubmit={() =>
 								createProviderMutation.mutate({
 									name: providerName.trim(),
-									provider: providerKind,
 									api_key: providerKey,
-									endpoint: providerEndpoint.trim(),
+									...connectionRequestFields(providerDraft),
 								})
 							} />
 
-			<ProfileCreateDialog profileCreateOpen={profileCreateOpen} profileName={profileName} profileConnectionId={profileConnectionId} profileModel={profileModel} profileChatEnabled={profileChatEnabled} profileFailoverId={profileFailoverId} profileReady={profileReady} providers={providers} profiles={profiles} firstProfile={profiles.length === 0} setProfileName={setProfileName} setProfileConnectionId={setProfileConnectionId} setProfileModel={setProfileModel} setProfileChatEnabled={setProfileChatEnabled} setProfileFailoverId={setProfileFailoverId} pending={createProfileMutation.isPending} error={createProfileMutation.error} onClose={() => { setProfileCreateOpen(false); resetProfileCreate(); }} onSubmit={() =>
+			<ProfileCreateDialog profileCreateOpen={profileCreateOpen} profileName={profileName} profileConnectionId={profileConnectionId} profileModel={profileModel} profileChatEnabled={profileChatEnabled} profileFailoverId={profileFailoverId} profileReasoning={profileReasoning} profileReady={profileReady} providers={providers} profiles={profiles} firstProfile={profiles.length === 0} setProfileName={setProfileName} setProfileConnectionId={(connectionId) => { setProfileConnectionId(connectionId); setProfileReasoning(null); }} setProfileModel={(model) => { setProfileModel(model); setProfileReasoning(null); }} setProfileChatEnabled={setProfileChatEnabled} setProfileFailoverId={setProfileFailoverId} setProfileReasoning={setProfileReasoning} pending={createProfileMutation.isPending} error={createProfileMutation.error} onClose={() => { setProfileCreateOpen(false); resetProfileCreate(); }} onSubmit={() =>
 								createProfileMutation.mutate({
 									name: profileName.trim(),
 									connection_id: profileConnectionId,
@@ -749,6 +767,7 @@ export function AIModelSettings() {
 									capabilities: null,
 									enabled_for_chat: profileChatEnabled,
 									failover_profile_id: profileFailoverId,
+									reasoning_effort: profileReasoning,
 								})
 							} />
 

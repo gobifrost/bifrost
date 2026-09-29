@@ -30,7 +30,7 @@ from src.services.agent_runtime.toolset import (
     ToolEventHandler,
     bound_tool_result_for_model,
 )
-from src.services.agent_runtime.usage import provider_reported_cost
+from src.services.agent_runtime.usage import provider_reported_cost, reasoning_tokens
 
 __all__ = [
     "AgentRunBudget",
@@ -58,5 +58,6 @@ __all__ = [
     "is_failover_eligible",
     "provider_name_for_config",
     "provider_reported_cost",
+    "reasoning_tokens",
     "response_fingerprint",
 ]

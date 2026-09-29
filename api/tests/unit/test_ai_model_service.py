@@ -627,3 +627,208 @@ async def test_connection_delete_is_blocked_while_used_for_embeddings(db_session
 
     await service.delete_embedding_config()
     await service.delete_connection(connection.id)
+
+
+# --- models.dev catalog integration -------------------------------------------
+
+
+def _test_catalog():
+    from src.services.model_catalog import parse_catalog
+
+    return parse_catalog(
+        {
+            "anthropic": {
+                "id": "anthropic",
+                "name": "Anthropic",
+                "npm": "@ai-sdk/anthropic",
+                "models": {
+                    "claude-haiku-4-5": {
+                        "id": "claude-haiku-4-5",
+                        "name": "Claude Haiku 4.5",
+                        "reasoning": True,
+                        "reasoning_options": [{"type": "budget_tokens", "min": 1024}],
+                        "tool_call": True,
+                        "modalities": {"input": ["text", "image", "pdf"], "output": ["text"]},
+                        "limit": {"context": 200000, "output": 64000},
+                        "cost": {"input": 1, "output": 5, "cache_read": 0.1},
+                    },
+                    "claude-plain": {"id": "claude-plain", "name": "Claude Plain"},
+                },
+            },
+            "fireworks-ai": {
+                "id": "fireworks-ai",
+                "name": "Fireworks AI",
+                "npm": "@ai-sdk/openai-compatible",
+                "api": "https://api.fireworks.ai/inference/v1/",
+                "models": {
+                    "kimi-k3": {
+                        "id": "kimi-k3",
+                        "name": "Kimi K3",
+                        "reasoning": True,
+                        "reasoning_options": [{"type": "effort", "values": ["low", "high"]}],
+                    }
+                },
+            },
+        },
+        fetched_at=None,
+        source="bundled",
+    )
+
+
+@pytest.fixture
+def catalog():
+    with patch(
+        "src.services.ai_model_service.get_model_catalog",
+        new=AsyncMock(return_value=_test_catalog()),
+    ):
+        yield
+
+
+@pytest.mark.asyncio
+async def test_native_connection_on_its_own_endpoint_links_to_the_catalog(db_session, catalog):
+    service = AIModelService(db_session)
+    native = await service.create_connection(
+        name=f"Anthropic {uuid4().hex[:8]}", provider="anthropic", api_key="k", endpoint=None
+    )
+    azure = await service.create_connection(
+        name=f"Azure {uuid4().hex[:8]}",
+        provider="openai",
+        api_key="k",
+        endpoint="https://example.openai.azure.com/openai/v1",
+    )
+    assert native.catalog_provider_id == "anthropic"
+    # A custom endpoint on a native adapter is not vouched for by the catalog.
+    assert azure.catalog_provider_id is None
+
+
+@pytest.mark.asyncio
+async def test_community_provider_uses_catalog_endpoint_and_adapter(db_session, catalog):
+    service = AIModelService(db_session)
+    connection = await service.create_connection(
+        name=f"Fireworks {uuid4().hex[:8]}",
+        provider="openai_compatible",
+        api_key="k",
+        endpoint=None,
+        catalog_provider_id="fireworks-ai",
+    )
+    assert connection.endpoint == "https://api.fireworks.ai/inference/v1"
+    proxied = await service.create_connection(
+        name=f"Proxied {uuid4().hex[:8]}",
+        provider="openai_compatible",
+        api_key="k",
+        endpoint="https://proxy.example/v1",
+        catalog_provider_id="fireworks-ai",
+    )
+    assert proxied.catalog_provider_id is None
+
+    with pytest.raises(ValueError, match="uses the 'openai_compatible' adapter"):
+        await service.create_connection(
+            name=f"Wrong {uuid4().hex[:8]}",
+            provider="anthropic",
+            api_key="k",
+            endpoint=None,
+            catalog_provider_id="fireworks-ai",
+        )
+    with pytest.raises(ValueError, match="not a provider Bifrost can connect to"):
+        await service.create_connection(
+            name=f"Unknown {uuid4().hex[:8]}",
+            provider="openai_compatible",
+            api_key="k",
+            endpoint="https://x.example/v1",
+            catalog_provider_id="no-such-provider",
+        )
+
+
+@pytest.mark.asyncio
+async def test_catalog_connection_lists_catalog_models_without_calling_provider(
+    db_session, catalog
+):
+    service = AIModelService(db_session)
+    connection = await service.create_connection(
+        name=f"Anthropic {uuid4().hex[:8]}", provider="anthropic", api_key="k", endpoint=None
+    )
+    with patch.object(
+        AIModelService, "test_saved_connection", side_effect=AssertionError("live call")
+    ):
+        models = await service.list_models(connection.id)
+
+    assert models is not None
+    haiku = next(model for model in models if model.id == "claude-haiku-4-5")
+    assert haiku.display_name == "Claude Haiku 4.5"
+    assert haiku.context_window == 200000
+    assert haiku.input_price == "1"
+    assert haiku.reasoning_choices == ["off", "on"]
+
+
+@pytest.mark.asyncio
+async def test_reasoning_choice_must_be_one_the_model_accepts(db_session, catalog):
+    service = AIModelService(db_session)
+    connection = await service.create_connection(
+        name=f"Fireworks {uuid4().hex[:8]}",
+        provider="openai_compatible",
+        api_key="k",
+        endpoint=None,
+        catalog_provider_id="fireworks-ai",
+    )
+    profile = await service.create_profile(
+        name=f"Kimi {uuid4().hex[:8]}",
+        connection_id=connection.id,
+        model="kimi-k3",
+        capabilities=None,
+        enabled_for_chat=False,
+        reasoning_effort="high",
+    )
+    config = await service.resolve_config(profile_id=profile.id)
+    assert config.reasoning_effort == "high"
+    assert config.catalog_provider_id == "fireworks-ai"
+
+    with pytest.raises(ValueError, match="choose one of low, high"):
+        await service.update_profile(
+            profile.id, reasoning_effort="max", reasoning_effort_provided=True
+        )
+    # Switching to a model the catalog does not know cannot keep the choice.
+    with pytest.raises(ValueError, match="lists no reasoning control"):
+        await service.update_profile(profile.id, model="custom-finetune")
+    cleared = await service.update_profile(
+        profile.id, model="custom-finetune", reasoning_effort=None, reasoning_effort_provided=True
+    )
+    assert cleared.reasoning_effort is None
+
+
+@pytest.mark.asyncio
+async def test_chat_capabilities_prefer_admin_record_then_catalog(db_session, catalog):
+    from src.models.contracts.artifacts import ModelCapabilities
+    from src.services.model_capabilities import model_fingerprint
+
+    service = AIModelService(db_session)
+    connection = await service.create_connection(
+        name=f"Anthropic {uuid4().hex[:8]}", provider="anthropic", api_key="k", endpoint=None
+    )
+    from_catalog = await service.create_profile(
+        name=f"Haiku {uuid4().hex[:8]}",
+        connection_id=connection.id,
+        model="claude-haiku-4-5",
+        capabilities=None,
+        enabled_for_chat=False,
+    )
+    capabilities = await service.profile_capabilities(from_catalog)
+    assert capabilities.source == "catalog"
+    assert capabilities.pdf_input is True
+
+    asserted = await service.create_profile(
+        name=f"Haiku manual {uuid4().hex[:8]}",
+        connection_id=connection.id,
+        model="claude-haiku-4-5",
+        capabilities=ModelCapabilities(
+            tool_calling=False,
+            source="manual",
+            fingerprint=model_fingerprint(
+                provider="anthropic",
+                model="claude-haiku-4-5",
+                endpoint=connection.endpoint,
+            ),
+        ),
+        enabled_for_chat=False,
+    )
+    capabilities = await service.profile_capabilities(asserted)
+    assert (capabilities.source, capabilities.tool_calling) == ("manual", False)

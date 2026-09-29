@@ -9,11 +9,26 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 class LLMModelInfo(BaseModel):
-    """Model information with both ID and display name."""
+    """Model information with both ID and display name.
+
+    Catalog fields are filled when the model is in the models.dev catalog and
+    left empty for models listed live from a custom endpoint.
+    """
 
     id: str
     display_name: str
     output_modalities: list[str] | None = None
+    input_modalities: list[str] | None = None
+    context_window: int | None = None
+    max_output_tokens: int | None = None
+    # USD per million tokens, as decimal strings.
+    input_price: str | None = None
+    output_price: str | None = None
+    cache_read_price: str | None = None
+    tool_call: bool | None = None
+    # Values a profile may choose for reasoning; empty when the model has no
+    # reasoning control (or the catalog does not know the model).
+    reasoning_choices: list[str] = Field(default_factory=list)
 
 # =============================================================================
 # Embedding Configuration

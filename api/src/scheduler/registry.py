@@ -28,6 +28,7 @@ SCHEDULED_TASKS: tuple[ScheduledTaskDefinition, ...] = (
     ScheduledTaskDefinition("file_index_reconciliation", "Reconcile Workspace File Index", "Daily at 01:00 UTC", "durable_job"),
     ScheduledTaskDefinition("webhook_renewal", "Renew Webhook Subscriptions", "Every 6 hours", "durable_job"),
     ScheduledTaskDefinition("solution_update_check", "Check Solution Updates", "Every 6 hours", "durable_job"),
+    ScheduledTaskDefinition("model_catalog_refresh", "Refresh Model Catalog", "Every 4 hours", "durable_job"),
     ScheduledTaskDefinition("solution_export_job_cleanup", "Clean Up Solution Export Artifacts", "Hourly"),
     ScheduledTaskDefinition("artifact_retention_cleanup", "Clean Up Artifacts", "Daily at 03:30 UTC", "durable_job"),
     ScheduledTaskDefinition("event_cleanup", "Clean Up Old Events", "Daily at 03:00 UTC"),

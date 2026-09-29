@@ -38,6 +38,8 @@ class ModelCallEvent:
     response: ModelResponse | None = None
     error: str | None = None
     context_breakdown: dict[str, int | str] | None = None
+    # Provider this candidate bills under (see provider_name_for_config).
+    billing_provider: str | None = None
 
 
 ModelCallObserver = Callable[[ModelCallEvent], Awaitable[None]]
@@ -52,10 +54,12 @@ class ObservedModel(WrapperModel):
         observer: ModelCallObserver,
         *,
         retry_surface: str = "agent",
+        billing_provider: str | None = None,
     ):
         super().__init__(wrapped)
         self._observer = observer
         self._retry_surface = retry_surface
+        self._billing_provider = billing_provider
 
     @staticmethod
     def _estimated_input_tokens(
@@ -192,6 +196,7 @@ class ObservedModel(WrapperModel):
                 messages_count=len(messages),
                 tools_count=tools_count,
                 context_breakdown=context_breakdown,
+                billing_provider=self._billing_provider,
             )
         )
         started = time.monotonic()
@@ -215,6 +220,7 @@ class ObservedModel(WrapperModel):
                     duration_ms=int((time.monotonic() - started) * 1_000),
                     error=str(exc),
                     context_breakdown=context_breakdown,
+                    billing_provider=self._billing_provider,
                 )
             )
             raise
@@ -227,6 +233,7 @@ class ObservedModel(WrapperModel):
                 duration_ms=int((time.monotonic() - started) * 1_000),
                 response=response,
                 context_breakdown=context_breakdown,
+                billing_provider=self._billing_provider,
             )
         )
         return response
@@ -249,6 +256,7 @@ class ObservedModel(WrapperModel):
                 messages_count=len(messages),
                 tools_count=tools_count,
                 context_breakdown=context_breakdown,
+                billing_provider=self._billing_provider,
             )
         )
         started = time.monotonic()
@@ -281,6 +289,7 @@ class ObservedModel(WrapperModel):
                     duration_ms=int((time.monotonic() - started) * 1_000),
                     error=str(exc),
                     context_breakdown=context_breakdown,
+                    billing_provider=self._billing_provider,
                 )
             )
             raise
@@ -293,5 +302,6 @@ class ObservedModel(WrapperModel):
                 duration_ms=int((time.monotonic() - started) * 1_000),
                 response=response,
                 context_breakdown=context_breakdown,
+                billing_provider=self._billing_provider,
             )
         )

@@ -3,7 +3,7 @@
 from typing import NoReturn
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Response, status
 
 from src.core.auth import CurrentActiveUser, RequirePlatformAdmin
 from src.core.db_deps import DbSession
@@ -22,13 +22,16 @@ from src.models.contracts.ai_models import (
     AIProviderConnectionResponse,
     AIProviderConnectionSummary,
     AIProviderConnectionUpdate,
+    ModelCatalogResponse,
 )
 from src.models.contracts.ai_behavior import AIBehaviorResponse, AIBehaviorUpdate
 from src.models.contracts.artifacts import ModelCapabilities
 from src.models.contracts.llm import LLMModelInfo
+from src.models.contracts.platform_jobs import PlatformJobAccepted
 from src.models.orm.ai_models import AIModelAssignment, AIModelProfile, AIProviderConnection
 from src.services.ai_model_service import AIModelService, ProviderConnectionTestConfig
 from src.services.ai_behavior_service import AIBehaviorService
+from src.services.model_catalog import catalog_summary, get_model_catalog
 
 router = APIRouter(
     prefix="/api/admin/ai",
@@ -71,6 +74,7 @@ def _connection_response(connection: AIProviderConnection) -> AIProviderConnecti
         name=connection.name,
         provider=connection.provider,
         endpoint=connection.endpoint,
+        catalog_provider_id=connection.catalog_provider_id,
         api_key_set=bool(connection.encrypted_api_key),
         profile_count=len(connection.profiles),
         anthropic_prompt_cache_supported=connection.anthropic_prompt_cache_supported,
@@ -85,6 +89,7 @@ def _connection_summary(connection: AIProviderConnection) -> AIProviderConnectio
         name=connection.name,
         provider=connection.provider,
         endpoint=connection.endpoint,
+        catalog_provider_id=connection.catalog_provider_id,
         anthropic_prompt_cache_supported=connection.anthropic_prompt_cache_supported,
     )
 
@@ -99,6 +104,7 @@ def _profile_response(profile: AIModelProfile) -> AIModelProfileResponse:
         capabilities=capabilities,
         enabled_for_chat=profile.enabled_for_chat,
         default_max_tokens=profile.default_max_tokens,
+        reasoning_effort=profile.reasoning_effort,
         failover_profile_id=profile.failover_profile_id,
         failover_profile_name=(
             profile.failover_profile.name if profile.failover_profile else None
@@ -141,6 +147,7 @@ async def create_provider_connection(
             provider=request.provider,
             api_key=request.api_key,
             endpoint=request.endpoint,
+            catalog_provider_id=request.catalog_provider_id,
         )
         await db.commit()
         return _connection_response(await service.get_connection(connection.id))
@@ -199,6 +206,8 @@ async def update_provider_connection(
             api_key=request.api_key,
             endpoint=request.endpoint,
             endpoint_provided="endpoint" in request.model_fields_set,
+            catalog_provider_id=request.catalog_provider_id,
+            catalog_provider_id_provided="catalog_provider_id" in request.model_fields_set,
         )
         await db.commit()
         return _connection_response(await service.get_connection(connection.id))
@@ -247,7 +256,36 @@ async def list_provider_models(connection_id: UUID, db: DbSession, user: Current
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Could not retrieve models from provider")
     return AIModelsResponse(
         provider=connection.provider,
-        models=[LLMModelInfo(id=model.id, display_name=model.display_name, output_modalities=model.output_modalities) for model in models],
+        source="catalog" if connection.catalog_provider_id else "provider",
+        models=models,
+    )
+
+
+@router.get("/catalog")
+async def get_catalog(db: DbSession, user: CurrentActiveUser) -> ModelCatalogResponse:
+    """Providers Bifrost can connect to, from the cached models.dev catalog."""
+    del user
+    return catalog_summary(await get_model_catalog(db))
+
+
+@router.post(
+    "/catalog/refresh",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=PlatformJobAccepted,
+)
+async def refresh_catalog(
+    response: Response, db: DbSession, user: CurrentActiveUser
+) -> PlatformJobAccepted:
+    """Refresh the model catalog now instead of waiting for the schedule."""
+    from src.jobs.platform.system_maintenance import enqueue_manual_model_catalog_refresh
+
+    job, reused = await enqueue_manual_model_catalog_refresh(db, user)
+    response.headers["Location"] = f"/api/platform-jobs/{job.id}"
+    return PlatformJobAccepted(
+        job_id=job.id,
+        notification_id=job.notification_id,
+        status=job.status,
+        reused=reused,
     )
 
 
@@ -274,6 +312,7 @@ async def create_model_profile(
             enabled_for_chat=request.enabled_for_chat,
             default_max_tokens=request.default_max_tokens,
             failover_profile_id=request.failover_profile_id,
+            reasoning_effort=request.reasoning_effort,
         )
         await db.commit()
         return _profile_response(await service.get_profile(profile.id))
@@ -330,6 +369,8 @@ async def update_model_profile(
             default_max_tokens_provided="default_max_tokens" in request.model_fields_set,
             failover_profile_id=request.failover_profile_id,
             failover_profile_id_provided="failover_profile_id" in request.model_fields_set,
+            reasoning_effort=request.reasoning_effort,
+            reasoning_effort_provided="reasoning_effort" in request.model_fields_set,
         )
         await db.commit()
         return _profile_response(await service.get_profile(profile.id))

@@ -6339,46 +6339,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/admin/llm/model-capabilities": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Discover Model Capabilities
-         * @description Look up model features without trusting provider model-list labels.
-         */
-        post: operations["discover_model_capabilities_api_admin_llm_model_capabilities_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/admin/llm/model-capabilities/verify": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Verify Model Capability Support
-         * @description Run a bounded, one-time provider conformance check for an unknown model.
-         */
-        post: operations["verify_model_capability_support_api_admin_llm_model_capabilities_verify_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/admin/llm/embedding-config": {
         parameters: {
             query?: never;
@@ -6584,6 +6544,46 @@ export interface paths {
         get: operations["list_provider_models_api_admin_ai_connections__connection_id__models_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/ai/catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Catalog
+         * @description Providers Bifrost can connect to, from the cached models.dev catalog.
+         */
+        get: operations["get_catalog_api_admin_ai_catalog_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/ai/catalog/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Refresh Catalog
+         * @description Refresh the model catalog now instead of waiting for the schedule.
+         */
+        post: operations["refresh_catalog_api_admin_ai_catalog_refresh_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -11289,6 +11289,11 @@ export interface components {
              * @description Fallback profile tried when this profile's provider fails with a retryable transport error after retries are exhausted
              */
             failover_profile_id?: string | null;
+            /**
+             * Reasoning Effort
+             * @description One of the model's catalog reasoning choices; null = model default
+             */
+            reasoning_effort?: string | null;
         };
         /** AIModelProfileMergeRequest */
         AIModelProfileMergeRequest: {
@@ -11331,6 +11336,8 @@ export interface components {
             enabled_for_chat: boolean;
             /** Default Max Tokens */
             default_max_tokens?: number | null;
+            /** Reasoning Effort */
+            reasoning_effort?: string | null;
             /** Failover Profile Id */
             failover_profile_id?: string | null;
             /** Failover Profile Name */
@@ -11375,6 +11382,11 @@ export interface components {
              * @description Fallback profile tried when this profile's provider fails with a retryable transport error after retries are exhausted
              */
             failover_profile_id?: string | null;
+            /**
+             * Reasoning Effort
+             * @description One of the model's catalog reasoning choices; null = model default
+             */
+            reasoning_effort?: string | null;
         };
         /** AIModelsResponse */
         AIModelsResponse: {
@@ -11383,6 +11395,11 @@ export interface components {
              * @enum {string}
              */
             provider: "openai" | "anthropic" | "google" | "openrouter" | "openai_compatible" | "opencode_go";
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "catalog" | "provider";
             /** Models */
             models: components["schemas"]["LLMModelInfo"][];
         };
@@ -11399,6 +11416,11 @@ export interface components {
             api_key: string;
             /** Endpoint */
             endpoint?: string | null;
+            /**
+             * Catalog Provider Id
+             * @description models.dev provider id; supplies the default endpoint and model list
+             */
+            catalog_provider_id?: string | null;
         };
         /** AIProviderConnectionResponse */
         AIProviderConnectionResponse: {
@@ -11416,6 +11438,8 @@ export interface components {
             provider: "openai" | "anthropic" | "google" | "openrouter" | "openai_compatible" | "opencode_go";
             /** Endpoint */
             endpoint?: string | null;
+            /** Catalog Provider Id */
+            catalog_provider_id?: string | null;
             /** Api Key Set */
             api_key_set: boolean;
             /**
@@ -11452,6 +11476,8 @@ export interface components {
             provider: "openai" | "anthropic" | "google" | "openrouter" | "openai_compatible" | "opencode_go";
             /** Endpoint */
             endpoint?: string | null;
+            /** Catalog Provider Id */
+            catalog_provider_id?: string | null;
             /** Anthropic Prompt Cache Supported */
             anthropic_prompt_cache_supported?: boolean | null;
         };
@@ -11465,6 +11491,8 @@ export interface components {
             api_key?: string | null;
             /** Endpoint */
             endpoint?: string | null;
+            /** Catalog Provider Id */
+            catalog_provider_id?: string | null;
         };
         /**
          * AIUsagePublicSimple
@@ -11489,6 +11517,11 @@ export interface components {
              * @default 0
              */
             cache_write_tokens: number;
+            /**
+             * Reasoning Tokens
+             * @default 0
+             */
+            reasoning_tokens: number;
             /** Provider Cost */
             provider_cost?: string | null;
             /** Cost */
@@ -11528,6 +11561,11 @@ export interface components {
              * @default 0
              */
             total_cache_write_tokens: number;
+            /**
+             * Total Reasoning Tokens
+             * @default 0
+             */
+            total_reasoning_tokens: number;
             /**
              * Total Provider Cost
              * @default 0
@@ -20087,6 +20125,9 @@ export interface components {
         /**
          * LLMModelInfo
          * @description Model information with both ID and display name.
+         *
+         *     Catalog fields are filled when the model is in the models.dev catalog and
+         *     left empty for models listed live from a custom endpoint.
          */
         LLMModelInfo: {
             /** Id */
@@ -20095,6 +20136,22 @@ export interface components {
             display_name: string;
             /** Output Modalities */
             output_modalities?: string[] | null;
+            /** Input Modalities */
+            input_modalities?: string[] | null;
+            /** Context Window */
+            context_window?: number | null;
+            /** Max Output Tokens */
+            max_output_tokens?: number | null;
+            /** Input Price */
+            input_price?: string | null;
+            /** Output Price */
+            output_price?: string | null;
+            /** Cache Read Price */
+            cache_read_price?: string | null;
+            /** Tool Call */
+            tool_call?: boolean | null;
+            /** Reasoning Choices */
+            reasoning_choices?: string[];
         };
         /**
          * LinkedAccountResponse
@@ -21323,7 +21380,7 @@ export interface components {
              * @default unknown
              * @enum {string}
              */
-            source: "openrouter" | "verified" | "manual" | "unknown";
+            source: "catalog" | "openrouter" | "verified" | "manual" | "unknown";
             /** Checked At */
             checked_at?: string | null;
             /**
@@ -21333,48 +21390,48 @@ export interface components {
             fingerprint: string;
         };
         /**
-         * ModelCapabilityLookupRequest
-         * @description Identify a configured model for deterministic catalog lookup.
+         * ModelCatalogProvider
+         * @description A provider Bifrost can connect to, from the models.dev catalog.
          */
-        ModelCapabilityLookupRequest: {
+        ModelCatalogProvider: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
             /**
-             * Provider
+             * Adapter
              * @enum {string}
              */
-            provider: "openai" | "anthropic" | "google";
-            /** Model */
-            model: string;
+            adapter: "openai" | "anthropic" | "google" | "openrouter" | "openai_compatible" | "opencode_go";
             /** Endpoint */
             endpoint?: string | null;
-        };
-        /**
-         * ModelCapabilityLookupResponse
-         * @description Capability lookup result plus an explanation suitable for settings UI.
-         */
-        ModelCapabilityLookupResponse: {
-            capabilities: components["schemas"]["ModelCapabilities"];
-            /** Message */
-            message: string;
-        };
-        /**
-         * ModelCapabilityVerifyRequest
-         * @description Run a one-time conformance check against the configured provider.
-         */
-        ModelCapabilityVerifyRequest: {
+            /** Doc */
+            doc?: string | null;
+            /** Env */
+            env?: string[];
             /**
-             * Provider
+             * Native
+             * @description Exercised directly by Bifrost; other providers reuse a native adapter
+             */
+            native: boolean;
+            /** Model Count */
+            model_count: number;
+        };
+        /** ModelCatalogResponse */
+        ModelCatalogResponse: {
+            /**
+             * Source
              * @enum {string}
              */
-            provider: "openai" | "anthropic" | "google";
-            /** Model */
-            model: string;
-            /** Endpoint */
-            endpoint?: string | null;
-            /**
-             * Api Key
-             * @description New unsaved API key; omit to use the saved provider key.
-             */
-            api_key?: string | null;
+            source: "bundled" | "refreshed";
+            /** Fetched At */
+            fetched_at?: string | null;
+            /** Provider Count */
+            provider_count: number;
+            /** Model Count */
+            model_count: number;
+            /** Providers */
+            providers: components["schemas"]["ModelCatalogProvider"][];
         };
         /**
          * NotificationCategory
@@ -40225,72 +40282,6 @@ export interface operations {
             };
         };
     };
-    discover_model_capabilities_api_admin_llm_model_capabilities_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ModelCapabilityLookupRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ModelCapabilityLookupResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    verify_model_capability_support_api_admin_llm_model_capabilities_verify_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ModelCapabilityVerifyRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ModelCapabilityLookupResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_embedding_config_endpoint_api_admin_llm_embedding_config_get: {
         parameters: {
             query?: never;
@@ -40676,6 +40667,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_catalog_api_admin_ai_catalog_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelCatalogResponse"];
+                };
+            };
+        };
+    };
+    refresh_catalog_api_admin_ai_catalog_refresh_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformJobAccepted"];
                 };
             };
         };

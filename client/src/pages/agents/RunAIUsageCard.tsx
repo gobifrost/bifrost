@@ -27,6 +27,7 @@ export function RunAIUsageCard({
 				input: number;
 				cacheRead: number;
 				output: number;
+				reasoning: number;
 				cost: number;
 			}
 		>();
@@ -37,12 +38,14 @@ export function RunAIUsageCard({
 				input: 0,
 				cacheRead: 0,
 				output: 0,
+				reasoning: 0,
 				cost: 0,
 			};
 			row.calls++;
 			row.input += entry.input_tokens;
 			row.cacheRead += entry.cache_read_tokens ?? 0;
 			row.output += entry.output_tokens;
+			row.reasoning += entry.reasoning_tokens ?? 0;
 			row.cost += Number(entry.cost) || 0;
 			rows.set(entry.model, row);
 		}
@@ -128,6 +131,7 @@ export function RunAIUsageCard({
 										input={row.input}
 										cacheRead={row.cacheRead}
 										output={row.output}
+										reasoning={row.reasoning}
 										cost={row.cost}
 									/>
 								</li>
@@ -173,12 +177,15 @@ function UsageMetrics({
 	input,
 	cacheRead,
 	output,
+	reasoning,
 	cost,
 }: {
 	calls: number;
 	input: number;
 	cacheRead: number;
 	output: number;
+	/** Hidden reasoning tokens, already counted in output. */
+	reasoning: number;
 	cost: number;
 }) {
 	return (
@@ -187,7 +194,12 @@ function UsageMetrics({
 				["Calls", formatNumber(calls)],
 				["Cost", formatCost(cost)],
 				["Cached", input > 0 ? formatCacheRate(cacheRead / input) : "—"],
-				["Output tokens", formatNumber(output)],
+				[
+					"Output tokens",
+					reasoning > 0
+						? `${formatNumber(output)} (${formatNumber(reasoning)} reasoning)`
+						: formatNumber(output),
+				],
 			].map(([label, value]) => (
 				<div key={label} className="min-w-0">
 					<dt className="text-muted-foreground">{label}</dt>

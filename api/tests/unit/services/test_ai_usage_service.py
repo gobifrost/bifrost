@@ -11,6 +11,7 @@ from uuid import uuid4
 
 import pytest
 
+from src.services.model_catalog import parse_catalog
 from src.services.ai_usage_service import (
     PRICING_KEY_PREFIX,
     USED_MODELS_KEY,
@@ -24,6 +25,20 @@ from src.services.ai_usage_service import (
     invalidate_pricing_cache,
     invalidate_usage_cache,
     record_ai_usage,
+)
+
+
+USAGE_CATALOG = parse_catalog(
+    {
+        "anthropic": {
+            "id": "anthropic",
+            "name": "Anthropic",
+            "npm": "@ai-sdk/anthropic",
+            "models": {"claude-opus-4-5": {"id": "claude-opus-4-5", "name": "Claude Opus 4.5"}},
+        }
+    },
+    fetched_at=None,
+    source="bundled",
 )
 
 
@@ -483,6 +498,14 @@ class TestGetUsedModels:
 class TestRecordAIUsage:
     """Tests for record_ai_usage function."""
 
+    @pytest.fixture(autouse=True)
+    def catalog(self):
+        """A small catalog in place of the stored one (the session is a mock)."""
+        with (
+            patch("src.services.model_pricing.get_model_catalog", new=AsyncMock(return_value=USAGE_CATALOG)),
+        ):
+            yield USAGE_CATALOG
+
     @pytest.fixture
     def mock_redis(self):
         """Create mock Redis client."""
@@ -509,11 +532,9 @@ class TestRecordAIUsage:
         })
 
         # Patch at the ORM model module level where AIUsage is defined
-        with patch("src.models.orm.ai_usage.AIUsage") as MockAIUsage, \
-             patch("src.services.model_registry.get_display_name") as mock_get_display_name:
+        with patch("src.models.orm.ai_usage.AIUsage") as MockAIUsage:
             mock_usage = MagicMock()
             MockAIUsage.return_value = mock_usage
-            mock_get_display_name.return_value = "gpt-4o"
 
             await record_ai_usage(
                 session=mock_session,
@@ -539,12 +560,12 @@ class TestRecordAIUsage:
             mock_session.flush.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_openrouter_uses_exact_cost_and_recovers_missing_catalog_price(
+    async def test_exact_cost_wins_while_catalog_fills_missing_price(
         self, mock_redis, mock_session
     ):
-        """Exact response cost wins while catalog recovery fills future pricing."""
+        """Exact response cost wins while the catalog fills future pricing."""
         exact_cost = Decimal("0.00012345")
-        recovered_pricing = (
+        filled_pricing = (
             Decimal("0.20"),
             Decimal("0.80"),
             Decimal("0.02"),
@@ -558,14 +579,14 @@ class TestRecordAIUsage:
                 new=AsyncMock(
                     side_effect=[
                         (None, None, None, None),
-                        recovered_pricing,
+                        filled_pricing,
                     ]
                 ),
             ) as pricing_lookup,
             patch(
-                "src.services.model_pricing.discover_openrouter_pricing",
+                "src.services.model_pricing.fill_pricing_from_catalog",
                 new=AsyncMock(return_value=True),
-            ) as discover,
+            ) as fill,
         ):
             await record_ai_usage(
                 session=mock_session,
@@ -579,10 +600,11 @@ class TestRecordAIUsage:
                 execution_id=uuid4(),
             )
 
-        discover.assert_awaited_once_with(
+        fill.assert_awaited_once_with(
             mock_session,
-            mock_redis,
-            "deepseek/deepseek-v4-flash",
+            provider="openrouter",
+            model="deepseek/deepseek-v4-flash",
+            usage_name="deepseek/deepseek-v4-flash",
         )
         assert pricing_lookup.await_count == 2
         call_kwargs = MockAIUsage.call_args.kwargs
@@ -593,42 +615,25 @@ class TestRecordAIUsage:
         assert call_kwargs["cost"] == exact_cost
 
     @pytest.mark.asyncio
-    async def test_converts_versioned_model_to_display_name(self, mock_redis, mock_session):
-        """Test converts versioned model ID to display name before storing."""
-        execution_id = uuid4()
-
-        # Mock pricing lookup
+    async def test_stores_undated_model_id_for_native_providers(self, mock_redis, mock_session):
+        """A dated snapshot shares its predecessor's usage rows and price."""
         mock_redis.get.return_value = json.dumps({
             "input_price": "3.00",
             "output_price": "15.00",
         })
 
-        with patch("src.models.orm.ai_usage.AIUsage") as MockAIUsage, \
-             patch("src.services.model_registry.get_display_name") as mock_get_display_name:
-            mock_usage = MagicMock()
-            MockAIUsage.return_value = mock_usage
-            # Simulate display name lookup returning the human-readable name
-            mock_get_display_name.return_value = "Claude Opus 4.5"
-
+        with patch("src.models.orm.ai_usage.AIUsage") as MockAIUsage:
             await record_ai_usage(
                 session=mock_session,
                 redis_client=mock_redis,
                 provider="anthropic",
-                model="claude-opus-4-5-20251101",  # Versioned ID from API
+                model="claude-opus-4-5-20251101",
                 input_tokens=2000,
                 output_tokens=1000,
-                execution_id=execution_id,
-                api_key="test-key",
+                execution_id=uuid4(),
             )
 
-            # Should have called get_display_name with the versioned model ID
-            mock_get_display_name.assert_called_once_with(
-                mock_redis, "anthropic", "claude-opus-4-5-20251101", "test-key"
-            )
-
-            # Should store the display name, not the versioned ID
-            call_kwargs = MockAIUsage.call_args[1]
-            assert call_kwargs["model"] == "Claude Opus 4.5"
+        assert MockAIUsage.call_args[1]["model"] == "claude-opus-4-5"
 
     @pytest.mark.asyncio
     async def test_records_usage_without_pricing(self, mock_redis, mock_session):
@@ -641,11 +646,9 @@ class TestRecordAIUsage:
             "output_price": None,
         })
 
-        with patch("src.models.orm.ai_usage.AIUsage") as MockAIUsage, \
-             patch("src.services.model_registry.get_display_name") as mock_get_display_name:
+        with patch("src.models.orm.ai_usage.AIUsage") as MockAIUsage:
             mock_usage = MagicMock()
             MockAIUsage.return_value = mock_usage
-            mock_get_display_name.return_value = "unknown-model"
 
             await record_ai_usage(
                 session=mock_session,
@@ -670,9 +673,7 @@ class TestRecordAIUsage:
             "output_price": "15.00",
         })
 
-        with patch("src.models.orm.ai_usage.AIUsage"), \
-             patch("src.services.model_registry.get_display_name") as mock_get_display_name:
-            mock_get_display_name.return_value = "gpt-4o"
+        with patch("src.models.orm.ai_usage.AIUsage"):
 
             await record_ai_usage(
                 session=mock_session,
@@ -697,9 +698,7 @@ class TestRecordAIUsage:
             "output_price": "15.00",
         })
 
-        with patch("src.models.orm.ai_usage.AIUsage"), \
-             patch("src.services.model_registry.get_display_name") as mock_get_display_name:
-            mock_get_display_name.return_value = "gpt-4o"
+        with patch("src.models.orm.ai_usage.AIUsage"):
 
             await record_ai_usage(
                 session=mock_session,
@@ -724,9 +723,7 @@ class TestRecordAIUsage:
         mock_session.flush.side_effect = Exception("DB error")
 
         # Should not raise
-        with patch("src.models.orm.ai_usage.AIUsage"), \
-             patch("src.services.model_registry.get_display_name") as mock_get_display_name:
-            mock_get_display_name.return_value = "gpt-4o"
+        with patch("src.models.orm.ai_usage.AIUsage"):
 
             await record_ai_usage(
                 session=mock_session,

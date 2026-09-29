@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database import get_db_context
+from src.core.principal import UserPrincipal
 from src.jobs.platform.base import (
     PlatformJobContext,
     PlatformJobDefinition,
+    PlatformJobFailure,
     PlatformJobPolicy,
 )
+from src.models.orm.platform_jobs import PlatformJob
 from src.scheduler.registry import ScheduledTaskOutcome
 from src.services.platform_jobs import enqueue_platform_job, publish_platform_job_update
 
@@ -133,6 +137,46 @@ async def run_artifact_retention_cleanup(
     }
 
 
+async def run_model_catalog_refresh(
+    context: PlatformJobContext, payload: EmptyMaintenancePayload
+) -> dict:
+    import httpx
+
+    from src.services.model_catalog import (
+        CatalogRefreshRejected,
+        refresh_model_catalog,
+    )
+
+    await context.report("Checking models.dev for catalog changes", percent=5)
+    try:
+        async with get_db_context() as db:
+            result = await refresh_model_catalog(db)
+            await db.commit()
+    except CatalogRefreshRejected as exc:
+        raise PlatformJobFailure("catalog_rejected", str(exc)) from exc
+    except httpx.HTTPError as exc:
+        raise PlatformJobFailure(
+            "catalog_unreachable",
+            f"models.dev could not be reached ({exc}); keeping the last good catalog.",
+            retryable=True,
+        ) from exc
+    await context.report("Model catalog refresh complete", percent=100)
+    await context.log(
+        "info",
+        "model_catalog_refresh_completed",
+        (
+            f"Model catalog {'updated' if result.changed else 'unchanged'}: "
+            f"{result.provider_count} providers, {result.model_count} models"
+        ),
+    )
+    return {
+        "changed": result.changed,
+        "provider_count": result.provider_count,
+        "model_count": result.model_count,
+        "fetched_at": result.fetched_at.isoformat(),
+    }
+
+
 OAUTH_REFRESH_DEFINITION = PlatformJobDefinition(
     job_type="oauth.refresh",
     payload_version=1,
@@ -195,6 +239,20 @@ ARTIFACT_RETENTION_CLEANUP_DEFINITION = PlatformJobDefinition(
         max_attempts=2,
         max_concurrency=1,
         min_memory_headroom_mb=128,
+    ),
+)
+
+
+MODEL_CATALOG_REFRESH_DEFINITION = PlatformJobDefinition(
+    job_type="model_catalog.refresh",
+    payload_version=1,
+    payload_model=EmptyMaintenancePayload,
+    handler=run_model_catalog_refresh,
+    policy=PlatformJobPolicy(
+        timeout_seconds=5 * 60,
+        max_attempts=2,
+        max_concurrency=1,
+        min_memory_headroom_mb=256,
     ),
 )
 
@@ -268,3 +326,41 @@ async def enqueue_automatic_artifact_retention_cleanup() -> ScheduledTaskOutcome
         EmptyMaintenancePayload(),
         title="Clean up expired artifacts",
     )
+
+
+async def enqueue_automatic_model_catalog_refresh() -> ScheduledTaskOutcome:
+    return await enqueue_system_maintenance(
+        MODEL_CATALOG_REFRESH_DEFINITION,
+        EmptyMaintenancePayload(),
+        title="Refresh the model catalog",
+    )
+
+
+async def enqueue_manual_model_catalog_refresh(
+    db: AsyncSession, user: UserPrincipal
+) -> tuple[PlatformJob, bool]:
+    """Queue an administrator-requested catalog refresh (deduplicated)."""
+    from src.services.platform_jobs import ensure_platform_job_notification
+
+    job, reused = await enqueue_platform_job(
+        db,
+        MODEL_CATALOG_REFRESH_DEFINITION,
+        EmptyMaintenancePayload(),
+        dedupe_key="manual",
+        resource_lock_key=MODEL_CATALOG_REFRESH_DEFINITION.job_type,
+        priority=500,
+        organization_id=None,
+        requested_by_user_id=user.user_id,
+        requested_by_email=user.email,
+        requested_by_name=user.name or user.email or "Unknown",
+        resource_type="system",
+        resource_id=MODEL_CATALOG_REFRESH_DEFINITION.job_type,
+        title="Refresh the model catalog",
+        action_url="/settings/ai",
+    )
+    if job.notification_id is None:
+        await ensure_platform_job_notification(db, job)
+    await db.commit()
+    await db.refresh(job)
+    await publish_platform_job_update(job)
+    return job, reused

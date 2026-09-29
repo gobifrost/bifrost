@@ -14,22 +14,35 @@ import { createPricing, deletePricing, listPricing, updatePricing, type AIModelP
 
 const QUERY_KEY = ["ai", "pricing"] as const;
 
+const EMPTY_DRAFT: PricingDraft = {
+	provider: "",
+	model: "",
+	inputPrice: "",
+	outputPrice: "",
+	cacheReadPrice: "",
+	cacheWritePrice: "",
+};
+
 export function AIUsageSettings() {
 	const queryClient = useQueryClient();
 	const { data, isLoading, isError, isFetching, refetch } = useQuery({ queryKey: QUERY_KEY, queryFn: listPricing });
 	const [editing, setEditing] = useState<AIModelPricingListItem | null | undefined>(undefined);
-	const [draft, setDraft] = useState<PricingDraft>({ provider: "", model: "", inputPrice: "", outputPrice: "" });
+	const [draft, setDraft] = useState<PricingDraft>(EMPTY_DRAFT);
 	const { provider, model, inputPrice, outputPrice } = draft;
+	const cachePrices = {
+		cache_read_price_per_million: draft.cacheReadPrice.trim() || null,
+		cache_write_price_per_million: draft.cacheWritePrice.trim() || null,
+	};
 
 	const close = () => {
 		setEditing(undefined);
-		setDraft({ provider: "", model: "", inputPrice: "", outputPrice: "" });
+		setDraft(EMPTY_DRAFT);
 	};
 	const invalidate = () => void queryClient.invalidateQueries({ queryKey: QUERY_KEY });
 	const saveMutation = useMutation({
 		mutationFn: () => editing
-			? updatePricing(editing.id, { input_price_per_million: inputPrice, output_price_per_million: outputPrice })
-			: createPricing({ provider: provider.trim(), model: model.trim(), input_price_per_million: inputPrice, output_price_per_million: outputPrice }),
+			? updatePricing(editing.id, { input_price_per_million: inputPrice, output_price_per_million: outputPrice, ...cachePrices })
+			: createPricing({ provider: provider.trim(), model: model.trim(), input_price_per_million: inputPrice, output_price_per_million: outputPrice, ...cachePrices }),
 		onSuccess: () => { invalidate(); close(); toast.success("Model pricing saved"); },
 	});
 	const [deleting, setDeleting] = useState<AIModelPricingListItem | null>(null);
@@ -40,7 +53,7 @@ export function AIUsageSettings() {
 	});
 	const openEdit = (item: AIModelPricingListItem) => {
 		saveMutation.reset(); setEditing(item);
-		setDraft({ provider: item.provider, model: item.model, inputPrice: item.input_price_per_million ?? "", outputPrice: item.output_price_per_million ?? "" });
+		setDraft({ provider: item.provider, model: item.model, inputPrice: item.input_price_per_million ?? "", outputPrice: item.output_price_per_million ?? "", cacheReadPrice: item.cache_read_price_per_million ?? "", cacheWritePrice: item.cache_write_price_per_million ?? "" });
 	};
 
 	return (

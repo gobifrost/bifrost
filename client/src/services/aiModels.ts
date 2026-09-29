@@ -28,6 +28,10 @@ export type AIModelProfileMergeResponse =
 export type AIConnectionTestResponse =
 	components["schemas"]["AIConnectionTestResponse"];
 export type AIModelsResponse = components["schemas"]["AIModelsResponse"];
+export type ProviderModel = components["schemas"]["LLMModelInfo"];
+export type ModelCatalog = components["schemas"]["ModelCatalogResponse"];
+export type ModelCatalogProvider = components["schemas"]["ModelCatalogProvider"];
+export type PlatformJobAccepted = components["schemas"]["PlatformJobAccepted"];
 
 function throwApiError(action: string, error: unknown): never {
 	const detail =
@@ -116,6 +120,18 @@ export async function listProviderModels(
 	);
 	if (error) throwApiError("list provider models", error);
 	return data as AIModelsResponse;
+}
+
+export async function getModelCatalog(): Promise<ModelCatalog> {
+	const { data, error } = await apiClient.GET("/api/admin/ai/catalog");
+	if (error) throwApiError("load the model catalog", error);
+	return data as ModelCatalog;
+}
+
+export async function refreshModelCatalog(): Promise<PlatformJobAccepted> {
+	const { data, error } = await apiClient.POST("/api/admin/ai/catalog/refresh");
+	if (error) throwApiError("refresh the model catalog", error);
+	return data as PlatformJobAccepted;
 }
 
 export async function listModelProfiles(): Promise<AIModelProfile[]> {

@@ -72,6 +72,7 @@ class LLMResponse:
     output_tokens: int | None = None
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
+    reasoning_tokens: int = 0
     provider_cost: Decimal | None = None
 
     # Model info
@@ -96,6 +97,7 @@ class LLMStreamChunk:
     output_tokens: int | None = None
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
+    reasoning_tokens: int = 0
     provider_cost: Decimal | None = None
 
     # For error chunks
@@ -136,6 +138,12 @@ class LLMConfig:
     # Populated by AIModelService.resolve_config; loses to an explicit
     # per-request override (Agent.llm_max_tokens).
     default_max_tokens: int | None = None
+    # models.dev provider id the connection was created from (None for a
+    # custom endpoint). Community providers bill under this id.
+    catalog_provider_id: str | None = None
+    # Profile reasoning choice: a catalog effort level, "on"/"off", or None
+    # for the model's default behavior.
+    reasoning_effort: str | None = None
     # Optional parameters
     extra_params: dict[str, Any] = field(default_factory=dict)
 

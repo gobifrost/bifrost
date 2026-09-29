@@ -20,7 +20,6 @@ from src.services.agent_executor import AgentExecutor
 from src.services.llm import LLMMessage, ToolDefinition
 from src.services.llm.base import LLMConfig
 from src.services.llm.pydantic_client import PydanticAIClient
-from src.services.model_capabilities import manual_capabilities
 
 
 class CountingTestModel(TestModel):
@@ -63,14 +62,7 @@ def configured_chat_model():
     profile.id = uuid4()
     profile.name = "Everyday"
     config = LLMConfig(provider="openai", model="test-model", api_key="test-key")
-    capabilities = manual_capabilities(
-        provider="openai",
-        model="test-model",
-        endpoint=None,
-        image_input=False,
-        pdf_input=False,
-        tool_calling=True,
-    )
+    capabilities = ModelCapabilities(tool_calling=True, source="manual")
     with (
         patch(
             "src.services.agent_executor.AIModelService.resolve_chat_profile",
@@ -153,14 +145,7 @@ async def test_chat_resolves_explicit_model_profile_id(
         return_value=(
             profile,
             LLMConfig(provider="openai", model="pro-model", api_key="test-key"),
-            manual_capabilities(
-                provider="openai",
-                model="pro-model",
-                endpoint=None,
-                image_input=False,
-                pdf_input=False,
-                tool_calling=True,
-            ),
+            ModelCapabilities(tool_calling=True, source="manual"),
         )
     )
     executor._save_message = AsyncMock(side_effect=_saved_message)
@@ -205,14 +190,7 @@ async def test_chat_omitted_model_profile_uses_default_resolution(
         return_value=(
             profile,
             LLMConfig(provider="openai", model="test-model", api_key="test-key"),
-            manual_capabilities(
-                provider="openai",
-                model="test-model",
-                endpoint=None,
-                image_input=False,
-                pdf_input=False,
-                tool_calling=True,
-            ),
+            ModelCapabilities(tool_calling=True, source="manual"),
         )
     )
     executor._save_message = AsyncMock(side_effect=_saved_message)

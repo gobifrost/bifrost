@@ -48,6 +48,7 @@ def _done(input_tokens=3, output_tokens=5):
         output_tokens=output_tokens,
         cache_read_tokens=0,
         cache_write_tokens=0,
+        reasoning_tokens=0,
         provider_cost=None,
     )
 

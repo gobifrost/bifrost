@@ -105,6 +105,10 @@ class AIUsage(Base):
     cache_write_tokens: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0"
     )
+    # Hidden reasoning/thinking tokens, already included in output_tokens.
+    reasoning_tokens: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     provider_cost: Mapped[Decimal | None] = mapped_column(
         Numeric(12, 8), default=None
     )

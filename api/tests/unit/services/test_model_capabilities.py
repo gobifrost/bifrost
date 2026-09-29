@@ -1,83 +1,41 @@
-import httpx
-import pytest
-from types import SimpleNamespace
-
 from src.models.contracts.artifacts import ModelCapabilities
 from src.services.model_capabilities import (
-    lookup_model_capabilities,
+    catalog_capabilities,
     model_fingerprint,
     normalize_capabilities,
     should_offer_tool_calling,
-    verify_model_capabilities,
 )
+from src.services.model_catalog import CatalogModel
 
 
-@pytest.mark.asyncio
-async def test_openrouter_catalog_maps_modalities_and_tools() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path.endswith("/models")
-        assert request.url.params["output_modalities"] == "all"
-        return httpx.Response(
-            200,
-            json={
-                "data": [
-                    {
-                        "id": "deepseek/deepseek-v4-pro",
-                        "architecture": {
-                            "input_modalities": ["text"],
-                            "output_modalities": ["text"],
-                        },
-                        "supported_parameters": ["tools", "tool_choice"],
-                    }
-                ]
-            },
-        )
-
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        capabilities, message = await lookup_model_capabilities(
-            provider="openai",
-            model="deepseek/deepseek-v4-pro",
-            endpoint="https://openrouter.ai/api/v1",
-            client=client,
-        )
-
-    assert capabilities.source == "openrouter"
-    assert capabilities.tool_calling is True
-    assert capabilities.image_input is False
-    assert capabilities.pdf_input is False
-    assert "OpenRouter" in message
-
-
-@pytest.mark.asyncio
-async def test_openrouter_lookup_never_places_model_id_in_request_url() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.host == "openrouter.ai"
-        assert request.url.path == "/api/v1/models"
-        assert "evil.test" not in str(request.url)
-        return httpx.Response(200, json={"data": []})
-
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        capabilities, _ = await lookup_model_capabilities(
-            provider="openai",
-            model="../../private?redirect=https://evil.test",
-            endpoint="https://openrouter.ai/api/v1",
-            client=client,
-        )
-
-    assert capabilities.source == "unknown"
-
-
-@pytest.mark.asyncio
-async def test_custom_endpoint_stays_unknown_without_authoritative_record() -> None:
-    capabilities, message = await lookup_model_capabilities(
-        provider="openai",
-        model="private-model",
-        endpoint="https://models.example.test/v1",
+def test_catalog_capabilities_follow_published_modalities_and_tools() -> None:
+    entry = CatalogModel(
+        id="claude-haiku-4-5",
+        name="Claude Haiku 4.5",
+        tool_call=True,
+        input_modalities=["text", "image", "pdf"],
     )
 
-    assert capabilities.source == "unknown"
-    assert capabilities.tool_calling is False
-    assert "manually" in message
+    capabilities = catalog_capabilities(
+        entry, provider="anthropic", model="claude-haiku-4-5", endpoint=None
+    )
+
+    assert (capabilities.image_input, capabilities.pdf_input, capabilities.tool_calling) == (
+        True,
+        True,
+        True,
+    )
+    assert capabilities.source == "catalog"
+    # The fingerprint binds the record to this exact target.
+    assert capabilities.fingerprint == model_fingerprint(
+        provider="anthropic", model="claude-haiku-4-5", endpoint=None
+    )
+
+
+def test_catalog_without_tool_support_suppresses_tools() -> None:
+    entry = CatalogModel(id="m", name="M", tool_call=False)
+    capabilities = catalog_capabilities(entry, provider="openai", model="m", endpoint=None)
+    assert should_offer_tool_calling(capabilities) is False
 
 
 def test_stale_capability_fingerprint_is_not_reused() -> None:
@@ -111,38 +69,3 @@ def test_unknown_capabilities_are_optimistic_for_tool_calling() -> None:
     assert should_offer_tool_calling(verified_unsupported) is False
     assert should_offer_tool_calling(manual_unsupported) is False
     assert should_offer_tool_calling(verified_supported) is True
-
-
-@pytest.mark.asyncio
-async def test_provider_conformance_verifies_tool_image_and_pdf_support(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class FakeClient:
-        async def complete(self, messages, tools=None, **kwargs):
-            if kwargs.get("require_tool_call"):
-                return SimpleNamespace(
-                    tool_calls=[SimpleNamespace(name="capability_probe")]
-                )
-            input_files = messages[0].input_files
-            if input_files:
-                assert input_files[0].media_type in {"image/png", "application/pdf"}
-            return SimpleNamespace(tool_calls=None)
-
-    monkeypatch.setattr(
-        "src.services.llm.factory.create_llm_client",
-        lambda *args, **kwargs: FakeClient(),
-    )
-
-    capabilities, message = await verify_model_capabilities(
-        provider="openai",
-        model="private-model",
-        endpoint="https://models.example.test/v1",
-        api_key="test-key",
-    )
-
-    assert capabilities.source == "verified"
-    assert capabilities.tool_calling is True
-    assert capabilities.image_input is True
-    assert capabilities.pdf_input is True
-    assert capabilities.checked_at is not None
-    assert "completed" in message

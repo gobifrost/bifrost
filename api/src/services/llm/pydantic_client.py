@@ -34,10 +34,11 @@ from pydantic_ai.tools import ToolDefinition as PydanticToolDefinition
 from src.services.agent_runtime.model_factory import (
     create_agent_model,
     provider_name_for_config,
+    reasoning_settings,
 )
 from src.services.agent_runtime.model_failover import FailoverModel
 from src.services.agent_runtime.retry_transport import ai_retry_context
-from src.services.agent_runtime.usage import provider_reported_cost
+from src.services.agent_runtime.usage import provider_reported_cost, reasoning_tokens
 from src.services.llm.base import (
     BaseLLMClient,
     LLMConfig,
@@ -183,6 +184,7 @@ class PydanticAIClient(BaseLLMClient):
                         output_tokens=response.usage.output_tokens,
                         cache_read_tokens=response.usage.cache_read_tokens,
                         cache_write_tokens=response.usage.cache_write_tokens,
+                        reasoning_tokens=reasoning_tokens(response.usage),
                         provider_cost=provider_reported_cost(response),
                     )
         except Exception as exc:
@@ -215,6 +217,7 @@ class PydanticAIClient(BaseLLMClient):
                     config.anthropic_prompt_cache_supported
                 )
             )
+        settings.update(reasoning_settings(config, max_tokens=resolved_max_tokens))
         return cast(ModelSettings, settings)
 
     @staticmethod
@@ -316,6 +319,7 @@ class PydanticAIClient(BaseLLMClient):
             output_tokens=response.usage.output_tokens,
             cache_read_tokens=response.usage.cache_read_tokens,
             cache_write_tokens=response.usage.cache_write_tokens,
+            reasoning_tokens=reasoning_tokens(response.usage),
             provider_cost=provider_reported_cost(response),
             model=response.model_name,
         )

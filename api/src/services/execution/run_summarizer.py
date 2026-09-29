@@ -398,6 +398,7 @@ async def summarize_run(
             output_tokens=response.output_tokens or 0,
             cache_read_tokens=response.cache_read_tokens,
             cache_write_tokens=response.cache_write_tokens,
+            reasoning_tokens=response.reasoning_tokens,
             provider_cost=response.provider_cost,
         )
         await db.commit()

@@ -65,6 +65,7 @@ from src.services.agent_runtime import (
     build_chain_model,
     build_runtime_capabilities,
     provider_reported_cost,
+    reasoning_tokens,
 )
 from src.services.model_capabilities import should_offer_tool_calling
 from src.services.execution.agent_helpers import (
@@ -461,6 +462,7 @@ class AgentExecutor:
             total_output_tokens = 0
             total_cache_read_tokens = 0
             total_cache_write_tokens = 0
+            total_reasoning_tokens = 0
             total_provider_cost = Decimal("0")
             provider_cost_seen = False
             final_finish_reason: str | None = None
@@ -469,6 +471,7 @@ class AgentExecutor:
             async def record_model_event(event: ModelCallEvent) -> None:
                 nonlocal total_input_tokens, total_output_tokens, model_name
                 nonlocal total_cache_read_tokens, total_cache_write_tokens
+                nonlocal total_reasoning_tokens
                 nonlocal total_provider_cost, provider_cost_seen
                 nonlocal final_finish_reason, final_incomplete
                 if event.type != "response" or event.response is None:
@@ -478,6 +481,7 @@ class AgentExecutor:
                 total_output_tokens += response_usage.output_tokens
                 total_cache_read_tokens += response_usage.cache_read_tokens
                 total_cache_write_tokens += response_usage.cache_write_tokens
+                total_reasoning_tokens += reasoning_tokens(response_usage)
                 request_provider_cost = provider_reported_cost(event.response)
                 if request_provider_cost is not None:
                     total_provider_cost += request_provider_cost
@@ -814,6 +818,7 @@ class AgentExecutor:
                     output_tokens=total_output_tokens,
                     cache_read_tokens=total_cache_read_tokens,
                     cache_write_tokens=total_cache_write_tokens,
+                    reasoning_tokens=total_reasoning_tokens,
                     provider_cost=(total_provider_cost if provider_cost_seen else None),
                     duration_ms=duration_ms,
                     conversation_id=conversation.id,
@@ -2081,6 +2086,7 @@ class AgentExecutor:
         output_tokens: int,
         cache_read_tokens: int = 0,
         cache_write_tokens: int = 0,
+        reasoning_tokens: int = 0,
         provider_cost: Decimal | None = None,
         duration_ms: int | None = None,
         conversation_id: UUID | None = None,
@@ -2116,6 +2122,7 @@ class AgentExecutor:
                 output_tokens=output_tokens,
                 cache_read_tokens=cache_read_tokens,
                 cache_write_tokens=cache_write_tokens,
+                reasoning_tokens=reasoning_tokens,
                 provider_cost=provider_cost,
                 duration_ms=duration_ms,
                 conversation_id=conversation_id,

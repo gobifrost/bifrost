@@ -12,6 +12,7 @@ from uuid import uuid4
 
 import pytest
 
+from src.services.model_catalog import parse_catalog
 from src.services.ai_usage_service import (
     USAGE_TOTALS_RUN_KEY_PREFIX,
     get_usage_totals,
@@ -47,11 +48,13 @@ class TestRecordAIUsageWithAgentRunId:
             "output_price": "15.00",
         })
 
+        empty_catalog = AsyncMock(
+            return_value=parse_catalog({}, fetched_at=None, source="bundled")
+        )
         with patch("src.models.orm.ai_usage.AIUsage") as MockAIUsage, \
-             patch("src.services.model_registry.get_display_name") as mock_get_display_name:
+             patch("src.services.model_pricing.get_model_catalog", new=empty_catalog):
             mock_usage = MagicMock()
             MockAIUsage.return_value = mock_usage
-            mock_get_display_name.return_value = "claude-sonnet-4-20250514"
 
             await record_ai_usage(
                 session=mock_session,
@@ -60,6 +63,7 @@ class TestRecordAIUsageWithAgentRunId:
                 model="claude-sonnet-4-20250514",
                 input_tokens=2000,
                 output_tokens=800,
+                reasoning_tokens=300,
                 duration_ms=320,
                 agent_run_id=agent_run_id,
             )
@@ -69,8 +73,10 @@ class TestRecordAIUsageWithAgentRunId:
             call_kwargs = MockAIUsage.call_args[1]
             assert call_kwargs["agent_run_id"] == agent_run_id
             assert call_kwargs["provider"] == "anthropic"
-            assert call_kwargs["model"] == "claude-sonnet-4-20250514"
+            # Native providers store the id without its date suffix.
+            assert call_kwargs["model"] == "claude-sonnet-4"
             assert call_kwargs["input_tokens"] == 2000
+            assert call_kwargs["reasoning_tokens"] == 300
             assert call_kwargs["output_tokens"] == 800
             assert call_kwargs["cost"] is not None
 

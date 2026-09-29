@@ -52,6 +52,7 @@ from src.services.agent_runtime import (
     build_chain_model,
     build_runtime_capabilities,
     provider_reported_cost,
+    reasoning_tokens,
 )
 from src.services.agent_runtime.empty_output import EmptyOutputCircuitBreaker
 from src.services.llm import ToolCallRequest
@@ -321,15 +322,17 @@ class AutonomousAgentExecutor:
             if response.text:
                 last_response_content = response.text
             self._own_tokens += request_usage.total_tokens
+            request_reasoning_tokens = reasoning_tokens(request_usage)
             self._buffer_ai_usage(
                 agent=agent,
                 run_id=run_id,
-                provider=response.provider_name or llm_config.provider,
+                provider=event.billing_provider or llm_config.provider,
                 model=response.model_name or model_name,
                 input_tokens=request_usage.input_tokens,
                 output_tokens=request_usage.output_tokens,
                 cache_read_tokens=request_usage.cache_read_tokens,
                 cache_write_tokens=request_usage.cache_write_tokens,
+                reasoning_tokens=request_reasoning_tokens,
                 provider_cost=provider_reported_cost(response),
                 duration_ms=event.duration_ms or 0,
             )
@@ -350,6 +353,7 @@ class AutonomousAgentExecutor:
                         "output_tokens": request_usage.output_tokens,
                         "cache_read_tokens": request_usage.cache_read_tokens,
                         "cache_write_tokens": request_usage.cache_write_tokens,
+                        "reasoning_tokens": request_reasoning_tokens,
                         "provider_cost": (
                             str(cost)
                             if (cost := provider_reported_cost(response)) is not None
@@ -1332,6 +1336,7 @@ class AutonomousAgentExecutor:
         output_tokens: int,
         cache_read_tokens: int = 0,
         cache_write_tokens: int = 0,
+        reasoning_tokens: int = 0,
         provider_cost: Decimal | None = None,
         duration_ms: int | None = None,
     ) -> None:
@@ -1345,6 +1350,7 @@ class AutonomousAgentExecutor:
             "output_tokens": output_tokens,
             "cache_read_tokens": cache_read_tokens,
             "cache_write_tokens": cache_write_tokens,
+            "reasoning_tokens": reasoning_tokens,
             "provider_cost": provider_cost,
             "duration_ms": duration_ms,
             "agent_run_id": UUID(run_id),

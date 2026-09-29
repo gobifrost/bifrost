@@ -20,11 +20,6 @@ from src.models.contracts.llm import (
     EmbeddingTestRequest,
     EmbeddingTestResponse,
 )
-from src.models.contracts.artifacts import (
-    ModelCapabilityLookupRequest,
-    ModelCapabilityLookupResponse,
-    ModelCapabilityVerifyRequest,
-)
 from src.services.ai_model_service import AIModelService
 
 logger = logging.getLogger(__name__)
@@ -34,67 +29,6 @@ router = APIRouter(
     tags=["LLM Configuration"],
     dependencies=[RequirePlatformAdmin],  # All endpoints require platform admin
 )
-
-
-@router.post("/model-capabilities")
-async def discover_model_capabilities(
-    request: ModelCapabilityLookupRequest,
-    db: DbSession,
-    user: CurrentActiveUser,
-) -> ModelCapabilityLookupResponse:
-    """Look up model features without trusting provider model-list labels."""
-    del db, user
-    from src.services.model_capabilities import lookup_model_capabilities
-
-    capabilities, message = await lookup_model_capabilities(
-        provider=request.provider,
-        model=request.model,
-        endpoint=request.endpoint,
-    )
-    return ModelCapabilityLookupResponse(capabilities=capabilities, message=message)
-
-
-@router.post("/model-capabilities/verify")
-async def verify_model_capability_support(
-    request: ModelCapabilityVerifyRequest,
-    db: DbSession,
-    user: CurrentActiveUser,
-) -> ModelCapabilityLookupResponse:
-    """Run a bounded, one-time provider conformance check for an unknown model."""
-    del user
-    from src.services.llm.factory import get_llm_config
-    from src.services.model_capabilities import verify_model_capabilities
-
-    api_key = request.api_key
-    if not api_key:
-        try:
-            saved = await get_llm_config(db)
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Enter an API key or save the provider configuration before verification.",
-            ) from exc
-        if saved.provider != request.provider:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="The saved API key belongs to a different provider.",
-            )
-        api_key = saved.api_key
-
-    try:
-        capabilities, message = await verify_model_capabilities(
-            provider=request.provider,
-            model=request.model,
-            endpoint=request.endpoint,
-            api_key=api_key,
-        )
-    except Exception as exc:
-        logger.info("Model capability verification failed: %s", log_safe(exc))
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="The model did not complete the capability verification. Confirm the endpoint, key, and model, then retry.",
-        ) from exc
-    return ModelCapabilityLookupResponse(capabilities=capabilities, message=message)
 
 
 # =============================================================================

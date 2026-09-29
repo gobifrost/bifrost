@@ -19,6 +19,7 @@ from pydantic_ai.settings import ModelSettings
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from src.models.contracts.artifacts import ModelCapabilities
 from src.core.principal import UserPrincipal
 from src.models.orm.agents import Agent, AgentDelegation, Conversation
 from src.models.orm.agent_runs import AgentRun
@@ -27,7 +28,6 @@ from src.services.execution.agent_helpers import agent_delegation_slug
 from src.services.execution.autonomous_agent_executor import AutonomousAgentExecutor
 from src.services.llm.base import LLMConfig, ToolCallRequest
 from src.services.llm.pydantic_client import PydanticAIClient
-from src.services.model_capabilities import manual_capabilities
 
 
 pytestmark = pytest.mark.asyncio
@@ -301,14 +301,7 @@ async def test_chat_executor_receives_durable_child_callback(
         LLMConfig(provider="openai", model="test-parent", api_key="test-key")
     )
     chat_profile = MagicMock(id=uuid4(), name="Test parent")
-    chat_capabilities = manual_capabilities(
-        provider="openai",
-        model="test-parent",
-        endpoint=None,
-        image_input=False,
-        pdf_input=False,
-        tool_calling=True,
-    )
+    chat_capabilities = ModelCapabilities(tool_calling=True, source="manual")
 
     parent_model = DelegatingTestModel(agent_delegation_slug(child["name"]))
     child_model = TestModel(custom_output_text="Durable child answer")

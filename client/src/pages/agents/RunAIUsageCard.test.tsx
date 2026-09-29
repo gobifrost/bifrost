@@ -45,6 +45,7 @@ describe("RunAIUsageCard", () => {
 				input_tokens: 300,
 				output_tokens: 30,
 				cache_read_tokens: 200,
+				reasoning_tokens: 12,
 				cost: "0.75",
 			},
 		] as Usage;
@@ -53,6 +54,7 @@ describe("RunAIUsageCard", () => {
 		expect(screen.getByText("2")).toBeInTheDocument();
 		expect(screen.getByText("$2.00")).toBeInTheDocument();
 		expect(screen.getByText("50%")).toBeInTheDocument();
-		expect(screen.getByText("50")).toBeInTheDocument();
+		// Reasoning is part of output, so it is shown inside the output total.
+		expect(screen.getByText("50 (12 reasoning)")).toBeInTheDocument();
 	});
 });

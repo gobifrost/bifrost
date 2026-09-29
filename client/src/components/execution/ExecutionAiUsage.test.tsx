@@ -16,6 +16,7 @@ function call(
 		cost: "0.01",
 		cache_read_tokens: 0,
 		cache_write_tokens: 0,
+		reasoning_tokens: 0,
 		timestamp: "2026-09-06T12:00:00Z",
 		sequence: 1,
 	};
