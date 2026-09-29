@@ -239,7 +239,7 @@ def role_x(e2e_client, platform_admin) -> Iterator[dict]:
     resp = e2e_client.post(
         "/api/roles",
         headers=platform_admin.headers,
-        json={"name": name, "permissions": {}},
+        json={"name": name},
     )
     assert resp.status_code == 201, resp.text
     role = resp.json()
@@ -298,7 +298,7 @@ def customer_org_platform_admin(
     role_resp = e2e_client.post(
         "/api/roles",
         headers=platform_admin.headers,
-        json={"name": "Platform Admin", "permissions": {}},
+        json={"name": "Platform Admin"},
     )
     assert role_resp.status_code == 201, role_resp.text
     role = role_resp.json()

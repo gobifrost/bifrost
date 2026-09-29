@@ -387,7 +387,7 @@ class TestMcpParityRoles:
         create_resp = e2e_client.post(
             "/api/roles",
             headers=platform_admin.headers,
-            json={"name": name, "permissions": {"workflows.read": True}},
+            json={"name": name},
         )
         assert create_resp.status_code == 201, create_resp.text
         role_id = create_resp.json()["id"]
@@ -420,12 +420,10 @@ class TestMcpParityRoles:
 
         # create
         name = f"mcp-parity-role-{uuid4().hex[:8]}"
-        perms = {"workflows.read": True}
         create_result = await bifrost_role_create(
             admin_context,
             name=name,
             description="created by test_mcp_parity",
-            permissions=perms,
         )
         created = create_result.structured_content or {}
         assert "error" not in created, created
@@ -437,7 +435,6 @@ class TestMcpParityRoles:
             admin_context,
             role_ref=name,
             name=renamed,
-            permissions={"workflows.read": True, "workflows.write": True},
         )
         updated = update_result.structured_content or {}
         assert updated.get("name") == renamed
@@ -886,7 +883,7 @@ class TestMcpParityWorkflow:
         role_resp = e2e_client.post(
             "/api/roles",
             headers=platform_admin.headers,
-            json={"name": role_name, "description": "test", "permissions": {}},
+            json={"name": role_name, "description": "test"},
         )
         assert role_resp.status_code == 201
         role_id = role_resp.json()["id"]
@@ -1040,7 +1037,7 @@ class TestMcpParityWorkflow:
         role_resp = e2e_client.post(
             "/api/roles",
             headers=platform_admin.headers,
-            json={"name": role_name, "description": "test", "permissions": {}},
+            json={"name": role_name, "description": "test"},
         )
         assert role_resp.status_code == 201
         role_id = role_resp.json()["id"]

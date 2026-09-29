@@ -1812,25 +1812,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/roles/{role_id}/knowledge": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get role knowledge-namespace assignments */
-        get: operations["roles.knowledge.list"];
-        put?: never;
-        /** Assign knowledge namespaces to role */
-        post: operations["roles.knowledge.assign"];
-        /** Bulk unassign knowledge namespaces from role */
-        delete: operations["roles.knowledge.bulk_remove"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/executions": {
         parameters: {
             query?: never;
@@ -5416,30 +5397,6 @@ export interface paths {
          *     org's tool-type workflow never surfaces here.
          */
         get: operations["get_accessible_tools_api_agents_accessible_tools_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/agents/accessible-knowledge": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Accessible Knowledge
-         * @description Get knowledge sources the current user can assign to their agents.
-         *
-         *     Role membership alone isn't org scope: also require the namespace-role
-         *     grant itself to be global or the caller's own org, so a role grant
-         *     scoped to another org's namespace assignment never surfaces here.
-         */
-        get: operations["get_accessible_knowledge_api_agents_accessible_knowledge_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -9336,50 +9293,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/knowledge-sources/roles": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Namespace Roles
-         * @description List all namespace role assignments.
-         */
-        get: operations["list_namespace_roles_api_knowledge_sources_roles_get"];
-        put?: never;
-        /**
-         * Assign Namespace Roles
-         * @description Assign roles to a namespace.
-         */
-        post: operations["assign_namespace_roles_api_knowledge_sources_roles_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/knowledge-sources/roles/{assignment_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /**
-         * Remove Namespace Role
-         * @description Remove a namespace role assignment.
-         */
-        delete: operations["remove_namespace_role_api_knowledge_sources_roles__assignment_id__delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/knowledge-sources/documents": {
         parameters: {
             query?: never;
@@ -11608,20 +11521,6 @@ export interface components {
             call_count: number;
         };
         /**
-         * AccessibleKnowledgeSource
-         * @description A knowledge source the current user can assign to their agents.
-         */
-        AccessibleKnowledgeSource: {
-            /** Id */
-            id: string;
-            /** Name */
-            name: string;
-            /** Namespace */
-            namespace: string;
-            /** Description */
-            description?: string | null;
-        };
-        /**
          * AccessibleTool
          * @description A tool the current user can assign to their agents.
          */
@@ -13004,14 +12903,6 @@ export interface components {
              * @description List of form IDs to assign
              */
             form_ids: string[];
-        };
-        /**
-         * AssignKnowledgeToRoleRequest
-         * @description Request body for bulk assigning knowledge namespaces to a role.
-         */
-        AssignKnowledgeToRoleRequest: {
-            /** Entries */
-            entries: components["schemas"]["KnowledgeAssignmentInput"][];
         };
         /**
          * AssignRolesToWorkflowRequest
@@ -19873,16 +19764,6 @@ export interface components {
             }[] | null;
         };
         /**
-         * KnowledgeAssignmentInput
-         * @description One namespace+org pair to assign to a role.
-         */
-        KnowledgeAssignmentInput: {
-            /** Namespace */
-            namespace: string;
-            /** Organization Id */
-            organization_id?: string | null;
-        };
-        /**
          * KnowledgeDocumentBulkScopeUpdate
          * @description Request model for bulk-updating document scope.
          */
@@ -20008,34 +19889,6 @@ export interface components {
              * @default 0
              */
             org_count: number;
-        };
-        /**
-         * KnowledgeNamespaceRoleCreate
-         * @description Request model for assigning roles to a namespace.
-         */
-        KnowledgeNamespaceRoleCreate: {
-            /** Namespace */
-            namespace: string;
-            /** Role Ids */
-            role_ids: string[];
-            /** Organization Id */
-            organization_id?: string | null;
-        };
-        /**
-         * KnowledgeNamespaceRolePublic
-         * @description Knowledge namespace role assignment output.
-         */
-        KnowledgeNamespaceRolePublic: {
-            /** Id */
-            id: string;
-            /** Namespace */
-            namespace: string;
-            /** Organization Id */
-            organization_id?: string | null;
-            /** Role Id */
-            role_id: string;
-            /** Assigned By */
-            assigned_by?: string | null;
         };
         /**
          * KnowledgeStorageTrend
@@ -24059,11 +23912,6 @@ export interface components {
              * @default 0
              */
             workflows: number;
-            /**
-             * Knowledge
-             * @default 0
-             */
-            knowledge: number;
         };
         /**
          * RoleCreate
@@ -24076,10 +23924,6 @@ export interface components {
             name: string;
             /** Description */
             description?: string | null;
-            /** Permissions */
-            permissions?: {
-                [key: string]: unknown;
-            } | null;
         };
         /**
          * RoleFormsResponse
@@ -24091,29 +23935,6 @@ export interface components {
              * @description List of form IDs assigned to the role
              */
             form_ids: string[];
-        };
-        /**
-         * RoleKnowledgeEntry
-         * @description A single knowledge-namespace assignment under a role.
-         */
-        RoleKnowledgeEntry: {
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /** Namespace */
-            namespace: string;
-            /** Organization Id */
-            organization_id?: string | null;
-        };
-        /**
-         * RoleKnowledgeResponse
-         * @description Response model for getting knowledge namespaces assigned to a role.
-         */
-        RoleKnowledgeResponse: {
-            /** Entries */
-            entries?: components["schemas"]["RoleKnowledgeEntry"][];
         };
         /**
          * RolePublic
@@ -24131,10 +23952,16 @@ export interface components {
              * Format: uuid
              */
             id: string;
-            /** Permissions */
-            permissions?: {
-                [key: string]: unknown;
-            };
+            /**
+             * Is Base
+             * @default false
+             */
+            is_base: boolean;
+            /**
+             * Is Builtin
+             * @default false
+             */
+            is_builtin: boolean;
             /** Created By */
             created_by: string;
             /** Created At */
@@ -24153,10 +23980,6 @@ export interface components {
             name?: string | null;
             /** Description */
             description?: string | null;
-            /** Permissions */
-            permissions?: {
-                [key: string]: unknown;
-            } | null;
         };
         /**
          * RoleUserSummary
@@ -27231,14 +27054,6 @@ export interface components {
         UnassignFormsFromRoleRequest: {
             /** Form Ids */
             form_ids: string[];
-        };
-        /**
-         * UnassignKnowledgeFromRoleRequest
-         * @description Request body for bulk unassigning knowledge namespaces from a role.
-         */
-        UnassignKnowledgeFromRoleRequest: {
-            /** Assignment Ids */
-            assignment_ids: string[];
         };
         /**
          * UnassignUsersFromRoleRequest
@@ -32062,103 +31877,6 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["UnassignWorkflowsFromRoleRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    "roles.knowledge.list": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                role_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RoleKnowledgeResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    "roles.knowledge.assign": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                role_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AssignKnowledgeToRoleRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    "roles.knowledge.bulk_remove": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                role_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["UnassignKnowledgeFromRoleRequest"];
             };
         };
         responses: {
@@ -38679,26 +38397,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AccessibleTool"][];
-                };
-            };
-        };
-    };
-    get_accessible_knowledge_api_agents_accessible_knowledge_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AccessibleKnowledgeSource"][];
                 };
             };
         };
@@ -45983,88 +45681,6 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["KnowledgeNamespaceInfo"][];
                 };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_namespace_roles_api_knowledge_sources_roles_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["KnowledgeNamespaceRolePublic"][];
-                };
-            };
-        };
-    };
-    assign_namespace_roles_api_knowledge_sources_roles_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["KnowledgeNamespaceRoleCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["KnowledgeNamespaceRolePublic"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    remove_namespace_role_api_knowledge_sources_roles__assignment_id__delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                assignment_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
             /** @description Validation Error */
             422: {

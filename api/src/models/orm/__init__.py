@@ -46,7 +46,6 @@ from src.models.orm.external_mcp import (
 from src.models.orm.forms import Form, FormField, FormRole
 from src.models.orm.integrations import Integration, IntegrationConfigSchema, IntegrationMapping
 from src.models.orm.knowledge import KnowledgeStore
-from src.models.orm.knowledge_sources import KnowledgeNamespaceRole
 from src.models.orm.memory import MemoryEntry, MemoryStore
 from src.models.orm.metrics import ExecutionMetricsDaily, KnowledgeStorageDaily, PlatformMetricsSnapshot, WorkflowROIDaily
 from src.models.orm.mfa import MFARecoveryCode, TrustedDevice, UserMFAMethod, UserOAuthAccount
@@ -61,7 +60,7 @@ from src.models.orm.solutions import Solution
 from src.models.orm.solution_export_jobs import SolutionExportJob
 from src.models.orm.custom_claims import CustomClaim
 from src.models.orm.tables import Document, Table
-from src.models.orm.users import Role, User, UserRole
+from src.models.orm.users import Role, RolePermission, User, UserRole, UserRoleBoundary
 from src.models.orm.user_invites import UserInvite
 from src.models.orm.workflow_operation_usage import WorkflowOperationUsage
 from src.models.orm.workflow_roles import WorkflowRole
@@ -102,7 +101,9 @@ __all__ = [
     # Users and Roles
     "User",
     "Role",
+    "RolePermission",
     "UserRole",
+    "UserRoleBoundary",
     "UserInvite",
     # Agent Runs
     "AgentRun",
@@ -156,8 +157,6 @@ __all__ = [
     "IntegrationMapping",
     # Knowledge Store
     "KnowledgeStore",
-    # Knowledge Namespace Roles
-    "KnowledgeNamespaceRole",
     # Memory
     "MemoryStore",
     "MemoryEntry",

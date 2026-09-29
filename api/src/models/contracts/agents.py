@@ -132,14 +132,6 @@ class AccessibleTool(BaseModel):
     description: str | None = None
 
 
-class AccessibleKnowledgeSource(BaseModel):
-    """A knowledge source the current user can assign to their agents."""
-    id: str
-    name: str
-    namespace: str
-    description: str | None = None
-
-
 class AgentPublic(BaseModel):
     """Agent output for API responses."""
     model_config = ConfigDict(from_attributes=True)

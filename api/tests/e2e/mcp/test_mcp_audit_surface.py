@@ -71,7 +71,6 @@ class TestMcpBridgeAuditSurface:
                 admin_context,
                 name=name,
                 description="mcp audit surface e2e",
-                permissions={"workflows.read": True},
             )
             created = result.structured_content or {}
             assert "error" not in created, created

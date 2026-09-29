@@ -21,7 +21,6 @@ def _role_body(role_id=None, name="facade-role"):
         "id": rid,
         "name": name,
         "description": "d",
-        "permissions": {},
         "created_by": "engine@bifrost.internal",
         "created_at": "2026-09-25T00:00:00+00:00",
         "updated_at": "2026-09-25T00:00:00+00:00",

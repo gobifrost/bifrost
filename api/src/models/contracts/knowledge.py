@@ -18,22 +18,6 @@ class KnowledgeNamespaceInfo(BaseModel):
     org_count: int = 0
 
 
-class KnowledgeNamespaceRolePublic(BaseModel):
-    """Knowledge namespace role assignment output."""
-    id: str
-    namespace: str
-    organization_id: str | None = None
-    role_id: str
-    assigned_by: str | None = None
-
-
-class KnowledgeNamespaceRoleCreate(BaseModel):
-    """Request model for assigning roles to a namespace."""
-    namespace: str
-    role_ids: list[str]
-    organization_id: str | None = None
-
-
 # ==================== KNOWLEDGE DOCUMENT MODELS ====================
 
 

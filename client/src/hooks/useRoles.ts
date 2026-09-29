@@ -298,7 +298,7 @@ export async function assignRolesToForm(
 }
 
 // =============================================================================
-// Agents / Apps / Workflows / Knowledge — consumer-tab hooks (Block 5)
+// Agents / Apps / Workflows — consumer-tab hooks (Block 5)
 // =============================================================================
 
 function invalidateRoleList(qc: ReturnType<typeof useQueryClient>) {
@@ -429,35 +429,3 @@ export function useBulkUnassignWorkflows() {
 	});
 }
 
-export function useRoleKnowledge(roleId: string | undefined) {
-	return $api.useQuery(
-		"get",
-		"/api/roles/{role_id}/knowledge",
-		{ params: { path: { role_id: roleId ?? "" } } },
-		{ enabled: !!roleId },
-	);
-}
-
-export function useAssignKnowledgeToRole() {
-	const qc = useQueryClient();
-	return $api.useMutation("post", "/api/roles/{role_id}/knowledge", {
-		onSuccess: () => {
-			qc.invalidateQueries({
-				queryKey: ["get", "/api/roles/{role_id}/knowledge"],
-			});
-			invalidateRoleList(qc);
-		},
-	});
-}
-
-export function useBulkUnassignKnowledge() {
-	const qc = useQueryClient();
-	return $api.useMutation("delete", "/api/roles/{role_id}/knowledge", {
-		onSuccess: () => {
-			qc.invalidateQueries({
-				queryKey: ["get", "/api/roles/{role_id}/knowledge"],
-			});
-			invalidateRoleList(qc);
-		},
-	});
-}

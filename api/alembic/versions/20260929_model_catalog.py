@@ -1,7 +1,7 @@
 """model catalog: cached models.dev snapshot, catalog provider, reasoning
 
 Revision ID: 20260929_model_catalog
-Revises: 20260928_audit_op_surface
+Revises: 20260929_r2b_roles
 Create Date: 2026-09-29
 """
 
@@ -10,7 +10,7 @@ from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB
 
 revision: str = "20260929_model_catalog"
-down_revision: str | None = "20260928_audit_op_surface"
+down_revision: str | None = "20260929_r2b_roles"
 branch_labels = None
 depends_on = None
 

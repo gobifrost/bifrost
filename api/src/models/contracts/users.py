@@ -199,7 +199,6 @@ class Role(BaseModel):
     id: str = Field(..., description="Role ID (GUID)")
     name: str = Field(..., min_length=1, max_length=100)
     description: str | None = None
-    permissions: dict = Field(default_factory=dict)
     created_by: str
     created_at: datetime
     updated_at: datetime
@@ -209,14 +208,12 @@ class CreateRoleRequest(BaseModel):
     """Request model for creating a role"""
     name: str = Field(..., min_length=1, max_length=100)
     description: str | None = None
-    permissions: dict | None = Field(default=None)
 
 
 class UpdateRoleRequest(BaseModel):
     """Request model for updating a role"""
     name: str | None = Field(default=None, min_length=1, max_length=100)
     description: str | None = None
-    permissions: dict | None = Field(default=None)
 
 
 # CRUD Pattern Models for Role
@@ -231,14 +228,12 @@ class RoleCreate(RoleBase):
 
     Roles are globally defined - org scoping happens at the entity level.
     """
-    permissions: dict | None = Field(default=None)
 
 
 class RoleUpdate(BaseModel):
     """Input for updating a role."""
     name: str | None = None
     description: str | None = None
-    permissions: dict | None = Field(default=None)
 
 
 class RolePublic(RoleBase):
@@ -249,7 +244,8 @@ class RolePublic(RoleBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
-    permissions: dict = Field(default_factory=dict)
+    is_base: bool = False
+    is_builtin: bool = False
     created_by: str
     created_at: datetime
     updated_at: datetime
@@ -368,34 +364,6 @@ class RoleWorkflowsResponse(BaseModel):
     workflow_ids: list[str] = Field(..., description="Workflow IDs assigned to the role")
 
 
-class RoleKnowledgeEntry(BaseModel):
-    """A single knowledge-namespace assignment under a role."""
-    id: UUID
-    namespace: str
-    organization_id: UUID | None = None
-
-
-class RoleKnowledgeResponse(BaseModel):
-    """Response model for getting knowledge namespaces assigned to a role."""
-    entries: list[RoleKnowledgeEntry] = Field(default_factory=list)
-
-
-class KnowledgeAssignmentInput(BaseModel):
-    """One namespace+org pair to assign to a role."""
-    namespace: str = Field(..., min_length=1, max_length=255)
-    organization_id: UUID | None = None
-
-
-class AssignKnowledgeToRoleRequest(BaseModel):
-    """Request body for bulk assigning knowledge namespaces to a role."""
-    entries: list[KnowledgeAssignmentInput] = Field(..., min_length=1, max_length=500)
-
-
-class UnassignKnowledgeFromRoleRequest(BaseModel):
-    """Request body for bulk unassigning knowledge namespaces from a role."""
-    assignment_ids: list[UUID] = Field(..., min_length=1, max_length=500)
-
-
 class RoleConsumerCounts(BaseModel):
     """Inline counts of every consumer type for a role."""
     users: int = 0
@@ -403,7 +371,6 @@ class RoleConsumerCounts(BaseModel):
     agents: int = 0
     apps: int = 0
     workflows: int = 0
-    knowledge: int = 0
 
 
 # ==================== PERMISSION MODELS ====================

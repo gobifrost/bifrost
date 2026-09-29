@@ -10,10 +10,11 @@ Implements Task 5b of the CLI mutation surface plan:
   :class:`RoleUpdate`; unset flags omitted by :func:`assemble_body`)
 * ``bifrost roles delete <ref>`` → ``DELETE /api/roles/{uuid}``
 
-Flags are generated from the DTOs via :func:`build_cli_flags`. Since
-``RoleCreate``/``RoleUpdate`` carry ``permissions`` as a ``dict`` in the DTO
-contract, the generated flag is ``--permissions`` accepting a JSON literal
-or ``@path`` to a YAML/JSON file (see :func:`load_dict_value`).
+Flags are generated from the DTOs via :func:`build_cli_flags`.
+
+Builtin roles (Platform Admin, User, Platform Operator) are hidden from
+list/get and refuse update/delete with 409 — see
+``api/shared/builtin_roles.py``.
 """
 
 from __future__ import annotations

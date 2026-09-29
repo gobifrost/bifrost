@@ -105,9 +105,6 @@ harness.
 | `roles.workflows.list` | — | — | `roles.read` |
 | `roles.workflows.assign` | — | — | `roles.readwrite` |
 | `roles.workflows.bulk_remove` | — | — | `roles.readwrite` |
-| `roles.knowledge.list` | — | — | `roles.read` |
-| `roles.knowledge.assign` | — | — | `roles.readwrite` |
-| `roles.knowledge.bulk_remove` | — | — | `roles.readwrite` |
 | `users.list` | — | — | `organizations.read` |
 | `users.get` | — | — | `organizations.read` |
 | `users.create` | — | — | `organizations.readwrite` |

@@ -105,13 +105,12 @@ async def bifrost_role_create(
     context: Any,
     name: str,
     description: str | None = None,
-    permissions: dict[str, Any] | None = None,
 ) -> ToolResult:
     """Create a role — thin wrapper over ``POST /api/roles``."""
     if not name:
         return error_result("name is required")
 
-    fields = {"name": name, "description": description, "permissions": permissions}
+    fields = {"name": name, "description": description}
     try:
         body = await _assemble_role_body(context, fields, is_update=False)
     except Exception as exc:
@@ -128,7 +127,6 @@ async def bifrost_role_update(
     role_ref: str,
     name: str | None = None,
     description: str | None = None,
-    permissions: dict[str, Any] | None = None,
 ) -> ToolResult:
     """Update a role — thin wrapper over ``PATCH /api/roles/{uuid}``.
 
@@ -149,7 +147,7 @@ async def bifrost_role_update(
                 f"could not resolve role {role_ref!r}", _ref_error_payload(exc)
             )
 
-    fields = {"name": name, "description": description, "permissions": permissions}
+    fields = {"name": name, "description": description}
     try:
         body = await _assemble_role_body(context, fields, is_update=True)
     except Exception as exc:
@@ -195,7 +193,7 @@ TOOLS = [
     ("bifrost_role_list", "List Roles", "List all roles in the platform."),
     ("bifrost_role_get", "Get Role", "Get a single role by UUID or name."),
     ("bifrost_role_create", "Create Role", "Create a new role."),
-    ("bifrost_role_update", "Update Role", "Update a role (name, description, permissions)."),
+    ("bifrost_role_update", "Update Role", "Update a role (name, description)."),
     ("bifrost_role_delete", "Delete Role", "Delete a role (CASCADE removes all assignments)."),
 ]
 

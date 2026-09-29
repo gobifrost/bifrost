@@ -33,7 +33,6 @@ from src.models.contracts.agents import (
     AgentPublic,
     AgentSummary,
     AgentUpdate,
-    AccessibleKnowledgeSource,
     AccessibleTool,
 )
 from src.models.orm import (
@@ -144,18 +143,20 @@ async def _user_has_permission(
     user_id: UUID,
     permission: str,
 ) -> bool:
-    """Check if a user has a permission via any of their roles."""
+    """Check if a user holds `permission` via any of their assigned roles.
+
+    `permission` here is a `role_permissions` string (`<domain>.<read|
+    readwrite|execute>`), not the retired `can_promote_agent` flag — the
+    one caller (agent self-promotion) now passes `agents.readwrite`.
+    """
     from src.models.orm.users import UserRole
+    from src.services.role_permissions import role_has_permission
 
     result = await db.execute(
-        select(Role.permissions)
-        .join(UserRole, UserRole.role_id == Role.id)
-        .where(UserRole.user_id == user_id)
+        select(UserRole.role_id).where(UserRole.user_id == user_id)
     )
-    for permissions in result.scalars().all():
-        if permissions and permissions.get(permission):
-            return True
-    return False
+    role_ids = list(result.scalars().all())
+    return await role_has_permission(db, role_ids=role_ids, permission=permission)
 
 
 def _logo_data_url(data: bytes | None, content_type: str | None) -> str | None:
@@ -520,53 +521,6 @@ async def get_accessible_tools(
     return [
         AccessibleTool(id=str(t.id), name=t.name, description=t.tool_description or t.description)
         for t in tools
-    ]
-
-
-@router.get("/accessible-knowledge")
-async def get_accessible_knowledge(
-    db: DbSession,
-    user: CurrentActiveUser,
-) -> list[AccessibleKnowledgeSource]:
-    """Get knowledge sources the current user can assign to their agents.
-
-    Role membership alone isn't org scope: also require the namespace-role
-    grant itself to be global or the caller's own org, so a role grant
-    scoped to another org's namespace assignment never surfaces here.
-    """
-    from sqlalchemy import or_
-
-    from src.models.orm.users import UserRole
-    from src.models.orm.knowledge_sources import KnowledgeNamespaceRole
-
-    result = await db.execute(
-        select(UserRole.role_id).where(UserRole.user_id == user.user_id)
-    )
-    role_ids = list(result.scalars().all())
-
-    if not role_ids:
-        return []
-
-    stmt = (
-        select(KnowledgeNamespaceRole.namespace)
-        .where(KnowledgeNamespaceRole.role_id.in_(role_ids))
-        .distinct()
-    )
-    if not has_scope_bypass(
-        is_platform_admin=user.is_superuser, is_provider_org=user.is_provider_org
-    ):
-        stmt = stmt.where(
-            or_(
-                KnowledgeNamespaceRole.organization_id.is_(None),
-                KnowledgeNamespaceRole.organization_id == user.organization_id,
-            )
-        )
-    result = await db.execute(stmt)
-    accessible_namespaces = list(result.scalars().all())
-
-    return [
-        AccessibleKnowledgeSource(id=ns, name=ns, namespace=ns, description=None)
-        for ns in sorted(accessible_namespaces)
     ]
 
 
@@ -962,7 +916,7 @@ async def promote_agent(
     if not is_admin:
         if agent.owner_user_id != user.user_id:
             raise HTTPException(403, "You can only promote your own agents")
-        if not await _user_has_permission(db, user.user_id, "can_promote_agent"):
+        if not await _user_has_permission(db, user.user_id, "agents.readwrite"):
             raise HTTPException(403, "You do not have permission to promote agents")
 
     # Promote: change access_level, clear owner

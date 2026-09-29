@@ -5912,171 +5912,6 @@
           "status": "intentionally_unsupported"
         },
         "rest": {
-          "operation_id": "roles.knowledge.list",
-          "status": "exact_parity"
-        },
-        "sdk": {
-          "binding": null,
-          "status": "intentionally_unsupported"
-        }
-      },
-      "operation": {
-        "action_scopes": [
-          "roles.read"
-        ],
-        "async_policy": "synchronous",
-        "audit_event": null,
-        "authorization_resolver": "roles.read in the selected boundary and knowledge organization filtering",
-        "cli": null,
-        "exclusions": {
-          "cli": "Role resource-assignment administration is available through the administrative UI and REST API.",
-          "manifest": "Role resource assignments are deployment-local authorization state.",
-          "mcp": "Role resource-assignment administration is intentionally excluded from coding-harness MCP tools.",
-          "native_builder": "Role resource-assignment administration is not a coding target.",
-          "sdk": "Role administration is not available to application SDKs."
-        },
-        "manifest": null,
-        "mcp": null,
-        "native_builder": false,
-        "operation_id": "roles.knowledge.list",
-        "rest": {
-          "method": "GET",
-          "path": "/api/roles/{role_id}/knowledge",
-          "request_model": null,
-          "response_model": "RoleKnowledgeResponse"
-        },
-        "side_effects": [],
-        "summary": "List knowledge namespace assignments for a Role",
-        "target_kind": "collection"
-      }
-    },
-    {
-      "observed": {
-        "cli": {
-          "path": null,
-          "status": "intentionally_unsupported"
-        },
-        "manifest": {
-          "entity": null,
-          "status": "intentionally_unsupported"
-        },
-        "mcp": {
-          "name": null,
-          "status": "intentionally_unsupported"
-        },
-        "rest": {
-          "operation_id": "roles.knowledge.assign",
-          "status": "exact_parity"
-        },
-        "sdk": {
-          "binding": null,
-          "status": "intentionally_unsupported"
-        }
-      },
-      "operation": {
-        "action_scopes": [
-          "roles.readwrite"
-        ],
-        "async_policy": "synchronous",
-        "audit_event": "role.knowledge_assigned",
-        "authorization_resolver": "roles.readwrite in the selected boundary and each knowledge namespace organization",
-        "cli": null,
-        "exclusions": {
-          "cli": "Role resource-assignment administration is available through the administrative UI and REST API.",
-          "manifest": "Role resource assignments are deployment-local authorization state.",
-          "mcp": "Role resource-assignment administration is intentionally excluded from coding-harness MCP tools.",
-          "native_builder": "Role resource-assignment administration is not a coding target.",
-          "sdk": "Role administration is not available to application SDKs."
-        },
-        "manifest": null,
-        "mcp": null,
-        "native_builder": false,
-        "operation_id": "roles.knowledge.assign",
-        "rest": {
-          "method": "POST",
-          "path": "/api/roles/{role_id}/knowledge",
-          "request_model": "AssignKnowledgeToRoleRequest",
-          "response_model": null
-        },
-        "side_effects": [
-          "create knowledge namespace-role junction rows",
-          "emit an audit event"
-        ],
-        "summary": "Assign knowledge namespaces to a Role",
-        "target_kind": "resource"
-      }
-    },
-    {
-      "observed": {
-        "cli": {
-          "path": null,
-          "status": "intentionally_unsupported"
-        },
-        "manifest": {
-          "entity": null,
-          "status": "intentionally_unsupported"
-        },
-        "mcp": {
-          "name": null,
-          "status": "intentionally_unsupported"
-        },
-        "rest": {
-          "operation_id": "roles.knowledge.bulk_remove",
-          "status": "exact_parity"
-        },
-        "sdk": {
-          "binding": null,
-          "status": "intentionally_unsupported"
-        }
-      },
-      "operation": {
-        "action_scopes": [
-          "roles.readwrite"
-        ],
-        "async_policy": "synchronous",
-        "audit_event": "role.knowledge_bulk_unassigned",
-        "authorization_resolver": "roles.readwrite in the selected boundary and each persisted knowledge assignment organization",
-        "cli": null,
-        "exclusions": {
-          "cli": "Role resource-assignment administration is available through the administrative UI and REST API.",
-          "manifest": "Role resource assignments are deployment-local authorization state.",
-          "mcp": "Role resource-assignment administration is intentionally excluded from coding-harness MCP tools.",
-          "native_builder": "Role resource-assignment administration is not a coding target.",
-          "sdk": "Role administration is not available to application SDKs."
-        },
-        "manifest": null,
-        "mcp": null,
-        "native_builder": false,
-        "operation_id": "roles.knowledge.bulk_remove",
-        "rest": {
-          "method": "DELETE",
-          "path": "/api/roles/{role_id}/knowledge",
-          "request_model": "UnassignKnowledgeFromRoleRequest",
-          "response_model": null
-        },
-        "side_effects": [
-          "delete knowledge namespace-role junction rows",
-          "emit an audit event"
-        ],
-        "summary": "Remove several knowledge namespace assignments from a Role",
-        "target_kind": "collection"
-      }
-    },
-    {
-      "observed": {
-        "cli": {
-          "path": null,
-          "status": "intentionally_unsupported"
-        },
-        "manifest": {
-          "entity": null,
-          "status": "intentionally_unsupported"
-        },
-        "mcp": {
-          "name": null,
-          "status": "intentionally_unsupported"
-        },
-        "rest": {
           "operation_id": "users.list",
           "status": "exact_parity"
         },
@@ -10078,7 +9913,7 @@
     "cli": 154,
     "manifest": 16,
     "mcp": 94,
-    "rest": 652,
+    "rest": 645,
     "sdk": 19
   },
   "schema_version": 1,
@@ -11334,13 +11169,6 @@
       {
         "method": "GET",
         "operation_id": "",
-        "path": "/api/agents/accessible-knowledge",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "GET",
-        "operation_id": "",
         "path": "/api/agents/accessible-tools",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -12441,27 +12269,6 @@
         "method": "PATCH",
         "operation_id": "",
         "path": "/api/knowledge-sources/documents/scope",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "GET",
-        "operation_id": "",
-        "path": "/api/knowledge-sources/roles",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "POST",
-        "operation_id": "",
-        "path": "/api/knowledge-sources/roles",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "DELETE",
-        "operation_id": "",
-        "path": "/api/knowledge-sources/roles/{assignment_id}",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
