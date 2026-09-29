@@ -923,14 +923,23 @@ async def test_verify_profile_sends_one_request_through_the_profile_config(db_se
 async def test_verify_profile_reports_the_provider_error(db_session):
     service = AIModelService(db_session)
     profile = await _profile(service)
-    rejected = AsyncMock(side_effect=RuntimeError("401 invalid api key"))
+    from pydantic_ai.exceptions import ModelHTTPError
+
+    rejected = AsyncMock(
+        side_effect=ModelHTTPError(
+            status_code=401,
+            model_name="openai/gpt-4o-mini",
+            body={"error": {"message": "No auth credentials found", "code": 401}},
+        )
+    )
 
     with patch("src.services.llm.pydantic_client.PydanticAIClient.complete", rejected):
         result = await service.verify_profile(profile.id)
 
     assert result.success is False
-    assert "401 invalid api key" in result.message
-    assert "openai/gpt-4o-mini" in result.message
+    assert result.message == (
+        "The provider rejected the API key. The provider said: No auth credentials found."
+    )
 
 
 @pytest.mark.asyncio
@@ -950,4 +959,4 @@ async def test_verify_profile_reports_a_timeout(db_session):
         result = await service.verify_profile(profile.id)
 
     assert result.success is False
-    assert "did not respond" in result.message
+    assert "did not answer" in result.message

@@ -1150,11 +1150,11 @@ class AIModelService:
         limit a run would, without the profile's failover chain.
         """
         from src.services.llm.base import LLMMessage
+        from src.services.llm.provider_errors import describe_provider_error
         from src.services.llm.pydantic_client import PydanticAIClient
         from src.services.provider_catalog_service import ProviderTestResult
 
         profile = await self.get_profile(profile_id)
-        label = f"{profile.connection.name} / {profile.model}"
         try:
             config = await self._config_for_profile(profile)
             async with asyncio.timeout(PROFILE_VERIFY_TIMEOUT_SECONDS):
@@ -1164,11 +1164,20 @@ class AIModelService:
         except TimeoutError:
             return ProviderTestResult(
                 False,
-                f"{label} did not respond within {PROFILE_VERIFY_TIMEOUT_SECONDS} seconds.",
+                f"The provider did not answer within {PROFILE_VERIFY_TIMEOUT_SECONDS} seconds.",
             )
         except Exception as error:
-            return ProviderTestResult(False, f"{label} failed: {str(error)[:500]}")
-        return ProviderTestResult(True, f"{label} answered a test request.")
+            logger.warning(
+                "ai_model_profile_verify_failed",
+                extra={
+                    "profile_id": str(profile.id),
+                    "model": profile.model,
+                    "error_type": type(error).__name__,
+                    "error": str(error)[:1000],
+                },
+            )
+            return ProviderTestResult(False, describe_provider_error(error))
+        return ProviderTestResult(True, "The model answered a test request.")
 
     async def list_models(self, connection_id: UUID) -> list[LLMModelInfo] | None:
         """Catalog models for a catalog-linked connection, else the live list.

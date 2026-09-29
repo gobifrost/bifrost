@@ -268,6 +268,6 @@ def test_profile_verification_reports_a_rejected_key_without_undoing_the_save(
 
     assert result.status_code == 200, result.text
     assert result.json()["success"] is False
-    assert "gpt-4o-mini" in result.json()["message"]
+    assert result.json()["message"].startswith("The provider rejected the API key.")
     profiles = e2e_client.get("/api/admin/ai/profiles", headers=platform_admin.headers).json()
     assert any(p["id"] == profile_id for p in profiles)
