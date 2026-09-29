@@ -97,4 +97,3 @@ def legacy_decide(persona: Persona, entry: AccessEntry, cross: bool) -> bool:
     if entry.inline_effect == InlineEffect.DENY_UNLESS_BYPASS:
         return persona.has_bypass
     return True
-
