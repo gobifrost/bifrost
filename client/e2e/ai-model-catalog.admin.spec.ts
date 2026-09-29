@@ -45,4 +45,9 @@ test("adds a catalog provider and a profile with a reasoning choice", async ({
 	await expect(profileCard.getByText("Reasoning: On (provider default)")).toBeVisible();
 	// The saved profile is tested with a real request; the fake key fails it.
 	await expect(page.getByText(`Haiku ${suffix} could not answer a test request`)).toBeVisible();
+
+	// The connection's Test runs the same real request for each of its profiles.
+	await page.getByRole("button", { name: `Test Anthropic ${suffix}` }).click();
+	await expect(page.getByText("Provider test failed")).toBeVisible();
+	await expect(page.getByText(`Haiku ${suffix}: The provider rejected the API key.`, { exact: false })).toBeVisible();
 });

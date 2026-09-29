@@ -271,3 +271,13 @@ def test_profile_verification_reports_a_rejected_key_without_undoing_the_save(
     assert result.json()["message"].startswith("The provider rejected the API key.")
     profiles = e2e_client.get("/api/admin/ai/profiles", headers=platform_admin.headers).json()
     assert any(p["id"] == profile_id for p in profiles)
+
+    connection_test = e2e_client.post(
+        f"/api/admin/ai/connections/{connection.json()['id']}/test",
+        headers=platform_admin.headers,
+    )
+    assert connection_test.status_code == 200, connection_test.text
+    assert connection_test.json()["success"] is False
+    assert connection_test.json()["message"].startswith(
+        "Rejected Key Profile E2E: The provider rejected the API key."
+    )

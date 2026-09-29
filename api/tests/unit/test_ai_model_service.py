@@ -960,3 +960,53 @@ async def test_verify_profile_reports_a_timeout(db_session):
 
     assert result.success is False
     assert "did not answer" in result.message
+
+
+@pytest.mark.asyncio
+async def test_connection_test_checks_every_profile_on_the_connection(db_session):
+    from src.services.provider_catalog_service import ProviderTestResult
+
+    service = AIModelService(db_session)
+    profile = await _profile(service)
+    second = await service.create_profile(
+        name=f"Second {uuid4().hex[:8]}",
+        connection_id=profile.connection_id,
+        model="openai/gpt-5.4-nano",
+        capabilities=None,
+        enabled_for_chat=False,
+    )
+    outcomes = {
+        profile.id: ProviderTestResult(True, "The model answered a test request."),
+        second.id: ProviderTestResult(False, "The provider rejected the API key."),
+    }
+    listing = AsyncMock(side_effect=AssertionError("listing is only for profile-less connections"))
+
+    with (
+        patch.object(AIModelService, "verify_profile", AsyncMock(side_effect=lambda pid: outcomes[pid])),
+        patch.object(AIModelService, "test_saved_connection", listing),
+    ):
+        failed = await service.test_connection(profile.connection_id)
+        outcomes[second.id] = ProviderTestResult(True, "The model answered a test request.")
+        passed = await service.test_connection(profile.connection_id)
+
+    assert failed.success is False
+    assert failed.message == f"{second.name}: The provider rejected the API key."
+    assert passed.success is True
+    assert passed.message == "All 2 profiles answered a test request."
+
+
+@pytest.mark.asyncio
+async def test_connection_without_profiles_falls_back_to_listing_and_says_so(db_session):
+    from src.services.provider_catalog_service import ProviderTestResult
+
+    service = AIModelService(db_session)
+    connection = await _connection(service)
+    listing = AsyncMock(return_value=ProviderTestResult(True, "Connected. Listed 3 model(s)."))
+
+    with patch.object(AIModelService, "test_saved_connection", listing):
+        result = await service.test_connection(connection.id)
+
+    assert result.success is True
+    assert result.message == (
+        "Connected. Listed 3 model(s). Add a model profile to test a real request."
+    )
