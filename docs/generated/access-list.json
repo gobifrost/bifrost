@@ -177,6 +177,34 @@
     "mcp_tool": null,
     "method": "GET",
     "operation_id": null,
+    "path": "/api/admin/ai/catalog",
+    "permission": "settings.read",
+    "reason": "Platform-admin-only operation."
+  },
+  {
+    "access_class": "permission",
+    "boundary": "platform",
+    "current_gate": "superuser",
+    "inline_checks": [],
+    "inline_effect": null,
+    "intended_change": null,
+    "mcp_tool": null,
+    "method": "POST",
+    "operation_id": null,
+    "path": "/api/admin/ai/catalog/refresh",
+    "permission": "settings.readwrite",
+    "reason": "Platform-admin-only operation."
+  },
+  {
+    "access_class": "permission",
+    "boundary": "platform",
+    "current_gate": "superuser",
+    "inline_checks": [],
+    "inline_effect": null,
+    "intended_change": null,
+    "mcp_tool": null,
+    "method": "GET",
+    "operation_id": null,
     "path": "/api/admin/ai/connections",
     "permission": "settings.read",
     "reason": "Platform-admin-only operation."
@@ -457,34 +485,6 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/admin/llm/embedding-test",
-    "permission": "settings.readwrite",
-    "reason": "Platform-admin-only operation."
-  },
-  {
-    "access_class": "permission",
-    "boundary": "platform",
-    "current_gate": "superuser",
-    "inline_checks": [],
-    "inline_effect": null,
-    "intended_change": null,
-    "mcp_tool": null,
-    "method": "POST",
-    "operation_id": null,
-    "path": "/api/admin/llm/model-capabilities",
-    "permission": "settings.readwrite",
-    "reason": "Platform-admin-only operation."
-  },
-  {
-    "access_class": "permission",
-    "boundary": "platform",
-    "current_gate": "superuser",
-    "inline_checks": [],
-    "inline_effect": null,
-    "intended_change": null,
-    "mcp_tool": null,
-    "method": "POST",
-    "operation_id": null,
-    "path": "/api/admin/llm/model-capabilities/verify",
     "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
@@ -824,8 +824,8 @@
     "reason": "Reads agent-run metadata (own run, or any run for a bypass caller \u2014 agent_run_access.py)."
   },
   {
-    "access_class": "permission",
-    "boundary": "organization",
+    "access_class": "own_private_agent",
+    "boundary": null,
     "current_gate": "authenticated",
     "inline_checks": [
       "has_scope_bypass",
@@ -838,8 +838,8 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/agent-runs/{run_id}/flag-conversation/message",
-    "permission": "agentruns.readwrite",
-    "reason": "Mutates agent-run metadata (own run, or any run for a bypass caller \u2014 agent_run_access.py)."
+    "permission": null,
+    "reason": "Tuning action on a run: non-bypass callers are limited to their own run of their own PRIVATE agent (agent_runs.py::_require_own_private_agent_run)."
   },
   {
     "access_class": "permission",
@@ -875,8 +875,8 @@
     "reason": "Own or accessible agent-run action."
   },
   {
-    "access_class": "permission",
-    "boundary": "organization",
+    "access_class": "own_private_agent",
+    "boundary": null,
     "current_gate": "authenticated",
     "inline_checks": [
       "has_scope_bypass",
@@ -889,12 +889,12 @@
     "method": "DELETE",
     "operation_id": null,
     "path": "/api/agent-runs/{run_id}/verdict",
-    "permission": "agentruns.readwrite",
-    "reason": "Mutates agent-run metadata (own run, or any run for a bypass caller \u2014 agent_run_access.py)."
+    "permission": null,
+    "reason": "Tuning action on a run: non-bypass callers are limited to their own run of their own PRIVATE agent (agent_runs.py::_require_own_private_agent_run)."
   },
   {
-    "access_class": "permission",
-    "boundary": "organization",
+    "access_class": "own_private_agent",
+    "boundary": null,
     "current_gate": "authenticated",
     "inline_checks": [
       "has_scope_bypass",
@@ -907,8 +907,8 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/agent-runs/{run_id}/verdict",
-    "permission": "agentruns.readwrite",
-    "reason": "Mutates agent-run metadata (own run, or any run for a bypass caller \u2014 agent_run_access.py)."
+    "permission": null,
+    "reason": "Tuning action on a run: non-bypass callers are limited to their own run of their own PRIVATE agent (agent_runs.py::_require_own_private_agent_run)."
   },
   {
     "access_class": "permission",
@@ -5165,7 +5165,7 @@
       "is_superuser"
     ],
     "inline_effect": "widens_for_bypass",
-    "intended_change": null,
+    "intended_change": "Provider-org non-admins lose this access at the R3 cutover; platform admins keep it.",
     "mcp_tool": null,
     "method": "POST",
     "operation_id": null,
@@ -5174,8 +5174,8 @@
     "reason": "Executes a tool/run through the MCP gateway."
   },
   {
-    "access_class": "permission",
-    "boundary": "organization",
+    "access_class": "execute",
+    "boundary": null,
     "current_gate": "authenticated",
     "inline_checks": [
       "is_platform_admin",
@@ -5183,12 +5183,12 @@
       "is_superuser"
     ],
     "inline_effect": "widens_for_bypass",
-    "intended_change": null,
+    "intended_change": "Provider-org non-admins lose this access at the R3 cutover; platform admins keep it.",
     "mcp_tool": null,
     "method": "POST",
     "operation_id": null,
     "path": "/api/mcp/gateway/capabilities/search",
-    "permission": "mcp.readwrite",
+    "permission": null,
     "reason": "Reads MCP gateway state/capabilities."
   },
   {
@@ -5201,7 +5201,7 @@
       "is_superuser"
     ],
     "inline_effect": "widens_for_bypass",
-    "intended_change": null,
+    "intended_change": "Provider-org non-admins lose this access at the R3 cutover; platform admins keep it.",
     "mcp_tool": null,
     "method": "GET",
     "operation_id": null,
@@ -5261,7 +5261,7 @@
       "is_superuser"
     ],
     "inline_effect": "widens_for_bypass",
-    "intended_change": null,
+    "intended_change": "Provider-org non-admins lose this access at the R3 cutover; platform admins keep it.",
     "mcp_tool": null,
     "method": "GET",
     "operation_id": null,
@@ -5520,6 +5520,20 @@
     "reason": "Platform-admin-only operation."
   },
   {
+    "access_class": "permission",
+    "boundary": "organization",
+    "current_gate": "authenticated",
+    "inline_checks": [],
+    "inline_effect": null,
+    "intended_change": null,
+    "mcp_tool": null,
+    "method": "GET",
+    "operation_id": null,
+    "path": "/api/model-catalog/names",
+    "permission": "settings.read",
+    "reason": "Reads public catalog display names for model ids already visible to the caller."
+  },
+  {
     "access_class": "personal",
     "boundary": null,
     "current_gate": "authenticated",
@@ -5594,8 +5608,8 @@
     "reason": "User's own notification."
   },
   {
-    "access_class": "personal",
-    "boundary": null,
+    "access_class": "permission",
+    "boundary": "organization",
     "current_gate": "superuser",
     "inline_checks": [
       "is_superuser"
@@ -5606,12 +5620,12 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/oauth/callback/{connection_name}",
-    "permission": null,
-    "reason": "User's own OAuth connection/credential."
+    "permission": "integrations.readwrite",
+    "reason": "Platform-admin-only operation."
   },
   {
-    "access_class": "personal",
-    "boundary": null,
+    "access_class": "permission",
+    "boundary": "organization",
     "current_gate": "superuser",
     "inline_checks": [
       "is_superuser"
@@ -5622,12 +5636,12 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/oauth/connections",
-    "permission": null,
-    "reason": "User's own OAuth connection/credential."
+    "permission": "integrations.readwrite",
+    "reason": "Platform-admin-only operation."
   },
   {
-    "access_class": "personal",
-    "boundary": null,
+    "access_class": "permission",
+    "boundary": "organization",
     "current_gate": "superuser",
     "inline_checks": [
       "is_superuser"
@@ -5638,12 +5652,12 @@
     "method": "DELETE",
     "operation_id": null,
     "path": "/api/oauth/connections/{connection_name}",
-    "permission": null,
-    "reason": "User's own OAuth connection/credential."
+    "permission": "integrations.readwrite",
+    "reason": "Platform-admin-only operation."
   },
   {
-    "access_class": "personal",
-    "boundary": null,
+    "access_class": "permission",
+    "boundary": "organization",
     "current_gate": "superuser",
     "inline_checks": [
       "is_superuser"
@@ -5654,12 +5668,12 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/oauth/connections/{connection_name}",
-    "permission": null,
-    "reason": "User's own OAuth connection/credential."
+    "permission": "integrations.read",
+    "reason": "Platform-admin-only operation."
   },
   {
-    "access_class": "personal",
-    "boundary": null,
+    "access_class": "permission",
+    "boundary": "organization",
     "current_gate": "superuser",
     "inline_checks": [
       "is_superuser"
@@ -5670,12 +5684,12 @@
     "method": "PUT",
     "operation_id": null,
     "path": "/api/oauth/connections/{connection_name}",
-    "permission": null,
-    "reason": "User's own OAuth connection/credential."
+    "permission": "integrations.readwrite",
+    "reason": "Platform-admin-only operation."
   },
   {
-    "access_class": "personal",
-    "boundary": null,
+    "access_class": "permission",
+    "boundary": "organization",
     "current_gate": "superuser",
     "inline_checks": [
       "is_superuser"
@@ -5686,12 +5700,12 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/oauth/connections/{connection_name}/authorize",
-    "permission": null,
-    "reason": "User's own OAuth connection/credential."
+    "permission": "integrations.readwrite",
+    "reason": "Platform-admin-only operation."
   },
   {
-    "access_class": "personal",
-    "boundary": null,
+    "access_class": "permission",
+    "boundary": "organization",
     "current_gate": "superuser",
     "inline_checks": [
       "is_superuser"
@@ -5702,12 +5716,12 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/oauth/connections/{connection_name}/cancel",
-    "permission": null,
-    "reason": "User's own OAuth connection/credential."
+    "permission": "integrations.readwrite",
+    "reason": "Platform-admin-only operation."
   },
   {
-    "access_class": "personal",
-    "boundary": null,
+    "access_class": "permission",
+    "boundary": "organization",
     "current_gate": "superuser",
     "inline_checks": [
       "is_superuser"
@@ -5718,12 +5732,12 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/oauth/connections/{connection_name}/refresh",
-    "permission": null,
-    "reason": "User's own OAuth connection/credential."
+    "permission": "integrations.readwrite",
+    "reason": "Platform-admin-only operation."
   },
   {
-    "access_class": "personal",
-    "boundary": null,
+    "access_class": "permission",
+    "boundary": "organization",
     "current_gate": "superuser",
     "inline_checks": [
       "is_superuser"
@@ -5734,8 +5748,8 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/oauth/credentials/{connection_name}",
-    "permission": null,
-    "reason": "User's own OAuth connection/credential."
+    "permission": "integrations.read",
+    "reason": "Platform-admin-only operation."
   },
   {
     "access_class": "permission",
@@ -6710,7 +6724,7 @@
       "is_superuser"
     ],
     "inline_effect": "widens_for_bypass",
-    "intended_change": null,
+    "intended_change": "Provider-org non-admins lose this access at the R3 cutover; platform admins keep it.",
     "mcp_tool": null,
     "method": "POST",
     "operation_id": null,
@@ -6741,7 +6755,7 @@
       "is_superuser"
     ],
     "inline_effect": "widens_for_bypass",
-    "intended_change": null,
+    "intended_change": "Provider-org non-admins lose this access at the R3 cutover; platform admins keep it.",
     "mcp_tool": null,
     "method": "POST",
     "operation_id": null,
@@ -6996,7 +7010,7 @@
       "is_superuser"
     ],
     "inline_effect": "widens_for_bypass",
-    "intended_change": null,
+    "intended_change": "Provider-org non-admins lose this access at the R3 cutover; platform admins keep it.",
     "mcp_tool": null,
     "method": "GET",
     "operation_id": null,
@@ -7152,7 +7166,7 @@
       "is_superuser"
     ],
     "inline_effect": "widens_for_bypass",
-    "intended_change": null,
+    "intended_change": "Provider-org non-admins lose this access at the R3 cutover; platform admins keep it.",
     "mcp_tool": null,
     "method": "GET",
     "operation_id": null,
@@ -7186,7 +7200,7 @@
       "is_superuser"
     ],
     "inline_effect": "widens_for_bypass",
-    "intended_change": null,
+    "intended_change": "Provider-org non-admins lose this access at the R3 cutover; platform admins keep it.",
     "mcp_tool": null,
     "method": "GET",
     "operation_id": null,
@@ -7203,7 +7217,7 @@
       "is_superuser"
     ],
     "inline_effect": "widens_for_bypass",
-    "intended_change": null,
+    "intended_change": "Provider-org non-admins lose this access at the R3 cutover; platform admins keep it.",
     "mcp_tool": null,
     "method": "POST",
     "operation_id": null,
@@ -9649,8 +9663,8 @@
     "reason": "Public/unauthenticated entry point (login, OAuth/device flow, health, CLI download, or inbound webhook)."
   },
   {
-    "access_class": "permission",
-    "boundary": "organization",
+    "access_class": "personal",
+    "boundary": null,
     "current_gate": "authenticated",
     "inline_checks": [
       "has_scope_bypass",
@@ -9662,8 +9676,8 @@
     "method": "WS",
     "operation_id": null,
     "path": "/ws/connect",
-    "permission": "platform.read",
-    "reason": "Opens a per-user event channel; per-channel (table/file/conversation) authorization is enforced on each subscribe message."
+    "permission": null,
+    "reason": "Opens the caller's own event channel; per-channel (table/file/conversation) authorization is enforced on each subscribe message."
   },
   {
     "access_class": "permission",
@@ -10971,7 +10985,7 @@
     "reason": "Reads `_repo/` workspace content; scope-bypass admin only, matching REST files.py editor routes."
   },
   {
-    "access_class": "public",
+    "access_class": "execute",
     "boundary": null,
     "current_gate": "authenticated",
     "inline_checks": [],

@@ -72,6 +72,15 @@ _NOISE_FUNC_NAMES = {
 # mcp_write_scope_bypass admits a provider-org non-admin, not just a true
 # platform admin.
 _PROVIDER_BYPASS_TOKENS = {"has_scope_bypass", "mcp_write_scope_bypass"}
+_PROVIDER_BYPASS_EFFECTS = {InlineEffect.WIDENS_FOR_BYPASS, InlineEffect.DENY_UNLESS_BYPASS}
+
+
+def _admits_provider_bypass(entry) -> bool:
+    return (
+        entry.current_gate == CurrentGate.ENGINE_OR_BYPASS
+        or bool(set(entry.inline_checks) & _PROVIDER_BYPASS_TOKENS)
+        or entry.inline_effect in _PROVIDER_BYPASS_EFFECTS
+    )
 
 
 def _openapi_path(path: str) -> str:
@@ -501,18 +510,16 @@ class TestInlineEffect:
 
 class TestIntendedChangeCoverage:
     """Any entry that admits a provider-org non-admin beyond a customer
-    member — engine_or_bypass gate, or an inline has_scope_bypass /
-    mcp_write_scope_bypass check — must say so via intended_change, unless
+    member — engine_or_bypass gate, an inline has_scope_bypass /
+    mcp_write_scope_bypass check, or an inline effect that admits or widens
+    for scope-bypass callers — must say so via intended_change, unless
     its reason already states why permanent provider-org access is
     intended (none currently do)."""
 
     def test_bypass_admitting_entries_have_intended_change(self) -> None:
         missing = []
         for entry in ACCESS_LIST:
-            admits_bypass = (
-                entry.current_gate == CurrentGate.ENGINE_OR_BYPASS
-                or bool(set(entry.inline_checks) & _PROVIDER_BYPASS_TOKENS)
-            )
+            admits_bypass = _admits_provider_bypass(entry)
             if admits_bypass and not entry.intended_change:
                 missing.append(entry.key)
         assert not missing, (
@@ -525,10 +532,7 @@ class TestIntendedChangeCoverage:
         stale note left over from a removed check."""
         extra = []
         for entry in ACCESS_LIST:
-            admits_bypass = (
-                entry.current_gate == CurrentGate.ENGINE_OR_BYPASS
-                or bool(set(entry.inline_checks) & _PROVIDER_BYPASS_TOKENS)
-            )
+            admits_bypass = _admits_provider_bypass(entry)
             if entry.intended_change and not admits_bypass:
                 extra.append(entry.key)
         assert not extra, f"intended_change set without a bypass-admitting gate/check: {extra}"
@@ -577,13 +581,6 @@ _REVIEWED_WRITE_ALLOWLIST: dict[tuple[str, str], str] = {
     ("POST", "/api/forms/{form_id}/startup"): "Form runtime — loading the form.",
     ("POST", "/api/forms/{form_id}/fields/{field_name}/options"): "Form runtime — loading field options.",
     ("POST", "/api/forms/{form_id}/upload"): "Form runtime — uploading a submission attachment.",
-    ("POST", "/api/oauth/connections"): "Own OAuth connection.",
-    ("PUT", "/api/oauth/connections/{connection_name}"): "Own OAuth connection.",
-    ("DELETE", "/api/oauth/connections/{connection_name}"): "Own OAuth connection.",
-    ("POST", "/api/oauth/connections/{connection_name}/authorize"): "Own OAuth connection.",
-    ("POST", "/api/oauth/connections/{connection_name}/cancel"): "Own OAuth connection.",
-    ("POST", "/api/oauth/connections/{connection_name}/refresh"): "Own OAuth connection.",
-    ("POST", "/api/oauth/callback/{connection_name}"): "Own OAuth connection.",
     ("POST", "/api/sdk/ai/complete"): "Workflow SDK call made during execution.",
     ("POST", "/api/sdk/ai/stream"): "Workflow SDK call made during execution.",
     ("POST", "/api/sdk/artifacts"): "Own execution-workspace artifact.",
@@ -610,6 +607,9 @@ _REVIEWED_WRITE_ALLOWLIST: dict[tuple[str, str], str] = {
     ("POST", "/api/agents/{agent_id}/tuning-session"): "Own private agent (tuning).",
     ("POST", "/api/agents/{agent_id}/tuning-session/dry-run"): "Own private agent (tuning).",
     ("POST", "/api/agents/{agent_id}/tuning-session/apply"): "Own private agent (tuning).",
+    ("POST", "/api/agent-runs/{run_id}/verdict"): "Own private agent's run (tuning).",
+    ("DELETE", "/api/agent-runs/{run_id}/verdict"): "Own private agent's run (tuning).",
+    ("POST", "/api/agent-runs/{run_id}/flag-conversation/message"): "Own private agent's run (tuning).",
     ("POST", "/api/agent-runs/{run_id}/rerun"): "Own/accessible agent run.",
     ("POST", "/api/agent-runs/{run_id}/cancel"): "Own/accessible agent run.",
     ("POST", "/api/agent-runs/{run_id}/dry-run"): "Own/accessible agent run.",
@@ -624,6 +624,7 @@ _REVIEWED_WRITE_ALLOWLIST: dict[tuple[str, str], str] = {
     ("POST", "/api/chat/conversations/{conversation_id}/attachments"): "Own chat conversation.",
     ("DELETE", "/api/chat/conversations/{conversation_id}/attachments/{attachment_id}"): "Own chat conversation.",
     ("POST", "/api/chat/conversations/{conversation_id}/messages"): "Own chat conversation.",
+    ("POST", "/api/mcp/gateway/capabilities/search"): "Discovers tools through the MCP gateway.",
     ("POST", "/api/mcp/gateway/agents/{agent_id}/tools/{tool_ref}/execute"): "Executes a tool through the MCP gateway.",
     ("DELETE", "/api/me/mcp-connections/{connection_id}"): "Own MCP tool connection.",
     ("POST", "/api/platform-jobs/{job_id}/cancel"): "Own platform job (or any, for a platform admin).",
