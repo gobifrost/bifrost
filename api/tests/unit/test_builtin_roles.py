@@ -100,7 +100,7 @@ def test_migration_frozen_copies_match_live_constants():
     fix = _load_migration("20260929_user_base_perm_fix.py")
     r2b = _load_migration("20260929_r2b_roles.py")
 
-    assert fix.down_revision == "20260929_model_catalog"
+    assert fix.down_revision == "20260929_r2b_wf_permissions"
     assert fix.USER_ROLE_ID == USER_ROLE_ID
     assert fix.USER_BASE_PERMISSIONS == USER_BASE_PERMISSIONS
     assert (r2b.USER_BASE_PERMISSIONS - fix.REMOVED_PERMISSIONS) | fix.ADDED_PERMISSIONS == USER_BASE_PERMISSIONS

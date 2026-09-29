@@ -1,7 +1,7 @@
 """Correct the User base role's seeded read permissions
 
 Revision ID: 20260929_user_base_perm_fix
-Revises: 20260929_model_catalog
+Revises: 20260929_r2b_wf_permissions
 Create Date: 2026-09-29
 
 The R2b derivation of the User base role's permissions counted an MCP tool's
@@ -57,7 +57,7 @@ REMOVED_PERMISSIONS: frozenset[str] = frozenset(
 ADDED_PERMISSIONS: frozenset[str] = frozenset()
 
 revision: str = "20260929_user_base_perm_fix"
-down_revision: Union[str, None] = "20260929_model_catalog"
+down_revision: Union[str, None] = "20260929_r2b_wf_permissions"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
