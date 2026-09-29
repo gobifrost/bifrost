@@ -1141,6 +1141,43 @@ class AIModelService:
             )
         )
 
+    async def test_connection(self, connection_id: UUID) -> ProviderTestResult:
+        """What a connection's Test runs: the real check on each of its profiles.
+
+        A connection names no model, so with no profiles the only possible
+        check is the provider's model listing, and the message says so.
+        """
+        from src.services.provider_catalog_service import ProviderTestResult
+
+        connection = await self.get_connection(connection_id)
+        profiles = (
+            (
+                await self.session.execute(
+                    select(AIModelProfile.id, AIModelProfile.name)
+                    .where(AIModelProfile.connection_id == connection.id)
+                    .order_by(AIModelProfile.name)
+                )
+            )
+            .all()
+        )
+        if not profiles:
+            listing = await self.test_saved_connection(connection_id)
+            return ProviderTestResult(
+                listing.success,
+                f"{listing.message} Add a model profile to test a real request.",
+                listing.models,
+            )
+        failures = []
+        for profile_id, name in profiles:
+            result = await self.verify_profile(profile_id)
+            if not result.success:
+                failures.append(f"{name}: {result.message}")
+        if failures:
+            return ProviderTestResult(False, " ".join(failures))
+        names = [name for _, name in profiles]
+        subject = names[0] if len(names) == 1 else f"All {len(names)} profiles"
+        return ProviderTestResult(True, f"{subject} answered a test request.")
+
     async def verify_profile(self, profile_id: UUID) -> ProviderTestResult:
         """Send one short request through the profile's own runtime path.
 

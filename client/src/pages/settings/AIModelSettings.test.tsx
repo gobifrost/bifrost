@@ -191,6 +191,27 @@ describe("AIModelSettings", () => {
 		).toBeInTheDocument();
 	});
 
+	it("tests a profile with a real request and reports the provider's answer", async () => {
+		const { toast } = await import("sonner");
+		aiModels.verifyModelProfile.mockResolvedValue({
+			success: false,
+			message: "The provider rejected the API key.",
+		});
+		const { user } = renderWithProviders(<AIModelSettings />);
+
+		await user.click(await screen.findByRole("button", { name: "Test Balanced" }));
+
+		await waitFor(() =>
+			expect(aiModels.verifyModelProfile).toHaveBeenCalledWith("profile-1"),
+		);
+		await waitFor(() =>
+			expect(toast.error).toHaveBeenCalledWith(
+				"Balanced could not answer a test request",
+				{ description: "The provider rejected the API key." },
+			),
+		);
+	});
+
 	it("creates provider connections and model profiles", async () => {
 		const { user } = renderWithProviders(<AIModelSettings />);
 

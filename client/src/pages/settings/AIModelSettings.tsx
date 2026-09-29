@@ -48,6 +48,7 @@ import {
 	testProviderConnection,
 	updateProviderConnection,
 	updateModelProfile,
+	verifyModelProfile,
 	verifyProviderConnection,
 	type AIModelAssignmentKey,
 	type AIModelAssignment,
@@ -316,23 +317,31 @@ export function AIModelSettings() {
 
 	const testProviderMutation = useMutation({
 		mutationFn: testProviderConnection,
-		onSuccess: (result) => {
-			const count = result.models?.length ?? 0;
+		onSuccess: (result) =>
 			toast[result.success ? "success" : "error"](
 				result.success ? "Provider verified" : "Provider test failed",
-				{
-					description: count
-						? `${result.message} ${count} models returned.`
-						: result.message,
-				},
-			);
-		},
+				{ description: result.message },
+			),
 		onError: (error) =>
 			toast.error("Provider test failed", {
 				description:
 					error instanceof Error
 						? error.message
 						: "Confirm credentials and endpoint.",
+			}),
+	});
+	const testProfileMutation = useMutation({
+		mutationFn: (profile: AIModelProfile) => verifyModelProfile(profile.id),
+		onSuccess: (result, profile) =>
+			toast[result.success ? "success" : "error"](
+				result.success
+					? `${profile.name} answered a test request`
+					: `${profile.name} could not answer a test request`,
+				{ description: result.success ? undefined : result.message },
+			),
+		onError: (error, profile) =>
+			toast.error(`${profile.name} could not be tested`, {
+				description: error instanceof Error ? error.message : undefined,
 			}),
 	});
 	const updateProviderMutation = useMutation({
@@ -729,6 +738,8 @@ export function AIModelSettings() {
 						chatPending={updateProfileMutation.isPending && updateProfileMutation.variables?.profileId === profile.id}
 						defaultPending={assignMutation.isPending && assignMutation.variables?.assignmentKey === "primary" && assignMutation.variables.profileId === profile.id}
 						defaultDisabled={assignmentsQuery.isLoading || assignmentsQuery.isError || assignMutation.isPending}
+						testing={testProfileMutation.isPending && testProfileMutation.variables?.id === profile.id}
+						onTest={() => testProfileMutation.mutate(profile)}
 						onSelect={(selected) => toggleProfileSelection(profile.id, selected)}
 						onEdit={() => { editProfileMutation.reset(); setProfileEdit({ id: profile.id, name: profile.name, connectionId: profile.connection_id, model: profile.model, defaultMaxTokens: profile.default_max_tokens ?? null, failoverProfileId: profile.failover_profile_id ?? null, reasoningEffort: profile.reasoning_effort ?? null }); }}
 						onDelete={() => { deleteProfileMutation.reset(); setDeletingProfile(profile); }}

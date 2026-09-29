@@ -233,7 +233,7 @@ async def delete_provider_connection(connection_id: UUID, db: DbSession, user: C
 async def test_provider_connection(connection_id: UUID, db: DbSession, user: CurrentActiveUser) -> AIConnectionTestResponse:
     del user
     try:
-        result = await AIModelService(db).test_saved_connection(connection_id)
+        result = await AIModelService(db).test_connection(connection_id)
     except (LookupError, ValueError) as error:
         _raise_service_error(error)
     return AIConnectionTestResponse(
