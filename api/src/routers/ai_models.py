@@ -17,6 +17,7 @@ from src.models.contracts.ai_models import (
     AIModelProfileMergeResponse,
     AIModelProfileResponse,
     AIModelProfileUpdate,
+    AIModelProfileVerifyResponse,
     AIModelsResponse,
     AIProviderConnectionCreate,
     AIProviderConnectionResponse,
@@ -377,6 +378,18 @@ async def update_model_profile(
     except (LookupError, ValueError) as error:
         await db.rollback()
         _raise_service_error(error)
+
+
+@router.post("/profiles/{profile_id}/verify")
+async def verify_model_profile(
+    profile_id: UUID, db: DbSession, user: CurrentActiveUser
+) -> AIModelProfileVerifyResponse:
+    del user
+    try:
+        result = await AIModelService(db).verify_profile(profile_id)
+    except LookupError as error:
+        _raise_service_error(error)
+    return AIModelProfileVerifyResponse(success=result.success, message=result.message)
 
 
 @router.delete("/profiles/{profile_id}", status_code=status.HTTP_204_NO_CONTENT)

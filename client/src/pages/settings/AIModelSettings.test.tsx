@@ -10,6 +10,7 @@ const aiModels = vi.hoisted(() => ({
 	createProviderConnection: vi.fn(),
 	updateProviderConnection: vi.fn(),
 	createModelProfile: vi.fn(),
+	verifyModelProfile: vi.fn(),
 	updateModelProfile: vi.fn(),
 	setModelAssignment: vi.fn(),
 	deleteProviderConnection: vi.fn(),
@@ -60,7 +61,7 @@ vi.mock("@/components/ai/ModelProfileSelector", () => ({
 }));
 
 vi.mock("sonner", () => ({
-	toast: { success: vi.fn(), error: vi.fn() },
+	toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
 }));
 
 import { AIModelSettings } from "./AIModelSettings";
@@ -145,6 +146,7 @@ describe("AIModelSettings", () => {
 		aiModels.createProviderConnection.mockResolvedValue(provider);
 		aiModels.updateProviderConnection.mockResolvedValue(provider);
 		aiModels.createModelProfile.mockResolvedValue(profile);
+		aiModels.verifyModelProfile.mockResolvedValue({ success: true, message: "ok" });
 		aiModels.updateModelProfile.mockResolvedValue(profile);
 		aiModels.setModelAssignment.mockResolvedValue({
 			assignment_key: "primary",
@@ -256,6 +258,9 @@ describe("AIModelSettings", () => {
 		);
 		expect(aiModels.createModelProfile.mock.calls[0][0]).not.toHaveProperty(
 			"max_tokens",
+		);
+		await waitFor(() =>
+			expect(aiModels.verifyModelProfile).toHaveBeenCalledWith(profile.id),
 		);
 	});
 

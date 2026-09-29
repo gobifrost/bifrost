@@ -233,3 +233,41 @@ def test_ai_model_profiles_can_be_merged(e2e_client, platform_admin):
     assert profiles[1]["id"] not in {
         profile["id"] for profile in remaining_profiles
     }
+
+
+def test_profile_verification_reports_a_rejected_key_without_undoing_the_save(
+    e2e_client, platform_admin
+):
+    connection = e2e_client.post(
+        "/api/admin/ai/connections",
+        headers=platform_admin.headers,
+        json={
+            "name": "Rejected Key E2E",
+            "provider": "openai",
+            "api_key": "sk-test",
+            "endpoint": "https://api.openai.com/v1",
+        },
+    )
+    assert connection.status_code == 201, connection.text
+    profile = e2e_client.post(
+        "/api/admin/ai/profiles",
+        headers=platform_admin.headers,
+        json={
+            "name": "Rejected Key Profile E2E",
+            "connection_id": connection.json()["id"],
+            "model": "gpt-4o-mini",
+        },
+    )
+    assert profile.status_code == 201, profile.text
+    profile_id = profile.json()["id"]
+
+    result = e2e_client.post(
+        f"/api/admin/ai/profiles/{profile_id}/verify",
+        headers=platform_admin.headers,
+    )
+
+    assert result.status_code == 200, result.text
+    assert result.json()["success"] is False
+    assert "gpt-4o-mini" in result.json()["message"]
+    profiles = e2e_client.get("/api/admin/ai/profiles", headers=platform_admin.headers).json()
+    assert any(p["id"] == profile_id for p in profiles)

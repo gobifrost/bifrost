@@ -37,6 +37,7 @@ import {
 	listProviderConnections,
 	type AIModelProfile,
 } from "@/services/aiModels";
+import { warnIfProfileFails } from "./warnIfProfileFails";
 import { useModelDisplayName } from "@/services/modelNames";
 
 const PROFILE_QUERY_KEY = ["ai", "model-profiles"] as const;
@@ -137,6 +138,7 @@ export function ModelProfileSelector({
 			setNewConnectionId("");
 			setNewModel("");
 			toast.success("Model profile created");
+			void warnIfProfileFails(profile.id, profile.name);
 		},
 		onError: (error) => {
 			toast.error("Could not create profile", {

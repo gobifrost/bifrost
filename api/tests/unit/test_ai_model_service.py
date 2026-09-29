@@ -894,3 +894,60 @@ async def test_gateway_models_route_to_the_api_the_catalog_documents(db_session)
     }
     # A Google /v1 endpoint and a templated URL cannot be called; not offered.
     assert listed == {"kimi", "gpt", "claude"}
+
+
+@pytest.mark.asyncio
+async def test_verify_profile_sends_one_request_through_the_profile_config(db_session):
+    service = AIModelService(db_session)
+    profile = await _profile(service)
+    built = []
+
+    class FakeClient:
+        def __init__(self, config, fallback_configs=None):
+            built.append((config, fallback_configs))
+
+        async def complete(self, messages, **kwargs):
+            return None
+
+    with patch("src.services.llm.pydantic_client.PydanticAIClient", FakeClient):
+        result = await service.verify_profile(profile.id)
+
+    assert result.success is True
+    [(config, fallbacks)] = built
+    assert config.model == "openai/gpt-4o-mini"
+    assert config.endpoint == OPENROUTER_DEFAULT_ENDPOINT
+    assert fallbacks is None  # the profile alone, not its failover chain
+
+
+@pytest.mark.asyncio
+async def test_verify_profile_reports_the_provider_error(db_session):
+    service = AIModelService(db_session)
+    profile = await _profile(service)
+    rejected = AsyncMock(side_effect=RuntimeError("401 invalid api key"))
+
+    with patch("src.services.llm.pydantic_client.PydanticAIClient.complete", rejected):
+        result = await service.verify_profile(profile.id)
+
+    assert result.success is False
+    assert "401 invalid api key" in result.message
+    assert "openai/gpt-4o-mini" in result.message
+
+
+@pytest.mark.asyncio
+async def test_verify_profile_reports_a_timeout(db_session):
+    import asyncio
+
+    service = AIModelService(db_session)
+    profile = await _profile(service)
+
+    async def hang(*args, **kwargs):
+        await asyncio.sleep(5)
+
+    with (
+        patch("src.services.ai_model_service.PROFILE_VERIFY_TIMEOUT_SECONDS", 0.05),
+        patch("src.services.llm.pydantic_client.PydanticAIClient.complete", hang),
+    ):
+        result = await service.verify_profile(profile.id)
+
+    assert result.success is False
+    assert "did not respond" in result.message

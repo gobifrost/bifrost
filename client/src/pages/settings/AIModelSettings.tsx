@@ -10,6 +10,7 @@ import { ProviderEditDialog, type ProviderEditDraft } from "@/components/ai/Prov
 import { ModelProfileEditDialog, type ModelProfileEditDraft } from "@/components/ai/ModelProfileEditDialog";
 import { ModelProfileMergeDialog } from "@/components/ai/ModelProfileMergeDialog";
 import { ModelAssignmentCard } from "@/components/ai/ModelAssignmentCard";
+import { warnIfProfileFails } from "@/components/ai/warnIfProfileFails";
 import { ModelProfileDeleteDialog } from "@/components/ai/ModelProfileDeleteDialog";
 import { ModelProfileCard } from "@/components/ai/ModelProfileCard";
 import { useMemo, useRef, useState } from "react";
@@ -374,6 +375,7 @@ export function AIModelSettings() {
 					? "First profile created and assigned everywhere"
 					: "Model profile created",
 			);
+			void warnIfProfileFails(profile.id, profile.name);
 		},
 	});
 
@@ -408,10 +410,11 @@ export function AIModelSettings() {
 				failover_profile_id: edit.failoverProfileId,
 				reasoning_effort: edit.reasoningEffort,
 			}),
-		onSuccess: () => {
+		onSuccess: (profile) => {
 			setProfileEdit(null);
 			invalidateAI();
 			toast.success("Model profile updated");
+			void warnIfProfileFails(profile.id, profile.name);
 		},
 		onError: (error) =>
 			toast.error("Could not update profile", {

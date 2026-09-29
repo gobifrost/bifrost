@@ -7,6 +7,7 @@ const aiModels = vi.hoisted(() => ({
 	listModelProfiles: vi.fn(),
 	listProviderConnections: vi.fn(),
 	createModelProfile: vi.fn(),
+	verifyModelProfile: vi.fn(),
 }));
 
 vi.mock("@/services/aiModels", async () => {
@@ -19,11 +20,12 @@ vi.mock("@/services/aiModels", async () => {
 		listModelProfiles: aiModels.listModelProfiles,
 		listProviderConnections: aiModels.listProviderConnections,
 		createModelProfile: aiModels.createModelProfile,
+		verifyModelProfile: aiModels.verifyModelProfile,
 	};
 });
 
 vi.mock("sonner", () => ({
-	toast: { success: vi.fn(), error: vi.fn() },
+	toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
 }));
 
 import { ModelProfileSelector } from "./ModelProfileSelector";
@@ -84,6 +86,7 @@ describe("ModelProfileSelector", () => {
 			id: "profile-3",
 			name: "New Chat",
 		});
+		aiModels.verifyModelProfile.mockResolvedValue({ success: true, message: "ok" });
 	});
 
 	it("selects reusable profiles only", async () => {
@@ -164,6 +167,9 @@ describe("ModelProfileSelector", () => {
 			"max_tokens",
 		);
 		expect(onValueChange).toHaveBeenCalledWith("profile-3");
+		await waitFor(() =>
+			expect(aiModels.verifyModelProfile).toHaveBeenCalledWith("profile-3"),
+		);
 	});
 
 	it("submits the inline create form only once when triggered twice synchronously", async () => {

@@ -43,4 +43,6 @@ test("adds a catalog provider and a profile with a reasoning choice", async ({
 
 	const profileCard = page.locator('[data-slot="card"]', { hasText: `Haiku ${suffix}` });
 	await expect(profileCard.getByText("Reasoning: On (provider default)")).toBeVisible();
+	// The saved profile is tested with a real request; the fake key fails it.
+	await expect(page.getByText(`Haiku ${suffix} could not answer a test request`)).toBeVisible();
 });

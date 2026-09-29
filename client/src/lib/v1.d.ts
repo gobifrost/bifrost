@@ -6600,6 +6600,23 @@ export interface paths {
         patch: operations["update_model_profile_api_admin_ai_profiles__profile_id__patch"];
         trace?: never;
     };
+    "/api/admin/ai/profiles/{profile_id}/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Verify Model Profile */
+        post: operations["verify_model_profile_api_admin_ai_profiles__profile_id__verify_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/ai/assignments": {
         parameters: {
             query?: never;
@@ -11320,6 +11337,13 @@ export interface components {
              * @description One of the model's catalog reasoning choices; null = model default
              */
             reasoning_effort?: string | null;
+        };
+        /** AIModelProfileVerifyResponse */
+        AIModelProfileVerifyResponse: {
+            /** Success */
+            success: boolean;
+            /** Message */
+            message: string;
         };
         /** AIModelsResponse */
         AIModelsResponse: {
@@ -40576,6 +40600,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AIModelProfileResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    verify_model_profile_api_admin_ai_profiles__profile_id__verify_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AIModelProfileVerifyResponse"];
                 };
             };
             /** @description Validation Error */
