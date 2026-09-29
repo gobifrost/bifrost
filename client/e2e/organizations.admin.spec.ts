@@ -53,6 +53,12 @@ test.describe("Organization Management", () => {
 
 		try {
 			await page.goto("/organizations");
+			// The nightly full suite creates many organizations before this test
+			// runs, so the new row can land past the first page. Scope the list
+			// to this org so the row assertions don't depend on list position.
+			await page
+				.getByLabel("Search organizations")
+				.fill(organizationName);
 			const organizationRow = page.getByRole("row", {
 				name: new RegExp(organizationName),
 			});
@@ -108,6 +114,12 @@ test.describe("Organization Management", () => {
 		await expect(
 			page.getByRole("heading", { name: /organizations/i }).first(),
 		).toBeVisible({ timeout: 10000 });
+		// The nightly full suite creates many organizations before this test
+		// runs, so a new row can land past the first page. Scope the list to
+		// this test's unique suffix so the row assertions don't depend on
+		// list position.
+		const search = page.getByLabel("Search organizations");
+		await search.fill(String(unique));
 
 		try {
 			await page
@@ -153,6 +165,7 @@ test.describe("Organization Management", () => {
 			await expect(
 				page.getByRole("heading", { name: /organizations/i }).first(),
 			).toBeVisible({ timeout: 10000 });
+			await search.fill(String(unique));
 			const editedRow = organizationRow(page, editedName);
 			await expect(editedRow).toBeVisible({ timeout: 10000 });
 			await expect(editedRow).toContainText(editedDomain);
@@ -180,6 +193,7 @@ test.describe("Organization Management", () => {
 			await expect(
 				page.getByRole("heading", { name: /organizations/i }).first(),
 			).toBeVisible({ timeout: 10000 });
+			await search.fill(String(unique));
 			await page.getByRole("switch", { name: "Show Inactive" }).click();
 			await expect(
 				organizationRow(page, editedName).getByText("Inactive", {

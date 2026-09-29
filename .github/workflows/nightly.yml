@@ -157,8 +157,10 @@ jobs:
             --cov=bifrost \
             --cov-report=term \
             --cov-report=xml:/tmp/bifrost/coverage.xml
-          coverage_file=$(find /tmp -maxdepth 2 -path '/tmp/bifrost-*/coverage.xml' -print -quit)
-          test -n "$coverage_file"
+          # shellcheck disable=SC1091
+          source scripts/lib/test_helpers.sh
+          coverage_file="/tmp/bifrost-$(compute_project_name .)/coverage.xml"
+          test -f "$coverage_file"
           cp "$coverage_file" coverage.xml
 
       - name: Export stack logs and tear down

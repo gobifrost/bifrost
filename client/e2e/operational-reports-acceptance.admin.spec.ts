@@ -431,7 +431,7 @@ test.describe("Operational reports acceptance (admin)", () => {
 		await page.goto("/reports/usage");
 		await usageReport;
 		await expect(
-			page.getByRole("heading", { name: "Usage Reports", exact: true }),
+			page.getByRole("heading", { name: "Usage", exact: true }),
 		).toBeVisible({ timeout: 10_000 });
 		await expect(page.getByText("Total AI Cost")).toBeVisible();
 		await expect(page.getByText("Usage by Conversation")).toBeVisible();
