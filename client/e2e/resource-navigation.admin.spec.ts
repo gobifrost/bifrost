@@ -123,6 +123,9 @@ test("resource titles and table cells support native middle-click without leakin
 		await page
 			.getByRole("textbox", { name: "Search agents", exact: true })
 			.fill(agentName);
+		// Search filters client-side and reflows the grid; wait until only the
+		// fixture remains so the click lands where the card now is.
+		await expect(page.getByRole("article")).toHaveCount(1);
 		const agentCard = page
 			.getByRole("article")
 			.filter({ has: page.getByRole("link", { name: agentName }) });
@@ -145,6 +148,8 @@ test("resource titles and table cells support native middle-click without leakin
 		await page
 			.getByRole("button", { name: "Table view", exact: true })
 			.click();
+		// Wait for the grid to unmount so clicks target the settled table.
+		await expect(page.getByRole("article")).toHaveCount(0);
 		const agentRow = page
 			.getByRole("row")
 			.filter({ has: page.getByRole("link", { name: agentName }) });
@@ -166,6 +171,7 @@ test("resource titles and table cells support native middle-click without leakin
 
 		await page.goto("/apps");
 		await page.getByLabel("Search apps").fill(appName);
+		await expect(page.getByRole("article")).toHaveCount(1);
 		const appCard = page
 			.getByRole("article")
 			.filter({ has: page.getByRole("link", { name: appName }) });
@@ -177,6 +183,7 @@ test("resource titles and table cells support native middle-click without leakin
 			`/apps/${appSlug}/preview`,
 		);
 		await page.getByRole("radio", { name: "Table view" }).click();
+		await expect(page.getByRole("article")).toHaveCount(0);
 		const appRow = page
 			.getByRole("row")
 			.filter({ has: page.getByRole("link", { name: appName }) });
@@ -201,6 +208,7 @@ test("resource titles and table cells support native middle-click without leakin
 				"Search forms by name, description, or workflow...",
 			)
 			.fill(formName);
+		await expect(page.locator('a[href^="/execute/"]')).toHaveCount(1);
 		const formRow = page
 			.getByRole("row")
 			.filter({ has: page.getByRole("link", { name: formName }) });
@@ -240,6 +248,7 @@ test("resource titles and table cells support native middle-click without leakin
 		await page
 			.getByPlaceholder("Search by name, description, or category...")
 			.fill(workflowName);
+		await expect(page.locator('a[href$="/execute"]')).toHaveCount(1);
 		const workflowLink = page.getByRole("link", {
 			name: workflowName,
 			exact: true,

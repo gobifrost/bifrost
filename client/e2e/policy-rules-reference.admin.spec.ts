@@ -33,6 +33,20 @@ const FILE_RULE_NAME = `e2e-file-ref-rule-${UNIQUE}`;
 const TABLE_RULE_NAME = `e2e-table-ref-rule-${UNIQUE}`;
 const SHARE_NAME = `e2e-ref-share-${UNIQUE}`.replace(/[^a-z0-9-]/g, "-");
 const TABLE_NAME = `e2e_ref_table_${UNIQUE}`.replace(/[^a-z0-9_]/g, "_");
+
+/**
+ * The Files "Add Shared Rule…" combobox renders a humanized label
+ * (FilePolicyEditor.tsx's `readableRuleName`), not the raw rule name —
+ * mirror that transform so the option locator matches what's on screen.
+ */
+function readableRuleName(name: string) {
+	if (name === "admin_bypass") return "Administrator Access";
+	return name
+		.split(/[_-]+/)
+		.filter(Boolean)
+		.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+		.join(" ");
+}
 let tableId: string | undefined;
 
 async function expectCleanupStatus(
@@ -64,8 +78,11 @@ async function policyEditorText(page: Page, modelPath: string) {
 		const model = monaco?.editor
 			?.getModels?.()
 			.find((item) => item.uri.path.endsWith(targetPath));
-		if (!model) throw new Error(`${targetPath} Monaco model not found`);
-		return model.getValue();
+		// Return "" rather than throwing when the model hasn't mounted yet
+		// (e.g. right after switching into the "Advanced" code view) so
+		// callers can `expect.poll(...).toContain(...)` this and have it
+		// retry instead of failing on the first, too-early read.
+		return model ? model.getValue() : "";
 	}, modelPath);
 }
 
@@ -152,24 +169,37 @@ test.describe("Policy rule reference mode", () => {
 		).toBeVisible({ timeout: 10000 });
 		await page.getByRole("tab", { name: "Policies" }).click();
 		await page
-			.getByRole("button", { name: `Edit policy for ${SHARE_NAME}/` })
+			.getByRole("button", { name: `Manage policy for ${SHARE_NAME}/` })
 			.click();
 
-		// Wait for the editor dialog.
+		// Wait for the embedded policy editor panel (a right-hand inspector
+		// pane, not a modal dialog — see files-explorer.admin.spec.ts).
+		const inspector = page.getByRole("region", {
+			name: "File details",
+			exact: true,
+		});
 		await expect(
-			page.getByRole("dialog", { name: /manage policy/i }),
+			inspector.getByRole("heading", { name: "Manage Policy", exact: true }),
 		).toBeVisible({ timeout: 10000 });
 
-		// The "Insert reference…" dropdown should appear with the file rule.
-		const refTrigger = page
-			.getByRole("dialog", { name: /manage policy/i })
-			.getByLabel(/insert reference/i);
+		// The "Add Shared Rule…" dropdown should appear with the file rule.
+		const refTrigger = inspector.getByRole("combobox", {
+			name: "Add Shared Rule",
+		});
 		await expect(refTrigger).toBeVisible({ timeout: 5000 });
 		await refTrigger.click();
-		await expect(
-			page.getByRole("option", { name: FILE_RULE_NAME }),
-		).toBeVisible({ timeout: 5000 });
-		await page.getByRole("option", { name: FILE_RULE_NAME }).click();
+		const fileRuleOption = page.getByRole("option", {
+			name: readableRuleName(FILE_RULE_NAME),
+		});
+		await expect(fileRuleOption).toBeVisible({ timeout: 5000 });
+		await fileRuleOption.click();
+
+		// The compact editor defaults to the structured "rules" view; flip to
+		// "Advanced" to see the raw doc buffer the rule was added to.
+		await inspector.getByLabel("Advanced").click();
+		await expect(page.getByTestId("json-yaml-editor-yaml")).toBeVisible({
+			timeout: 5000,
+		});
 		await expect
 			.poll(() => policyEditorText(page, "file-policies.yaml"))
 			.toContain(FILE_RULE_NAME);
@@ -205,7 +235,7 @@ test.describe("Policy rule reference mode", () => {
 			.getByRole("button", { name: `${TABLE_NAME} actions` })
 			.click();
 		await page.getByRole("menuitem", { name: "Edit" }).click();
-		const tableDialog = page.getByRole("dialog", { name: /edit table/i });
+		const tableDialog = page.getByRole("region", { name: "Edit Table" });
 		await expect(tableDialog).toBeVisible({ timeout: 10000 });
 
 		// The "Insert reference…" dropdown should appear with the table rule.

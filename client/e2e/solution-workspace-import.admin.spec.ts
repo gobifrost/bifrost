@@ -279,7 +279,13 @@ test("reviews collisions and replaces workspace content without installing a Sol
 		expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
 		const mobileReview = dialog.locator("[data-testid=workspace-import-config-section]").locator("..");
 		await mobileReview.evaluate((element) => { element.scrollTop = element.scrollHeight; });
-		await expect(dialog.getByTestId("workspace-import-scroller").getByText(configKey, { exact: true })).toBeInViewport();
+		// Assert the actual config *input* (not just any element with matching
+		// text) is scrolled into view. A same-named "Config" row also renders
+		// further down in the item table (`workspace-import-scroller`), and
+		// with `exact: true` that row — not the field label, whose text also
+		// carries a required-marker "*" child — is the only exact text match
+		// in the dialog. Scoping to the input avoids that same-text collision.
+		await expect(configInput).toBeInViewport();
 		const [mobileDialogBox, mobileHeaderBox, mobileFooterBox, mobileStartBox] = await Promise.all([
 			dialog.boundingBox(),
 			dialog.getByRole("heading", { name: "Review workspace import" }).boundingBox(),
