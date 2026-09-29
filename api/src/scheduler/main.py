@@ -286,6 +286,22 @@ class Scheduler:
             **misfire_options,
         )
 
+        # Workflow operation usage flush — every 15 minutes.
+        from src.jobs.schedulers.workflow_operation_usage_flush import (
+            flush_workflow_operation_usage,
+        )
+        scheduler.add_job(
+            self._run_scheduled_task,
+            IntervalTrigger(minutes=15),
+            id="workflow_operation_usage_flush",
+            name="Flush workflow operation usage counters",
+            replace_existing=True,
+            next_run_time=datetime.now(timezone.utc),
+            args=["workflow_operation_usage_flush", flush_workflow_operation_usage],
+            **misfire_options,
+        )
+        logger.info("Workflow operation usage flush scheduled (every 15 min)")
+
         # Legacy entity-logo normalization — bounded batches, immediate at startup.
         from src.jobs.schedulers.logo_thumbnail_backfill import (
             backfill_logo_thumbnails,

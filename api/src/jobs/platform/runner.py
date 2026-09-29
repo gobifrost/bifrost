@@ -89,6 +89,8 @@ async def run_claimed_platform_job(job_id: UUID, lease_token: UUID) -> bool:
             email=context.requested_by_email,
             name=context.requested_by_name,
             source="platform_job",
+            # Background system work, not a browser/CLI/MCP call.
+            surface="service",
         )
     )
 

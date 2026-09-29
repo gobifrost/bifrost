@@ -30,6 +30,16 @@ class ActorContext:
     # Execution (or service attempt) that produced the event, from a signed
     # engine/service token's ``engine_execution_id``; None for human HTTP.
     execution_id: UUID | None = None
+    # Transport the request came in over: "web", "cli", "mcp", "embed",
+    # "workflow", or "service". Unlike ``source`` (actor type), this is
+    # about which client made the call. See
+    # src/core/request_actor.py::actor_from_token_payload for resolution.
+    surface: str = "web"
+    # Catalog operation id (operation_catalog.py) for the route that
+    # produced this event, stamped after route matching by
+    # src/core/app_wiring.py::install_operation_id_capture. None for
+    # routes with no catalog binding.
+    operation_id: str | None = None
 
 
 _actor: ContextVar[ActorContext | None] = ContextVar("audit_actor", default=None)

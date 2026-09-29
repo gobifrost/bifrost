@@ -84,6 +84,8 @@ async def emit_audit(
                 user_agent=actor.user_agent,
                 details=details,
                 execution_id=actor.execution_id,
+                operation_id=actor.operation_id,
+                surface=actor.surface,
             )
 
     try:

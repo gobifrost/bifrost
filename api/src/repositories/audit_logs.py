@@ -52,6 +52,8 @@ class AuditLogRepository:
         user_agent: str | None,
         details: dict[str, Any] | None,
         execution_id: UUID | None,
+        operation_id: str | None = None,
+        surface: str | None = None,
     ) -> AuditLog:
         """Insert a new audit log row."""
         log = AuditLog(
@@ -66,6 +68,8 @@ class AuditLogRepository:
             user_agent=user_agent,
             details=details,
             execution_id=execution_id,
+            operation_id=operation_id,
+            surface=surface,
         )
         self.session.add(log)
         await self.session.flush()

@@ -29,6 +29,13 @@ class AuditLogEntry(BaseModel):
     resource_id: UUID | None = Field(None, description="Target entity ID")
     outcome: str = Field(..., description="'success' or 'failure'")
     source: str = Field(..., description="Event source: 'http', 'sso_sync', 'scheduler', 'cli', ...")
+    operation_id: str | None = Field(
+        None, description="Catalog operation id for the route that produced this event"
+    )
+    surface: str | None = Field(
+        None,
+        description="Transport the request came in over: 'web', 'cli', 'mcp', 'embed', 'workflow', 'service'",
+    )
     execution_id: UUID | None = Field(
         None,
         description="Workflow execution that produced the event, when supported",

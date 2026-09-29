@@ -133,6 +133,36 @@ class TestEmitAudit:
         assert created["details"] == {"email": "new@example.com"}
 
     @pytest.mark.asyncio
+    async def test_writes_operation_id_and_surface_from_actor(self, monkeypatch):
+        """emit_audit persists the actor's operation_id and surface (R2a-2)."""
+        created = {}
+
+        async def fake_create(**kwargs):
+            created.update(kwargs)
+            return MagicMock(id=uuid4())
+
+        mock_repo = MagicMock()
+        mock_repo.create = AsyncMock(side_effect=fake_create)
+        monkeypatch.setattr(
+            "src.services.audit.AuditLogRepository", lambda session: mock_repo
+        )
+
+        set_actor(
+            ActorContext(
+                user_id=uuid4(),
+                organization_id=uuid4(),
+                source="http",
+                surface="mcp",
+                operation_id="agents.list",
+            )
+        )
+
+        await emit_audit(_session_mock(), "agents.list")
+
+        assert created["operation_id"] == "agents.list"
+        assert created["surface"] == "mcp"
+
+    @pytest.mark.asyncio
     async def test_swallows_repository_errors(self, monkeypatch):
         """Audit failures must NOT propagate to the caller."""
         mock_repo = MagicMock()

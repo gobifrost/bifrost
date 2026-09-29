@@ -92,6 +92,8 @@ async def list_audit_logs(
                 resource_id=row.resource_id,
                 outcome=row.outcome,
                 source=row.source,
+                operation_id=row.operation_id,
+                surface=row.surface,
                 execution_id=row.execution_id,
                 actor=AuditLogActor(
                     user_id=row.user_id,

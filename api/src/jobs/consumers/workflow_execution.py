@@ -986,6 +986,7 @@ class WorkflowExecutionConsumer(BaseConsumer):
                 caller_organization_id=str(org_id) if org_id else None,
                 caller_email=user_email,
                 caller_name=user_name,
+                engine_workflow_id=workflow_id,
             )
 
             # Build context for worker process

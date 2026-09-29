@@ -489,6 +489,10 @@ def create_app() -> FastAPI:
             "docs": "/docs",
         }
 
+    # Must run after every route is registered — see docstring.
+    from src.core.app_wiring import install_operation_id_capture
+    install_operation_id_capture(app)
+
     return app
 
 

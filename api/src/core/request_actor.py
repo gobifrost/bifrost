@@ -32,11 +32,34 @@ def _uuid_or_none(value: object) -> UUID | None:
         return None
 
 
+# Self-reported surface values a plain human access token's caller may claim
+# via the ``X-Bifrost-Surface`` header. Attribution only: a caller can send
+# any value here, so this is never used for authorization, only to label
+# which first-party client made the call in the audit log.
+_SELF_REPORTED_SURFACES = {"cli", "mcp"}
+
+
+def resolve_self_reported_surface(surface_header: str | None) -> str:
+    """Resolve the ``surface`` for a plain human/anonymous access token.
+
+    ``X-Bifrost-Surface: cli|mcp`` is sent by the first-party CLI HTTP
+    client and the MCP thin-wrapper bridge on themselves (see
+    ``bifrost/client.py`` and ``services/mcp_server/tools/_http_bridge.py``).
+    It is attribution only, exactly like the ``engine_caller_*`` claims:
+    never read for authorization, only to label the audit row. Any other
+    value, or no header, means an ordinary browser request.
+    """
+    if surface_header in _SELF_REPORTED_SURFACES:
+        return surface_header
+    return "web"
+
+
 def actor_from_token_payload(
     payload: dict | None,
     *,
     ip_address: str | None,
     user_agent: str | None,
+    surface_header: str | None = None,
 ) -> ActorContext | None:
     """Build the audit actor for one decoded access-token payload.
 
@@ -47,6 +70,10 @@ def actor_from_token_payload(
             metadata.
         ip_address: Client IP, or ``None`` on a Unix-socket (child) request.
         user_agent: Request ``User-Agent`` header value, if any.
+        surface_header: The request's self-reported ``X-Bifrost-Surface``
+            header value, if any. Only consulted for a plain human access
+            token; every other token type has an unforgeable surface
+            derived from its own claims.
 
     Returns:
         The :class:`ActorContext` for the request, or ``None`` when
@@ -54,17 +81,21 @@ def actor_from_token_payload(
 
     Attribution rules:
 
-    - Human access token (no engine/service claim): ``sub`` is the user,
-      ``org_id`` the scope, ``source`` ``"http"``.
+    - Human access token (no engine/service/embed claim): ``sub`` is the
+      user, ``org_id`` the scope, ``source`` ``"http"``, ``surface``
+      resolved from ``X-Bifrost-Surface`` (see
+      :func:`resolve_self_reported_surface`).
+    - Embed session token (``embed`` claim): ``source`` ``"http"``,
+      ``surface`` ``"embed"``.
     - Service token (``service_id`` claim): the service acts for the system
-      sentinel user, ``source`` ``"service"``, ``execution_id`` from
-      ``engine_execution_id``.
+      sentinel user, ``source`` ``"service"``, ``surface`` ``"service"``,
+      ``execution_id`` from ``engine_execution_id``.
     - Engine token (``engine_execution_id`` claim) with a signed human
       caller: the caller's claims attribute the event to the person whose
-      workflow ran, ``source`` ``"workflow"``.
+      workflow ran, ``source`` ``"workflow"``, ``surface`` ``"workflow"``.
     - Engine token without a human caller (absent or sentinel
       ``engine_caller_user_id``): the system sentinel user, ``source``
-      ``"workflow"``.
+      ``"workflow"``, ``surface`` ``"workflow"``.
 
     Invalid UUID strings in any of those claims are treated as absent
     (never raise).
@@ -85,6 +116,7 @@ def actor_from_token_payload(
             user_agent=user_agent,
             source="service",
             execution_id=_uuid_or_none(payload.get("engine_execution_id")),
+            surface="service",
         )
 
     if "engine_execution_id" in payload:
@@ -101,6 +133,7 @@ def actor_from_token_payload(
                 user_agent=user_agent,
                 source="workflow",
                 execution_id=_uuid_or_none(payload.get("engine_execution_id")),
+                surface="workflow",
             )
         return ActorContext(
             user_id=SYSTEM_USER_UUID,
@@ -111,6 +144,20 @@ def actor_from_token_payload(
             user_agent=user_agent,
             source="workflow",
             execution_id=_uuid_or_none(payload.get("engine_execution_id")),
+            surface="workflow",
+        )
+
+    if payload.get("embed"):
+        return ActorContext(
+            user_id=_uuid_or_none(payload.get("sub")),
+            organization_id=_uuid_or_none(payload.get("org_id")),
+            email=email,
+            name=name,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            source="http",
+            execution_id=None,
+            surface="embed",
         )
 
     return ActorContext(
@@ -122,4 +169,5 @@ def actor_from_token_payload(
         user_agent=user_agent,
         source="http",
         execution_id=None,
+        surface=resolve_self_reported_surface(surface_header),
     )
