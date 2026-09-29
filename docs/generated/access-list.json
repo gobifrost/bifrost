@@ -382,6 +382,7 @@
     "boundary": "platform",
     "current_gate": "superuser",
     "inline_checks": [],
+    "inline_effect": null,
     "intended_change": null,
     "mcp_tool": null,
     "method": "GET",
