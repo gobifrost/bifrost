@@ -395,7 +395,7 @@ async def list_file_policies(
     scope: str | None = Query(default=None),
     organization_id: str | None = Query(default=None),
     solution: str | None = Query(default=None),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> FilePolicyListResponse:
     """List file policies for a location and optional org/solution scope.
 
@@ -430,7 +430,7 @@ async def test_file_policy_access(
     request: FilePolicyAccessTestRequest,
     ctx: Context,
     user: CurrentSuperuser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> FilePolicyAccessTestResponse:
     """Evaluate effective access for a path using the real file policy service."""
     from src.services.file_policy_service import FilePolicyService
@@ -489,7 +489,7 @@ async def list_file_structure(
     request: FileStructureRequest,
     ctx: Context,
     user: CurrentSuperuser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> FileStructureResponse:
     """Admin-only STRUCTURAL listing (not policy-gated): what physically exists
     in a scope, so the explorer tree never orphans a file. Excludes reserved
@@ -524,7 +524,7 @@ async def get_file_policy(
     location: str = Query(default="workspace"),
     scope: str | None = Query(default=None),
     solution: str | None = Query(default=None),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> FilePolicyPublic:
     """Get the exact file policy for a location/path prefix.
 
@@ -565,7 +565,7 @@ async def set_file_policy(
     location: str = Query(default="workspace"),
     scope: str | None = Query(default=None),
     solution: str | None = Query(default=None),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> FilePolicyPublic:
     """Create or replace the file policy for a location/path prefix.
 
@@ -621,7 +621,7 @@ async def delete_file_policy(
     location: str = Query(default="workspace"),
     scope: str | None = Query(default=None),
     solution: str | None = Query(default=None),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> None:
     """Delete the exact file policy for a location/path prefix.
 
@@ -753,7 +753,7 @@ async def read_file(
     request: FileReadRequest,
     ctx: Context,
     user: CurrentActiveUser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> FileReadResponse:
     """Read a file from a managed or custom location."""
     from shared.sdk_files import sdk_read_file
@@ -779,7 +779,7 @@ async def write_file(
     request: FileWriteRequest,
     ctx: Context,
     user: CurrentActiveUser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> None:
     """Write a file to a managed or custom location."""
     from shared.sdk_files import sdk_write_file
@@ -805,7 +805,7 @@ async def delete_file(
     request: FileDeleteRequest,
     ctx: Context,
     user: CurrentActiveUser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> None:
     """Delete a file from a managed or custom location."""
     from shared.sdk_files import sdk_delete_file
@@ -828,7 +828,7 @@ async def list_files_simple(
     request: FileListRequest,
     ctx: Context,
     user: CurrentActiveUser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> FileListResponse:
     """List files in a directory (simple SDK-focused endpoint)."""
     # The workspace `include_metadata=True` branch stays in the router for
@@ -946,7 +946,7 @@ async def file_exists(
     request: FileExistsRequest,
     ctx: Context,
     user: CurrentActiveUser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> FileExistsResponse:
     """Check if a file exists."""
     from shared.sdk_files import sdk_file_exists
@@ -969,7 +969,7 @@ async def file_stat(
     request: FileReadRequest,
     ctx: Context,
     user: CurrentActiveUser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> FileStatResponse:
     """Return file metadata for guarded CLI workflows."""
     from shared.sdk_files import sdk_file_stat
@@ -991,7 +991,7 @@ async def get_signed_url(
     request: SignedUrlRequest,
     ctx: Context,
     user: CurrentActiveUser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> SignedUrlResponse:
     """Generate a presigned S3 URL for direct file upload or download.
 
@@ -1007,7 +1007,7 @@ async def complete_signed_upload(
     request: SignedUploadCompleteRequest,
     ctx: Context,
     user: CurrentActiveUser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> None:
     """Finalize a successful direct browser upload."""
     await _record_completed_signed_upload(request, ctx, db)
@@ -1018,7 +1018,7 @@ async def get_signed_urls(
     request: SignedUrlBatchRequest,
     ctx: Context,
     user: CurrentActiveUser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> SignedUrlBatchResponse:
     """Generate presigned URLs with per-path allow/deny results."""
     results: list[SignedUrlBatchResult] = []
@@ -1058,7 +1058,7 @@ async def pull_files(
     request: FilePullRequest,
     ctx: Context,
     user: CurrentSuperuser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> FilePullResponse:
     """
     Pull manifest files from server that differ from local state.
@@ -1100,7 +1100,7 @@ async def pull_files(
 async def get_manifest(
     ctx: Context,
     user: CurrentSuperuser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> dict[str, str]:
     """Return regenerated manifest files from DB state."""
     from src.services.manifest_generator import generate_manifest
@@ -1189,7 +1189,7 @@ async def list_files_editor(
     user: CurrentSuperuser,
     path: str = Query(..., description="Directory path relative to workspace root"),
     recursive: bool = Query(default=False, description="If true, return all files recursively"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> list[FileMetadata]:
     """
     List files and folders in a directory with rich metadata.
@@ -1271,7 +1271,7 @@ async def get_file_content_editor(
     ctx: Context,
     user: CurrentSuperuser,
     path: str = Query(..., description="File path relative to workspace root"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> FileContentResponse:
     """
     Read file content with rich metadata.
@@ -1317,7 +1317,7 @@ async def put_file_content_editor(
     request: FileContentRequest,
     ctx: Context,
     user: CurrentSuperuser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> FileContentResponse:
     """
     Write file content with conflict detection.
@@ -1482,7 +1482,7 @@ async def create_folder_editor(
     ctx: Context,
     user: CurrentSuperuser,
     path: str = Query(..., description="Folder path relative to workspace root"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> FileMetadata:
     """
     Create a new folder.
@@ -1517,7 +1517,7 @@ async def delete_file_editor(
     ctx: Context,
     user: CurrentSuperuser,
     path: str = Query(..., description="File or folder path"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> None:
     """
     Delete a file or folder recursively.
@@ -1577,7 +1577,7 @@ async def rename_file_editor(
     user: CurrentSuperuser,
     old_path: str = Query(..., description="Current path"),
     new_path: str = Query(..., description="New path"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> FileMetadata:
     """
     Rename or move a file or folder.
@@ -1622,7 +1622,7 @@ async def search_file_contents(
     request: SearchRequest,
     ctx: Context,
     user: CurrentSuperuser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> SearchResponse:
     """
     Search file contents for text or regex patterns.

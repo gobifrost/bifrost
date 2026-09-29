@@ -142,7 +142,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
     Usage:
         @router.get("/items")
-        async def get_items(db: AsyncSession = Depends(get_db)):
+        async def get_items(db: AsyncSession = Depends(get_db, scope="function")):
             ...
     """
     session_factory = get_session_factory()

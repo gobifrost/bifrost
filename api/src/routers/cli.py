@@ -61,7 +61,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.auth import Context, CurrentEngineOrBypassUser, CurrentUser
 from src.core.principal import UserPrincipal
-from src.core.database import get_db
+from src.core.database import get_db, get_db_context
 from src.core.log_safety import log_safe
 from src.models.contracts.cli import (
     CLIAICompleteRequest,
@@ -155,7 +155,7 @@ class DeveloperContextResponse(BaseModel):
 )
 async def get_dev_context(
     current_user: CurrentUser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     org_id: UUID | None = None,
 ) -> DeveloperContextResponse:
     """Get development context for CLI initialization.
@@ -243,7 +243,7 @@ async def _resolve_sdk_org_id(
 async def cli_get_config(
     request: CLIConfigGetRequest,
     current_user: CurrentEngineOrBypassUser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> CLIConfigValue | None:
     """Get a config value via CLI API."""
     from shared.sdk_config import (
@@ -281,7 +281,7 @@ async def cli_get_config(
 async def cli_set_config(
     request: CLIConfigSetRequest,
     current_user: CurrentEngineOrBypassUser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> None:
     """Set a config value via CLI API."""
     from shared.sdk_config import (
@@ -320,7 +320,7 @@ async def cli_set_config(
 async def cli_list_config(
     request: CLIConfigListRequest,
     current_user: CurrentEngineOrBypassUser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> dict[str, Any]:
     """List all config values via CLI API."""
     from shared.sdk_config import (
@@ -357,7 +357,7 @@ async def cli_list_config(
 async def cli_delete_config(
     request: CLIConfigDeleteRequest,
     current_user: CurrentEngineOrBypassUser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> bool:
     """Delete a config value via CLI API."""
     from shared.sdk_config import (
@@ -400,7 +400,7 @@ async def cli_delete_config(
 async def sdk_integrations_get(
     request: SDKIntegrationsGetRequest,
     current_user: CurrentEngineOrBypassUser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> SDKIntegrationsGetResponse | None:
     """Get integration mapping data for an organization via SDK.
 
@@ -467,7 +467,7 @@ async def sdk_integrations_get(
 async def sdk_integrations_list_mappings(
     request: SDKIntegrationsListMappingsRequest,
     current_user: CurrentEngineOrBypassUser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> SDKIntegrationsListMappingsResponse | None:
     """List all mappings for an integration via SDK.
 
@@ -509,7 +509,7 @@ async def sdk_integrations_list_mappings(
 async def sdk_integrations_get_mapping(
     request: SDKIntegrationsGetMappingRequest,
     current_user: CurrentEngineOrBypassUser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> SDKIntegrationsMappingItem | None:
     """Get a specific integration mapping by org_id or entity_id via SDK.
 
@@ -552,7 +552,7 @@ async def sdk_integrations_get_mapping(
 async def sdk_integrations_upsert_mapping(
     request: SDKIntegrationsUpsertMappingRequest,
     current_user: CurrentEngineOrBypassUser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> SDKIntegrationsMappingItem:
     """Create or update an integration mapping for an organization via SDK.
 
@@ -602,7 +602,7 @@ async def sdk_integrations_upsert_mapping(
 async def sdk_integrations_delete_mapping(
     request: SDKIntegrationsDeleteMappingRequest,
     current_user: CurrentEngineOrBypassUser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> dict:
     """Delete an integration mapping for an organization via SDK.
 
@@ -640,7 +640,7 @@ async def sdk_integrations_delete_mapping(
 async def sdk_integrations_refresh_token(
     request: SDKIntegrationsRefreshTokenRequest,
     current_user: CurrentEngineOrBypassUser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> SDKIntegrationsRefreshTokenResponse:
     """Programmatically refresh an OAuth token for an integration.
 
@@ -702,7 +702,7 @@ async def sdk_store_artifact(
     current_user: CurrentUser,
     file: UploadFile = File(...),
     workspace_id: UUID | None = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ArtifactRef:
     """Validate and store workflow-produced bytes behind an opaque identity."""
     from shared.sdk_artifacts import ArtifactCaller, sdk_store_artifact as _store
@@ -723,7 +723,7 @@ async def sdk_store_artifact(
 async def sdk_list_artifacts(
     current_user: CurrentUser,
     workspace_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> list[ArtifactRef]:
     """List the latest logical files in one authorized execution workspace."""
     from shared.sdk_artifacts import ArtifactCaller, sdk_list_artifacts as _list
@@ -739,7 +739,7 @@ async def sdk_render_document_artifact(
     request: DocumentArtifactSpec,
     current_user: CurrentUser,
     workspace_id: UUID | None = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ArtifactRef:
     """Render and store a trusted PDF or DOCX artifact."""
     from shared.sdk_artifact_generation import (
@@ -764,7 +764,7 @@ async def sdk_render_spreadsheet_artifact(
     request: SpreadsheetArtifactSpec,
     current_user: CurrentUser,
     workspace_id: UUID | None = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ArtifactRef:
     """Render and store a trusted XLSX artifact."""
     from shared.sdk_artifact_generation import (
@@ -784,7 +784,7 @@ async def sdk_render_text_artifact(
     request: TextArtifactSpec,
     current_user: CurrentUser,
     workspace_id: UUID | None = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ArtifactRef:
     """Render and store a trusted text-family artifact."""
     from shared.sdk_artifact_generation import (
@@ -805,7 +805,7 @@ async def sdk_generate_image_artifact(
     current_user: CurrentUser,
     workspace_id: UUID | None = None,
     execution_id: UUID | None = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ArtifactRef:
     """Generate and store an image with the configured provider."""
     from shared.sdk_artifact_generation import (
@@ -832,7 +832,7 @@ async def sdk_generate_video_artifact(
     response: Response,
     workspace_id: UUID | None = None,
     execution_id: UUID | None = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> PlatformJobAccepted:
     """Queue durable video generation into canonical artifact storage."""
     from shared.sdk_video import (
@@ -857,7 +857,7 @@ async def sdk_generate_video_artifact(
 async def sdk_read_artifact(
     artifact_id: UUID,
     current_user: CurrentUser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     preview: bool = False,
 ) -> Response:
     """Read an opaque artifact after enforcing caller scope."""
@@ -902,7 +902,7 @@ async def sdk_read_artifact(
 async def sdk_artifact_download_url(
     artifact_id: UUID,
     current_user: CurrentUser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ArtifactDownloadResponse:
     """Create a short-lived download URL for an opaque artifact."""
     from shared.sdk_artifacts import (
@@ -929,7 +929,7 @@ async def sdk_artifact_download_url(
 async def cli_ai_complete(
     request: "CLIAICompleteRequest",
     current_user: CurrentUser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> "CLIAICompleteResponse":
     """Generate an AI completion using platform-configured LLM.
 
@@ -966,7 +966,7 @@ async def cli_ai_complete(
 async def cli_ai_stream(
     request: CLIAICompleteRequest,
     current_user: CurrentUser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> StreamingResponse:
     """Generate a streaming AI completion using SSE.
 
@@ -988,22 +988,25 @@ async def cli_ai_stream(
     resolved_org_id = await _resolve_sdk_org_id(current_user, request.org_id, db)
 
     async def sse():
-        async for event in stream_sdk_ai(
-            db,
-            current_user,
-            messages=request.messages,
-            max_tokens=request.max_tokens,
-            model=request.model,
-            # The established HTTP stream endpoint always selected the
-            # platform default profile. Keep that SDK-visible behavior;
-            # worker-local callers may select a profile directly.
-            execution_id=request.execution_id,
-            resolved_org_id=resolved_org_id,
-            input_files=request.input_files,
-        ):
-            yield f"data: {json.dumps(event)}\n\n"
-            if event.get("done") is True:
-                yield "data: [DONE]\n\n"
+        # The request session is committed and closed before the response
+        # is sent, so the stream owns its own session.
+        async with get_db_context() as stream_db:
+            async for event in stream_sdk_ai(
+                stream_db,
+                current_user,
+                messages=request.messages,
+                max_tokens=request.max_tokens,
+                model=request.model,
+                # The established HTTP stream endpoint always selected the
+                # platform default profile. Keep that SDK-visible behavior;
+                # worker-local callers may select a profile directly.
+                execution_id=request.execution_id,
+                resolved_org_id=resolved_org_id,
+                input_files=request.input_files,
+            ):
+                yield f"data: {json.dumps(event)}\n\n"
+                if event.get("done") is True:
+                    yield "data: [DONE]\n\n"
 
     return StreamingResponse(
         sse(),
@@ -1022,7 +1025,7 @@ async def cli_ai_stream(
 )
 async def cli_ai_info(
     current_user: CurrentUser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> "CLIAIInfoResponse":
     """Get information about the configured LLM.
 
@@ -1070,7 +1073,7 @@ def _deny_external_knowledge(current_user: UserPrincipal) -> None:
 async def cli_knowledge_store(
     request: "CLIKnowledgeStoreRequest",
     current_user: CurrentEngineOrBypassUser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> dict:
     """Store a document with its embedding in the knowledge store."""
     _deny_external_knowledge(current_user)
@@ -1104,7 +1107,7 @@ async def cli_knowledge_store(
 async def cli_knowledge_store_many(
     request: "CLIKnowledgeStoreManyRequest",
     current_user: CurrentEngineOrBypassUser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> dict:
     """Store multiple documents with batch embedding."""
     _deny_external_knowledge(current_user)
@@ -1139,7 +1142,7 @@ async def cli_knowledge_store_many(
 async def cli_knowledge_search(
     request: "CLIKnowledgeSearchRequest",
     current_user: CurrentUser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> list[CLIKnowledgeDocumentResponse]:
     """Search knowledge using fused lexical and vector rankings."""
     _deny_external_knowledge(current_user)
@@ -1176,7 +1179,7 @@ async def cli_knowledge_search(
 async def cli_knowledge_delete(
     request: "CLIKnowledgeDeleteRequest",
     current_user: CurrentEngineOrBypassUser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> dict:
     """Delete a document by key from the knowledge store."""
     _deny_external_knowledge(current_user)
@@ -1208,7 +1211,7 @@ async def cli_knowledge_delete_namespace(
     namespace: str,
     scope: str | None = None,
     current_user: CurrentEngineOrBypassUser = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> dict:
     """Delete all documents in a namespace."""
     _deny_external_knowledge(current_user)
@@ -1239,7 +1242,7 @@ async def cli_knowledge_list_namespaces(
     scope: str | None = None,
     include_global: bool = True,
     current_user: CurrentUser = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> list[CLIKnowledgeNamespaceInfo]:
     """List all namespaces with document counts per scope."""
     _deny_external_knowledge(current_user)
@@ -1273,7 +1276,7 @@ async def cli_knowledge_get(
     namespace: str = "default",
     scope: str | None = None,
     current_user: CurrentUser = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> CLIKnowledgeDocumentResponse | None:
     """Get a document by key from the knowledge store."""
     _deny_external_knowledge(current_user)
@@ -1409,7 +1412,7 @@ async def cli_create_table(
     request: SDKTableCreateRequest,
     ctx: Context,
     current_user: CurrentEngineOrBypassUser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> SDKTableInfo:
     """Create a new table via SDK."""
     from shared.sdk_config import ScopeResolutionError, resolve_sdk_scope
@@ -1472,7 +1475,7 @@ async def cli_create_table(
 async def cli_list_tables(
     request: SDKTableListRequest,
     current_user: CurrentEngineOrBypassUser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> list[SDKTableInfo]:
     """List tables via SDK.
 

@@ -53,7 +53,7 @@ async def list_oauth_configs(
     request: Request,
     ctx: Context,
     user: CurrentSuperuser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> OAuthConfigListResponse:
     """
     List all OAuth provider configurations with their status.
@@ -83,7 +83,7 @@ async def set_oauth_login_preference(
     preference: OAuthLoginPreference,
     ctx: Context,
     user: CurrentSuperuser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> OAuthLoginPreference:
     """Update the platform-wide preferred SSO behavior."""
     service = OAuthConfigService(db)
@@ -112,7 +112,7 @@ async def get_oauth_config(
     provider: OAuthSSOProvider,
     ctx: Context,
     user: CurrentSuperuser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> OAuthProviderConfigResponse:
     """Get configuration for a specific OAuth provider."""
     service = OAuthConfigService(db)
@@ -145,7 +145,7 @@ async def set_microsoft_config(
     config: MicrosoftOAuthConfigRequest,
     ctx: Context,
     user: CurrentSuperuser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> OAuthProviderConfigResponse:
     """
     Configure Microsoft Entra ID (Azure AD) OAuth SSO.
@@ -193,7 +193,7 @@ async def set_google_config(
     config: GoogleOAuthConfigRequest,
     ctx: Context,
     user: CurrentSuperuser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> OAuthProviderConfigResponse:
     """
     Configure Google OAuth SSO.
@@ -232,7 +232,7 @@ async def set_oidc_config(
     config: OIDCConfigRequest,
     ctx: Context,
     user: CurrentSuperuser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> OAuthProviderConfigResponse:
     """
     Configure a generic OIDC provider for SSO.
@@ -276,7 +276,7 @@ async def delete_oauth_config(
     provider: OAuthSSOProvider,
     ctx: Context,
     user: CurrentSuperuser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> None:
     """Delete all configuration for a specific OAuth provider."""
     service = OAuthConfigService(db)
@@ -312,7 +312,7 @@ async def test_oauth_config(
     ctx: Context,
     user: CurrentSuperuser,
     test_data: OAuthConfigTestRequest | None = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> OAuthConfigTestResponse:
     """
     Test OAuth provider configuration by checking the discovery endpoint.

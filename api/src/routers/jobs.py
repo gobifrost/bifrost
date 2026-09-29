@@ -54,7 +54,7 @@ class JobStatusResponse(BaseModel):
 )
 async def get_job_status(
     job_id: str,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     *,
     _user: CurrentSuperuser,
 ) -> JobStatusResponse:

@@ -24,6 +24,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 from uuid import UUID, uuid4
 
+from contextlib import asynccontextmanager
+
 import pytest
 
 
@@ -531,6 +533,12 @@ async def test_http_stream_ignores_requested_profile():
 
     client = _FakeClient(chunks=[_done()])
     session = AsyncMock()
+    stream_session = AsyncMock()
+
+    @asynccontextmanager
+    async def stream_db_context():
+        yield stream_session
+
     get_client = AsyncMock(return_value=client)
     redis_patch, record_patch, _ = _patch_usage()
 
@@ -538,6 +546,7 @@ async def test_http_stream_ignores_requested_profile():
         patch("src.services.llm.get_llm_client", new=get_client),
         redis_patch,
         record_patch,
+        patch("src.routers.cli.get_db_context", new=stream_db_context),
     ):
         response = await cli_ai_stream(
             CLIAICompleteRequest(
@@ -550,7 +559,9 @@ async def test_http_stream_ignores_requested_profile():
         async for _ in response.body_iterator:
             pass
 
-    get_client.assert_awaited_once_with(session, profile_name=None)
+    # The request session is closed before the body streams, so the stream
+    # must run on its own session.
+    get_client.assert_awaited_once_with(stream_session, profile_name=None)
 
 
 @pytest.mark.asyncio
