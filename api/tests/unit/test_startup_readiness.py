@@ -63,7 +63,7 @@ async def test_scheduler_keeps_heartbeat_but_is_not_ready_while_gated(
 
         scheduler._shutdown_event.set()
         scheduler.running = False
-        await start_task
+        await asyncio.gather(start_task)
         for task in (scheduler._heartbeat_task, *scheduler._platform_job_tasks):
             if task is not None:
                 task.cancel()
@@ -104,4 +104,4 @@ async def test_worker_is_not_ready_until_gate_passes_and_consumers_start(
         await _eventually(worker_health.is_ready)
 
         worker._shutdown_event.set()
-        await start_task
+        await asyncio.gather(start_task)
