@@ -174,9 +174,25 @@ def install_request_context_middleware(app: FastAPI) -> None:
     so HTTP and worker-local (Unix socket) requests attribute audit events
     identically. Unauthenticated requests still get an anonymous actor so
     failed logins are recorded with network metadata.
+
+    Also stashes the request's raw ASGI ``scope`` dict (see
+    :func:`src.services.audit_context.set_request_scope`). Starlette's router
+    mutates that same dict in place with ``scope["route"]`` once it matches a
+    route — a fact that holds regardless of *how* a route reached this app
+    (``include_router`` on the main app, or spliced directly into
+    ``app.router.routes`` by the worker-local SDK socket app), since it is
+    part of the public ASGI routing contract, not a FastAPI/Starlette
+    implementation detail. ``emit_audit()`` reads ``scope["route"]`` at
+    emission time to resolve the catalog operation id for the audit row;
+    this middleware also reads it (after ``call_next`` returns, once routing
+    has necessarily happened) to feed the workflow-operation-usage counter
+    for engine-token requests carrying an ``engine_workflow_id`` claim.
     """
     from src.core.rate_limit import get_client_ip
-    from src.core.request_actor import actor_from_token_payload
+    from src.core.request_actor import (
+        actor_from_token_payload,
+        resolve_self_reported_surface,
+    )
     from src.core.request_context import (
         RequestUser,
         set_request_session_id,
@@ -186,7 +202,9 @@ def install_request_context_middleware(app: FastAPI) -> None:
     from src.services.audit_context import (
         ActorContext,
         clear_actor,
+        clear_request_scope,
         set_actor,
+        set_request_scope,
     )
 
     @app.middleware("http")
@@ -223,9 +241,13 @@ def install_request_context_middleware(app: FastAPI) -> None:
         # record no IP rather than the sentinel "unknown".
         ip_address = None if request.client is None else get_client_ip(request)
         user_agent = request.headers.get("user-agent")
+        surface_header = request.headers.get("x-bifrost-surface")
 
         actor = actor_from_token_payload(
-            payload, ip_address=ip_address, user_agent=user_agent
+            payload,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            surface_header=surface_header,
         )
         if actor is None:
             # No token (or an undecodable one): still set an anonymous actor
@@ -236,14 +258,63 @@ def install_request_context_middleware(app: FastAPI) -> None:
                 organization_id=None,
                 ip_address=ip_address,
                 user_agent=user_agent,
+                surface=resolve_self_reported_surface(surface_header),
             )
         actor_token = set_actor(actor)
+        scope_token = set_request_scope(request.scope)
+        # Attribution only (see mint_engine_token docstring): feeds the
+        # workflow-operation-usage counter below, never read for authorization.
+        engine_workflow_id = payload.get("engine_workflow_id") if payload else None
 
         try:
             response = await call_next(request)
+            # Routing has necessarily happened by now, so request.scope["route"]
+            # (if any route matched) is populated.
+            if engine_workflow_id:
+                route = request.scope.get("route")
+                if route is not None:
+                    operation_key = (
+                        getattr(route, "operation_id", None)
+                        or f"{request.method} {route.path}"
+                    )
+                    await _record_workflow_operation_usage(
+                        engine_workflow_id, operation_key
+                    )
         finally:
             # Reset context after request
             set_request_user(None)
             set_request_session_id(None)
             clear_actor(actor_token)
+            clear_request_scope(scope_token)
         return response
+
+
+async def _record_workflow_operation_usage(workflow_id: str, operation_key: str) -> None:
+    """Best-effort daily usage counter for one workflow's engine-token calls.
+
+    Attribution only: records which catalog operations (reads included) a
+    workflow's SDK calls actually touch, for a later "what does this
+    workflow actually need" pass — never read for authorization. Flushed
+    into the durable ``workflow_operation_usage`` table by
+    src/jobs/schedulers/workflow_operation_usage_flush.py every 15 minutes.
+
+    Fire-and-forget: a Redis error is logged at debug and never fails or
+    slows the request it would otherwise just tag.
+    """
+    from datetime import datetime, timezone
+
+    from src.core.redis_client import get_redis_client
+
+    try:
+        day = datetime.now(timezone.utc).date().isoformat()
+        key = f"bifrost:wf_usage:{day}"
+        field = f"{workflow_id}|{operation_key}"
+        redis_conn = await get_redis_client()._get_redis()
+        pipe = redis_conn.pipeline(transaction=False)
+        pipe.hincrby(key, field, 1)
+        pipe.expire(key, 60 * 60 * 24 * 3)
+        await pipe.execute()
+    except Exception as exc:
+        # Attribution counter only — a Redis outage must never fail or slow
+        # the request that would otherwise just be tagged.
+        logger.debug("workflow operation usage increment failed: %s", exc)

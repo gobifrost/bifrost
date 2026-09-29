@@ -520,6 +520,7 @@ def mint_engine_token(
     caller_organization_id: str | None = None,
     caller_email: str | None = None,
     caller_name: str | None = None,
+    engine_workflow_id: str | None = None,
 ) -> tuple[str, str]:
     """
     Mint a short-lived, execution-scoped engine token parent-side.
@@ -541,6 +542,11 @@ def mint_engine_token(
     never change ``sub``, ``is_superuser``, or any authorization decision,
     and are read only by the audit actor builder.
 
+    ``engine_workflow_id`` is likewise **attribution only**: it feeds the
+    per-workflow catalog-operation-usage counter
+    (``src.core.app_wiring._record_workflow_operation_usage``) and is never
+    read for authorization.
+
     Returns:
         (token, expires_at_iso): JWT string and ISO-8601 expiry timestamp.
     """
@@ -555,6 +561,8 @@ def mint_engine_token(
         "engine_solution_id": solution_id,
         "engine_global_repo_access": bool(global_repo_access),
     }
+    if engine_workflow_id is not None:
+        token_data["engine_workflow_id"] = engine_workflow_id
 
     caller_claims = {
         "engine_caller_user_id": caller_user_id,

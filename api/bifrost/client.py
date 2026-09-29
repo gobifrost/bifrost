@@ -581,7 +581,13 @@ class BifrostClient:
         self._http_loop: asyncio.AbstractEventLoop | None = None
         self._sync_http = httpx.Client(
             base_url=self.api_url,
-            headers={"Authorization": f"Bearer {access_token}"},
+            # X-Bifrost-Surface is self-reported audit attribution only (see
+            # src.core.request_actor.resolve_self_reported_surface); never
+            # sent on the engine-local clients below.
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "X-Bifrost-Surface": "cli",
+            },
             timeout=30.0,
         )
         # Engine-local Unix-socket transport, built lazily from the trusted
@@ -619,7 +625,10 @@ class BifrostClient:
             # Create new client bound to current event loop
             self._http = httpx.AsyncClient(
                 base_url=self.api_url,
-                headers={"Authorization": f"Bearer {self._access_token}"},
+                headers={
+                    "Authorization": f"Bearer {self._access_token}",
+                    "X-Bifrost-Surface": "cli",
+                },
                 timeout=30.0,
             )
             self._http_loop = current_loop

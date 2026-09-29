@@ -37,6 +37,7 @@ SCHEDULED_TASKS: tuple[ScheduledTaskDefinition, ...] = (
     ScheduledTaskDefinition("scheduler_diagnostics_cleanup", "Clean Up Scheduler Diagnostics", "Hourly"),
     ScheduledTaskDefinition("summary_backfill_reconciliation", "Reconcile Summary Backfills", "Every minute"),
     ScheduledTaskDefinition("workspace_bundle_preview_cleanup", "Clean Up Workspace Bundle Previews", "Hourly"),
+    ScheduledTaskDefinition("workflow_operation_usage_flush", "Flush Workflow Operation Usage Counters", "Every 15 minutes"),
 )
 
 SCHEDULED_TASKS_BY_ID = {task.task_id: task for task in SCHEDULED_TASKS}

@@ -37,6 +37,11 @@ class AuditLog(Base):
     execution_id: Mapped[UUID | None] = mapped_column(default=None)
     outcome: Mapped[str] = mapped_column(String(16), default="success", server_default=text("'success'"))
     source: Mapped[str] = mapped_column(String(32), default="http", server_default=text("'http'"))
+    # Catalog operation id (operation_catalog.py) for the route that produced
+    # this event; NULL for routes with no catalog binding.
+    operation_id: Mapped[str | None] = mapped_column(String(128), default=None)
+    # Transport the request came in over: web/cli/mcp/embed/workflow/service.
+    surface: Mapped[str | None] = mapped_column(String(16), default=None)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=text("NOW()")
     )

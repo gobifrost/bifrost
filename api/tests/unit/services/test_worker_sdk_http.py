@@ -3395,3 +3395,85 @@ class TestSocketErrorParityAndActorContext:
             assert current_actor() is None
         finally:
             await delete_live_execution(async_session_factory, str(execution_id))
+
+
+class TestOperationIdCapture:
+    """R2a-2 (post-review rework): emit_audit resolves ``operation_id`` from
+    ``request.scope["route"]`` live, via the scope dict the request-context
+    middleware stashes — no per-route wiring needed, so a route added after
+    the app was built (like these ad-hoc test routes) is captured exactly
+    like every other worker-local SDK route."""
+
+    @pytest.mark.asyncio
+    async def test_catalogued_route_records_operation_id(self, async_session_factory):
+        from sqlalchemy import delete, select
+
+        from src.core.database import get_db_context
+        from src.models.orm.audit import AuditLog
+        from src.services.audit import emit_audit
+
+        app = build_worker_sdk_app()
+        action = f"__test__.socket.catalogued.{uuid4().hex[:8]}"
+
+        @app.get("/__test__/catalogued-op", operation_id="__test__.catalogued_op")
+        async def _catalogued():
+            async with get_db_context() as db:
+                await emit_audit(db, action)
+            return {"ok": True}
+
+        transport = httpx.ASGITransport(app=app)
+        try:
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://bifrost-engine"
+            ) as client:
+                response = await client.get("/__test__/catalogued-op")
+            assert response.status_code == 200, response.text
+
+            async with async_session_factory() as session:
+                row = (
+                    await session.execute(
+                        select(AuditLog).where(AuditLog.action == action)
+                    )
+                ).scalar_one()
+            assert row.operation_id == "__test__.catalogued_op"
+        finally:
+            async with async_session_factory() as cleanup:
+                await cleanup.execute(delete(AuditLog).where(AuditLog.action == action))
+                await cleanup.commit()
+
+    @pytest.mark.asyncio
+    async def test_uncatalogued_route_records_none(self, async_session_factory):
+        from sqlalchemy import delete, select
+
+        from src.core.database import get_db_context
+        from src.models.orm.audit import AuditLog
+        from src.services.audit import emit_audit
+
+        app = build_worker_sdk_app()
+        action = f"__test__.socket.uncatalogued.{uuid4().hex[:8]}"
+
+        @app.get("/__test__/uncatalogued-op")
+        async def _uncatalogued():
+            async with get_db_context() as db:
+                await emit_audit(db, action)
+            return {"ok": True}
+
+        transport = httpx.ASGITransport(app=app)
+        try:
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://bifrost-engine"
+            ) as client:
+                response = await client.get("/__test__/uncatalogued-op")
+            assert response.status_code == 200, response.text
+
+            async with async_session_factory() as session:
+                row = (
+                    await session.execute(
+                        select(AuditLog).where(AuditLog.action == action)
+                    )
+                ).scalar_one()
+            assert row.operation_id is None
+        finally:
+            async with async_session_factory() as cleanup:
+                await cleanup.execute(delete(AuditLog).where(AuditLog.action == action))
+                await cleanup.commit()

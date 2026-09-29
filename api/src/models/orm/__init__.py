@@ -63,6 +63,7 @@ from src.models.orm.custom_claims import CustomClaim
 from src.models.orm.tables import Document, Table
 from src.models.orm.users import Role, User, UserRole
 from src.models.orm.user_invites import UserInvite
+from src.models.orm.workflow_operation_usage import WorkflowOperationUsage
 from src.models.orm.workflow_roles import WorkflowRole
 from src.models.orm.workflows import Workflow
 from src.models.orm.file_index import FileIndex
@@ -139,6 +140,7 @@ __all__ = [
     "SystemConfig",
     # Workflows
     "Workflow",
+    "WorkflowOperationUsage",
     "WorkflowRole",
     # Services (supervised executables)
     "ServiceDefinition",

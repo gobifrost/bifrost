@@ -1,19 +1,23 @@
 """Unit tests for the shared audit-actor builder.
 
 Covers every branch of ``actor_from_token_payload`` — no payload, human
-access token, service token, engine token with and without a signed caller —
-including malformed UUID claims (which must never raise).
+access token, service token, engine token with and without a signed caller,
+embed session token — including malformed UUID claims (which must never
+raise) and per-token-type ``surface`` resolution (R2a-2).
 """
 
 from uuid import uuid4
 
 from src.core.constants import SYSTEM_USER_ID, SYSTEM_USER_UUID
-from src.core.request_actor import actor_from_token_payload
+from src.core.request_actor import actor_from_token_payload, resolve_self_reported_surface
 
 
-def _actor(payload):
+def _actor(payload, surface_header=None):
     return actor_from_token_payload(
-        payload, ip_address="10.0.0.1", user_agent="pytest"
+        payload,
+        ip_address="10.0.0.1",
+        user_agent="pytest",
+        surface_header=surface_header,
     )
 
 
@@ -179,3 +183,86 @@ class TestEngineTokenWithoutHumanCaller:
         assert actor is not None
         assert actor.execution_id is None
         assert actor.source == "workflow"
+
+
+class TestSurfaceResolution:
+    """R2a-2: surface is resolved per token type, independent of `source`."""
+
+    def test_human_token_defaults_to_web(self):
+        actor = _actor({"sub": str(uuid4()), "org_id": str(uuid4())})
+        assert actor is not None
+        assert actor.surface == "web"
+
+    def test_human_token_self_reports_cli(self):
+        actor = _actor(
+            {"sub": str(uuid4()), "org_id": str(uuid4())}, surface_header="cli"
+        )
+        assert actor is not None
+        assert actor.surface == "cli"
+
+    def test_human_token_self_reports_mcp(self):
+        actor = _actor(
+            {"sub": str(uuid4()), "org_id": str(uuid4())}, surface_header="mcp"
+        )
+        assert actor is not None
+        assert actor.surface == "mcp"
+
+    def test_unrecognized_header_value_falls_back_to_web(self):
+        actor = _actor(
+            {"sub": str(uuid4()), "org_id": str(uuid4())}, surface_header="bogus"
+        )
+        assert actor is not None
+        assert actor.surface == "web"
+
+    def test_service_token_surface_is_service_regardless_of_header(self):
+        actor = _actor(
+            {
+                "service_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                "engine_execution_id": str(uuid4()),
+            },
+            surface_header="cli",
+        )
+        assert actor is not None
+        assert actor.surface == "service"
+
+    def test_engine_token_surface_is_workflow_regardless_of_header(self):
+        actor = _actor(
+            {"engine_execution_id": str(uuid4())}, surface_header="mcp"
+        )
+        assert actor is not None
+        assert actor.surface == "workflow"
+
+    def test_engine_token_with_caller_surface_is_workflow(self):
+        actor = _actor(
+            {
+                "engine_execution_id": str(uuid4()),
+                "engine_caller_user_id": str(uuid4()),
+            }
+        )
+        assert actor is not None
+        assert actor.surface == "workflow"
+
+    def test_embed_token_surface_is_embed(self):
+        actor = _actor(
+            {
+                "sub": SYSTEM_USER_ID,
+                "org_id": str(uuid4()),
+                "embed": True,
+                "embed_kind": "app",
+            },
+            surface_header="cli",
+        )
+        assert actor is not None
+        assert actor.source == "http"
+        assert actor.surface == "embed"
+
+
+class TestResolveSelfReportedSurface:
+    def test_known_values_pass_through(self):
+        assert resolve_self_reported_surface("cli") == "cli"
+        assert resolve_self_reported_surface("mcp") == "mcp"
+
+    def test_unknown_or_missing_defaults_to_web(self):
+        assert resolve_self_reported_surface(None) == "web"
+        assert resolve_self_reported_surface("web") == "web"
+        assert resolve_self_reported_surface("anything-else") == "web"

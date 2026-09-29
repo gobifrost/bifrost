@@ -13081,6 +13081,16 @@ export interface components {
              */
             source: string;
             /**
+             * Operation Id
+             * @description Catalog operation id for the route that produced this event
+             */
+            operation_id?: string | null;
+            /**
+             * Surface
+             * @description Transport the request came in over: 'web', 'cli', 'mcp', 'embed', 'workflow', 'service'
+             */
+            surface?: string | null;
+            /**
              * Execution Id
              * @description Workflow execution that produced the event, when supported
              */

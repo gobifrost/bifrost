@@ -116,6 +116,10 @@ async def rest_client(context: "MCPContext") -> AsyncIterator[httpx.AsyncClient]
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
+        # Self-reported audit attribution only (see
+        # src.core.request_actor.resolve_self_reported_surface) — labels
+        # this bridge call's audit rows with surface="mcp".
+        "X-Bifrost-Surface": "mcp",
     }
 
     override_base = os.environ.get(_BRIDGE_URL_ENV)

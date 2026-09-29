@@ -60,6 +60,7 @@ class TestSchedulerDiagnostics:
             "summary_backfill_reconciliation",
             "artifact_retention_cleanup",
             "workspace_bundle_preview_cleanup",
+            "workflow_operation_usage_flush",
         }
         assert set(tasks) == expected
         for task_id in (

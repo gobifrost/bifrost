@@ -557,6 +557,7 @@ def build_worker_sdk_app() -> Any:
             "worker-local SDK app could not mount every SDK route "
             f"({selected}/{expected}); route selection is stale"
         )
+
     return app
 
 
