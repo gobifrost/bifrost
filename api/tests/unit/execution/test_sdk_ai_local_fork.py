@@ -185,7 +185,7 @@ class TestForkedAISocket:
         )
 
         engine_token, _ = mint_engine_token(
-            execution_id="gate-c5f-ai-fork",
+            execution_id=execution_id,
             solution_id=None,
             global_repo_access=True,
             timeout_seconds=120,

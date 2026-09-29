@@ -171,12 +171,16 @@ class TestForkedRolesSocket:
             "    'had_sqlalchemy': 'sqlalchemy' in sys.modules,",
             "}",
         ]
+        from tests.helpers.live_execution import create_live_execution
+
+        engine_execution_id = str(uuid4())
         engine_token, _ = mint_engine_token(
-            execution_id="gate-c5e-roles-fork",
+            execution_id=engine_execution_id,
             solution_id=None,
             global_repo_access=True,
             timeout_seconds=120,
         )
+        await create_live_execution(async_session_factory, engine_execution_id)
         context = _context_for(
             _script_b64("\n".join(lines) + "\n"),
             engine_token,
@@ -194,6 +198,9 @@ class TestForkedRolesSocket:
             envelope = await _run_socket_fork(server, context)
         finally:
             await server.stop()
+            from tests.helpers.live_execution import delete_live_execution
+
+            await delete_live_execution(async_session_factory, engine_execution_id)
 
         try:
             assert envelope["success"] is True, envelope
@@ -282,12 +289,16 @@ class TestForkedRolesSocket:
             "    'listed': isinstance(_listed, list),",
             "}",
         ]
+        from tests.helpers.live_execution import create_live_execution, delete_live_execution
+
+        engine_execution_id = str(uuid4())
         engine_token, _ = mint_engine_token(
-            execution_id="gate-c5e-roles-fork-nonadmin",
+            execution_id=engine_execution_id,
             solution_id=None,
             global_repo_access=True,
             timeout_seconds=120,
         )
+        await create_live_execution(async_session_factory, engine_execution_id)
         context = _context_for(
             _script_b64("\n".join(lines) + "\n"),
             engine_token,
@@ -302,6 +313,7 @@ class TestForkedRolesSocket:
             envelope = await _run_socket_fork(server, context)
         finally:
             await server.stop()
+            await delete_live_execution(async_session_factory, engine_execution_id)
 
         assert envelope["success"] is True, envelope
         result = envelope["result"]

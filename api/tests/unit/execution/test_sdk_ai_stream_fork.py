@@ -273,6 +273,7 @@ class TestForkedAIStream:
     ):
         """A real child streams AI over the socket with HTTP disabled."""
         from src.core.security import mint_engine_token
+        from tests.helpers.live_execution import create_live_execution
 
         execution_id = str(uuid4())
         org_id = str(uuid4())
@@ -282,6 +283,7 @@ class TestForkedAIStream:
             global_repo_access=True,
             timeout_seconds=120,
         )
+        await create_live_execution(async_session_factory, execution_id)
         context = _context_for(
             _script_b64(_AI_SOURCE.replace("ORG_ID", repr(org_id))),
             engine_token,
@@ -336,6 +338,9 @@ class TestForkedAIStream:
                 )
         finally:
             await server.stop()
+            from tests.helpers.live_execution import delete_live_execution
+
+            await delete_live_execution(async_session_factory, execution_id)
 
         assert envelope["success"] is True, envelope
         result = envelope["result"]

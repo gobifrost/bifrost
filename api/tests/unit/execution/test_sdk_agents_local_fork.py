@@ -20,7 +20,7 @@ import base64
 import contextlib
 import os
 import time
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -123,13 +123,17 @@ class TestForkedAgentsSocket:
         monkeypatch.setenv("BIFROST_API_URL", "http://127.0.0.1:9")
 
         from src.core.security import mint_engine_token
+        from src.models.orm.executions import Execution as ExecutionModel
+        from tests.helpers.live_execution import create_live_execution
 
+        engine_execution_id = str(uuid4())
         engine_token, _ = mint_engine_token(
-            execution_id="gate-c5b-agents-fork",
+            execution_id=engine_execution_id,
             solution_id=None,
             global_repo_access=True,
             timeout_seconds=120,
         )
+        await create_live_execution(async_session_factory, engine_execution_id)
 
         server = WorkerSdkHttpServer()
         await server.start()
@@ -186,5 +190,8 @@ class TestForkedAgentsSocket:
                 )
                 await session.execute(
                     delete(AgentModel).where(AgentModel.id == agent_id)
+                )
+                await session.execute(
+                    delete(ExecutionModel).where(ExecutionModel.id == UUID(engine_execution_id))
                 )
                 await session.commit()

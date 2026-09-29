@@ -19,6 +19,13 @@ class ExecutionStatus(str, Enum):
     CANCELLED = "Cancelled"
 
 
+# Statuses under which the execution's child process may still be running
+# and calling back into the platform SDK.
+LIVE_EXECUTION_STATUSES = frozenset(
+    {ExecutionStatus.PENDING, ExecutionStatus.RUNNING, ExecutionStatus.CANCELLING}
+)
+
+
 class FormAccessLevel(str, Enum):
     """Form access control levels.
 

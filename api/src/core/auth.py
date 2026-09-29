@@ -107,7 +107,7 @@ async def get_current_user_optional(
     Args:
         request: FastAPI request object
         credentials: HTTP Bearer credentials from request
-        db: Database session (unused, kept for signature compatibility)
+        db: Database session (used to verify engine-token execution liveness)
 
     Returns:
         UserPrincipal if authenticated, None otherwise
@@ -177,6 +177,28 @@ async def get_current_user_optional(
         return None
     # else: superuser with no org = system account (valid)
     # else: embed token without org = valid (HMAC-verified)
+
+    # Execution-scoped engine tokens (mint_engine_token: superuser + an
+    # engine_execution_id claim) stop working once their execution is no
+    # longer running. A supervised-service token (mint_service_token) also
+    # carries engine_execution_id but is never superuser, so it is
+    # unaffected. Liveness is read from the execution row's status in
+    # Postgres, the authoritative source - see shared.execution_liveness
+    # and src.models.enums.LIVE_EXECUTION_STATUSES.
+    engine_execution_id = payload.get("engine_execution_id")
+    if engine_execution_id and is_superuser:
+        from shared.execution_liveness import is_execution_live
+
+        try:
+            live = await is_execution_live(db, engine_execution_id)
+        except Exception:
+            logger.exception(
+                f"Could not verify execution liveness for engine token "
+                f"(execution_id={engine_execution_id}); rejecting"
+            )
+            return None
+        if not live:
+            return None
 
     return UserPrincipal(
         user_id=user_id,
