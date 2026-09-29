@@ -1,4 +1,3 @@
-import { KnowledgeTab } from "@/components/roles/KnowledgeTab";
 import { RoleDetailHeader } from "@/components/roles/RoleDetailHeader";
 import { useMemo, useState } from "react";
 import { useNavigate, useParams, Link } from "react-router-dom";
@@ -9,7 +8,6 @@ import {
 	Bot,
 	LayoutGrid,
 	Workflow,
-	BookOpen,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -56,7 +54,7 @@ import {
 import type { components } from "@/lib/v1";
 
 type ConsumerKey =
-	"users" | "forms" | "agents" | "apps" | "workflows" | "knowledge";
+	"users" | "forms" | "agents" | "apps" | "workflows";
 
 const TABS: {
 	key: ConsumerKey;
@@ -68,7 +66,6 @@ const TABS: {
 	{ key: "agents", label: "Agents", Icon: Bot },
 	{ key: "apps", label: "Apps", Icon: LayoutGrid },
 	{ key: "workflows", label: "Workflows", Icon: Workflow },
-	{ key: "knowledge", label: "Knowledge", Icon: BookOpen },
 ];
 
 export function RoleDetail() {
@@ -242,14 +239,6 @@ export function RoleDetail() {
 				>
 					<PageScrollArea className="lg:flex lg:flex-col lg:overflow-hidden">
 						<WorkflowsTab roleId={role.id} />
-					</PageScrollArea>
-				</TabsContent>
-				<TabsContent
-					value="knowledge"
-					className="flex min-h-0 flex-1 flex-col"
-				>
-					<PageScrollArea className="lg:flex lg:flex-col lg:overflow-hidden">
-						<KnowledgeTab roleId={role.id} />
 					</PageScrollArea>
 				</TabsContent>
 			</Tabs>

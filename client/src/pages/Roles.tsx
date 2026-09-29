@@ -4,7 +4,6 @@ import { Link, useNavigate } from "react-router-dom";
 import {
 	ArrowDown,
 	ArrowUp,
-	BookOpen,
 	Bot,
 	FileText,
 	LayoutGrid,
@@ -54,7 +53,7 @@ type SortDirection = "asc" | "desc";
 const PAGE_SIZE = 25;
 
 const CHIP_DEFS: {
-	key: "users" | "forms" | "agents" | "apps" | "workflows" | "knowledge";
+	key: "users" | "forms" | "agents" | "apps" | "workflows";
 	label: string;
 	icon: React.ComponentType<{ className?: string }>;
 }[] = [
@@ -63,7 +62,6 @@ const CHIP_DEFS: {
 	{ key: "agents", label: "Agents", icon: Bot },
 	{ key: "apps", label: "Apps", icon: LayoutGrid },
 	{ key: "workflows", label: "Workflows", icon: Workflow },
-	{ key: "knowledge", label: "Knowledge", icon: BookOpen },
 ];
 
 const EMPTY_CONSUMER_COUNTS: Record<(typeof CHIP_DEFS)[number]["key"], number> =
@@ -73,7 +71,6 @@ const EMPTY_CONSUMER_COUNTS: Record<(typeof CHIP_DEFS)[number]["key"], number> =
 		agents: 0,
 		apps: 0,
 		workflows: 0,
-		knowledge: 0,
 	};
 
 function getSortDirection(
@@ -426,7 +423,7 @@ export function Roles() {
 		<PageWorkspace className="mx-auto max-w-7xl">
 			<ListPageHeader
 				title="Roles"
-				description="Control access to forms, agents, apps, workflows, and knowledge. Select a count to manage assignments."
+				description="Control access to forms, agents, apps, and workflows. Select a count to manage assignments."
 				actions={
 					<>
 						<Button

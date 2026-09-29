@@ -51,9 +51,30 @@ from src.core.org_filter import OrgFilterType, resolve_org_filter
 from src.core.principal import UserPrincipal
 
 if TYPE_CHECKING:
+    from src.models import User as UserORM
     from src.models import UserPublic
 
 logger = logging.getLogger(__name__)
+
+
+async def set_user_base_role(session: AsyncSession, user: "UserORM", role_id: UUID) -> None:
+    """The single writer of `User.base_role_id` / `User.is_superuser`.
+
+    Every user creation or update path that sets `is_superuser` must route
+    through here (or through a create path that sets both fields together,
+    like this one) so the two never drift: `is_superuser` is always exactly
+    `role_id == PLATFORM_ADMIN_ROLE_ID`.
+
+    `role_id` must be a base role (Platform Admin or User) — never Platform
+    Operator or a custom role. Raises `ValueError` otherwise.
+    """
+    from shared.builtin_roles import BASE_ROLE_IDS, PLATFORM_ADMIN_ROLE_ID
+
+    if role_id not in BASE_ROLE_IDS:
+        raise ValueError(f"role_id {role_id} is not a base role (Platform Admin or User)")
+
+    user.base_role_id = role_id
+    user.is_superuser = role_id == PLATFORM_ADMIN_ROLE_ID
 
 
 class UserServiceError(Exception):
@@ -223,6 +244,7 @@ async def create_user(
     from src.models.contracts.user_invites import InviteStatus
     from src.services.audit import emit_audit
     from src.services.user_invite_service import UserInviteService
+    from shared.builtin_roles import PLATFORM_ADMIN_ROLE_ID, USER_ROLE_ID
 
     now = datetime.now(timezone.utc)
 
@@ -231,13 +253,15 @@ async def create_user(
         name=name,
         hashed_password="",
         is_active=is_active,
-        is_superuser=is_superuser,
         is_external=is_external,
         is_verified=True,
         is_registered=False,
         organization_id=organization_id,
         created_at=now,
         updated_at=now,
+    )
+    await set_user_base_role(
+        session, new_user, PLATFORM_ADMIN_ROLE_ID if is_superuser else USER_ROLE_ID
     )
 
     session.add(new_user)
@@ -318,6 +342,7 @@ async def update_user(
     """
     from src.models import UserPublic
     from src.services.audit import emit_audit
+    from shared.builtin_roles import PLATFORM_ADMIN_ROLE_ID, USER_ROLE_ID
 
     db_user = await _resolve_user(session, user_id)
     if not db_user:
@@ -334,7 +359,9 @@ async def update_user(
     if is_active is not None:
         db_user.is_active = is_active
     if is_superuser is not None:
-        db_user.is_superuser = is_superuser
+        await set_user_base_role(
+            session, db_user, PLATFORM_ADMIN_ROLE_ID if is_superuser else USER_ROLE_ID
+        )
         if is_superuser:
             db_user.organization_id = PROVIDER_ORG_ID
     if is_verified is not None:

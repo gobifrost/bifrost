@@ -67,7 +67,7 @@ class TestAgentsCRUD:
     ):
         role_resp = e2e_client.post(
             "/api/roles",
-            json={"name": f"Agent List Role {uuid4().hex[:8]}", "permissions": {}},
+            json={"name": f"Agent List Role {uuid4().hex[:8]}"},
             headers=platform_admin.headers,
         )
         assert role_resp.status_code == 201, role_resp.text
@@ -148,7 +148,7 @@ class TestAgentsCRUD:
         """Admin updates to private should leave an owner-only agent."""
         role_resp = e2e_client.post(
             "/api/roles",
-            json={"name": f"Agent Private Role {uuid4().hex[:8]}", "permissions": {}},
+            json={"name": f"Agent Private Role {uuid4().hex[:8]}"},
             headers=platform_admin.headers,
         )
         assert role_resp.status_code == 201, role_resp.text

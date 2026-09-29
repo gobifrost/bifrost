@@ -4,7 +4,6 @@ Knowledge Sources Router
 Namespace-based knowledge management.
 Namespaces are derived from the knowledge_store table.
 Documents are stored via the KnowledgeRepository with embeddings.
-Role assignments use the knowledge_namespace_roles table.
 """
 
 import logging
@@ -17,7 +16,6 @@ from sqlalchemy import delete, select, update
 from shared.scope_resolver import has_scope_bypass
 from src.core.auth import CurrentActiveUser, CurrentSuperuser
 from src.core.db_deps import DbSession
-from src.core.log_safety import log_safe
 from src.core.org_filter import OrgFilterType, org_filter_clause, resolve_org_filter
 from src.models.contracts.knowledge import (
     KnowledgeDocumentBulkScopeUpdate,
@@ -26,12 +24,8 @@ from src.models.contracts.knowledge import (
     KnowledgeDocumentSummary,
     KnowledgeDocumentUpdate,
     KnowledgeNamespaceInfo,
-    KnowledgeNamespaceRoleCreate,
-    KnowledgeNamespaceRolePublic,
 )
 from src.models.orm.knowledge import KnowledgeStore
-from src.models.orm.knowledge_sources import KnowledgeNamespaceRole
-from src.models.orm.users import Role
 from src.repositories.knowledge import KnowledgeRepository
 from src.services.operation_catalog import operation_route
 
@@ -95,107 +89,6 @@ async def list_namespaces(
         )
         for ns in ns_list
     ]
-
-
-# =============================================================================
-# Namespace Role Assignments
-# (Must be registered before /{namespace} routes to avoid path conflicts)
-# =============================================================================
-
-
-@router.get("/roles")
-async def list_namespace_roles(
-    db: DbSession,
-    user: CurrentSuperuser,
-) -> list[KnowledgeNamespaceRolePublic]:
-    """List all namespace role assignments."""
-    result = await db.execute(select(KnowledgeNamespaceRole))
-    assignments = result.scalars().all()
-
-    return [
-        KnowledgeNamespaceRolePublic(
-            id=str(a.id),
-            namespace=a.namespace,
-            organization_id=str(a.organization_id) if a.organization_id else None,
-            role_id=str(a.role_id),
-            assigned_by=a.assigned_by,
-        )
-        for a in assignments
-    ]
-
-
-@router.post("/roles", status_code=status.HTTP_201_CREATED)
-async def assign_namespace_roles(
-    data: KnowledgeNamespaceRoleCreate,
-    db: DbSession,
-    user: CurrentSuperuser,
-) -> list[KnowledgeNamespaceRolePublic]:
-    """Assign roles to a namespace."""
-    org_id = UUID(data.organization_id) if data.organization_id else None
-    created = []
-
-    for role_id_str in data.role_ids:
-        try:
-            role_uuid = UUID(role_id_str)
-        except ValueError:
-            logger.warning(f"Invalid role ID: {log_safe(role_id_str)}")
-            continue
-
-        # Verify role exists
-        result = await db.execute(
-            select(Role).where(Role.id == role_uuid)
-        )
-        if not result.scalar_one_or_none():
-            continue
-
-        # Check for existing assignment
-        existing = await db.execute(
-            select(KnowledgeNamespaceRole).where(
-                KnowledgeNamespaceRole.namespace == data.namespace,
-                KnowledgeNamespaceRole.organization_id == org_id,
-                KnowledgeNamespaceRole.role_id == role_uuid,
-            )
-        )
-        if existing.scalar_one_or_none():
-            continue
-
-        assignment = KnowledgeNamespaceRole(
-            namespace=data.namespace,
-            organization_id=org_id,
-            role_id=role_uuid,
-            assigned_by=user.email,
-        )
-        db.add(assignment)
-        await db.flush()
-
-        created.append(KnowledgeNamespaceRolePublic(
-            id=str(assignment.id),
-            namespace=assignment.namespace,
-            organization_id=str(assignment.organization_id) if assignment.organization_id else None,
-            role_id=str(assignment.role_id),
-            assigned_by=assignment.assigned_by,
-        ))
-
-    return created
-
-
-@router.delete("/roles/{assignment_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def remove_namespace_role(
-    assignment_id: UUID,
-    db: DbSession,
-    user: CurrentSuperuser,
-) -> None:
-    """Remove a namespace role assignment."""
-    result = await db.execute(
-        select(KnowledgeNamespaceRole).where(KnowledgeNamespaceRole.id == assignment_id)
-    )
-    if not result.scalar_one_or_none():
-        raise HTTPException(404, f"Assignment {assignment_id} not found")
-
-    await db.execute(
-        delete(KnowledgeNamespaceRole).where(KnowledgeNamespaceRole.id == assignment_id)
-    )
-    await db.flush()
 
 
 # =============================================================================
@@ -662,11 +555,3 @@ async def delete_namespace(
 
     if deleted == 0:
         raise HTTPException(404, f"Namespace '{namespace}' not found or empty")
-
-    # Also clean up any role assignments for this namespace
-    await db.execute(
-        delete(KnowledgeNamespaceRole).where(
-            KnowledgeNamespaceRole.namespace == namespace
-        )
-    )
-    await db.flush()

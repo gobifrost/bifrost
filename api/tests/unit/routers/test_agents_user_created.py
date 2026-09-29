@@ -234,35 +234,61 @@ class TestDeleteAgentAuthorization:
 
 
 class TestPromoteAgentPermission:
-    """Test promote endpoint permission logic."""
+    """Test promote endpoint permission logic.
+
+    ``_user_has_permission`` now reads the ``role_permissions`` table (see
+    ``src.services.role_permissions``) rather than the retired
+    ``roles.permissions`` JSONB column, so these exercise it against a
+    real seeded role instead of mocking the session.
+    """
 
     @pytest.mark.asyncio
-    async def test_user_has_permission_returns_true(self):
-        """_user_has_permission returns True when role has the permission."""
+    async def test_user_has_permission_returns_true(self, db_session):
+        """_user_has_permission returns True when a held role grants it."""
+        from src.models.orm.users import Role, RolePermission, User, UserRole
         from src.routers.agents import _user_has_permission
 
-        user_id = uuid4()
+        from src.models.orm.organizations import Organization
+        org = Organization(name=f"org-{uuid4().hex[:8]}", is_active=True, created_by="test")
+        db_session.add(org)
+        await db_session.flush()
+        user = User(
+            email=f"promoter-{uuid4().hex[:8]}@test.local",
+            name="Promoter",
+            organization_id=org.id,
+        )
+        db_session.add(user)
+        role = Role(name=f"Promoters-{uuid4().hex[:8]}", created_by="test")
+        db_session.add(role)
+        await db_session.flush()
+        db_session.add(RolePermission(role_id=role.id, permission="agents.readwrite"))
+        db_session.add(UserRole(user_id=user.id, role_id=role.id, assigned_by="test"))
+        await db_session.flush()
 
-        # Mock the DB session
-        mock_session = AsyncMock()
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = [{"can_promote_agent": True}]
-        mock_session.execute = AsyncMock(return_value=mock_result)
-
-        result = await _user_has_permission(mock_session, user_id, "can_promote_agent")
+        result = await _user_has_permission(db_session, user.id, "agents.readwrite")
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_user_has_permission_returns_false_when_no_permission(self):
-        """_user_has_permission returns False when no role has the permission."""
+    async def test_user_has_permission_returns_false_when_no_permission(self, db_session):
+        """_user_has_permission returns False when no held role grants it."""
+        from src.models.orm.users import Role, User, UserRole
         from src.routers.agents import _user_has_permission
 
-        user_id = uuid4()
+        from src.models.orm.organizations import Organization
+        org = Organization(name=f"org-{uuid4().hex[:8]}", is_active=True, created_by="test")
+        db_session.add(org)
+        await db_session.flush()
+        user = User(
+            email=f"nonpromoter-{uuid4().hex[:8]}@test.local",
+            name="Non-promoter",
+            organization_id=org.id,
+        )
+        db_session.add(user)
+        role = Role(name=f"Readers-{uuid4().hex[:8]}", created_by="test")
+        db_session.add(role)
+        await db_session.flush()
+        db_session.add(UserRole(user_id=user.id, role_id=role.id, assigned_by="test"))
+        await db_session.flush()
 
-        mock_session = AsyncMock()
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = [{}]
-        mock_session.execute = AsyncMock(return_value=mock_result)
-
-        result = await _user_has_permission(mock_session, user_id, "can_promote_agent")
+        result = await _user_has_permission(db_session, user.id, "agents.readwrite")
         assert result is False

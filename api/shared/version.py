@@ -5,9 +5,12 @@ from functools import lru_cache
 
 # Old CLIs below this release cannot parse PlatformJobStatus.requires_action
 # while polling durable jobs, and SDKs <= 1.4.1 require the removed
-# WorkflowExecution.session_id field. The API exposes this floor at /api/version and
-# compatible CLIs hard-block command dispatch until they are upgraded.
-MIN_CLI_VERSION = "1.4.2"
+# WorkflowExecution.session_id field. CLIs <= 1.4.2 also still send/expect
+# `permissions` on RoleCreate/RoleUpdate/RolePublic, which R2b removed (base
+# roles + role_permissions replace it). The API exposes this floor at
+# /api/version and compatible CLIs hard-block command dispatch until they
+# are upgraded.
+MIN_CLI_VERSION = "1.4.3"
 
 
 @lru_cache(maxsize=1)

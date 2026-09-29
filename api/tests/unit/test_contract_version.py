@@ -275,7 +275,14 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # 4): rescoping a table is now supported via PATCH. ADDITIVE: old CLIs
     # simply never send it and retain the prior no-rescope behavior.
     # Fingerprint refreshed only.
-    "345fe13bd2a3699b5fc750b269eff6fbb745e7acb9de80c03d3ec2101171129e"
+    #
+    # RoleCreate/RoleUpdate/RolePublic lost `permissions` (2026-09-29, RBAC
+    # R2b: base roles + role_permissions table replace the free-form JSONB
+    # column). CLI-IMPACTING: an old CLI's `bifrost roles create/update
+    # --permissions ...` would send a field the server no longer accepts,
+    # and `RolePublic.permissions` disappears from responses an old CLI
+    # parses. MIN_CLI_VERSION raised to 1.4.3 (api/shared/version.py).
+    "f8939b691af202c4434d54a5bc3bfb5e6f4953fda396b46023ad7ad2f9ce4a12"
 )
 
 

@@ -3,7 +3,6 @@ E2E for the new role-consumer endpoints:
 
 - /api/roles/{id}/apps         GET / POST / DELETE
 - /api/roles/{id}/workflows    GET / POST / DELETE
-- /api/roles/{id}/knowledge    GET / POST / DELETE
 
 Plus: GET /api/roles now includes consumer_counts per role.
 """
@@ -196,59 +195,6 @@ class TestRoleWorkflows:
 
 
 # =============================================================================
-# Knowledge namespaces
-# =============================================================================
-
-
-@pytest.mark.e2e
-class TestRoleKnowledge:
-    def test_assign_list_unassign_knowledge(self, e2e_client, platform_admin, org1):
-        role = _create_role(e2e_client, platform_admin.headers, "K")
-        ns = f"role-ns-{uuid.uuid4().hex[:6]}"
-
-        # Empty initial state.
-        initial = e2e_client.get(
-            f"/api/roles/{role}/knowledge", headers=platform_admin.headers
-        ).json()
-        assert initial == {"entries": []}
-
-        post = e2e_client.post(
-            f"/api/roles/{role}/knowledge",
-            headers=platform_admin.headers,
-            json={
-                "entries": [
-                    {"namespace": ns, "organization_id": None},
-                    {"namespace": ns, "organization_id": org1["id"]},
-                ]
-            },
-        )
-        assert post.status_code == 204, post.text
-
-        entries = e2e_client.get(
-            f"/api/roles/{role}/knowledge", headers=platform_admin.headers
-        ).json()["entries"]
-        assert len(entries) == 2
-        namespaces = {e["namespace"] for e in entries}
-        assert namespaces == {ns}
-
-        # Bulk unassign by assignment id.
-        first_id = entries[0]["id"]
-        dele = e2e_client.request(
-            "DELETE",
-            f"/api/roles/{role}/knowledge",
-            headers=platform_admin.headers,
-            json={"assignment_ids": [first_id]},
-        )
-        assert dele.status_code == 204, dele.text
-
-        remaining = e2e_client.get(
-            f"/api/roles/{role}/knowledge", headers=platform_admin.headers
-        ).json()["entries"]
-        assert len(remaining) == 1
-        assert remaining[0]["id"] != first_id
-
-
-# =============================================================================
 # Inline consumer counts on GET /api/roles
 # =============================================================================
 
@@ -272,7 +218,6 @@ class TestRoleConsumerCounts:
                 "agents": 0,
                 "apps": 0,
                 "workflows": 0,
-                "knowledge": 0,
             }
 
             # Add one of each type.
@@ -343,13 +288,6 @@ class TestRoleConsumerCounts:
                 json={"workflow_ids": [wf_id]},
             )
 
-            ns = f"cnt-ns-{uuid.uuid4().hex[:6]}"
-            e2e_client.post(
-                f"/api/roles/{role}/knowledge",
-                headers=platform_admin.headers,
-                json={"entries": [{"namespace": ns, "organization_id": None}]},
-            )
-
             # Now every count should be 1.
             roles_after = e2e_client.get(
                 "/api/roles", headers=platform_admin.headers
@@ -361,7 +299,6 @@ class TestRoleConsumerCounts:
                 "agents": 1,
                 "apps": 1,
                 "workflows": 1,
-                "knowledge": 1,
             }
 
             # Unassign the user — counts.users drops back to 0.
