@@ -344,7 +344,7 @@ async def live_health_check() -> HealthCheck:
 @router.get("/ready", response_model=DetailedHealthCheck)
 async def ready_health_check(
     response: Response,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> DetailedHealthCheck:
     """
     Readiness check for core API serving dependencies.
@@ -355,7 +355,7 @@ async def ready_health_check(
 @router.get("/detailed", response_model=DetailedHealthCheck)
 async def detailed_health_check(
     response: Response,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> DetailedHealthCheck:
     """
     Detailed health check with component status.

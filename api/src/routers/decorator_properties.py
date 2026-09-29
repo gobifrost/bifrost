@@ -41,7 +41,7 @@ async def get_decorator_properties(
     ctx: Context,
     user: CurrentSuperuser,
     path: str = Query(..., description="File path relative to workspace root"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> DecoratorPropertiesResponse:
     """
     Read all decorator properties from a Python file.
@@ -103,7 +103,7 @@ async def update_decorator_properties(
     ctx: Context,
     user: CurrentSuperuser,
     request: UpdatePropertiesRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> UpdatePropertiesResponse:
     """
     Update properties on a decorator.

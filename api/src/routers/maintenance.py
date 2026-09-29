@@ -64,7 +64,7 @@ router = APIRouter(prefix="/api/maintenance", tags=["Maintenance"])
 )
 async def get_artifact_retention_settings(
     user: CurrentSuperuser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ArtifactRetentionSettings:
     return await ArtifactRetentionSettingsService(db).get_settings()
 
@@ -77,7 +77,7 @@ async def get_artifact_retention_settings(
 async def update_artifact_retention_settings(
     request: ArtifactRetentionSettingsUpdate,
     user: CurrentSuperuser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ArtifactRetentionSettings:
     service = ArtifactRetentionSettingsService(db)
     settings = await service.update_settings(
@@ -97,7 +97,7 @@ async def update_artifact_retention_settings(
 async def cleanup_artifact_retention(
     response: Response,
     user: CurrentSuperuser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> PlatformJobAccepted:
     job, reused = await enqueue_platform_job(
         db,
@@ -145,7 +145,7 @@ async def cleanup_artifact_retention(
 async def get_maintenance_status(
     ctx: Context,
     user: CurrentSuperuser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> MaintenanceStatus:
     """
     Get the current maintenance status of the workspace.
@@ -185,7 +185,7 @@ async def get_maintenance_status(
 async def index_documentation(
     ctx: Context,
     user: CurrentSuperuser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> DocsIndexResponse:
     """
     Manually index platform documentation into the knowledge store.
@@ -307,7 +307,7 @@ async def reimport_from_repo(
 )
 async def cleanup_orphaned(
     user: CurrentSuperuser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> CleanupOrphanedResponse:
     """
     Find and deactivate workflows that reference files no longer in FileIndex.
@@ -403,7 +403,7 @@ class AppDependencyScanResponse(BaseModel):
 async def scan_app_dependencies(
     ctx: Context,
     user: CurrentSuperuser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> AppDependencyScanResponse:
     """
     Scan app file dependencies from source code in file_index.
@@ -557,7 +557,7 @@ async def scan_app_dependencies(
 )
 async def run_preflight(
     user: CurrentSuperuser,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> PreflightResponse:
     """Run preflight validation on the current workspace state."""
     import ast

@@ -1296,12 +1296,10 @@ async def export_solution(
                 )
         _cleanup_file(source_path)
         # Commit the SolutionConnectionSchema rows that _connection_entries
-        # upserts as a side-effect of a fresh _repo/ scan. Without this the only
-        # commit is get_db()'s teardown, which FastAPI runs AFTER the FileResponse
-        # body is streamed — so a caller that queries these rows right after the
-        # response races the commit (flaky under load), and a deferred-commit
-        # failure would silently drop the persisted declarations. Every other
-        # mutating endpoint in this router commits explicitly; match that.
+        # upserts as a side-effect of a fresh _repo/ scan, so a commit failure
+        # surfaces here (and the export temp files are cleaned up) rather
+        # than after the archive has been built. Every other mutating
+        # endpoint in this router commits explicitly; match that.
         await ctx.db.commit()
     except Exception:
         _cleanup_file(out_path)

@@ -68,7 +68,7 @@ def _branding_response(branding: GlobalBranding | None) -> BrandingSettings:
     description="Get platform branding settings. Public endpoint for login page display.",
 )
 async def get_branding(
-    db: Annotated[AsyncSession, Depends(get_db)],
+    db: Annotated[AsyncSession, Depends(get_db, scope="function")],
 ) -> BrandingSettings:
     """
     Get branding settings (public endpoint).
@@ -215,7 +215,7 @@ async def upload_logo(
         404: {"description": "Logo not found"},
     },
 )
-async def get_logo(logo_type: str, db: AsyncSession = Depends(get_db)):
+async def get_logo(logo_type: str, db: AsyncSession = Depends(get_db, scope="function")):
     """Serve logo image from database."""
     if logo_type not in ("square", "rectangle"):
         raise HTTPException(

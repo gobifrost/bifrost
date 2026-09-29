@@ -13,8 +13,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database import get_db, get_optional_db
 
-# Type alias for dependency injection
-DbSession = Annotated[AsyncSession, Depends(get_db)]
+# scope="function" tears the session down (commit/rollback/close) when the
+# endpoint returns, BEFORE the response is sent. With the default
+# request scope FastAPI runs the teardown after the body is on the wire, so
+# clients would see 2xx before the write is committed (and a failed commit
+# could not change the response). Consequently a handler must not hand the
+# session to anything that runs after it returns (streaming bodies,
+# background tasks): those open their own session.
+# tests/unit/test_db_dependency_scope.py enforces this on every use.
+DbSession = Annotated[AsyncSession, Depends(get_db, scope="function")]
 
 # Type alias for optional database injection
-OptionalDbSession = Annotated[AsyncSession | None, Depends(get_optional_db)]
+OptionalDbSession = Annotated[
+    AsyncSession | None, Depends(get_optional_db, scope="function")
+]
