@@ -1902,9 +1902,17 @@ class ManifestResolver:
                 "organizations",
             )
 
-        # Delete roles not in manifest (only when manifest has roles)
+        # Delete roles not in manifest (only when manifest has roles).
+        # Builtin roles (Platform Admin, User, Platform Operator) are never
+        # portable manifest content — they're never in `manifest.roles` —
+        # but they're real, FK-referenced-by-users rows. Never sweep them
+        # as "removed from repo".
         if present_role_uuids:
-            await _bulk_delete(Role, [], present_role_uuids, "roles")
+            from shared.builtin_roles import BUILTIN_ROLE_IDS
+
+            await _bulk_delete(
+                Role, [], present_role_uuids + list(BUILTIN_ROLE_IDS), "roles"
+            )
 
         return entity_changes
 

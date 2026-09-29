@@ -399,7 +399,7 @@ model without classifying it fails CI.
 | KnowledgeStorageDaily  | Aggregated storage telemetry                                                |
 | User                   | Identity record; looked up by ID for auth/audit, not by name with cascade   |
 | AIUsage                | AI cost/usage telemetry                                                     |
-| KnowledgeNamespaceRole | RBAC junction; consumed by KnowledgeRepository, not resolved as an entity   |
+| UserRoleBoundary       | Role-assignment boundary row; read by (user_id, role_id), not by name with cascade |
 | Event                  | Event record post-receipt (telemetry)                                       |
 | AuditLog               | Write-only from execution path; no cascade lookup ever                      |
 | HomeCollection         | Owner/shared launcher record; ID-based edits and audience checks in `shared.home`; references never grant access |

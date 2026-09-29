@@ -124,9 +124,6 @@ export interface ConsumerTabProps {
  * Generic role-consumer tab. Renders the assigned items as a standard
  * DataTable (matching /users + /history conventions), with an optional
  * Organization column for entity types that carry an org_id.
- *
- * Knowledge is a special case — see KnowledgeTab in RoleDetail.tsx for the
- * namespace+org shape.
  */
 export function ConsumerTab({
 	items,

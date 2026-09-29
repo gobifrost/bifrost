@@ -3,9 +3,8 @@
  *
  * Covers:
  * - required-name validation surfaces an error and blocks submit
- * - create-mode submit with trimmed values + permissions
+ * - create-mode submit with trimmed name/description
  * - edit-mode pre-fills from the role prop and submits patch with role_id
- * - permission toggle is included in the submit payload
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -28,7 +27,6 @@ function makeRole(overrides: Partial<NonNullable<Role>> = {}): NonNullable<Role>
 		id: "role-1",
 		name: "Admin",
 		description: "Admin role",
-		permissions: { can_promote_agent: true },
 		created_at: "2026-04-20T00:00:00Z",
 		updated_at: "2026-04-20T00:00:00Z",
 		organization_id: null,
@@ -58,7 +56,7 @@ describe("RoleDialog — validation", () => {
 });
 
 describe("RoleDialog — create mode", () => {
-	it("submits name, description, and permissions", async () => {
+	it("submits name and description", async () => {
 		const onClose = vi.fn();
 		const { user } = renderWithProviders(
 			<RoleDialog open={true} onClose={onClose} />,
@@ -69,8 +67,6 @@ describe("RoleDialog — create mode", () => {
 			screen.getByLabelText(/description/i),
 			"Read-only access",
 		);
-		// Toggle permission on.
-		await user.click(screen.getByRole("switch"));
 
 		await user.click(screen.getByRole("button", { name: /^create$/i }));
 
@@ -81,7 +77,6 @@ describe("RoleDialog — create mode", () => {
 			body: {
 				name: "Viewer",
 				description: "Read-only access",
-				permissions: { can_promote_agent: true },
 			},
 		});
 		expect(onClose).toHaveBeenCalled();
@@ -112,7 +107,6 @@ describe("RoleDialog — edit mode", () => {
 		// Pre-filled values.
 		expect(screen.getByLabelText(/role name/i)).toHaveValue("Admin");
 		expect(screen.getByLabelText(/description/i)).toHaveValue("Admin role");
-		expect(screen.getByRole("switch")).toBeChecked();
 
 		await user.clear(screen.getByLabelText(/role name/i));
 		await user.type(screen.getByLabelText(/role name/i), "Admin Edited");
@@ -125,7 +119,6 @@ describe("RoleDialog — edit mode", () => {
 			body: {
 				name: "Admin Edited",
 				description: "Admin role",
-				permissions: { can_promote_agent: true },
 			},
 		});
 	});

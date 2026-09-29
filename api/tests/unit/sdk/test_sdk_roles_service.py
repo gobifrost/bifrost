@@ -80,12 +80,10 @@ class TestRoleService:
             db_session,
             name="Tech",
             description="Technicians",
-            permissions=None,
             actor_email="admin@test.local",
         )
         assert created.name == "Tech"
         assert created.description == "Technicians"
-        assert created.permissions == {}
         assert created.created_by == "admin@test.local"
         assert created.consumer_counts is not None
         assert created.consumer_counts.users == 0
@@ -93,18 +91,6 @@ class TestRoleService:
         fetched = await get_role(db_session, role_id=created.id)
         assert fetched.id == created.id
         assert fetched.name == "Tech"
-
-    async def test_create_with_permissions(self, db_session):
-        from shared.sdk_roles import create_role
-
-        created = await create_role(
-            db_session,
-            name="Perm Role",
-            description=None,
-            permissions={"tickets": ["read"]},
-            actor_email="admin@test.local",
-        )
-        assert created.permissions == {"tickets": ["read"]}
 
     async def test_get_missing_raises_404(self, db_session):
         from shared.sdk_roles import get_role
@@ -120,11 +106,11 @@ class TestRoleService:
         tag = uuid4().hex[:8]
         await create_role(
             db_session, name=f"Zulu {tag}", description=None,
-            permissions=None, actor_email="a@t.local",
+            actor_email="a@t.local",
         )
         await create_role(
             db_session, name=f"Alpha {tag}", description="findme",
-            permissions=None, actor_email="a@t.local",
+            actor_email="a@t.local",
         )
 
         items, total = await list_roles(db_session, search=tag)
@@ -148,7 +134,7 @@ class TestRoleService:
 
         created = await create_role(
             db_session, name="Before", description="d",
-            permissions=None, actor_email="a@t.local",
+            actor_email="a@t.local",
         )
         updated = await update_role(
             db_session, role_id=created.id, description="after",
@@ -170,7 +156,7 @@ class TestRoleService:
 
         created = await create_role(
             db_session, name="Gone", description=None,
-            permissions=None, actor_email="a@t.local",
+            actor_email="a@t.local",
         )
         assert await delete_role(db_session, role_id=created.id) == "Gone"
         with pytest.raises(RoleServiceError) as exc_info:
@@ -190,7 +176,7 @@ class TestRoleService:
 
         role = await create_role(
             db_session, name="Crew", description=None,
-            permissions=None, actor_email="a@t.local",
+            actor_email="a@t.local",
         )
         u1 = await _seed_user(db_session)
         u2 = await _seed_user(db_session)
@@ -221,7 +207,7 @@ class TestRoleService:
 
         role = await create_role(
             db_session, name="Crew", description=None,
-            permissions=None, actor_email="a@t.local",
+            actor_email="a@t.local",
         )
 
         with pytest.raises(RoleServiceError) as exc_info:
@@ -253,7 +239,7 @@ class TestRoleService:
 
         role = await create_role(
             db_session, name="Forms", description=None,
-            permissions=None, actor_email="a@t.local",
+            actor_email="a@t.local",
         )
         form = await _seed_form(db_session)
 
@@ -278,7 +264,7 @@ class TestRoleService:
 
         role = await create_role(
             db_session, name="Forms404", description=None,
-            permissions=None, actor_email="a@t.local",
+            actor_email="a@t.local",
         )
         missing = str(uuid4())
         with pytest.raises(RoleServiceError) as exc_info:
@@ -295,7 +281,7 @@ class TestRoleService:
 
         role = await create_role(
             db_session, name="FormsBad", description=None,
-            permissions=None, actor_email="a@t.local",
+            actor_email="a@t.local",
         )
         with pytest.raises(ValueError):
             await assign_forms_to_role(
@@ -319,7 +305,7 @@ class TestRolesRouterBoundary:
 
         role_id = uuid4()
         public = RolePublic(
-            id=role_id, name="R", description=None, permissions={},
+            id=role_id, name="R", description=None,
             created_by="a@t.local", created_at="2026-01-01T00:00:00+00:00",
             updated_at="2026-01-01T00:00:00+00:00",
         )
@@ -345,7 +331,7 @@ class TestRolesRouterBoundary:
         from src.models import RoleCreate
         from src.routers.roles import create_role
 
-        request = RoleCreate(name="N", description="D", permissions={"a": 1})
+        request = RoleCreate(name="N", description="D")
         with patch(
             "shared.sdk_roles.create_role", new=AsyncMock(return_value="ROLE")
         ) as mock_create:
@@ -353,7 +339,7 @@ class TestRolesRouterBoundary:
         assert result == "ROLE"
         kwargs = mock_create.call_args[1]
         assert kwargs == {
-            "name": "N", "description": "D", "permissions": {"a": 1},
+            "name": "N", "description": "D",
             "actor_email": "me@t.local",
         }
 
@@ -399,7 +385,6 @@ class TestRolesRouterBoundary:
         assert kwargs["role_id"] == role_id
         assert kwargs["name"] is None
         assert kwargs["description"] == "new"
-        assert kwargs["permissions"] is None
 
     async def test_delete_maps_404_but_lets_guard_409_through(self):
         from src.routers.roles import delete_role
@@ -494,3 +479,72 @@ class TestRolesRouterBoundary:
             assert await get_role_forms(role_id, _stub_user(), AsyncMock()) == "RESP"
         mock_list.assert_awaited_once()
         assert mock_list.call_args[1] == {"role_id": role_id}
+
+
+@pytest.mark.asyncio
+class TestBuiltinRoleGuards:
+    """Builtin roles (Platform Admin, User, Platform Operator) are hidden
+    from list/get and refuse update/delete/assignment (409) — see
+    `shared.builtin_roles`. R3a adds their UI; until then no existing
+    screen or picker should start showing them."""
+
+    async def test_builtins_hidden_from_list(self, db_session):
+        from shared.builtin_roles import PLATFORM_ADMIN_ROLE_ID, USER_ROLE_ID, PLATFORM_OPERATOR_ROLE_ID
+        from shared.sdk_roles import list_roles
+
+        items, _total = await list_roles(db_session)
+        ids = {item.id for item in items}
+        assert PLATFORM_ADMIN_ROLE_ID not in ids
+        assert USER_ROLE_ID not in ids
+        assert PLATFORM_OPERATOR_ROLE_ID not in ids
+
+    async def test_builtin_hidden_from_get_404(self, db_session):
+        from shared.builtin_roles import USER_ROLE_ID
+        from shared.sdk_roles import get_role
+
+        with pytest.raises(RoleServiceError) as exc_info:
+            await get_role(db_session, role_id=USER_ROLE_ID)
+        assert exc_info.value.status_code == 404
+
+    async def test_builtin_update_refused(self, db_session):
+        from shared.builtin_roles import PLATFORM_ADMIN_ROLE_ID
+        from shared.sdk_roles import update_role
+
+        with pytest.raises(RoleServiceError) as exc_info:
+            await update_role(
+                db_session, role_id=PLATFORM_ADMIN_ROLE_ID, name="Hacked", actor_email="a@t.local",
+            )
+        assert exc_info.value.status_code == 409
+
+    async def test_builtin_delete_refused(self, db_session):
+        from shared.builtin_roles import USER_ROLE_ID
+        from shared.sdk_roles import delete_role
+
+        with pytest.raises(RoleServiceError) as exc_info:
+            await delete_role(db_session, role_id=USER_ROLE_ID)
+        assert exc_info.value.status_code == 409
+
+    async def test_builtin_assign_users_refused(self, db_session):
+        from shared.builtin_roles import USER_ROLE_ID
+        from shared.sdk_roles import assign_users_to_role
+
+        user = await _seed_user(db_session)
+        with pytest.raises(RoleServiceError) as exc_info:
+            await assign_users_to_role(
+                db_session, role_id=USER_ROLE_ID, user_ids=[str(user.id)], actor_email="a@t.local",
+            )
+        assert exc_info.value.status_code == 409
+
+    async def test_builtin_assign_forms_refused(self, db_session):
+        from shared.builtin_roles import PLATFORM_OPERATOR_ROLE_ID
+        from shared.sdk_roles import assign_forms_to_role
+
+        form = await _seed_form(db_session)
+        with pytest.raises(RoleServiceError) as exc_info:
+            await assign_forms_to_role(
+                db_session,
+                role_id=PLATFORM_OPERATOR_ROLE_ID,
+                form_ids=[str(form.id)],
+                actor_email="a@t.local",
+            )
+        assert exc_info.value.status_code == 409

@@ -576,27 +576,6 @@ ROLE_RESOURCE_ASSIGNMENT_OPERATIONS = {
         None,
         False,
     ),
-    "roles.knowledge.list": (
-        "GET",
-        "/api/roles/{role_id}/knowledge",
-        None,
-        None,
-        False,
-    ),
-    "roles.knowledge.assign": (
-        "POST",
-        "/api/roles/{role_id}/knowledge",
-        None,
-        None,
-        False,
-    ),
-    "roles.knowledge.bulk_remove": (
-        "DELETE",
-        "/api/roles/{role_id}/knowledge",
-        None,
-        None,
-        False,
-    ),
 }
 
 POLICY_RULE_OPERATIONS = {

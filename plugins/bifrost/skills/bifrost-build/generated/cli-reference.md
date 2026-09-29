@@ -1918,8 +1918,6 @@ Usage: roles create [OPTIONS]
 Options:
   --name TEXT         name  [required]
   --description TEXT  description
-  --permissions TEXT  permissions as JSON literal or @path to a YAML/JSON
-                      file.
   --json              Emit JSON instead of human-readable output.
   --help              Show this message and exit.
 ```
@@ -1975,8 +1973,6 @@ Usage: roles update [OPTIONS] REF
 Options:
   --name TEXT         name
   --description TEXT  description
-  --permissions TEXT  permissions as JSON literal or @path to a YAML/JSON
-                      file.
   --json              Emit JSON instead of human-readable output.
   --help              Show this message and exit.
 ```

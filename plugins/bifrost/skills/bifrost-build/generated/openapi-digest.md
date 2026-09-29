@@ -62,7 +62,6 @@
 | POST | `/api/agent-runs/{run_id}/verdict` |
 | GET | `/api/agents` |
 | POST | `/api/agents` |
-| GET | `/api/agents/accessible-knowledge` |
 | GET | `/api/agents/accessible-tools` |
 | GET | `/api/agents/stats/fleet` |
 | DELETE | `/api/agents/{agent_id}` |
@@ -304,9 +303,6 @@
 | GET | `/api/knowledge-sources` |
 | GET | `/api/knowledge-sources/documents` |
 | PATCH | `/api/knowledge-sources/documents/scope` |
-| GET | `/api/knowledge-sources/roles` |
-| POST | `/api/knowledge-sources/roles` |
-| DELETE | `/api/knowledge-sources/roles/{assignment_id}` |
 | DELETE | `/api/knowledge-sources/{namespace}` |
 | GET | `/api/knowledge-sources/{namespace}/documents` |
 | POST | `/api/knowledge-sources/{namespace}/documents` |
@@ -436,9 +432,6 @@
 | GET | `/api/roles/{role_id}/forms` |
 | POST | `/api/roles/{role_id}/forms` |
 | DELETE | `/api/roles/{role_id}/forms/{form_id}` |
-| DELETE | `/api/roles/{role_id}/knowledge` |
-| GET | `/api/roles/{role_id}/knowledge` |
-| POST | `/api/roles/{role_id}/knowledge` |
 | DELETE | `/api/roles/{role_id}/users` |
 | GET | `/api/roles/{role_id}/users` |
 | POST | `/api/roles/{role_id}/users` |

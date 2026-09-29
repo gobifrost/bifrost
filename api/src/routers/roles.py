@@ -33,7 +33,6 @@ from src.models.orm.applications import Application as ApplicationORM
 from src.models.orm.app_roles import AppRole as AppRoleORM
 from src.models.orm.workflows import Workflow as WorkflowORM
 from src.models.orm.workflow_roles import WorkflowRole as WorkflowRoleORM
-from src.models.orm.knowledge_sources import KnowledgeNamespaceRole as KnowledgeNamespaceRoleORM
 from src.models import (
     RoleCreate,
     RolePublic,
@@ -43,20 +42,16 @@ from src.models import (
     RoleAgentsResponse,
     RoleAppsResponse,
     RoleWorkflowsResponse,
-    RoleKnowledgeResponse,
-    RoleKnowledgeEntry,
     AssignUsersToRoleRequest,
     AssignFormsToRoleRequest,
     AssignAgentsToRoleRequest,
     AssignAppsToRoleRequest,
     AssignWorkflowsToRoleRequest,
-    AssignKnowledgeToRoleRequest,
     UnassignUsersFromRoleRequest,
     UnassignFormsFromRoleRequest,
     UnassignAgentsFromRoleRequest,
     UnassignAppsFromRoleRequest,
     UnassignWorkflowsFromRoleRequest,
-    UnassignKnowledgeFromRoleRequest,
 )
 
 # Per-user role cache (Redis-backed, used by table-policy `has_role` lookups
@@ -143,7 +138,6 @@ async def create_role(
             db,
             name=request.name,
             description=request.description,
-            permissions=request.permissions,
             actor_email=user.email,
         )
     except RoleServiceError as e:
@@ -191,7 +185,6 @@ async def update_role(
             role_id=role_id,
             name=request.name,
             description=request.description,
-            permissions=request.permissions,
             actor_email=user.email,
         )
     except RoleServiceError as e:
@@ -477,6 +470,11 @@ async def assign_agents_to_role(
     db: DbSession,
 ) -> None:
     """Assign agents to a role."""
+    from shared.builtin_roles import is_builtin_role_id
+
+    if is_builtin_role_id(role_id):
+        raise HTTPException(status.HTTP_409_CONFLICT, "Builtin roles cannot be assigned entities")
+
     now = datetime.now(timezone.utc)
 
     for agent_id_str in request.agent_ids:
@@ -711,6 +709,11 @@ async def assign_apps_to_role(
     user: CurrentSuperuser,
     db: DbSession,
 ) -> None:
+    from shared.builtin_roles import is_builtin_role_id
+
+    if is_builtin_role_id(role_id):
+        raise HTTPException(status.HTTP_409_CONFLICT, "Builtin roles cannot be assigned entities")
+
     now = datetime.now(timezone.utc)
     for app_id_str in request.app_ids:
         app_uuid = UUID(app_id_str)
@@ -813,6 +816,11 @@ async def assign_workflows_to_role(
     user: CurrentSuperuser,
     db: DbSession,
 ) -> None:
+    from shared.builtin_roles import is_builtin_role_id
+
+    if is_builtin_role_id(role_id):
+        raise HTTPException(status.HTTP_409_CONFLICT, "Builtin roles cannot be assigned entities")
+
     now = datetime.now(timezone.utc)
     for wf_id_str in request.workflow_ids:
         wf_uuid = UUID(wf_id_str)
@@ -880,112 +888,3 @@ async def bulk_unassign_workflows(
         details={"workflow_ids": [str(u) for u in uuids]},
     )
 
-
-# =============================================================================
-# Role-Knowledge Assignments
-# =============================================================================
-
-
-@router.get(
-    "/{role_id}/knowledge",
-    response_model=RoleKnowledgeResponse,
-    summary="Get role knowledge-namespace assignments",
-**operation_route("roles.knowledge.list"))
-async def get_role_knowledge(
-    role_id: UUID,
-    user: CurrentSuperuser,
-    db: DbSession,
-) -> RoleKnowledgeResponse:
-    result = await db.execute(
-        select(KnowledgeNamespaceRoleORM).where(
-            KnowledgeNamespaceRoleORM.role_id == role_id
-        )
-    )
-    return RoleKnowledgeResponse(
-        entries=[
-            RoleKnowledgeEntry(
-                id=row.id,
-                namespace=row.namespace,
-                organization_id=row.organization_id,
-            )
-            for row in result.scalars().all()
-        ]
-    )
-
-
-@router.post(
-    "/{role_id}/knowledge",
-    status_code=status.HTTP_204_NO_CONTENT,
-    summary="Assign knowledge namespaces to role",
-**operation_route("roles.knowledge.assign"))
-async def assign_knowledge_to_role(
-    role_id: UUID,
-    request: AssignKnowledgeToRoleRequest,
-    user: CurrentSuperuser,
-    db: DbSession,
-) -> None:
-    now = datetime.now(timezone.utc)
-    for entry in request.entries:
-        existing = await db.execute(
-            select(KnowledgeNamespaceRoleORM).where(
-                KnowledgeNamespaceRoleORM.namespace == entry.namespace,
-                KnowledgeNamespaceRoleORM.organization_id == entry.organization_id,
-                KnowledgeNamespaceRoleORM.role_id == role_id,
-            )
-        )
-        if existing.scalar_one_or_none():
-            continue
-        db.add(KnowledgeNamespaceRoleORM(
-            namespace=entry.namespace,
-            organization_id=entry.organization_id,
-            role_id=role_id,
-            assigned_by=user.email,
-            assigned_at=now,
-        ))
-    await db.flush()
-    logger.info(f"Assigned knowledge namespaces to role {log_safe(role_id)}")
-    await emit_audit(
-        db,
-        "role.knowledge_assigned",
-        resource_type="role",
-        resource_id=role_id,
-        details={
-            "entries": [
-                {
-                    "namespace": e.namespace,
-                    "organization_id": str(e.organization_id) if e.organization_id else None,
-                }
-                for e in request.entries
-            ]
-        },
-    )
-
-
-@router.delete(
-    "/{role_id}/knowledge",
-    status_code=status.HTTP_204_NO_CONTENT,
-    summary="Bulk unassign knowledge namespaces from role",
-**operation_route("roles.knowledge.bulk_remove"))
-async def bulk_unassign_knowledge(
-    role_id: UUID,
-    request: UnassignKnowledgeFromRoleRequest,
-    user: CurrentSuperuser,
-    db: DbSession,
-) -> None:
-    await db.execute(
-        delete(KnowledgeNamespaceRoleORM).where(
-            KnowledgeNamespaceRoleORM.role_id == role_id,
-            KnowledgeNamespaceRoleORM.id.in_(request.assignment_ids),
-        )
-    )
-    await db.flush()
-    logger.info(
-        f"Bulk unassigned {len(request.assignment_ids)} knowledge assignments from role {log_safe(role_id)}"
-    )
-    await emit_audit(
-        db,
-        "role.knowledge_bulk_unassigned",
-        resource_type="role",
-        resource_id=role_id,
-        details={"assignment_ids": [str(a) for a in request.assignment_ids]},
-    )

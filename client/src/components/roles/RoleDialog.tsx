@@ -23,7 +23,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Switch } from "@/components/ui/switch";
 import { useCreateRole, useUpdateRole } from "@/hooks/useRoles";
 import type { components } from "@/lib/v1";
 type Role = components["schemas"]["RolePublic"];
@@ -31,7 +30,6 @@ type Role = components["schemas"]["RolePublic"];
 const formSchema = z.object({
 	name: z.string().min(1, "Name is required").max(100, "Name too long"),
 	description: z.string().optional(),
-	can_promote_agent: z.boolean(),
 });
 
 type FormValues = z.infer<typeof formSchema>;
@@ -55,7 +53,6 @@ export function RoleDialog({ role, open, onClose }: RoleDialogProps) {
 		defaultValues: {
 			name: "",
 			description: "",
-			can_promote_agent: false,
 		},
 	});
 
@@ -71,15 +68,11 @@ export function RoleDialog({ role, open, onClose }: RoleDialogProps) {
 			form.reset({
 				name: role.name,
 				description: role.description || "",
-				can_promote_agent:
-					(role.permissions as Record<string, boolean>)
-						?.can_promote_agent ?? false,
 			});
 		} else {
 			form.reset({
 				name: "",
 				description: "",
-				can_promote_agent: false,
 			});
 		}
 	}, [role, form, open, form.formState.isDirty]);
@@ -94,10 +87,6 @@ export function RoleDialog({ role, open, onClose }: RoleDialogProps) {
 					body: {
 						name: values.name,
 						description: values.description || null,
-						permissions: {
-							...role?.permissions,
-							can_promote_agent: values.can_promote_agent,
-						},
 					},
 				});
 			} else {
@@ -105,9 +94,6 @@ export function RoleDialog({ role, open, onClose }: RoleDialogProps) {
 					body: {
 						name: values.name,
 						description: values.description || null,
-						permissions: {
-							can_promote_agent: values.can_promote_agent,
-						},
 					},
 				});
 			}
@@ -194,39 +180,6 @@ export function RoleDialog({ role, open, onClose }: RoleDialogProps) {
 									</FormItem>
 								)}
 							/>
-
-							{/* Permissions Section */}
-							<div className="pt-4 border-t">
-								<h4 className="text-sm font-medium mb-3">
-									Permissions
-								</h4>
-								<FormField
-									control={form.control}
-									name="can_promote_agent"
-									render={({ field }) => (
-										<FormItem className="flex min-w-0 items-center justify-between gap-3 rounded-[var(--bf-radius-control)] border bg-muted/50 p-4">
-											<div className="space-y-0.5">
-												<FormLabel className="flex min-h-11 items-center text-sm">
-													Promote Agents
-												</FormLabel>
-												<FormDescription className="text-xs">
-													Allow users to promote
-													private agents to the
-													organization
-												</FormDescription>
-											</div>
-											<FormControl>
-												<Switch
-													checked={field.value}
-													onCheckedChange={
-														field.onChange
-													}
-												/>
-											</FormControl>
-										</FormItem>
-									)}
-								/>
-							</div>
 						</fieldset>
 						{saveError && (
 							<p

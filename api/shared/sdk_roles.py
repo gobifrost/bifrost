@@ -72,9 +72,6 @@ async def get_consumer_counts(
     from src.models import FormRole as FormRoleORM
     from src.models import UserRole as UserRoleORM
     from src.models.orm.app_roles import AppRole as AppRoleORM
-    from src.models.orm.knowledge_sources import (
-        KnowledgeNamespaceRole as KnowledgeNamespaceRoleORM,
-    )
     from src.models.orm.workflow_roles import WorkflowRole as WorkflowRoleORM
 
     counts_by_role = {role_id: RoleConsumerCounts() for role_id in role_ids}
@@ -87,7 +84,6 @@ async def get_consumer_counts(
         ("agents", AgentRoleORM),
         ("apps", AppRoleORM),
         ("workflows", WorkflowRoleORM),
-        ("knowledge", KnowledgeNamespaceRoleORM),
     ]
     for field, orm in aggregates:
         aggregate = await session.execute(
@@ -107,7 +103,6 @@ async def create_role(
     *,
     name: str,
     description: str | None,
-    permissions: dict | None,
     actor_email: str,
 ) -> RolePublic:
     """Create a role (shared by the HTTP handler and worker-local calls)."""
@@ -120,7 +115,6 @@ async def create_role(
     role = RoleORM(
         name=name,
         description=description,
-        permissions=permissions or {},
         created_by=actor_email,
         created_at=now,
         updated_at=now,
@@ -154,14 +148,18 @@ async def get_role(
     *,
     role_id: UUID,
 ) -> RolePublic:
-    """Get a role by ID. Raises 404 when missing."""
+    """Get a role by ID. Raises 404 when missing or builtin.
+
+    Builtin roles (Platform Admin, User, Platform Operator) are hidden from
+    this surface until R3a ships their UI — see `shared.builtin_roles`.
+    """
     from src.models import Role as RoleORM
     from src.models import RolePublic
 
     result = await session.execute(select(RoleORM).where(RoleORM.id == role_id))
     role = result.scalar_one_or_none()
 
-    if not role:
+    if not role or role.is_builtin:
         raise RoleServiceError(404, "Role not found")
 
     public = RolePublic.model_validate(role)
@@ -187,7 +185,9 @@ async def list_roles(
     from src.models import Role as RoleORM
     from src.models import RolePublic
 
-    query = select(RoleORM)
+    # Builtin roles (Platform Admin, User, Platform Operator) are hidden
+    # from this surface until R3a ships their UI.
+    query = select(RoleORM).where(RoleORM.is_builtin.is_(False))
     if search and (term := search.strip()):
         pattern = f"%{term}%"
         query = query.where(
@@ -225,12 +225,13 @@ async def update_role(
     role_id: UUID,
     name: str | None = None,
     description: str | None = None,
-    permissions: dict | None = None,
     actor_email: str,
 ) -> RolePublic:
     """Update a role. Only non-None fields are applied.
 
-    Raises 404 when missing. Like the historical handler, the returned
+    Raises 404 when missing, 409 when builtin (Platform Admin, User,
+    Platform Operator can't be renamed/described until R3a ships their UI —
+    see `shared.builtin_roles`). Like the historical handler, the returned
     payload carries no inline consumer counts.
     """
     from src.models import Role as RoleORM
@@ -242,13 +243,13 @@ async def update_role(
 
     if not role:
         raise RoleServiceError(404, "Role not found")
+    if role.is_builtin:
+        raise RoleServiceError(409, "Builtin roles cannot be modified")
 
     if name is not None:
         role.name = name
     if description is not None:
         role.description = description
-    if permissions is not None:
-        role.permissions = permissions
 
     role.updated_at = datetime.now(timezone.utc)
 
@@ -274,7 +275,6 @@ async def update_role(
         for k, v in (
             ("name", name),
             ("description", description),
-            ("permissions", permissions),
         )
         if v is not None
     ]
@@ -310,6 +310,8 @@ async def delete_role(
 
     if not role:
         raise RoleServiceError(404, "Role not found")
+    if role.is_builtin:
+        raise RoleServiceError(409, "Builtin roles cannot be deleted")
 
     # A role assigned to a solution-managed entity has deploy-owned bindings;
     # deleting it would cascade-strip them outside deploy (Codex R4). Refuse.
@@ -418,15 +420,19 @@ async def assign_users_to_role(
 
     Each entry is a user UUID or an email address (resolved to a UUID;
     unresolvable entries are skipped with a warning, exactly like the
-    historical handler).
+    historical handler). Raises 409 for a builtin role id.
     """
     from src.models import User as UserORM
     from src.models import UserRole as UserRoleORM
     from src.services.audit import emit_audit
+    from shared.builtin_roles import is_builtin_role_id
     from shared.system_account_guard import (
         SYSTEM_ACCOUNT_ROLE_MESSAGE,
         is_system_account,
     )
+
+    if is_builtin_role_id(role_id):
+        raise RoleServiceError(409, "Builtin roles cannot be assigned entities")
 
     now = datetime.now(timezone.utc)
     # Track newly-assigned users so we can invalidate the per-user role cache.
@@ -520,12 +526,17 @@ async def assign_forms_to_role(
     ``ValueError`` (historical behavior — surfaced as a 500 on the HTTP
     path). Solution-managed forms are refused by the guard (409
     propagates unchanged). No audit row, like the historical handler.
+    Raises 409 for a builtin role id.
     """
     from src.models import Form as FormORM
     from src.models import FormRole as FormRoleORM
     from src.services.solutions.guard import (
         assert_entity_id_not_solution_managed,
     )
+    from shared.builtin_roles import is_builtin_role_id
+
+    if is_builtin_role_id(role_id):
+        raise RoleServiceError(409, "Builtin roles cannot be assigned entities")
 
     now = datetime.now(timezone.utc)
 

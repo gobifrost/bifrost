@@ -151,7 +151,11 @@ class TestSolutionFormAgentDeploy:
         )).scalars().all()
         assert len(rows) == 1, "missing role should be auto-created exactly once"
         created = rows[0]
-        assert not created.permissions, "auto-created role must be empty (grants nothing)"
+        from src.models.orm.users import RolePermission
+        granted = (await db.execute(
+            _select(RolePermission).where(RolePermission.role_id == created.id)
+        )).scalars().all()
+        assert not granted, "auto-created role must be empty (grants nothing)"
         # It's surfaced on the result.
         assert role_name in result.roles_created
         # The form is linked to the created role.

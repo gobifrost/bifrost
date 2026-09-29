@@ -4285,16 +4285,20 @@ class TestRoleImport:
         assert row is not None
         assert row.name == "SharedRole"
 
-    async def test_role_preserves_permissions(
+    async def test_role_preserves_description(
         self, db_session: AsyncSession, sync_service, working_clone,
     ):
-        """Role exists with permissions/description → preserved on pull."""
+        """Role exists with a description → preserved on pull.
+
+        Roles aren't portable manifest content: the manifest carries only
+        identity (id/name), never `role_permissions` grants (R2b removed the
+        old free-form `permissions` JSONB this test used to check)."""
         from src.models.orm.users import Role
 
         role_id = uuid4()
         db_session.add(Role(
             id=role_id, name="PermRole", created_by="git-sync",
-            description="Important role", permissions={"read": True},
+            description="Important role",
         ))
         await db_session.commit()
 
@@ -4305,7 +4309,7 @@ class TestRoleImport:
             "roles": [{"id": str(role_id), "name": "PermRole"}]
         }, default_flow_style=False))
         working_clone.index.add([".bifrost/roles.yaml"])
-        working_clone.index.commit("Preserve perms")
+        working_clone.index.commit("Preserve description")
         working_clone.remotes.origin.push("main")
 
         result = await sync_service.desktop_sync(confirm_deletes=True)
@@ -4315,7 +4319,6 @@ class TestRoleImport:
             select(Role).where(Role.id == role_id)
         )).scalar_one()
         assert row.description == "Important role"
-        assert row.permissions == {"read": True}
 
     async def test_delete_removed_role(
         self, db_session: AsyncSession, sync_service, working_clone,
