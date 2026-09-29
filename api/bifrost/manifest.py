@@ -154,6 +154,12 @@ class ManifestWorkflow(EntityCodec, BaseModel):
         **classify(FieldClass.CONTENT),
     )
 
+    def view(self, dest: Destination, *, extras: dict[str, Any] | None = None) -> dict:
+        out = super().view(dest, extras=extras)
+        if dest is Destination.GIT_SYNC:
+            out.pop("requested_permissions", None)
+        return out
+
     @classmethod
     def from_row(cls, wf, *, roles: list[str] | None = None) -> "ManifestWorkflow":
         """Build from a Workflow ORM row, mirroring serialize_workflow exactly."""

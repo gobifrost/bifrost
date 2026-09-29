@@ -241,6 +241,10 @@ IDENTITY_MODELS: set[str] = {
     # at). It belongs to an org but is never resolved by name with cascade
     # — it's read by (user_id, role_id), like UserRole itself.
     "UserRoleBoundary",
+    # A workflow permission grant's organization_id is the boundary a grant
+    # applies at, not a scope it resolves in. Read by workflow_id, never
+    # name-resolved through the cascade.
+    "WorkflowPermissionGrant",
     "Event",
     "AuditLog",
     # A Solution install belongs to a scope (organization_id) but is never

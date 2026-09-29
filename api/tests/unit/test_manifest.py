@@ -3074,3 +3074,19 @@ class TestSolutionFilePolicyBundleRoundTrip:
 
         (tmp_path / ".bifrost").mkdir(parents=True)
         assert _collect_file_policies(pathlib.Path(tmp_path)) == []
+
+
+def test_manifest_workflow_git_sync_view_ignores_requested_permissions():
+    from bifrost.manifest import ManifestWorkflow
+    from bifrost.manifest_codec import Destination
+
+    wf = ManifestWorkflow.model_validate(
+        {
+            "id": "88888888-8888-8888-8888-888888888888",
+            "path": "p.py",
+            "function_name": "f",
+            "requested_permissions": {"mode": "full"},
+        }
+    )
+    assert "requested_permissions" not in wf.view(Destination.GIT_SYNC)
+    assert wf.view(Destination.INSTALL)["requested_permissions"] == {"mode": "full", "grants": []}
