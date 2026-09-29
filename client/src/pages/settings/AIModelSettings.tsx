@@ -53,6 +53,7 @@ import {
 	type AIModelProfile,
 	type AIProviderConnection,
 } from "@/services/aiModels";
+import { useModelDisplayName } from "@/services/modelNames";
 
 const PROVIDER_QUERY_KEY = ["ai", "provider-connections"] as const;
 const PROFILE_QUERY_KEY = ["ai", "model-profiles"] as const;
@@ -102,8 +103,11 @@ const ASSIGNMENTS: {
 	},
 ];
 
-function profileLine(profile: AIModelProfile): string {
-	return `${profile.connection.name} · ${profile.model}`;
+function profileLine(
+	profile: AIModelProfile,
+	modelName: (model: string) => string,
+): string {
+	return `${profile.connection.name} · ${modelName(profile.model)}`;
 }
 
 function assignmentLabel(key: AIModelAssignmentKey): string {
@@ -174,6 +178,7 @@ export function AIModelSettings() {
 	const [profileEdit, setProfileEdit] = useState<ModelProfileEditDraft | null>(null);
 
 	const catalogQuery = useModelCatalog();
+	const modelName = useModelDisplayName();
 	const providersQuery = useQuery({
 		queryKey: PROVIDER_QUERY_KEY,
 		queryFn: listProviderConnections,
@@ -716,7 +721,7 @@ export function AIModelSettings() {
 						</button>
 					)}
 					{profiles.map((profile) => <ModelProfileCard key={profile.id}
-						profile={profile} description={profileLine(profile)} assignments={(profile.assignment_keys ?? []).filter((key) => key !== "primary").map(assignmentLabel)}
+						profile={profile} description={profileLine(profile, modelName)} assignments={(profile.assignment_keys ?? []).filter((key) => key !== "primary").map(assignmentLabel)}
 						selectionMode={profileSelectionMode} selected={selectedProfileIds.has(profile.id)} isDefault={defaultProfileId === profile.id}
 						chatPending={updateProfileMutation.isPending && updateProfileMutation.variables?.profileId === profile.id}
 						defaultPending={assignMutation.isPending && assignMutation.variables?.assignmentKey === "primary" && assignMutation.variables.profileId === profile.id}

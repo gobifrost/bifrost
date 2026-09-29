@@ -128,3 +128,44 @@ async def test_models_without_published_prices_are_left_unpriced(db_session, cat
     assert not await fill_pricing_from_catalog(
         db_session, provider="unknown-cloud", model="m", usage_name="m"
     )
+
+
+@pytest.mark.asyncio
+async def test_display_names_cover_usage_prices_and_profiles(db_session, catalog) -> None:
+    from sqlalchemy import delete
+
+    from src.models.orm.ai_usage import AIUsage
+    from src.services.model_pricing import used_model_display_names
+
+    # Start from known rows only; the shared test DB may hold others.
+    await db_session.execute(delete(AIUsage))
+    await db_session.execute(delete(AIModelPricing))
+    db_session.add_all(
+        [
+            AIModelPricing(
+                provider="fireworks-ai",
+                model="accounts/fireworks/models/kimi-k3",
+                input_price_per_million=Decimal("1"),
+                output_price_per_million=Decimal("1"),
+            ),
+            AIModelPricing(
+                provider="anthropic",
+                model="claude-opus-4-5",
+                input_price_per_million=Decimal("1"),
+                output_price_per_million=Decimal("1"),
+            ),
+            AIModelPricing(
+                provider="openai",
+                model="not-in-catalog",
+                input_price_per_million=Decimal("1"),
+                output_price_per_million=Decimal("1"),
+            ),
+        ]
+    )
+    await db_session.flush()
+
+    names = await used_model_display_names(db_session)
+
+    assert names["accounts/fireworks/models/kimi-k3"] == "Kimi K3"
+    assert names["claude-opus-4-5"] == "Claude Opus 4.5"
+    assert "not-in-catalog" not in names

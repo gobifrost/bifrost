@@ -203,3 +203,9 @@ class ModelCatalogResponse(BaseModel):
     provider_count: int
     model_count: int
     providers: list[ModelCatalogProvider]
+
+
+class ModelDisplayNamesResponse(BaseModel):
+    """Stored model id -> catalog display name, for ids the catalog knows."""
+
+    names: dict[str, str]

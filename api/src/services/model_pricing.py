@@ -5,10 +5,12 @@ import re
 from datetime import date
 from urllib.parse import urlparse
 
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.models.orm.ai_usage import AIModelPricing
+from src.models.orm.ai_models import AIModelProfile, AIProviderConnection
+from src.models.orm.ai_usage import AIModelPricing, AIUsage
 from src.services.model_catalog import (
     NATIVE_CATALOG_IDS,
     CatalogModel,
@@ -110,3 +112,36 @@ async def fill_pricing_from_catalog(
         logger.info("Filled %s/%s pricing from the model catalog", provider, usage_name)
     return added
 
+
+async def used_model_display_names(session: AsyncSession) -> dict[str, str]:
+    """Catalog display names for every model id Bifrost stores or configures.
+
+    Keys are the stored ids (usage rows, prices, profiles); ids the catalog
+    does not know are omitted, so callers show the id itself.
+    """
+    catalog = await get_model_catalog(session)
+    pairs: set[tuple[str, str]] = set()
+    for model_table in (AIUsage, AIModelPricing):
+        rows = await session.execute(
+            select(model_table.provider, model_table.model).distinct()
+        )
+        pairs.update((provider, model) for provider, model in rows.all())
+    profiles = await session.execute(
+        select(
+            AIProviderConnection.catalog_provider_id,
+            AIProviderConnection.provider,
+            AIModelProfile.model,
+        ).join(AIModelProfile, AIModelProfile.connection_id == AIProviderConnection.id)
+    )
+    names: dict[str, str] = {}
+    for catalog_id, kind, model in profiles.all():
+        entry = catalog.model(catalog_id, model) if catalog_id else None
+        if entry is None:
+            entry = _catalog_entry(catalog, kind, model)
+        if entry is not None:
+            names[model] = entry.name
+    for provider, model in pairs:
+        entry = _catalog_entry(catalog, provider, model)
+        if entry is not None:
+            names.setdefault(model, entry.name)
+    return names

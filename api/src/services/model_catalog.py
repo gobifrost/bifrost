@@ -88,6 +88,7 @@ _MODEL_FIELDS = (
     "limit",
     "cost",
     "status",
+    "provider",  # per-model SDK/endpoint override
 )
 _PROVIDER_FIELDS = ("id", "name", "api", "npm", "doc", "env")
 
@@ -124,6 +125,12 @@ class CatalogModel(BaseModel):
     max_output_tokens: int | None = None
     cost: CatalogCost | None = None
     status: str | None = None
+    # Per-model override of the provider's SDK, endpoint, or API shape. Some
+    # gateways serve, say, Claude over Anthropic Messages and GPT over the
+    # Responses API while their default is Chat Completions.
+    route_sdk: str | None = None
+    route_api: str | None = None
+    route_shape: str | None = None
 
     @property
     def reasoning_choices(self) -> list[str]:
@@ -165,9 +172,46 @@ class CatalogProvider(BaseModel):
     def is_native(self) -> bool:
         return self.id in NATIVE_PROVIDER_KINDS
 
+    def route(self, model: CatalogModel) -> ModelRoute | None:
+        """How to call ``model`` on this community provider, or None if
+        Bifrost has no adapter for the API the catalog documents for it.
+
+        Native providers keep their own routing and are not routed here.
+        """
+        sdk = model.route_sdk or self.npm or ""
+        api = model.route_api or self.endpoint
+        if not api or "${" in api or sdk not in _ADAPTER_BY_SDK:
+            return None
+        if sdk == "@ai-sdk/anthropic":
+            # The Anthropic SDK appends /v1/messages to its base URL.
+            return ModelRoute("anthropic", _strip_path_suffix(api, "/v1"), None)
+        if sdk == "@ai-sdk/google":
+            # The Google SDK appends its own /v1beta path; any other
+            # version cannot be expressed through it.
+            if not api.rstrip("/").endswith("/v1beta"):
+                return None
+            return ModelRoute("google", _strip_path_suffix(api, "/v1beta"), None)
+        if sdk == "@ai-sdk/openai" or model.route_shape == "responses":
+            return ModelRoute("openai", api.rstrip("/"), "responses")
+        return ModelRoute("openai", api.rstrip("/"), "chat_completions")
+
     @property
     def endpoint(self) -> str | None:
         return self.api or NATIVE_DEFAULT_ENDPOINTS.get(self.id)
+
+
+@dataclass(frozen=True)
+class ModelRoute:
+    """The Bifrost client provider, base URL, and OpenAI transport to use."""
+
+    provider: Literal["openai", "anthropic", "google"]
+    endpoint: str
+    openai_transport: Literal["chat_completions", "responses"] | None
+
+
+def _strip_path_suffix(url: str, suffix: str) -> str:
+    trimmed = url.rstrip("/")
+    return trimmed[: -len(suffix)] if trimmed.endswith(suffix) else trimmed
 
 
 @dataclass(frozen=True)
@@ -279,6 +323,7 @@ def _parse_model(model: dict[str, Any]) -> CatalogModel:
     limit = model.get("limit") or {}
     modalities = model.get("modalities") or {}
     cost = model.get("cost")
+    route = model.get("provider") if isinstance(model.get("provider"), dict) else {}
     return CatalogModel(
         id=model["id"],
         name=model.get("name") or model["id"],
@@ -297,6 +342,9 @@ def _parse_model(model: dict[str, Any]) -> CatalogModel:
         max_output_tokens=limit.get("output"),
         cost=CatalogCost.model_validate(cost) if isinstance(cost, dict) else None,
         status=model.get("status"),
+        route_sdk=route.get("npm"),
+        route_api=route.get("api"),
+        route_shape=route.get("shape"),
     )
 
 

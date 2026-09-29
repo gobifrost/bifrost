@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import type { AIModelProfile } from "@/services/aiModels";
+import { useModelDisplayName } from "@/services/modelNames";
 
 export function ModelProfileMergeDialog({ profileMergeOpen, selectedProfiles, mergeTargetProfileId, setMergeTargetProfileId, pending, failed, completed = false, returnFocusRef, onClose, onConfirm }: {
  profileMergeOpen: boolean;
@@ -20,6 +21,7 @@ export function ModelProfileMergeDialog({ profileMergeOpen, selectedProfiles, me
  onClose: () => void;
  onConfirm: () => void;
 }) {
+	const modelName = useModelDisplayName();
 	const mergeTargetProfile = selectedProfiles.find(
 		(profile) => profile.id === mergeTargetProfileId,
 	);
@@ -86,7 +88,7 @@ export function ModelProfileMergeDialog({ profileMergeOpen, selectedProfiles, me
 												{profile.name}
 											</span>
 											<span className="mt-1 block text-sm font-normal text-muted-foreground [overflow-wrap:anywhere]">
-												{`${profile.connection.name} · ${profile.model}`}
+												{`${profile.connection.name} · ${modelName(profile.model)}`}
 											</span>
 											{selected && <Badge variant="secondary" className="mt-2">Keep</Badge>}
 										</span>

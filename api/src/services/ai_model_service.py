@@ -28,6 +28,7 @@ from src.models.orm.ai_models import (
 from src.services.model_catalog import (
     NATIVE_CATALOG_IDS,
     CatalogModel,
+    ModelRoute,
     get_model_catalog,
 )
 from src.services.opencode_go import (
@@ -459,15 +460,14 @@ class AIModelService:
             else:
                 openai_transport = wire_api
 
-        if (
-            connection.provider == "openai_compatible"
-            and openai_transport is None
-            and connection.catalog_provider_id is not None
-        ):
-            # Catalog providers on this adapter speak Chat Completions
-            # (models.dev ``@ai-sdk/openai-compatible``); no probe needed.
-            openai_transport = "chat_completions"
-        if connection.provider == "openai_compatible" and openai_transport is None:
+        route = await self._catalog_route(connection, profile.model)
+        if route is not None:
+            # The catalog documents which API this model is served on, which
+            # may differ per model on one gateway; no transport probe needed.
+            provider = route.provider
+            endpoint = route.endpoint
+            openai_transport = route.openai_transport
+        elif connection.provider == "openai_compatible" and openai_transport is None:
             from src.services.openai_transport_detection import (
                 detect_openai_transport,
             )
@@ -1150,8 +1150,13 @@ class AIModelService:
             connection.catalog_provider_id
         )
         if entry is not None:
+            # Community models on an API Bifrost cannot call are left out.
             return sorted(
-                (catalog_model_info(model) for model in entry.models.values()),
+                (
+                    catalog_model_info(model)
+                    for model in entry.models.values()
+                    if entry.is_native or entry.route(model) is not None
+                ),
                 key=lambda model: model.display_name.lower(),
             )
         result = await self.test_saved_connection(connection_id)
@@ -1165,6 +1170,22 @@ class AIModelService:
             )
             for model in result.models or []
         ]
+
+    async def _catalog_route(
+        self, connection: AIProviderConnection, model: str
+    ) -> ModelRoute | None:
+        """Catalog routing for a community provider's model, if known.
+
+        Native providers keep their own adapters; models the catalog does not
+        list keep the connection's adapter as before.
+        """
+        entry = (await get_model_catalog(self.session)).provider(
+            connection.catalog_provider_id
+        )
+        if entry is None or entry.is_native:
+            return None
+        catalog_model = entry.models.get(model)
+        return entry.route(catalog_model) if catalog_model else None
 
     async def catalog_model_for(self, profile: AIModelProfile) -> CatalogModel | None:
         catalog = await get_model_catalog(self.session)

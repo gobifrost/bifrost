@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatCacheRate, formatContextTokens } from "@/lib/run-usage";
 import { formatCost, formatNumber } from "@/lib/utils";
 import type { components } from "@/lib/v1";
+import { useModelDisplayName } from "@/services/modelNames";
 
 type Run = components["schemas"]["AgentRunDetailResponse"];
 
@@ -18,6 +19,7 @@ export function RunAIUsageCard({
 	reported?: { model: string | null; tokens: number };
 	presentation?: "card" | "embedded";
 }) {
+	const modelName = useModelDisplayName();
 	const grouped = useMemo(() => {
 		const rows = new Map<
 			string,
@@ -102,7 +104,7 @@ export function RunAIUsageCard({
 							<div>
 								<dt className="text-muted-foreground">Model</dt>
 								<dd className="mt-1 font-mono [overflow-wrap:anywhere]">
-									{reported.model}
+									{modelName(reported.model)}
 								</dd>
 							</div>
 						) : null}
@@ -123,8 +125,8 @@ export function RunAIUsageCard({
 									key={row.model}
 									className="min-w-0 space-y-3 py-3 first:pt-1"
 								>
-									<p className="font-mono text-xs [overflow-wrap:anywhere]">
-										{row.model}
+									<p className="text-xs font-medium [overflow-wrap:anywhere]" title={row.model}>
+										{modelName(row.model)}
 									</p>
 									<UsageMetrics
 										calls={row.calls}

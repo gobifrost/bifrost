@@ -5197,6 +5197,19 @@
     "reason": "Platform-admin-only operation."
   },
   {
+    "access_class": "permission",
+    "boundary": "organization",
+    "current_gate": "authenticated",
+    "inline_checks": [],
+    "intended_change": null,
+    "mcp_tool": null,
+    "method": "GET",
+    "operation_id": null,
+    "path": "/api/model-catalog/names",
+    "permission": "settings.read",
+    "reason": "Reads public catalog display names for model ids already visible to the caller."
+  },
+  {
     "access_class": "personal",
     "boundary": null,
     "current_gate": "authenticated",

@@ -37,6 +37,7 @@ import {
 	listProviderConnections,
 	type AIModelProfile,
 } from "@/services/aiModels";
+import { useModelDisplayName } from "@/services/modelNames";
 
 const PROFILE_QUERY_KEY = ["ai", "model-profiles"] as const;
 const CONNECTION_QUERY_KEY = ["ai", "provider-connections"] as const;
@@ -54,8 +55,11 @@ export interface ModelProfileSelectorProps {
 	profileErrorShownByParent?: boolean;
 }
 
-function profileDescription(profile: AIModelProfile): string {
-	return `${profile.connection.name} · ${profile.model}`;
+function profileDescription(
+	profile: AIModelProfile,
+	modelName: (model: string) => string,
+): string {
+	return `${profile.connection.name} · ${modelName(profile.model)}`;
 }
 
 export function ModelProfileSelector({
@@ -69,6 +73,7 @@ export function ModelProfileSelector({
 	isSaving = false,
 	profileErrorShownByParent = false,
 }: ModelProfileSelectorProps) {
+	const modelName = useModelDisplayName();
 	const [creating, setCreating] = useState(false);
 	const [newName, setNewName] = useState("");
 	const [newConnectionId, setNewConnectionId] = useState("");
@@ -100,7 +105,7 @@ export function ModelProfileSelector({
 		const options = profiles.map((profile) => ({
 			value: profile.id,
 			label: profile.name,
-			description: profileDescription(profile),
+			description: profileDescription(profile, modelName),
 		}));
 
 		if (
@@ -110,12 +115,12 @@ export function ModelProfileSelector({
 			options.unshift({
 				value: savedProfile.id,
 				label: savedProfile.name,
-				description: profileDescription(savedProfile),
+				description: profileDescription(savedProfile, modelName),
 			});
 		}
 
 		return options;
-	}, [profiles, savedProfile]);
+	}, [profiles, savedProfile, modelName]);
 	const connections = connectionsQuery.data ?? [];
 	const canCreate = connections.length > 0;
 

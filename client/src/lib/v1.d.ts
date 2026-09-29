@@ -6678,6 +6678,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/model-catalog/names": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Model Display Names
+         * @description Display names for the model ids shown in runs, usage, and settings.
+         */
+        get: operations["get_model_display_names_api_model_catalog_names_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/integrations": {
         parameters: {
             query?: never;
@@ -21432,6 +21452,16 @@ export interface components {
             model_count: number;
             /** Providers */
             providers: components["schemas"]["ModelCatalogProvider"][];
+        };
+        /**
+         * ModelDisplayNamesResponse
+         * @description Stored model id -> catalog display name, for ids the catalog knows.
+         */
+        ModelDisplayNamesResponse: {
+            /** Names */
+            names: {
+                [key: string]: string;
+            };
         };
         /**
          * NotificationCategory
@@ -40941,6 +40971,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_model_display_names_api_model_catalog_names_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelDisplayNamesResponse"];
                 };
             };
         };

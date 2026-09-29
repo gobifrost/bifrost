@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { RecordActionsMenu } from "@/components/common/RecordActionsMenu";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import type { AIModelPricingListItem } from "@/services/ai-pricing";
+import { useModelDisplayName } from "@/services/modelNames";
 
 export function ModelPricingList({
 	items,
@@ -13,6 +14,7 @@ export function ModelPricingList({
 	onEdit: (item: AIModelPricingListItem) => void;
 	onDelete: (item: AIModelPricingListItem) => void;
 }) {
+	const modelName = useModelDisplayName();
 	return (
 		<ul
 			aria-label="Model pricing"
@@ -31,10 +33,11 @@ export function ModelPricingList({
 							aria-label={`Edit ${item.model}`}
 							onClick={() => onEdit(item)}
 						>
-							{item.model}
+							{modelName(item.model)}
 						</Button>
 						<p className="mt-1 text-sm text-muted-foreground [overflow-wrap:anywhere]">
 							{item.provider}
+							{modelName(item.model) !== item.model ? ` · ${item.model}` : ""}
 						</p>
 					</div>
 					<dl className="col-span-2 row-start-2 grid min-w-0 grid-cols-2 gap-4 text-sm @3xl:col-span-1 @3xl:col-start-2 @3xl:row-start-1">

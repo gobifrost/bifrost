@@ -1,4 +1,5 @@
-import { render, screen, within } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
+import { renderWithProviders } from "@/test-utils";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { ExecutionAiUsage } from "./ExecutionAiUsage";
@@ -24,7 +25,7 @@ function call(
 
 describe("ExecutionAiUsage", () => {
 	it("combines repeated calls while keeping providers distinct and full names visible", () => {
-		render(
+		renderWithProviders(
 			<ExecutionAiUsage
 				usage={[call("one", 100), call("one", 200), call("two", 400)]}
 			/>,
@@ -45,7 +46,7 @@ describe("ExecutionAiUsage", () => {
 
 	it("keeps totals visible when keyboard users collapse model details", async () => {
 		const user = userEvent.setup();
-		render(
+		renderWithProviders(
 			<ExecutionAiUsage
 				usage={[call("one", 100)]}
 				totals={{

@@ -59,6 +59,7 @@ from src.routers import (
     chat_router,
     llm_config_router,
     ai_models_router,
+    model_catalog_router,
     integrations_router,
     decorator_properties_router,
     maintenance_router,
@@ -421,6 +422,7 @@ def create_app() -> FastAPI:
     app.include_router(chat_router)
     app.include_router(llm_config_router)
     app.include_router(ai_models_router)
+    app.include_router(model_catalog_router)
     app.include_router(integrations_router)
     app.include_router(decorator_properties_router)
     app.include_router(maintenance_router)

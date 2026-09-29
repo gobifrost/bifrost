@@ -1,4 +1,5 @@
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
+import { renderWithProviders } from "@/test-utils";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { FailoverProfileField } from "./FailoverProfileField";
@@ -36,7 +37,7 @@ const profiles = [
 describe("FailoverProfileField", () => {
 	it("excludes the profile being edited from the options", async () => {
 		const user = userEvent.setup();
-		render(
+		renderWithProviders(
 			<FailoverProfileField
 				id="failover"
 				profiles={profiles}
@@ -54,7 +55,7 @@ describe("FailoverProfileField", () => {
 	it("selecting none clears the fallback", async () => {
 		const user = userEvent.setup();
 		const onChange = vi.fn();
-		render(
+		renderWithProviders(
 			<FailoverProfileField
 				id="failover"
 				profiles={profiles}
@@ -70,7 +71,7 @@ describe("FailoverProfileField", () => {
 	});
 
 	it("warns when the fallback shares the connection", () => {
-		render(
+		renderWithProviders(
 			<FailoverProfileField
 				id="failover"
 				profiles={profiles}
@@ -84,7 +85,7 @@ describe("FailoverProfileField", () => {
 	});
 
 	it("stays quiet for a different-connection fallback", () => {
-		render(
+		renderWithProviders(
 			<FailoverProfileField
 				id="failover"
 				profiles={profiles}

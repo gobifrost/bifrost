@@ -832,3 +832,65 @@ async def test_chat_capabilities_prefer_admin_record_then_catalog(db_session, ca
     )
     capabilities = await service.profile_capabilities(asserted)
     assert (capabilities.source, capabilities.tool_calling) == ("manual", False)
+
+
+@pytest.mark.asyncio
+async def test_gateway_models_route_to_the_api_the_catalog_documents(db_session):
+    from src.services.model_catalog import parse_catalog
+
+    gateway = parse_catalog(
+        {
+            "zen": {
+                "id": "zen",
+                "name": "Zen",
+                "npm": "@ai-sdk/openai-compatible",
+                "api": "https://gateway.example/zen/v1",
+                "models": {
+                    "kimi": {"id": "kimi", "name": "Kimi"},
+                    "gpt": {"id": "gpt", "name": "GPT", "provider": {"npm": "@ai-sdk/openai"}},
+                    "claude": {"id": "claude", "name": "Claude", "provider": {"npm": "@ai-sdk/anthropic"}},
+                    "gemini": {"id": "gemini", "name": "Gemini", "provider": {"npm": "@ai-sdk/google"}},
+                    "vertex": {
+                        "id": "vertex",
+                        "name": "Vertex",
+                        "provider": {"npm": "@ai-sdk/openai", "api": "https://${REGION}.example/v1"},
+                    },
+                },
+            }
+        },
+        fetched_at=None,
+        source="bundled",
+    )
+    with patch(
+        "src.services.ai_model_service.get_model_catalog",
+        new=AsyncMock(return_value=gateway),
+    ):
+        service = AIModelService(db_session)
+        connection = await service.create_connection(
+            name=f"Zen {uuid4().hex[:8]}",
+            provider="openai_compatible",
+            api_key="k",
+            endpoint=None,
+            catalog_provider_id="zen",
+        )
+        routes = {}
+        for model in ("kimi", "gpt", "claude"):
+            profile = await service.create_profile(
+                name=f"{model} {uuid4().hex[:8]}",
+                connection_id=connection.id,
+                model=model,
+                capabilities=None,
+                enabled_for_chat=False,
+            )
+            config = await service.resolve_config(profile_id=profile.id)
+            routes[model] = (config.provider, config.endpoint, config.openai_transport)
+        listed = {model.id for model in await service.list_models(connection.id) or []}
+
+    assert routes == {
+        "kimi": ("openai", "https://gateway.example/zen/v1", "chat_completions"),
+        "gpt": ("openai", "https://gateway.example/zen/v1", "responses"),
+        # The Anthropic SDK appends /v1/messages itself.
+        "claude": ("anthropic", "https://gateway.example/zen", None),
+    }
+    # A Google /v1 endpoint and a templated URL cannot be called; not offered.
+    assert listed == {"kimi", "gpt", "claude"}

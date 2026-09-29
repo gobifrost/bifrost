@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/collapsible";
 import { formatCost, formatNumber } from "@/lib/utils";
 import type { components } from "@/lib/v1";
+import { useModelDisplayName } from "@/services/modelNames";
 
 type Usage = components["schemas"]["AIUsagePublicSimple"];
 interface ExecutionAiUsageProps {
@@ -23,6 +24,7 @@ interface ExecutionAiUsageProps {
 
 export function ExecutionAiUsage({ usage, totals }: ExecutionAiUsageProps) {
 	const [open, setOpen] = useState(true);
+	const modelName = useModelDisplayName();
 	const groups = useMemo(() => {
 		const result = new Map<
 			string,
@@ -95,8 +97,8 @@ export function ExecutionAiUsage({ usage, totals }: ExecutionAiUsageProps) {
 					{groups.map(([key, group]) => (
 						<li key={key} className="min-w-0 space-y-3 py-3">
 							<div className="space-y-1">
-								<p className="font-mono text-sm [overflow-wrap:anywhere]">
-									{group.model}
+								<p className="text-sm font-medium [overflow-wrap:anywhere]" title={group.model}>
+									{modelName(group.model)}
 								</p>
 								<p className="text-sm text-muted-foreground [overflow-wrap:anywhere]">
 									{group.provider} · {group.calls}{" "}
