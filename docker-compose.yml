@@ -258,6 +258,8 @@ services:
       BIFROST_S3_SECRET_KEY: ${BIFROST_S3_SECRET_KEY:-${SEAWEEDFS_SECRET_KEY}}
       BIFROST_S3_REGION: ${BIFROST_S3_REGION:-us-east-1}
     depends_on:
+      init:
+        condition: service_completed_successfully
       pgbouncer:
         condition: service_healthy
       rabbitmq:

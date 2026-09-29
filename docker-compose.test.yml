@@ -247,8 +247,12 @@ services:
       - /app/src/services/sdk_package/node_modules  # preserve npm deps from image
       - /app/src/services/sdk_package/sdk_src  # preserve image-baked SDK source (masked by :ro src mount)
       - ./api/shared:/app/shared:ro
+      - ./api/alembic:/app/alembic:ro
+      - ./api/alembic.ini:/app/alembic.ini:ro
       - ./api/bifrost:/app/bifrost:ro
     depends_on:
+      init:
+        condition: service_completed_successfully
       pgbouncer:
         condition: service_healthy
       rabbitmq:
@@ -296,6 +300,8 @@ services:
       - /app/src/services/sdk_package/node_modules  # preserve npm deps from image
       - /app/src/services/sdk_package/sdk_src  # preserve image-baked SDK source (masked by :ro src mount)
       - ./api/shared:/app/shared:ro
+      - ./api/alembic:/app/alembic:ro
+      - ./api/alembic.ini:/app/alembic.ini:ro
       - ./api/bifrost:/app/bifrost:ro
       - test-mounts:/mounts
       # Platform jobs (Solution git sync, workspace imports) run on the
@@ -304,6 +310,8 @@ services:
       # uid-1000-created fixture subdir, never the LOG_DIR root.
       - ${LOG_DIR:-/tmp/bifrost}/solution-repo-fixtures:/tmp/bifrost/solution-repo-fixtures
     depends_on:
+      init:
+        condition: service_completed_successfully
       pgbouncer:
         condition: service_healthy
       rabbitmq:

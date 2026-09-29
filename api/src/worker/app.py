@@ -19,7 +19,8 @@ import os
 import signal
 
 from src.config import get_settings
-from src.core.database import init_db, close_db
+from shared.schema_gate import wait_for_schema
+from src.core.database import close_db, get_engine, init_db
 from src.jobs.rabbitmq import rabbitmq
 from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer
 from src.jobs.consumers.package_install import PackageInstallConsumer
@@ -90,6 +91,10 @@ class Worker:
                     # Initialize database connection
                     logger.info("Initializing database connection...")
                     await init_db()
+
+                if not self._stopping:
+                    # Do not consume work against a schema older than this image.
+                    await wait_for_schema(get_engine())
 
                 if not self._stopping:
                     # Configure the ORM before accepting queue messages. Lazy mapper

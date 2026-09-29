@@ -28,7 +28,8 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from src.config import get_settings
-from src.core.database import init_db, close_db
+from shared.schema_gate import wait_for_schema
+from src.core.database import close_db, get_engine, init_db
 from src.jobs.schedulers.cron_scheduler import process_schedule_sources
 from src.jobs.schedulers.execution_cleanup import cleanup_stuck_executions
 from src.jobs.schedulers.platform_jobs import platform_job_worker_loop
@@ -107,6 +108,10 @@ class Scheduler:
         logger.info("Initializing database connection...")
         await init_db()
         logger.info("Database connection established")
+
+        # Heartbeat stays stale until the schema is current, so the health
+        # probe reports unhealthy while waiting on migrations.
+        await wait_for_schema(get_engine())
 
         write_heartbeat()
         self._heartbeat_task = asyncio.create_task(heartbeat_loop())
