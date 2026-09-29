@@ -36,6 +36,7 @@ from pydantic import ValidationError
 from sqlalchemy import delete, insert, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.models.contracts.workflow_permissions import RequestedWorkflowPermissions
 from src.models.orm.agents import Agent, AgentRole
 from src.models.orm.events import (
     EventSource,
@@ -55,6 +56,7 @@ from src.models.orm.workflows import Workflow
 from src.services.solution_deploy_preflight import preflight_workflows
 from src.services.solutions.storage import SolutionStorage
 from src.services.sync_ops import Upsert
+from src.services.workflow_permissions import sync_solution_permission_requests
 from shared.logo_processing import ProcessedLogo, process_logo
 
 logger = logging.getLogger(__name__)
@@ -838,6 +840,7 @@ class SolutionDeployer:
         sid = solution.id
         indexer = WorkflowIndexer(self.db)
         source_files = python_files or {}
+        permission_requests: dict[UUID, RequestedWorkflowPermissions] = {}
         for mwf in workflows:
             wf_id = UUID(mwf["id"])
 
@@ -861,6 +864,16 @@ class SolutionDeployer:
                     )
 
             mwf_model = ManifestWorkflow(**mwf)
+            if mwf_model.requested_permissions is not None:
+                try:
+                    permission_requests[wf_id] = RequestedWorkflowPermissions.model_validate(
+                        mwf_model.requested_permissions.model_dump()
+                    )
+                except ValidationError as exc:
+                    raise SolutionDeployConflict(
+                        f"workflow '{mwf_model.name}': invalid requested_permissions: "
+                        + "; ".join(e["msg"] for e in exc.errors())
+                    ) from exc
             values = {
                 **mwf_model.to_orm_values(Destination.INSTALL).direct,
                 # Scope is inherited from the install — no per-entity binding.
@@ -888,6 +901,9 @@ class SolutionDeployer:
             await self._sync_entity_roles(
                 WorkflowRole, "workflow_id", wf_id, await self._resolve_roles(mwf)
             )
+        await sync_solution_permission_requests(
+            self.db, solution_id=sid, requests=permission_requests
+        )
 
     async def _upsert_tables(
         self, solution: Solution, tables: list[dict[str, Any]]

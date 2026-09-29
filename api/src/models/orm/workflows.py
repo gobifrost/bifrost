@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -117,6 +117,10 @@ class Workflow(Base):
         String(20), default="role_based", server_default="role_based"
     )
 
+    # Values: 'full' | 'restricted'. NULL follows the platform default; nothing
+    # reads this until delegated execution.
+    permission_mode: Mapped[str | None] = mapped_column(String(16), default=None)
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=text("NOW()")
@@ -148,6 +152,10 @@ class Workflow(Base):
     )
 
     __table_args__ = (
+        CheckConstraint(
+            "permission_mode IN ('full', 'restricted')",
+            name="ck_workflows_permission_mode",
+        ),
         Index(
             "ix_workflows_api_key_hash",
             "api_key_hash",
