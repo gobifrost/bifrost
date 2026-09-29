@@ -35,11 +35,6 @@ class ActorContext:
     # about which client made the call. See
     # src/core/request_actor.py::actor_from_token_payload for resolution.
     surface: str = "web"
-    # Catalog operation id (operation_catalog.py) for the route that
-    # produced this event, stamped after route matching by
-    # src/core/app_wiring.py::install_operation_id_capture. None for
-    # routes with no catalog binding.
-    operation_id: str | None = None
 
 
 _actor: ContextVar[ActorContext | None] = ContextVar("audit_actor", default=None)
@@ -61,3 +56,31 @@ def clear_actor(token: Token[ActorContext | None] | None = None) -> None:
         _actor.reset(token)
     else:
         _actor.set(None)
+
+
+# The current request's raw ASGI ``scope`` dict (or None outside a request).
+# Stashed by the request-context middleware (src/core/app_wiring.py) right
+# alongside the actor, before ``call_next`` — Starlette's router mutates this
+# same dict in place with ``scope["route"]`` once it matches a route, so by
+# the time a handler calls emit_audit(), the route (if any) is already
+# present. This intentionally uses no FastAPI/Starlette internals beyond the
+# public ASGI scope contract.
+_request_scope: ContextVar[dict | None] = ContextVar("audit_request_scope", default=None)
+
+
+def current_request_scope() -> dict | None:
+    """Return the current request's ASGI scope, or None outside a request."""
+    return _request_scope.get()
+
+
+def set_request_scope(scope: dict) -> Token[dict | None]:
+    """Set the current request's ASGI scope. Returns the reset token."""
+    return _request_scope.set(scope)
+
+
+def clear_request_scope(token: Token[dict | None] | None = None) -> None:
+    """Clear the request scope (optionally with a reset token from set_request_scope)."""
+    if token is not None:
+        _request_scope.reset(token)
+    else:
+        _request_scope.set(None)

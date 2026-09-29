@@ -817,9 +817,9 @@ async def _generate_login_tokens(user, db, response: Response | None = None) -> 
         user_agent=base_actor.user_agent if base_actor else None,
         source="http",
         # Same request as the middleware's pre-auth actor — carry over its
-        # already-resolved surface/operation_id rather than defaulting.
+        # already-resolved surface rather than defaulting. operation_id is
+        # resolved separately, at emit time, from the request scope.
         surface=base_actor.surface if base_actor else "web",
-        operation_id=base_actor.operation_id if base_actor else None,
     )
     await emit_audit(
         db,

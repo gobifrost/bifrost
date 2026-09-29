@@ -6,15 +6,14 @@ objects. They must therefore share the same global exception mapping and the
 same request-context middleware, so an SDK call made over the worker's Unix
 socket is attributed and errored identically to one made over HTTP.
 
-This module is the single home for that wiring: :func:`register_exception_handlers`,
-:func:`install_request_context_middleware`, and :func:`install_operation_id_capture`.
+This module is the single home for that wiring: :func:`register_exception_handlers`
+and :func:`install_request_context_middleware`.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from contextvars import ContextVar
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -25,14 +24,6 @@ from sqlalchemy.exc import IntegrityError, NoResultFound, OperationalError
 from src.models.contracts.common import ErrorResponse
 
 logger = logging.getLogger(__name__)
-
-# The current request's engine-token ``engine_workflow_id`` claim (attribution
-# only), read by _capture_operation_id() to feed the workflow-operation-usage
-# counter. Set by the request-context middleware; not part of ActorContext
-# since it is never used for audit attribution, only for that counter.
-_engine_workflow_id: ContextVar[str | None] = ContextVar(
-    "engine_workflow_id", default=None
-)
 
 
 def register_exception_handlers(app: FastAPI) -> None:
@@ -183,6 +174,19 @@ def install_request_context_middleware(app: FastAPI) -> None:
     so HTTP and worker-local (Unix socket) requests attribute audit events
     identically. Unauthenticated requests still get an anonymous actor so
     failed logins are recorded with network metadata.
+
+    Also stashes the request's raw ASGI ``scope`` dict (see
+    :func:`src.services.audit_context.set_request_scope`). Starlette's router
+    mutates that same dict in place with ``scope["route"]`` once it matches a
+    route — a fact that holds regardless of *how* a route reached this app
+    (``include_router`` on the main app, or spliced directly into
+    ``app.router.routes`` by the worker-local SDK socket app), since it is
+    part of the public ASGI routing contract, not a FastAPI/Starlette
+    implementation detail. ``emit_audit()`` reads ``scope["route"]`` at
+    emission time to resolve the catalog operation id for the audit row;
+    this middleware also reads it (after ``call_next`` returns, once routing
+    has necessarily happened) to feed the workflow-operation-usage counter
+    for engine-token requests carrying an ``engine_workflow_id`` claim.
     """
     from src.core.rate_limit import get_client_ip
     from src.core.request_actor import (
@@ -198,7 +202,9 @@ def install_request_context_middleware(app: FastAPI) -> None:
     from src.services.audit_context import (
         ActorContext,
         clear_actor,
+        clear_request_scope,
         set_actor,
+        set_request_scope,
     )
 
     @app.middleware("http")
@@ -255,87 +261,32 @@ def install_request_context_middleware(app: FastAPI) -> None:
                 surface=resolve_self_reported_surface(surface_header),
             )
         actor_token = set_actor(actor)
+        scope_token = set_request_scope(request.scope)
         # Attribution only (see mint_engine_token docstring): feeds the
-        # workflow-operation-usage counter in _capture_operation_id, never
-        # read for authorization.
-        engine_workflow_token = _engine_workflow_id.set(
-            payload.get("engine_workflow_id") if payload else None
-        )
+        # workflow-operation-usage counter below, never read for authorization.
+        engine_workflow_id = payload.get("engine_workflow_id") if payload else None
 
         try:
             response = await call_next(request)
+            # Routing has necessarily happened by now, so request.scope["route"]
+            # (if any route matched) is populated.
+            if engine_workflow_id:
+                route = request.scope.get("route")
+                if route is not None:
+                    operation_key = (
+                        getattr(route, "operation_id", None)
+                        or f"{request.method} {route.path}"
+                    )
+                    await _record_workflow_operation_usage(
+                        engine_workflow_id, operation_key
+                    )
         finally:
             # Reset context after request
             set_request_user(None)
             set_request_session_id(None)
             clear_actor(actor_token)
-            _engine_workflow_id.reset(engine_workflow_token)
+            clear_request_scope(scope_token)
         return response
-
-
-def install_operation_id_capture(app: FastAPI) -> None:
-    """Stamp each request's matched-route catalog operation id onto the actor.
-
-    ``request.scope["route"]`` is only populated once Starlette has matched
-    a route — i.e. after ``install_request_context_middleware``'s outer HTTP
-    middleware has already set the actor, and after it would already be too
-    late for a plain "before call_next" middleware step to see it. A FastAPI
-    dependency runs at the right time (after routing, before the endpoint
-    body), but a *global* ``dependencies=[...]`` list is only merged into a
-    route's ``Dependant`` when that route is registered through
-    ``include_router``/``add_api_route``. The worker-local SDK app
-    (``worker_sdk_http.py``) instead splices already-built ``APIRoute``
-    objects straight into ``app.router.routes``, bypassing that merge, so a
-    global dependency would silently miss every worker-local SDK route.
-
-    Mutating each route's already-built ``Dependant.dependencies`` list
-    directly — after every route has been added to ``app`` — works
-    uniformly for both apps regardless of how a given route got there: the
-    list is read fresh at each request, not frozen at route-construction
-    time (verified: this is the same object the request handler already
-    holds a reference to).
-
-    Call once, after the last route has been added to ``app``.
-    """
-    from fastapi.dependencies.utils import get_dependant
-    from fastapi.routing import APIRoute
-
-    for route in app.routes:
-        if isinstance(route, APIRoute):
-            route.dependant.dependencies.insert(
-                0, get_dependant(path=route.path, call=_capture_operation_id)
-            )
-
-
-async def _capture_operation_id(request: Request) -> None:
-    """Stamp the matched route's catalog operation id onto the audit actor.
-
-    Runs as a synthetic dependency on every route (see
-    :func:`install_operation_id_capture`), after routing has matched
-    ``request.scope["route"]`` but before the endpoint body executes.
-    Routes without a catalog operation id (no ``operation_route()``
-    binding) leave the actor's ``operation_id`` unset.
-
-    Also feeds the per-workflow catalog-operation-usage counter (Part 2 of
-    R2a-2) for requests authenticated by an engine token that carries an
-    ``engine_workflow_id`` claim.
-    """
-    from dataclasses import replace
-
-    from src.services.audit_context import current_actor, set_actor
-
-    route = request.scope.get("route")
-    operation_id = getattr(route, "operation_id", None) if route is not None else None
-
-    if operation_id:
-        actor = current_actor()
-        if actor is not None:
-            set_actor(replace(actor, operation_id=operation_id))
-
-    workflow_id = _engine_workflow_id.get()
-    if workflow_id and route is not None:
-        operation_key = operation_id or f"{request.method} {route.path}"
-        await _record_workflow_operation_usage(workflow_id, operation_key)
 
 
 async def _record_workflow_operation_usage(workflow_id: str, operation_key: str) -> None:

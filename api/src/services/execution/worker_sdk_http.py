@@ -558,13 +558,6 @@ def build_worker_sdk_app() -> Any:
             f"({selected}/{expected}); route selection is stale"
         )
 
-    # Must run after every route is spliced in above — see docstring. These
-    # routes were built (and their Dependant fixed) by their original router
-    # module, so a global FastAPI ``dependencies=`` list would never reach
-    # them; this mutates each route's Dependant directly instead.
-    from src.core.app_wiring import install_operation_id_capture
-    install_operation_id_capture(app)
-
     return app
 
 

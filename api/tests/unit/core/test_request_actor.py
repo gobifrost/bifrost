@@ -192,7 +192,6 @@ class TestSurfaceResolution:
         actor = _actor({"sub": str(uuid4()), "org_id": str(uuid4())})
         assert actor is not None
         assert actor.surface == "web"
-        assert actor.operation_id is None
 
     def test_human_token_self_reports_cli(self):
         actor = _actor(

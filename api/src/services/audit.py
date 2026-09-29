@@ -23,11 +23,27 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.repositories.audit_logs import AuditLogRepository
-from src.services.audit_context import ActorContext, current_actor
+from src.services.audit_context import ActorContext, current_actor, current_request_scope
 
 logger = logging.getLogger(__name__)
 
 Outcome = Literal["success", "failure"]
+
+
+def _operation_id_from_current_scope() -> str | None:
+    """Resolve the catalog operation id for the request being handled, if any.
+
+    Reads ``request.scope["route"]`` at emission time (not stamped ahead of
+    time onto the actor) via the ASGI scope dict stashed by
+    ``src.core.app_wiring``'s request-context middleware. None outside an
+    HTTP request, or for a route with no catalog binding
+    (``operation_route()``).
+    """
+    scope = current_request_scope()
+    if scope is None:
+        return None
+    route = scope.get("route")
+    return getattr(route, "operation_id", None) if route is not None else None
 
 
 async def emit_audit(
@@ -64,6 +80,8 @@ async def emit_audit(
     if actor is None:
         return
 
+    operation_id = _operation_id_from_current_scope()
+
     async def _insert(user_id: UUID | None) -> None:
         # Wrap the insert in a SAVEPOINT so a failed audit row (e.g. a dangling
         # actor FK from a stale token) rolls back only itself — never the
@@ -84,7 +102,7 @@ async def emit_audit(
                 user_agent=actor.user_agent,
                 details=details,
                 execution_id=actor.execution_id,
-                operation_id=actor.operation_id,
+                operation_id=operation_id,
                 surface=actor.surface,
             )
 
