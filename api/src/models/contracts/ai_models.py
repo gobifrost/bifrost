@@ -174,6 +174,11 @@ class AIConnectionTestResponse(BaseModel):
     models: list[LLMModelInfo] | None = None
 
 
+class AIModelProfileVerifyResponse(BaseModel):
+    success: bool
+    message: str
+
+
 class AIModelsResponse(BaseModel):
     provider: AIProviderKind
     # "catalog" = models.dev list for a catalog provider; "provider" = the

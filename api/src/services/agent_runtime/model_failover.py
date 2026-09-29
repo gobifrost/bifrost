@@ -46,10 +46,10 @@ def is_failover_eligible(exc: BaseException) -> bool:
         return False
     if isinstance(status, int):
         return status in FAILOVERABLE_STATUS_CODES
-    return _is_connection_error(exc)
+    return is_connection_error(exc)
 
 
-def _is_connection_error(exc: BaseException) -> bool:
+def is_connection_error(exc: BaseException) -> bool:
     """Match provider-SDK connection/timeout errors without module-scope imports."""
     try:
         from anthropic import (

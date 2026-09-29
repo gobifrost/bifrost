@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 from dataclasses import dataclass
@@ -66,6 +67,8 @@ ASSIGNMENT_KEYS: tuple[AIModelAssignmentKey, ...] = (
 #: Bounds worst-case spend and added latency: each chain member only runs
 #: after the previous one exhausted its own 6-attempt / 60s transport budget.
 MAX_FAILOVER_CHAIN_LENGTH = 3
+# A profile check that has not answered by then is reported as failed.
+PROFILE_VERIFY_TIMEOUT_SECONDS = 30
 
 
 @dataclass(frozen=True)
@@ -1137,6 +1140,44 @@ class AIModelService:
                 endpoint=connection.endpoint,
             )
         )
+
+    async def verify_profile(self, profile_id: UUID) -> ProviderTestResult:
+        """Send one short request through the profile's own runtime path.
+
+        Listing ``/models`` proves little: some providers have no listing,
+        some list without checking the key, and a key can list models it may
+        not call. This uses the same routing, reasoning choice, and output
+        limit a run would, without the profile's failover chain.
+        """
+        from src.services.llm.base import LLMMessage
+        from src.services.llm.provider_errors import describe_provider_error
+        from src.services.llm.pydantic_client import PydanticAIClient
+        from src.services.provider_catalog_service import ProviderTestResult
+
+        profile = await self.get_profile(profile_id)
+        try:
+            config = await self._config_for_profile(profile)
+            async with asyncio.timeout(PROFILE_VERIFY_TIMEOUT_SECONDS):
+                await PydanticAIClient(config).complete(
+                    [LLMMessage(role="user", content="Reply with the word OK.")]
+                )
+        except TimeoutError:
+            return ProviderTestResult(
+                False,
+                f"The provider did not answer within {PROFILE_VERIFY_TIMEOUT_SECONDS} seconds.",
+            )
+        except Exception as error:
+            logger.warning(
+                "ai_model_profile_verify_failed",
+                extra={
+                    "profile_id": str(profile.id),
+                    "model": profile.model,
+                    "error_type": type(error).__name__,
+                    "error": str(error)[:1000],
+                },
+            )
+            return ProviderTestResult(False, describe_provider_error(error))
+        return ProviderTestResult(True, "The model answered a test request.")
 
     async def list_models(self, connection_id: UUID) -> list[LLMModelInfo] | None:
         """Catalog models for a catalog-linked connection, else the live list.

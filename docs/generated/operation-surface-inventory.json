@@ -9913,7 +9913,7 @@
     "cli": 154,
     "manifest": 16,
     "mcp": 94,
-    "rest": 645,
+    "rest": 646,
     "sdk": 19
   },
   "schema_version": 1,
@@ -10918,6 +10918,13 @@
         "method": "PATCH",
         "operation_id": "",
         "path": "/api/admin/ai/profiles/{profile_id}",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/api/admin/ai/profiles/{profile_id}/verify",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
