@@ -74,3 +74,31 @@ def test_derived_permissions_are_read_only_organization_scoped():
 def test_platform_operator_permissions_are_read_only():
     for permission in PLATFORM_OPERATOR_PERMISSIONS:
         assert permission.endswith(".read"), permission
+
+
+def test_r2b_migration_frozen_copy_matches_live_constants():
+    """The R2b migration carries its own frozen copy (it must not import live
+    code). Today that copy must equal the live constants; after a deliberate
+    change to the live values, update them through a NEW migration and adjust
+    this test to pin the new revision instead."""
+    import importlib.util
+    from pathlib import Path
+
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "alembic"
+        / "versions"
+        / "20260929_r2b_roles.py"
+    )
+    spec = importlib.util.spec_from_file_location("r2b_roles_migration", path)
+    assert spec and spec.loader
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+
+    assert migration.PLATFORM_ADMIN_ROLE_ID == PLATFORM_ADMIN_ROLE_ID
+    assert migration.USER_ROLE_ID == USER_ROLE_ID
+    assert migration.PLATFORM_OPERATOR_ROLE_ID == PLATFORM_OPERATOR_ROLE_ID
+    assert migration.USER_BASE_PERMISSIONS == USER_BASE_PERMISSIONS
+    assert migration.PLATFORM_OPERATOR_PERMISSIONS == PLATFORM_OPERATOR_PERMISSIONS
+    source = path.read_text()
+    assert "from shared" not in source and "from src" not in source

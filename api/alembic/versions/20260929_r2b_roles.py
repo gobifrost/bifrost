@@ -1,7 +1,7 @@
 """R2b: base roles, role permissions, boundaries + backfill (not enforced)
 
 Revision ID: 20260929_r2b_roles
-Revises: 20260928_r1b_mcp_names_b5
+Revises: 20260928_audit_op_surface
 Create Date: 2026-09-29
 
 Adds the data model for the R2/R3 roles catalog and backfills it so it
@@ -35,16 +35,52 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-from shared.builtin_roles import (
-    PLATFORM_ADMIN_ROLE_ID,
-    PLATFORM_OPERATOR_PERMISSIONS,
-    PLATFORM_OPERATOR_ROLE_ID,
-    USER_BASE_PERMISSIONS,
-    USER_ROLE_ID,
+from uuid import UUID
+
+# Frozen at the time this migration was written. Migrations never import live
+# application code: shared/builtin_roles.py may evolve, but this revision must
+# keep meaning what it meant. tests/unit/test_builtin_roles.py asserts these
+# copies equal the live constants and the access-list derivation today.
+PLATFORM_ADMIN_ROLE_ID = UUID("00000000-0000-0000-0000-000000000005")
+USER_ROLE_ID = UUID("00000000-0000-0000-0000-000000000006")
+PLATFORM_OPERATOR_ROLE_ID = UUID("00000000-0000-0000-0000-000000000007")
+USER_BASE_PERMISSIONS: frozenset[str] = frozenset(
+    {
+        "agentruns.read",
+        "agents.read",
+        "apps.read",
+        "configs.read",
+        "events.read",
+        "executions.read",
+        "forms.read",
+        "integrations.read",
+        "knowledge.read",
+        "mcp.read",
+        "metrics.read",
+        "policyrules.read",
+        "roles.read",
+        "settings.read",
+        "tables.read",
+        "workflows.read",
+    }
+)
+PLATFORM_OPERATOR_PERMISSIONS: frozenset[str] = frozenset(
+    {
+        "agentruns.read",
+        "agents.read",
+        "apps.read",
+        "configs.read",
+        "executions.read",
+        "forms.read",
+        "integrations.read",
+        "metrics.read",
+        "organizations.read",
+        "workflows.read",
+    }
 )
 
 revision: str = "20260929_r2b_roles"
-down_revision: Union[str, None] = "20260928_r1b_mcp_names_b5"
+down_revision: Union[str, None] = "20260928_audit_op_surface"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
