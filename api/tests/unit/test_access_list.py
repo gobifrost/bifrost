@@ -360,6 +360,65 @@ class TestConsistency:
                 mismatches.append((entry.operation_id, entry.permission, op.action_scopes))
         assert not mismatches, f"permission not in catalogued action_scopes vocabulary: {mismatches}"
 
+    def test_permission_domains_are_in_the_closed_vocabulary(self) -> None:
+        # AccessEntry's own validator already enforces this at construction
+        # time (see PERMISSION_DOMAINS); re-assert here for the same reason
+        # as test_permission_entries_have_permission_and_boundary above.
+        from src.models.contracts.permissions import PERMISSION_DOMAINS
+
+        unknown = []
+        for entry in ACCESS_LIST:
+            if entry.permission is None:
+                continue
+            domain, _, _action = entry.permission.rpartition(".")
+            if domain not in PERMISSION_DOMAINS:
+                unknown.append((entry.key, domain))
+        assert not unknown, f"permission domain outside PERMISSION_DOMAINS: {unknown}"
+
+    # A (domain, current_gate) group is allowed mixed boundaries only when the
+    # domain is one of the intentionally-collapsed multi-resource buckets
+    # (settings/metrics/platform) or genuinely holds two differently-scoped
+    # sub-resources under the same gate — each entry's own `reason` states
+    # which. Any OTHER (domain, gate) group must use one boundary throughout:
+    # the same resource's read and write routes can't arbitrarily disagree.
+    _ALLOWED_MIXED_BOUNDARY_GROUPS = {
+        # Settings bucket: some sub-resources are inherently global (AI
+        # pricing, branding), others inherently per-org (OAuth SSO config,
+        # embed secrets, workflow signing keys) — see the domain description.
+        ("settings", CurrentGate.SUPERUSER),
+        # Metrics bucket: ROI reports are per-org; the rest (audit,
+        # cross-org dashboards, scheduler diagnostics) are platform-wide.
+        ("metrics", CurrentGate.SUPERUSER),
+        # Platform bucket: the org-scoped external-service registry
+        # (/api/services/*) sits alongside genuinely global maintenance/
+        # packages/github/kubernetes/worker admin.
+        ("platform", CurrentGate.SUPERUSER),
+        # Roles domain: /api/roles/* is genuinely org-cascaded; the two
+        # /api/users/{id}/roles|forms reads are flat global lookups with no
+        # org filter (see their reason text).
+        ("roles", CurrentGate.SUPERUSER),
+        # required-instructions (settings, folded in above) has a
+        # platform-wide GET/PUT and a deliberate per-org
+        # /organizations/{organization_id} variant (see reason text).
+    }
+
+    def test_same_domain_same_gate_entries_share_one_boundary(self) -> None:
+        groups: dict[tuple[str, CurrentGate], set[str]] = {}
+        for entry in ACCESS_LIST:
+            if entry.permission is None:
+                continue
+            domain, _, _action = entry.permission.rpartition(".")
+            groups.setdefault((domain, entry.current_gate), set()).add(entry.boundary)
+        unjustified = {
+            key: boundaries
+            for key, boundaries in groups.items()
+            if len(boundaries) > 1 and key not in self._ALLOWED_MIXED_BOUNDARY_GROUPS
+        }
+        assert not unjustified, (
+            "same (permission domain, current_gate) group uses more than one "
+            f"boundary with no listed justification: {unjustified}"
+        )
+
 
 class TestMcpMatchesRest:
     def test_bound_mcp_tools_inherit_their_rest_entry(self, entries_by_key) -> None:

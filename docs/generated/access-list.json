@@ -100,7 +100,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/admin/ai/assignments",
-    "permission": "ai_models.read",
+    "permission": "settings.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -113,7 +113,7 @@
     "method": "DELETE",
     "operation_id": null,
     "path": "/api/admin/ai/assignments/{assignment_key}",
-    "permission": "ai_models.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -126,7 +126,7 @@
     "method": "PUT",
     "operation_id": null,
     "path": "/api/admin/ai/assignments/{assignment_key}",
-    "permission": "ai_models.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -139,7 +139,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/admin/ai/behavior",
-    "permission": "ai_models.read",
+    "permission": "settings.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -152,7 +152,7 @@
     "method": "PUT",
     "operation_id": null,
     "path": "/api/admin/ai/behavior",
-    "permission": "ai_models.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -165,7 +165,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/admin/ai/connections",
-    "permission": "ai_models.read",
+    "permission": "settings.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -178,7 +178,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/admin/ai/connections",
-    "permission": "ai_models.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -191,7 +191,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/admin/ai/connections/verify",
-    "permission": "ai_models.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -204,7 +204,7 @@
     "method": "DELETE",
     "operation_id": null,
     "path": "/api/admin/ai/connections/{connection_id}",
-    "permission": "ai_models.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -217,7 +217,7 @@
     "method": "PATCH",
     "operation_id": null,
     "path": "/api/admin/ai/connections/{connection_id}",
-    "permission": "ai_models.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -230,7 +230,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/admin/ai/connections/{connection_id}/models",
-    "permission": "ai_models.read",
+    "permission": "settings.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -243,7 +243,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/admin/ai/connections/{connection_id}/test",
-    "permission": "ai_models.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -256,7 +256,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/admin/ai/profiles",
-    "permission": "ai_models.read",
+    "permission": "settings.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -269,7 +269,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/admin/ai/profiles",
-    "permission": "ai_models.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -282,7 +282,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/admin/ai/profiles/merge",
-    "permission": "ai_models.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -295,7 +295,7 @@
     "method": "DELETE",
     "operation_id": null,
     "path": "/api/admin/ai/profiles/{profile_id}",
-    "permission": "ai_models.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -308,7 +308,7 @@
     "method": "PATCH",
     "operation_id": null,
     "path": "/api/admin/ai/profiles/{profile_id}",
-    "permission": "ai_models.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -321,7 +321,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/admin/kubernetes/execution",
-    "permission": "kubernetes.read",
+    "permission": "platform.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -334,7 +334,7 @@
     "method": "PUT",
     "operation_id": null,
     "path": "/api/admin/kubernetes/execution",
-    "permission": "kubernetes.readwrite",
+    "permission": "platform.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -347,7 +347,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/admin/kubernetes/status",
-    "permission": "kubernetes.read",
+    "permission": "platform.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -360,7 +360,7 @@
     "method": "DELETE",
     "operation_id": null,
     "path": "/api/admin/llm/embedding-config",
-    "permission": "llm_config.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -373,7 +373,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/admin/llm/embedding-config",
-    "permission": "llm_config.read",
+    "permission": "settings.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -386,7 +386,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/admin/llm/embedding-config",
-    "permission": "llm_config.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -399,7 +399,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/admin/llm/embedding-reindex",
-    "permission": "llm_config.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -412,7 +412,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/admin/llm/embedding-test",
-    "permission": "llm_config.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -425,7 +425,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/admin/llm/model-capabilities",
-    "permission": "llm_config.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -438,7 +438,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/admin/llm/model-capabilities/verify",
-    "permission": "llm_config.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -451,7 +451,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/admin/memory/settings",
-    "permission": "memory.read",
+    "permission": "settings.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -464,7 +464,7 @@
     "method": "PUT",
     "operation_id": null,
     "path": "/api/admin/memory/settings",
-    "permission": "memory.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -477,7 +477,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/admin/required-instructions",
-    "permission": "required_instructions.read",
+    "permission": "settings.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -490,7 +490,7 @@
     "method": "PUT",
     "operation_id": null,
     "path": "/api/admin/required-instructions",
-    "permission": "required_instructions.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -503,8 +503,8 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/admin/required-instructions/organizations/{organization_id}",
-    "permission": "required_instructions.read",
-    "reason": "Platform-admin-only operation."
+    "permission": "settings.read",
+    "reason": "Platform-admin-only operation. (Per-org variant: this route takes an explicit organization_id path param, unlike the platform-wide GET above.)"
   },
   {
     "access_class": "permission",
@@ -516,8 +516,8 @@
     "method": "PUT",
     "operation_id": null,
     "path": "/api/admin/required-instructions/organizations/{organization_id}",
-    "permission": "required_instructions.readwrite",
-    "reason": "Platform-admin-only operation."
+    "permission": "settings.readwrite",
+    "reason": "Platform-admin-only operation. (Per-org variant: this route takes an explicit organization_id path param, unlike the platform-wide PUT above.)"
   },
   {
     "access_class": "permission",
@@ -529,7 +529,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/admin/roi/settings",
-    "permission": "roi_settings.read",
+    "permission": "settings.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -542,7 +542,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/admin/roi/settings",
-    "permission": "roi_settings.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -559,7 +559,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/agent-runs",
-    "permission": "agent_runs.read",
+    "permission": "agentruns.read",
     "reason": "Reads shared agent-run history at org scope."
   },
   {
@@ -572,7 +572,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/agent-runs/backfill-eligible",
-    "permission": "agent_runs.read",
+    "permission": "agentruns.read",
     "reason": "Bulk summarizer/backfill action on org agent-run history."
   },
   {
@@ -585,7 +585,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/agent-runs/backfill-jobs",
-    "permission": "agent_runs.read",
+    "permission": "agentruns.read",
     "reason": "Bulk summarizer/backfill action on org agent-run history."
   },
   {
@@ -598,7 +598,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/agent-runs/backfill-jobs/{job_id}",
-    "permission": "agent_runs.read",
+    "permission": "agentruns.read",
     "reason": "Bulk summarizer/backfill action on org agent-run history."
   },
   {
@@ -611,7 +611,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/agent-runs/backfill-jobs/{job_id}/cancel",
-    "permission": "agent_runs.readwrite",
+    "permission": "agentruns.readwrite",
     "reason": "Bulk summarizer/backfill action on org agent-run history."
   },
   {
@@ -624,7 +624,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/agent-runs/backfill-summaries",
-    "permission": "agent_runs.readwrite",
+    "permission": "agentruns.readwrite",
     "reason": "Bulk summarizer/backfill action on org agent-run history."
   },
   {
@@ -670,7 +670,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/agent-runs/metadata-keys",
-    "permission": "agent_runs.read",
+    "permission": "agentruns.read",
     "reason": "Reads shared agent-run history at org scope."
   },
   {
@@ -687,7 +687,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/agent-runs/metadata-values",
-    "permission": "agent_runs.read",
+    "permission": "agentruns.read",
     "reason": "Reads shared agent-run history at org scope."
   },
   {
@@ -700,7 +700,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/agent-runs/{run_id}",
-    "permission": "agent_runs.read",
+    "permission": "agentruns.read",
     "reason": "Reads shared agent-run history at org scope."
   },
   {
@@ -751,7 +751,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/agent-runs/{run_id}/flag-conversation",
-    "permission": "agent_runs.read",
+    "permission": "agentruns.read",
     "reason": "Reads agent-run metadata (own run, or any run for a bypass caller \u2014 agent_run_access.py)."
   },
   {
@@ -768,7 +768,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/agent-runs/{run_id}/flag-conversation/message",
-    "permission": "agent_runs.readwrite",
+    "permission": "agentruns.readwrite",
     "reason": "Mutates agent-run metadata (own run, or any run for a bypass caller \u2014 agent_run_access.py)."
   },
   {
@@ -781,7 +781,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/agent-runs/{run_id}/regenerate-summary",
-    "permission": "agent_runs.readwrite",
+    "permission": "agentruns.readwrite",
     "reason": "Mutates agent-run metadata (own run, or any run for a bypass caller \u2014 agent_run_access.py)."
   },
   {
@@ -816,7 +816,7 @@
     "method": "DELETE",
     "operation_id": null,
     "path": "/api/agent-runs/{run_id}/verdict",
-    "permission": "agent_runs.readwrite",
+    "permission": "agentruns.readwrite",
     "reason": "Mutates agent-run metadata (own run, or any run for a bypass caller \u2014 agent_run_access.py)."
   },
   {
@@ -833,7 +833,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/agent-runs/{run_id}/verdict",
-    "permission": "agent_runs.readwrite",
+    "permission": "agentruns.readwrite",
     "reason": "Mutates agent-run metadata (own run, or any run for a bypass caller \u2014 agent_run_access.py)."
   },
   {
@@ -1176,7 +1176,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/applications/sdk/update",
-    "permission": "applications.readwrite",
+    "permission": "apps.readwrite",
     "reason": "Mutates shared app source/build state."
   },
   {
@@ -1192,7 +1192,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/applications/swap-slugs",
-    "permission": "applications.readwrite",
+    "permission": "apps.readwrite",
     "reason": "Mutates shared app source/build state."
   },
   {
@@ -1256,7 +1256,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/applications/{app_id}/bundle-manifest",
-    "permission": "applications.read",
+    "permission": "apps.read",
     "reason": "Reads shared app source/build state."
   },
   {
@@ -1303,7 +1303,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/applications/{app_id}/deploy",
-    "permission": "applications.readwrite",
+    "permission": "apps.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -1335,7 +1335,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/applications/{app_id}/draft",
-    "permission": "applications.read",
+    "permission": "apps.read",
     "reason": "Reads shared app source/build state."
   },
   {
@@ -1351,7 +1351,7 @@
     "method": "PUT",
     "operation_id": null,
     "path": "/api/applications/{app_id}/draft",
-    "permission": "applications.readwrite",
+    "permission": "apps.readwrite",
     "reason": "Mutates shared app source/build state."
   },
   {
@@ -1364,7 +1364,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/applications/{app_id}/embed-secrets",
-    "permission": "app_embed_secrets.read",
+    "permission": "settings.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -1377,7 +1377,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/applications/{app_id}/embed-secrets",
-    "permission": "app_embed_secrets.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -1390,7 +1390,7 @@
     "method": "DELETE",
     "operation_id": null,
     "path": "/api/applications/{app_id}/embed-secrets/{secret_id}",
-    "permission": "app_embed_secrets.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -1403,7 +1403,7 @@
     "method": "PATCH",
     "operation_id": null,
     "path": "/api/applications/{app_id}/embed-secrets/{secret_id}",
-    "permission": "app_embed_secrets.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -1419,7 +1419,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/applications/{app_id}/export",
-    "permission": "applications.read",
+    "permission": "apps.read",
     "reason": "Reads shared app source/build state."
   },
   {
@@ -1435,7 +1435,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/applications/{app_id}/files",
-    "permission": "applications.read",
+    "permission": "apps.read",
     "reason": "Reads shared app source/build state."
   },
   {
@@ -1450,7 +1450,7 @@
     "method": "DELETE",
     "operation_id": null,
     "path": "/api/applications/{app_id}/files/{file_path}",
-    "permission": "applications.readwrite",
+    "permission": "apps.readwrite",
     "reason": "Mutates shared app source/build state."
   },
   {
@@ -1466,7 +1466,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/applications/{app_id}/files/{file_path}",
-    "permission": "applications.read",
+    "permission": "apps.read",
     "reason": "Reads shared app source/build state."
   },
   {
@@ -1481,7 +1481,7 @@
     "method": "PUT",
     "operation_id": null,
     "path": "/api/applications/{app_id}/files/{file_path}",
-    "permission": "applications.readwrite",
+    "permission": "apps.readwrite",
     "reason": "Mutates shared app source/build state."
   },
   {
@@ -1496,7 +1496,7 @@
     "method": "DELETE",
     "operation_id": null,
     "path": "/api/applications/{app_id}/logo",
-    "permission": "applications.readwrite",
+    "permission": "apps.readwrite",
     "reason": "Mutates shared app source/build state."
   },
   {
@@ -1509,7 +1509,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/applications/{app_id}/logo",
-    "permission": "applications.read",
+    "permission": "apps.read",
     "reason": "Reads shared app source/build state."
   },
   {
@@ -1524,7 +1524,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/applications/{app_id}/logo",
-    "permission": "applications.readwrite",
+    "permission": "apps.readwrite",
     "reason": "Mutates shared app source/build state."
   },
   {
@@ -1587,7 +1587,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/applications/{app_id}/rollback",
-    "permission": "applications.readwrite",
+    "permission": "apps.readwrite",
     "reason": "Mutates shared app source/build state."
   },
   {
@@ -1603,7 +1603,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/applications/{app_id}/sdk/update",
-    "permission": "applications.readwrite",
+    "permission": "apps.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -1619,7 +1619,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/applications/{app_id}/source",
-    "permission": "applications.read",
+    "permission": "apps.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -1664,7 +1664,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/audit",
-    "permission": "audit.read",
+    "permission": "metrics.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -1677,7 +1677,7 @@
     "method": "DELETE",
     "operation_id": null,
     "path": "/api/branding",
-    "permission": "branding.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -1703,7 +1703,7 @@
     "method": "PUT",
     "operation_id": null,
     "path": "/api/branding",
-    "permission": "branding.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -1716,7 +1716,7 @@
     "method": "DELETE",
     "operation_id": null,
     "path": "/api/branding/application-name",
-    "permission": "branding.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -1729,7 +1729,7 @@
     "method": "DELETE",
     "operation_id": null,
     "path": "/api/branding/color",
-    "permission": "branding.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -1742,7 +1742,7 @@
     "method": "DELETE",
     "operation_id": null,
     "path": "/api/branding/logo/{logo_type}",
-    "permission": "branding.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -1768,7 +1768,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/branding/logo/{logo_type}",
-    "permission": "branding.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -1960,7 +1960,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/chat/model-profiles",
-    "permission": "chat.read",
+    "permission": "settings.read",
     "reason": "Reads the org's shared AI model-profile catalog."
   },
   {
@@ -2183,7 +2183,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/decorator-properties",
-    "permission": "decorator_properties.read",
+    "permission": "settings.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -2196,7 +2196,7 @@
     "method": "PUT",
     "operation_id": null,
     "path": "/api/decorator-properties",
-    "permission": "decorator_properties.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -2209,7 +2209,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/dependencies/availability",
-    "permission": "dependencies.readwrite",
+    "permission": "platform.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -2222,7 +2222,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/dependencies/{entity_type}/{entity_id}",
-    "permission": "dependencies.read",
+    "permission": "platform.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -2711,7 +2711,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/export-import/export/all",
-    "permission": "export_import.readwrite",
+    "permission": "platform.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -2724,7 +2724,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/export-import/export/configs",
-    "permission": "export_import.readwrite",
+    "permission": "platform.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -2737,7 +2737,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/export-import/export/integrations",
-    "permission": "export_import.readwrite",
+    "permission": "platform.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -2750,7 +2750,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/export-import/export/knowledge",
-    "permission": "export_import.readwrite",
+    "permission": "platform.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -2763,7 +2763,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/export-import/export/tables",
-    "permission": "export_import.readwrite",
+    "permission": "platform.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -2776,7 +2776,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/export-import/import/all",
-    "permission": "export_import.readwrite",
+    "permission": "platform.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -2789,7 +2789,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/export-import/import/configs",
-    "permission": "export_import.readwrite",
+    "permission": "platform.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -2802,7 +2802,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/export-import/import/integrations",
-    "permission": "export_import.readwrite",
+    "permission": "platform.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -2815,7 +2815,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/export-import/import/knowledge",
-    "permission": "export_import.readwrite",
+    "permission": "platform.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -2830,7 +2830,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/export-import/import/tables",
-    "permission": "export_import.readwrite",
+    "permission": "platform.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -2991,7 +2991,7 @@
   },
   {
     "access_class": "permission",
-    "boundary": "organization",
+    "boundary": "platform",
     "current_gate": "superuser",
     "inline_checks": [
       "is_platform_admin",
@@ -3033,7 +3033,7 @@
   },
   {
     "access_class": "permission",
-    "boundary": "organization",
+    "boundary": "platform",
     "current_gate": "superuser",
     "inline_checks": [
       "is_superuser"
@@ -3283,7 +3283,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/forms/{form_id}/embed-secrets",
-    "permission": "form_embed_secrets.read",
+    "permission": "settings.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -3296,7 +3296,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/forms/{form_id}/embed-secrets",
-    "permission": "form_embed_secrets.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -3309,7 +3309,7 @@
     "method": "DELETE",
     "operation_id": null,
     "path": "/api/forms/{form_id}/embed-secrets/{secret_id}",
-    "permission": "form_embed_secrets.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -3322,7 +3322,7 @@
     "method": "PATCH",
     "operation_id": null,
     "path": "/api/forms/{form_id}/embed-secrets/{secret_id}",
-    "permission": "form_embed_secrets.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -3519,7 +3519,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/github/abort-merge",
-    "permission": "github.readwrite",
+    "permission": "platform.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -3532,7 +3532,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/github/branches",
-    "permission": "github.read",
+    "permission": "platform.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -3545,7 +3545,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/github/changes",
-    "permission": "github.readwrite",
+    "permission": "platform.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -3558,7 +3558,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/github/commit",
-    "permission": "github.readwrite",
+    "permission": "platform.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -3571,7 +3571,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/github/commits",
-    "permission": "github.read",
+    "permission": "platform.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -3584,7 +3584,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/github/config",
-    "permission": "github.read",
+    "permission": "platform.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -3597,7 +3597,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/github/connect",
-    "permission": "github.readwrite",
+    "permission": "platform.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -3610,7 +3610,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/github/connect/preview",
-    "permission": "github.readwrite",
+    "permission": "platform.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -3623,7 +3623,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/github/create-repository",
-    "permission": "github.readwrite",
+    "permission": "platform.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -3636,7 +3636,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/github/diff",
-    "permission": "github.readwrite",
+    "permission": "platform.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -3649,7 +3649,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/github/discard",
-    "permission": "github.readwrite",
+    "permission": "platform.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -3662,7 +3662,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/github/disconnect",
-    "permission": "github.readwrite",
+    "permission": "platform.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -3675,7 +3675,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/github/fetch",
-    "permission": "github.readwrite",
+    "permission": "platform.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -3688,7 +3688,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/github/repo-status",
-    "permission": "github.read",
+    "permission": "platform.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -3701,7 +3701,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/github/repositories",
-    "permission": "github.read",
+    "permission": "platform.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -3714,7 +3714,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/github/resolve",
-    "permission": "github.readwrite",
+    "permission": "platform.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -3727,7 +3727,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/github/status",
-    "permission": "github.read",
+    "permission": "platform.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -3740,7 +3740,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/github/sync",
-    "permission": "github.readwrite",
+    "permission": "platform.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -3753,7 +3753,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/github/validate",
-    "permission": "github.readwrite",
+    "permission": "platform.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -4263,7 +4263,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/jobs/{job_id}",
-    "permission": "jobs.read",
+    "permission": "platform.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -4310,7 +4310,7 @@
     "method": "PATCH",
     "operation_id": null,
     "path": "/api/knowledge-sources/documents/scope",
-    "permission": "knowledge_sources.readwrite",
+    "permission": "knowledge.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -4323,7 +4323,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/knowledge-sources/roles",
-    "permission": "knowledge_sources.read",
+    "permission": "knowledge.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -4336,7 +4336,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/knowledge-sources/roles",
-    "permission": "knowledge_sources.readwrite",
+    "permission": "knowledge.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -4349,7 +4349,7 @@
     "method": "DELETE",
     "operation_id": null,
     "path": "/api/knowledge-sources/roles/{assignment_id}",
-    "permission": "knowledge_sources.readwrite",
+    "permission": "knowledge.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -4366,7 +4366,7 @@
     "method": "DELETE",
     "operation_id": null,
     "path": "/api/knowledge-sources/{namespace}",
-    "permission": "knowledge_sources.readwrite",
+    "permission": "knowledge.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -4381,7 +4381,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/knowledge-sources/{namespace}/documents",
-    "permission": "knowledge_sources.read",
+    "permission": "knowledge.read",
     "reason": "Reads shared knowledge-base documents."
   },
   {
@@ -4472,7 +4472,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/maintenance/artifact-retention/cleanup",
-    "permission": "maintenance.readwrite",
+    "permission": "platform.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -4485,7 +4485,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/maintenance/artifact-retention/settings",
-    "permission": "maintenance.read",
+    "permission": "platform.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -4498,7 +4498,7 @@
     "method": "PUT",
     "operation_id": null,
     "path": "/api/maintenance/artifact-retention/settings",
-    "permission": "maintenance.readwrite",
+    "permission": "platform.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -4511,7 +4511,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/maintenance/cleanup-orphaned",
-    "permission": "maintenance.readwrite",
+    "permission": "platform.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -4526,7 +4526,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/maintenance/index-docs",
-    "permission": "maintenance.readwrite",
+    "permission": "platform.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -4539,7 +4539,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/maintenance/preflight",
-    "permission": "maintenance.readwrite",
+    "permission": "platform.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -4552,7 +4552,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/maintenance/reimport",
-    "permission": "maintenance.readwrite",
+    "permission": "platform.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -4565,7 +4565,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/maintenance/scan-app-dependencies",
-    "permission": "maintenance.readwrite",
+    "permission": "platform.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -4578,7 +4578,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/maintenance/status",
-    "permission": "maintenance.read",
+    "permission": "platform.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -4594,7 +4594,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/mcp-connections",
-    "permission": "mcp_connections.read",
+    "permission": "mcp.read",
     "reason": "Org-scoped shared MCP connection (not the caller's own credential)."
   },
   {
@@ -4612,7 +4612,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/mcp-connections",
-    "permission": "mcp_connections.readwrite",
+    "permission": "mcp.readwrite",
     "reason": "Org-scoped shared MCP connection (not the caller's own credential)."
   },
   {
@@ -4630,7 +4630,7 @@
     "method": "DELETE",
     "operation_id": null,
     "path": "/api/mcp-connections/{connection_id}",
-    "permission": "mcp_connections.readwrite",
+    "permission": "mcp.readwrite",
     "reason": "Org-scoped shared MCP connection (not the caller's own credential)."
   },
   {
@@ -4646,7 +4646,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/mcp-connections/{connection_id}",
-    "permission": "mcp_connections.read",
+    "permission": "mcp.read",
     "reason": "Org-scoped shared MCP connection (not the caller's own credential)."
   },
   {
@@ -4664,7 +4664,7 @@
     "method": "PATCH",
     "operation_id": null,
     "path": "/api/mcp-connections/{connection_id}",
-    "permission": "mcp_connections.readwrite",
+    "permission": "mcp.readwrite",
     "reason": "Org-scoped shared MCP connection (not the caller's own credential)."
   },
   {
@@ -4682,7 +4682,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/mcp-connections/{connection_id}/connect",
-    "permission": "mcp_connections.readwrite",
+    "permission": "mcp.readwrite",
     "reason": "Org-scoped shared MCP connection (not the caller's own credential)."
   },
   {
@@ -4700,7 +4700,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/mcp-connections/{connection_id}/refresh-tools",
-    "permission": "mcp_connections.readwrite",
+    "permission": "mcp.readwrite",
     "reason": "Org-scoped shared MCP connection (not the caller's own credential)."
   },
   {
@@ -4718,7 +4718,7 @@
     "method": "PATCH",
     "operation_id": null,
     "path": "/api/mcp-connections/{connection_id}/tools/{tool_id}",
-    "permission": "mcp_connections.readwrite",
+    "permission": "mcp.readwrite",
     "reason": "Org-scoped shared MCP connection (not the caller's own credential)."
   },
   {
@@ -4734,7 +4734,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/mcp-servers",
-    "permission": "mcp_servers.read",
+    "permission": "mcp.read",
     "reason": "Reads the org's registered MCP server catalog."
   },
   {
@@ -4747,7 +4747,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/mcp-servers",
-    "permission": "mcp_servers.readwrite",
+    "permission": "mcp.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -4760,7 +4760,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/mcp-servers/discover",
-    "permission": "mcp_servers.readwrite",
+    "permission": "mcp.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -4775,7 +4775,7 @@
     "method": "DELETE",
     "operation_id": null,
     "path": "/api/mcp-servers/{server_id}",
-    "permission": "mcp_servers.readwrite",
+    "permission": "mcp.readwrite",
     "reason": "Mutates the org's registered MCP server catalog."
   },
   {
@@ -4793,7 +4793,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/mcp-servers/{server_id}",
-    "permission": "mcp_servers.read",
+    "permission": "mcp.read",
     "reason": "Reads the org's registered MCP server catalog."
   },
   {
@@ -4808,7 +4808,7 @@
     "method": "PATCH",
     "operation_id": null,
     "path": "/api/mcp-servers/{server_id}",
-    "permission": "mcp_servers.readwrite",
+    "permission": "mcp.readwrite",
     "reason": "Mutates the org's registered MCP server catalog."
   },
   {
@@ -5069,7 +5069,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/memory/settings",
-    "permission": "memory.read",
+    "permission": "settings.read",
     "reason": "Reads the org's memory feature settings."
   },
   {
@@ -5082,7 +5082,7 @@
     "method": "PUT",
     "operation_id": null,
     "path": "/api/memory/settings",
-    "permission": "memory.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Mutates the org's memory feature settings."
   },
   {
@@ -5221,7 +5221,7 @@
     "method": "DELETE",
     "operation_id": null,
     "path": "/api/notifications/locks/upload",
-    "permission": "notifications.readwrite",
+    "permission": "platform.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -5234,7 +5234,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/notifications/locks/upload",
-    "permission": "notifications.read",
+    "permission": "platform.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -5410,7 +5410,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/oauth/refresh_all",
-    "permission": "oauth_connections.readwrite",
+    "permission": "platform.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -5423,7 +5423,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/oauth/refresh_job_status",
-    "permission": "oauth_connections.read",
+    "permission": "platform.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -5501,7 +5501,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/packages",
-    "permission": "packages.read",
+    "permission": "platform.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -5514,7 +5514,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/packages/install",
-    "permission": "packages.readwrite",
+    "permission": "platform.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -5527,7 +5527,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/packages/updates",
-    "permission": "packages.read",
+    "permission": "platform.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -5540,7 +5540,7 @@
     "method": "DELETE",
     "operation_id": null,
     "path": "/api/packages/{package_name}",
-    "permission": "packages.readwrite",
+    "permission": "platform.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -5594,7 +5594,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/platform/queue",
-    "permission": "workers.read",
+    "permission": "platform.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -5607,7 +5607,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/platform/scheduler",
-    "permission": "scheduler_diagnostics.read",
+    "permission": "metrics.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -5620,7 +5620,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/platform/scheduler/tasks/{task_id}/runs",
-    "permission": "scheduler_diagnostics.read",
+    "permission": "metrics.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -5633,7 +5633,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/platform/stuck-history",
-    "permission": "workers.read",
+    "permission": "platform.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -5646,7 +5646,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/platform/workers",
-    "permission": "workers.read",
+    "permission": "platform.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -5659,7 +5659,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/platform/workers/metrics",
-    "permission": "workers.read",
+    "permission": "platform.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -5672,7 +5672,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/platform/workers/stats",
-    "permission": "workers.read",
+    "permission": "platform.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -5685,7 +5685,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/platform/workers/{worker_id}",
-    "permission": "workers.read",
+    "permission": "platform.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -5698,7 +5698,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/platform/workers/{worker_id}/processes/{pid}/recycle",
-    "permission": "workers.readwrite",
+    "permission": "platform.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -5711,7 +5711,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/platform/workers/{worker_id}/recycle-all",
-    "permission": "workers.readwrite",
+    "permission": "platform.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -5890,7 +5890,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/reports/roi/by-organization",
-    "permission": "roi_reports.read",
+    "permission": "metrics.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -5903,7 +5903,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/reports/roi/by-workflow",
-    "permission": "roi_reports.read",
+    "permission": "metrics.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -5916,7 +5916,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/reports/roi/summary",
-    "permission": "roi_reports.read",
+    "permission": "metrics.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -5929,7 +5929,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/reports/roi/trends",
-    "permission": "roi_reports.read",
+    "permission": "metrics.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -5942,7 +5942,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/reports/usage",
-    "permission": "usage_reports.read",
+    "permission": "metrics.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -5955,7 +5955,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/reports/workflow-resources",
-    "permission": "usage_reports.read",
+    "permission": "metrics.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -5968,7 +5968,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/required-instructions",
-    "permission": "required_instructions.read",
+    "permission": "settings.read",
     "reason": "Reads the caller's applicable required-instructions content."
   },
   {
@@ -6332,7 +6332,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/schedules/validate",
-    "permission": "schedules.readwrite",
+    "permission": "platform.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -6551,7 +6551,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/sdk/config/delete",
-    "permission": "config.readwrite",
+    "permission": "configs.readwrite",
     "reason": "Workflow/agent SDK call reading or writing config during execution."
   },
   {
@@ -6568,7 +6568,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/sdk/config/get",
-    "permission": "config.read",
+    "permission": "configs.read",
     "reason": "Workflow/agent SDK call reading or writing config during execution."
   },
   {
@@ -6585,7 +6585,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/sdk/config/list",
-    "permission": "config.read",
+    "permission": "configs.read",
     "reason": "Workflow/agent SDK call reading or writing config during execution."
   },
   {
@@ -6602,7 +6602,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/sdk/config/set",
-    "permission": "config.readwrite",
+    "permission": "configs.readwrite",
     "reason": "Workflow/agent SDK call reading or writing config during execution."
   },
   {
@@ -6888,7 +6888,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/sdk/requirements",
-    "permission": "sdk_modules.read",
+    "permission": "repository.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -6935,8 +6935,8 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/services",
-    "permission": "services.read",
-    "reason": "Platform-admin-only operation."
+    "permission": "platform.read",
+    "reason": "Platform-admin-only operation on an org-scoped service registration."
   },
   {
     "access_class": "permission",
@@ -6948,8 +6948,8 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/services/{service_id}",
-    "permission": "services.read",
-    "reason": "Platform-admin-only operation."
+    "permission": "platform.read",
+    "reason": "Platform-admin-only operation on an org-scoped service registration."
   },
   {
     "access_class": "permission",
@@ -6961,8 +6961,8 @@
     "method": "PATCH",
     "operation_id": null,
     "path": "/api/services/{service_id}",
-    "permission": "services.readwrite",
-    "reason": "Platform-admin-only operation."
+    "permission": "platform.readwrite",
+    "reason": "Platform-admin-only operation on an org-scoped service registration."
   },
   {
     "access_class": "permission",
@@ -6974,8 +6974,8 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/services/{service_id}/attempts",
-    "permission": "services.read",
-    "reason": "Platform-admin-only operation."
+    "permission": "platform.read",
+    "reason": "Platform-admin-only operation on an org-scoped service registration."
   },
   {
     "access_class": "permission",
@@ -6987,8 +6987,8 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/services/{service_id}/disable",
-    "permission": "services.readwrite",
-    "reason": "Platform-admin-only operation."
+    "permission": "platform.readwrite",
+    "reason": "Platform-admin-only operation on an org-scoped service registration."
   },
   {
     "access_class": "permission",
@@ -7000,8 +7000,8 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/services/{service_id}/enable",
-    "permission": "services.readwrite",
-    "reason": "Platform-admin-only operation."
+    "permission": "platform.readwrite",
+    "reason": "Platform-admin-only operation on an org-scoped service registration."
   },
   {
     "access_class": "permission",
@@ -7013,8 +7013,8 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/services/{service_id}/logs",
-    "permission": "services.read",
-    "reason": "Platform-admin-only operation."
+    "permission": "platform.read",
+    "reason": "Platform-admin-only operation on an org-scoped service registration."
   },
   {
     "access_class": "permission",
@@ -7026,8 +7026,8 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/services/{service_id}/restart",
-    "permission": "services.readwrite",
-    "reason": "Platform-admin-only operation."
+    "permission": "platform.readwrite",
+    "reason": "Platform-admin-only operation on an org-scoped service registration."
   },
   {
     "access_class": "permission",
@@ -7039,8 +7039,8 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/services/{service_id}/start",
-    "permission": "services.readwrite",
-    "reason": "Platform-admin-only operation."
+    "permission": "platform.readwrite",
+    "reason": "Platform-admin-only operation on an org-scoped service registration."
   },
   {
     "access_class": "permission",
@@ -7052,8 +7052,8 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/services/{service_id}/stop",
-    "permission": "services.readwrite",
-    "reason": "Platform-admin-only operation."
+    "permission": "platform.readwrite",
+    "reason": "Platform-admin-only operation on an org-scoped service registration."
   },
   {
     "access_class": "permission",
@@ -7065,7 +7065,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/settings/ai/pricing",
-    "permission": "ai_pricing.read",
+    "permission": "settings.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -7078,7 +7078,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/settings/ai/pricing",
-    "permission": "ai_pricing.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -7091,7 +7091,7 @@
     "method": "DELETE",
     "operation_id": null,
     "path": "/api/settings/ai/pricing/{pricing_id}",
-    "permission": "ai_pricing.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -7104,7 +7104,7 @@
     "method": "PUT",
     "operation_id": null,
     "path": "/api/settings/ai/pricing/{pricing_id}",
-    "permission": "ai_pricing.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -7117,7 +7117,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/settings/oauth",
-    "permission": "oauth_config.read",
+    "permission": "settings.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -7130,7 +7130,7 @@
     "method": "PUT",
     "operation_id": null,
     "path": "/api/settings/oauth/google",
-    "permission": "oauth_config.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -7143,7 +7143,7 @@
     "method": "PUT",
     "operation_id": null,
     "path": "/api/settings/oauth/login-preference",
-    "permission": "oauth_config.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -7156,7 +7156,7 @@
     "method": "PUT",
     "operation_id": null,
     "path": "/api/settings/oauth/microsoft",
-    "permission": "oauth_config.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -7169,7 +7169,7 @@
     "method": "PUT",
     "operation_id": null,
     "path": "/api/settings/oauth/oidc",
-    "permission": "oauth_config.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -7182,7 +7182,7 @@
     "method": "DELETE",
     "operation_id": null,
     "path": "/api/settings/oauth/{provider}",
-    "permission": "oauth_config.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -7195,7 +7195,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/settings/oauth/{provider}",
-    "permission": "oauth_config.read",
+    "permission": "settings.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -7208,7 +7208,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/settings/oauth/{provider}/test",
-    "permission": "oauth_config.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -7888,7 +7888,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/tools",
-    "permission": "tools.read",
+    "permission": "settings.read",
     "reason": "Reads the shared platform tool catalog."
   },
   {
@@ -7901,7 +7901,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/tools/system",
-    "permission": "tools.read",
+    "permission": "settings.read",
     "reason": "Reads the shared platform tool catalog."
   },
   {
@@ -7921,7 +7921,7 @@
   },
   {
     "access_class": "permission",
-    "boundary": "organization",
+    "boundary": "platform",
     "current_gate": "superuser",
     "inline_checks": [
       "is_superuser"
@@ -7936,7 +7936,7 @@
   },
   {
     "access_class": "permission",
-    "boundary": "organization",
+    "boundary": "platform",
     "current_gate": "superuser",
     "inline_checks": [
       "is_superuser"
@@ -7977,7 +7977,7 @@
   },
   {
     "access_class": "permission",
-    "boundary": "organization",
+    "boundary": "platform",
     "current_gate": "superuser",
     "inline_checks": [
       "is_superuser"
@@ -7992,7 +7992,7 @@
   },
   {
     "access_class": "permission",
-    "boundary": "organization",
+    "boundary": "platform",
     "current_gate": "superuser",
     "inline_checks": [
       "is_superuser"
@@ -8003,7 +8003,7 @@
     "operation_id": "users.forms.list",
     "path": "/api/users/{user_id}/forms",
     "permission": "roles.read",
-    "reason": "Reads a user's assigned forms."
+    "reason": "Reads a user's assigned forms (global lookup by user id/email, no org filter \u2014 platform admin only)."
   },
   {
     "access_class": "permission",
@@ -8068,7 +8068,7 @@
     "operation_id": "users.roles.list",
     "path": "/api/users/{user_id}/roles",
     "permission": "roles.read",
-    "reason": "Platform-admin-only operation."
+    "reason": "Reads a user's role assignments (global lookup by user id/email, no org filter \u2014 platform admin only)."
   },
   {
     "access_class": "public",
@@ -8093,7 +8093,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/workflow-keys",
-    "permission": "workflow_keys.read",
+    "permission": "settings.read",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -8106,7 +8106,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/workflow-keys",
-    "permission": "workflow_keys.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -8119,7 +8119,7 @@
     "method": "DELETE",
     "operation_id": null,
     "path": "/api/workflow-keys/{workflow_id}",
-    "permission": "workflow_keys.readwrite",
+    "permission": "settings.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -8375,7 +8375,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/auth/admin/revoke-user",
-    "permission": "auth.readwrite",
+    "permission": "organizations.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -9100,7 +9100,7 @@
     "method": "WS",
     "operation_id": null,
     "path": "/ws/connect",
-    "permission": "websocket.read",
+    "permission": "platform.read",
     "reason": "Opens a per-user event channel; per-channel (table/file/conversation) authorization is enforced on each subscribe message."
   },
   {
@@ -9713,7 +9713,7 @@
   },
   {
     "access_class": "permission",
-    "boundary": "organization",
+    "boundary": "platform",
     "current_gate": "authenticated",
     "inline_checks": [
       "is_superuser"
@@ -10187,11 +10187,10 @@
     "boundary": null,
     "current_gate": "authenticated",
     "inline_checks": [
-      "has_scope_bypass",
       "is_platform_admin",
       "is_superuser"
     ],
-    "intended_change": "Provider-org non-admins lose access at the R3 cutover; platform admins keep it; workflow/engine executions keep it via workflow permissions.",
+    "intended_change": null,
     "mcp_tool": "bifrost_workflow_execute",
     "method": null,
     "operation_id": "workflows.execute",

@@ -18,6 +18,8 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
+from src.models.contracts.permissions import PERMISSION_DOMAINS
+
 
 class AccessClass(StrEnum):
     """The kind of access a route or MCP tool grants."""
@@ -146,6 +148,11 @@ class AccessEntry(BaseModel):
             if not domain or suffix not in ("read", "readwrite", "execute"):
                 raise ValueError(
                     "permission must be '<domain>.<read|readwrite|execute>'"
+                )
+            if domain not in PERMISSION_DOMAINS:
+                raise ValueError(
+                    f"permission domain {domain!r} is not in the closed "
+                    "PERMISSION_DOMAINS vocabulary (src.models.contracts.permissions)"
                 )
         else:
             if self.permission is not None or self.boundary is not None:

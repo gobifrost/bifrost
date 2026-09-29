@@ -6,6 +6,7 @@ import pytest
 
 from src.main import app
 from src.models.contracts.operation_catalog import OperationDefinition
+from src.models.contracts.permissions import PERMISSION_DOMAINS
 from src.services.operation_catalog import (
     OPERATION_CATALOG,
     get_operation,
@@ -1300,5 +1301,25 @@ def test_registered_mcp_tool_ids_match_the_catalog() -> None:
             f"domain {domain!r}: registered={sorted(registered_ids)} "
             f"catalog={sorted(catalog_names)}"
         )
+
+
+def test_action_scopes_use_the_closed_permission_domain_vocabulary() -> None:
+    """Every catalogued action_scopes domain must be a permission domain the
+    R2/R3 roles catalog actually knows about (src.models.contracts.permissions).
+
+    This is a one-way check: the catalog must not invent a domain outside
+    the closed vocabulary. It does not require every permission domain to
+    have a catalogued operation (many, like `settings` and `platform`,
+    cover uncatalogued admin routes only).
+    """
+    unknown: dict[str, set[str]] = {}
+    for operation in OPERATION_CATALOG:
+        for scope in operation.action_scopes:
+            domain, _, _action = scope.rpartition(".")
+            if domain not in PERMISSION_DOMAINS:
+                unknown.setdefault(domain, set()).add(operation.operation_id)
+    assert not unknown, (
+        f"catalog action_scopes use a domain outside PERMISSION_DOMAINS: {unknown}"
+    )
 
 
