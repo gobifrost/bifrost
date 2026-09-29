@@ -37,6 +37,7 @@ from src.routers.agent_tuning import router as agent_tuning_router
 from src.routers.chat import router as chat_router
 from src.routers.llm_config import router as llm_config_router
 from src.routers.ai_models import router as ai_models_router
+from src.routers.model_catalog import router as model_catalog_router
 from src.routers.integrations import router as integrations_router
 from src.routers.decorator_properties import router as decorator_properties_router
 from src.routers.maintenance import router as maintenance_router
@@ -120,6 +121,7 @@ __all__ = [
     "chat_router",
     "llm_config_router",
     "ai_models_router",
+    "model_catalog_router",
     "integrations_router",
     "decorator_properties_router",
     "maintenance_router",

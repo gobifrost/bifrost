@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ProviderModelField } from "./ProviderModelField";
 import { FailoverProfileField } from "./FailoverProfileField";
+import { ReasoningEffortField } from "./ReasoningEffortField";
 import type { AIProviderConnection, AIProviderKind, AIModelProfile } from "@/services/aiModels";
 
 export interface ModelProfileEditDraft {
@@ -16,6 +17,7 @@ export interface ModelProfileEditDraft {
 	model: string;
 	defaultMaxTokens: number | null;
 	failoverProfileId: string | null;
+	reasoningEffort: string | null;
 }
 
 export function ModelProfileEditDialog({ profileEdit, profiles, providers, providerLabel, pending, failed, onChange, onClose, onSave }: {
@@ -71,6 +73,7 @@ export function ModelProfileEditDialog({ profileEdit, profiles, providers, provi
 											...profileEdit,
 											connectionId,
 											model: "",
+											reasoningEffort: null,
 										})
 									}
 								>
@@ -101,7 +104,19 @@ export function ModelProfileEditDialog({ profileEdit, profiles, providers, provi
 								onChange({
 									...profileEdit,
 									model,
+									// Choices differ per model; start from its default.
+									reasoningEffort: null,
 								})
+							}
+						/>
+						<ReasoningEffortField
+							id="edit-profile-reasoning"
+							connectionId={profileEdit.connectionId}
+							model={profileEdit.model}
+							value={profileEdit.reasoningEffort}
+							disabled={pending}
+							onValueChange={(reasoningEffort) =>
+								onChange({ ...profileEdit, reasoningEffort })
 							}
 						/>
 						<div className="space-y-2">

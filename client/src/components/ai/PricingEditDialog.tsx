@@ -18,6 +18,9 @@ export interface PricingDraft {
 	model: string;
 	inputPrice: string;
 	outputPrice: string;
+	/** Optional; blank means the model has no separate cached-token rate. */
+	cacheReadPrice: string;
+	cacheWritePrice: string;
 }
 
 export function PricingEditDialog({
@@ -99,6 +102,8 @@ export function PricingEditDialog({
 								{ key: "model", label: "Model" },
 								{ key: "inputPrice", label: "Input price" },
 								{ key: "outputPrice", label: "Output price" },
+								{ key: "cacheReadPrice", label: "Cache read price (optional)" },
+								{ key: "cacheWritePrice", label: "Cache write price (optional)" },
 							] as const).map(({ key, label }) => {
 								const identity = key === "provider" || key === "model";
 								if (identity && editing) {

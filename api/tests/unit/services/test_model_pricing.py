@@ -1,130 +1,171 @@
-"""Tests for provider identity and provider-published pricing discovery."""
+"""Tests for provider identity, usage model names, and catalog price fill-in."""
 
 from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
+from sqlalchemy import select
 
+from src.models.orm.ai_usage import AIModelPricing
+from src.services.model_catalog import parse_catalog
 from src.services.model_pricing import (
-    OPENROUTER_MODELS_ENDPOINT,
-    PublishedModelPricing,
     canonical_provider,
-    configured_models,
-    discover_openrouter_pricing,
+    fill_pricing_from_catalog,
     is_openrouter_endpoint,
-    parse_pricing_catalog,
-    sync_published_pricing,
+    usage_model_name,
 )
+
+CATALOG = parse_catalog(
+    {
+        "anthropic": {
+            "id": "anthropic",
+            "name": "Anthropic",
+            "npm": "@ai-sdk/anthropic",
+            "models": {
+                "claude-opus-4-5": {
+                    "id": "claude-opus-4-5",
+                    "name": "Claude Opus 4.5",
+                    "cost": {"input": 5, "output": 25, "cache_read": 0.5, "cache_write": 6.25},
+                }
+            },
+        },
+        "fireworks-ai": {
+            "id": "fireworks-ai",
+            "name": "Fireworks AI",
+            "npm": "@ai-sdk/openai-compatible",
+            "api": "https://api.fireworks.ai/inference/v1/",
+            "models": {
+                "accounts/fireworks/models/kimi-k3": {
+                    "id": "accounts/fireworks/models/kimi-k3",
+                    "name": "Kimi K3",
+                    "cost": {"input": 0.6, "output": 2.5},
+                },
+                "free-preview": {"id": "free-preview", "name": "Preview"},
+            },
+        },
+    },
+    fetched_at=None,
+    source="bundled",
+)
+
+
+@pytest.fixture
+def catalog():
+    with patch("src.services.model_pricing.get_model_catalog", return_value=CATALOG):
+        yield CATALOG
 
 
 def test_openrouter_identity_is_derived_from_endpoint_without_contract_change() -> None:
     assert is_openrouter_endpoint("https://openrouter.ai/api/v1")
     assert canonical_provider("openai", "https://openrouter.ai/api/v1") == "openrouter"
     assert canonical_provider("custom", "https://gateway.example/v1") == "openai"
-    assert configured_models(" balanced ", "fast", None, "fast") == {
-        "balanced",
-        "fast",
-    }
 
 
-def test_catalog_parser_preserves_zero_and_cache_prices() -> None:
-    catalog = parse_pricing_catalog(
-        {
-            "data": [
-                {
-                    "id": "deepseek/deepseek-v4-flash",
-                    "pricing": {
-                        "prompt": "0.0000002",
-                        "completion": "0.0000008",
-                        "input_cache_read": "0.00000002",
-                        "input_cache_write": "0",
-                    },
-                },
-                {"id": "missing-pricing"},
-            ]
-        }
+def test_usage_names_keep_each_provider_historical_convention() -> None:
+    # Native providers key usage and prices by the undated id, as before.
+    assert usage_model_name("anthropic", "claude-opus-4-5-20251101") == "claude-opus-4-5"
+    assert usage_model_name("openai", "gpt-4o-2024-11-20") == "gpt-4o"
+    assert usage_model_name("google", "gemini-3.8-flash") == "gemini-3.8-flash"
+    # OpenRouter and community providers keep the exact id.
+    assert usage_model_name("openrouter", "anthropic/claude-opus-4-5") == (
+        "anthropic/claude-opus-4-5"
     )
-
-    assert catalog["deepseek/deepseek-v4-flash"] == PublishedModelPricing(
-        input_price=Decimal("0.2000"),
-        output_price=Decimal("0.8000"),
-        cache_read_price=Decimal("0.0200"),
-        cache_write_price=Decimal("0.0000"),
-    )
-    assert "missing-pricing" not in catalog
+    assert usage_model_name("fireworks-ai", "model-2026-01-01") == "model-2026-01-01"
 
 
 @pytest.mark.asyncio
-async def test_sync_adds_all_selected_and_previously_used_models() -> None:
-    session = AsyncMock()
-    session.add = MagicMock()
-    existing_result = MagicMock()
-    existing_result.scalars.return_value.all.return_value = []
-    used_result = MagicMock()
-    used_result.all.return_value = [("used/model",)]
-    session.execute.side_effect = [existing_result, used_result]
-    pricing = PublishedModelPricing(Decimal("1"), Decimal("2"), Decimal("0.1"))
-    catalog = {
-        "balanced/model": pricing,
-        "fast/model": pricing,
-        "pro/model": pricing,
-        "summary/model": pricing,
-        "tuning/model": pricing,
-        "used/model": pricing,
-    }
-
-    changed = await sync_published_pricing(
-        session,
-        provider="openrouter",
-        selected_models={
-            "balanced/model",
-            "fast/model",
-            "pro/model",
-            "summary/model",
-            "tuning/model",
-        },
-        catalog=catalog,
+async def test_missing_price_is_filled_from_catalog_for_any_provider(db_session, catalog) -> None:
+    added = await fill_pricing_from_catalog(
+        db_session,
+        provider="fireworks-ai",
+        model="accounts/fireworks/models/kimi-k3",
+        usage_name="accounts/fireworks/models/kimi-k3",
     )
-
-    assert changed == 6
-    assert {call.args[0].model for call in session.add.call_args_list} == set(catalog)
-    session.flush.assert_awaited_once()
+    assert added is True
+    row = (
+        await db_session.execute(
+            select(AIModelPricing).where(AIModelPricing.provider == "fireworks-ai")
+        )
+    ).scalar_one()
+    assert row.input_price_per_million == Decimal("0.6000")
+    assert row.output_price_per_million == Decimal("2.5000")
+    assert row.cache_read_price_per_million is None
 
 
 @pytest.mark.asyncio
-async def test_discovery_is_deduplicated_and_uses_public_openrouter_catalog() -> None:
-    session = AsyncMock()
-    redis = AsyncMock()
-    redis.set.return_value = True
-    catalog = {
-        "new/model": PublishedModelPricing(Decimal("1"), Decimal("2")),
-    }
-    with (
-        patch(
-            "src.services.model_pricing.fetch_pricing_catalog",
-            new=AsyncMock(return_value=catalog),
-        ) as fetch,
-        patch(
-            "src.services.model_pricing.sync_published_pricing",
-            new=AsyncMock(return_value=1),
-        ) as sync,
-    ):
-        assert await discover_openrouter_pricing(session, redis, "new/model")
-
-    fetch.assert_awaited_once_with(OPENROUTER_MODELS_ENDPOINT, timeout_seconds=5.0)
-    sync.assert_awaited_once_with(
-        session,
-        provider="openrouter",
-        selected_models={"new/model"},
-        catalog=catalog,
+async def test_fill_never_overwrites_an_existing_price(db_session, catalog) -> None:
+    db_session.add(
+        AIModelPricing(
+            provider="anthropic",
+            model="claude-opus-4-5",
+            input_price_per_million=Decimal("4.0000"),
+            output_price_per_million=Decimal("20.0000"),
+        )
     )
-    redis.set.assert_awaited_once()
+    await db_session.flush()
 
-    redis.set.reset_mock()
-    redis.set.return_value = False
-    with patch(
-        "src.services.model_pricing.fetch_pricing_catalog",
-        new=AsyncMock(),
-    ) as fetch_again:
-        assert not await discover_openrouter_pricing(session, redis, "new/model")
-    fetch_again.assert_not_awaited()
+    added = await fill_pricing_from_catalog(
+        db_session,
+        provider="anthropic",
+        model="claude-opus-4-5-20251101",
+        usage_name="claude-opus-4-5",
+    )
+
+    assert added is False
+    row = (
+        await db_session.execute(
+            select(AIModelPricing).where(AIModelPricing.model == "claude-opus-4-5")
+        )
+    ).scalar_one()
+    assert row.input_price_per_million == Decimal("4.0000")
+
+
+@pytest.mark.asyncio
+async def test_models_without_published_prices_are_left_unpriced(db_session, catalog) -> None:
+    assert not await fill_pricing_from_catalog(
+        db_session, provider="fireworks-ai", model="free-preview", usage_name="free-preview"
+    )
+    assert not await fill_pricing_from_catalog(
+        db_session, provider="unknown-cloud", model="m", usage_name="m"
+    )
+
+
+@pytest.mark.asyncio
+async def test_display_names_cover_usage_prices_and_profiles(db_session, catalog) -> None:
+    from sqlalchemy import delete
+
+    from src.models.orm.ai_usage import AIUsage
+    from src.services.model_pricing import used_model_display_names
+
+    # Start from known rows only; the shared test DB may hold others.
+    await db_session.execute(delete(AIUsage))
+    await db_session.execute(delete(AIModelPricing))
+    db_session.add_all(
+        [
+            AIModelPricing(
+                provider="fireworks-ai",
+                model="accounts/fireworks/models/kimi-k3",
+                input_price_per_million=Decimal("1"),
+                output_price_per_million=Decimal("1"),
+            ),
+            AIModelPricing(
+                provider="anthropic",
+                model="claude-opus-4-5",
+                input_price_per_million=Decimal("1"),
+                output_price_per_million=Decimal("1"),
+            ),
+            AIModelPricing(
+                provider="openai",
+                model="not-in-catalog",
+                input_price_per_million=Decimal("1"),
+                output_price_per_million=Decimal("1"),
+            ),
+        ]
+    )
+    await db_session.flush()
+
+    names = await used_model_display_names(db_session)
+
+    assert names["accounts/fireworks/models/kimi-k3"] == "Kimi K3"
+    assert names["claude-opus-4-5"] == "Claude Opus 4.5"
+    assert "not-in-catalog" not in names

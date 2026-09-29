@@ -32,6 +32,7 @@ class TestSchedulerDiagnostics:
                         "webhook_renewal",
                         "solution_update_check",
                         "file_index_reconciliation",
+                        "model_catalog_refresh",
                     )
                 )
             ):
@@ -51,6 +52,7 @@ class TestSchedulerDiagnostics:
             "file_index_reconciliation",
             "webhook_renewal",
             "solution_update_check",
+            "model_catalog_refresh",
             "solution_export_job_cleanup",
             "event_cleanup",
             "stuck_event_cleanup",
@@ -68,6 +70,7 @@ class TestSchedulerDiagnostics:
             "webhook_renewal",
             "solution_update_check",
             "file_index_reconciliation",
+            "model_catalog_refresh",
         ):
             assert tasks[task_id]["execution_mode"] == "durable_job"
             assert tasks[task_id]["last_run"]["status"] == "enqueued"

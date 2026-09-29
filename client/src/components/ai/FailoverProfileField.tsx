@@ -1,6 +1,7 @@
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { AIModelProfile } from "@/services/aiModels";
+import { useModelDisplayName } from "@/services/modelNames";
 
 export function FailoverProfileField({ id, profiles, currentProfileId, currentConnectionId, value, disabled, onChange }: {
 	id: string;
@@ -11,6 +12,7 @@ export function FailoverProfileField({ id, profiles, currentProfileId, currentCo
 	disabled?: boolean;
 	onChange: (profileId: string | null) => void;
 }) {
+	const modelName = useModelDisplayName();
 	const options = profiles.filter((profile) => profile.id !== currentProfileId);
 	const selected = options.find((profile) => profile.id === value) ?? null;
 	const sameConnection = selected !== null && selected.connection_id === currentConnectionId;
@@ -30,7 +32,7 @@ export function FailoverProfileField({ id, profiles, currentProfileId, currentCo
 					<SelectItem value="none">None — fail the run instead</SelectItem>
 					{options.map((profile) => (
 						<SelectItem key={profile.id} value={profile.id}>
-							{profile.name} · {profile.model}
+							{profile.name} · {modelName(profile.model)}
 						</SelectItem>
 					))}
 				</SelectContent>

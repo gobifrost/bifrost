@@ -17,12 +17,19 @@ from sqlalchemy.orm import joinedload, selectinload
 from src.config import get_settings
 from src.models.contracts.ai_models import AIModelAssignmentKey, AIProviderKind
 from src.models.contracts.artifacts import ModelCapabilities
+from src.models.contracts.llm import LLMModelInfo
 from src.models.orm.agents import Agent
 from src.models.orm.ai_models import (
     AIEmbeddingConfig,
     AIModelAssignment,
     AIModelProfile,
     AIProviderConnection,
+)
+from src.services.model_catalog import (
+    NATIVE_CATALOG_IDS,
+    CatalogModel,
+    ModelRoute,
+    get_model_catalog,
 )
 from src.services.opencode_go import (
     OPENCODE_GO_DEFAULT_ENDPOINT,
@@ -34,10 +41,7 @@ from src.services.opencode_go import (
 if TYPE_CHECKING:
     from src.services.embeddings.base import EmbeddingConfig
     from src.services.llm.base import LLMConfig
-    from src.services.provider_catalog_service import (
-        ProviderModelInfo,
-        ProviderTestResult,
-    )
+    from src.services.provider_catalog_service import ProviderTestResult
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +81,25 @@ class ModelProfileMergeResult:
     merged_profile_ids: tuple[UUID, ...]
     reassigned_agent_count: int
     reassigned_assignment_keys: tuple[AIModelAssignmentKey, ...]
+
+
+def catalog_model_info(model: CatalogModel) -> LLMModelInfo:
+    cost = model.cost
+    return LLMModelInfo(
+        id=model.id,
+        display_name=model.name,
+        output_modalities=model.output_modalities or None,
+        input_modalities=model.input_modalities or None,
+        context_window=model.context_window,
+        max_output_tokens=model.max_output_tokens,
+        input_price=str(cost.input) if cost and cost.input is not None else None,
+        output_price=str(cost.output) if cost and cost.output is not None else None,
+        cache_read_price=(
+            str(cost.cache_read) if cost and cost.cache_read is not None else None
+        ),
+        tool_call=model.tool_call,
+        reasoning_choices=model.reasoning_choices,
+    )
 
 
 class AIModelService:
@@ -195,6 +218,43 @@ class AIModelService:
         if provider == "openai_compatible":
             raise ValueError("Endpoint is required for OpenAI-compatible providers")
         return PROVIDER_DEFAULT_ENDPOINTS[provider]
+
+    async def _link_catalog_provider(
+        self,
+        provider: AIProviderKind,
+        endpoint: str | None,
+        catalog_provider_id: str | None,
+    ) -> tuple[str | None, str | None]:
+        """Resolve a connection's endpoint and catalog link.
+
+        A named catalog provider must use the adapter the catalog assigns it
+        and defaults to the catalog's endpoint; pointing it elsewhere leaves
+        the connection unlinked. Without one, a native
+        connection on its provider's own endpoint is linked to that catalog
+        provider; any other endpoint stays unlinked.
+        """
+        if catalog_provider_id:
+            entry = (await get_model_catalog(self.session)).provider(catalog_provider_id)
+            if entry is None or entry.adapter is None:
+                raise ValueError(
+                    f"'{catalog_provider_id}' is not a provider Bifrost can connect to"
+                )
+            if entry.adapter != provider:
+                raise ValueError(
+                    f"{entry.name} uses the '{entry.adapter}' adapter, not '{provider}'"
+                )
+            catalog_endpoint = self.normalize_endpoint(provider, entry.endpoint)
+            normalized = self.normalize_endpoint(provider, endpoint or entry.endpoint)
+            # The catalog describes the provider's own endpoint only; a
+            # different one (a proxy, Azure) is a custom connection.
+            return normalized, catalog_provider_id if normalized == catalog_endpoint else None
+        normalized = self.normalize_endpoint(provider, endpoint)
+        native_id = NATIVE_CATALOG_IDS.get(provider)
+        if native_id is None:
+            return normalized, None
+        if provider in ("openrouter", "opencode_go") or normalized == PROVIDER_DEFAULT_ENDPOINTS[provider]:
+            return normalized, native_id
+        return normalized, None
 
     def client_provider(self, provider: AIProviderKind) -> str:
         if provider in ("openrouter", "openai_compatible", "opencode_go"):
@@ -400,7 +460,14 @@ class AIModelService:
             else:
                 openai_transport = wire_api
 
-        if connection.provider == "openai_compatible" and openai_transport is None:
+        route = await self._catalog_route(connection, profile.model)
+        if route is not None:
+            # The catalog documents which API this model is served on, which
+            # may differ per model on one gateway; no transport probe needed.
+            provider = route.provider
+            endpoint = route.endpoint
+            openai_transport = route.openai_transport
+        elif connection.provider == "openai_compatible" and openai_transport is None:
             from src.services.openai_transport_detection import (
                 detect_openai_transport,
             )
@@ -423,6 +490,8 @@ class AIModelService:
             provider_connection_id=connection.id,
             anthropic_prompt_cache_supported=connection.anthropic_prompt_cache_supported,
             default_max_tokens=profile.default_max_tokens,
+            catalog_provider_id=connection.catalog_provider_id,
+            reasoning_effort=profile.reasoning_effort,
         )
 
     async def list_chat_profiles(self) -> tuple[list[AIModelProfile], UUID | None]:
@@ -457,22 +526,35 @@ class AIModelService:
         )
         return profiles, assignment.profile_id if assignment else None
 
-    def normalized_profile_capabilities(
-        self, profile: AIModelProfile
-    ) -> ModelCapabilities:
-        """Normalize a profile's stored capability metadata without exposing model ids."""
-        # Keep capability discovery lazy: that module imports the LLM package,
-        # whose public factory resolves profiles through this service.
-        from src.services.model_capabilities import normalize_capabilities
+    async def profile_capabilities(self, profile: AIModelProfile) -> ModelCapabilities:
+        """Chat capabilities for a profile.
 
-        return normalize_capabilities(
+        An administrator's stored record wins while it still matches the
+        profile's exact provider, endpoint, and model; otherwise the catalog
+        entry answers; otherwise the capabilities are unknown.
+        """
+        # Lazy: that module imports the LLM package, whose public factory
+        # resolves profiles through this service.
+        from src.services.model_capabilities import (
+            catalog_capabilities,
+            normalize_capabilities,
+        )
+
+        target = {
+            "provider": profile.connection.provider,
+            "model": profile.model,
+            "endpoint": profile.connection.endpoint,
+        }
+        stored = normalize_capabilities(
             ModelCapabilities.model_validate(profile.capabilities)
             if profile.capabilities
             else None,
-            provider=profile.connection.provider,
-            model=profile.model,
-            endpoint=profile.connection.endpoint,
+            **target,
         )
+        if stored.source != "unknown":
+            return stored
+        entry = await self.catalog_model_for(profile)
+        return catalog_capabilities(entry, **target) if entry else stored
 
     async def resolve_chat_profile(
         self,
@@ -515,7 +597,7 @@ class AIModelService:
             raise ValueError(f"Model profile '{profile.name}' is not enabled for Chat.")
 
         config = await self.resolve_config(profile_id=profile.id)
-        return profile, config, self.normalized_profile_capabilities(profile)
+        return profile, config, await self.profile_capabilities(profile)
 
     async def list_connections(self) -> list[AIProviderConnection]:
         return list(
@@ -555,15 +637,20 @@ class AIModelService:
         provider: AIProviderKind,
         api_key: str,
         endpoint: str | None,
+        catalog_provider_id: str | None = None,
     ) -> AIProviderConnection:
         trimmed_name = name.strip()
         if not trimmed_name:
             raise ValueError("Provider connection name is required")
         await self._ensure_unique_connection_name(trimmed_name)
+        endpoint, catalog_provider_id = await self._link_catalog_provider(
+            provider, endpoint, catalog_provider_id
+        )
         connection = AIProviderConnection(
             name=trimmed_name,
             provider=provider,
-            endpoint=self.normalize_endpoint(provider, endpoint),
+            endpoint=endpoint,
+            catalog_provider_id=catalog_provider_id,
             encrypted_api_key=self.encrypt_api_key(api_key),
         )
         self.session.add(connection)
@@ -579,6 +666,8 @@ class AIModelService:
         api_key: str | None = None,
         endpoint: str | None = None,
         endpoint_provided: bool = False,
+        catalog_provider_id: str | None = None,
+        catalog_provider_id_provided: bool = False,
     ) -> AIProviderConnection:
         connection = await self.get_connection(connection_id)
         if name is not None:
@@ -590,12 +679,23 @@ class AIModelService:
             )
             connection.name = trimmed_name
         transport_may_change = (
-            provider is not None or endpoint_provided or api_key is not None
+            provider is not None
+            or endpoint_provided
+            or api_key is not None
+            or catalog_provider_id_provided
         )
         if provider is not None:
             connection.provider = provider
-        if provider is not None or endpoint_provided:
-            connection.endpoint = self.normalize_endpoint(connection.provider, endpoint)
+        if provider is not None or endpoint_provided or catalog_provider_id_provided:
+            connection.endpoint, connection.catalog_provider_id = (
+                await self._link_catalog_provider(
+                    connection.provider,
+                    endpoint,
+                    # A new provider or endpoint re-infers the link unless the
+                    # caller names the catalog provider it now belongs to.
+                    catalog_provider_id if catalog_provider_id_provided else None,
+                )
+            )
         if api_key is not None:
             connection.encrypted_api_key = self.encrypt_api_key(api_key)
         if transport_may_change:
@@ -680,6 +780,7 @@ class AIModelService:
         enabled_for_chat: bool,
         default_max_tokens: int | None = None,
         failover_profile_id: UUID | None = None,
+        reasoning_effort: str | None = None,
     ) -> AIModelProfile:
         trimmed_name = name.strip()
         trimmed_model = model.strip()
@@ -689,7 +790,8 @@ class AIModelService:
             raise ValueError("Model id is required")
         self._validate_default_max_tokens(default_max_tokens)
         await self._ensure_unique_profile_name(trimmed_name)
-        await self.get_connection(connection_id)
+        connection = await self.get_connection(connection_id)
+        await self._validate_reasoning_effort(connection, trimmed_model, reasoning_effort)
         if failover_profile_id is not None:
             await self._validate_failover(None, failover_profile_id)
         is_first_profile = (
@@ -703,6 +805,7 @@ class AIModelService:
             enabled_for_chat=enabled_for_chat or is_first_profile,
             default_max_tokens=default_max_tokens,
             failover_profile_id=failover_profile_id,
+            reasoning_effort=reasoning_effort,
         )
         self.session.add(profile)
         await self.session.flush()
@@ -740,6 +843,8 @@ class AIModelService:
         default_max_tokens_provided: bool = False,
         failover_profile_id: UUID | None = None,
         failover_profile_id_provided: bool = False,
+        reasoning_effort: str | None = None,
+        reasoning_effort_provided: bool = False,
     ) -> AIModelProfile:
         profile = await self.get_profile(profile_id)
         if name is not None:
@@ -760,6 +865,15 @@ class AIModelService:
             profile.model = trimmed_model
             profile.openai_transport = None
             profile.wire_api = None
+        if reasoning_effort_provided:
+            profile.reasoning_effort = reasoning_effort
+        if connection_id is not None or model is not None or reasoning_effort_provided:
+            # A model change must not keep a choice the new model rejects.
+            await self._validate_reasoning_effort(
+                await self.get_connection(profile.connection_id),
+                profile.model,
+                profile.reasoning_effort,
+            )
         if capabilities_provided:
             profile.capabilities = (
                 capabilities.model_dump(mode="json") if capabilities else None
@@ -1024,11 +1138,74 @@ class AIModelService:
             )
         )
 
-    async def list_models(self, connection_id: UUID) -> list[ProviderModelInfo] | None:
+    async def list_models(self, connection_id: UUID) -> list[LLMModelInfo] | None:
+        """Catalog models for a catalog-linked connection, else the live list.
+
+        Only custom endpoints the catalog does not know are asked for their
+        ``/models``; the catalog carries context limits, prices, and
+        reasoning choices those listings lack.
+        """
+        connection = await self.get_connection(connection_id)
+        entry = (await get_model_catalog(self.session)).provider(
+            connection.catalog_provider_id
+        )
+        if entry is not None:
+            # Community models on an API Bifrost cannot call are left out.
+            return sorted(
+                (
+                    catalog_model_info(model)
+                    for model in entry.models.values()
+                    if entry.is_native or entry.route(model) is not None
+                ),
+                key=lambda model: model.display_name.lower(),
+            )
         result = await self.test_saved_connection(connection_id)
         if not result.success:
             return None
-        return result.models
+        return [
+            LLMModelInfo(
+                id=model.id,
+                display_name=model.display_name,
+                output_modalities=model.output_modalities,
+            )
+            for model in result.models or []
+        ]
+
+    async def _catalog_route(
+        self, connection: AIProviderConnection, model: str
+    ) -> ModelRoute | None:
+        """Catalog routing for a community provider's model, if known.
+
+        Native providers keep their own adapters; models the catalog does not
+        list keep the connection's adapter as before.
+        """
+        entry = (await get_model_catalog(self.session)).provider(
+            connection.catalog_provider_id
+        )
+        if entry is None or entry.is_native:
+            return None
+        catalog_model = entry.models.get(model)
+        return entry.route(catalog_model) if catalog_model else None
+
+    async def catalog_model_for(self, profile: AIModelProfile) -> CatalogModel | None:
+        catalog = await get_model_catalog(self.session)
+        return catalog.model(profile.connection.catalog_provider_id, profile.model)
+
+    async def _validate_reasoning_effort(
+        self, connection: AIProviderConnection, model: str, reasoning_effort: str | None
+    ) -> None:
+        if reasoning_effort is None:
+            return
+        entry = (await get_model_catalog(self.session)).model(
+            connection.catalog_provider_id, model
+        )
+        choices = entry.reasoning_choices if entry else []
+        if reasoning_effort not in choices:
+            raise ValueError(
+                f"'{model}' does not accept reasoning '{reasoning_effort}'"
+                + (f"; choose one of {', '.join(choices)}" if choices else
+                   "; the catalog lists no reasoning control for it")
+            )
 
     async def get_embedding_config_row(self) -> AIEmbeddingConfig | None:
         return (

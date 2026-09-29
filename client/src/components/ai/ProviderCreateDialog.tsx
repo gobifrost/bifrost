@@ -4,20 +4,19 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { PROVIDERS, providerLabel } from "./providerOptions";
-import type { AIProviderKind } from "@/services/aiModels";
+import {
+	ProviderConnectionFields,
+	type ProviderConnectionDraft,
+} from "./ProviderConnectionFields";
 
-export function ProviderCreateDialog({ providerCreateOpen, providerName, providerKind, providerEndpoint, providerKey, providerReady, setProviderName, changeProviderKind, setProviderEndpoint, setProviderKey, pending, error, onClose, onSubmit }: {
+export function ProviderCreateDialog({ providerCreateOpen, providerName, providerDraft, providerKey, providerReady, setProviderName, changeProviderDraft, setProviderKey, pending, error, onClose, onSubmit }: {
  providerCreateOpen: boolean;
  providerName: string;
- providerKind: AIProviderKind;
- providerEndpoint: string;
+ providerDraft: ProviderConnectionDraft;
  providerKey: string;
  providerReady: boolean;
  setProviderName: (value: string) => void;
- changeProviderKind: (value: AIProviderKind) => void;
- setProviderEndpoint: (value: string) => void;
+ changeProviderDraft: (draft: ProviderConnectionDraft) => void;
  setProviderKey: (value: string) => void;
  pending: boolean;
  error: Error | null;
@@ -40,69 +39,24 @@ export function ProviderCreateDialog({ providerCreateOpen, providerName, provide
 						</DialogDescription>
 					</DialogHeader>
 					<fieldset disabled={pending} className="grid min-w-0 gap-4 py-2">
-						<div className="grid gap-4 sm:grid-cols-2">
-							<div className="space-y-2">
-								<Label htmlFor="ai-provider-kind">
-									Provider
-								</Label>
-								<Select
-								disabled={pending}
-									value={providerKind}
-									onValueChange={(value) =>
-										changeProviderKind(
-											value as AIProviderKind,
-										)
-									}
-								>
-									<SelectTrigger
-										id="ai-provider-kind"
-										className="h-auto min-h-11 w-full data-[size=default]:h-auto [&_[data-slot=select-value]]:whitespace-normal [&_[data-slot=select-value]]:[overflow-wrap:anywhere]"
-									>
-										<SelectValue />
-									</SelectTrigger>
-									<SelectContent>
-										{PROVIDERS.map((provider) => (
-											<SelectItem
-												key={provider.value}
-												value={provider.value}
-											>
-												{provider.label}
-											</SelectItem>
-										))}
-									</SelectContent>
-								</Select>
-							</div>
-							<div className="space-y-2">
-								<Label htmlFor="ai-provider-name">
-									Connection Name
-								</Label>
-								<Input
-									id="ai-provider-name"
-									value={providerName}
-									onChange={(event) =>
-										setProviderName(event.target.value)
-									}
-									placeholder="OpenAI Production"
-								/>
-							</div>
-						</div>
+						<ProviderConnectionFields
+							idPrefix="ai-provider"
+							draft={providerDraft}
+							onChange={changeProviderDraft}
+							disabled={pending}
+						/>
 						<div className="space-y-2">
-							<Label htmlFor="ai-provider-endpoint">
-								Endpoint
+							<Label htmlFor="ai-provider-name">
+								Connection Name
 							</Label>
 							<Input
-								id="ai-provider-endpoint"
-								value={providerEndpoint}
+								id="ai-provider-name"
+								value={providerName}
 								onChange={(event) =>
-									setProviderEndpoint(event.target.value)
+									setProviderName(event.target.value)
 								}
-								placeholder="https://api.example.com/v1"
+								placeholder="OpenAI Production"
 							/>
-							<p className="text-xs text-muted-foreground">
-								{providerKind === "openai_compatible"
-									? "Required for OpenAI-Compatible providers."
-									: `Prefilled with the standard ${providerLabel(providerKind)} endpoint.`}
-							</p>
 						</div>
 						<div className="space-y-2">
 							<Label htmlFor="ai-provider-key">API Key</Label>

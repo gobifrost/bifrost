@@ -17,6 +17,8 @@ const aiModels = vi.hoisted(() => ({
 	mergeModelProfiles: vi.fn(),
 	testProviderConnection: vi.fn(),
 	verifyProviderConnection: vi.fn(),
+	getModelCatalog: vi.fn(),
+	refreshModelCatalog: vi.fn(),
 }));
 
 vi.mock("@/services/aiModels", async () => {
@@ -93,9 +95,22 @@ const profile = {
 	updated_at: "2026-08-22T00:00:00Z",
 };
 
+const catalog = {
+	source: "refreshed" as const,
+	fetched_at: "2026-09-29T08:00:00Z",
+	provider_count: 3,
+	model_count: 3,
+	providers: [
+		{ id: "openai", name: "OpenAI", adapter: "openai" as const, endpoint: "https://api.openai.com/v1", env: ["OPENAI_API_KEY"], native: true, model_count: 1 },
+		{ id: "openrouter", name: "OpenRouter", adapter: "openrouter" as const, endpoint: "https://openrouter.ai/api/v1", env: ["OPENROUTER_API_KEY"], native: true, model_count: 1 },
+		{ id: "fireworks-ai", name: "Fireworks AI", adapter: "openai_compatible" as const, endpoint: "https://api.fireworks.ai/inference/v1/", env: ["FIREWORKS_API_KEY"], native: false, model_count: 1 },
+	],
+};
+
 describe("AIModelSettings", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		aiModels.getModelCatalog.mockResolvedValue(catalog);
 		aiModels.listProviderConnections.mockResolvedValue([provider]);
 		aiModels.listModelProfiles.mockResolvedValue([profile]);
 		aiModels.listModelAssignments.mockResolvedValue([
@@ -184,7 +199,7 @@ describe("AIModelSettings", () => {
 		await user.click(
 			within(dialog).getByRole("combobox", { name: "Provider" }),
 		);
-		await user.click(screen.getByRole("option", { name: "OpenRouter" }));
+		await user.click(screen.getByRole("option", { name: /^OpenRouter/ }));
 		expect(within(dialog).getByLabelText("Endpoint")).toHaveValue(
 			"https://openrouter.ai/api/v1",
 		);
@@ -208,6 +223,7 @@ describe("AIModelSettings", () => {
 				provider: "openrouter",
 				api_key: "sk-provider",
 				endpoint: "https://openrouter.ai/api/v1",
+				catalog_provider_id: "openrouter",
 			}),
 		);
 
@@ -240,6 +256,49 @@ describe("AIModelSettings", () => {
 		);
 		expect(aiModels.createModelProfile.mock.calls[0][0]).not.toHaveProperty(
 			"max_tokens",
+		);
+	});
+
+	it("adds a community provider and a profile with a catalog reasoning choice", async () => {
+		aiModels.listProviderModels.mockResolvedValue({
+			provider: "openai_compatible",
+			source: "catalog",
+			models: [
+				{ id: "kimi-k3", display_name: "Kimi K3", reasoning_choices: ["low", "high"] },
+			],
+		});
+		const { user } = renderWithProviders(<AIModelSettings />);
+
+		await user.click(await screen.findByRole("button", { name: "Add Provider" }));
+		let dialog = screen.getByRole("dialog");
+		await user.click(within(dialog).getByRole("combobox", { name: "Provider" }));
+		await user.click(screen.getByRole("option", { name: /^Fireworks AI/ }));
+		expect(within(dialog).getByText(/Community provider/)).toBeInTheDocument();
+		await user.type(within(dialog).getByLabelText("API Key"), "fw-key");
+		await user.click(within(dialog).getByRole("button", { name: "Add Provider" }));
+		await waitFor(() =>
+			expect(aiModels.createProviderConnection).toHaveBeenCalledWith(
+				expect.objectContaining({
+					name: "Fireworks AI",
+					provider: "openai_compatible",
+					endpoint: "https://api.fireworks.ai/inference/v1/",
+					catalog_provider_id: "fireworks-ai",
+				}),
+			),
+		);
+
+		await user.click(screen.getByRole("button", { name: "Add Profile" }));
+		dialog = screen.getByRole("dialog");
+		await user.type(within(dialog).getByRole("textbox", { name: "Profile Name" }), "Kimi");
+		await user.click(within(dialog).getByRole("combobox", { name: "Model" }));
+		await user.click(screen.getByRole("option", { name: /^Kimi K3/ }));
+		await user.click(within(dialog).getByRole("combobox", { name: "Reasoning" }));
+		await user.click(screen.getByRole("option", { name: "High" }));
+		await user.click(within(dialog).getByRole("button", { name: "Add Profile" }));
+
+		await waitFor(() => expect(aiModels.createModelProfile).toHaveBeenCalled());
+		expect(aiModels.createModelProfile.mock.calls[0][0]).toEqual(
+			expect.objectContaining({ model: "kimi-k3", reasoning_effort: "high" }),
 		);
 	});
 

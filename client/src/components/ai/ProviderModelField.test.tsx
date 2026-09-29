@@ -74,6 +74,7 @@ describe("ProviderModelField", () => {
 	it("loads the selected provider's catalog", async () => {
 		listProviderModels.mockResolvedValue({
 			provider: "openai",
+			source: "catalog",
 			models: [
 				{
 					id: "text-embedding-3-large",
@@ -90,9 +91,7 @@ describe("ProviderModelField", () => {
 			).toBeInTheDocument(),
 		);
 		expect(
-			screen.getByText(
-				"This list is supplied by the provider and may include models your account cannot access. Choose a model available to your account.",
-			),
+			screen.getByText(/From the models\.dev catalog, which may list models your account cannot use\./),
 		).toBeInTheDocument();
 		fireEvent.change(screen.getByLabelText("Model"), {
 			target: { value: "text-embedding-3-large" },
@@ -107,7 +106,7 @@ it("retries catalog failure without losing a selected model", async () => {
 	renderField("retry-connection", vi.fn(), "existing-model");
 	expect(await screen.findByRole("alert")).toHaveTextContent("selected model is preserved");
 	expect(screen.getByRole("textbox", { name: "Model" })).toHaveValue("existing-model");
-	fireEvent.click(screen.getByRole("button", { name: "Retry model catalog" }));
+	fireEvent.click(screen.getByRole("button", { name: "Retry model list" }));
 	await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
 	expect(screen.getByRole("combobox", { name: "Model" })).toHaveValue("existing-model");
 });
@@ -119,4 +118,21 @@ it("allows editing an existing model ID when the catalog is empty", async () => 
 	const input = await screen.findByRole("textbox", { name: "Model" });
 	fireEvent.change(input, { target: { value: "replacement-model" } });
 	expect(onValueChange).toHaveBeenCalledWith("replacement-model");
+});
+
+it("lets an administrator type a model the catalog does not list", async () => {
+	listProviderModels.mockResolvedValueOnce({
+		source: "catalog",
+		models: [{ id: "listed", display_name: "Listed" }],
+	});
+	const onValueChange = vi.fn();
+	renderField("typed-connection", onValueChange);
+
+	fireEvent.click(await screen.findByRole("button", { name: "Enter a model ID instead" }));
+	fireEvent.change(screen.getByRole("textbox", { name: "Model" }), {
+		target: { value: "my-finetune" },
+	});
+	expect(onValueChange).toHaveBeenCalledWith("my-finetune");
+	fireEvent.click(screen.getByRole("button", { name: "Choose from the model list" }));
+	expect(screen.getByRole("combobox", { name: "Model" })).toBeInTheDocument();
 });

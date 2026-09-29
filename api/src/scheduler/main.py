@@ -443,6 +443,23 @@ class Scheduler:
         except ImportError:
             logger.warning("Solution update check job not available")
 
+        # Model catalog (models.dev) - every 4 hours, and once at startup so a
+        # new install moves off the bundled snapshot promptly.
+        from src.jobs.platform.system_maintenance import (
+            enqueue_automatic_model_catalog_refresh,
+        )
+        scheduler.add_job(
+            self._run_scheduled_task,
+            IntervalTrigger(hours=4),
+            id="model_catalog_refresh",
+            name="Refresh the models.dev provider and model catalog",
+            replace_existing=True,
+            next_run_time=datetime.now(timezone.utc),
+            args=["model_catalog_refresh", enqueue_automatic_model_catalog_refresh],
+            **misfire_options,
+        )
+        logger.info("Model catalog refresh scheduled (every 4 hours)")
+
         # Completed Solution backup artifacts expire independently of execution.
         try:
             from src.jobs.schedulers.solution_export_jobs import (

@@ -9913,7 +9913,7 @@
     "cli": 154,
     "manifest": 16,
     "mcp": 94,
-    "rest": 644,
+    "rest": 645,
     "sdk": 19
   },
   "schema_version": 1,
@@ -10826,6 +10826,20 @@
       {
         "method": "GET",
         "operation_id": "",
+        "path": "/api/admin/ai/catalog",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/api/admin/ai/catalog/refresh",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
         "path": "/api/admin/ai/connections",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -10960,20 +10974,6 @@
         "method": "POST",
         "operation_id": "",
         "path": "/api/admin/llm/embedding-test",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "POST",
-        "operation_id": "",
-        "path": "/api/admin/llm/model-capabilities",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "POST",
-        "operation_id": "",
-        "path": "/api/admin/llm/model-capabilities/verify",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -12640,6 +12640,13 @@
         "method": "GET",
         "operation_id": "",
         "path": "/api/metrics/workflows",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/model-catalog/names",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },

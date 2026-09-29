@@ -309,7 +309,7 @@ test.describe("AI model settings", () => {
 		await page.getByRole("option", { name: /Default/ }).click();
 		await expect(
 			profileDialog.getByText(
-				"This list is supplied by the provider and may include models your account cannot access. Choose a model available to your account.",
+				/Reported by this endpoint, which may list models your account cannot use\./,
 			),
 		).toBeVisible();
 		await profileDialog.getByLabel("Model", { exact: true }).click();

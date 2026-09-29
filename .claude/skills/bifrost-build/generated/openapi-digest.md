@@ -11,6 +11,8 @@
 | PUT | `/api/admin/ai/assignments/{assignment_key}` |
 | GET | `/api/admin/ai/behavior` |
 | PUT | `/api/admin/ai/behavior` |
+| GET | `/api/admin/ai/catalog` |
+| POST | `/api/admin/ai/catalog/refresh` |
 | GET | `/api/admin/ai/connections` |
 | POST | `/api/admin/ai/connections` |
 | POST | `/api/admin/ai/connections/verify` |
@@ -31,8 +33,6 @@
 | POST | `/api/admin/llm/embedding-config` |
 | POST | `/api/admin/llm/embedding-reindex` |
 | POST | `/api/admin/llm/embedding-test` |
-| POST | `/api/admin/llm/model-capabilities` |
-| POST | `/api/admin/llm/model-capabilities/verify` |
 | GET | `/api/admin/memory/settings` |
 | PUT | `/api/admin/memory/settings` |
 | GET | `/api/admin/required-instructions` |
@@ -359,6 +359,7 @@
 | GET | `/api/metrics/resources` |
 | GET | `/api/metrics/snapshot` |
 | GET | `/api/metrics/workflows` |
+| GET | `/api/model-catalog/names` |
 | GET | `/api/notifications` |
 | DELETE | `/api/notifications/locks/upload` |
 | GET | `/api/notifications/locks/upload` |

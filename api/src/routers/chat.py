@@ -82,7 +82,7 @@ async def get_model_profiles(db: DbSession, user: CurrentActiveUser) -> ChatMode
                 id=profile.id,
                 name=profile.name,
                 label=profile.name,
-                capabilities=service.normalized_profile_capabilities(profile),
+                capabilities=await service.profile_capabilities(profile),
             )
             for profile in profiles
         ],

@@ -68,6 +68,7 @@ import {
 	buildRunActivity,
 	type RunActivityItem,
 } from "./run-activity";
+import { useModelDisplayName } from "@/services/modelNames";
 
 type AgentRunStepResponse = components["schemas"]["AgentRunStepResponse"];
 type AgentRunDetailResponse = components["schemas"]["AgentRunDetailResponse"];
@@ -1015,6 +1016,7 @@ function SelectedUsage({
 	usage: NonNullable<AgentRunDetailResponse["ai_usage"]>;
 	summary: AgentRunDetailResponse["usage_summary"] | null;
 }) {
+	const modelName = useModelDisplayName();
 	const summaryParts = runUsageParts(summary);
 	return (
 		<div className="grid gap-3">
@@ -1028,7 +1030,7 @@ function SelectedUsage({
 					key={`${entry.model}-${index}`}
 					className="grid gap-x-4 gap-y-2 rounded-[var(--bf-radius-feature)] border border-border/70 bg-muted/35 p-3 text-xs sm:grid-cols-5"
 				>
-					<UsageMetric label="Model" value={entry.model} />
+					<UsageMetric label="Model" value={modelName(entry.model)} />
 					<UsageMetric
 						label="Context"
 						value={formatContextTokens(entry.input_tokens)}

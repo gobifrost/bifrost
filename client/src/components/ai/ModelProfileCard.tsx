@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
+import { reasoningLabel } from "@/lib/model-info";
 import type { AIModelProfile } from "@/services/aiModels";
 
 export function ModelProfileCard({ profile, description, assignments, selectionMode, selected, isDefault, chatPending, defaultPending, defaultDisabled, onSelect, onEdit, onDelete, onChatChange, onSetDefault }: {
@@ -29,10 +30,11 @@ export function ModelProfileCard({ profile, description, assignments, selectionM
 			<CardDescription className="min-w-0 [overflow-wrap:anywhere]">{description}</CardDescription>
 		</CardHeader>
 		<CardContent className="space-y-4">
-		{(profile.enabled_for_chat || isDefault || assignments.length > 0 || profile.default_max_tokens != null || profile.failover_profile_name != null) && <div className="flex flex-wrap gap-2">
+		{(profile.enabled_for_chat || isDefault || assignments.length > 0 || profile.default_max_tokens != null || profile.reasoning_effort != null || profile.failover_profile_name != null) && <div className="flex flex-wrap gap-2">
 			{profile.enabled_for_chat && <Badge variant="secondary"><MessageSquareText className="size-3" />Chat</Badge>}
 			{isDefault && <Badge><CheckCircle2 className="size-3" />Default</Badge>}
 			{profile.default_max_tokens != null && <Badge variant="outline" className="h-auto whitespace-normal">Default cap {profile.default_max_tokens?.toLocaleString()}</Badge>}
+			{profile.reasoning_effort != null && <Badge variant="outline">Reasoning: {reasoningLabel(profile.reasoning_effort)}</Badge>}
 			{profile.failover_profile_name != null && <Badge variant="outline" className="h-auto whitespace-normal [overflow-wrap:anywhere]">Fallback → {profile.failover_profile_name}</Badge>}
 			{assignments.map((name) => <Badge key={name} variant="outline" className="h-auto whitespace-normal [overflow-wrap:anywhere]">{name}</Badge>)}
 		</div>}

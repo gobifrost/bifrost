@@ -9,16 +9,18 @@ import { MessageSquareText } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { ProviderModelField } from "./ProviderModelField";
 import { FailoverProfileField } from "./FailoverProfileField";
+import { ReasoningEffortField } from "./ReasoningEffortField";
 import { providerLabel } from "./providerOptions";
 import type { AIProviderConnection, AIModelProfile } from "@/services/aiModels";
 
-export function ProfileCreateDialog({ profileCreateOpen, profileName, profileConnectionId, profileModel, profileChatEnabled, profileFailoverId, profileReady, providers, profiles, firstProfile, setProfileName, setProfileConnectionId, setProfileModel, setProfileChatEnabled, setProfileFailoverId, pending, error, onClose, onSubmit }: {
+export function ProfileCreateDialog({ profileCreateOpen, profileName, profileConnectionId, profileModel, profileChatEnabled, profileFailoverId, profileReasoning, profileReady, providers, profiles, firstProfile, setProfileName, setProfileConnectionId, setProfileModel, setProfileChatEnabled, setProfileFailoverId, setProfileReasoning, pending, error, onClose, onSubmit }: {
 	profileCreateOpen: boolean;
 	profileName: string;
 	profileConnectionId: string;
 	profileModel: string;
 	profileChatEnabled: boolean;
 	profileFailoverId: string | null;
+	profileReasoning: string | null;
 	profileReady: boolean;
 	providers: AIProviderConnection[];
 	profiles: AIModelProfile[];
@@ -28,6 +30,7 @@ export function ProfileCreateDialog({ profileCreateOpen, profileName, profileCon
 	setProfileModel: (value: string) => void;
 	setProfileChatEnabled: (value: boolean) => void;
 	setProfileFailoverId: (value: string | null) => void;
+	setProfileReasoning: (value: string | null) => void;
 	pending: boolean;
 	error: Error | null;
 	onClose: () => void;
@@ -101,6 +104,14 @@ export function ProfileCreateDialog({ profileCreateOpen, profileName, profileCon
 								onValueChange={setProfileModel}
 							/>
 						</div>
+						<ReasoningEffortField
+							id="ai-profile-reasoning"
+							connectionId={profileConnectionId}
+							model={profileModel}
+							value={profileReasoning}
+							disabled={pending}
+							onValueChange={setProfileReasoning}
+						/>
 						<FailoverProfileField
 							id="ai-profile-failover"
 							profiles={profiles}

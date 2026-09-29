@@ -168,33 +168,11 @@ class ModelCapabilities(BaseModel):
     image_input: bool = False
     pdf_input: bool = False
     tool_calling: bool = False
-    source: Literal["openrouter", "verified", "manual", "unknown"] = "unknown"
+    # "openrouter"/"verified" remain valid for records saved before the
+    # catalog existed; new records are "catalog" or "manual".
+    source: Literal["catalog", "openrouter", "verified", "manual", "unknown"] = "unknown"
     checked_at: datetime | None = None
     fingerprint: str = ""
-
-
-class ModelCapabilityLookupRequest(BaseModel):
-    """Identify a configured model for deterministic catalog lookup."""
-
-    provider: Literal["openai", "anthropic", "google"]
-    model: str = Field(min_length=1)
-    endpoint: str | None = None
-
-
-class ModelCapabilityLookupResponse(BaseModel):
-    """Capability lookup result plus an explanation suitable for settings UI."""
-
-    capabilities: ModelCapabilities
-    message: str
-
-
-class ModelCapabilityVerifyRequest(ModelCapabilityLookupRequest):
-    """Run a one-time conformance check against the configured provider."""
-
-    api_key: str | None = Field(
-        default=None,
-        description="New unsaved API key; omit to use the saved provider key.",
-    )
 
 
 class ArtifactDownloadResponse(BaseModel):

@@ -50,6 +50,7 @@ async def record_ai_usage(
     output_tokens: int,
     cache_read_tokens: int = 0,
     cache_write_tokens: int = 0,
+    reasoning_tokens: int = 0,
     provider_cost: Decimal | None = None,
     sequence: int = 1,
     duration_ms: int | None = None,
@@ -59,14 +60,13 @@ async def record_ai_usage(
     message_id: UUID | None = None,
     organization_id: UUID | None = None,
     user_id: UUID | None = None,
-    api_key: str | None = None,
 ) -> None:
     """
     Record an AI usage event.
 
     Steps:
-    1. Convert model ID to display name
-    2. Get pricing from cache or DB
+    1. Name the model the way its usage and prices are keyed
+    2. Get pricing from cache or DB, filling a missing price from the catalog
     3. Calculate cost
     4. Insert to ai_usage table
     5. Invalidate aggregates cache
@@ -86,43 +86,30 @@ async def record_ai_usage(
         message_id: UUID of message within conversation
         organization_id: UUID of organization
         user_id: UUID of user who initiated the call
-        api_key: Provider API key (optional, for fetching display names if not cached)
     """
     from src.models.orm.ai_usage import AIUsage
-    from src.services.model_registry import get_display_name
+    from src.services.model_pricing import (
+        canonical_provider,
+        fill_pricing_from_catalog,
+        usage_model_name,
+    )
 
     try:
-        from src.services.model_pricing import (
-            OPENROUTER_PROVIDER,
-            canonical_provider,
-            discover_openrouter_pricing,
-        )
-
         provider = canonical_provider(provider)
-        # OpenRouter catalog and response IDs use stable slugs. Native providers
-        # retain the existing display-name normalization contract.
-        display_name = (
-            model
-            if provider == OPENROUTER_PROVIDER
-            else await get_display_name(redis_client, provider, model, api_key)
-        )
+        display_name = usage_model_name(provider, model)
 
         pricing = await get_cached_pricing(
             redis_client, session, provider, display_name
         )
         pricing_missing = pricing[0] is None and pricing[1] is None
-        if pricing_missing and provider == OPENROUTER_PROVIDER:
-            discovered = await discover_openrouter_pricing(
-                session,
-                redis_client,
-                display_name,
+        if pricing_missing and await fill_pricing_from_catalog(
+            session, provider=provider, model=model, usage_name=display_name
+        ):
+            await invalidate_pricing_cache(redis_client, provider, display_name)
+            pricing = await get_cached_pricing(
+                redis_client, session, provider, display_name
             )
-            if discovered:
-                await invalidate_pricing_cache(redis_client, provider, display_name)
-                pricing = await get_cached_pricing(
-                    redis_client, session, provider, display_name
-                )
-                pricing_missing = pricing[0] is None and pricing[1] is None
+            pricing_missing = pricing[0] is None and pricing[1] is None
 
         calculated_cost = calculate_cost(
             input_tokens,
@@ -147,6 +134,7 @@ async def record_ai_usage(
             output_tokens=output_tokens,
             cache_read_tokens=cache_read_tokens,
             cache_write_tokens=cache_write_tokens,
+            reasoning_tokens=reasoning_tokens,
             provider_cost=provider_cost,
             cost=cost,
             duration_ms=duration_ms,

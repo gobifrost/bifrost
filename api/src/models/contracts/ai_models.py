@@ -27,6 +27,11 @@ class AIProviderConnectionCreate(BaseModel):
     provider: AIProviderKind
     api_key: str = Field(..., min_length=1)
     endpoint: str | None = Field(default=None, max_length=500)
+    catalog_provider_id: str | None = Field(
+        default=None,
+        max_length=100,
+        description="models.dev provider id; supplies the default endpoint and model list",
+    )
 
 
 class AIProviderConnectionUpdate(BaseModel):
@@ -34,6 +39,7 @@ class AIProviderConnectionUpdate(BaseModel):
     provider: AIProviderKind | None = None
     api_key: str | None = Field(default=None)
     endpoint: str | None = Field(default=None, max_length=500)
+    catalog_provider_id: str | None = Field(default=None, max_length=100)
 
 
 class AIProviderConnectionResponse(BaseModel):
@@ -41,6 +47,7 @@ class AIProviderConnectionResponse(BaseModel):
     name: str
     provider: AIProviderKind
     endpoint: str | None = None
+    catalog_provider_id: str | None = None
     api_key_set: bool
     profile_count: int = 0
     anthropic_prompt_cache_supported: bool | None = None
@@ -55,6 +62,7 @@ class AIProviderConnectionSummary(BaseModel):
     name: str
     provider: AIProviderKind
     endpoint: str | None = None
+    catalog_provider_id: str | None = None
     anthropic_prompt_cache_supported: bool | None = None
 
 
@@ -75,6 +83,11 @@ class AIModelProfileCreate(BaseModel):
         description="Fallback profile tried when this profile's provider fails "
         "with a retryable transport error after retries are exhausted",
     )
+    reasoning_effort: str | None = Field(
+        default=None,
+        max_length=32,
+        description="One of the model's catalog reasoning choices; null = model default",
+    )
 
 
 class AIModelProfileUpdate(BaseModel):
@@ -93,6 +106,11 @@ class AIModelProfileUpdate(BaseModel):
         default=None,
         description="Fallback profile tried when this profile's provider fails "
         "with a retryable transport error after retries are exhausted",
+    )
+    reasoning_effort: str | None = Field(
+        default=None,
+        max_length=32,
+        description="One of the model's catalog reasoning choices; null = model default",
     )
 
 
@@ -117,6 +135,7 @@ class AIModelProfileResponse(BaseModel):
     capabilities: ModelCapabilities | None = None
     enabled_for_chat: bool
     default_max_tokens: int | None = None
+    reasoning_effort: str | None = None
     failover_profile_id: UUID | None = None
     failover_profile_name: str | None = None
     connection: AIProviderConnectionSummary
@@ -157,4 +176,36 @@ class AIConnectionTestResponse(BaseModel):
 
 class AIModelsResponse(BaseModel):
     provider: AIProviderKind
+    # "catalog" = models.dev list for a catalog provider; "provider" = the
+    # custom endpoint's own /models listing.
+    source: Literal["catalog", "provider"]
     models: list[LLMModelInfo]
+
+
+class ModelCatalogProvider(BaseModel):
+    """A provider Bifrost can connect to, from the models.dev catalog."""
+
+    id: str
+    name: str
+    adapter: AIProviderKind
+    endpoint: str | None = None
+    doc: str | None = None
+    env: list[str] = Field(default_factory=list)
+    native: bool = Field(
+        description="Exercised directly by Bifrost; other providers reuse a native adapter"
+    )
+    model_count: int
+
+
+class ModelCatalogResponse(BaseModel):
+    source: Literal["bundled", "refreshed"]
+    fetched_at: datetime | None = None
+    provider_count: int
+    model_count: int
+    providers: list[ModelCatalogProvider]
+
+
+class ModelDisplayNamesResponse(BaseModel):
+    """Stored model id -> catalog display name, for ids the catalog knows."""
+
+    names: dict[str, str]

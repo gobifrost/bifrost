@@ -54,6 +54,7 @@ class AIUsagePublicSimple(BaseModel):
     output_tokens: int
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
+    reasoning_tokens: int = 0  # Included in output_tokens
     provider_cost: str | None = None
     cost: str | None = None  # Decimal as string
     duration_ms: int | None = None
@@ -67,6 +68,7 @@ class AIUsageTotalsSimple(BaseModel):
     total_output_tokens: int = 0
     total_cache_read_tokens: int = 0
     total_cache_write_tokens: int = 0
+    total_reasoning_tokens: int = 0
     total_provider_cost: str = "0"
     total_cost: str = "0"  # Decimal as string
     total_duration_ms: int = 0

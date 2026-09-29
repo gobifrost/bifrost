@@ -39,6 +39,7 @@ def _llm_response(**kwargs):
         output_tokens=kwargs.get("output_tokens", 5),
         cache_read_tokens=kwargs.get("cache_read_tokens", 0),
         cache_write_tokens=kwargs.get("cache_write_tokens", 0),
+        reasoning_tokens=kwargs.get("reasoning_tokens", 0),
         provider_cost=kwargs.get("provider_cost", None),
         model=kwargs.get("model", "gpt-4o"),
     )

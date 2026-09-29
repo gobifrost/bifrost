@@ -27,6 +27,9 @@ class AIProviderConnection(Base):
     anthropic_prompt_cache_supported: Mapped[bool | None] = mapped_column(
         Boolean, nullable=True
     )
+    # models.dev provider id this connection was created from. Null for a
+    # custom endpoint that is not in the catalog.
+    catalog_provider_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
@@ -71,6 +74,9 @@ class AIModelProfile(Base):
     wire_api: Mapped[str | None] = mapped_column(String(32), nullable=True)
     default_max_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     capabilities: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # One value from the model's catalog reasoning options: an effort level,
+    # "on"/"off" for a toggle, or null for the model's default behavior.
+    reasoning_effort: Mapped[str | None] = mapped_column(String(32), nullable=True)
     enabled_for_chat: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -185,3 +191,18 @@ class AIEmbeddingConfig(Base):
         CheckConstraint("dimensions > 0", name="ck_ai_embedding_configs_dimensions_positive"),
         Index("ix_ai_embedding_configs_connection_id", "connection_id"),
     )
+
+
+class AIModelCatalog(Base):
+    """Last good copy of an external model catalog (models.dev)."""
+
+    __tablename__ = "ai_model_catalog"
+
+    source: Mapped[str] = mapped_column(String(50), primary_key=True)
+    etag: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    provider_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    model_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    # When the stored payload last changed, and when the source was last asked.
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

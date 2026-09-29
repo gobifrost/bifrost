@@ -2,11 +2,14 @@ import { Pencil, RefreshCw, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import type { AIProviderConnection } from "@/services/aiModels";
+import type { AIProviderConnection, ModelCatalogProvider } from "@/services/aiModels";
 
-export function ProviderConnectionCard({ provider, providerLabel, testing, onEdit, onTest, onDelete }: {
+import { providerLabel } from "./providerOptions";
+
+export function ProviderConnectionCard({ provider, catalogProvider, testing, onEdit, onTest, onDelete }: {
 	provider: AIProviderConnection;
-	providerLabel: string;
+	/** The catalog entry this connection belongs to; absent for custom endpoints. */
+	catalogProvider: ModelCatalogProvider | undefined;
 	testing: boolean;
 	onEdit: () => void;
 	onTest: () => void;
@@ -19,7 +22,8 @@ export function ProviderConnectionCard({ provider, providerLabel, testing, onEdi
 		</CardHeader>
 		<CardContent className="space-y-4">
 			<div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-				<Badge variant="secondary">{providerLabel}</Badge>
+				<Badge variant="secondary">{catalogProvider?.name ?? `Custom · ${providerLabel(provider.provider)}`}</Badge>
+				{catalogProvider && !catalogProvider.native && <Badge variant="outline" title="Uses a native adapter; not tested by Bifrost directly">Community</Badge>}
 				<span>{provider.profile_count} {provider.profile_count === 1 ? "profile" : "profiles"}</span>
 				<span>Key {provider.api_key_set ? "saved" : "missing"}</span>
 			</div>

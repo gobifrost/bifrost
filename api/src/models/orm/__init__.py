@@ -14,7 +14,7 @@ from src.models.orm.agent_runs import AgentRun, AgentRunStep
 from src.models.orm.summary_backfill_job import SummaryBackfillJob
 from src.models.orm.agents import Agent, AgentDelegation, AgentRole, AgentTool, Conversation, Message, MessageAttachment
 from src.models.orm.ai_usage import AIModelPricing, AIUsage
-from src.models.orm.ai_models import AIEmbeddingConfig, AIModelAssignment, AIModelProfile, AIProviderConnection
+from src.models.orm.ai_models import AIEmbeddingConfig, AIModelAssignment, AIModelCatalog, AIModelProfile, AIProviderConnection
 from src.models.orm.app_embed_secrets import AppEmbedSecret
 from src.models.orm.artifacts import Artifact
 from src.models.orm.platform_jobs import PlatformJob
@@ -125,6 +125,7 @@ __all__ = [
     "AIUsage",
     "AIModelAssignment",
     "AIEmbeddingConfig",
+    "AIModelCatalog",
     "AIModelProfile",
     "AIProviderConnection",
     # Forms

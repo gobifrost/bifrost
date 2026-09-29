@@ -4,15 +4,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { PROVIDERS, providerOption, providerLabel } from "./providerOptions";
-import type { AIProviderKind } from "@/services/aiModels";
+import {
+	ProviderConnectionFields,
+	type ProviderConnectionDraft,
+} from "./ProviderConnectionFields";
 
-export interface ProviderEditDraft {
+export interface ProviderEditDraft extends ProviderConnectionDraft {
  id: string;
  name: string;
- provider: AIProviderKind;
- endpoint: string;
  apiKey: string;
 }
 
@@ -54,69 +53,12 @@ export function ProviderEditDialog({ providerEdit, pending, failed, onChange, on
 									}
 								/>
 							</div>
-							<div className="space-y-2">
-								<Label htmlFor="edit-provider-kind">
-									Provider
-								</Label>
-								<Select
-									disabled={pending}
-									value={providerEdit.provider}
-									onValueChange={(provider) => {
-										const nextKind =
-											provider as AIProviderKind;
-										const previousDefault = providerOption(
-											providerEdit.provider,
-										).endpoint;
-										onChange({
-											...providerEdit,
-											provider: nextKind,
-											endpoint:
-												!providerEdit.endpoint ||
-												providerEdit.endpoint ===
-													previousDefault
-													? providerOption(nextKind)
-															.endpoint
-													: providerEdit.endpoint,
-										});
-									}}
-								>
-									<SelectTrigger className="h-auto min-h-11 w-full data-[size=default]:h-auto [&_[data-slot=select-value]]:whitespace-normal [&_[data-slot=select-value]]:[overflow-wrap:anywhere]" id="edit-provider-kind">
-										<SelectValue />
-									</SelectTrigger>
-									<SelectContent>
-										{PROVIDERS.map((provider) => (
-											<SelectItem
-												key={provider.value}
-												value={provider.value}
-											>
-												{provider.label}
-											</SelectItem>
-										))}
-									</SelectContent>
-								</Select>
-							</div>
-							<div className="space-y-2">
-								<Label htmlFor="edit-provider-endpoint">
-									Endpoint
-								</Label>
-								<Input
-									id="edit-provider-endpoint"
-									value={providerEdit.endpoint}
-									onChange={(event) =>
-										onChange({
-											...providerEdit,
-											endpoint: event.target.value,
-										})
-									}
-									placeholder="https://api.example.com/v1"
-								/>
-								<p className="text-xs text-muted-foreground">
-									{providerEdit.provider ===
-									"openai_compatible"
-										? "Required for OpenAI-Compatible providers."
-										: `Standard ${providerLabel(providerEdit.provider)} endpoint.`}
-								</p>
-							</div>
+							<ProviderConnectionFields
+								idPrefix="edit-provider"
+								draft={providerEdit}
+								disabled={pending}
+								onChange={(draft) => onChange({ ...providerEdit, ...draft })}
+							/>
 							<div className="space-y-2">
 								<Label htmlFor="edit-provider-key">
 									New API Key

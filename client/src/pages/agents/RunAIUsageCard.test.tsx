@@ -1,5 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen } from "@/test-utils";
+vi.mock("@/services/modelNames", () => ({
+	useModelDisplayName: () => (model: string) =>
+		model === "claude-haiku-4-5" ? "Claude Haiku 4.5" : model,
+}));
+
 import { RunAIUsageCard } from "./RunAIUsageCard";
 import type { components } from "@/lib/v1";
 
@@ -45,6 +50,7 @@ describe("RunAIUsageCard", () => {
 				input_tokens: 300,
 				output_tokens: 30,
 				cache_read_tokens: 200,
+				reasoning_tokens: 12,
 				cost: "0.75",
 			},
 		] as Usage;
@@ -53,6 +59,29 @@ describe("RunAIUsageCard", () => {
 		expect(screen.getByText("2")).toBeInTheDocument();
 		expect(screen.getByText("$2.00")).toBeInTheDocument();
 		expect(screen.getByText("50%")).toBeInTheDocument();
-		expect(screen.getByText("50")).toBeInTheDocument();
+		// Reasoning is part of output, so it is shown inside the output total.
+		expect(screen.getByText("50 (12 reasoning)")).toBeInTheDocument();
+	});
+
+	it("shows the catalog display name with the stored id as a tooltip", () => {
+		renderWithProviders(
+			<RunAIUsageCard
+				usage={[
+					{
+						model: "claude-haiku-4-5",
+						provider: "anthropic",
+						input_tokens: 10,
+						output_tokens: 5,
+						cache_read_tokens: 0,
+						cache_write_tokens: 0,
+						reasoning_tokens: 0,
+						timestamp: "2026-09-29T00:00:00Z",
+						sequence: 1,
+					},
+				]}
+				summary={null}
+			/>,
+		);
+		expect(screen.getByText("Claude Haiku 4.5")).toHaveAttribute("title", "claude-haiku-4-5");
 	});
 });

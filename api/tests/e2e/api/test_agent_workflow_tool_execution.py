@@ -17,6 +17,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 from sqlalchemy import delete, update
 
+from src.models.contracts.artifacts import ModelCapabilities
 from src.core.principal import UserPrincipal
 from src.models.contracts.agents import ChatRequest
 from src.models.enums import AgentAccessLevel
@@ -26,7 +27,6 @@ from src.models.orm.workflows import Workflow
 from src.routers.chat import send_message
 from src.services.llm.base import LLMConfig
 from src.services.llm.pydantic_client import PydanticAIClient
-from src.services.model_capabilities import manual_capabilities
 
 
 pytestmark = pytest.mark.asyncio
@@ -106,14 +106,7 @@ async def test_chat_handler_executes_global_agent_workflow_in_caller_org(
         LLMConfig(provider="openai", model="test-chat", api_key="test-key")
     )
     profile = MagicMock(id=uuid4(), name="Test chat workflow tool")
-    capabilities = manual_capabilities(
-        provider="openai",
-        model="test-chat",
-        endpoint=None,
-        image_input=False,
-        pdf_input=False,
-        tool_calling=True,
-    )
+    capabilities = ModelCapabilities(tool_calling=True, source="manual")
 
     execution_id: str | None = None
     try:
