@@ -1,7 +1,7 @@
 """R2b: workflow permission mode, grants, and Solution permission requests
 
 Revision ID: 20260929_r2b_wf_permissions
-Revises: 20260929_r2b_roles
+Revises: 20260929_model_catalog
 Create Date: 2026-09-29
 
 Data only — nothing reads any of this until delegated execution.
@@ -22,7 +22,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "20260929_r2b_wf_permissions"
-down_revision: Union[str, None] = "20260929_r2b_roles"
+down_revision: Union[str, None] = "20260929_model_catalog"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
