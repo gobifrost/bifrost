@@ -68,6 +68,19 @@ NATIVE_DEFAULT_ENDPOINTS: dict[str, str] = {
     "anthropic": "https://api.anthropic.com",
     "google": "https://generativelanguage.googleapis.com",
 }
+# Providers whose catalog entry names their own AI SDK package, which has the
+# base URL built in, so models.dev publishes no "api" for them. Each serves
+# OpenAI Chat Completions at the URL here. A published catalog "api" wins.
+OPENAI_COMPATIBLE_ENDPOINTS: dict[str, str] = {
+    "groq": "https://api.groq.com/openai/v1",
+    "xai": "https://api.x.ai/v1",
+    "mistral": "https://api.mistral.ai/v1",
+    "togetherai": "https://api.together.xyz/v1",
+    "deepinfra": "https://api.deepinfra.com/v1/openai",
+    "cerebras": "https://api.cerebras.ai/v1",
+    "perplexity": "https://api.perplexity.ai",
+    "cohere": "https://api.cohere.ai/compatibility/v1",
+}
 # Catalog SDK package -> the Bifrost adapter that speaks the same wire API.
 _ADAPTER_BY_SDK: dict[str, AdapterKind] = {
     "@ai-sdk/openai-compatible": "openai_compatible",
@@ -164,9 +177,16 @@ class CatalogProvider(BaseModel):
         """The Bifrost adapter for this provider, or None if unsupported."""
         if self.id in NATIVE_PROVIDER_KINDS:
             return NATIVE_PROVIDER_KINDS[self.id]
-        if not self.api:
+        if not self.endpoint:
             return None
-        return _ADAPTER_BY_SDK.get(self.npm or "")
+        return _ADAPTER_BY_SDK.get(self.sdk or "")
+
+    @property
+    def sdk(self) -> str | None:
+        """The SDK package whose wire API Bifrost uses for this provider."""
+        if self.id in OPENAI_COMPATIBLE_ENDPOINTS:
+            return "@ai-sdk/openai-compatible"
+        return self.npm
 
     @property
     def is_native(self) -> bool:
@@ -178,7 +198,7 @@ class CatalogProvider(BaseModel):
 
         Native providers keep their own routing and are not routed here.
         """
-        sdk = model.route_sdk or self.npm or ""
+        sdk = model.route_sdk or self.sdk or ""
         api = model.route_api or self.endpoint
         if not api or "${" in api or sdk not in _ADAPTER_BY_SDK:
             return None
@@ -197,7 +217,11 @@ class CatalogProvider(BaseModel):
 
     @property
     def endpoint(self) -> str | None:
-        return self.api or NATIVE_DEFAULT_ENDPOINTS.get(self.id)
+        return (
+            self.api
+            or NATIVE_DEFAULT_ENDPOINTS.get(self.id)
+            or OPENAI_COMPATIBLE_ENDPOINTS.get(self.id)
+        )
 
 
 @dataclass(frozen=True)
