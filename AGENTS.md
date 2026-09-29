@@ -361,6 +361,8 @@ export async function getDataProviders() {
 3. Restart `bifrost-init` to run alembic: `docker compose restart bifrost-init`
 4. Restart API: `docker compose restart api`
 
+**Withdrawing a migration:** never turn an already-applied migration into a no-op without a forward migration that removes what it created. Databases that ran it keep that schema, fresh databases never get it, and later migrations collide with the difference. Fresh-database tests cannot see this, so add a rehearsal that applies the residue to a disposable database at the prior revision and upgrades to head (see `api/tests/e2e/platform/test_builder_residue_migration_rehearsal.py`), and register the tombstone in `api/tests/unit/test_migration_tombstones.py`.
+
 **After adding a Python dependency:**
 1. Add to `pyproject.toml` (root)
 2. Regenerate the lock: `docker run --rm -v "$PWD":/repo -w /repo python:3.14-slim sh -c "pip install --quiet --require-hashes -r requirements-piptools.lock && pip-compile --generate-hashes --output-file=requirements.lock pyproject.toml"`

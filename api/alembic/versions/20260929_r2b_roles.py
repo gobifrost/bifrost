@@ -208,6 +208,12 @@ def _backfill_user_role_boundaries() -> int:
 
 
 def upgrade() -> None:
+    # Residue of the withdrawn Builder revision 20260730_role_auth_scopes,
+    # which already-upgraded databases may carry.
+    op.execute("DROP INDEX IF EXISTS uq_roles_key")
+    for column in ("key", "scopes", "is_builtin", "assignable_to_resources"):
+        op.execute(f"ALTER TABLE roles DROP COLUMN IF EXISTS {column}")
+
     _assert_no_promote_agent_grant()
     _assert_knowledge_namespace_roles_empty()
 
