@@ -20,6 +20,7 @@ import signal
 
 from src.config import get_settings
 from shared.schema_gate import wait_for_schema
+from src.worker.health import clear_ready, mark_ready
 from src.core.database import close_db, get_engine, init_db
 from src.jobs.rabbitmq import rabbitmq
 from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer
@@ -85,6 +86,7 @@ class Worker:
         logger.info("Starting Bifrost Worker...")
         logger.info(f"Environment: {self.settings.environment}")
 
+        clear_ready()
         try:
             async with self._startup_lock:
                 if not self._stopping:
@@ -115,6 +117,7 @@ class Worker:
             raise
 
         if not self._stopping:
+            mark_ready()
             logger.info("Bifrost Worker started")
             logger.info("Waiting for messages... (Ctrl+C to stop)")
 

@@ -8,10 +8,19 @@ import time
 from pathlib import Path
 
 HEARTBEAT_PATH = Path("/tmp/bifrost-scheduler-heartbeat")
+READY_PATH = Path("/tmp/bifrost-scheduler-ready")
 
 
 def write_heartbeat() -> None:
     HEARTBEAT_PATH.touch()
+
+
+def clear_ready() -> None:
+    READY_PATH.unlink(missing_ok=True)
+
+
+def mark_ready() -> None:
+    READY_PATH.touch()
 
 
 async def heartbeat_loop(interval_seconds: float = 10) -> None:
@@ -28,11 +37,22 @@ def heartbeat_is_fresh(max_age_seconds: float = 60) -> bool:
     return age <= max_age_seconds
 
 
+def is_ready(max_age_seconds: float = 60) -> bool:
+    """Ready once startup gates have passed and the event loop is still alive."""
+    return READY_PATH.exists() and heartbeat_is_fresh(max_age_seconds)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--max-age", type=float, default=60)
+    parser.add_argument(
+        "--ready",
+        action="store_true",
+        help="Readiness check: also require startup gates to have passed.",
+    )
     args = parser.parse_args()
-    return 0 if heartbeat_is_fresh(args.max_age) else 1
+    check = is_ready if args.ready else heartbeat_is_fresh
+    return 0 if check(args.max_age) else 1
 
 
 if __name__ == "__main__":

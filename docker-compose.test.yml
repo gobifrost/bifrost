@@ -250,6 +250,12 @@ services:
       - ./api/alembic:/app/alembic:ro
       - ./api/alembic.ini:/app/alembic.ini:ro
       - ./api/bifrost:/app/bifrost:ro
+    healthcheck:
+      test: ["CMD", "python", "-m", "src.worker.health", "--ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
     depends_on:
       init:
         condition: service_completed_successfully
@@ -309,6 +315,12 @@ services:
       # server-side. Same safety shape as the api mount: only the
       # uid-1000-created fixture subdir, never the LOG_DIR root.
       - ${LOG_DIR:-/tmp/bifrost}/solution-repo-fixtures:/tmp/bifrost/solution-repo-fixtures
+    healthcheck:
+      test: ["CMD", "python", "-m", "src.scheduler.health", "--ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
     depends_on:
       init:
         condition: service_completed_successfully

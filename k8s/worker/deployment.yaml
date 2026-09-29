@@ -73,6 +73,18 @@ spec:
             periodSeconds: 30
             timeoutSeconds: 5
             failureThreshold: 3
+          # Ready only after the startup schema gate passes and consumers are
+          # running, so a rollout pauses while new pods wait for migrations.
+          readinessProbe:
+            exec:
+              command:
+                - python
+                - -m
+                - src.worker.health
+                - --ready
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
           lifecycle:
             preStop:
               exec:

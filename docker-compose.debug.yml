@@ -260,6 +260,12 @@ services:
       - ./api/alembic:/app/alembic:ro
       - ./api/alembic.ini:/app/alembic.ini:ro
       - ./api/bifrost:/app/bifrost:ro
+    healthcheck:
+      test: ["CMD", "python", "-m", "src.scheduler.health", "--ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
     depends_on:
       init:
         condition: service_completed_successfully
@@ -321,6 +327,12 @@ services:
       - ./api/alembic:/app/alembic:ro
       - ./api/alembic.ini:/app/alembic.ini:ro
       - ./api/bifrost:/app/bifrost:ro
+    healthcheck:
+      test: ["CMD", "python", "-m", "src.worker.health", "--ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
     depends_on:
       init:
         condition: service_completed_successfully

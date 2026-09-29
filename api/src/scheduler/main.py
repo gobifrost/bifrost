@@ -33,7 +33,12 @@ from src.core.database import close_db, get_engine, init_db
 from src.jobs.schedulers.cron_scheduler import process_schedule_sources
 from src.jobs.schedulers.execution_cleanup import cleanup_stuck_executions
 from src.jobs.schedulers.platform_jobs import platform_job_worker_loop
-from src.scheduler.health import heartbeat_loop, write_heartbeat
+from src.scheduler.health import (
+    clear_ready,
+    heartbeat_loop,
+    mark_ready,
+    write_heartbeat,
+)
 from src.scheduler.leadership import SchedulerLeadershipLease
 from src.scheduler.registry import (
     SCHEDULED_TASKS_BY_ID,
@@ -109,12 +114,13 @@ class Scheduler:
         await init_db()
         logger.info("Database connection established")
 
-        # Heartbeat stays stale until the schema is current, so the health
-        # probe reports unhealthy while waiting on migrations.
-        await wait_for_schema(get_engine())
-
+        # Liveness (heartbeat) starts before the schema gate so a scheduler
+        # waiting on migrations is alive but not ready.
+        clear_ready()
         write_heartbeat()
         self._heartbeat_task = asyncio.create_task(heartbeat_loop())
+        await wait_for_schema(get_engine())
+
         self._diagnostics_task = asyncio.create_task(
             self._diagnostics_heartbeat_loop(),
             name="scheduler-diagnostics-heartbeat",
@@ -142,6 +148,7 @@ class Scheduler:
             task.add_done_callback(self._background_task_done)
         self._leadership_task.add_done_callback(self._background_task_done)
 
+        mark_ready()
         logger.info("Bifrost Scheduler replica started")
         logger.info("Running... (Ctrl+C to stop)")
 
