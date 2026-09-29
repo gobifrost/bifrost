@@ -5,7 +5,8 @@ import { Bot, ChevronDown, Info, Sparkles } from "lucide-react";
 import { SummaryRegenerationControl } from "@/components/agents/SummaryRegenerationControl";
 import { Button } from "@/components/ui/button";
 import { VariablesTreeView } from "@/components/ui/variables-tree-view";
-import { cn, formatCost, formatDuration, formatNumber } from "@/lib/utils";
+import { runUsageParts } from "@/lib/run-usage";
+import { cn, formatDuration, formatNumber } from "@/lib/utils";
 import type { components } from "@/lib/v1";
 
 import { RunAIUsageCard } from "./RunAIUsageCard";
@@ -75,7 +76,7 @@ export function AgentRunOverviewFooter({
 								model: run.llm_model ?? null,
 								tokens: run.tokens_used,
 							}}
-							totals={run.ai_totals ?? null}
+							summary={run.usage_summary ?? null}
 							presentation="embedded"
 						/>
 					) : (
@@ -132,16 +133,7 @@ function FooterToggle({
 }
 
 function usageSummary(run: Run): string {
-	const tokens = run.ai_totals
-		? run.ai_totals.total_input_tokens + run.ai_totals.total_output_tokens
-		: run.tokens_used;
-	const cost = run.ai_totals?.total_cost;
-	return [
-		tokens > 0 ? `${formatNumber(tokens)} tokens` : null,
-		cost != null ? formatCost(cost) : null,
-	]
-		.filter(Boolean)
-		.join(" · ");
+	return runUsageParts(run.usage_summary).join(" · ");
 }
 
 function metadataSummary(run: Run): string {

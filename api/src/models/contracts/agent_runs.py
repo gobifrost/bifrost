@@ -22,6 +22,20 @@ class AgentRunStepResponse(BaseModel):
     created_at: datetime
 
 
+class AgentRunUsageSummary(BaseModel):
+    """What a single run cost and how heavy its model calls were.
+
+    ``cost`` and ``cache_hit_rate`` cover the whole run tree (delegates at any
+    depth, plus the summarizer). ``peak_context_tokens`` is the largest single
+    request in this run's own conversation.
+    """
+
+    cost: str | None = None  # Decimal as string
+    delegate_cost: str | None = None  # Portion of cost spent by delegates
+    peak_context_tokens: int | None = None
+    cache_hit_rate: float | None = None  # 0.0-1.0 of input read from cache
+
+
 class AgentRunResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -63,6 +77,7 @@ class AgentRunResponse(BaseModel):
     started_at: datetime | None = None
     completed_at: datetime | None = None
     parent_run_id: UUID | None = None
+    usage_summary: AgentRunUsageSummary | None = None
 
 
 class AgentRunChildResponse(BaseModel):

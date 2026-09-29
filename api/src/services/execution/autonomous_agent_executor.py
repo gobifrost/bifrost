@@ -162,6 +162,17 @@ class AutonomousAgentExecutor:
         # charged to the root run instead of giving each child a fresh budget.
         self._active_usage: RunUsage | None = None
         self._active_budget: AgentRunBudget | None = None
+        # Reported totals for this run's subtree: its own model calls plus
+        # every delegate's subtree. Unlike a delta on the shared ledger, this
+        # never absorbs a concurrent sibling's calls, and it survives a
+        # timeout or cancellation because it is updated per response.
+        self._own_tokens = 0
+        self._delegated_tokens = 0
+
+    @property
+    def subtree_tokens(self) -> int:
+        """Tokens used by this run's own calls plus all of its delegates."""
+        return self._own_tokens + self._delegated_tokens
 
     async def run(
         self,
@@ -193,6 +204,8 @@ class AutonomousAgentExecutor:
         run_id = run_id or str(uuid4())
         self._current_run_id = run_id
         self._knowledge_search_budget.reset()
+        self._own_tokens = 0
+        self._delegated_tokens = 0
 
         # Resolve caller_user_id from _caller metadata. If a webhook ran
         # without a signed user claim, _caller is either absent or has no
@@ -307,6 +320,7 @@ class AutonomousAgentExecutor:
                 model_name = response.model_name
             if response.text:
                 last_response_content = response.text
+            self._own_tokens += request_usage.total_tokens
             self._buffer_ai_usage(
                 agent=agent,
                 run_id=run_id,
@@ -525,7 +539,7 @@ class AutonomousAgentExecutor:
         response = {
             "output": output or None,
             "iterations_used": usage.requests - usage_start_requests,
-            "tokens_used": usage.total_tokens - usage_start_tokens,
+            "tokens_used": self.subtree_tokens,
             "status": status,
             "llm_model": model_name,
         }
@@ -1089,6 +1103,10 @@ class AutonomousAgentExecutor:
             }
 
         duration_ms = int((time.time() - sub_start) * 1000)
+        # The child's own counter is authoritative even when it timed out or
+        # was cancelled before returning a result.
+        sub_tokens = sub_executor.subtree_tokens
+        self._delegated_tokens += sub_tokens
         status = str(sub_result.get("status") or "completed")
         if status not in {
             "completed",
@@ -1127,7 +1145,7 @@ class AutonomousAgentExecutor:
                 output if isinstance(output, dict) else {"text": output}
             )
             sub_run_obj.iterations_used = sub_result.get("iterations_used", 0)
-            sub_run_obj.tokens_used = sub_result.get("tokens_used", 0)
+            sub_run_obj.tokens_used = sub_tokens
             sub_run_obj.llm_model = sub_result.get("llm_model")
             sub_run_obj.duration_ms = duration_ms
             sub_run_obj.completed_at = datetime.now(timezone.utc)

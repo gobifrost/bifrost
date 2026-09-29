@@ -76,7 +76,7 @@ describe("AgentRunOverviewFooter", () => {
 		expect(
 			screen.getByRole("button", { name: /run metadata/i }),
 		).toHaveAttribute("aria-expanded", "false");
-		expect(screen.queryByText("Input tokens")).not.toBeInTheDocument();
+		expect(screen.queryByText("Output tokens")).not.toBeInTheDocument();
 		expect(screen.queryByText("Captured data")).not.toBeInTheDocument();
 	});
 
@@ -91,11 +91,11 @@ describe("AgentRunOverviewFooter", () => {
 		);
 
 		await user.click(screen.getByRole("button", { name: /ai usage/i }));
-		expect(screen.getAllByText("Input tokens").length).toBeGreaterThan(0);
+		expect(screen.getAllByText("Output tokens").length).toBeGreaterThan(0);
 		expect(screen.queryByText("Captured data")).not.toBeInTheDocument();
 
 		await user.click(screen.getByRole("button", { name: /run metadata/i }));
-		expect(screen.queryByText("Input tokens")).not.toBeInTheDocument();
+		expect(screen.queryByText("Output tokens")).not.toBeInTheDocument();
 		expect(screen.getByText("Captured data")).toBeInTheDocument();
 		expect(
 			screen.getByRole("link", { name: /tier-1 triage/i }),

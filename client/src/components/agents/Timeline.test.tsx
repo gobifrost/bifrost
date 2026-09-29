@@ -896,6 +896,31 @@ describe("Timeline activity view", () => {
 });
 
 describe("AdvancedTimeline", () => {
+	it("shows each model call's context size and cache share", () => {
+		renderWithProviders(
+			<AdvancedTimeline
+				steps={[
+					step(
+						"llm_response",
+						{
+							content: "Checking the ticket",
+							tool_calls: [],
+							usage: {
+								input_tokens: 17_698,
+								output_tokens: 450,
+								cache_read_tokens: 12_121,
+							},
+						},
+						1,
+						{ tokens_used: 18_148 },
+					),
+				]}
+			/>,
+		);
+		expect(screen.getByText("17.7k context · 68% cached")).toBeInTheDocument();
+		expect(screen.queryByText(/18,148 tok/)).not.toBeInTheDocument();
+	});
+
 	it("keeps exact executor labels and shows arguments in the variable tree", async () => {
 		const { user } = renderWithProviders(
 			<AdvancedTimeline

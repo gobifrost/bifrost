@@ -53,9 +53,7 @@ import {
 } from "@/services/agentRuns";
 import {
 	cn,
-	formatCost,
 	formatDuration,
-	formatNumber,
 	formatRelativeTime,
 } from "@/lib/utils";
 import {
@@ -63,6 +61,7 @@ import {
 	getLocationHref,
 	type AgentRunNavigationOrigin,
 } from "@/lib/agent-run-navigation";
+import { RUN_USAGE_HELP, runUsageParts } from "@/lib/run-usage";
 import type { components } from "@/lib/v1";
 
 type AgentRun = components["schemas"]["AgentRunResponse"];
@@ -558,6 +557,7 @@ function FlipbookCard({
 	runNavigationOrigin: AgentRunNavigationOrigin;
 }) {
 	const startedAt = run.started_at ?? run.created_at;
+	const usageParts = runUsageParts(run.usage_summary);
 	return (
 		<Card className="overflow-hidden">
 			<CardHeader className="pb-3">
@@ -568,11 +568,12 @@ function FlipbookCard({
 							{run.duration_ms != null
 								? formatDuration(run.duration_ms)
 								: "—"}{" "}
-							· {run.iterations_used} iter ·{" "}
-							{formatNumber(run.tokens_used)} tok
-							{run.ai_totals?.total_cost
-								? ` · ${formatCost(run.ai_totals.total_cost)}`
-								: ""}
+							· {run.iterations_used} iter
+							{usageParts.length > 0 ? (
+								<span title={RUN_USAGE_HELP}>
+									{` · ${usageParts.join(" · ")}`}
+								</span>
+							) : null}
 						</div>
 						<CardTitle className="mt-1 text-base">
 							{run.did || run.asked ? (

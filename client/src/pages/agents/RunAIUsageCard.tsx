@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { Sparkles } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { formatCacheRate, formatContextTokens } from "@/lib/run-usage";
 import { formatCost, formatNumber } from "@/lib/utils";
 import type { components } from "@/lib/v1";
 
@@ -8,12 +9,12 @@ type Run = components["schemas"]["AgentRunDetailResponse"];
 
 export function RunAIUsageCard({
 	usage,
-	totals,
+	summary,
 	reported,
 	presentation = "card",
 }: {
 	usage: NonNullable<Run["ai_usage"]>;
-	totals: Run["ai_totals"] | null;
+	summary: Run["usage_summary"] | null;
 	reported?: { model: string | null; tokens: number };
 	presentation?: "card" | "embedded";
 }) {
@@ -24,6 +25,7 @@ export function RunAIUsageCard({
 				model: string;
 				calls: number;
 				input: number;
+				cacheRead: number;
 				output: number;
 				cost: number;
 			}
@@ -33,17 +35,20 @@ export function RunAIUsageCard({
 				model: entry.model,
 				calls: 0,
 				input: 0,
+				cacheRead: 0,
 				output: 0,
 				cost: 0,
 			};
 			row.calls++;
 			row.input += entry.input_tokens;
+			row.cacheRead += entry.cache_read_tokens ?? 0;
 			row.output += entry.output_tokens;
 			row.cost += Number(entry.cost) || 0;
 			rows.set(entry.model, row);
 		}
 		return [...rows.values()];
 	}, [usage]);
+	const delegateCost = Number(summary?.delegate_cost) || 0;
 	const content = (
 		<>
 			<CardHeader className="pb-2">
@@ -53,6 +58,41 @@ export function RunAIUsageCard({
 				</CardTitle>
 			</CardHeader>
 			<CardContent className="min-w-0 space-y-4">
+				{summary ? (
+					<div className="space-y-2">
+						<dl className="grid grid-cols-3 gap-x-4 text-xs">
+							<HeadlineMetric
+								label="Cost"
+								value={summary.cost != null ? formatCost(summary.cost) : "—"}
+								help="Everything this run spent, including delegated agents and the run summary."
+							/>
+							<HeadlineMetric
+								label="Peak context"
+								value={
+									summary.peak_context_tokens != null
+										? `${formatContextTokens(summary.peak_context_tokens)} tokens`
+										: "—"
+								}
+								help="The largest single request this run sent to the model."
+							/>
+							<HeadlineMetric
+								label="Cached"
+								value={
+									summary.cache_hit_rate != null
+										? formatCacheRate(summary.cache_hit_rate)
+										: "—"
+								}
+								help="Share of input read from the provider's prompt cache, billed at a reduced rate."
+							/>
+						</dl>
+						{delegateCost > 0 ? (
+							<p className="text-xs text-muted-foreground">
+								Includes {formatCost(delegateCost)} from delegated
+								agents.
+							</p>
+						) : null}
+					</div>
+				) : null}
 				{grouped.length === 0 && reported ? (
 					<dl className="space-y-3 text-xs">
 						{reported.model ? (
@@ -71,33 +111,28 @@ export function RunAIUsageCard({
 						</div>
 					</dl>
 				) : null}
-				<ul className="divide-y">
-					{grouped.map((row) => (
-						<li
-							key={row.model}
-							className="min-w-0 space-y-3 py-3 first:pt-0"
-						>
-							<p className="font-mono text-xs [overflow-wrap:anywhere]">
-								{row.model}
-							</p>
-							<UsageMetrics
-								calls={row.calls}
-								input={row.input}
-								output={row.output}
-								cost={row.cost}
-							/>
-						</li>
-					))}
-				</ul>
-				{totals ? (
-					<div className="space-y-3 border-t pt-3">
-						<p className="text-xs font-medium">Total</p>
-						<UsageMetrics
-							calls={totals.call_count}
-							input={totals.total_input_tokens}
-							output={totals.total_output_tokens}
-							cost={totals.total_cost}
-						/>
+				{grouped.length > 0 ? (
+					<div className="space-y-1 border-t pt-3">
+						<p className="text-xs font-medium">This run&apos;s calls</p>
+						<ul className="divide-y">
+							{grouped.map((row) => (
+								<li
+									key={row.model}
+									className="min-w-0 space-y-3 py-3 first:pt-1"
+								>
+									<p className="font-mono text-xs [overflow-wrap:anywhere]">
+										{row.model}
+									</p>
+									<UsageMetrics
+										calls={row.calls}
+										input={row.input}
+										cacheRead={row.cacheRead}
+										output={row.output}
+										cost={row.cost}
+									/>
+								</li>
+							))}
+						</ul>
 					</div>
 				) : null}
 			</CardContent>
@@ -116,23 +151,42 @@ export function RunAIUsageCard({
 	return <Card data-testid="ai-usage-card">{content}</Card>;
 }
 
+function HeadlineMetric({
+	label,
+	value,
+	help,
+}: {
+	label: string;
+	value: string;
+	help: string;
+}) {
+	return (
+		<div className="min-w-0" title={help}>
+			<dt className="text-muted-foreground">{label}</dt>
+			<dd className="mt-1 text-base font-semibold tabular-nums">{value}</dd>
+		</div>
+	);
+}
+
 function UsageMetrics({
 	calls,
 	input,
+	cacheRead,
 	output,
 	cost,
 }: {
 	calls: number;
 	input: number;
+	cacheRead: number;
 	output: number;
-	cost: number | string;
+	cost: number;
 }) {
 	return (
-		<dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-xs">
+		<dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-xs sm:grid-cols-4">
 			{[
 				["Calls", formatNumber(calls)],
 				["Cost", formatCost(cost)],
-				["Input tokens", formatNumber(input)],
+				["Cached", input > 0 ? formatCacheRate(cacheRead / input) : "—"],
 				["Output tokens", formatNumber(output)],
 			].map(([label, value]) => (
 				<div key={label} className="min-w-0">

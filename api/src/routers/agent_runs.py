@@ -30,6 +30,7 @@ from src.models.contracts.agent_runs import (
     AgentRunListResponse,
     AgentRunRerunResponse,
     AgentRunResponse,
+    AgentRunUsageSummary,
     BackfillEligibleResponse,
     BackfillSummariesRequest,
     BackfillSummariesResponse,
@@ -56,6 +57,7 @@ from src.models.orm.agents import Agent
 from src.models.orm.ai_usage import AIUsage
 from src.models.orm.summary_backfill_job import SummaryBackfillJob
 from src.core.redis_client import get_redis_client
+from src.services.agent_run_usage_summary import summarize_run_usage
 from src.services.execution.agent_run_access import agent_run_visibility_conditions
 from src.services.execution.agent_run_service import (
     enqueue_agent_run,
@@ -122,7 +124,10 @@ async def _require_own_private_agent_run(
         )
 
 
-def _run_to_response(run: AgentRun) -> AgentRunResponse:
+def _run_to_response(
+    run: AgentRun,
+    usage_summary: AgentRunUsageSummary | None = None,
+) -> AgentRunResponse:
     """Convert AgentRun ORM to AgentRunResponse."""
     return AgentRunResponse(
         id=run.id,
@@ -162,6 +167,7 @@ def _run_to_response(run: AgentRun) -> AgentRunResponse:
         started_at=run.started_at,
         completed_at=run.completed_at,
         parent_run_id=run.parent_run_id,
+        usage_summary=usage_summary,
     )
 
 
@@ -321,8 +327,9 @@ async def list_agent_runs(
 
     next_cursor = str(page_offset + len(runs)) if has_more else None
 
+    usage_summaries = await summarize_run_usage(db, [run.id for run in runs])
     return AgentRunListResponse(
-        items=[_run_to_response(run) for run in runs],
+        items=[_run_to_response(run, usage_summaries.get(run.id)) for run in runs],
         total=total,
         next_cursor=next_cursor,
     )
