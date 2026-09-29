@@ -2578,6 +2578,47 @@ def test_manifest_workflow_carries_tool_description():
     assert wf2.tool_description is None
 
 
+def test_manifest_workflow_requested_permissions_round_trip():
+    from bifrost.manifest import ManifestWorkflow
+
+    data = {
+        "id": "55555555-5555-5555-5555-555555555555",
+        "path": "workflows/x.py",
+        "function_name": "x",
+        "requested_permissions": {
+            "mode": "restricted",
+            "grants": [{"permission": "tables.read", "boundary": "platform"}],
+        },
+    }
+    dumped = ManifestWorkflow.model_validate(data).model_dump(mode="json")
+    assert dumped["requested_permissions"] == data["requested_permissions"]
+
+
+def test_manifest_workflow_requested_permissions_absent_stays_absent():
+    from bifrost.manifest import ManifestWorkflow
+    from bifrost.manifest_codec import Destination
+
+    wf = ManifestWorkflow(id="66666666-6666-6666-6666-666666666666", path="p.py", function_name="f")
+    assert wf.requested_permissions is None
+    assert "requested_permissions" not in wf.view(Destination.INSTALL)
+
+
+def test_manifest_workflow_requested_permissions_is_not_an_orm_column():
+    from bifrost.manifest import ManifestWorkflow
+    from bifrost.manifest_codec import Destination
+
+    wf = ManifestWorkflow.model_validate(
+        {
+            "id": "77777777-7777-7777-7777-777777777777",
+            "path": "p.py",
+            "function_name": "f",
+            "requested_permissions": {"mode": "full"},
+        }
+    )
+    for dest in (Destination.GIT_SYNC, Destination.INSTALL):
+        assert "requested_permissions" not in wf.to_orm_values(dest).direct
+
+
 # =============================================================================
 # ManifestPolicyRule tests (Task 10)
 # =============================================================================
@@ -3033,3 +3074,19 @@ class TestSolutionFilePolicyBundleRoundTrip:
 
         (tmp_path / ".bifrost").mkdir(parents=True)
         assert _collect_file_policies(pathlib.Path(tmp_path)) == []
+
+
+def test_manifest_workflow_git_sync_view_ignores_requested_permissions():
+    from bifrost.manifest import ManifestWorkflow
+    from bifrost.manifest_codec import Destination
+
+    wf = ManifestWorkflow.model_validate(
+        {
+            "id": "88888888-8888-8888-8888-888888888888",
+            "path": "p.py",
+            "function_name": "f",
+            "requested_permissions": {"mode": "full"},
+        }
+    )
+    assert "requested_permissions" not in wf.view(Destination.GIT_SYNC)
+    assert wf.view(Destination.INSTALL)["requested_permissions"] == {"mode": "full", "grants": []}

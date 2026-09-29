@@ -67,6 +67,9 @@ _OPERATIONAL_SOLUTION_ROW_NAMES = {
     # Job bookkeeping belongs to the platform scheduler/API, not the deploy-owned
     # portable entity surface protected by this guard.
     "SolutionExportJob",
+    # Approval state is written by admins after deploy; deploy only syncs the
+    # requested side.
+    "SolutionWorkflowPermissionRequest",
 }
 
 _WORKFLOW_RUNTIME_KEY_FIELDS = {

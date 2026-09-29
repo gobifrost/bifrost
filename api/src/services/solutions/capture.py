@@ -35,6 +35,7 @@ from src.models.orm.events import (
 )
 from src.models.orm.forms import Form, FormField, FormRole
 from src.models.orm.solution_config_schema import SolutionConfigSchema
+from src.models.orm.solution_workflow_permission_requests import SolutionWorkflowPermissionRequest
 from src.models.orm.solutions import Solution
 from src.models.orm.tables import Document, Table
 from src.models.orm.users import Role
@@ -403,14 +404,34 @@ class SolutionCaptureService:
                 select(Workflow).where(Workflow.solution_id == solution_id)
             )
         ).scalars().all()
+        requests = {
+            r.workflow_id: r
+            for r in (
+                await self.db.execute(
+                    select(SolutionWorkflowPermissionRequest).where(
+                        SolutionWorkflowPermissionRequest.solution_id == solution_id
+                    )
+                )
+            ).scalars()
+        }
         out: list[dict[str, Any]] = []
         for w in rows:
             role_ids = await self._role_ids(WorkflowRole, "workflow_id", w.id)
             role_names = await self._role_names(role_ids)
+            request = requests.get(w.id)
             out.append(
                 ManifestWorkflow.from_row(w, roles=role_ids).view(
                     Destination.INSTALL,
-                    extras={"roles": role_ids, "role_names": role_names},
+                    extras={
+                        "roles": role_ids,
+                        "role_names": role_names,
+                        # Requested side only; approval state never travels.
+                        "requested_permissions": (
+                            {"mode": request.requested_mode, "grants": request.requested_grants}
+                            if request is not None
+                            else None
+                        ),
+                    },
                 )
             )
         return out

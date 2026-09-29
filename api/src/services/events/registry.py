@@ -247,6 +247,27 @@ CURATED_TOPICS = [
         ),
     },
     {
+        "topic": "solution.permission_request",
+        "description": "Fired when a Solution install has a new or changed workflow permission request awaiting admin approval.",
+        "category": "Solutions",
+        "emitted_by": "Solution deploy",
+        "example_body": _body(
+            actor=_SYSTEM_ACTOR,
+            solution={
+                "id": "550e8400-e29b-41d4-a716-446655440090",
+                "slug": "acme-tenant-manager",
+            },
+            workflow={
+                "id": "550e8400-e29b-41d4-a716-446655440040",
+                "name": "sync_tenant_users",
+            },
+            request={
+                "mode": "restricted",
+                "grants": [{"permission": "organizations.read", "boundary": "managed_organizations"}],
+            },
+        ),
+    },
+    {
         "topic": "event.delivery_retry_exhausted",
         "description": "Fired when an event delivery cannot be completed after retries.",
         "category": "Events",
