@@ -261,7 +261,7 @@ export function useRefreshOAuthToken() {
 		"post",
 		"/api/oauth/connections/{connection_name}/refresh",
 		{
-			onSuccess: (_, variables) => {
+			onSuccess: (data, variables) => {
 				const connectionName = variables.params?.path?.connection_name;
 				queryClient.invalidateQueries({
 					queryKey: ["get", "/api/integrations"],
@@ -277,7 +277,13 @@ export function useRefreshOAuthToken() {
 						},
 					],
 				});
-				toast.success("OAuth token refreshed successfully");
+				// The refresh endpoint reports provider-side failures as a 200
+				// with success=false, so the HTTP status alone is not the outcome.
+				if (data.success) {
+					toast.success("OAuth token refreshed successfully");
+				} else {
+					toast.error(data.message);
+				}
 			},
 			onError: (error) => {
 				const message =
