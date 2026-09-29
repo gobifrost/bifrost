@@ -6,9 +6,11 @@
   private agents and their own personal state (profile, MFA, sessions, chat,
   home, notifications, memory, own OAuth/MCP connections).
 - Global entities and `_repo` (the git-synced workspace) are Platform-
-  boundary only: reading or writing them requires platform-admin or
-  provider-org (scope-bypass) access, matching `OrgScopedRepository`'s
-  bypass rule (see `api/src/repositories/README.md`).
+  boundary only: platform admins, and running workflows through workflow
+  permissions. Today the provider-org scope bypass (see
+  `api/src/repositories/README.md`) also reaches some of them; those entries
+  carry `intended_change` and lose that path at the R3 cutover. Never add a
+  new route that relies on provider-org membership for access.
 - MCP matches REST exactly: an MCP tool with a REST binding in the operation
   catalog (`src.services.operation_catalog.OPERATION_CATALOG`) inherits that
   route's access class, permission, boundary, and current gate verbatim.
