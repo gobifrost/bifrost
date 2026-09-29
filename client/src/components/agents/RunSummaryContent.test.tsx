@@ -14,6 +14,12 @@ const run: AgentRun = {
 	status: "completed",
 	iterations_used: 1,
 	tokens_used: 1234,
+	usage_summary: {
+		cost: "0.0747",
+		delegate_cost: null,
+		peak_context_tokens: 18_148,
+		cache_hit_rate: 0.14,
+	},
 	asked: "Triage ticket 428950",
 	did: "Routed it to Support",
 	input: {},
@@ -34,7 +40,10 @@ describe("RunSummaryContent", () => {
 		).toBeInTheDocument();
 		expect(screen.getByText("Triage ticket 428950")).toBeInTheDocument();
 		expect(screen.getByText("Routed it to Support")).toBeInTheDocument();
-		expect(screen.getByText("1,234")).toBeInTheDocument();
+		expect(screen.getByTestId("run-usage-summary")).toHaveTextContent(
+			"$0.0747 · 18.1k context · 14% cached",
+		);
+		expect(screen.queryByText("1,234")).not.toBeInTheDocument();
 		expect(screen.getByText("ticket_id")).toBeInTheDocument();
 		expect(screen.getByText("428950")).toBeInTheDocument();
 	});

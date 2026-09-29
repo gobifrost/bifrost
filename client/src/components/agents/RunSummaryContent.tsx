@@ -3,18 +3,13 @@ import {
 	CheckCircle,
 	Clock,
 	GitBranch,
-	Hash,
 	Loader2,
 	XCircle,
 } from "lucide-react";
 import type { ReactNode } from "react";
 
-import {
-	cn,
-	formatDuration,
-	formatNumber,
-	formatRelativeTime,
-} from "@/lib/utils";
+import { cn, formatDuration, formatRelativeTime } from "@/lib/utils";
+import { RUN_USAGE_HELP, runUsageParts } from "@/lib/run-usage";
 import { MarkdownContent } from "@/components/common/MarkdownContent";
 import type { components } from "@/lib/v1";
 
@@ -105,6 +100,7 @@ export function RunSummaryContent({
 	const visibleChips = rankedMetadata.slice(0, 3);
 	const overflow = metadataEntries.length - visibleChips.length;
 	const startedAt = run.started_at ?? run.created_at;
+	const usageParts = runUsageParts(run.usage_summary);
 	const bodyText = run.did ?? (run.error ? `Error: ${run.error}` : null);
 
 	return (
@@ -173,15 +169,17 @@ export function RunSummaryContent({
 							<span>{formatDuration(run.duration_ms)}</span>
 						</>
 					) : null}
-					<span aria-hidden="true">·</span>
-					<span className="inline-flex items-center gap-1">
-						<Hash
-							aria-hidden="true"
-							className="h-[11px] w-[11px]"
-						/>
-						{formatNumber(run.tokens_used)}
-						<span className="sr-only">tokens</span>
-					</span>
+					{usageParts.length > 0 ? (
+						<>
+							<span aria-hidden="true">·</span>
+							<span
+								title={RUN_USAGE_HELP}
+								data-testid="run-usage-summary"
+							>
+								{usageParts.join(" · ")}
+							</span>
+						</>
+					) : null}
 					{visibleChips.length > 0 ? (
 						<span aria-hidden="true">·</span>
 					) : null}

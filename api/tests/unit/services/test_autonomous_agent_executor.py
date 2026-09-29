@@ -607,6 +607,111 @@ class TestAutonomousAgentExecutor:
         assert created_runs[0].completed_at is not None
 
     @pytest.mark.asyncio
+    async def test_run_delegation_keeps_child_tokens_when_child_times_out(
+        self, mock_session, mock_agent
+    ):
+        """A timed-out child still reports the calls it made before the deadline."""
+        delegated = MagicMock()
+        delegated.id = uuid4()
+        delegated.name = "Slow Specialist"
+        delegated.is_active = True
+        delegated.tools = []
+        delegated.delegated_agents = []
+        delegated.max_iterations = 5
+        delegated.max_token_budget = 1000
+        delegated.organization_id = mock_agent.organization_id
+        mock_agent.delegated_agents = [delegated]
+
+        query_result = MagicMock()
+        query_result.scalar_one_or_none.return_value = delegated
+        mock_session._mock_session.execute = AsyncMock(return_value=query_result)
+        created_runs: list[AgentRun] = []
+        mock_session._mock_session.add.side_effect = (
+            lambda value: created_runs.append(value)
+            if isinstance(value, AgentRun)
+            else None
+        )
+        mock_session._mock_session.get.side_effect = (
+            lambda model, _run_id: created_runs[0]
+            if model is AgentRun and created_runs
+            else None
+        )
+
+        async def child_run_then_time_out(child_executor, **_kwargs):
+            # Two model responses land before the delegation deadline.
+            child_executor._own_tokens = 1_200 + 800
+            raise asyncio.TimeoutError()
+
+        executor = AutonomousAgentExecutor(mock_session)
+        with patch.object(
+            AutonomousAgentExecutor,
+            "run",
+            autospec=True,
+            side_effect=child_run_then_time_out,
+        ):
+            outcome = await executor.run_delegation(
+                parent_agent=mock_agent,
+                tool_call=ToolCallRequest(
+                    id="tc1",
+                    name="delegate_to_slow_specialist",
+                    arguments={"task": "Take too long"},
+                ),
+                parent_run_id=str(uuid4()),
+            )
+
+        assert outcome.status == "timeout"
+        assert created_runs[0].tokens_used == 2_000
+        assert executor.subtree_tokens == 2_000
+
+    @pytest.mark.asyncio
+    @patch("src.services.agent_runtime.model_factory.create_agent_model")
+    @patch("src.services.execution.autonomous_agent_executor.resolve_agent_tools")
+    async def test_run_excludes_concurrent_sibling_usage_on_shared_ledger(
+        self, mock_resolve_tools, mock_create_model, mock_session, mock_agent
+    ):
+        """A delegate's total is its own calls, not whatever siblings charged meanwhile."""
+        mock_agent.system_tools = ["system_tool"]
+        mock_resolve_tools.return_value = ([_tool("system_tool")], {})
+        mock_llm = AsyncMock()
+        mock_llm.complete = AsyncMock(side_effect=[
+            LLMResponse(
+                content=None,
+                tool_calls=[ToolCallRequest(id="tc1", name="system_tool", arguments={})],
+                finish_reason="tool_use",
+                input_tokens=100,
+                output_tokens=50,
+            ),
+            LLMResponse(
+                content="Final answer",
+                tool_calls=None,
+                finish_reason="end_turn",
+                input_tokens=200,
+                output_tokens=100,
+            ),
+        ])
+        mock_create_model.return_value = LegacyMockModel(mock_llm)
+        shared_usage = RunUsage(input_tokens=1_000)
+
+        async def sibling_charges_ledger(*_args, **_kwargs):
+            # A concurrent sibling delegate records usage mid-run.
+            shared_usage.input_tokens += 7_000
+            return "system output"
+
+        executor = AutonomousAgentExecutor(mock_session)
+        executor._execute_system_tool = AsyncMock(side_effect=sibling_charges_ledger)
+        result = await executor.run(
+            agent=mock_agent,
+            input_data={"task": "do something"},
+            run_id=str(uuid4()),
+            _shared_usage=shared_usage,
+            _shared_budget=AgentRunBudget(max_requests=10, max_total_tokens=50_000),
+        )
+
+        assert result["status"] == "completed"
+        assert result["tokens_used"] == 450
+        assert shared_usage.total_tokens == 1_000 + 7_000 + 450
+
+    @pytest.mark.asyncio
     async def test_run_delegation_rejects_cross_org_target(
         self, mock_session, mock_agent
     ):

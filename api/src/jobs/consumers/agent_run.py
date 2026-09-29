@@ -348,7 +348,7 @@ class AgentRunConsumer(BaseConsumer):
                     run_result = {
                         "output": None,
                         "iterations_used": 0,
-                        "tokens_used": 0,
+                        "tokens_used": executor.subtree_tokens,
                         "status": "timeout",
                         "llm_model": None,
                         "error": f"Agent run timed out after {run_timeout}s",
@@ -357,7 +357,7 @@ class AgentRunConsumer(BaseConsumer):
                     run_result = {
                         "output": None,
                         "iterations_used": 0,
-                        "tokens_used": 0,
+                        "tokens_used": executor.subtree_tokens,
                         "status": "cancelled",
                         "llm_model": None,
                     }

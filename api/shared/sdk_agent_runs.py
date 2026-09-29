@@ -298,6 +298,10 @@ async def get_sdk_agent_run(
             call_count=int(totals_row.call_count or 0),
         )
 
+    from src.services.agent_run_usage_summary import summarize_run_usage
+
+    usage_summary = (await summarize_run_usage(session, [run_id])).get(run_id)
+
     # Fetch delegation sub-runs and their agents in one ordered query. Keep the
     # legacy ID list while also returning enough context for a user-facing view.
     child_runs_result = await session.execute(
@@ -413,4 +417,5 @@ async def get_sdk_agent_run(
         steps=steps_response,
         ai_usage=ai_usage_list,
         ai_totals=ai_totals_response,
+        usage_summary=usage_summary,
     )

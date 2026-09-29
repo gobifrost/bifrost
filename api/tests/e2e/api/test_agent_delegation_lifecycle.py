@@ -155,18 +155,23 @@ async def test_chat_delegation_creates_terminal_run_with_conversation_and_caller
             "name": alice_user.name,
             "organization_id": str(alice_user.organization_id),
         }
+        async def child_run(child_executor, **_kwargs):
+            # The real run() counts each model response on the executor.
+            child_executor._own_tokens = 42
+            return {
+                "output": "Durable answer",
+                "status": "completed",
+                "iterations_used": 2,
+                "tokens_used": child_executor.subtree_tokens,
+                "llm_model": "cheap-model",
+            }
+
         with (
             patch.object(
                 AutonomousAgentExecutor,
                 "run",
-                new_callable=AsyncMock,
-                return_value={
-                    "output": "Durable answer",
-                    "status": "completed",
-                    "iterations_used": 2,
-                    "tokens_used": 42,
-                    "llm_model": "cheap-model",
-                },
+                autospec=True,
+                side_effect=child_run,
             ),
             patch(
                 "src.services.execution.run_summarizer.enqueue_summarize",

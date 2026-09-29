@@ -11936,6 +11936,7 @@ export interface components {
             completed_at?: string | null;
             /** Parent Run Id */
             parent_run_id?: string | null;
+            usage_summary?: components["schemas"]["AgentRunUsageSummary"] | null;
             /** Steps */
             steps?: components["schemas"]["AgentRunStepResponse"][];
             /** Child Run Ids */
@@ -12083,6 +12084,7 @@ export interface components {
             completed_at?: string | null;
             /** Parent Run Id */
             parent_run_id?: string | null;
+            usage_summary?: components["schemas"]["AgentRunUsageSummary"] | null;
         };
         /** AgentRunStepResponse */
         AgentRunStepResponse: {
@@ -12113,6 +12115,24 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+        };
+        /**
+         * AgentRunUsageSummary
+         * @description What a single run cost and how heavy its model calls were.
+         *
+         *     ``cost`` and ``cache_hit_rate`` cover the whole run tree (delegates at any
+         *     depth, plus the summarizer). ``peak_context_tokens`` is the largest single
+         *     request in this run's own conversation.
+         */
+        AgentRunUsageSummary: {
+            /** Cost */
+            cost?: string | null;
+            /** Delegate Cost */
+            delegate_cost?: string | null;
+            /** Peak Context Tokens */
+            peak_context_tokens?: number | null;
+            /** Cache Hit Rate */
+            cache_hit_rate?: number | null;
         };
         /** AgentStatsResponse */
         AgentStatsResponse: {
