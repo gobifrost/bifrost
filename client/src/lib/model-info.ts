@@ -36,7 +36,7 @@ export function modelFactsLine(model: ModelFacts): string | undefined {
 
 const REASONING_LABELS: Record<string, string> = {
 	off: "Off",
-	on: "On",
+	on: "On (provider default)",
 	none: "None",
 	minimal: "Minimal",
 	low: "Low",
@@ -48,4 +48,9 @@ const REASONING_LABELS: Record<string, string> = {
 
 export function reasoningLabel(choice: string): string {
 	return REASONING_LABELS[choice] ?? choice;
+}
+
+/** Whether a choice switches reasoning on or off rather than naming an effort. */
+export function isReasoningToggle(choice: string): boolean {
+	return choice === "on" || choice === "off";
 }

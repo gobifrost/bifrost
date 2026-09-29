@@ -363,6 +363,7 @@
 | GET | `/api/metrics/resources` |
 | GET | `/api/metrics/snapshot` |
 | GET | `/api/metrics/workflows` |
+| GET | `/api/model-catalog/names` |
 | GET | `/api/notifications` |
 | DELETE | `/api/notifications/locks/upload` |
 | GET | `/api/notifications/locks/upload` |

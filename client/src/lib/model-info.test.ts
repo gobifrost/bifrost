@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { modelFactsLine, reasoningLabel } from "./model-info";
+import { isReasoningToggle, modelFactsLine, reasoningLabel } from "./model-info";
 
 describe("modelFactsLine", () => {
 	it("summarizes catalog facts in picker order", () => {
@@ -33,6 +33,16 @@ describe("reasoningLabel", () => {
 	it("labels known levels and passes unknown ones through", () => {
 		expect(reasoningLabel("xhigh")).toBe("Extra high");
 		expect(reasoningLabel("off")).toBe("Off");
+		expect(reasoningLabel("on")).toBe("On (provider default)");
 		expect(reasoningLabel("turbo")).toBe("turbo");
+	});
+});
+
+describe("isReasoningToggle", () => {
+	it("is true only for on and off", () => {
+		expect(isReasoningToggle("on")).toBe(true);
+		expect(isReasoningToggle("off")).toBe(true);
+		expect(isReasoningToggle("none")).toBe(false);
+		expect(isReasoningToggle("high")).toBe(false);
 	});
 });

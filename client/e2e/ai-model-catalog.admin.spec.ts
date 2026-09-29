@@ -38,9 +38,9 @@ test("adds a catalog provider and a profile with a reasoning choice", async ({
 	await page.getByPlaceholder("Search models...").fill("claude-haiku-4-5");
 	await page.getByRole("option", { name: /Claude Haiku 4\.5.*reasoning/ }).first().click();
 	await profileDialog.getByRole("combobox", { name: "Reasoning" }).click();
-	await page.getByRole("option", { name: "On", exact: true }).click();
+	await page.getByRole("option", { name: "On (provider default)", exact: true }).click();
 	await profileDialog.getByRole("button", { name: "Add Profile", exact: true }).click();
 
 	const profileCard = page.locator('[data-slot="card"]', { hasText: `Haiku ${suffix}` });
-	await expect(profileCard.getByText("Reasoning: On")).toBeVisible();
+	await expect(profileCard.getByText("Reasoning: On (provider default)")).toBeVisible();
 });

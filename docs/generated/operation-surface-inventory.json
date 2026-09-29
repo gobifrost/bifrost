@@ -10078,7 +10078,7 @@
     "cli": 154,
     "manifest": 16,
     "mcp": 94,
-    "rest": 651,
+    "rest": 652,
     "sdk": 19
   },
   "schema_version": 1,
@@ -12833,6 +12833,13 @@
         "method": "GET",
         "operation_id": "",
         "path": "/api/metrics/workflows",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/model-catalog/names",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },

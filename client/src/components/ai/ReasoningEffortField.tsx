@@ -2,11 +2,14 @@ import { Label } from "@/components/ui/label";
 import {
 	Select,
 	SelectContent,
+	SelectGroup,
 	SelectItem,
+	SelectLabel,
+	SelectSeparator,
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
-import { reasoningLabel } from "@/lib/model-info";
+import { isReasoningToggle, reasoningLabel } from "@/lib/model-info";
 
 import { useProviderModels } from "./ProviderModelField";
 
@@ -43,6 +46,13 @@ export function ReasoningEffortField({
 }) {
 	const choices = useReasoningChoices(connectionId, model);
 	if (choices.length === 0) return null;
+	const groups = [
+		{ label: "On / off", choices: choices.filter(isReasoningToggle) },
+		{
+			label: "Effort",
+			choices: choices.filter((choice) => !isReasoningToggle(choice)),
+		},
+	].filter((group) => group.choices.length > 0);
 
 	return (
 		<div className="min-w-0 space-y-2">
@@ -57,10 +67,16 @@ export function ReasoningEffortField({
 				</SelectTrigger>
 				<SelectContent>
 					<SelectItem value={MODEL_DEFAULT}>Model default</SelectItem>
-					{choices.map((choice) => (
-						<SelectItem key={choice} value={choice}>
-							{reasoningLabel(choice)}
-						</SelectItem>
+					{groups.map((group) => (
+						<SelectGroup key={group.label}>
+							<SelectSeparator />
+							<SelectLabel>{group.label}</SelectLabel>
+							{group.choices.map((choice) => (
+								<SelectItem key={choice} value={choice}>
+									{reasoningLabel(choice)}
+								</SelectItem>
+							))}
+						</SelectGroup>
 					))}
 				</SelectContent>
 			</Select>
