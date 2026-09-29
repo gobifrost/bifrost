@@ -123,15 +123,16 @@ class TestForkedWorkflowMutationsSocket:
         monkeypatch.setenv("BIFROST_API_URL", "http://127.0.0.1:9")
 
         from src.core.security import mint_engine_token
-        from tests.helpers.engine_execution_lease import mark_engine_execution_running
+        from tests.helpers.live_execution import create_live_execution
 
+        engine_execution_id = str(uuid4())
         engine_token, _ = mint_engine_token(
-            execution_id="gate-c5a-workflows-fork",
+            execution_id=engine_execution_id,
             solution_id=None,
             global_repo_access=True,
             timeout_seconds=120,
         )
-        await mark_engine_execution_running("gate-c5a-workflows-fork")
+        await create_live_execution(async_session_factory, engine_execution_id)
 
         server = WorkerSdkHttpServer()
         await server.start()
@@ -182,6 +183,9 @@ class TestForkedWorkflowMutationsSocket:
             with contextlib.suppress(Exception):
                 template.shutdown()
             await server.stop()
+            from tests.helpers.live_execution import delete_live_execution
+
+            await delete_live_execution(async_session_factory, engine_execution_id)
             async with async_session_factory() as session:
                 await session.execute(
                     delete(ExecutionModel).where(

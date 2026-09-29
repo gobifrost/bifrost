@@ -92,7 +92,7 @@ def _wait_for_pid_to_die(pid: int, timeout: float = 10.0) -> None:
 @pytest.mark.asyncio
 class TestForkedKnowledgeTransport:
     async def test_all_seven_ops_over_worker_socket_without_channel(
-        self, monkeypatch
+        self, monkeypatch, async_session_factory
     ):
         """A real forked child runs the full knowledge facade, HTTP dead."""
         from src.core.security import mint_engine_token
@@ -139,15 +139,16 @@ class TestForkedKnowledgeTransport:
         )
         monkeypatch.setenv("BIFROST_API_URL", "http://127.0.0.1:9")
 
-        from tests.helpers.engine_execution_lease import mark_engine_execution_running
+        from tests.helpers.live_execution import create_live_execution
 
+        engine_execution_id = str(uuid4())
         engine_token, _ = mint_engine_token(
-            execution_id="gate-c4c-fork",
+            execution_id=engine_execution_id,
             solution_id=None,
             global_repo_access=True,
             timeout_seconds=120,
         )
-        await mark_engine_execution_running("gate-c4c-fork")
+        await create_live_execution(async_session_factory, engine_execution_id)
 
         server = WorkerSdkHttpServer()
         await server.start()
@@ -201,3 +202,6 @@ class TestForkedKnowledgeTransport:
             with contextlib.suppress(Exception):
                 template.shutdown()
             await server.stop()
+            from tests.helpers.live_execution import delete_live_execution
+
+            await delete_live_execution(async_session_factory, engine_execution_id)

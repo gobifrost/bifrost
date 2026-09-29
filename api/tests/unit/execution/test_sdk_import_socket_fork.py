@@ -149,7 +149,7 @@ def _wait_for_pid_to_die(pid: int, timeout: float = 10.0) -> None:
 @pytest.mark.asyncio
 class TestForkedColdImportOverSocket:
     async def test_cold_entry_and_dynamic_import_over_socket(
-        self, db_session, monkeypatch
+        self, db_session, async_session_factory, monkeypatch
     ):
         """Cold entry fetch + dynamic resolve ride the socket, no credentials."""
         from src.core.security import mint_engine_token
@@ -182,16 +182,17 @@ class TestForkedColdImportOverSocket:
         # so success proves the engine socket served both.
         monkeypatch.setenv("BIFROST_API_URL", "http://127.0.0.1:9")
 
-        from tests.helpers.engine_execution_lease import mark_engine_execution_running
+        from tests.helpers.live_execution import create_live_execution
 
         execution_id = f"exec-{tag}"
+        engine_execution_id = str(uuid4())
         engine_token, _ = mint_engine_token(
-            execution_id=execution_id,
+            execution_id=engine_execution_id,
             solution_id=None,
             global_repo_access=True,
             timeout_seconds=120,
         )
-        await mark_engine_execution_running(execution_id)
+        await create_live_execution(async_session_factory, engine_execution_id)
         context = _context_for(function_name, entry_path, engine_token, execution_id)
 
         server = WorkerSdkHttpServer()
@@ -223,6 +224,9 @@ class TestForkedColdImportOverSocket:
                 result_queue.close()
             template.shutdown()
             await server.stop()
+            from tests.helpers.live_execution import delete_live_execution
+
+            await delete_live_execution(async_session_factory, engine_execution_id)
             await _drop_s3(dep_path)
             await _drop_s3(entry_path)
             from sqlalchemy import delete

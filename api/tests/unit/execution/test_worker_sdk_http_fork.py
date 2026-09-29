@@ -147,7 +147,7 @@ def _wait_for_pid_to_die(pid: int, timeout: float = 10.0) -> None:
 
 @pytest.mark.asyncio
 async def test_forked_child_config_crud_over_worker_socket(
-    committed_config, monkeypatch
+    committed_config, monkeypatch, async_session_factory
 ):
     from src.core.security import mint_engine_token
 
@@ -158,14 +158,15 @@ async def test_forked_child_config_crud_over_worker_socket(
     # serve the call.
     monkeypatch.setenv("BIFROST_API_URL", "http://127.0.0.1:9")
 
+    engine_execution_id = str(uuid4())
     engine_token, _ = mint_engine_token(
-        execution_id="gate-a-fork",
+        execution_id=engine_execution_id,
         solution_id=None,
         global_repo_access=True,
         timeout_seconds=120,
     )
-    from tests.helpers.engine_execution_lease import mark_engine_execution_running
-    await mark_engine_execution_running("gate-a-fork")
+    from tests.helpers.live_execution import create_live_execution
+    await create_live_execution(async_session_factory, engine_execution_id)
 
     server = WorkerSdkHttpServer()
     await server.start()
@@ -206,6 +207,8 @@ async def test_forked_child_config_crud_over_worker_socket(
         with contextlib.suppress(Exception):
             template.shutdown()
         await server.stop()
+        from tests.helpers.live_execution import delete_live_execution
+        await delete_live_execution(async_session_factory, engine_execution_id)
 
 
 def _refresh_outcome(access: str) -> dict[str, Any]:
@@ -509,14 +512,15 @@ async def test_forked_child_integrations_over_worker_socket(
     # serve every call.
     monkeypatch.setenv("BIFROST_API_URL", "http://127.0.0.1:9")
 
+    engine_execution_id = str(uuid4())
     engine_token, _ = mint_engine_token(
-        execution_id="gate-c2-fork",
+        execution_id=engine_execution_id,
         solution_id=None,
         global_repo_access=True,
         timeout_seconds=120,
     )
-    from tests.helpers.engine_execution_lease import mark_engine_execution_running
-    await mark_engine_execution_running("gate-c2-fork")
+    from tests.helpers.live_execution import create_live_execution
+    await create_live_execution(async_session_factory, engine_execution_id)
     organization = {"id": seed["org_id"], "name": "Fork Org"}
 
     server = WorkerSdkHttpServer()
@@ -597,6 +601,8 @@ async def test_forked_child_integrations_over_worker_socket(
         with contextlib.suppress(Exception):
             template.shutdown()
         await server.stop()
+        from tests.helpers.live_execution import delete_live_execution
+        await delete_live_execution(async_session_factory, engine_execution_id)
         await _cleanup_committed_integration(async_session_factory, seed)
 
 
@@ -776,14 +782,15 @@ async def test_forked_child_tables_over_worker_socket(
     # serve every call.
     monkeypatch.setenv("BIFROST_API_URL", "http://127.0.0.1:9")
 
+    engine_execution_id = str(uuid4())
     engine_token, _ = mint_engine_token(
-        execution_id="gate-c3a-fork",
+        execution_id=engine_execution_id,
         solution_id=None,
         global_repo_access=True,
         timeout_seconds=120,
     )
-    from tests.helpers.engine_execution_lease import mark_engine_execution_running
-    await mark_engine_execution_running("gate-c3a-fork")
+    from tests.helpers.live_execution import create_live_execution
+    await create_live_execution(async_session_factory, engine_execution_id)
     organization = {"id": org_id, "name": "Fork Tables Org"}
 
     server = WorkerSdkHttpServer()
@@ -880,6 +887,8 @@ async def test_forked_child_tables_over_worker_socket(
         with contextlib.suppress(Exception):
             template.shutdown()
         await server.stop()
+        from tests.helpers.live_execution import delete_live_execution
+        await delete_live_execution(async_session_factory, engine_execution_id)
         await _cleanup_committed_org(async_session_factory, org_id)
 
 
@@ -945,7 +954,7 @@ result = {{
 
 
 @pytest.mark.asyncio
-async def test_forked_child_files_over_worker_socket(monkeypatch):
+async def test_forked_child_files_over_worker_socket(monkeypatch, async_session_factory):
     """Gate C4a: every files facade route is served over the worker socket.
 
     A real child forks with the worker's Unix socket injected and a dead
@@ -965,14 +974,15 @@ async def test_forked_child_files_over_worker_socket(monkeypatch):
     # serve every call.
     monkeypatch.setenv("BIFROST_API_URL", "http://127.0.0.1:9")
 
+    engine_execution_id = str(uuid4())
     engine_token, _ = mint_engine_token(
-        execution_id="gate-c4a-fork",
+        execution_id=engine_execution_id,
         solution_id=None,
         global_repo_access=True,
         timeout_seconds=120,
     )
-    from tests.helpers.engine_execution_lease import mark_engine_execution_running
-    await mark_engine_execution_running("gate-c4a-fork")
+    from tests.helpers.live_execution import create_live_execution
+    await create_live_execution(async_session_factory, engine_execution_id)
 
     server = WorkerSdkHttpServer()
     await server.start()
@@ -1037,6 +1047,8 @@ async def test_forked_child_files_over_worker_socket(monkeypatch):
         with contextlib.suppress(Exception):
             template.shutdown()
         await server.stop()
+        from tests.helpers.live_execution import delete_live_execution
+        await delete_live_execution(async_session_factory, engine_execution_id)
 
 
 def _artifacts_script(*, filename: str, text_name: str) -> str:
@@ -1093,7 +1105,7 @@ result = {{
 
 
 @pytest.mark.asyncio
-async def test_forked_child_artifacts_over_worker_socket(monkeypatch):
+async def test_forked_child_artifacts_over_worker_socket(monkeypatch, async_session_factory):
     """Gate C4b: every artifact facade route is served over the worker socket.
 
     A real child forks with the worker's Unix socket injected and a dead
@@ -1111,14 +1123,15 @@ async def test_forked_child_artifacts_over_worker_socket(monkeypatch):
     # serve every call.
     monkeypatch.setenv("BIFROST_API_URL", "http://127.0.0.1:9")
 
+    engine_execution_id = str(uuid4())
     engine_token, _ = mint_engine_token(
-        execution_id="gate-c4b-fork",
+        execution_id=engine_execution_id,
         solution_id=None,
         global_repo_access=True,
         timeout_seconds=120,
     )
-    from tests.helpers.engine_execution_lease import mark_engine_execution_running
-    await mark_engine_execution_running("gate-c4b-fork")
+    from tests.helpers.live_execution import create_live_execution
+    await create_live_execution(async_session_factory, engine_execution_id)
 
     server = WorkerSdkHttpServer()
     await server.start()
@@ -1178,6 +1191,8 @@ async def test_forked_child_artifacts_over_worker_socket(monkeypatch):
         with contextlib.suppress(Exception):
             template.shutdown()
         await server.stop()
+        from tests.helpers.live_execution import delete_live_execution
+        await delete_live_execution(async_session_factory, engine_execution_id)
 
 
 async def _seed_committed_event_source(async_session_factory, topic: str) -> str:
@@ -1295,14 +1310,15 @@ async def test_forked_child_events_and_forms_over_worker_socket(
     # serve every call.
     monkeypatch.setenv("BIFROST_API_URL", "http://127.0.0.1:9")
 
+    engine_execution_id = str(uuid4())
     engine_token, _ = mint_engine_token(
-        execution_id="gate-c5c-fork",
+        execution_id=engine_execution_id,
         solution_id=None,
         global_repo_access=True,
         timeout_seconds=120,
     )
-    from tests.helpers.engine_execution_lease import mark_engine_execution_running
-    await mark_engine_execution_running("gate-c5c-fork")
+    from tests.helpers.live_execution import create_live_execution
+    await create_live_execution(async_session_factory, engine_execution_id)
 
     server = WorkerSdkHttpServer()
     await server.start()
@@ -1372,6 +1388,9 @@ async def test_forked_child_events_and_forms_over_worker_socket(
         with contextlib.suppress(Exception):
             template.shutdown()
         await server.stop()
+        from tests.helpers.live_execution import delete_live_execution
+
+        await delete_live_execution(async_session_factory, engine_execution_id)
         from sqlalchemy import delete
 
         async with async_session_factory() as session:

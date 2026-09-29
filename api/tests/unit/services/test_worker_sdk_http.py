@@ -64,17 +64,23 @@ def _reset_engine_transport_globals():
     _clear_client()
 
 
+_ENGINE_TOKEN_EXECUTION_ID = str(uuid4())
+
+
 @pytest_asyncio.fixture(autouse=True)
-async def _engine_execution_is_live():
+async def _engine_execution_is_live(async_session_factory):
     """Every ``_engine_token()`` in this file shares one execution_id.
 
-    Authentication now requires the execution to be live (see
-    src/core/auth.py); mark it running so these route-reuse tests exercise
-    a still-running child the way production does.
+    Authentication requires the execution to be live (see src/core/auth.py,
+    which reads the execution row's status); create a real, running
+    execution row for it so these route-reuse tests exercise a
+    still-running child the way production does.
     """
-    from tests.helpers.engine_execution_lease import mark_engine_execution_running
+    from tests.helpers.live_execution import create_live_execution, delete_live_execution
 
-    await mark_engine_execution_running("gate-a-route-reuse")
+    await create_live_execution(async_session_factory, _ENGINE_TOKEN_EXECUTION_ID)
+    yield
+    await delete_live_execution(async_session_factory, _ENGINE_TOKEN_EXECUTION_ID)
 
 
 @pytest_asyncio.fixture
@@ -148,7 +154,7 @@ def _engine_token() -> str:
     from src.core.security import mint_engine_token
 
     token, _ = mint_engine_token(
-        execution_id="gate-a-route-reuse",
+        execution_id=_ENGINE_TOKEN_EXECUTION_ID,
         solution_id=None,
         global_repo_access=True,
         timeout_seconds=300,
@@ -3324,10 +3330,10 @@ class TestSocketErrorParityAndActorContext:
         }
 
     @pytest.mark.asyncio
-    async def test_request_context_attributes_engine_caller(self):
+    async def test_request_context_attributes_engine_caller(self, async_session_factory):
         from src.core.security import mint_engine_token
         from src.services.audit_context import current_actor
-        from tests.helpers.engine_execution_lease import mark_engine_execution_running
+        from tests.helpers.live_execution import create_live_execution, delete_live_execution
 
         caller_id = uuid4()
         org_id = uuid4()
@@ -3342,48 +3348,50 @@ class TestSocketErrorParityAndActorContext:
             caller_email="caller@example.com",
             caller_name="Caller Name",
         )
-        await mark_engine_execution_running(str(execution_id))
+        await create_live_execution(async_session_factory, str(execution_id))
+        try:
+            app = build_worker_sdk_app()
 
-        app = build_worker_sdk_app()
+            @app.get("/__test__/actor")
+            async def _actor():
+                actor = current_actor()
+                assert actor is not None
+                return {
+                    "user_id": str(actor.user_id) if actor.user_id else None,
+                    "organization_id": (
+                        str(actor.organization_id) if actor.organization_id else None
+                    ),
+                    "email": actor.email,
+                    "name": actor.name,
+                    "source": actor.source,
+                    "execution_id": (
+                        str(actor.execution_id) if actor.execution_id else None
+                    ),
+                    "ip_address": actor.ip_address,
+                }
 
-        @app.get("/__test__/actor")
-        async def _actor():
-            actor = current_actor()
-            assert actor is not None
-            return {
-                "user_id": str(actor.user_id) if actor.user_id else None,
-                "organization_id": (
-                    str(actor.organization_id) if actor.organization_id else None
-                ),
-                "email": actor.email,
-                "name": actor.name,
-                "source": actor.source,
-                "execution_id": (
-                    str(actor.execution_id) if actor.execution_id else None
-                ),
-                "ip_address": actor.ip_address,
-            }
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://bifrost-engine"
+            ) as client:
+                response = await client.get(
+                    "/__test__/actor",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
 
-        transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(
-            transport=transport, base_url="http://bifrost-engine"
-        ) as client:
-            response = await client.get(
-                "/__test__/actor",
-                headers={"Authorization": f"Bearer {token}"},
-            )
+            assert response.status_code == 200, response.text
+            body = response.json()
+            assert body["source"] == "workflow"
+            assert body["user_id"] == str(caller_id)
+            assert body["organization_id"] == str(org_id)
+            assert body["email"] == "caller@example.com"
+            assert body["name"] == "Caller Name"
+            assert body["execution_id"] == str(execution_id)
+            # No client on an ASGI transport unless the test sets one; either way
+            # the actor must never carry the sentinel "unknown".
+            assert body["ip_address"] != "unknown"
 
-        assert response.status_code == 200, response.text
-        body = response.json()
-        assert body["source"] == "workflow"
-        assert body["user_id"] == str(caller_id)
-        assert body["organization_id"] == str(org_id)
-        assert body["email"] == "caller@example.com"
-        assert body["name"] == "Caller Name"
-        assert body["execution_id"] == str(execution_id)
-        # No client on an ASGI transport unless the test sets one; either way
-        # the actor must never carry the sentinel "unknown".
-        assert body["ip_address"] != "unknown"
-
-        # The actor is request-scoped and cleared once the response is done.
-        assert current_actor() is None
+            # The actor is request-scoped and cleared once the response is done.
+            assert current_actor() is None
+        finally:
+            await delete_live_execution(async_session_factory, str(execution_id))

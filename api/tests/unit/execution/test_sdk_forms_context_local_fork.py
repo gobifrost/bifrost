@@ -79,7 +79,7 @@ def _wait_for_pid_to_die(pid: int, timeout: float = 10.0) -> None:
 @pytest.mark.asyncio
 class TestForkedFormsContextTransport:
     async def test_forms_and_context_over_socket_without_http(
-        self, db_session, monkeypatch
+        self, db_session, async_session_factory, monkeypatch
     ):
         """A real forked child reads forms and context over the socket."""
         from src.core.principal import UserPrincipal
@@ -192,13 +192,14 @@ class TestForkedFormsContextTransport:
             "    'had_sqlalchemy': 'sqlalchemy' in sys.modules,",
             "}",
         ]
-        from tests.helpers.engine_execution_lease import mark_engine_execution_running
+        from tests.helpers.live_execution import create_live_execution
 
-        await mark_engine_execution_running("gate-c5h-forms-fork")
+        engine_execution_id = str(uuid4())
+        await create_live_execution(async_session_factory, engine_execution_id)
         context = _context_for(
             _script_b64("\n".join(lines) + "\n"),
             mint_engine_token(
-                execution_id="gate-c5h-forms-fork",
+                execution_id=engine_execution_id,
                 solution_id=None,
                 global_repo_access=True,
                 timeout_seconds=120,
@@ -272,3 +273,6 @@ class TestForkedFormsContextTransport:
         finally:
             template.shutdown()
             await server.stop()
+            from tests.helpers.live_execution import delete_live_execution
+
+            await delete_live_execution(async_session_factory, engine_execution_id)
