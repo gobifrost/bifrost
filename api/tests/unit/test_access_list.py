@@ -1,39 +1,51 @@
 """Tests for the R2a-1 access list.
 
-Proves the access list is complete (every REST route and MCP tool has
-exactly one entry, and no entry points at a route/tool that no longer
-exists), that each entry's ``current_gate`` matches what the route's
-dependency tree (or MCP tool's inline scope-bypass check) actually enforces
-today, that permission-class entries are internally consistent and agree
-with the operation catalog, that MCP tools inherit their bound REST route's
-entry, that the generated JSON projection is fresh, and that no write
-route in the personal/execute/own_private_agent classes has snuck onto a
+Proves the access list is complete (every REST route, WebSocket route, and
+MCP tool has exactly one entry, and no entry points at a route/tool that no
+longer exists), that each entry's ``current_gate`` matches ONLY what the
+route's dependency tree mechanically enforces today (never narrowed by an
+inline check — that's ``inline_checks``' job), that every ``inline_checks``
+token is actually reachable from the handler's source, that
+permission-class entries are internally consistent and agree with the
+operation catalog, that MCP tools inherit their bound REST route's entry,
+that every route/tool admitting provider-org non-admins beyond a customer
+member (``engine_or_bypass`` gate, or a ``has_scope_bypass``/
+``mcp_write_scope_bypass`` inline check) records an ``intended_change``,
+that the generated JSON projection is fresh, and that no write route in the
+personal/execute/own_private_agent classes has snuck onto a
 platform-managed entity outside the reviewed allow-list.
 """
 
 from __future__ import annotations
 
+import ast
+import importlib
 import inspect
 import re
 import subprocess
 import sys
+import textwrap
 from pathlib import Path
 
 import pytest
 from fastapi.routing import APIRoute
+from starlette.routing import WebSocketRoute
 
 from src.core import auth as auth_mod
 from src.main import app
-from src.models.contracts.access_list import AccessClass, CurrentGate
+from src.models.contracts.access_list import (
+    INLINE_CHECK_TOKENS,
+    AccessClass,
+    CurrentGate,
+)
 from src.services.access_list import ACCESS_LIST
 from src.services.mcp_server.server import get_system_tools
 from src.services.operation_catalog import OPERATION_CATALOG
 
 _API_ROOT = Path(__file__).resolve().parents[2]
-_REPO_ROOT = _API_ROOT.parent
 
-_INLINE_TOKENS = ("is_superuser", "is_platform_admin", "has_scope_bypass", "is_provider_org")
-
+# The dependency-tree functions that fully define `current_gate`. Matched by
+# identity, never by name-in-string.
 _GATE_FUNCS = {
     auth_mod.get_current_user: CurrentGate.AUTHENTICATED,
     auth_mod.get_current_active_user: CurrentGate.AUTHENTICATED,
@@ -41,6 +53,23 @@ _GATE_FUNCS = {
     auth_mod.get_current_superuser: CurrentGate.SUPERUSER,
     auth_mod.get_current_engine_or_bypass_user: CurrentGate.ENGINE_OR_BYPASS,
 }
+
+# JWT/token-minting helpers embed principal fields (is_superuser, ...) as
+# claims, not as authorization checks — excluded from the inline-check scan
+# so claim construction isn't mistaken for a check.
+_NOISE_FUNC_NAMES = {
+    "create_access_token",
+    "create_embed_access_token",
+    "mint_service_token",
+    "mint_engine_token",
+    "decode_token",
+}
+
+# The two tokens that specifically indicate a provider-org bypass (as
+# opposed to a platform-admin-only check): calling has_scope_bypass or
+# mcp_write_scope_bypass admits a provider-org non-admin, not just a true
+# platform admin.
+_PROVIDER_BYPASS_TOKENS = {"has_scope_bypass", "mcp_write_scope_bypass"}
 
 
 def _openapi_path(path: str) -> str:
@@ -61,11 +90,12 @@ def _rest_routes() -> list[tuple[str, str, APIRoute]]:
 
 
 def _dependency_gate(route: APIRoute) -> CurrentGate:
-    """Derive the strongest gate actually enforced by the route's dependency tree.
+    """The gate the route's dependency tree enforces — and ONLY that.
 
     Matches dependency callables by identity (not by name-in-string), and
     recurses the whole tree so a gate nested behind another dependency is
-    still found.
+    still found. This is never narrowed by an inline check in the handler
+    body; that's a separate, additive fact (see ``_inline_checks``).
     """
     found: set[CurrentGate] = set()
 
@@ -86,27 +116,109 @@ def _dependency_gate(route: APIRoute) -> CurrentGate:
     return CurrentGate.NONE
 
 
-def _inline_tokens(route: APIRoute) -> list[str]:
+def _custom_dependency_callables(route: APIRoute) -> list[object]:
+    """Non-canonical dependency callables in the tree (e.g. a custom auth
+    dependency that does more than the four canonical resolvers, such as
+    sdk_modules.py's ``_module_source_caller``)."""
+    found: list[object] = []
+    seen: set[int] = set()
+
+    def walk(dependant: object) -> None:
+        call = getattr(dependant, "call", None)
+        if (
+            call not in _GATE_FUNCS
+            and callable(call)
+            and inspect.isfunction(call)
+        ):
+            mod = getattr(call, "__module__", "") or ""
+            if (mod.startswith("src.") or mod.startswith("shared.")) and id(call) not in seen:
+                seen.add(id(call))
+                found.append(call)
+        for sub in getattr(dependant, "dependencies", ()):
+            walk(sub)
+
+    walk(route.dependant)
+    return found
+
+
+def _local_imports(tree: ast.AST) -> dict[str, tuple[str, str]]:
+    imports: dict[str, tuple[str, str]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            for alias in node.names:
+                local = alias.asname or alias.name
+                imports[local] = (node.module, alias.name)
+    return imports
+
+
+def _called_names(tree: ast.AST) -> set[str]:
+    return {
+        node.func.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+
+
+def _reachable_sources(func: object, depth: int = 1, _visited: set[int] | None = None) -> list[str]:
+    """The function's own source, plus up to ``depth`` hops of calls it
+    makes to a locally-imported or module-global function that lives in
+    ``shared.``/``src.`` — the "service it calls one level down" the R2a-1
+    spec asks the inline-check scan to cover. Token-minting helpers are
+    excluded (see ``_NOISE_FUNC_NAMES``); classes are not descended into
+    (too coarse — an unrelated method would pollute the scan).
+    """
+    if _visited is None:
+        _visited = set()
+    key = id(func)
+    if key in _visited:
+        return []
+    _visited.add(key)
+    if getattr(func, "__name__", "") in _NOISE_FUNC_NAMES:
+        return []
     try:
-        source = inspect.getsource(route.endpoint)
+        source = inspect.getsource(func)
     except (OSError, TypeError):
         return []
-    return sorted(t for t in _INLINE_TOKENS if re.search(rf"\b{re.escape(t)}\b", source))
+    sources = [source]
+    if depth <= 0:
+        return sources
+    try:
+        tree = ast.parse(textwrap.dedent(source))
+    except SyntaxError:
+        return sources
+    local_imports = _local_imports(tree)
+    called = _called_names(tree)
+    func_globals = getattr(func, "__globals__", {})
+    for name in called:
+        target = None
+        if name in local_imports:
+            module_name, orig_name = local_imports[name]
+            if module_name.startswith("shared") or module_name.startswith("src."):
+                try:
+                    mod = importlib.import_module(module_name)
+                    target = getattr(mod, orig_name, None)
+                except Exception:
+                    target = None
+        elif name in func_globals:
+            candidate = func_globals[name]
+            mod_attr = getattr(candidate, "__module__", "") or ""
+            if mod_attr.startswith("shared") or mod_attr.startswith("src."):
+                target = candidate
+        if target is not None and inspect.isfunction(target):
+            sources.extend(_reachable_sources(target, depth - 1, _visited))
+    return sources
 
 
-def _actual_gate(route: APIRoute) -> CurrentGate:
-    base = _dependency_gate(route)
-    if base != CurrentGate.NONE and _inline_tokens(route):
-        return CurrentGate.INLINE
-    return base
+def _inline_checks(route: APIRoute) -> tuple[str, ...]:
+    blob_parts = _reachable_sources(route.endpoint, depth=1)
+    for dep_func in _custom_dependency_callables(route):
+        blob_parts.extend(_reachable_sources(dep_func, depth=1))
+    blob = "\n".join(blob_parts)
+    return tuple(sorted({t for t in INLINE_CHECK_TOKENS if re.search(rf"\b{re.escape(t)}\b", blob)}))
 
 
 def _mcp_tool_ids() -> set[str]:
     return {str(tool["id"]) for tool in get_system_tools()}
-
-
-def _catalog_by_rest() -> dict[tuple[str, str], object]:
-    return {(op.rest.method, op.rest.path): op for op in OPERATION_CATALOG if op.rest}
 
 
 def _catalog_by_mcp() -> dict[str, object]:
@@ -141,8 +253,6 @@ class TestCompleteness:
         assert not missing, f"MCP tools missing an access-list entry: {missing}"
 
     def test_websocket_routes_have_entries(self, entries_by_key) -> None:
-        from starlette.routing import WebSocketRoute
-
         missing = []
         for route in app.routes:
             if isinstance(route, WebSocketRoute):
@@ -153,8 +263,6 @@ class TestCompleteness:
 
     def test_no_stale_rest_entries(self, rest_routes) -> None:
         live = {(method, path) for method, path, _route in rest_routes}
-        from starlette.routing import WebSocketRoute
-
         live |= {("WS", _openapi_path(r.path)) for r in app.routes if isinstance(r, WebSocketRoute)}
         stale = [
             (entry.method, entry.path)
@@ -174,13 +282,18 @@ class TestCompleteness:
 
 
 class TestGateAgreement:
-    def test_rest_current_gate_matches_dependency_tree(self, rest_routes, entries_by_key) -> None:
+    def test_rest_current_gate_matches_dependency_tree_only(self, rest_routes, entries_by_key) -> None:
+        """current_gate must equal the DEPENDENCY-derived gate — never
+        narrowed by an inline check. A route whose handler does an extra
+        is_superuser-style check on top of `authenticated` still records
+        current_gate=authenticated; the extra check lives in inline_checks.
+        """
         mismatches = []
         for method, path, route in rest_routes:
             entry = entries_by_key.get((method, path))
             if entry is None:
                 continue
-            actual = _actual_gate(route)
+            actual = _dependency_gate(route)
             if actual != entry.current_gate:
                 mismatches.append((method, path, entry.current_gate, actual))
         assert not mismatches, (
@@ -188,19 +301,35 @@ class TestGateAgreement:
             f"(method, path, recorded, actual): {mismatches}"
         )
 
-    def test_inline_entries_source_actually_contains_a_check_token(self, rest_routes) -> None:
+    def test_mcp_current_gate_is_authenticated(self, entries_by_key) -> None:
+        """MCP tools all sit behind the FastMCP OAuth session — the transport-
+        level floor is `authenticated` for every one of them; anything
+        narrower is an inline_checks fact, not a different current_gate."""
+        wrong = [
+            entry.mcp_tool
+            for entry in ACCESS_LIST
+            if entry.mcp_tool is not None and entry.current_gate != CurrentGate.AUTHENTICATED
+        ]
+        assert not wrong, f"MCP entries with current_gate != authenticated: {wrong}"
+
+    def test_inline_checks_tokens_are_reachable_from_source(self, rest_routes) -> None:
+        """Every token in inline_checks must actually be found by the same
+        one-hop reachable-source scan the generator uses — so a removed
+        check fails this test, not just a stale docstring."""
         by_key = {(m, p): r for m, p, r in rest_routes}
-        missing_token = []
+        mismatches = []
         for entry in ACCESS_LIST:
-            if entry.current_gate != CurrentGate.INLINE or entry.method is None:
+            if not entry.inline_checks or entry.method is None:
                 continue
             route = by_key.get((entry.method, entry.path))
             if route is None:
                 continue
-            if not _inline_tokens(route):
-                missing_token.append((entry.method, entry.path))
-        assert not missing_token, (
-            f"entries marked current_gate=inline but with no inline check token in source: {missing_token}"
+            actual = set(_inline_checks(route))
+            missing = set(entry.inline_checks) - actual
+            if missing:
+                mismatches.append((entry.method, entry.path, sorted(missing)))
+        assert not mismatches, (
+            f"inline_checks tokens not found in reachable source (method, path, missing): {mismatches}"
         )
 
 
@@ -255,6 +384,41 @@ class TestMcpMatchesRest:
         assert not mismatches, f"MCP tool entry disagrees with its bound REST route's entry: {mismatches}"
 
 
+class TestIntendedChangeCoverage:
+    """Any entry that admits a provider-org non-admin beyond a customer
+    member — engine_or_bypass gate, or an inline has_scope_bypass /
+    mcp_write_scope_bypass check — must say so via intended_change, unless
+    its reason already states why permanent provider-org access is
+    intended (none currently do)."""
+
+    def test_bypass_admitting_entries_have_intended_change(self) -> None:
+        missing = []
+        for entry in ACCESS_LIST:
+            admits_bypass = (
+                entry.current_gate == CurrentGate.ENGINE_OR_BYPASS
+                or bool(set(entry.inline_checks) & _PROVIDER_BYPASS_TOKENS)
+            )
+            if admits_bypass and not entry.intended_change:
+                missing.append(entry.key)
+        assert not missing, (
+            f"entries admitting provider-org bypass with no intended_change: {missing}"
+        )
+
+    def test_intended_change_only_on_bypass_admitting_entries(self) -> None:
+        """Catch drift the other way too: intended_change should not be set
+        on an entry that doesn't actually admit bypass — it would be a
+        stale note left over from a removed check."""
+        extra = []
+        for entry in ACCESS_LIST:
+            admits_bypass = (
+                entry.current_gate == CurrentGate.ENGINE_OR_BYPASS
+                or bool(set(entry.inline_checks) & _PROVIDER_BYPASS_TOKENS)
+            )
+            if entry.intended_change and not admits_bypass:
+                extra.append(entry.key)
+        assert not extra, f"intended_change set without a bypass-admitting gate/check: {extra}"
+
+
 class TestGeneratedJsonFreshness:
     def test_access_list_json_is_fresh(self) -> None:
         result = subprocess.run(
@@ -298,7 +462,6 @@ _REVIEWED_WRITE_ALLOWLIST: dict[tuple[str, str], str] = {
     ("POST", "/api/forms/{form_id}/startup"): "Form runtime — loading the form.",
     ("POST", "/api/forms/{form_id}/fields/{field_name}/options"): "Form runtime — loading field options.",
     ("POST", "/api/forms/{form_id}/upload"): "Form runtime — uploading a submission attachment.",
-    ("POST", "/api/platform-jobs/{job_id}/cancel"): "Cancel an own/accessible platform job.",
     ("POST", "/api/oauth/connections"): "Own OAuth connection.",
     ("PUT", "/api/oauth/connections/{connection_name}"): "Own OAuth connection.",
     ("DELETE", "/api/oauth/connections/{connection_name}"): "Own OAuth connection.",
@@ -306,27 +469,14 @@ _REVIEWED_WRITE_ALLOWLIST: dict[tuple[str, str], str] = {
     ("POST", "/api/oauth/connections/{connection_name}/cancel"): "Own OAuth connection.",
     ("POST", "/api/oauth/connections/{connection_name}/refresh"): "Own OAuth connection.",
     ("POST", "/api/oauth/callback/{connection_name}"): "Own OAuth connection.",
-    ("POST", "/api/sdk/config/get"): "Workflow SDK call made during execution.",
-    ("POST", "/api/sdk/config/set"): "Workflow SDK call made during execution.",
-    ("POST", "/api/sdk/config/list"): "Workflow SDK call made during execution.",
-    ("POST", "/api/sdk/config/delete"): "Workflow SDK call made during execution.",
-    ("POST", "/api/sdk/integrations/get"): "Workflow SDK call made during execution.",
-    ("POST", "/api/sdk/integrations/list_mappings"): "Workflow SDK call made during execution.",
-    ("POST", "/api/sdk/integrations/get_mapping"): "Workflow SDK call made during execution.",
-    ("POST", "/api/sdk/integrations/upsert_mapping"): "Workflow SDK call made during execution.",
-    ("POST", "/api/sdk/integrations/delete_mapping"): "Workflow SDK call made during execution.",
-    ("POST", "/api/sdk/integrations/refresh_token"): "Workflow SDK call made during execution.",
-    ("POST", "/api/sdk/artifacts"): "Workflow SDK call made during execution.",
-    ("POST", "/api/sdk/artifacts/document"): "Workflow SDK call made during execution.",
-    ("POST", "/api/sdk/artifacts/spreadsheet"): "Workflow SDK call made during execution.",
-    ("POST", "/api/sdk/artifacts/text"): "Workflow SDK call made during execution.",
-    ("POST", "/api/sdk/artifacts/image"): "Workflow SDK call made during execution.",
-    ("POST", "/api/sdk/artifacts/video"): "Workflow SDK call made during execution.",
     ("POST", "/api/sdk/ai/complete"): "Workflow SDK call made during execution.",
     ("POST", "/api/sdk/ai/stream"): "Workflow SDK call made during execution.",
-    ("POST", "/api/sdk/knowledge/search"): "Workflow SDK call made during execution.",
-    ("POST", "/api/sdk/tables/create"): "Workflow SDK call made during execution.",
-    ("POST", "/api/sdk/tables/list"): "Workflow SDK call made during execution.",
+    ("POST", "/api/sdk/artifacts"): "Own execution-workspace artifact.",
+    ("POST", "/api/sdk/artifacts/document"): "Own execution-workspace artifact.",
+    ("POST", "/api/sdk/artifacts/spreadsheet"): "Own execution-workspace artifact.",
+    ("POST", "/api/sdk/artifacts/text"): "Own execution-workspace artifact.",
+    ("POST", "/api/sdk/artifacts/image"): "Own execution-workspace artifact.",
+    ("POST", "/api/sdk/artifacts/video"): "Own execution-workspace artifact.",
     ("DELETE", "/api/notifications/{notification_id}"): "Own notification.",
     ("PATCH", "/api/profile"): "Own profile.",
     ("POST", "/api/profile/avatar"): "Own profile.",
@@ -341,18 +491,14 @@ _REVIEWED_WRITE_ALLOWLIST: dict[tuple[str, str], str] = {
     ("POST", "/api/agents/{agent_id}/promote"): "Own private agent.",
     ("POST", "/api/agents/{agent_id}/logo"): "Own private agent.",
     ("DELETE", "/api/agents/{agent_id}/logo"): "Own private agent.",
+    ("POST", "/api/agents/{agent_id}/tuning-session"): "Own private agent (tuning).",
+    ("POST", "/api/agents/{agent_id}/tuning-session/dry-run"): "Own private agent (tuning).",
+    ("POST", "/api/agents/{agent_id}/tuning-session/apply"): "Own private agent (tuning).",
     ("POST", "/api/agent-runs/{run_id}/rerun"): "Own/accessible agent run.",
     ("POST", "/api/agent-runs/{run_id}/cancel"): "Own/accessible agent run.",
-    ("POST", "/api/agent-runs/{run_id}/verdict"): "Own/accessible agent run.",
-    ("DELETE", "/api/agent-runs/{run_id}/verdict"): "Own/accessible agent run.",
-    ("POST", "/api/agent-runs/{run_id}/flag-conversation/message"): "Own/accessible agent run.",
-    ("POST", "/api/agent-runs/{run_id}/regenerate-summary"): "Own/accessible agent run.",
     ("POST", "/api/agent-runs/{run_id}/dry-run"): "Own/accessible agent run.",
     ("POST", "/api/agent-runs/enqueue"): "Own agent run.",
     ("POST", "/api/agent-runs/execute"): "Own agent run.",
-    ("POST", "/api/agents/{agent_id}/tuning-session"): "Interactive tuning preview on an accessible agent.",
-    ("POST", "/api/agents/{agent_id}/tuning-session/dry-run"): "Interactive tuning preview on an accessible agent.",
-    ("POST", "/api/agents/{agent_id}/tuning-session/apply"): "Interactive tuning preview on an accessible agent.",
     ("POST", "/api/chat/conversations"): "Own chat conversation.",
     ("DELETE", "/api/chat/conversations/{conversation_id}"): "Own chat conversation.",
     ("POST", "/api/chat/runs"): "Own chat conversation.",
@@ -362,16 +508,9 @@ _REVIEWED_WRITE_ALLOWLIST: dict[tuple[str, str], str] = {
     ("POST", "/api/chat/conversations/{conversation_id}/attachments"): "Own chat conversation.",
     ("DELETE", "/api/chat/conversations/{conversation_id}/attachments/{attachment_id}"): "Own chat conversation.",
     ("POST", "/api/chat/conversations/{conversation_id}/messages"): "Own chat conversation.",
-    ("POST", "/api/integrations/{integration_id}/test"): "Live connectivity test, not a definition mutation.",
     ("POST", "/api/mcp/gateway/agents/{agent_id}/tools/{tool_ref}/execute"): "Executes a tool through the MCP gateway.",
-    ("POST", "/api/events/emit"): "Triggers a platform event.",
-    ("POST", "/api/mcp-connections"): "Own MCP tool connection.",
-    ("PATCH", "/api/mcp-connections/{connection_id}"): "Own MCP tool connection.",
-    ("DELETE", "/api/mcp-connections/{connection_id}"): "Own MCP tool connection.",
-    ("PATCH", "/api/mcp-connections/{connection_id}/tools/{tool_id}"): "Own MCP tool connection.",
-    ("POST", "/api/mcp-connections/{connection_id}/refresh-tools"): "Own MCP tool connection.",
-    ("POST", "/api/mcp-connections/{connection_id}/connect"): "Own MCP tool connection.",
     ("DELETE", "/api/me/mcp-connections/{connection_id}"): "Own MCP tool connection.",
+    ("POST", "/api/platform-jobs/{job_id}/cancel"): "Own platform job (or any, for a platform admin).",
 }
 
 

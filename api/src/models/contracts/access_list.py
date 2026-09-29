@@ -44,7 +44,10 @@ class AccessClass(StrEnum):
 
 
 class CurrentGate(StrEnum):
-    """What the code enforces TODAY, derived mechanically from the route."""
+    """What the code's DEPENDENCY TREE enforces today — mechanically derived,
+    never overridden by an inline check. An inline check the handler (or a
+    service it calls one level down) layers on top is recorded separately on
+    ``AccessEntry.inline_checks``; it never changes this value."""
 
     # No auth dependency at all.
     NONE = "none"
@@ -59,11 +62,20 @@ class CurrentGate(StrEnum):
     ENGINE = "engine"
     # An embed-session-only dependency.
     EMBED = "embed"
-    # The dependency gate is broader than what actually gates the route: the
-    # handler or a service it calls one level down does its own
-    # is_superuser / is_platform_admin / has_scope_bypass / is_provider_org
-    # check beyond the FastAPI dependency.
-    INLINE = "inline"
+
+
+# The specific inline-check tokens the gate-agreement test looks for in the
+# handler's source (or the source of a function it calls one level down):
+# is_superuser / is_platform_admin / has_scope_bypass / is_provider_org /
+# mcp_write_scope_bypass (the MCP-tool analog of has_scope_bypass, used by
+# the code_editor tools' `_check_read_scope` / `_check_write_scope`).
+INLINE_CHECK_TOKENS = (
+    "is_superuser",
+    "is_platform_admin",
+    "has_scope_bypass",
+    "is_provider_org",
+    "mcp_write_scope_bypass",
+)
 
 
 _PERMISSION_BOUNDARIES = ("organization", "managed_organizations", "platform")
@@ -81,6 +93,12 @@ class AccessEntry(BaseModel):
     access_class: AccessClass
     current_gate: CurrentGate
 
+    # Inline is_superuser/is_platform_admin/has_scope_bypass/is_provider_org/
+    # mcp_write_scope_bypass tokens actually found in the handler's source
+    # (or a function it calls one level down), beyond current_gate's
+    # dependency-tree check. Empty when there is none.
+    inline_checks: tuple[str, ...] = ()
+
     # Required iff access_class is PERMISSION. Format: "<domain>.<read|readwrite|execute>".
     permission: str | None = None
     # Required iff access_class is PERMISSION.
@@ -95,6 +113,13 @@ class AccessEntry(BaseModel):
     # Set only when today's gate is broader or narrower than the intended
     # class (e.g. every engine_or_bypass route used by humans today).
     intended_change: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_inline_checks(self) -> "AccessEntry":
+        unknown = set(self.inline_checks) - set(INLINE_CHECK_TOKENS)
+        if unknown:
+            raise ValueError(f"unknown inline_checks tokens: {sorted(unknown)}")
+        return self
 
     @model_validator(mode="after")
     def _validate_target(self) -> "AccessEntry":
