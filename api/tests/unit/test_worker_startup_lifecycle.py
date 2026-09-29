@@ -71,6 +71,7 @@ async def test_stop_waits_for_blocked_startup_and_prevents_late_subscriptions():
 
     with (
         patch("src.worker.app.init_db", new=AsyncMock()),
+        patch("src.worker.app.wait_for_schema", new=AsyncMock()),
         patch("src.worker.app.close_db", new=AsyncMock()),
         patch("src.worker.app.rabbitmq.close", new=AsyncMock()),
         patch(

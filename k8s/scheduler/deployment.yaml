@@ -55,6 +55,18 @@ spec:
             periodSeconds: 30
             timeoutSeconds: 5
             failureThreshold: 3
+          # Ready only after the startup schema gate passes, so a rollout
+          # pauses while new pods wait for migrations.
+          readinessProbe:
+            exec:
+              command:
+                - python
+                - -m
+                - src.scheduler.health
+                - --ready
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
       # Run as non-root user (matches Dockerfile)
       securityContext:
         runAsUser: 1000
