@@ -31,6 +31,11 @@ Diagnostics → Scheduler.
   provider's SDK in the catalog (`@ai-sdk/openai-compatible` → the
   OpenAI-compatible adapter, and so on). They are labelled "Community" in the
   UI; Bifrost does not test them individually.
+- models.dev publishes no base URL for providers whose AI SDK package has one
+  built in (Groq, xAI, Mistral, Together, DeepInfra, Cerebras, Perplexity,
+  Cohere). Bifrost supplies their OpenAI-compatible URLs from
+  `OPENAI_COMPATIBLE_ENDPOINTS`; a URL the catalog later publishes wins. Any
+  other catalog provider without an OpenAI-style endpoint is not offered.
 - A connection pointed at an endpoint other than the catalog's is a custom
   connection: its models are listed by the endpoint's own `/models`.
 

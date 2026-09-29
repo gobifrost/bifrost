@@ -67,6 +67,8 @@ def _raw_catalog(extra_models: int = 0) -> dict:
             },
         ),
         "bedrock": _provider("bedrock", "@ai-sdk/amazon-bedrock", None, {"m": {"id": "m", "name": "M"}}),
+        # Own SDK package with the base URL built in, so no "api" is published.
+        "groq": _provider("groq", "@ai-sdk/groq", None, {"llama": {"id": "llama", "name": "Llama"}}),
         "broken": "not a provider",
     }
     for index in range(25 + extra_models):
@@ -98,6 +100,38 @@ def test_adapters_follow_each_providers_sdk() -> None:
     supported = [p.id for p in catalog.supported_providers()]
     assert supported[0] == "anthropic"  # native providers sort first
     assert "bedrock" not in supported
+
+
+def test_known_openai_compatible_providers_get_a_base_url() -> None:
+    catalog = parse_catalog(trim_catalog(_raw_catalog()), fetched_at=None, source="bundled")
+    groq = catalog.provider("groq")
+    assert groq.adapter == "openai_compatible"
+    assert groq.endpoint == "https://api.groq.com/openai/v1"
+    route = groq.route(groq.models["llama"])
+    assert route is not None
+    assert (route.provider, route.endpoint, route.openai_transport) == (
+        "openai",
+        "https://api.groq.com/openai/v1",
+        "chat_completions",
+    )
+    assert "groq" in [p.id for p in catalog.supported_providers()]
+
+
+def test_a_published_catalog_base_url_wins_over_the_table() -> None:
+    raw = _raw_catalog()
+    raw["groq"]["api"] = "https://groq.example/v2"
+    groq = parse_catalog(trim_catalog(raw), fetched_at=None, source="bundled").provider("groq")
+    assert groq.endpoint == "https://groq.example/v2"
+    assert groq.route(groq.models["llama"]).endpoint == "https://groq.example/v2"
+
+
+def test_bundled_snapshot_offers_every_tabled_provider() -> None:
+    catalog = load_bundled_catalog()
+    supported = {p.id for p in catalog.supported_providers()}
+    for pid in model_catalog.OPENAI_COMPATIBLE_ENDPOINTS:
+        assert pid in supported, pid
+        provider = catalog.provider(pid)
+        assert any(provider.route(m) for m in provider.models.values()), pid
 
 
 def test_reasoning_choices_come_from_the_catalog_options() -> None:
