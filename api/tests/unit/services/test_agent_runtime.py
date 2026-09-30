@@ -563,7 +563,7 @@ def test_budget_is_enforced_before_requests_and_warns_before_hard_stop() -> None
     budget = AgentRunBudget(max_requests=9, max_total_tokens=100_000)
 
     limits = budget.usage_limits()
-    capabilities = build_runtime_capabilities(budget)
+    capabilities = build_runtime_capabilities(budget, context_window=None)
 
     assert limits.request_limit == 9
     assert limits.total_tokens_limit == 100_000
@@ -580,7 +580,7 @@ def test_unconfigured_budget_disables_run_limits_but_keeps_context_governance() 
     budget = AgentRunBudget()
 
     limits = budget.usage_limits()
-    capabilities = build_runtime_capabilities(budget)
+    capabilities = build_runtime_capabilities(budget, context_window=None)
 
     assert limits.request_limit is None
     assert limits.total_tokens_limit is None
@@ -592,7 +592,8 @@ def test_unconfigured_budget_disables_run_limits_but_keeps_context_governance() 
     warner = next(item for item in capabilities if isinstance(item, WarnNearLimits))
     assert warner.max_iterations is None
     assert warner.max_total_tokens is None
-    assert warner.max_context_tokens == budget.context_target_tokens
+    assert warner.max_context_tokens is None
+    assert warner.max_context_fraction == 1.0
 
 
 @pytest.mark.asyncio

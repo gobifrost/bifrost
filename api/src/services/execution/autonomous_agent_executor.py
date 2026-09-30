@@ -57,6 +57,7 @@ from src.services.agent_runtime import (
 from src.services.agent_runtime.empty_output import EmptyOutputCircuitBreaker
 from src.services.llm import ToolCallRequest
 from src.services.llm.factory import get_llm_configs
+from src.services.model_pricing import chain_context_window
 from src.services.knowledge.search_budget import (
     KNOWLEDGE_FULL_CONTENT_HINT,
     KnowledgeSearchBudget,
@@ -230,6 +231,7 @@ class AutonomousAgentExecutor:
 
         async with self._session_factory() as db:
             llm_configs = await get_llm_configs(db, profile_id=agent.llm_profile_id)
+            context_window = await chain_context_window(db, llm_configs)
         llm_config = llm_configs[0]
         model_name = llm_config.model
 
@@ -443,7 +445,7 @@ class AutonomousAgentExecutor:
             ),
             toolsets=[toolset] if tool_definitions else [],
             capabilities=[
-                *build_runtime_capabilities(budget),
+                *build_runtime_capabilities(budget, context_window=context_window),
                 empty_output_guard,
             ],
             model_settings=chain.primary_settings,

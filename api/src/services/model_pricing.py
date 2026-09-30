@@ -1,4 +1,4 @@
-"""Canonical provider identity, usage model names, and catalog price fill-in."""
+"""Canonical provider identity, usage model names, and catalog lookups."""
 
 import logging
 import re
@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.orm.ai_models import AIModelProfile, AIProviderConnection
 from src.models.orm.ai_usage import AIModelPricing, AIUsage
+from src.services.llm.base import LLMConfig
 from src.services.model_catalog import (
     NATIVE_CATALOG_IDS,
     CatalogModel,
@@ -59,6 +60,38 @@ def _catalog_entry(
     return catalog.model(catalog_id, model) or catalog.model(
         catalog_id, strip_date_suffix(model)
     )
+
+
+async def chain_context_window(
+    session: AsyncSession,
+    configs: list[LLMConfig],
+    *,
+    primary_model: str | None = None,
+) -> int | None:
+    """Smallest catalog context window across a failover chain.
+
+    Any candidate may serve a request, so the chain is governed by the
+    smallest window the catalog knows. ``primary_model`` replaces the first
+    config's model, matching ``build_chain_model``'s override. Returns None
+    when the catalog knows none of the chain's models.
+    """
+
+    catalog = await get_model_catalog(session)
+    windows: list[int] = []
+    for index, config in enumerate(configs):
+        model = primary_model if index == 0 and primary_model else config.model
+        entry = (
+            catalog.model(config.catalog_provider_id, model)
+            if config.catalog_provider_id
+            else None
+        )
+        if entry is None:
+            entry = _catalog_entry(
+                catalog, canonical_provider(config.provider, config.endpoint), model
+            )
+        if entry is not None and entry.context_window:
+            windows.append(entry.context_window)
+    return min(windows) if windows else None
 
 
 def usage_model_name(provider: str, model: str) -> str:
