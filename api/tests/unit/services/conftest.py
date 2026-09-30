@@ -205,3 +205,23 @@ def sample_oauth_response_metadata():
     }
 
 
+
+
+# ====================  Agent Executor Fixtures ====================
+
+
+@pytest.fixture(autouse=True)
+def unknown_catalog_context_window():
+    """Executor unit tests run on mock sessions that cannot serve the model
+    catalog; treat every chain's window as unknown to the catalog."""
+    with (
+        patch(
+            "src.services.agent_executor.chain_context_window",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "src.services.execution.autonomous_agent_executor.chain_context_window",
+            new=AsyncMock(return_value=None),
+        ),
+    ):
+        yield

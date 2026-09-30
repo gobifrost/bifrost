@@ -8,8 +8,10 @@ from sqlalchemy import select
 
 from src.models.orm.ai_usage import AIModelPricing
 from src.services.model_catalog import parse_catalog
+from src.services.llm.base import LLMConfig
 from src.services.model_pricing import (
     canonical_provider,
+    chain_context_window,
     fill_pricing_from_catalog,
     is_openrouter_endpoint,
     usage_model_name,
@@ -26,6 +28,7 @@ CATALOG = parse_catalog(
                     "id": "claude-opus-4-5",
                     "name": "Claude Opus 4.5",
                     "cost": {"input": 5, "output": 25, "cache_read": 0.5, "cache_write": 6.25},
+                    "limit": {"context": 200000},
                 }
             },
         },
@@ -39,6 +42,7 @@ CATALOG = parse_catalog(
                     "id": "accounts/fireworks/models/kimi-k3",
                     "name": "Kimi K3",
                     "cost": {"input": 0.6, "output": 2.5},
+                    "limit": {"context": 131072},
                 },
                 "free-preview": {"id": "free-preview", "name": "Preview"},
             },
@@ -169,3 +173,38 @@ async def test_display_names_cover_usage_prices_and_profiles(db_session, catalog
     assert names["accounts/fireworks/models/kimi-k3"] == "Kimi K3"
     assert names["claude-opus-4-5"] == "Claude Opus 4.5"
     assert "not-in-catalog" not in names
+
+
+def _config(provider: str, model: str, catalog_provider_id: str | None = None) -> LLMConfig:
+    return LLMConfig(
+        provider=provider,  # type: ignore[arg-type]
+        model=model,
+        api_key="test",
+        catalog_provider_id=catalog_provider_id,
+    )
+
+
+@pytest.mark.asyncio
+async def test_chain_context_window_is_the_smallest_known_window(catalog) -> None:
+    configs = [
+        _config("anthropic", "claude-opus-4-5-20251101"),
+        _config("openai", "accounts/fireworks/models/kimi-k3", "fireworks-ai"),
+        _config("openai", "unknown-model"),
+    ]
+
+    assert await chain_context_window(None, configs) == 131_072  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_chain_context_window_uses_the_primary_model_override(catalog) -> None:
+    configs = [_config("anthropic", "unknown-model")]
+
+    assert await chain_context_window(None, configs) is None  # type: ignore[arg-type]
+    assert (
+        await chain_context_window(
+            None,  # type: ignore[arg-type]
+            configs,
+            primary_model="claude-opus-4-5",
+        )
+        == 200_000
+    )

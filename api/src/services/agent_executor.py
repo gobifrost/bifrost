@@ -68,6 +68,7 @@ from src.services.agent_runtime import (
     reasoning_tokens,
 )
 from src.services.model_capabilities import should_offer_tool_calling
+from src.services.model_pricing import chain_context_window
 from src.services.execution.agent_helpers import (
     find_delegated_agent,
     parse_mcp_tool_name,
@@ -440,6 +441,11 @@ class AgentExecutor:
             # 6. Get LLM client
             async with self._db() as session:
                 llm_client = await get_llm_client(session, profile_id=chat_profile.id)
+                context_window = await chain_context_window(
+                    session,
+                    [llm_client.config, *llm_client.fallback_configs],
+                    primary_model=model_override,
+                )
 
             # 7. Hand the full loop to Pydantic AI. Bifrost remains responsible
             # for authorization, persistence, and its stable stream contract;
@@ -665,7 +671,9 @@ class AgentExecutor:
                 # history already contains its original system part.
                 instructions=system_prompt,
                 toolsets=[toolset] if tool_definitions else [],
-                capabilities=build_runtime_capabilities(budget),
+                capabilities=build_runtime_capabilities(
+                    budget, context_window=context_window
+                ),
                 model_settings=chain.primary_settings,
                 # Permit one schema/tool-name correction. It is charged to the
                 # same pre-request budget, so a malformed provider response can
