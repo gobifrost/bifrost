@@ -70,9 +70,13 @@ def is_builtin_role_id(role_id: UUID) -> bool:
 def derive_user_base_permissions(access_list: "list[AccessEntry]") -> frozenset[str]:
     """The User base role's permission set, derived from the access list.
 
-    Exactly the permissions of every access-list entry that is:
+    Exactly the permissions of every access-list entry whose deciding entry
+    (an MCP tool bound to a REST route through the operation catalog is
+    decided by that route's entry, not by the MCP transport floor) is:
     - ``access_class == permission``
     - ``current_gate == authenticated`` (no scope-bypass modifier layered on)
+    - not narrowed by an inline check to superusers or scope-bypass callers
+      (``inline_effect`` is not ``deny_unless_superuser``/``deny_unless_bypass``)
     - ``intended_change is None`` (a permanent, not a transitional, grant)
     - ``boundary == "organization"``
     - action ``read`` (permission string ends in ``.read``)
@@ -81,13 +85,17 @@ def derive_user_base_permissions(access_list: "list[AccessEntry]") -> frozenset[
     today with no admin/provider-org bypass involved, so granting them via
     the User base role changes nothing about who can do what.
     """
-    from src.models.contracts.access_list import AccessClass, CurrentGate
+    from src.models.contracts.access_list import AccessClass, CurrentGate, InlineEffect
+    from src.services.access_list import effective_entries
 
+    narrowed = {InlineEffect.DENY_UNLESS_SUPERUSER, InlineEffect.DENY_UNLESS_BYPASS}
     permissions: set[str] = set()
-    for entry in access_list:
+    for entry in effective_entries(access_list):
         if entry.access_class != AccessClass.PERMISSION:
             continue
         if entry.current_gate != CurrentGate.AUTHENTICATED:
+            continue
+        if entry.inline_effect in narrowed:
             continue
         if entry.intended_change is not None:
             continue
@@ -101,7 +109,8 @@ def derive_user_base_permissions(access_list: "list[AccessEntry]") -> frozenset[
 
 
 # Frozen literal copy of what `derive_user_base_permissions(ACCESS_LIST)`
-# produces as of this migration. See the module docstring for why this is
+# produces as of the latest migration that seeds it
+# (20260929_user_base_perm_fix). See the module docstring for why this is
 # not computed live. `tests/unit/test_builtin_roles.py` asserts the two
 # stay identical.
 USER_BASE_PERMISSIONS: frozenset[str] = frozenset(
@@ -109,19 +118,12 @@ USER_BASE_PERMISSIONS: frozenset[str] = frozenset(
         "agentruns.read",
         "agents.read",
         "apps.read",
-        "configs.read",
-        "events.read",
         "executions.read",
         "forms.read",
-        "integrations.read",
         "knowledge.read",
         "mcp.read",
         "metrics.read",
-        "policyrules.read",
-        "roles.read",
         "settings.read",
-        "tables.read",
-        "workflows.read",
     }
 )
 

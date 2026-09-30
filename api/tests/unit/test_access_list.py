@@ -36,7 +36,9 @@ from src.main import app
 from src.models.contracts.access_list import (
     INLINE_CHECK_TOKENS,
     AccessClass,
+    AccessEntry,
     CurrentGate,
+    InlineEffect,
 )
 from src.services.access_list import ACCESS_LIST
 from src.services.mcp_server.server import get_system_tools
@@ -70,6 +72,15 @@ _NOISE_FUNC_NAMES = {
 # mcp_write_scope_bypass admits a provider-org non-admin, not just a true
 # platform admin.
 _PROVIDER_BYPASS_TOKENS = {"has_scope_bypass", "mcp_write_scope_bypass"}
+_PROVIDER_BYPASS_EFFECTS = {InlineEffect.WIDENS_FOR_BYPASS, InlineEffect.DENY_UNLESS_BYPASS}
+
+
+def _admits_provider_bypass(entry) -> bool:
+    return (
+        entry.current_gate == CurrentGate.ENGINE_OR_BYPASS
+        or bool(set(entry.inline_checks) & _PROVIDER_BYPASS_TOKENS)
+        or entry.inline_effect in _PROVIDER_BYPASS_EFFECTS
+    )
 
 
 def _openapi_path(path: str) -> str:
@@ -443,20 +454,72 @@ class TestMcpMatchesRest:
         assert not mismatches, f"MCP tool entry disagrees with its bound REST route's entry: {mismatches}"
 
 
+class TestInlineEffect:
+    """`inline_effect` says what an inline check does to the caller; the R2c
+    decision matrix reads it, so it must be present wherever a check is."""
+
+    def test_required_when_inline_checks_are_present(self) -> None:
+        with pytest.raises(ValueError, match="inline_effect is required"):
+            AccessEntry(
+                method="GET",
+                path="/x",
+                access_class=AccessClass.PERSONAL,
+                current_gate=CurrentGate.AUTHENTICATED,
+                inline_checks=("is_superuser",),
+                reason="test",
+            )
+
+    def test_may_stand_without_tokens_when_the_check_is_deeper(self) -> None:
+        entry = AccessEntry(
+            method="GET",
+            path="/x",
+            access_class=AccessClass.PERSONAL,
+            current_gate=CurrentGate.AUTHENTICATED,
+            inline_effect=InlineEffect.DENY_UNLESS_SUPERUSER,
+            reason="test",
+        )
+        assert entry.inline_checks == ()
+
+    def test_every_entry_with_inline_checks_has_an_effect(self) -> None:
+        missing = [e.key for e in ACCESS_LIST if e.inline_checks and e.inline_effect is None]
+        assert not missing, f"entries with inline_checks but no inline_effect: {missing}"
+
+    def test_entries_with_an_effect_but_no_tokens_say_where_the_check_lives(self) -> None:
+        unexplained = [
+            e.key
+            for e in ACCESS_LIST
+            if e.inline_effect is not None and not e.inline_checks and "one-hop" not in e.reason
+        ]
+        assert not unexplained, f"inline_effect without inline_checks needs a reason naming where: {unexplained}"
+
+    def test_bound_mcp_tools_share_their_rest_routes_effect(self, entries_by_key) -> None:
+        catalog_by_mcp = _catalog_by_mcp()
+        mismatches = []
+        for name in _mcp_tool_ids():
+            op = catalog_by_mcp.get(name)
+            if op is None or op.rest is None:
+                continue
+            rest_entry = entries_by_key.get((op.rest.method, op.rest.path))
+            mcp_entry = entries_by_key.get(name)
+            if rest_entry is None or mcp_entry is None or mcp_entry.inline_effect is None:
+                continue
+            if rest_entry.inline_effect not in (None, mcp_entry.inline_effect):
+                mismatches.append((name, mcp_entry.inline_effect, rest_entry.inline_effect))
+        assert not mismatches, f"MCP tool effect differs from its bound REST route: {mismatches}"
+
+
 class TestIntendedChangeCoverage:
     """Any entry that admits a provider-org non-admin beyond a customer
-    member — engine_or_bypass gate, or an inline has_scope_bypass /
-    mcp_write_scope_bypass check — must say so via intended_change, unless
+    member — engine_or_bypass gate, an inline has_scope_bypass /
+    mcp_write_scope_bypass check, or an inline effect that admits or widens
+    for scope-bypass callers — must say so via intended_change, unless
     its reason already states why permanent provider-org access is
     intended (none currently do)."""
 
     def test_bypass_admitting_entries_have_intended_change(self) -> None:
         missing = []
         for entry in ACCESS_LIST:
-            admits_bypass = (
-                entry.current_gate == CurrentGate.ENGINE_OR_BYPASS
-                or bool(set(entry.inline_checks) & _PROVIDER_BYPASS_TOKENS)
-            )
+            admits_bypass = _admits_provider_bypass(entry)
             if admits_bypass and not entry.intended_change:
                 missing.append(entry.key)
         assert not missing, (
@@ -469,10 +532,7 @@ class TestIntendedChangeCoverage:
         stale note left over from a removed check."""
         extra = []
         for entry in ACCESS_LIST:
-            admits_bypass = (
-                entry.current_gate == CurrentGate.ENGINE_OR_BYPASS
-                or bool(set(entry.inline_checks) & _PROVIDER_BYPASS_TOKENS)
-            )
+            admits_bypass = _admits_provider_bypass(entry)
             if entry.intended_change and not admits_bypass:
                 extra.append(entry.key)
         assert not extra, f"intended_change set without a bypass-admitting gate/check: {extra}"
@@ -521,13 +581,6 @@ _REVIEWED_WRITE_ALLOWLIST: dict[tuple[str, str], str] = {
     ("POST", "/api/forms/{form_id}/startup"): "Form runtime — loading the form.",
     ("POST", "/api/forms/{form_id}/fields/{field_name}/options"): "Form runtime — loading field options.",
     ("POST", "/api/forms/{form_id}/upload"): "Form runtime — uploading a submission attachment.",
-    ("POST", "/api/oauth/connections"): "Own OAuth connection.",
-    ("PUT", "/api/oauth/connections/{connection_name}"): "Own OAuth connection.",
-    ("DELETE", "/api/oauth/connections/{connection_name}"): "Own OAuth connection.",
-    ("POST", "/api/oauth/connections/{connection_name}/authorize"): "Own OAuth connection.",
-    ("POST", "/api/oauth/connections/{connection_name}/cancel"): "Own OAuth connection.",
-    ("POST", "/api/oauth/connections/{connection_name}/refresh"): "Own OAuth connection.",
-    ("POST", "/api/oauth/callback/{connection_name}"): "Own OAuth connection.",
     ("POST", "/api/sdk/ai/complete"): "Workflow SDK call made during execution.",
     ("POST", "/api/sdk/ai/stream"): "Workflow SDK call made during execution.",
     ("POST", "/api/sdk/artifacts"): "Own execution-workspace artifact.",
@@ -541,6 +594,7 @@ _REVIEWED_WRITE_ALLOWLIST: dict[tuple[str, str], str] = {
     ("POST", "/api/profile/avatar"): "Own profile.",
     ("DELETE", "/api/profile/avatar"): "Own profile.",
     ("POST", "/api/profile/password"): "Own profile.",
+    ("PUT", "/api/memory/settings"): "Own memory on/off setting.",
     ("POST", "/api/memory"): "Own memory entry.",
     ("POST", "/api/memory/search"): "Own memory entries.",
     ("DELETE", "/api/memory/{memory_id}"): "Own memory entry.",
@@ -553,6 +607,9 @@ _REVIEWED_WRITE_ALLOWLIST: dict[tuple[str, str], str] = {
     ("POST", "/api/agents/{agent_id}/tuning-session"): "Own private agent (tuning).",
     ("POST", "/api/agents/{agent_id}/tuning-session/dry-run"): "Own private agent (tuning).",
     ("POST", "/api/agents/{agent_id}/tuning-session/apply"): "Own private agent (tuning).",
+    ("POST", "/api/agent-runs/{run_id}/verdict"): "Own private agent's run (tuning).",
+    ("DELETE", "/api/agent-runs/{run_id}/verdict"): "Own private agent's run (tuning).",
+    ("POST", "/api/agent-runs/{run_id}/flag-conversation/message"): "Own private agent's run (tuning).",
     ("POST", "/api/agent-runs/{run_id}/rerun"): "Own/accessible agent run.",
     ("POST", "/api/agent-runs/{run_id}/cancel"): "Own/accessible agent run.",
     ("POST", "/api/agent-runs/{run_id}/dry-run"): "Own/accessible agent run.",
@@ -567,6 +624,7 @@ _REVIEWED_WRITE_ALLOWLIST: dict[tuple[str, str], str] = {
     ("POST", "/api/chat/conversations/{conversation_id}/attachments"): "Own chat conversation.",
     ("DELETE", "/api/chat/conversations/{conversation_id}/attachments/{attachment_id}"): "Own chat conversation.",
     ("POST", "/api/chat/conversations/{conversation_id}/messages"): "Own chat conversation.",
+    ("POST", "/api/mcp/gateway/capabilities/search"): "Discovers tools through the MCP gateway.",
     ("POST", "/api/mcp/gateway/agents/{agent_id}/tools/{tool_ref}/execute"): "Executes a tool through the MCP gateway.",
     ("DELETE", "/api/me/mcp-connections/{connection_id}"): "Own MCP tool connection.",
     ("POST", "/api/platform-jobs/{job_id}/cancel"): "Own platform job (or any, for a platform admin).",

@@ -76,29 +76,36 @@ def test_platform_operator_permissions_are_read_only():
         assert permission.endswith(".read"), permission
 
 
-def test_r2b_migration_frozen_copy_matches_live_constants():
-    """The R2b migration carries its own frozen copy (it must not import live
-    code). Today that copy must equal the live constants; after a deliberate
-    change to the live values, update them through a NEW migration and adjust
-    this test to pin the new revision instead."""
+def _load_migration(filename: str):
     import importlib.util
     from pathlib import Path
 
-    path = (
-        Path(__file__).resolve().parents[2]
-        / "alembic"
-        / "versions"
-        / "20260929_r2b_roles.py"
-    )
-    spec = importlib.util.spec_from_file_location("r2b_roles_migration", path)
+    path = Path(__file__).resolve().parents[2] / "alembic" / "versions" / filename
+    spec = importlib.util.spec_from_file_location(filename.removesuffix(".py"), path)
     assert spec and spec.loader
     migration = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(migration)
+    assert "from shared" not in path.read_text() and "from src" not in path.read_text()
+    return migration
 
-    assert migration.PLATFORM_ADMIN_ROLE_ID == PLATFORM_ADMIN_ROLE_ID
-    assert migration.USER_ROLE_ID == USER_ROLE_ID
-    assert migration.PLATFORM_OPERATOR_ROLE_ID == PLATFORM_OPERATOR_ROLE_ID
-    assert migration.USER_BASE_PERMISSIONS == USER_BASE_PERMISSIONS
-    assert migration.PLATFORM_OPERATOR_PERMISSIONS == PLATFORM_OPERATOR_PERMISSIONS
-    source = path.read_text()
-    assert "from shared" not in source and "from src" not in source
+
+def test_migration_frozen_copies_match_live_constants():
+    """Each migration carries its own frozen copy (it must not import live
+    code). The latest migration that seeds the User role
+    (`20260929_user_base_perm_fix`) must equal the live constant; after a
+    deliberate change to the live values, update them through a NEW migration
+    and adjust this test to pin the new revision instead. The R2b migration
+    stays pinned to what it seeded, and to the Platform Operator set, which
+    no later migration changed."""
+    fix = _load_migration("20260929_user_base_perm_fix.py")
+    r2b = _load_migration("20260929_r2b_roles.py")
+
+    assert fix.down_revision == "20260929_r2b_wf_permissions"
+    assert fix.USER_ROLE_ID == USER_ROLE_ID
+    assert fix.USER_BASE_PERMISSIONS == USER_BASE_PERMISSIONS
+    assert (r2b.USER_BASE_PERMISSIONS - fix.REMOVED_PERMISSIONS) | fix.ADDED_PERMISSIONS == USER_BASE_PERMISSIONS
+
+    assert r2b.PLATFORM_ADMIN_ROLE_ID == PLATFORM_ADMIN_ROLE_ID
+    assert r2b.USER_ROLE_ID == USER_ROLE_ID
+    assert r2b.PLATFORM_OPERATOR_ROLE_ID == PLATFORM_OPERATOR_ROLE_ID
+    assert r2b.PLATFORM_OPERATOR_PERMISSIONS == PLATFORM_OPERATOR_PERMISSIONS

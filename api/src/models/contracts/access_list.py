@@ -66,6 +66,28 @@ class CurrentGate(StrEnum):
     EMBED = "embed"
 
 
+class InlineEffect(StrEnum):
+    """What an inline check does to the caller, once the entry's
+    ``inline_checks`` tokens (or a deeper check the one-hop scan cannot see)
+    have been read against the handler and the service it calls. The R2c
+    evaluator and its legacy oracle both read this to decide how an entry
+    behaves for a caller acting beyond their own organization."""
+
+    # The handler refuses non-superusers outright.
+    DENY_UNLESS_SUPERUSER = "deny_unless_superuser"
+    # The handler refuses callers without scope bypass (superuser or
+    # provider-org member).
+    DENY_UNLESS_BYPASS = "deny_unless_bypass"
+    # Everyone signed in reaches it; superusers additionally act beyond
+    # their own organization or see everything.
+    WIDENS_FOR_SUPERUSER = "widens_for_superuser"
+    # Same, for a superuser or a provider-org member.
+    WIDENS_FOR_BYPASS = "widens_for_bypass"
+    # The token is present but does not gate the caller (for example it is
+    # copied into a claim or a response).
+    NO_CALLER_EFFECT = "no_caller_effect"
+
+
 # The specific inline-check tokens the gate-agreement test looks for in the
 # handler's source (or the source of a function it calls one level down):
 # is_superuser / is_platform_admin / has_scope_bypass / is_provider_org /
@@ -101,6 +123,12 @@ class AccessEntry(BaseModel):
     # dependency-tree check. Empty when there is none.
     inline_checks: tuple[str, ...] = ()
 
+    # What the inline check does to the caller. Required when
+    # ``inline_checks`` is non-empty; may also be set with empty
+    # ``inline_checks`` when the check lives deeper than the one-hop scan (the
+    # ``reason`` then says where).
+    inline_effect: InlineEffect | None = None
+
     # Required iff access_class is PERMISSION. Format: "<domain>.<read|readwrite|execute>".
     permission: str | None = None
     # Required iff access_class is PERMISSION.
@@ -121,6 +149,12 @@ class AccessEntry(BaseModel):
         unknown = set(self.inline_checks) - set(INLINE_CHECK_TOKENS)
         if unknown:
             raise ValueError(f"unknown inline_checks tokens: {sorted(unknown)}")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_inline_effect(self) -> "AccessEntry":
+        if self.inline_checks and self.inline_effect is None:
+            raise ValueError("inline_effect is required when inline_checks is non-empty")
         return self
 
     @model_validator(mode="after")
