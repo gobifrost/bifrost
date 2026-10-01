@@ -2700,8 +2700,7 @@
       },
       "operation": {
         "action_scopes": [
-          "workflows.readwrite",
-          "roles.readwrite"
+          "workflows.readwrite"
         ],
         "async_policy": "synchronous",
         "audit_event": "workflow.roles.grant",
@@ -2766,8 +2765,7 @@
       },
       "operation": {
         "action_scopes": [
-          "workflows.readwrite",
-          "roles.readwrite"
+          "workflows.readwrite"
         ],
         "async_policy": "synchronous",
         "audit_event": "workflow.roles.revoke",
@@ -4611,7 +4609,7 @@
         ],
         "async_policy": "synchronous",
         "audit_event": null,
-        "authorization_resolver": "roles.read in the selected boundary",
+        "authorization_resolver": "roles.read in the Platform boundary",
         "cli": {
           "path": [
             "roles",
@@ -4671,7 +4669,7 @@
         ],
         "async_policy": "synchronous",
         "audit_event": null,
-        "authorization_resolver": "roles.read in the selected boundary",
+        "authorization_resolver": "roles.read in the Platform boundary",
         "cli": {
           "path": [
             "roles",
@@ -4922,7 +4920,7 @@
       },
       "operation": {
         "action_scopes": [
-          "roles.read"
+          "roleassignments.read"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
@@ -4975,11 +4973,11 @@
       },
       "operation": {
         "action_scopes": [
-          "roles.readwrite"
+          "roleassignments.readwrite"
         ],
         "async_policy": "synchronous",
         "audit_event": "role.user_assigned",
-        "authorization_resolver": "Role assignment service requires roles.readwrite at every existing and requested boundary",
+        "authorization_resolver": "Role assignment service requires roleassignments.readwrite at every existing and requested boundary",
         "cli": null,
         "exclusions": {
           "cli": "Role assignment administration is available through the administrative UI and REST API.",
@@ -5032,11 +5030,11 @@
       },
       "operation": {
         "action_scopes": [
-          "roles.readwrite"
+          "roleassignments.readwrite"
         ],
         "async_policy": "synchronous",
         "audit_event": "role.user_unassigned",
-        "authorization_resolver": "Role assignment service requires roles.readwrite at every existing boundary",
+        "authorization_resolver": "Role assignment service requires roleassignments.readwrite at every existing boundary",
         "cli": null,
         "exclusions": {
           "cli": "Role assignment administration is available through the administrative UI and REST API.",
@@ -5089,11 +5087,11 @@
       },
       "operation": {
         "action_scopes": [
-          "roles.readwrite"
+          "roleassignments.readwrite"
         ],
         "async_policy": "synchronous",
         "audit_event": "role.users_bulk_unassigned",
-        "authorization_resolver": "Role assignment service requires roles.readwrite at every existing boundary",
+        "authorization_resolver": "Role assignment service requires roleassignments.readwrite at every existing boundary",
         "cli": null,
         "exclusions": {
           "cli": "Role assignment administration is available through the administrative UI and REST API.",
@@ -5146,11 +5144,11 @@
       },
       "operation": {
         "action_scopes": [
-          "roles.read"
+          "forms.read.all"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
-        "authorization_resolver": "roles.read in the selected boundary and form organization filtering",
+        "authorization_resolver": "forms.read.all in the selected boundary and form organization filtering",
         "cli": null,
         "exclusions": {
           "cli": "Role resource-assignment administration is available through the administrative UI and REST API.",
@@ -5199,11 +5197,11 @@
       },
       "operation": {
         "action_scopes": [
-          "roles.readwrite"
+          "forms.readwrite"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
-        "authorization_resolver": "roles.readwrite in the selected boundary, exact form boundary, and Solution-management guard",
+        "authorization_resolver": "forms.readwrite in the selected boundary, exact form boundary, and Solution-management guard",
         "cli": null,
         "exclusions": {
           "cli": "Role resource-assignment administration is available through the administrative UI and REST API.",
@@ -5256,11 +5254,11 @@
       },
       "operation": {
         "action_scopes": [
-          "roles.readwrite"
+          "forms.readwrite"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
-        "authorization_resolver": "roles.readwrite in the selected boundary, exact form boundary, and Solution-management guard",
+        "authorization_resolver": "forms.readwrite in the selected boundary, exact form boundary, and Solution-management guard",
         "cli": null,
         "exclusions": {
           "cli": "Role resource-assignment administration is available through the administrative UI and REST API.",
@@ -5312,11 +5310,11 @@
       },
       "operation": {
         "action_scopes": [
-          "roles.readwrite"
+          "forms.readwrite"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
-        "authorization_resolver": "roles.readwrite in the selected boundary, exact form boundaries, and Solution-management guard",
+        "authorization_resolver": "forms.readwrite in the selected boundary, exact form boundaries, and Solution-management guard",
         "cli": null,
         "exclusions": {
           "cli": "Role resource-assignment administration is available through the administrative UI and REST API.",
@@ -5368,11 +5366,11 @@
       },
       "operation": {
         "action_scopes": [
-          "roles.read"
+          "agents.read.all"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
-        "authorization_resolver": "roles.read in the selected boundary and Agent organization filtering",
+        "authorization_resolver": "agents.read.all in the selected boundary and Agent organization filtering",
         "cli": null,
         "exclusions": {
           "cli": "Role resource-assignment administration is available through the administrative UI and REST API.",
@@ -5421,11 +5419,11 @@
       },
       "operation": {
         "action_scopes": [
-          "roles.readwrite"
+          "agents.readwrite"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
-        "authorization_resolver": "roles.readwrite in the selected boundary, exact Agent boundary, and Solution-management guard",
+        "authorization_resolver": "agents.readwrite in the selected boundary, exact Agent boundary, and Solution-management guard",
         "cli": null,
         "exclusions": {
           "cli": "Role resource-assignment administration is available through the administrative UI and REST API.",
@@ -5478,11 +5476,11 @@
       },
       "operation": {
         "action_scopes": [
-          "roles.readwrite"
+          "agents.readwrite"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
-        "authorization_resolver": "roles.readwrite in the selected boundary, exact Agent boundary, and Solution-management guard",
+        "authorization_resolver": "agents.readwrite in the selected boundary, exact Agent boundary, and Solution-management guard",
         "cli": null,
         "exclusions": {
           "cli": "Role resource-assignment administration is available through the administrative UI and REST API.",
@@ -5534,11 +5532,11 @@
       },
       "operation": {
         "action_scopes": [
-          "roles.readwrite"
+          "agents.readwrite"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
-        "authorization_resolver": "roles.readwrite in the selected boundary, exact Agent boundaries, and Solution-management guard",
+        "authorization_resolver": "agents.readwrite in the selected boundary, exact Agent boundaries, and Solution-management guard",
         "cli": null,
         "exclusions": {
           "cli": "Role resource-assignment administration is available through the administrative UI and REST API.",
@@ -5590,11 +5588,11 @@
       },
       "operation": {
         "action_scopes": [
-          "roles.read"
+          "apps.read.all"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
-        "authorization_resolver": "roles.read in the selected boundary and Application organization filtering",
+        "authorization_resolver": "apps.read.all in the selected boundary and Application organization filtering",
         "cli": null,
         "exclusions": {
           "cli": "Role resource-assignment administration is available through the administrative UI and REST API.",
@@ -5643,11 +5641,11 @@
       },
       "operation": {
         "action_scopes": [
-          "roles.readwrite"
+          "apps.readwrite"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
-        "authorization_resolver": "roles.readwrite in the selected boundary, exact Application boundary, and Solution-management guard",
+        "authorization_resolver": "apps.readwrite in the selected boundary, exact Application boundary, and Solution-management guard",
         "cli": null,
         "exclusions": {
           "cli": "Role resource-assignment administration is available through the administrative UI and REST API.",
@@ -5700,11 +5698,11 @@
       },
       "operation": {
         "action_scopes": [
-          "roles.readwrite"
+          "apps.readwrite"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
-        "authorization_resolver": "roles.readwrite in the selected boundary, exact Application boundaries, and Solution-management guard",
+        "authorization_resolver": "apps.readwrite in the selected boundary, exact Application boundaries, and Solution-management guard",
         "cli": null,
         "exclusions": {
           "cli": "Role resource-assignment administration is available through the administrative UI and REST API.",
@@ -5756,11 +5754,11 @@
       },
       "operation": {
         "action_scopes": [
-          "roles.read"
+          "workflows.read.all"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
-        "authorization_resolver": "roles.read in the selected boundary and Workflow organization filtering",
+        "authorization_resolver": "workflows.read.all in the selected boundary and Workflow organization filtering",
         "cli": null,
         "exclusions": {
           "cli": "Role resource-assignment administration is available through the administrative UI and REST API.",
@@ -5809,11 +5807,11 @@
       },
       "operation": {
         "action_scopes": [
-          "roles.readwrite"
+          "workflows.readwrite"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
-        "authorization_resolver": "roles.readwrite in the selected boundary, exact Workflow boundary, and Solution-management guard",
+        "authorization_resolver": "workflows.readwrite in the selected boundary, exact Workflow boundary, and Solution-management guard",
         "cli": null,
         "exclusions": {
           "cli": "Role resource-assignment administration is available through the administrative UI and REST API.",
@@ -5866,11 +5864,11 @@
       },
       "operation": {
         "action_scopes": [
-          "roles.readwrite"
+          "workflows.readwrite"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
-        "authorization_resolver": "roles.readwrite in the selected boundary, exact Workflow boundaries, and Solution-management guard",
+        "authorization_resolver": "workflows.readwrite in the selected boundary, exact Workflow boundaries, and Solution-management guard",
         "cli": null,
         "exclusions": {
           "cli": "Role resource-assignment administration is available through the administrative UI and REST API.",
@@ -5922,7 +5920,7 @@
       },
       "operation": {
         "action_scopes": [
-          "organizations.read"
+          "users.read"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
@@ -5975,7 +5973,7 @@
       },
       "operation": {
         "action_scopes": [
-          "organizations.read"
+          "users.read"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
@@ -6028,7 +6026,7 @@
       },
       "operation": {
         "action_scopes": [
-          "organizations.readwrite"
+          "users.lifecycle.readwrite"
         ],
         "async_policy": "synchronous",
         "audit_event": "user.create",
@@ -6085,7 +6083,7 @@
       },
       "operation": {
         "action_scopes": [
-          "organizations.readwrite"
+          "users.lifecycle.readwrite"
         ],
         "async_policy": "synchronous",
         "audit_event": "user.update",
@@ -6141,7 +6139,7 @@
       },
       "operation": {
         "action_scopes": [
-          "organizations.readwrite"
+          "users.lifecycle.readwrite"
         ],
         "async_policy": "synchronous",
         "audit_event": "user.delete",
@@ -6197,7 +6195,7 @@
       },
       "operation": {
         "action_scopes": [
-          "organizations.readwrite"
+          "users.lifecycle.readwrite"
         ],
         "async_policy": "synchronous",
         "audit_event": "user.bulk_update",
@@ -6254,7 +6252,7 @@
       },
       "operation": {
         "action_scopes": [
-          "organizations.readwrite"
+          "users.readwrite"
         ],
         "async_policy": "synchronous",
         "audit_event": "user.invite_resend",
@@ -6310,7 +6308,7 @@
       },
       "operation": {
         "action_scopes": [
-          "organizations.readwrite"
+          "users.readwrite"
         ],
         "async_policy": "synchronous",
         "audit_event": "user.invite_send",
@@ -6365,7 +6363,7 @@
       },
       "operation": {
         "action_scopes": [
-          "organizations.readwrite"
+          "users.readwrite"
         ],
         "async_policy": "synchronous",
         "audit_event": "user.invite_regenerate",
@@ -6420,7 +6418,7 @@
       },
       "operation": {
         "action_scopes": [
-          "organizations.readwrite"
+          "users.readwrite"
         ],
         "async_policy": "synchronous",
         "audit_event": "user.invite_revoke",
@@ -6475,7 +6473,7 @@
       },
       "operation": {
         "action_scopes": [
-          "roles.read"
+          "roleassignments.read"
         ],
         "async_policy": "synchronous",
         "audit_event": null,
@@ -6528,7 +6526,7 @@
       },
       "operation": {
         "action_scopes": [
-          "roles.read"
+          "roleassignments.read"
         ],
         "async_policy": "synchronous",
         "audit_event": null,

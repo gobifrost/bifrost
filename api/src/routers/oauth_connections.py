@@ -838,8 +838,11 @@ async def get_credentials(
     ctx: Context,
     user: CurrentSuperuser,
 ) -> OAuthCredentialsResponse:
-    """Get OAuth credentials for use in workflows."""
-    from src.core.security import decrypt_secret
+    """Get OAuth credential metadata; token values are masked.
+
+    Workflows read decrypted tokens through /api/sdk/integrations/*, never here.
+    """
+    from src.core.security import SECRET_PLACEHOLDER
     from src.models import OAuthCredentialsModel
 
     org_id = ctx.org_id
@@ -866,28 +869,15 @@ async def get_credentials(
             expires_at=None,
         )
 
-    # Decrypt tokens
-    try:
-        access_token = decrypt_secret(token.encrypted_access_token.decode())
-        refresh_token = None
-        if token.encrypted_refresh_token:
-            refresh_token = decrypt_secret(token.encrypted_refresh_token.decode())
-    except Exception as e:
-        logger.error(f"Failed to decrypt token: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to decrypt token",
-        )
-
     expires_at_str = token.expires_at.isoformat() if token.expires_at else None
     scopes = " ".join(token.scopes) if token.scopes else ""
 
     credentials = OAuthCredentialsModel(
         connection_name=connection_name,
-        access_token=access_token,
+        access_token=SECRET_PLACEHOLDER,
         token_type="Bearer",
         expires_at=expires_at_str or "",
-        refresh_token=refresh_token,
+        refresh_token=SECRET_PLACEHOLDER if token.encrypted_refresh_token else None,
         scopes=scopes,
         integration_id=str(provider.integration_id) if provider.integration_id else None,
     )

@@ -106,6 +106,41 @@ class TestCliIntegrations:
                 headers=platform_admin.headers,
             )
 
+    def test_get_prints_redacted_secret_config(
+        self, cli_client, _invoke, e2e_client, platform_admin
+    ) -> None:
+        """``integrations get`` shows secret defaults as ``[SECRET]``, never plaintext."""
+        name = f"cli-integ-secret-{uuid4().hex[:8]}"
+        plaintext = f"cli-plain-{uuid4().hex}"
+        create_resp = e2e_client.post(
+            "/api/integrations",
+            headers=platform_admin.headers,
+            json={
+                "name": name,
+                "config_schema": [{"key": "api_key", "type": "secret", "required": True}],
+            },
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        integration_id = create_resp.json()["id"]
+
+        try:
+            put = e2e_client.put(
+                f"/api/integrations/{integration_id}/config",
+                headers=platform_admin.headers,
+                json={"config": {"api_key": plaintext}},
+            )
+            assert put.status_code == 200, put.text
+
+            result = _invoke(["--json", "get", integration_id])
+            assert result.exit_code == 0, result.output
+            assert plaintext not in result.output
+            assert json.loads(result.output)["config_defaults"] == {"api_key": "[SECRET]"}
+        finally:
+            e2e_client.delete(
+                f"/api/integrations/{integration_id}",
+                headers=platform_admin.headers,
+            )
+
     def test_create_with_config_schema_file(
         self, cli_client, _invoke, e2e_client, platform_admin, schema_yaml_path
     ):

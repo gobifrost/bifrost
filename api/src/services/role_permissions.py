@@ -15,7 +15,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.builtin_roles import BUILTIN_ROLE_IDS, PLATFORM_ADMIN_ROLE_ID, WILDCARD_PERMISSION
-from src.models.contracts.permissions import PERMISSION_DOMAINS
+from src.models.contracts.permissions import parse_permission
 
 
 class RolePermissionError(Exception):
@@ -29,17 +29,12 @@ class RolePermissionError(Exception):
 
 def validate_permission(permission: str) -> None:
     """Raise ``RolePermissionError(422, ...)`` unless `permission` is a
-    well-formed ``<domain>.<read|readwrite|execute>`` string in the closed
-    ``PERMISSION_DOMAINS`` vocabulary."""
-    domain, _, suffix = permission.rpartition(".")
-    if not domain or suffix not in ("read", "readwrite", "execute"):
-        raise RolePermissionError(
-            422, f"Invalid permission format: {permission!r} (expected '<domain>.<read|readwrite|execute>')"
-        )
-    if domain not in PERMISSION_DOMAINS:
-        raise RolePermissionError(
-            422, f"Unknown permission domain {domain!r} (not in PERMISSION_DOMAINS)"
-        )
+    well-formed ``<domain>.<read|readwrite|execute>[.all]`` string in the
+    closed ``PERMISSION_DOMAINS`` vocabulary (see ``parse_permission``)."""
+    try:
+        parse_permission(permission)
+    except ValueError as exc:
+        raise RolePermissionError(422, str(exc)) from exc
 
 
 async def get_role_permissions(session: AsyncSession, *, role_id: UUID) -> frozenset[str]:

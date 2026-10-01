@@ -519,6 +519,8 @@ class IntegrationsRepository:
 
         For each key-value pair:
         - If value is None or empty string, delete the entry (fall back to default)
+        - If a secret key carries ``SECRET_PLACEHOLDER``, keep the stored value
+          (admin reads return the placeholder, and the UI saves back what it read)
         - Otherwise, upsert the entry
         - Sets config_type based on integration config schema
         - Encrypts secret values before storage
@@ -526,7 +528,7 @@ class IntegrationsRepository:
         Uses explicit SELECT + INSERT/UPDATE pattern because PostgreSQL's
         ON CONFLICT doesn't work with functional indexes (COALESCE for NULL handling).
         """
-        from src.core.security import encrypt_secret
+        from src.core.security import SECRET_PLACEHOLDER, encrypt_secret
         from src.models.enums import ConfigType as ConfigTypeEnum
 
         # Look up schema items for this integration to get config_schema_id
@@ -557,6 +559,9 @@ class IntegrationsRepository:
             db_config_type = ConfigTypeEnum.STRING
             if schema_item:
                 db_config_type = SCHEMA_TYPE_MAP.get(schema_item.type, ConfigTypeEnum.STRING)
+
+            if db_config_type == ConfigTypeEnum.SECRET and value == SECRET_PLACEHOLDER:
+                continue
 
             # Build the WHERE clause for matching existing config
             # Handle NULL comparison properly with IS NULL
@@ -663,23 +668,21 @@ class IntegrationsRepository:
         return True
 
     async def _extract_config_value(self, entry: ConfigModel) -> Any:
-        """Extract config value, decrypting secrets."""
-        from src.core.security import decrypt_secret
+        """Extract a config value for an admin response, masking secrets.
+
+        Every caller is a human-facing admin route; the engine reads decrypted
+        values through ``src.repositories.integrations`` on the /api/sdk paths.
+        """
+        from src.core.security import SECRET_PLACEHOLDER
         from src.models.enums import ConfigType as ConfigTypeEnum
+
+        if entry.config_type == ConfigTypeEnum.SECRET:
+            return SECRET_PLACEHOLDER
 
         value = entry.value
         if isinstance(value, dict) and "value" in value:
-            raw = value["value"]
-        else:
-            raw = value
-
-        if entry.config_type == ConfigTypeEnum.SECRET and isinstance(raw, str):
-            try:
-                return decrypt_secret(raw)
-            except Exception:
-                # Value may not be encrypted yet (pre-migration data)
-                return raw
-        return raw
+            return value["value"]
+        return value
 
     async def get_integration_defaults(
         self, integration_id: UUID, *, external: bool
@@ -690,9 +693,11 @@ class IntegrationsRepository:
         These are stored in the configs table with integration_id set
         but organization_id is NULL.
 
+        Secret values come back as ``SECRET_PLACEHOLDER``.
+
         ``external`` is REQUIRED (no default — EXT-1 NEW-G/NEW-H defense in
-        depth). These defaults ARE the global (org_id=NULL) tier and may carry
-        decrypted SECRETs. An EXTERNAL portal caller passes True and gets {};
+        depth). These defaults ARE the global (org_id=NULL) tier. An EXTERNAL
+        portal caller passes True and gets {};
         the superuser admin routes that use this class pass False explicitly.
         No default so a future call site can't silently leak the global tier
         (this is the class behind the now-deleted cross-tenant /sdk/{name}).

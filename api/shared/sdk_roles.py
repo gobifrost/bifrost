@@ -185,8 +185,8 @@ async def list_roles(
     from src.models import Role as RoleORM
     from src.models import RolePublic
 
-    # Builtin roles (Platform Admin, User, Platform Operator) are hidden
-    # from this surface until R3a ships their UI.
+    # Builtin roles (Platform Admin, User, Platform Operator, Secrets
+    # Reader) are hidden from this surface until R3a ships their UI.
     query = select(RoleORM).where(RoleORM.is_builtin.is_(False))
     if search and (term := search.strip()):
         pattern = f"%{term}%"

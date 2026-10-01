@@ -20,6 +20,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from shared.builtin_roles import (
+    DECRYPTION_ROLE_ID,
     PLATFORM_ADMIN_ROLE_ID,
     PLATFORM_OPERATOR_ROLE_ID,
     USER_ROLE_ID,
@@ -208,12 +209,14 @@ def test_upgrade_over_builder_residue_removes_it_and_matches_the_orm() -> None:
         assert not RESIDUE_INDEXES & set(schema["indexes"])
         assert "ck_solution_deploy_jobs_kind" not in schema["constraints"]
 
-        # R2b applied over the residue: is_builtin is its column, seeded.
+        # R2b applied over the residue: is_builtin is its column, seeded
+        # (Secrets Reader is seeded by a later migration).
         assert ("roles", "is_builtin") in schema["columns"]
         assert schema["builtin_roles"] == {
             PLATFORM_ADMIN_ROLE_ID,
             USER_ROLE_ID,
             PLATFORM_OPERATOR_ROLE_ID,
+            DECRYPTION_ROLE_ID,
         }
 
         # Rows written before the upgrade are untouched.

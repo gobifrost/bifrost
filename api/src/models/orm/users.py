@@ -142,10 +142,10 @@ class Role(Base):
     # A base role (Platform Admin, User) is one every user holds exactly one
     # of via `User.base_role_id`, never assigned through `user_roles`.
     is_base: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
-    # A builtin role (Platform Admin, User, Platform Operator) has a fixed id
-    # (see `shared.builtin_roles`), can't be renamed/deleted, and is hidden
-    # from the roles list/get/resource-assignment surfaces until R3a ships
-    # the UI for it.
+    # A builtin role (Platform Admin, User, Platform Operator, Secrets
+    # Reader) has a fixed id (see `shared.builtin_roles`), can't be
+    # renamed/deleted, and is hidden from the roles list/get/resource-
+    # assignment surfaces until R3a ships the UI for it.
     is_builtin: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
     created_by: Mapped[str] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(

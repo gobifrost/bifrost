@@ -49,8 +49,8 @@ harness.
 | `workflows.get` | `bifrost workflows get` | `bifrost_workflow_get` | `workflows.read` |
 | `workflows.update` | `bifrost workflows update` | `bifrost_workflow_update` | `workflows.readwrite` |
 | `workflows.delete` | `bifrost workflows delete` | `bifrost_workflow_delete` | `workflows.readwrite`, `repository.readwrite` |
-| `workflows.roles.grant` | `bifrost workflows grant-role` | `bifrost_workflow_role_grant` | `workflows.readwrite`, `roles.readwrite` |
-| `workflows.roles.revoke` | `bifrost workflows revoke-role` | `bifrost_workflow_role_revoke` | `workflows.readwrite`, `roles.readwrite` |
+| `workflows.roles.grant` | `bifrost workflows grant-role` | `bifrost_workflow_role_grant` | `workflows.readwrite` |
+| `workflows.roles.revoke` | `bifrost workflows revoke-role` | `bifrost_workflow_role_revoke` | `workflows.readwrite` |
 | `integrations.list` | `bifrost integrations list` | `bifrost_integration_list` | `integrations.read` |
 | `integrations.get` | `bifrost integrations get` | `bifrost_integration_get` | `integrations.read` |
 | `integrations.create` | `bifrost integrations create` | `bifrost_integration_create` | `integrations.readwrite` |
@@ -87,36 +87,36 @@ harness.
 | `roles.create` | `bifrost roles create` | `bifrost_role_create` | `roles.readwrite` |
 | `roles.update` | `bifrost roles update` | `bifrost_role_update` | `roles.readwrite` |
 | `roles.delete` | `bifrost roles delete` | `bifrost_role_delete` | `roles.readwrite` |
-| `roles.users.list` | — | — | `roles.read` |
-| `roles.users.assign` | — | — | `roles.readwrite` |
-| `roles.users.remove` | — | — | `roles.readwrite` |
-| `roles.users.bulk_remove` | — | — | `roles.readwrite` |
-| `roles.forms.list` | — | — | `roles.read` |
-| `roles.forms.assign` | — | — | `roles.readwrite` |
-| `roles.forms.remove` | — | — | `roles.readwrite` |
-| `roles.forms.bulk_remove` | — | — | `roles.readwrite` |
-| `roles.agents.list` | — | — | `roles.read` |
-| `roles.agents.assign` | — | — | `roles.readwrite` |
-| `roles.agents.remove` | — | — | `roles.readwrite` |
-| `roles.agents.bulk_remove` | — | — | `roles.readwrite` |
-| `roles.apps.list` | — | — | `roles.read` |
-| `roles.apps.assign` | — | — | `roles.readwrite` |
-| `roles.apps.bulk_remove` | — | — | `roles.readwrite` |
-| `roles.workflows.list` | — | — | `roles.read` |
-| `roles.workflows.assign` | — | — | `roles.readwrite` |
-| `roles.workflows.bulk_remove` | — | — | `roles.readwrite` |
-| `users.list` | — | — | `organizations.read` |
-| `users.get` | — | — | `organizations.read` |
-| `users.create` | — | — | `organizations.readwrite` |
-| `users.update` | — | — | `organizations.readwrite` |
-| `users.delete` | — | — | `organizations.readwrite` |
-| `users.bulk_update` | — | — | `organizations.readwrite` |
-| `users.invites.resend` | — | — | `organizations.readwrite` |
-| `users.invites.send` | — | — | `organizations.readwrite` |
-| `users.invites.regenerate` | — | — | `organizations.readwrite` |
-| `users.invites.revoke` | — | — | `organizations.readwrite` |
-| `users.roles.list` | — | — | `roles.read` |
-| `users.forms.list` | — | — | `roles.read` |
+| `roles.users.list` | — | — | `roleassignments.read` |
+| `roles.users.assign` | — | — | `roleassignments.readwrite` |
+| `roles.users.remove` | — | — | `roleassignments.readwrite` |
+| `roles.users.bulk_remove` | — | — | `roleassignments.readwrite` |
+| `roles.forms.list` | — | — | `forms.read.all` |
+| `roles.forms.assign` | — | — | `forms.readwrite` |
+| `roles.forms.remove` | — | — | `forms.readwrite` |
+| `roles.forms.bulk_remove` | — | — | `forms.readwrite` |
+| `roles.agents.list` | — | — | `agents.read.all` |
+| `roles.agents.assign` | — | — | `agents.readwrite` |
+| `roles.agents.remove` | — | — | `agents.readwrite` |
+| `roles.agents.bulk_remove` | — | — | `agents.readwrite` |
+| `roles.apps.list` | — | — | `apps.read.all` |
+| `roles.apps.assign` | — | — | `apps.readwrite` |
+| `roles.apps.bulk_remove` | — | — | `apps.readwrite` |
+| `roles.workflows.list` | — | — | `workflows.read.all` |
+| `roles.workflows.assign` | — | — | `workflows.readwrite` |
+| `roles.workflows.bulk_remove` | — | — | `workflows.readwrite` |
+| `users.list` | — | — | `users.read` |
+| `users.get` | — | — | `users.read` |
+| `users.create` | — | — | `users.lifecycle.readwrite` |
+| `users.update` | — | — | `users.lifecycle.readwrite` |
+| `users.delete` | — | — | `users.lifecycle.readwrite` |
+| `users.bulk_update` | — | — | `users.lifecycle.readwrite` |
+| `users.invites.resend` | — | — | `users.readwrite` |
+| `users.invites.send` | — | — | `users.readwrite` |
+| `users.invites.regenerate` | — | — | `users.readwrite` |
+| `users.invites.revoke` | — | — | `users.readwrite` |
+| `users.roles.list` | — | — | `roleassignments.read` |
+| `users.forms.list` | — | — | `roleassignments.read` |
 | `claims.list` | `bifrost claims list` | `bifrost_claim_list` | `claims.read` |
 | `claims.get` | `bifrost claims get` | `bifrost_claim_get` | `claims.read` |
 | `claims.create` | `bifrost claims create` | `bifrost_claim_create` | `claims.readwrite` |

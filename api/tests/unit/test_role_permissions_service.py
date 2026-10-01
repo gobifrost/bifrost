@@ -26,6 +26,19 @@ def test_validate_permission_accepts_known_domain_and_action():
     validate_permission("workflows.execute")
 
 
+def test_validate_permission_accepts_extended_suffix_and_identity_domains():
+    validate_permission("apps.read.all")
+    validate_permission("users.lifecycle.readwrite")
+    validate_permission("roleassignments.readwrite")
+    validate_permission("secrets.read")
+
+
+def test_validate_permission_rejects_a_bare_extended_suffix():
+    with pytest.raises(RolePermissionError) as exc_info:
+        validate_permission("apps.all")
+    assert exc_info.value.status_code == 422
+
+
 def test_validate_permission_rejects_unknown_domain():
     with pytest.raises(RolePermissionError) as exc_info:
         validate_permission("not_a_domain.read")

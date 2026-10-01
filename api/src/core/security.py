@@ -343,6 +343,12 @@ def decrypt_with_key(encrypted: str, secret_key: str) -> str:
     return f.decrypt(encrypted_bytes).decode()
 
 
+# What human-facing reads return in place of a stored secret. Only the
+# engine-facing /api/sdk/* paths return decrypted values; every other surface
+# shows this, so field presence still signals "is set".
+SECRET_PLACEHOLDER = "[SECRET]"
+
+
 def encrypt_secret(plaintext: str) -> str:
     """
     Encrypt a secret value for storage in the database.

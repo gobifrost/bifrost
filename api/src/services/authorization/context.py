@@ -18,7 +18,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.builtin_roles import PLATFORM_ADMIN_ROLE_ID
+from shared.builtin_roles import PLATFORM_ADMIN_ROLE_ID, WILDCARD_PERMISSION
 from src.models.orm.users import RolePermission, User, UserRole, UserRoleBoundary
 
 
@@ -62,6 +62,19 @@ class AuthorizationContext:
     @property
     def is_platform_admin(self) -> bool:
         return self.base_role_id == PLATFORM_ADMIN_ROLE_ID
+
+    @property
+    def held_permissions(self) -> frozenset[str]:
+        """Everything the person holds at any boundary: the base role, every
+        additional role wherever it applies, and the wildcard for a Platform
+        Admin. For deciding whether they are a protected target, not for
+        deciding an operation (that is boundary-aware; see ``decide``)."""
+        held = set(self.base_permissions)
+        for grant in self.role_grants:
+            held |= grant.permissions
+        if self.is_platform_admin:
+            held.add(WILDCARD_PERMISSION)
+        return frozenset(held)
 
 
 async def build_authorization_context(
