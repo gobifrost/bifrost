@@ -5,27 +5,41 @@ import { useEditorStore } from "@/stores/editorStore";
 import { fileService } from "@/services/fileService";
 import { SearchPanel } from "./SearchPanel";
 import { SearchResultItem } from "./SearchResultItem";
-import { searchService, type SearchResponse } from "@/services/searchService";
+import {
+	searchService,
+	type SearchMatch,
+	type SearchResponse,
+} from "@/services/searchService";
 vi.mock("@/services/searchService", () => ({
 	searchService: { searchFiles: vi.fn() },
 }));
 vi.mock("@/services/fileService", () => ({
 	fileService: { readFile: vi.fn() },
 }));
-const result = {
+const workspace = { kind: "workspace" as const, editable: true };
+const result: SearchMatch = {
 	file_path: "folder/long_file.py",
+	source: workspace,
 	line: 8,
 	column: 0,
-	match_text: "items[0] = items[1]",
+	text: "items[0] = items[1]",
+	context_before: [],
+	context_after: [],
 };
-const response: SearchResponse = {
+const page = (overrides: Partial<SearchResponse> = {}): SearchResponse => ({
 	query: "items",
-	results: [result],
-	total_matches: 1,
-	files_searched: 2,
-	truncated: false,
+	output_mode: "content",
+	matches: [result],
+	files: [],
+	returned: 1,
+	has_more_matches: false,
+	response_complete: true,
+	next_cursor: null,
+	guidance: "Complete.",
 	search_time_ms: 1,
-};
+	...overrides,
+});
+const response = page();
 beforeEach(() => {
 	vi.resetAllMocks();
 	useEditorStore.setState({
@@ -46,14 +60,14 @@ it("highlights literal regex characters without interpreting them", () => {
 		/>,
 	);
 	expect(container.querySelectorAll("mark")).toHaveLength(2);
-	expect(screen.getByRole("button")).toHaveTextContent(result.match_text);
+	expect(screen.getByRole("button")).toHaveTextContent(result.text);
 });
 
 it("keeps result labels tied to the submitted query and exposes retry without discarding them", async () => {
 	vi.mocked(searchService.searchFiles)
 		.mockResolvedValueOnce(response)
 		.mockRejectedValueOnce(new Error("Search temporarily unavailable"))
-		.mockResolvedValueOnce({ ...response, results: [], total_matches: 0 });
+		.mockResolvedValueOnce(page({ matches: [], returned: 0 }));
 	const user = userEvent.setup();
 	render(<SearchPanel />);
 	const input = screen.getByRole("textbox", { name: "Search file contents" });
@@ -157,4 +171,63 @@ it("retains results after an open failure and retries the same file with its eta
 	);
 	expect(useEditorStore.getState().tabs[0].etag).toBe("server-etag");
 	expect(useEditorStore.getState().pendingLineReveal).toBe(8);
+});
+
+it("loads the next page with the returned cursor and appends results", async () => {
+	const second: SearchMatch = {
+		...result,
+		file_path: "folder/b.py",
+		line: 2,
+	};
+	vi.mocked(searchService.searchFiles)
+		.mockResolvedValueOnce(
+			page({
+				has_more_matches: true,
+				response_complete: false,
+				next_cursor: "c1",
+			}),
+		)
+		.mockResolvedValueOnce(page({ matches: [second] }));
+	const user = userEvent.setup();
+	render(<SearchPanel />);
+	await user.type(screen.getByRole("textbox"), "items{Enter}");
+	expect(await screen.findByRole("status")).toHaveTextContent(
+		"1+ matches for “items”",
+	);
+	await user.click(screen.getByRole("button", { name: "Load more results" }));
+	expect(vi.mocked(searchService.searchFiles)).toHaveBeenLastCalledWith(
+		expect.objectContaining({ query: "items", cursor: "c1", limit: 100 }),
+	);
+	expect(await screen.findByText("folder/b.py")).toBeVisible();
+	expect(screen.getByText(result.file_path)).toBeVisible();
+	expect(
+		screen.queryByRole("button", { name: "Load more results" }),
+	).not.toBeInTheDocument();
+	expect(screen.getByRole("status")).toHaveTextContent(
+		"2 matches for “items”",
+	);
+});
+
+it("labels Solution hits read-only and does not open them as workspace files", async () => {
+	const solutionHit: SearchMatch = {
+		...result,
+		file_path: "functions/sync.py",
+		source: {
+			kind: "solution",
+			solution_slug: "covi-psa",
+			editable: false,
+		},
+	};
+	vi.mocked(searchService.searchFiles).mockResolvedValue(
+		page({ matches: [solutionHit] }),
+	);
+	const user = userEvent.setup();
+	render(<SearchPanel />);
+	await user.type(screen.getByRole("textbox"), "items{Enter}");
+	const button = await screen.findByRole("button", {
+		name: /functions\/sync.py/,
+	});
+	expect(button).toHaveTextContent("Solution · covi-psa · read-only");
+	expect(button).toBeDisabled();
+	expect(fileService.readFile).not.toHaveBeenCalled();
 });

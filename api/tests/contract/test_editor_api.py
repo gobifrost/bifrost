@@ -127,6 +127,7 @@ class TestEditorModelContracts:
         response = SearchResponse(
             query="def run",
             output_mode="files",
+            matches=[],
             files=[SearchFileHit(
                 file_path="a.py", source=SearchSource(kind="workspace", editable=True),
                 match_count=3, first_line=7,

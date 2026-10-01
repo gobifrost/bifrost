@@ -1,16 +1,20 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useReducedMotion } from "framer-motion";
-import { Search, FileText, Workflow, FileCode, Loader2, AlertTriangle } from "lucide-react";
+import {
+	Search,
+	FileText,
+	Workflow,
+	FileCode,
+	Loader2,
+	AlertTriangle,
+} from "lucide-react";
 import { useEditorStore } from "@/stores/editorStore";
 import { useAuth } from "@/contexts/AuthContext";
 import { useForms } from "@/hooks/useForms";
 import { useWorkflowsMetadata } from "@/hooks/useWorkflows";
 import { fileService } from "@/services/fileService";
-import {
-	searchService,
-	type SearchResult as ApiSearchResult,
-} from "@/services/searchService";
+import { searchService, type SearchFileHit } from "@/services/searchService";
 import {
 	CommandDialog,
 	CommandGroup,
@@ -122,20 +126,18 @@ export function QuickAccess({ isOpen, onClose }: QuickAccessProps) {
 					query: searchQuery,
 					case_sensitive: false,
 					is_regex: false,
-					include_pattern: "**/*",
-					max_results: 50,
+					source: "workspace",
+					output_mode: "files",
+					context_lines: 0,
+					limit: 20,
 				});
 
-				const scriptResults = scriptsResponse.results.map(
-					(result: ApiSearchResult) => ({
+				const scriptResults = scriptsResponse.files.map(
+					(hit: SearchFileHit) => ({
 						type: "script" as const,
-						name:
-							result.file_path.split("/").pop() ||
-							result.file_path,
-						description: result.match_text
-							? `Line ${result.line}: ${result.match_text.trim()}`
-							: "",
-						path: result.file_path,
+						name: hit.file_path.split("/").pop() || hit.file_path,
+						description: `${hit.match_count} match${hit.match_count === 1 ? "" : "es"}, first at line ${hit.first_line}`,
+						path: hit.file_path,
 					}),
 				);
 				allResults.push(...scriptResults);
@@ -246,7 +248,8 @@ export function QuickAccess({ isOpen, onClose }: QuickAccessProps) {
 			// server-ranked, so disable cmdk's own filtering on that wrapper.
 			commandProps={{
 				shouldFilter: false,
-				className: "max-h-[calc(100dvh-2rem)] sm:max-h-[calc(66dvh-1rem)]",
+				className:
+					"max-h-[calc(100dvh-2rem)] sm:max-h-[calc(66dvh-1rem)]",
 			}}
 		>
 			<div className="relative shrink-0">
@@ -273,8 +276,8 @@ export function QuickAccess({ isOpen, onClose }: QuickAccessProps) {
 							<div className="min-w-0 flex-1">
 								<p className="leading-6">{searchError}</p>
 								<p className="text-xs leading-5 text-muted-foreground">
-									Forms and workflows still appear. Retry to search scripts
-									again.
+									Forms and workflows still appear. Retry to
+									search scripts again.
 								</p>
 							</div>
 							<Button
@@ -307,8 +310,7 @@ export function QuickAccess({ isOpen, onClose }: QuickAccessProps) {
 							Search for forms, workflows, and scripts
 						</p>
 						<p className="text-xs text-muted-foreground mt-2">
-							Use ↑↓ to navigate, Enter to select, Esc to
-							close
+							Use ↑↓ to navigate, Enter to select, Esc to close
 						</p>
 					</div>
 				)}
@@ -355,7 +357,9 @@ export function QuickAccess({ isOpen, onClose }: QuickAccessProps) {
 				</div>
 			)}
 			<div className="flex shrink-0 justify-end border-t border-border/50 p-1 sm:hidden">
-				<Button variant="ghost" className="min-h-11" onClick={onClose}>Close search</Button>
+				<Button variant="ghost" className="min-h-11" onClick={onClose}>
+					Close search
+				</Button>
 			</div>
 		</CommandDialog>
 	);

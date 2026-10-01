@@ -338,8 +338,8 @@ class SearchResponse(BaseModel):
     """One page of search results plus what to do next."""
     query: str
     output_mode: Literal["content", "files"]
-    matches: list[SearchMatch] = Field(default_factory=list)
-    files: list[SearchFileHit] = Field(default_factory=list)
+    matches: list[SearchMatch] = Field(..., description="Matching lines (content mode; empty in files mode)")
+    files: list[SearchFileHit] = Field(..., description="Matching files (files mode; empty in content mode)")
     returned: int = Field(..., description="Results in this page")
     has_more_matches: bool = Field(..., description="More results exist beyond this page")
     response_complete: bool = Field(..., description="This page ends the result set")
