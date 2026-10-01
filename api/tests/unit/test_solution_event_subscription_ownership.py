@@ -273,3 +273,123 @@ async def test_bundle_and_recapture_leave_external_subscription_out(db_session) 
     }
     assert str(external.id) not in exported_ids
     assert str(own_unmanaged.id) in exported_ids
+
+
+async def _make_agent(db, *, solution_id) -> UUID:
+    from src.models.orm.agents import Agent
+
+    agent = Agent(
+        id=uuid.uuid4(), name=f"agent-{uuid.uuid4().hex[:6]}",
+        organization_id=None, solution_id=solution_id,
+        system_prompt="help", created_by="test",
+    )
+    db.add(agent)
+    await db.flush()
+    return agent.id
+
+
+async def _make_workflow(db, *, solution_id) -> UUID:
+    wf = Workflow(
+        id=uuid.uuid4(), name=f"wf-{uuid.uuid4().hex[:6]}", function_name="main",
+        path=f"workflows/{uuid.uuid4().hex[:6]}.py", type="workflow",
+        is_active=True, solution_id=solution_id,
+    )
+    db.add(wf)
+    await db.flush()
+    return wf.id
+
+
+async def _add_unmanaged_sub(db, source_id, *, workflow_id=None, agent_id=None) -> UUID:
+    sub = EventSubscription(
+        id=uuid.uuid4(), event_source_id=source_id,
+        workflow_id=workflow_id, agent_id=agent_id,
+        target_type="agent" if agent_id else "workflow",
+        solution_id=None, created_by="operator@example.com",
+    )
+    db.add(sub)
+    await db.flush()
+    return sub.id
+
+
+def _events_selector(source_id: UUID) -> SolutionCaptureSelectors:
+    return SolutionCaptureSelectors(
+        workflows=[], tables=[], apps=[], forms=[], agents=[], claims=[],
+        configs=[], events=[source_id],
+    )
+
+
+async def test_first_capture_leaves_external_listeners_external(db_session) -> None:
+    db = db_session
+    sol = await _make_solution(db)
+    source = EventSource(
+        id=uuid.uuid4(), name="loose-topic", source_type="topic",
+        organization_id=None, solution_id=None, created_by="test",
+    )
+    db.add(source)
+    await db.flush()
+
+    own_wf_sub = await _add_unmanaged_sub(
+        db, source.id, workflow_id=await _make_workflow(db, solution_id=sol.id))
+    own_agent_sub = await _add_unmanaged_sub(
+        db, source.id, agent_id=await _make_agent(db, solution_id=sol.id))
+    ext_wf_sub = await _add_unmanaged_sub(
+        db, source.id, workflow_id=await _make_workflow(db, solution_id=None))
+    ext_agent_sub = await _add_unmanaged_sub(
+        db, source.id, agent_id=await _make_agent(db, solution_id=None))
+
+    await SolutionCaptureService(db).capture(sol, _events_selector(source.id))
+    await db.flush()
+
+    owners = {s.id: s.solution_id for s in await _subs(db, source.id)}
+    assert owners == {
+        own_wf_sub: sol.id,
+        own_agent_sub: sol.id,
+        ext_wf_sub: None,
+        ext_agent_sub: None,
+    }
+
+
+async def test_recapture_adopts_agent_subscription_to_solution_agent_only(
+    db_session,
+) -> None:
+    db = db_session
+    sol = await _make_solution(db)
+    await SolutionDeployer(db).deploy(_bundle(sol, [{"id": SUB_A, "workflow_id": WF_A}]))
+    await db.flush()
+    source_id = await _deployed_source_id(db, sol)
+
+    own_agent_sub = await _add_unmanaged_sub(
+        db, source_id, agent_id=await _make_agent(db, solution_id=sol.id))
+    ext_agent_sub = await _add_unmanaged_sub(
+        db, source_id, agent_id=await _make_agent(db, solution_id=None))
+
+    await SolutionCaptureService(db).capture(sol, _events_selector(source_id))
+    await db.flush()
+
+    owners = {s.id: s.solution_id for s in await _subs(db, source_id)}
+    assert owners[own_agent_sub] == sol.id
+    assert owners[ext_agent_sub] is None
+
+
+async def test_source_removed_from_manifest_cascades_external_listeners(
+    db_session,
+) -> None:
+    db = db_session
+    sol = await _make_solution(db)
+    deployer = SolutionDeployer(db)
+    await deployer.deploy(_bundle(sol, [{"id": SUB_A, "workflow_id": WF_A}]))
+    await db.flush()
+    source_id = await _deployed_source_id(db, sol)
+    external = await _add_external_sub(db, source_id)
+
+    no_events = _bundle(sol, [])
+    no_events.events = []
+    await deployer.deploy(no_events)
+    await db.flush()
+
+    assert (await db.get(EventSource, source_id)) is None
+    assert await _subs(db, source_id) == []
+    remaining = (await db.execute(
+        select(EventSubscription.id).where(EventSubscription.id == external.id)
+    )).scalar_one_or_none()
+    assert remaining is None  # cascaded with the source

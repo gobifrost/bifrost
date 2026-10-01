@@ -122,12 +122,14 @@ function DeleteSession({ id, name, slug, onClose, onDelete }: Props) {
 						</Button>
 					</div>
 				) : summary.data ? (
-					<ul
-						data-testid="deletion-summary-list"
-						className="grid grid-cols-2 gap-2 text-sm"
-					>
-						{(Object.keys(counts) as (keyof typeof counts)[]).map(
-							(key) => {
+					<div className="space-y-2">
+						<ul
+							data-testid="deletion-summary-list"
+							className="grid grid-cols-2 gap-2 text-sm"
+						>
+							{(
+								Object.keys(counts) as (keyof typeof counts)[]
+							).map((key) => {
 								const count = summary.data?.[key] ?? 0;
 								return count > 0 ? (
 									<li key={key}>
@@ -135,9 +137,25 @@ function DeleteSession({ id, name, slug, onClose, onDelete }: Props) {
 										{count === 1 ? "" : "s"}
 									</li>
 								) : null;
-							},
-						)}
-					</ul>
+							})}
+						</ul>
+						{(summary.data.external_event_subscriptions ?? 0) >
+						0 ? (
+							<p
+								data-testid="deletion-summary-external-listeners"
+								className="text-sm text-destructive"
+							>
+								{summary.data.external_event_subscriptions}{" "}
+								external listener
+								{summary.data.external_event_subscriptions === 1
+									? ""
+									: "s"}{" "}
+								outside this Solution will also be removed
+								because they subscribe to its events or target
+								its workflows or agents.
+							</p>
+						) : null}
+					</div>
 				) : null}
 				<div className="space-y-2">
 					<Label htmlFor={inputId}>

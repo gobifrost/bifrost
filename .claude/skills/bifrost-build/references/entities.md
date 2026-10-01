@@ -93,7 +93,8 @@ An event source is a schedule, webhook, or topic. A subscription targets exactly
 - Subscription target type is inferred from the workflow/agent selector.
 - Changing a subscription's target is not an update: delete and recreate the subscription intentionally.
 - Topic workflows receive event metadata and payload through the execution context; validate missing or malformed payload fields.
-- On a Solution-owned source, deploy replaces only the subscriptions declared in the Solution's `.bifrost/events.yaml`. A subscription you create on that source from outside the Solution (for example, a workspace workflow listening to the Solution's topic or schedule) stays in place across redeploys, is not exported with the Solution, and is deleted only when the source is deleted.
+- On a Solution-owned source, deploy replaces only the subscriptions declared in the Solution's `.bifrost/events.yaml`. A subscription you create on that source from outside the Solution (for example, a workspace workflow listening to the Solution's topic or schedule) stays in place across redeploys and is not exported with the Solution. Capture adopts only subscriptions that target the Solution's own workflows or agents; capture the listener's workflow too if it belongs in the Solution.
+- External listeners are still removed with what they depend on: when a redeploy drops the source from the manifest, or when the Solution is hard-deleted (the deletion summary reports them as `external_event_subscriptions`). A non-destructive uninstall leaves them in place.
 
 Use `events.emit()` from a workflow to publish a topic. Confirm source scope, subscription access, idempotency/retry behavior, and downstream failure handling.
 

@@ -25861,6 +25861,11 @@ export interface components {
              * @default 0
              */
             events: number;
+            /**
+             * External Event Subscriptions
+             * @default 0
+             */
+            external_event_subscriptions: number;
         };
         /**
          * SolutionDependencyPreview
