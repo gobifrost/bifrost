@@ -162,6 +162,49 @@ class TestCliEvents:
             headers=platform_admin.headers,
         )
 
+    def test_signing_secret_is_shown_only_by_create_and_rotate(
+        self,
+        cli_client,
+        _invoke,
+        e2e_client,
+        platform_admin,
+    ) -> None:
+        secret = f"cli-secret-{uuid4().hex}"
+        create_result = _invoke([
+            "--json",
+            "create-source",
+            "--name", f"cli-evt-signed-{uuid4().hex[:8]}",
+            "--source-type", "webhook",
+            "--global",
+            "--adapter", "generic",
+            "--webhook-config", json.dumps({"secret": secret}),
+        ])
+        assert create_result.exit_code == 0, create_result.output
+        source = json.loads(create_result.output)
+        assert source["raw_secret"] == secret
+
+        try:
+            get_result = _invoke(["--json", "get-source", source["id"]])
+            list_result = _invoke(["--json", "list-sources"])
+            for result in (get_result, list_result):
+                assert result.exit_code == 0, result.output
+                assert secret not in result.output
+                assert '"raw_secret"' not in result.output
+            assert json.loads(get_result.output)["webhook"]["secret_set"] is True
+
+            rotate_result = _invoke(["--json", "rotate-secret", source["id"]])
+            assert rotate_result.exit_code == 0, rotate_result.output
+            rotated = json.loads(rotate_result.output)["raw_secret"]
+            assert rotated and rotated != secret
+            after = _invoke(["--json", "get-source", source["id"]])
+            assert after.exit_code == 0, after.output
+            assert rotated not in after.output
+        finally:
+            e2e_client.delete(
+                f"/api/events/sources/{source['id']}",
+                headers=platform_admin.headers,
+            )
+
     def test_provider_source_can_be_resubscribed_and_deleted(
         self,
         cli_client,

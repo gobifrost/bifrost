@@ -12,6 +12,7 @@
  */
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -24,7 +25,13 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { AlertCircle, ChevronDown, Info, RefreshCw } from "lucide-react";
+import {
+	AlertCircle,
+	CheckCircle2,
+	ChevronDown,
+	Info,
+	RefreshCw,
+} from "lucide-react";
 import {
 	Popover,
 	PopoverContent,
@@ -156,6 +163,12 @@ interface DynamicConfigFormProps {
 	configSchema: ConfigSchema;
 	config: Record<string, unknown>;
 	onChange: (config: Record<string, unknown>) => void;
+	/**
+	 * A secret is already stored for this source. Password fields are
+	 * write-only: the server never returns the value, and leaving the field
+	 * blank keeps the stored secret.
+	 */
+	secretConfigured?: boolean;
 }
 
 /**
@@ -243,6 +256,7 @@ function DynamicField({
 	currentConfig,
 	onChange,
 	isRequired,
+	secretConfigured = false,
 }: {
 	fieldName: string;
 	property: SchemaProperty;
@@ -254,6 +268,7 @@ function DynamicField({
 	currentConfig: Record<string, unknown>;
 	onChange: (value: unknown) => void;
 	isRequired: boolean;
+	secretConfigured?: boolean;
 }) {
 	const fieldId = useId();
 	const descriptionId = `${fieldId}-description`;
@@ -710,15 +725,24 @@ function DynamicField({
 
 	// Default: text input
 	const isPassword = property.format === "password";
+	const showStoredSecret = isPassword && secretConfigured;
 
 	return (
 		<div className="min-w-0 space-y-2">
-			<FieldLabel
-				htmlFor={fieldId}
-				title={property.title || fieldName}
-				isRequired={isRequired}
-				help={help}
-			/>
+			<div className="flex min-w-0 flex-wrap items-center gap-2">
+				<FieldLabel
+					htmlFor={fieldId}
+					title={property.title || fieldName}
+					isRequired={isRequired}
+					help={help}
+				/>
+				{showStoredSecret && (
+					<Badge variant="secondary" className="text-xs font-normal">
+						<CheckCircle2 aria-hidden="true" className="mr-1 size-3" />
+						Secret configured
+					</Badge>
+				)}
+			</div>
 			<Input
 				aria-required={isRequired}
 				aria-describedby={
@@ -730,8 +754,10 @@ function DynamicField({
 				value={(value as string) ?? ""}
 				onChange={(e) => onChange(e.target.value || undefined)}
 				placeholder={
-					property.description ||
-					`Enter ${property.title || fieldName}...`
+					showStoredSecret
+						? "Leave blank to keep the current secret"
+						: property.description ||
+							`Enter ${property.title || fieldName}...`
 				}
 			/>
 			{property.description && (
@@ -757,6 +783,7 @@ export function DynamicConfigForm({
 	configSchema,
 	config,
 	onChange,
+	secretConfigured = false,
 }: DynamicConfigFormProps) {
 	// Memoize properties to prevent re-renders
 	const properties = useMemo(
@@ -851,6 +878,7 @@ export function DynamicConfigForm({
 							handleFieldChange(fieldName, value)
 						}
 						isRequired={required.includes(fieldName)}
+						secretConfigured={secretConfigured}
 					/>
 				);
 			})}

@@ -170,6 +170,7 @@
 | PATCH | `/api/events/sources/{source_id}` |
 | GET | `/api/events/sources/{source_id}/events` |
 | POST | `/api/events/sources/{source_id}/resubscribe` |
+| POST | `/api/events/sources/{source_id}/rotate-secret` |
 | GET | `/api/events/sources/{source_id}/subscriptions` |
 | POST | `/api/events/sources/{source_id}/subscriptions` |
 | DELETE | `/api/events/sources/{source_id}/subscriptions/{subscription_id}` |

@@ -33,6 +33,7 @@ from src.services.webhooks.protocol import (
     WebhookIntegrationAuth,
     WebhookRequest,
 )
+from src.services.webhooks.signing_secret import with_signing_secret
 
 
 def _sign(body: bytes, secret: str, prefix: str = "sha256=") -> str:
@@ -441,7 +442,7 @@ class TestGenericWebhookAdapterHandleRequest:
             headers={"x-signature-256": sig},
         )
         result = await adapter.handle_request(
-            request, config={}, state={"secret": secret}
+            request, config={}, state=with_signing_secret({}, secret)
         )
 
         assert isinstance(result, Deliver)
@@ -459,7 +460,7 @@ class TestGenericWebhookAdapterHandleRequest:
             headers={"x-signature-256": f"sha256= {signature}"},
         )
         result = await adapter.handle_request(
-            request, config={}, state={"secret": secret}
+            request, config={}, state=with_signing_secret({}, secret)
         )
 
         assert isinstance(result, Deliver)
@@ -469,7 +470,7 @@ class TestGenericWebhookAdapterHandleRequest:
         """Secret set but no signature header → Rejected(401)."""
         request = _make_request(headers={})
         result = await adapter.handle_request(
-            request, config={}, state={"secret": "mysecret"}
+            request, config={}, state=with_signing_secret({}, "mysecret")
         )
 
         assert isinstance(result, Rejected)
@@ -482,7 +483,7 @@ class TestGenericWebhookAdapterHandleRequest:
             headers={"x-signature-256": "sha256=badhash"},
         )
         result = await adapter.handle_request(
-            request, config={}, state={"secret": "mysecret"}
+            request, config={}, state=with_signing_secret({}, "mysecret")
         )
 
         assert isinstance(result, Rejected)
@@ -502,7 +503,7 @@ class TestGenericWebhookAdapterHandleRequest:
         result = await adapter.handle_request(
             request,
             config={"signature_header": "X-Hub-Signature-256"},
-            state={"secret": secret},
+            state=with_signing_secret({}, secret),
         )
 
         assert isinstance(result, Deliver)
@@ -521,7 +522,7 @@ class TestGenericWebhookAdapterHandleRequest:
         result = await adapter.handle_request(
             request,
             config={"signature_prefix": "hmac-sha256="},
-            state={"secret": secret},
+            state=with_signing_secret({}, secret),
         )
 
         assert isinstance(result, Deliver)
@@ -589,20 +590,11 @@ class TestGenericWebhookAdapterSubscribe:
         return GenericWebhookAdapter()
 
     @pytest.mark.asyncio
-    async def test_subscribe_stores_secret_in_state(self, adapter):
+    async def test_subscribe_never_persists_a_secret(self, adapter):
+        """The events router owns the encrypted secret; subscribe stores none."""
         result = await adapter.subscribe(
             callback_url="https://example.com/webhook",
             config={"secret": "my-secret-key"},
-            integration=None,
-        )
-
-        assert result.state["secret"] == "my-secret-key"
-
-    @pytest.mark.asyncio
-    async def test_subscribe_without_secret_empty_state(self, adapter):
-        result = await adapter.subscribe(
-            callback_url="https://example.com/webhook",
-            config={},
             integration=None,
         )
 

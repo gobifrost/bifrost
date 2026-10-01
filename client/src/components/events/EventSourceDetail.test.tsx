@@ -13,6 +13,8 @@ const useEventSourceMock = vi.fn();
 const mockDelete = vi.fn();
 const mockUpdate = vi.fn();
 const mockResubscribe = vi.fn();
+const mockRotate = vi.fn();
+const mockRotateReset = vi.fn();
 let mockIsPlatformAdmin = true;
 
 vi.mock("@/contexts/AuthContext", () => ({
@@ -37,6 +39,11 @@ vi.mock("@/services/events", async () => {
 		}),
 		useResubscribeEventSource: () => ({
 			mutateAsync: mockResubscribe,
+			isPending: false,
+		}),
+		useRotateWebhookSecret: () => ({
+			mutateAsync: mockRotate,
+			reset: mockRotateReset,
 			isPending: false,
 		}),
 	};
@@ -81,6 +88,8 @@ beforeEach(() => {
 	mockUpdate.mockResolvedValue(undefined);
 	mockResubscribe.mockReset();
 	mockResubscribe.mockResolvedValue(undefined);
+	mockRotate.mockReset();
+	mockRotateReset.mockReset();
 	useEventSourceMock.mockReset();
 	mockIsPlatformAdmin = true;
 });
@@ -177,6 +186,62 @@ describe("EventSourceDetail — populated", () => {
 		expect(onClose).toHaveBeenCalled();
 	});
 
+	it("rotates a generic webhook's signing secret and reveals it once", async () => {
+		mockRotate.mockResolvedValue({ raw_secret: "synthetic-rotated-value" });
+		useEventSourceMock.mockReturnValue({
+			data: makeSource({
+				webhook: {
+					adapter_name: "generic",
+					callback_url: "/api/hooks/src-1",
+					secret_set: true,
+				},
+			} as Partial<EventSource>),
+			isLoading: false,
+			refetch: vi.fn(),
+		});
+		const { user } = renderWithProviders(
+			<EventSourceDetail sourceId="src-1" onClose={() => {}} />,
+		);
+
+		await user.click(screen.getByRole("button", { name: / actions$/ }));
+		await user.click(
+			screen.getByRole("menuitem", { name: "Rotate signing secret" }),
+		);
+		expect(mockRotate).not.toHaveBeenCalled();
+		await user.click(screen.getByRole("button", { name: "Rotate secret" }));
+
+		await waitFor(() => expect(mockRotate).toHaveBeenCalledTimes(1));
+		expect(mockRotate.mock.calls[0]![0]).toEqual({
+			params: { path: { source_id: "src-1" } },
+			body: {},
+		});
+		expect(mockRotateReset).toHaveBeenCalled();
+		expect(
+			screen.getByRole("region", { name: "New webhook signing secret" }),
+		).toHaveTextContent("synthetic-rotated-value");
+
+		await user.click(screen.getByRole("button", { name: "Dismiss secret" }));
+		expect(
+			screen.queryByText("synthetic-rotated-value"),
+		).not.toBeInTheDocument();
+	});
+
+	it("offers no secret rotation for adapters without a signing secret", async () => {
+		useEventSourceMock.mockReturnValue({
+			data: makeSource(),
+			isLoading: false,
+			refetch: vi.fn(),
+		});
+		const { user } = renderWithProviders(
+			<EventSourceDetail sourceId="src-1" onClose={() => {}} />,
+		);
+
+		await user.click(screen.getByRole("button", { name: / actions$/ }));
+		expect(
+			screen.queryByRole("menuitem", { name: "Rotate signing secret" }),
+		).not.toBeInTheDocument();
+	});
+
 	it("hides admin-only controls for non-admin viewers", () => {
 		mockIsPlatformAdmin = false;
 		useEventSourceMock.mockReturnValue({
@@ -208,6 +273,7 @@ describe("EventSourceDetail — populated", () => {
 					rate_limit_window_seconds: 60,
 					rate_limit_enabled: true,
 					rate_limited_count_24h: 0,
+					secret_set: false,
 					config: {
 						resource: "/users/user-1/messages",
 						change_types: ["created"],

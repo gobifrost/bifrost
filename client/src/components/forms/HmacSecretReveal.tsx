@@ -3,7 +3,7 @@ import { Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { copyToClipboard } from "@/lib/clipboard";
 
-export function HmacSecretReveal({ value, onDismiss }: { value: string; onDismiss: () => void }) {
+export function HmacSecretReveal({ value, onDismiss, label = "New embed secret" }: { value: string; onDismiss: () => void; label?: string }) {
 	const [state, setState] = useState<"idle" | "copying" | "copied" | "error">("idle");
 	const copying = useRef(false);
 	const copy = async () => {
@@ -15,7 +15,7 @@ export function HmacSecretReveal({ value, onDismiss }: { value: string; onDismis
 		finally { copying.current = false; }
 	};
 	return (
-		<section aria-label="New embed secret" className="min-w-0 space-y-4 rounded-[var(--bf-radius-surface)] border border-[var(--bf-warning)] bg-[var(--bf-warning-soft)] p-[var(--bf-surface-pad)]">
+		<section aria-label={label} className="min-w-0 space-y-4 rounded-[var(--bf-radius-surface)] border border-[var(--bf-warning)] bg-[var(--bf-warning-soft)] p-[var(--bf-surface-pad)]">
 			<p className="text-sm font-medium">Copy this secret now — it will not be shown again.</p>
 			<code tabIndex={0} onFocus={event => { const selection = window.getSelection(); const range = document.createRange(); range.selectNodeContents(event.currentTarget); selection?.removeAllRanges(); selection?.addRange(range); }} aria-label="Secret value" className="block whitespace-pre-wrap rounded-[var(--bf-radius-control)] border bg-background p-3 font-mono text-sm select-all [overflow-wrap:anywhere] focus-visible:outline-2 focus-visible:outline-ring">{value}</code>
 			{state === "error" && <p role="alert" className="text-sm">Could not copy the secret. Select the value and copy it manually, or try again.</p>}

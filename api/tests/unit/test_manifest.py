@@ -1202,6 +1202,40 @@ class TestEventManifest:
         assert len(evt_rest.subscriptions) == len(evt_orig.subscriptions)
         assert evt_rest.subscriptions[0].workflow_id == evt_orig.subscriptions[0].workflow_id
 
+    def test_webhook_config_never_carries_the_signing_secret(self):
+        """A manifest written before the secret moved out of config still
+        parses, and neither import nor export carries the secret."""
+        from types import SimpleNamespace
+
+        from bifrost.manifest import ManifestEventSource, parse_manifest, serialize_manifest
+
+        es_id = str(uuid4())
+        legacy = parse_manifest(yaml.dump({
+            "events": {
+                es_id: {
+                    "id": es_id,
+                    "name": "Signed hook",
+                    "source_type": "webhook",
+                    "adapter_name": "generic",
+                    "webhook_config": {"secret": "LEGACY-PLAINTEXT", "signature_header": "X-Sig"},
+                },
+            },
+        }))
+        assert legacy.events[es_id].webhook_config == {"signature_header": "X-Sig"}
+        assert "LEGACY-PLAINTEXT" not in serialize_manifest(legacy)
+
+        row = SimpleNamespace(
+            id=es_id, name="Signed hook", source_type="webhook", event_type=None,
+            organization_id=None, is_active=True,
+        )
+        webhook = SimpleNamespace(
+            adapter_name="generic", integration_id=None,
+            config={"secret": "ROW-PLAINTEXT", "signature_header": "X-Sig"},
+            rate_limit_per_minute=60, rate_limit_window_seconds=60, rate_limit_enabled=True,
+        )
+        exported = ManifestEventSource.from_row(row, webhook=webhook)
+        assert exported.webhook_config == {"signature_header": "X-Sig"}
+
     def test_event_split_file(self, full_manifest_data):
         """Events serialize to events.yaml in split format."""
         from bifrost.manifest import parse_manifest, serialize_manifest_dir, parse_manifest_dir

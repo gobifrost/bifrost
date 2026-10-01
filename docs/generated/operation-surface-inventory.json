@@ -8414,7 +8414,7 @@
           "method": "POST",
           "path": "/api/events/sources",
           "request_model": "EventSourceCreate",
-          "response_model": "EventSourceResponse"
+          "response_model": "EventSourceSecretResponse"
         },
         "side_effects": [
           "persist type-specific Event Source configuration",
@@ -9908,10 +9908,10 @@
     }
   ],
   "counts": {
-    "cli": 154,
+    "cli": 155,
     "manifest": 16,
     "mcp": 94,
-    "rest": 646,
+    "rest": 647,
     "sdk": 19
   },
   "schema_version": 1,
@@ -10031,6 +10031,15 @@
         "path": [
           "events",
           "resubscribe-source"
+        ],
+        "reason": "CLI operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "kind": "operation",
+        "path": [
+          "events",
+          "rotate-secret"
         ],
         "reason": "CLI operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -11714,6 +11723,13 @@
         "method": "POST",
         "operation_id": "",
         "path": "/api/events/sources/{source_id}/resubscribe",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/api/events/sources/{source_id}/rotate-secret",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },

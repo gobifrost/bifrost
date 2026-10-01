@@ -45,8 +45,10 @@ import {
 	useDeleteEventSource,
 	useUpdateEventSource,
 	useResubscribeEventSource,
+	useRotateWebhookSecret,
 	type EventSourceType,
 } from "@/services/events";
+import { HmacSecretReveal } from "@/components/forms/HmacSecretReveal";
 import { Switch } from "@/components/ui/switch";
 import { SubscriptionsTable } from "./SubscriptionsTable";
 import { EventsTable } from "./EventsTable";
@@ -142,6 +144,9 @@ export function EventSourceDetail({
 	const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 	const [editDialogOpen, setEditDialogOpen] = useState(false);
 	const [resubscribeDialogOpen, setResubscribeDialogOpen] = useState(false);
+	const [rotateDialogOpen, setRotateDialogOpen] = useState(false);
+	const [rotateError, setRotateError] = useState<string | null>(null);
+	const [revealedSecret, setRevealedSecret] = useState<string | null>(null);
 
 	const {
 		data: source,
@@ -152,6 +157,7 @@ export function EventSourceDetail({
 	} = useEventSource(sourceId);
 	const updateMutation = useUpdateEventSource();
 	const resubscribeMutation = useResubscribeEventSource();
+	const rotateMutation = useRotateWebhookSecret();
 
 	// Toggle active status
 	const handleToggleActive = async () => {
@@ -235,6 +241,30 @@ export function EventSourceDetail({
 		}
 	};
 
+	const handleRotateSecret = async () => {
+		if (rotateMutation.isPending) return;
+		setRotateError(null);
+		try {
+			const rotated = await rotateMutation.mutateAsync({
+				params: { path: { source_id: sourceId } },
+				body: {},
+			});
+			// Keep the one-time secret only in this dialog, not the mutation cache.
+			rotateMutation.reset();
+			setRevealedSecret(rotated.raw_secret ?? null);
+		} catch (error) {
+			setRotateError(
+				getErrorMessage(error, "Failed to rotate the signing secret"),
+			);
+		}
+	};
+
+	const closeRotateDialog = () => {
+		setRotateDialogOpen(false);
+		setRevealedSecret(null);
+		setRotateError(null);
+	};
+
 	if (isLoading) {
 		return (
 			<div className="min-w-0 flex flex-col gap-5">
@@ -287,6 +317,10 @@ export function EventSourceDetail({
 	}
 
 	const isGraph = isMicrosoftGraphSource(source);
+	// Only the generic adapter verifies an HMAC signing secret.
+	const isGenericWebhook =
+		source.source_type === "webhook" &&
+		(source.webhook?.adapter_name ?? "generic") === "generic";
 	const graphSummary = getGraphSourceSummary(source);
 	const graphStatus =
 		graphSummary?.health === "connected"
@@ -395,6 +429,11 @@ export function EventSourceDetail({
 							source={source}
 							onEdit={() => setEditDialogOpen(true)}
 							onDelete={() => setDeleteDialogOpen(true)}
+							onRotateSecret={
+								isGenericWebhook
+									? () => setRotateDialogOpen(true)
+									: undefined
+							}
 						/>
 					)}
 				</div>
@@ -707,6 +746,65 @@ export function EventSourceDetail({
 							Delete
 						</AlertDialogAction>
 					</AlertDialogFooter>
+				</AlertDialogContent>
+			</AlertDialog>
+
+			<AlertDialog
+				open={rotateDialogOpen}
+				onOpenChange={(next) => {
+					if (!next && !rotateMutation.isPending) closeRotateDialog();
+				}}
+			>
+				<AlertDialogContent>
+					<AlertDialogHeader>
+						<AlertDialogTitle>
+							{revealedSecret
+								? "New signing secret"
+								: "Rotate signing secret?"}
+						</AlertDialogTitle>
+						<AlertDialogDescription>
+							{revealedSecret
+								? "Set this secret in the sending service. Requests signed with the previous secret are now rejected."
+								: "Bifrost will generate a new signing secret and show it once. Requests signed with the current secret are rejected until you update the sending service."}
+						</AlertDialogDescription>
+					</AlertDialogHeader>
+					{revealedSecret && (
+						<HmacSecretReveal
+							value={revealedSecret}
+							onDismiss={closeRotateDialog}
+							label="New webhook signing secret"
+						/>
+					)}
+					{rotateError && (
+						<p
+							role="alert"
+							className="text-sm text-destructive [overflow-wrap:anywhere]"
+						>
+							{rotateError}
+						</p>
+					)}
+					{!revealedSecret && (
+						<AlertDialogFooter>
+							<AlertDialogCancel
+								className="min-h-11"
+								disabled={rotateMutation.isPending}
+							>
+								Cancel
+							</AlertDialogCancel>
+							<AlertDialogAction
+								className="min-h-11"
+								onClick={(event) => {
+									event.preventDefault();
+									void handleRotateSecret();
+								}}
+								disabled={rotateMutation.isPending}
+							>
+								{rotateMutation.isPending
+									? "Rotating…"
+									: "Rotate secret"}
+							</AlertDialogAction>
+						</AlertDialogFooter>
+					)}
 				</AlertDialogContent>
 			</AlertDialog>
 

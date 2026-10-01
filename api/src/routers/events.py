@@ -33,6 +33,7 @@ from src.models.contracts.events import (
     EventSourceCreate,
     EventSourceListResponse,
     EventSourceResponse,
+    EventSourceSecretResponse,
     EventSourceUpdate,
     EventSubscriptionCreate,
     EventSubscriptionListResponse,
@@ -45,6 +46,7 @@ from src.models.contracts.events import (
     TopicsRegistryResponse,
     WebhookAdapterInfo,
     WebhookAdapterListResponse,
+    WebhookSecretRotate,
     WebhookSourceResponse,
 )
 from src.models.enums import EventDeliveryStatus, EventSourceType
@@ -81,6 +83,14 @@ from src.services.webhooks.auth import (
 from src.services.webhooks.lifecycle import (
     resubscribe_provider,
     unsubscribe_provider,
+)
+from src.services.webhooks.signing_secret import (
+    carry_signing_secret,
+    generate_signing_secret,
+    signing_secret_set,
+    split_signing_secret,
+    uses_signing_secret,
+    with_signing_secret,
 )
 from src.services.operation_catalog import operation_route
 
@@ -131,6 +141,7 @@ async def _build_event_source_response(
             integration_id=ws.integration_id,
             integration_name=ws.integration.name if ws.integration else None,
             config=ws.config or {},
+            secret_set=signing_secret_set(ws.state),
             callback_url=_build_callback_url(source.id),
             external_id=ws.external_id,
             provider_metadata=(
@@ -173,6 +184,34 @@ async def _build_event_source_response(
         webhook=webhook_response,
         schedule=schedule_response,
     )
+
+
+def _split_webhook_secret(config: dict[str, Any], adapter: Any) -> tuple[dict[str, Any], bool, str | None]:
+    """Separate the write-only signing secret from adapter config, rejecting
+    a secret the adapter would never verify."""
+    try:
+        remaining, sent, secret = split_signing_secret(config)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+    if secret and not uses_signing_secret(adapter):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Adapter '{adapter.name}' does not verify a signing secret",
+        )
+    return remaining, sent, secret
+
+
+async def _build_event_source_secret_response(
+    source: EventSource,
+    db: DbSession,
+    raw_secret: str | None,
+) -> EventSourceSecretResponse:
+    """The create/rotate response: the source plus the secret this call set."""
+    response = await _build_event_source_response(source, db)
+    return EventSourceSecretResponse(**response.model_dump(), raw_secret=raw_secret)
 
 
 async def _build_event_subscription_response(
@@ -424,7 +463,13 @@ async def _resubscribe_webhook_on_change(
             )
 
     ws.external_id = subscribe_result.external_id
-    ws.state = subscribe_result.state
+    # The stored signing secret outlives the provider registration, unless the
+    # new adapter has no use for one.
+    ws.state = (
+        carry_signing_secret(ws.state, subscribe_result.state)
+        if uses_signing_secret(adapter)
+        else subscribe_result.state
+    )
     ws.expires_at = subscribe_result.expires_at
     source.error_message = None
 
@@ -605,24 +650,27 @@ async def list_sources(
 
 @router.post(
     "/sources",
-    response_model=EventSourceResponse,
+    response_model=EventSourceSecretResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Create event source",
-    description="Create a new event source (Platform admin only).",
+    description=(
+        "Create a new event source (Platform admin only). A webhook signing "
+        "secret supplied as webhook.config.secret is returned once, in raw_secret."
+    ),
 **operation_route("events.sources.create"))
 async def create_source(
     request: EventSourceCreate,
     ctx: Context,
     user: CurrentSuperuser,
     db: DbSession,
-) -> EventSourceResponse:
+) -> EventSourceSecretResponse:
     """
     Create a new event source.
 
     For webhooks, this will:
     1. Generate a unique callback URL
     2. Call the adapter's subscribe method (if needed)
-    3. Store the webhook configuration
+    3. Store the webhook configuration, and the signing secret encrypted
     """
     now = datetime.now(timezone.utc)
 
@@ -684,6 +732,8 @@ async def create_source(
     db.add(source)
     await db.flush()
 
+    signing_secret: str | None = None
+
     # Handle webhook-specific configuration
     if request.source_type == EventSourceType.WEBHOOK:
         if not request.webhook:
@@ -700,6 +750,7 @@ async def create_source(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Unknown adapter: {adapter_name}",
             )
+        config, _, signing_secret = _split_webhook_secret(request.webhook.config, adapter)
 
         # Validate integration if required
         integration = None
@@ -733,7 +784,7 @@ async def create_source(
             event_source_id=source.id,
             adapter_name=adapter_name,
             integration_id=request.webhook.integration_id,
-            config=request.webhook.config,
+            config=config,
             rate_limit_per_minute=request.webhook.rate_limit_per_minute,
             rate_limit_window_seconds=request.webhook.rate_limit_window_seconds,
             rate_limit_enabled=request.webhook.rate_limit_enabled,
@@ -755,12 +806,12 @@ async def create_source(
         try:
             result = await adapter.subscribe(
                 callback_url=callback_url,
-                config=request.webhook.config,
+                config=config,
                 integration=integration,
             )
 
             webhook_source.external_id = result.external_id
-            webhook_source.state = result.state
+            webhook_source.state = with_signing_secret(result.state, signing_secret)
             webhook_source.expires_at = result.expires_at
 
         except Exception as e:
@@ -826,7 +877,7 @@ async def create_source(
         },
     )
 
-    return await _build_event_source_response(source, db)
+    return await _build_event_source_secret_response(source, db, signing_secret)
 
 
 @router.get(
@@ -913,13 +964,8 @@ async def update_source(
     if request.webhook and source.webhook_source:
         ws = source.webhook_source
         webhook_fields = request.webhook.model_fields_set
-        if "config" in webhook_fields:
-            ws.config = request.webhook.config
-            # Sync secret to state (adapter reads from state, not config)
-            if request.webhook.config.get("secret"):
-                new_state = dict(ws.state or {})
-                new_state["secret"] = request.webhook.config["secret"]
-                ws.state = new_state
+        secret_sent = False
+        signing_secret: str | None = None
 
         desired_adapter_name = (
             request.webhook.adapter_name
@@ -941,6 +987,12 @@ async def update_source(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail=f"Unknown adapter: {desired_adapter_name}",
                 )
+            if "config" in webhook_fields:
+                # Absent "secret" keeps the stored secret; a value replaces it
+                # and an empty one clears it, after the resubscribe below.
+                ws.config, secret_sent, signing_secret = _split_webhook_secret(
+                    request.webhook.config, adapter
+                )
             if desired_integration_id is not None:
                 if await db.get(Integration, desired_integration_id) is None:
                     raise HTTPException(
@@ -958,6 +1010,8 @@ async def update_source(
             # a provider failure on the new subscribe leaves the DB
             # untouched (no ORM attribute is mutated before that call).
             await _resubscribe_webhook_on_change(db, source, ws, adapter, desired_integration_id)
+            if secret_sent:
+                ws.state = with_signing_secret(ws.state, signing_secret)
 
         ws.adapter_name = desired_adapter_name
         ws.integration_id = desired_integration_id
@@ -1069,6 +1123,59 @@ async def resubscribe_source(
             detail="Event source not found after resubscription",
         )
     return await _build_event_source_response(source, db)
+
+
+@router.post(
+    "/sources/{source_id}/rotate-secret",
+    response_model=EventSourceSecretResponse,
+    summary="Rotate a webhook source's signing secret",
+    description=(
+        "Replace the HMAC signing secret with a supplied or generated one. The "
+        "response returns the new secret once, in raw_secret; no later call "
+        "returns it (Platform admin only)."
+    ),
+)
+async def rotate_source_secret(
+    source_id: UUID,
+    request: WebhookSecretRotate,
+    ctx: Context,
+    user: CurrentSuperuser,
+    db: DbSession,
+) -> EventSourceSecretResponse:
+    """Set a new signing secret on a webhook source.
+
+    No Solution bundle carries the secret, and deploy keeps the stored one, so
+    Solution-managed sources may rotate it too.
+    """
+    repo = EventSourceRepository(db)
+    source = await repo.get_by_id_with_details(source_id)
+    if not source:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Event source not found",
+        )
+    ws = source.webhook_source
+    adapter = get_adapter_registry().get(ws.adapter_name) if ws else None
+    if ws is None or adapter is None or not uses_signing_secret(adapter):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only webhook sources whose adapter verifies a signing secret can rotate it",
+        )
+
+    signing_secret = request.secret or generate_signing_secret()
+    ws.state = with_signing_secret(ws.state, signing_secret)
+    ws.updated_at = datetime.now(timezone.utc)
+    await db.flush()
+
+    await emit_audit(
+        db,
+        "event_source.rotate_secret",
+        resource_type="event_source",
+        resource_id=source.id,
+        details={"name": source.name, "generated": request.secret is None},
+    )
+
+    return await _build_event_source_secret_response(source, db, signing_secret)
 
 
 @router.delete(

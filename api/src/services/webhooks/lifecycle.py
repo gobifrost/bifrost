@@ -11,6 +11,7 @@ from src.services.webhooks.auth import (
     resolve_webhook_integration_auth,
 )
 from src.services.webhooks.registry import get_adapter_registry
+from src.services.webhooks.signing_secret import carry_signing_secret
 
 
 async def _resolve_integration(
@@ -79,7 +80,8 @@ async def resubscribe_provider(
         raise
 
     webhook.external_id = None
-    webhook.state = {}
+    # The signing secret belongs to the source, not the provider registration.
+    webhook.state = carry_signing_secret(webhook.state, {})
     webhook.expires_at = None
     webhook.updated_at = datetime.now(timezone.utc)
     await db.commit()
@@ -97,7 +99,7 @@ async def resubscribe_provider(
         raise
 
     webhook.external_id = result.external_id
-    webhook.state = result.state
+    webhook.state = carry_signing_secret(webhook.state, result.state)
     webhook.expires_at = result.expires_at
     webhook.updated_at = datetime.now(timezone.utc)
     source.error_message = None

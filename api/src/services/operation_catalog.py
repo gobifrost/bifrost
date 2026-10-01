@@ -3043,7 +3043,7 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
             method="POST",
             path="/api/events/sources",
             request_model="EventSourceCreate",
-            response_model="EventSourceResponse",
+            response_model="EventSourceSecretResponse",
         ),
         cli=CliOperationBinding(path=("events", "create-source")),
         mcp=McpOperationBinding(name="bifrost_event_source_create"),
