@@ -232,8 +232,8 @@ class TestBifrostFileSearch:
 
         calls = []
 
-        async def fake_call_rest(ctx, method, path, **kw):
-            calls.append((method, path, kw["json"]))
+        async def fake_call_rest(ctx, method, path, *, json_body=None, params=None):
+            calls.append((method, path, json_body))
             return 200, _PAGE
 
         monkeypatch.setattr(code_editor, "call_rest", fake_call_rest)
@@ -255,20 +255,22 @@ class TestBifrostFileSearch:
 
         page = {**_PAGE, "output_mode": "files", "matches": [], "files": [
             {"file_path": "a.py", "match_count": 4, "first_line": 2, "source": {"kind": "workspace", "editable": True}},
+            {"file_path": "b.py", "match_count": 1, "first_line": 9, "source": {"kind": "workspace", "editable": True}},
         ]}
 
-        async def fake_call_rest(ctx, method, path, **kw):
+        async def fake_call_rest(ctx, method, path, *, json_body=None, params=None):
             return 200, page
 
         monkeypatch.setattr(code_editor, "call_rest", fake_call_rest)
         result = await code_editor.bifrost_file_search(platform_admin_context, query="x", output_mode="files")
         assert "a.py (4 matches, first at line 2)" in get_result_text(result)
+        assert "b.py (1 match, first at line 9)" in get_result_text(result)
 
     @pytest.mark.asyncio
     async def test_rest_rejection_is_a_tool_error(self, platform_admin_context, monkeypatch):
         from src.services.mcp_server.tools import code_editor
 
-        async def fake_call_rest(ctx, method, path, **kw):
+        async def fake_call_rest(ctx, method, path, *, json_body=None, params=None):
             return 400, {"detail": "cursor does not belong to this search"}
 
         monkeypatch.setattr(code_editor, "call_rest", fake_call_rest)

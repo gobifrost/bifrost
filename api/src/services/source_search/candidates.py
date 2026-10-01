@@ -1,10 +1,13 @@
 """SQL candidate paging over the workspace and Solution source indexes.
 
-Candidates come back in deterministic ``(rank, scope, path)`` byte order so a
-keyset cursor can resume exactly. Literal queries are prefiltered in SQL
-(accelerated by the optional pg_trgm GIN index); regex queries scan every
-in-scope row. Content is fetched in size-bounded chunks so memory stays small
-however large the index is.
+Candidates come back in ``(rank, scope, path)`` order — the workspace first,
+then each Solution install — so a keyset cursor can resume exactly. Each scope
+is paged by its own primary key (``path``, then ``(solution_id, path)``) in
+the database's collation, which lets PostgreSQL walk the index in order and
+stop after a page instead of scanning and sorting every match. Literal queries
+are prefiltered in SQL (accelerated by the optional pg_trgm GIN index); regex
+queries scan every in-scope row. Content is fetched in size-bounded chunks so
+memory stays small however large the index is.
 """
 
 from __future__ import annotations
@@ -14,7 +17,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from uuid import UUID
 
-from sqlalchemy import String, cast, func, literal, null, select, tuple_, union_all
+from sqlalchemy import func, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.path_glob import glob_literal_prefix, glob_matches
@@ -40,51 +43,78 @@ def _escape_like(value: str) -> str:
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
-def _content_filter(column, request: SearchRequest):
-    if request.is_regex:
-        return None
-    pattern = f"%{_escape_like(request.query)}%"
-    if request.case_sensitive:
-        return column.like(pattern, escape="\\")
-    return column.ilike(pattern, escape="\\")
-
-
-def _branches(request: SearchRequest):
-    prefix = glob_literal_prefix(request.include_pattern) if request.include_pattern else ""
-    branches = []
-    if request.source in ("all", "workspace") and request.solution_id is None:
-        ws = select(
-            literal(0).label("rank"),
-            literal("").label("scope"),
-            FileIndex.path.label("path"),
-            func.octet_length(FileIndex.content).label("size"),
-            cast(null(), String).label("slug"),
-        ).where(FileIndex.content.isnot(None))
-        if (cond := _content_filter(FileIndex.content, request)) is not None:
-            ws = ws.where(cond)
-        if prefix:
-            ws = ws.where(FileIndex.path.like(_escape_like(prefix) + "%", escape="\\"))
-        branches.append(ws)
-    if request.source in ("all", "solutions"):
-        sol = (
-            select(
-                literal(1).label("rank"),
-                cast(SolutionFileIndex.solution_id, String).label("scope"),
-                SolutionFileIndex.path.label("path"),
-                func.octet_length(SolutionFileIndex.content).label("size"),
-                Solution.slug.label("slug"),
-            )
-            .join(Solution, Solution.id == SolutionFileIndex.solution_id)
-            .where(SolutionFileIndex.content.isnot(None))
+def _filters(content_col, path_col, request: SearchRequest) -> list:
+    conds = [content_col.isnot(None)]
+    if not request.is_regex:
+        pattern = f"%{_escape_like(request.query)}%"
+        conds.append(
+            content_col.like(pattern, escape="\\")
+            if request.case_sensitive
+            else content_col.ilike(pattern, escape="\\")
         )
-        if request.solution_id is not None:
-            sol = sol.where(SolutionFileIndex.solution_id == request.solution_id)
-        if (cond := _content_filter(SolutionFileIndex.content, request)) is not None:
-            sol = sol.where(cond)
-        if prefix:
-            sol = sol.where(SolutionFileIndex.path.like(_escape_like(prefix) + "%", escape="\\"))
-        branches.append(sol)
-    return branches
+    prefix = glob_literal_prefix(request.include_pattern) if request.include_pattern else ""
+    if prefix:
+        conds.append(path_col.like(_escape_like(prefix) + "%", escape="\\"))
+    return conds
+
+
+def _wanted(path: str, include: re.Pattern[str] | None) -> bool:
+    return not is_excluded_path(path) and (include is None or glob_matches(include, path))
+
+
+async def _workspace_pages(
+    db: AsyncSession, request: SearchRequest, after: str, inclusive: bool
+) -> AsyncIterator[list[tuple[int, str, str, int, str | None]]]:
+    conds = _filters(FileIndex.content, FileIndex.path, request)
+    while True:
+        bound = FileIndex.path >= after if inclusive else FileIndex.path > after
+        page = (
+            await db.execute(
+                select(FileIndex.path, func.octet_length(FileIndex.content))
+                .where(*conds, bound)
+                .order_by(FileIndex.path)
+                .limit(CANDIDATE_PAGE)
+            )
+        ).tuples().all()
+        if not page:
+            return
+        yield [(0, "", path, size or 0, None) for path, size in page]
+        if len(page) < CANDIDATE_PAGE:
+            return
+        after, inclusive = page[-1][0], False
+
+
+async def _solution_pages(
+    db: AsyncSession, request: SearchRequest, after: tuple[UUID, str] | None, inclusive: bool
+) -> AsyncIterator[list[tuple[int, str, str, int, str | None]]]:
+    conds = _filters(SolutionFileIndex.content, SolutionFileIndex.path, request)
+    if request.solution_id is not None:
+        conds.append(SolutionFileIndex.solution_id == request.solution_id)
+    slugs: dict[UUID, str] = {}
+    key = tuple_(SolutionFileIndex.solution_id, SolutionFileIndex.path)
+    while True:
+        stmt = select(
+            SolutionFileIndex.solution_id,
+            SolutionFileIndex.path,
+            func.octet_length(SolutionFileIndex.content),
+        ).where(*conds)
+        if after is not None:
+            stmt = stmt.where(key >= tuple_(*after) if inclusive else key > tuple_(*after))
+        page = (
+            await db.execute(
+                stmt.order_by(SolutionFileIndex.solution_id, SolutionFileIndex.path).limit(CANDIDATE_PAGE)
+            )
+        ).tuples().all()
+        if not page:
+            return
+        missing = {sid for sid, _path, _size in page} - slugs.keys()
+        if missing:
+            result = await db.execute(select(Solution.id, Solution.slug).where(Solution.id.in_(missing)))
+            slugs.update(result.tuples().all())
+        yield [(1, str(sid), path, size or 0, slugs.get(sid)) for sid, path, size in page]
+        if len(page) < CANDIDATE_PAGE:
+            return
+        after, inclusive = (page[-1][0], page[-1][1]), False
 
 
 async def _fetch_contents(
@@ -120,43 +150,29 @@ async def iter_candidates(
     include: re.Pattern[str] | None,
 ) -> AsyncIterator[Candidate]:
     """Yield in-scope files with content, in cursor order, starting at ``start``."""
-    branches = _branches(request)
-    if not branches:
-        return
-    union = union_all(*branches).subquery() if len(branches) > 1 else branches[0].subquery()
-    key = tuple_(union.c.rank, union.c.scope.collate("C"), union.c.path.collate("C"))
-    position, inclusive = start, True
-    while True:
-        bound = tuple_(literal(position[0]), literal(position[1]), literal(position[2]))
-        page = (
-            await db.execute(
-                select(union.c.rank, union.c.scope, union.c.path, union.c.size, union.c.slug)
-                .where(key >= bound if inclusive else key > bound)
-                .order_by(union.c.rank, union.c.scope.collate("C"), union.c.path.collate("C"))
-                .limit(CANDIDATE_PAGE)
-            )
-        ).tuples().all()
-        if not page:
-            return
-        position, inclusive = (page[-1][0], page[-1][1], page[-1][2]), False
-        wanted = [
-            row for row in page
-            if not is_excluded_path(row[2]) and (include is None or glob_matches(include, row[2]))
-        ]
-        chunk: list[tuple[int, str, str, str | None]] = []
-        chunk_bytes = 0
-        for rank, scope, path, size, slug in wanted:
-            if chunk and chunk_bytes + (size or 0) > CONTENT_CHUNK_BYTES:
+    rank, scope, path = start
+    sources = []
+    if request.source in ("all", "workspace") and request.solution_id is None and rank == 0:
+        sources.append(_workspace_pages(db, request, path, inclusive=True))
+    if request.source in ("all", "solutions"):
+        sol_start = (UUID(scope), path) if rank == 1 else None
+        sources.append(_solution_pages(db, request, sol_start, inclusive=True))
+    for pages in sources:
+        async for page in pages:
+            chunk: list[tuple[int, str, str, str | None]] = []
+            chunk_bytes = 0
+            for row_rank, row_scope, row_path, size, slug in page:
+                if not _wanted(row_path, include):
+                    continue
+                if chunk and chunk_bytes + size > CONTENT_CHUNK_BYTES:
+                    async for cand in _emit(db, chunk):
+                        yield cand
+                    chunk, chunk_bytes = [], 0
+                chunk.append((row_rank, row_scope, row_path, slug))
+                chunk_bytes += size
+            if chunk:
                 async for cand in _emit(db, chunk):
                     yield cand
-                chunk, chunk_bytes = [], 0
-            chunk.append((rank, scope, path, slug))
-            chunk_bytes += size or 0
-        if chunk:
-            async for cand in _emit(db, chunk):
-                yield cand
-        if len(page) < CANDIDATE_PAGE:
-            return
 
 
 async def _emit(

@@ -362,7 +362,7 @@ async def bifrost_file_search(
     if cursor is not None:
         body["cursor"] = cursor
 
-    status_code, page = await call_rest(context, "POST", "/api/files/search", json=body)
+    status_code, page = await call_rest(context, "POST", "/api/files/search", json_body=body)
     if status_code != 200 or not isinstance(page, dict):
         detail = page.get("detail") if isinstance(page, dict) else page
         return error_result(f"bifrost_file_search failed: HTTP {status_code}: {detail}", {"body": page})
@@ -377,7 +377,9 @@ async def bifrost_file_search(
     if page["output_mode"] == "files":
         for hit in page["files"]:
             path, suffix = where(hit)
-            lines.append(f"{path} ({hit['match_count']} matches, first at line {hit['first_line']}){suffix}")
+            count = hit["match_count"]
+            noun = "match" if count == 1 else "matches"
+            lines.append(f"{path} ({count} {noun}, first at line {hit['first_line']}){suffix}")
     else:
         for m in page["matches"]:
             path, suffix = where(m)

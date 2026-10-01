@@ -408,6 +408,10 @@ def _search_header(item: dict) -> str:
     return item["file_path"]
 
 
+def _matches(count: int) -> str:
+    return f"{count} match{'' if count == 1 else 'es'}"
+
+
 def _next_page_command(query: str, flags: list[str], cursor: str) -> str:
     return shlex.join(["bifrost", "files", "search", query, *flags, "--cursor", cursor])
 
@@ -416,7 +420,7 @@ def _render_search(page: dict, query: str, flags: list[str]) -> None:
     if page["output_mode"] == "files":
         for hit in page["files"]:
             click.echo(
-                f"{_search_header(hit)}  ({hit['match_count']} matches, first at line {hit['first_line']})"
+                f"{_search_header(hit)}  ({_matches(hit['match_count'])}, first at line {hit['first_line']})"
             )
     else:
         current = None

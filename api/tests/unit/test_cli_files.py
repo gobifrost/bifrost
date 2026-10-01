@@ -401,6 +401,13 @@ class TestSearch:
         assert "a.py  (3 matches, first at line 7)" in result.output
         assert "1 result — complete." in result.output
 
+    def test_files_mode_singular_match(self) -> None:
+        page = _search_page(
+            files=[{"file_path": "b.py", "match_count": 1, "first_line": 2, "source": _WS}], mode="files",
+        )
+        result = _invoke(["search", "x", "--files"], {}, {"/api/files/search": page})
+        assert "b.py  (1 match, first at line 2)" in result.output
+
     def test_json_output_is_the_raw_page(self) -> None:
         result = _invoke(["search", "x", "--json"], {}, {"/api/files/search": _search_page(cursor=None)})
         assert result.exit_code == 0, result.output

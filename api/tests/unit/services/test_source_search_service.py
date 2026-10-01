@@ -127,3 +127,28 @@ async def test_cursor_from_other_filters_is_invalid(db_session):
     first = await search_source(db_session, SearchRequest(query=tok, limit=1))
     with pytest.raises(InvalidSearchRequest, match="does not belong"):
         await search_source(db_session, SearchRequest(query=tok, limit=1, is_regex=True, cursor=first.next_cursor))
+
+
+@pytest.mark.asyncio
+async def test_cursor_crosses_from_workspace_into_each_solution_exactly_once(db_session):
+    tok = _token()
+    solutions = [Solution(id=uuid4(), slug=f"x{n}-{tok.lower()}", name="cross") for n in range(2)]
+    db_session.add_all(solutions)
+    await db_session.flush()
+    await _seed(db_session, {f"ss/{tok}/w{i}.txt": tok for i in range(2)})
+    for sol in solutions:
+        for i in range(2):
+            body = f"{tok}\n".encode()
+            await FileIndexService(db_session).index_solution(sol.id, f"f{i}.py", body, hashlib.sha256(body).hexdigest())
+
+    seen, cursor = [], None
+    while True:
+        page = await search_source(db_session, SearchRequest(query=tok, limit=1, cursor=cursor))
+        seen += [(m.source.solution_slug, m.file_path) for m in page.matches]
+        if page.response_complete:
+            break
+        cursor = page.next_cursor
+    ordered = sorted(solutions, key=lambda s: s.id)
+    assert seen == [(None, f"ss/{tok}/w0.txt"), (None, f"ss/{tok}/w1.txt")] + [
+        (sol.slug, f"f{i}.py") for sol in ordered for i in range(2)
+    ]
