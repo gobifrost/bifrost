@@ -324,6 +324,48 @@ class TestAgentBindingsDeploy:
         )).scalars().all()
         assert wf_id in tool_wf_ids, "agent tool binding dropped on deploy"
 
+    async def test_delegation_to_a_later_bundle_agent_deploys(self, db_session):
+        from src.models.orm.agents import AgentDelegation
+        from sqlalchemy import select as _select
+
+        db = db_session
+        sol = Solution(id=uuid.uuid4(), slug=f"dg-{uuid.uuid4().hex[:8]}", name="DG", organization_id=None)
+        db.add(sol)
+        await db.flush()
+
+        parent, child = str(uuid.uuid4()), str(uuid.uuid4())
+        await SolutionDeployer(db).deploy(SolutionBundle(
+            solution=sol,
+            agents=[
+                {"id": parent, "name": "parent", "system_prompt": "hi", "delegated_agent_ids": [child]},
+                {"id": child, "name": "child", "system_prompt": "hi"},
+            ],
+        ))
+        await db.flush()
+
+        children = (await db.execute(
+            _select(AgentDelegation.child_agent_id).where(
+                AgentDelegation.parent_agent_id == solution_entity_id(sol.id, uuid.UUID(parent))
+            )
+        )).scalars().all()
+        assert children == [solution_entity_id(sol.id, uuid.UUID(child))]
+
+    async def test_delegation_to_an_unknown_agent_fails_deploy(self, db_session):
+        db = db_session
+        sol = Solution(id=uuid.uuid4(), slug=f"du-{uuid.uuid4().hex[:8]}", name="DU", organization_id=None)
+        db.add(sol)
+        await db.flush()
+
+        missing = str(uuid.uuid4())
+        with pytest.raises(SolutionDeployConflict, match=missing):
+            await SolutionDeployer(db).deploy(SolutionBundle(
+                solution=sol,
+                agents=[{
+                    "id": str(uuid.uuid4()), "name": "parent", "system_prompt": "hi",
+                    "delegated_agent_ids": [missing],
+                }],
+            ))
+
 
 @pytest.mark.e2e
 class TestAgentScalarAndMCPDeploy:
