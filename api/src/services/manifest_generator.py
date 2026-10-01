@@ -542,8 +542,7 @@ async def generate_manifest(
     # Event sources + subscriptions
     # ------------------------------------------------------------------
     event_source_result = await db.execute(
-        select(EventSource)
-        .where(*export_criteria(EventSource))
+        _scope(select(EventSource).where(*export_criteria(EventSource)), EventSource)
         .order_by(EventSource.name)
     )
     event_sources_list = event_source_result.scalars().unique().all()
@@ -562,8 +561,10 @@ async def generate_manifest(
 
     # Subscriptions keyed by event_source_id
     sub_result = await db.execute(
-        select(EventSubscription)
-        .where(*export_criteria(EventSubscription))
+        _scope(
+            select(EventSubscription).where(*export_criteria(EventSubscription)),
+            EventSubscription,
+        )
         .order_by(EventSubscription.event_source_id, EventSubscription.workflow_id)
     )
     subs_by_source: dict[str, list[EventSubscription]] = {}

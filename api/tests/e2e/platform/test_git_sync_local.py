@@ -6310,6 +6310,56 @@ class TestDeletionSweepMatchesExport:
         assert not removed & excluded_ids
         assert str(exported_agent.id) in removed
 
+    async def test_workspace_export_omits_solution_owned_events(
+        self,
+        db_session: AsyncSession,
+    ):
+        """A Solution's event source subscribes a Solution workflow the workspace
+        manifest excludes, so exporting it would fail manifest validation."""
+        from bifrost.manifest import validate_manifest
+        from src.models.orm.events import EventSource, EventSubscription
+        from src.models.orm.solutions import Solution
+        from src.services.manifest_generator import generate_manifest
+        from src.services.manifest_import import ManifestResolver
+
+        suffix = uuid4().hex[:8]
+        solution = Solution(
+            id=uuid4(), slug=f"git-sync-events-{suffix}", name="Events guard",
+            organization_id=None,
+        )
+        db_session.add(solution)
+        await db_session.flush()
+        wf = Workflow(
+            id=uuid4(), name="Solution WF", function_name="solution_wf",
+            path=f"workflows/solution_events_{suffix}.py", is_active=True,
+            solution_id=solution.id,
+        )
+        source = EventSource(
+            id=uuid4(), name=f"solution-events-{suffix}", source_type="schedule",
+            is_active=True, created_by="test", solution_id=solution.id,
+        )
+        db_session.add_all([wf, source])
+        await db_session.flush()
+        sub = EventSubscription(
+            id=uuid4(), event_source_id=source.id, workflow_id=wf.id,
+            is_active=True, created_by="test", solution_id=solution.id,
+        )
+        db_session.add(sub)
+        await db_session.flush()
+
+        try:
+            manifest = await generate_manifest(db_session)
+            changes = await ManifestResolver(db_session)._resolve_deletions(
+                manifest=manifest, dry_run=True,
+            )
+        finally:
+            await db_session.rollback()
+
+        assert str(source.id) not in manifest.events
+        assert not [error for error in validate_manifest(manifest) if str(wf.id) in error]
+        removed = {c.entity_id for c in changes if c.action == "removed"}
+        assert not removed & {str(source.id), str(sub.id)}
+
 
 @pytest.mark.e2e
 @pytest.mark.asyncio
