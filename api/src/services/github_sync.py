@@ -105,6 +105,11 @@ class WorkspacePlanStale(SyncError):
     pass
 
 
+class WorkspaceSourceMissing(SyncError):
+    """The incoming workspace is empty, so applying it would delete every workspace entity."""
+    pass
+
+
 class GitConnectPreviewError(SyncError):
     """A first-connect preview is unavailable, expired, or not owned by this caller."""
 
@@ -145,6 +150,21 @@ def _delete_keys(changes: list) -> set[tuple[str, str]]:
 # =============================================================================
 # Helpers
 # =============================================================================
+
+
+def _manifest_is_empty(manifest: Manifest) -> bool:
+    """True when a manifest declares no entities at all."""
+    return not (get_all_entity_ids(manifest) or manifest.organizations or manifest.roles)
+
+
+def _has_workspace_files(root: Path) -> bool:
+    """True when the tree holds any file outside Git internals and .bifrost/."""
+    for entry in root.iterdir():
+        if entry.name in (".git", ".bifrost"):
+            continue
+        if entry.is_file() or any(path.is_file() for path in entry.rglob("*")):
+            return True
+    return False
 
 
 def _workspace_fingerprint(root: Path) -> str:
@@ -1076,6 +1096,13 @@ class GitHubSyncService:
             self._resolver.configs_touched = configs_touched_before
             self.db.expire_all()
         pending_removals = [change for change in pending_deletes if change.action != "keep"]
+        if pending_removals and _manifest_is_empty(read_manifest_from_dir(work_dir / ".bifrost")):
+            raise WorkspaceSourceMissing(
+                "Sync refused: the repository has no .bifrost/ manifest, or its manifest "
+                f"lists no entities, so applying it would delete {len(pending_removals)} "
+                "workspace entities. Nothing was changed. Restore the .bifrost/ manifest "
+                "in the repository, then sync again."
+            )
         return WorkspaceSyncPlan(
             base_sha=base_sha,
             merge_sha=merge_sha,
@@ -1643,8 +1670,28 @@ class GitHubSyncService:
         Returns count of entities imported.
         """
         async with self.repo_manager.checkout() as work_dir:
+            storage_is_empty = not _has_workspace_files(work_dir)
+
             # Regenerate manifest from current DB state
             await self._regenerate_manifest_to_dir(self.db, work_dir)
+
+            # The regenerated manifest drops entities whose files are missing,
+            # so empty storage would otherwise delete every file-backed entity.
+            if storage_is_empty:
+                removals = [
+                    change
+                    for change in await self._resolver._resolve_deletions(
+                        work_dir=work_dir, dry_run=True,
+                    )
+                    if change.action != "keep"
+                ]
+                if removals:
+                    raise WorkspaceSourceMissing(
+                        "Reimport refused: workspace storage has no workspace files, so "
+                        f"reimporting would delete {len(removals)} workspace entities. "
+                        "Nothing was changed. Restore the workspace files (for example "
+                        "with a git sync), then reimport again."
+                    )
 
             # Import entities atomically with savepoint
             async with self.db.begin_nested():

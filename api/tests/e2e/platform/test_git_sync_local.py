@@ -6184,6 +6184,66 @@ class TestDeleteConfirmation:
 
 @pytest.mark.e2e
 @pytest.mark.asyncio
+class TestMissingManifestGuard:
+    """A source with no workspace manifest must never become a delete-everything plan."""
+
+    async def test_sync_refuses_remote_without_manifest(
+        self,
+        db_session: AsyncSession,
+        sync_service,
+        bare_repo,
+        working_clone,
+    ):
+        wf_id = uuid4()
+        db_session.add(Workflow(
+            id=wf_id,
+            name="Missing Manifest Guard",
+            function_name="git_sync_test_wf",
+            path="workflows/git_sync_test_guard.py",
+            is_active=True,
+        ))
+        await db_session.commit()
+
+        clone_dir = Path(working_clone.working_dir)
+        (clone_dir / "workflows").mkdir(exist_ok=True)
+        (clone_dir / "workflows" / "git_sync_test_guard.py").write_text(SAMPLE_WORKFLOW_PY)
+        working_clone.index.add(["workflows/git_sync_test_guard.py"])
+        working_clone.index.commit("Remote without .bifrost/")
+        working_clone.remotes.origin.push("main")
+
+        result = await sync_service.desktop_sync(confirm_deletes=True)
+
+        assert result.success is False
+        assert "Nothing was changed" in (result.error or "")
+        db_session.expire_all()
+        assert await db_session.get(Workflow, wf_id) is not None
+
+    async def test_reimport_refuses_empty_workspace_storage(
+        self,
+        db_session: AsyncSession,
+        sync_service,
+    ):
+        from src.services.github_sync import WorkspaceSourceMissing
+
+        wf_id = uuid4()
+        db_session.add(Workflow(
+            id=wf_id,
+            name="Empty Storage Guard",
+            function_name="git_sync_test_wf",
+            path="workflows/git_sync_test_reimport_guard.py",
+            is_active=True,
+        ))
+        await db_session.commit()
+
+        with pytest.raises(WorkspaceSourceMissing, match="Nothing was changed"):
+            await sync_service.reimport_from_repo()
+
+        db_session.expire_all()
+        assert await db_session.get(Workflow, wf_id) is not None
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
 class TestSolutionFilesManifestRoundTrip:
     """Task 22: solution_files manifest + import round-trip (files + sha256 match).
 
