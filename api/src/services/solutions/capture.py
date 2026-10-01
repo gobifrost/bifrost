@@ -205,12 +205,38 @@ class SolutionCaptureService:
         EventSubscription rows so they too become managed. Child schedule/webhook
         rows are owned transitively via their EventSource FK cascade — no
         ``solution_id`` of their own.
+
+        When the source itself is newly adopted, all its subscriptions come
+        with it. Re-capturing a source this install already owns adopts only
+        the unmanaged subscriptions that target one of this install's own
+        workflows/agents — an operator's external listener (a workspace
+        workflow subscribed to the Solution's source) stays external, which is
+        what deploy relies on to leave it alone.
         """
+        already_owned = set(
+            (
+                await self.db.execute(
+                    select(EventSource.id).where(
+                        EventSource.id.in_(list(dict.fromkeys(ids))),
+                        EventSource.solution_id == solution.id,
+                    )
+                )
+            ).scalars().all()
+        )
         await self._capture_model(EventSource, solution, ids)
+        own_workflows = select(Workflow.id).where(Workflow.solution_id == solution.id)
+        own_agents = select(Agent.id).where(Agent.solution_id == solution.id)
         for source_id in dict.fromkeys(ids):
+            criteria = [EventSubscription.event_source_id == source_id]
+            if source_id in already_owned:
+                criteria += [
+                    EventSubscription.solution_id.is_(None),
+                    EventSubscription.workflow_id.in_(own_workflows)
+                    | EventSubscription.agent_id.in_(own_agents),
+                ]
             await self.db.execute(
                 update(EventSubscription)
-                .where(EventSubscription.event_source_id == source_id)
+                .where(*criteria)
                 .values(solution_id=solution.id)
             )
 
@@ -474,7 +500,10 @@ class SolutionCaptureService:
             subs = (
                 await self.db.execute(
                     select(EventSubscription).where(
-                        EventSubscription.event_source_id == es.id
+                        EventSubscription.event_source_id == es.id,
+                        # Only this install's managed subscriptions travel;
+                        # external listeners on the source are instance-local.
+                        EventSubscription.solution_id == solution_id,
                     )
                 )
             ).scalars().all()
