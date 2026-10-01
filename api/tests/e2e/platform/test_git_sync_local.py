@@ -268,6 +268,8 @@ async def sync_service(db_session: AsyncSession, bare_repo, tmp_path):
     service.repo_manager.checkpoint_workspace = checkpoint_workspace  # type: ignore[assignment]
     service.repo_manager.restore_workspace_checkpoint = restore_workspace_checkpoint  # type: ignore[assignment]
     service.repo_manager.delete_workspace_checkpoint = delete_workspace_checkpoint  # type: ignore[assignment]
+    # The simulated storage is the persistent dir itself, so it is never stale.
+    service.repo_manager.ensure_storage_unchanged = AsyncMock()  # type: ignore[assignment]
     service._sync_up_calls = sync_up_calls  # type: ignore[attr-defined]
     # Patch the module-level PERSISTENT_WORK_DIR so is_initialized checks the test dir
     import src.services.git_repo_manager as grm_mod
@@ -426,6 +428,13 @@ async def cleanup_test_data(db_session: AsyncSession):
     )
     await db_session.execute(
         delete(Table).where(Table.created_by == "git-sync")
+    )
+    # Policy rules imported by TestPolicyRuleRoundTrip. A leftover rule is a
+    # workspace entity, so a later first Git connection would refuse to sync.
+    from src.models.orm.policy_rule import PolicyRule
+
+    await db_session.execute(
+        delete(PolicyRule).where(PolicyRule.name.in_(["ops_read_only", "ops_access"]))
     )
 
     # Clean up orgs and roles last (entities FK into these)
@@ -6240,6 +6249,154 @@ class TestMissingManifestGuard:
 
         db_session.expire_all()
         assert await db_session.get(Workflow, wf_id) is not None
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+class TestDeletionSweepMatchesExport:
+    """The deletion sweep only considers rows the workspace export would write."""
+
+    async def test_sweep_never_removes_rows_the_export_excludes(
+        self,
+        db_session: AsyncSession,
+    ):
+        from bifrost.manifest import get_all_entity_ids
+        from src.models.orm.agents import Agent
+        from src.models.orm.applications import Application
+        from src.models.orm.events import EventSource, EventSubscription
+        from src.services.manifest_generator import generate_manifest
+        from src.services.manifest_import import ManifestResolver
+
+        suffix = uuid4().hex[:8]
+        wf = Workflow(
+            id=uuid4(), name="Sweep WF", function_name="sweep_wf",
+            path=f"workflows/git_sync_test_sweep_{suffix}.py", is_active=True,
+        )
+        active_source = EventSource(
+            id=uuid4(), name=f"sweep-active-{suffix}", source_type="schedule",
+            is_active=True, created_by="test",
+        )
+        excluded = [
+            Agent(
+                id=uuid4(), name=f"sweep-inactive-{suffix}", system_prompt="x",
+                channels=["chat"], is_active=False, created_by="test",
+            ),
+            Application(
+                id=uuid4(), name="Independent V2", slug=f"sweep-v2-{suffix}",
+                repo_path=None,
+            ),
+            EventSource(
+                id=uuid4(), name=f"sweep-inactive-{suffix}", source_type="schedule",
+                is_active=False, created_by="test",
+            ),
+        ]
+        db_session.add_all([wf, active_source, *excluded])
+        await db_session.flush()
+        inactive_sub = EventSubscription(
+            id=uuid4(), event_source_id=active_source.id, workflow_id=wf.id,
+            is_active=False, created_by="test",
+        )
+        exported_agent = Agent(
+            id=uuid4(), name=f"sweep-active-{suffix}", system_prompt="x",
+            channels=["chat"], is_active=True, created_by="test",
+        )
+        db_session.add_all([inactive_sub, exported_agent])
+        await db_session.flush()
+        excluded_ids = {str(row.id) for row in [*excluded, inactive_sub]}
+
+        try:
+            manifest = await generate_manifest(db_session)
+            assert not excluded_ids & get_all_entity_ids(manifest)
+            # Removing an exported row from the manifest still sweeps it.
+            del manifest.agents[str(exported_agent.id)]
+            changes = await ManifestResolver(db_session)._resolve_deletions(
+                manifest=manifest, dry_run=True,
+            )
+        finally:
+            await db_session.rollback()
+
+        removed = {c.entity_id for c in changes if c.action == "removed"}
+        assert not removed & excluded_ids
+        assert str(exported_agent.id) in removed
+
+    async def test_workspace_export_omits_solution_owned_events(
+        self,
+        db_session: AsyncSession,
+    ):
+        """A Solution's event source subscribes a Solution workflow the workspace
+        manifest excludes, so exporting it would fail manifest validation."""
+        from bifrost.manifest import validate_manifest
+        from src.models.orm.events import EventSource, EventSubscription
+        from src.models.orm.solutions import Solution
+        from src.services.manifest_generator import generate_manifest
+        from src.services.manifest_import import ManifestResolver
+
+        suffix = uuid4().hex[:8]
+        solution = Solution(
+            id=uuid4(), slug=f"git-sync-events-{suffix}", name="Events guard",
+            organization_id=None,
+        )
+        db_session.add(solution)
+        await db_session.flush()
+        wf = Workflow(
+            id=uuid4(), name="Solution WF", function_name="solution_wf",
+            path=f"workflows/solution_events_{suffix}.py", is_active=True,
+            solution_id=solution.id,
+        )
+        source = EventSource(
+            id=uuid4(), name=f"solution-events-{suffix}", source_type="schedule",
+            is_active=True, created_by="test", solution_id=solution.id,
+        )
+        db_session.add_all([wf, source])
+        await db_session.flush()
+        sub = EventSubscription(
+            id=uuid4(), event_source_id=source.id, workflow_id=wf.id,
+            is_active=True, created_by="test", solution_id=solution.id,
+        )
+        db_session.add(sub)
+        await db_session.flush()
+
+        try:
+            manifest = await generate_manifest(db_session)
+            changes = await ManifestResolver(db_session)._resolve_deletions(
+                manifest=manifest, dry_run=True,
+            )
+        finally:
+            await db_session.rollback()
+
+        assert str(source.id) not in manifest.events
+        assert not [error for error in validate_manifest(manifest) if str(wf.id) in error]
+        removed = {c.entity_id for c in changes if c.action == "removed"}
+        assert not removed & {str(source.id), str(sub.id)}
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+class TestReimportNonDestructive:
+    """Maintenance Reimport imports, but leaves deletions to a confirmed git sync."""
+
+    async def test_reimport_reports_missing_entities_instead_of_deleting(
+        self,
+        db_session: AsyncSession,
+        sync_service,
+    ):
+        kept_path = "workflows/git_sync_test_reimport_kept.py"
+        write_entity_to_repo(sync_service._persistent_dir, kept_path, SAMPLE_WORKFLOW_PY)
+        missing_id = uuid4()
+        db_session.add(Workflow(
+            id=missing_id,
+            name="Reimport Missing File",
+            function_name="git_sync_test_wf",
+            path="workflows/git_sync_test_reimport_missing.py",
+            is_active=True,
+        ))
+        await db_session.commit()
+
+        result = await sync_service.reimport_from_repo()
+
+        db_session.expire_all()
+        assert await db_session.get(Workflow, missing_id) is not None
+        assert str(missing_id) in {change.entity_id for change in result.pending_deletes}
 
 
 @pytest.mark.e2e

@@ -13,10 +13,13 @@ Environment variables required:
 - GITHUB_TEST_REPO: Repository to test against (default: jackmusick/e2e-test-workspace)
 """
 
+import asyncio
 import logging
 import os
+import tempfile
 import time
 from collections.abc import Generator
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -177,6 +180,39 @@ def github_test_branch(
         # Don't fail - branch may already be deleted or cleanup isn't critical
 
 
+async def _publish_workspace_manifest() -> None:
+    """Write the manifest git sync would export for the current DB into storage.
+
+    Production entity writes keep ``_repo/.bifrost/`` current. Earlier tests
+    insert rows directly, so without this a first connection would see entities
+    the workspace manifest never declares.
+    """
+    from src.config import get_settings
+    from src.core.database import close_db, get_db_context
+    from src.services.git_repo_manager import GitRepoManager
+    from src.services.github_sync import GitHubSyncService
+    from src.services.repo_storage import RepoStorage
+
+    storage = RepoStorage(get_settings())
+    try:
+        with tempfile.TemporaryDirectory(prefix="e2e-workspace-manifest-") as raw:
+            work_dir = Path(raw)
+            await GitRepoManager(get_settings()).sync_down(work_dir)
+            async with get_db_context() as db:
+                await GitHubSyncService._regenerate_manifest_to_dir(db, work_dir)
+            generated = {
+                f".bifrost/{path.name}": path.read_bytes()
+                for path in (work_dir / ".bifrost").iterdir()
+            }
+        for path in await storage.list(".bifrost/"):
+            if path not in generated:
+                await storage.delete(path)
+        for path, content in generated.items():
+            await storage.write(path, content)
+    finally:
+        await close_db()
+
+
 def _wait_for_platform_job(
     e2e_client,
     headers: dict,
@@ -232,6 +268,7 @@ def github_configured(e2e_client, platform_admin, github_test_branch):
     assert response.status_code == 200, f"Token validation failed: {response.text}"
 
     # Step 2: Review and reconcile the first connection.
+    asyncio.run(_publish_workspace_manifest())
     repo_url = f"https://github.com/{config['repo']}.git"
     response = e2e_client.post(
         "/api/github/connect/preview",
@@ -264,13 +301,15 @@ def github_configured(e2e_client, platform_admin, github_test_branch):
         platform_admin.headers,
         response.json()["job_id"],
     )
-    # Earlier tests may have created workspace entities absent from the test
-    # repository. A reviewed connect then correctly pauses for delete approval;
+    # The published manifest declares every entity, so only a file-backed row
+    # whose file is missing from storage (left by an earlier test) can still
+    # be pending deletion. The connect then correctly pauses for approval;
     # this fixture must not delete another test's data to complete setup.
     assert job["status"] in {"succeeded", "requires_action"}, job
     if job["status"] == "requires_action":
         assert job["result"]["needs_delete_confirmation"] is True, job
-        assert job["result"]["pending_deletes"], job
+        pending_types = {change["entity_type"] for change in job["result"]["pending_deletes"]}
+        assert pending_types and pending_types <= {"workflows", "applications"}, job
     logger.info("GitHub connection job reached %s", job["status"])
 
     yield {**config, "connect_job": job}

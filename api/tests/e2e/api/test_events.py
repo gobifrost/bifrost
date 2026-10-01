@@ -1394,6 +1394,9 @@ class TestTopicEmitEndpoints:
 
     def test_topics_registry_requires_platform_admin(self, e2e_client, org1_user):
         """GET /api/events/topics lists topics across organizations, so it is admin-only."""
+        # e2e_client is session-scoped and keeps the access_token cookie of the
+        # last user a fixture authenticated, which may be a platform admin.
+        e2e_client.cookies.clear()
         anonymous = e2e_client.get("/api/events/topics")
         assert anonymous.status_code in (401, 403), anonymous.text
         regular = e2e_client.get("/api/events/topics", headers=org1_user.headers)

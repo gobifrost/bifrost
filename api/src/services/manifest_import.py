@@ -1545,6 +1545,7 @@ class ManifestResolver:
         from src.models.orm.tables import Table
         from src.models.orm.users import Role
         from src.models.orm.workflows import Workflow
+        from src.services.manifest_generator import export_criteria
 
         if manifest is None:
             if work_dir:
@@ -1712,15 +1713,31 @@ class ManifestResolver:
                 )
             return len(stale_ids)
 
+        # Every sweep below is limited to the rows the manifest export would
+        # have written (export_criteria), so a row the export leaves out is
+        # never mistaken for one removed from the repo.
+
         # Delete subscriptions before workflows. Workflow deletion cascades to
         # subscriptions; preview and dry-run revalidation must see the same
-        # explicit deletion set as the real apply phase.
-        await _bulk_delete(EventSubscription, [], present_sub_uuids, "event_subscriptions")
+        # explicit deletion set as the real apply phase. Subscriptions are
+        # exported only under an exported source.
+        exported_sources = select(EventSource.id).where(
+            *export_criteria(EventSource), EventSource.solution_id.is_(None)
+        )
+        await _bulk_delete(
+            EventSubscription,
+            [
+                *export_criteria(EventSubscription),
+                EventSubscription.event_source_id.in_(exported_sources),
+            ],
+            present_sub_uuids,
+            "event_subscriptions",
+        )
 
         # Delete workflows synced from git that are no longer present
         await _bulk_delete(
             Workflow,
-            [Workflow.is_active == True, Workflow.path.isnot(None)],  # noqa: E712
+            [*export_criteria(Workflow), Workflow.path.isnot(None)],
             present_wf_uuids,
             "workflows",
         )
@@ -1728,7 +1745,7 @@ class ManifestResolver:
         # Delete integrations not in manifest
         await _bulk_delete(
             Integration,
-            [Integration.is_deleted == False],  # noqa: E712
+            export_criteria(Integration),
             present_integ_uuids,
             "integrations",
         )
@@ -1802,27 +1819,31 @@ class ManifestResolver:
 
         await _bulk_delete(
             PolicyRuleOrm,
-            [PolicyRuleOrm.is_builtin == False],  # noqa: E712
+            export_criteria(PolicyRuleOrm),
             present_policy_rule_uuids,
             "policy_rules",
         )
 
         # Delete event sources not in manifest
-        await _bulk_delete(EventSource, [], present_event_uuids, "events")
+        await _bulk_delete(
+            EventSource, export_criteria(EventSource), present_event_uuids, "events"
+        )
 
         # Delete forms not in manifest
         await _bulk_delete(
             Form,
-            [Form.is_active == True],  # noqa: E712
+            export_criteria(Form),
             present_form_uuids,
             "forms",
         )
 
         # Delete agents not in manifest
-        await _bulk_delete(Agent, [], present_agent_uuids, "agents")
+        await _bulk_delete(Agent, export_criteria(Agent), present_agent_uuids, "agents")
 
         # Delete apps not in manifest
-        await _bulk_delete(Application, [], present_app_uuids, "applications")
+        await _bulk_delete(
+            Application, export_criteria(Application), present_app_uuids, "applications"
+        )
 
         # External MCP cleanup. Delete leaves first, then connections, then
         # servers — although CASCADE FKs on the schema make later deletes

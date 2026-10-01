@@ -38,7 +38,7 @@ from src.jobs.platform.git_operation import (
     GIT_OPERATION_DEFINITION,
     GitOperationPayload,
     WORKSPACE_MUTATION_RESOURCE_LOCK_KEY,
-    _authenticated_clone_url,
+    _github_remote_url,
 )
 from src.models.contracts.github import (
     GitConnectPreview,
@@ -47,6 +47,7 @@ from src.models.contracts.github import (
 )
 from src.models.contracts.platform_jobs import PlatformJobAccepted, PlatformJobStatus
 from src.models.orm.platform_jobs import PlatformJob
+from src.services.git_repo_manager import GitRepoManager
 from src.services.github_api import GitHubAPIClient, GitHubAPIError
 from src.services.github_config import (
     delete_github_config,
@@ -57,6 +58,7 @@ from src.services.github_sync import (
     GitConnectDecisionError,
     GitConnectPreviewError,
     GitHubSyncService,
+    redact_token,
     resolve_connect_items,
 )
 from src.services.platform_jobs import (
@@ -548,6 +550,7 @@ async def disconnect_github(
 ) -> dict:
     """Disconnect GitHub integration."""
     try:
+        await GitRepoManager().remove_stored_credentials()
         await delete_github_config(db, ctx.org_id)
 
         logger.info("GitHub integration disconnected")
@@ -681,8 +684,9 @@ async def preview_git_connect(
     repository_url = _normalize_connect_repository_url(body.repository_url)
     service = GitHubSyncService(
         db,
-        repo_url=_authenticated_clone_url(config, repository_url),
+        repo_url=_github_remote_url(config, repository_url),
         branch=body.branch,
+        token=config.token,
     )
     try:
         return await service.preview_connect(
@@ -692,7 +696,10 @@ async def preview_git_connect(
             organization_id=str(ctx.org_id) if ctx.org_id else None,
         )
     except GitConnectPreviewError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=redact_token(str(exc), config.token),
+        ) from exc
 
 
 @router.post(

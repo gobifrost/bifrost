@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import pytest
 
-from src.services.git_repo_manager import GitRepoManager
+from src.services.git_repo_manager import GitRepoManager, WorkspaceStorageChanged
 
 
 @pytest.fixture
@@ -160,7 +160,8 @@ class TestSyncDown:
 
     @pytest.mark.asyncio
     async def test_calls_aws_sync_with_correct_args(self, manager, tmp_path):
-        with patch.object(manager, "_run_aws_cli", new_callable=AsyncMock) as mock_run:
+        with patch.object(manager, "_run_aws_cli", new_callable=AsyncMock) as mock_run, \
+             patch.object(manager, "_storage_fingerprint", AsyncMock(return_value="fp")):
             await manager.sync_down(tmp_path)
             mock_run.assert_awaited_once()
             cmd = mock_run.call_args[0][0]
@@ -168,12 +169,15 @@ class TestSyncDown:
             assert cmd[3] == "s3://bifrost-local/_repo/"
             assert cmd[4] == str(tmp_path)
             assert "--delete" in cmd
+            # Same-size S3 edits must still replace an older local copy.
+            assert "--exact-timestamps" in cmd
 
     @pytest.mark.asyncio
     async def test_creates_target_dir(self, manager):
         import tempfile
         target = Path(tempfile.mkdtemp()) / "subdir"
-        with patch.object(manager, "_run_aws_cli", new_callable=AsyncMock):
+        with patch.object(manager, "_run_aws_cli", new_callable=AsyncMock), \
+             patch.object(manager, "_storage_fingerprint", AsyncMock(return_value="fp")):
             await manager.sync_down(target)
             assert target.exists()
         # Cleanup
@@ -186,7 +190,8 @@ class TestSyncUp:
 
     @pytest.mark.asyncio
     async def test_calls_aws_sync_with_delete(self, manager, tmp_path):
-        with patch.object(manager, "_run_aws_cli", new_callable=AsyncMock) as mock_run:
+        with patch.object(manager, "_run_aws_cli", new_callable=AsyncMock) as mock_run, \
+             patch.object(manager, "_storage_fingerprint", AsyncMock(return_value="fp")):
             await manager.sync_up(tmp_path)
             mock_run.assert_awaited_once()
             cmd = mock_run.call_args[0][0]
@@ -194,6 +199,131 @@ class TestSyncUp:
             assert cmd[3] == str(tmp_path)
             assert cmd[4] == "s3://bifrost-local/_repo/"
             assert "--delete" in cmd
+
+
+class TestStorageBaseline:
+    """A working dir is only trusted while S3 _repo/ still matches its last sync."""
+
+    @pytest.mark.asyncio
+    async def test_sync_down_trusts_the_listing_taken_before_transfer(self, manager, tmp_path):
+        (tmp_path / ".git").mkdir()
+        fingerprints = iter(["before-transfer", "after-transfer"])
+
+        async def fingerprint():
+            return next(fingerprints)
+
+        with patch.object(manager, "_run_aws_cli", new_callable=AsyncMock), \
+             patch.object(manager, "_storage_fingerprint", side_effect=fingerprint):
+            await manager.sync_down(tmp_path)
+            # A write that landed during the transfer must not be trusted.
+            with pytest.raises(WorkspaceStorageChanged, match="Run Fetch"):
+                await manager.ensure_storage_unchanged(tmp_path, "main")
+
+    @pytest.mark.asyncio
+    async def test_sync_up_trusts_the_listing_taken_after_transfer(self, manager, tmp_path):
+        (tmp_path / ".git").mkdir()
+        with patch.object(manager, "_run_aws_cli", new_callable=AsyncMock), \
+             patch.object(manager, "_storage_fingerprint", AsyncMock(return_value="fp")):
+            await manager.sync_up(tmp_path)
+            await manager.ensure_storage_unchanged(tmp_path, "main")
+
+    @pytest.mark.asyncio
+    async def test_working_dir_without_a_baseline_is_refused(self, manager, tmp_path):
+        (tmp_path / ".git").mkdir()
+        with patch.object(manager, "_storage_fingerprint", AsyncMock(return_value="fp")):
+            with pytest.raises(WorkspaceStorageChanged, match="Nothing was changed"):
+                await manager.ensure_storage_unchanged(tmp_path, "main")
+
+    @pytest.mark.asyncio
+    async def test_failed_transfer_leaves_no_baseline(self, manager, tmp_path):
+        (tmp_path / ".git").mkdir()
+        with patch.object(manager, "_storage_fingerprint", AsyncMock(return_value="fp")), \
+             patch.object(manager, "_run_aws_cli", AsyncMock(return_value=None)):
+            await manager.sync_up(tmp_path)
+        with patch.object(manager, "_storage_fingerprint", AsyncMock(return_value="fp")), \
+             patch.object(manager, "_run_aws_cli", AsyncMock(side_effect=RuntimeError("boom"))):
+            with pytest.raises(RuntimeError):
+                await manager.sync_up(tmp_path)
+            with pytest.raises(WorkspaceStorageChanged):
+                await manager.ensure_storage_unchanged(tmp_path, "main")
+
+
+class TestRefusalNamesUnsyncedWork:
+    """Fetch mirrors S3 over the working dir, so the refusal names what it discards."""
+
+    @staticmethod
+    def _repo(path: Path):
+        from git import Repo
+
+        repo = Repo.init(str(path), initial_branch="main")
+        with repo.config_writer() as config:
+            config.set_value("user", "name", "Test")
+            config.set_value("user", "email", "test@example.com")
+        return repo
+
+    @staticmethod
+    def _commit(repo, name: str, content: str, message: str) -> None:
+        (Path(repo.working_dir) / name).write_text(content)
+        repo.index.add([name])
+        repo.index.commit(message)
+
+    async def _refusal(self, manager, work_dir: Path) -> str:
+        with patch.object(manager, "_storage_fingerprint", AsyncMock(return_value="fp")):
+            with pytest.raises(WorkspaceStorageChanged) as error:
+                await manager.ensure_storage_unchanged(work_dir, "main")
+        message = str(error.value)
+        assert "Nothing was changed" in message
+        return message
+
+    @pytest.mark.asyncio
+    async def test_no_warning_when_everything_is_synced(self, manager, tmp_path):
+        repo = self._repo(tmp_path)
+        self._commit(repo, "a.txt", "a", "published")
+        repo.git.update_ref("refs/remotes/origin/main", repo.head.commit.hexsha)
+
+        message = await self._refusal(manager, tmp_path)
+
+        assert "You have" not in message
+
+    @pytest.mark.asyncio
+    async def test_names_local_commits_not_yet_synced(self, manager, tmp_path):
+        repo = self._repo(tmp_path)
+        self._commit(repo, "a.txt", "a", "published")
+        repo.git.update_ref("refs/remotes/origin/main", repo.head.commit.hexsha)
+        self._commit(repo, "b.txt", "b", "local only")
+
+        message = await self._refusal(manager, tmp_path)
+
+        assert "You have 1 local commit not yet synced" in message
+        assert "redo it" in message
+
+    @pytest.mark.asyncio
+    async def test_counts_every_commit_when_never_fetched(self, manager, tmp_path):
+        repo = self._repo(tmp_path)
+        self._commit(repo, "a.txt", "a", "first")
+        self._commit(repo, "b.txt", "b", "second")
+
+        message = await self._refusal(manager, tmp_path)
+
+        assert "You have 2 local commits not yet synced" in message
+
+    @pytest.mark.asyncio
+    async def test_names_an_unfinished_merge(self, manager, tmp_path):
+        from git import GitCommandError
+
+        repo = self._repo(tmp_path)
+        self._commit(repo, "a.txt", "base", "base")
+        repo.create_head("other")
+        self._commit(repo, "a.txt", "ours", "ours")
+        repo.heads.other.checkout()
+        self._commit(repo, "a.txt", "theirs", "theirs")
+        repo.heads.main.checkout()
+        with pytest.raises(GitCommandError):
+            repo.git.merge("other")
+
+        message = await self._refusal(manager, tmp_path)
+
+        assert "You have an unfinished merge with conflict resolutions" in message
 
 
 class TestCheckout:

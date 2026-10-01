@@ -11,6 +11,7 @@ Key principles:
 5. Preflight validates repo health (syntax, lint, refs, orphans)
 """
 
+import base64
 import hashlib
 import logging
 import shutil
@@ -18,7 +19,7 @@ import subprocess
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Mapping
+from typing import TYPE_CHECKING, Any, Literal, Mapping
 from uuid import uuid4
 
 import yaml
@@ -29,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import Settings, get_settings
 from src.models.contracts.github import (
+    EntityChange,
     GitConnectItem,
     GitConnectPreview,
     GitConnectRequest,
@@ -135,6 +137,13 @@ class _GitConnectPreviewRecord(BaseModel):
     items: list[GitConnectItem]
 
 
+class ReimportResult(BaseModel):
+    """Outcome of a Maintenance Reimport, which imports but never deletes."""
+
+    entities_imported: int
+    pending_deletes: list[EntityChange]
+
+
 def _delete_keys(changes: list) -> set[tuple[str, str]]:
     """Return the stable identities that a deletion confirmation authorizes."""
     keys = {
@@ -150,6 +159,37 @@ def _delete_keys(changes: list) -> set[tuple[str, str]]:
 # =============================================================================
 # Helpers
 # =============================================================================
+
+
+def _git_auth_env(token: str | None) -> dict[str, str]:
+    """Per-command git environment that sends the GitHub token without persisting it.
+
+    The token travels as an HTTP header that git reads from its environment
+    (GIT_CONFIG_*), so it is never written into .git/config, which is mirrored
+    to workspace storage and into retry checkpoints.
+    """
+    if not token:
+        return {}
+    credentials = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+    return {
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
+        "GIT_CONFIG_VALUE_0": f"Authorization: Basic {credentials}",
+        "GIT_TERMINAL_PROMPT": "0",
+    }
+
+
+def redact_token(value: Any, token: str | None) -> Any:
+    """Replace the token in every string of a JSON-shaped result or message."""
+    if not token:
+        return value
+    if isinstance(value, str):
+        return value.replace(token, "***")
+    if isinstance(value, dict):
+        return {key: redact_token(item, token) for key, item in value.items()}
+    if isinstance(value, list):
+        return [redact_token(item, token) for item in value]
+    return value
 
 
 def _manifest_is_empty(manifest: Manifest) -> bool:
@@ -300,9 +340,13 @@ class GitHubSyncService:
         repo_url: str,
         branch: str = "main",
         settings: Settings | None = None,
+        token: str | None = None,
     ):
         self.db = db
+        # A credential-free URL: it is written into .git/config. The token
+        # reaches git only through _git_env.
         self.repo_url = repo_url
+        self._git_env = _git_auth_env(token)
         self.branch = branch
         self.repo_manager = GitRepoManager(settings or get_settings())
         self._resolver = ManifestResolver(db)
@@ -311,11 +355,12 @@ class GitHubSyncService:
     def _connect_preview_key(token: str) -> str:
         return f"{_GIT_CONNECT_PREVIEW_KEY_PREFIX}{token}"
 
-    @staticmethod
-    def _clone_connect_remote(destination: Path, repository_url: str, branch: str) -> GitRepo | None:
+    def _clone_connect_remote(self, destination: Path, repository_url: str, branch: str) -> GitRepo | None:
         """Clone the reviewed remote branch, treating an empty remote as an empty tree."""
         try:
-            repo = GitRepo.clone_from(repository_url, str(destination), branch=branch)
+            repo = GitRepo.clone_from(
+                repository_url, str(destination), branch=branch, env=self._git_env,
+            )
         except Exception as exc:
             message = str(exc).lower()
             if "empty repository" in message:
@@ -328,7 +373,9 @@ class GitHubSyncService:
                 if destination.exists():
                     shutil.rmtree(destination)
                 try:
-                    fallback = GitRepo.clone_from(repository_url, str(destination))
+                    fallback = GitRepo.clone_from(
+                        repository_url, str(destination), env=self._git_env,
+                    )
                 except Exception as fallback_exc:
                     if "empty repository" in str(fallback_exc).lower():
                         return None
@@ -451,6 +498,7 @@ class GitHubSyncService:
         shutil.copy2(source, destination)
 
     def _configure_connect_repo(self, repo: GitRepo) -> None:
+        repo.git.update_environment(**self._git_env)
         if "origin" in [remote.name for remote in repo.remotes]:
             repo.remotes.origin.set_url(self.repo_url)
         else:
@@ -1062,6 +1110,7 @@ class GitHubSyncService:
 
         try:
             async with self.repo_manager.lock() as work_dir:
+                await self.repo_manager.ensure_storage_unchanged(work_dir, self.branch)
                 repo = self._open_or_init(work_dir)
                 return await self._do_commit(work_dir, repo, message)
         except Exception as e:
@@ -1273,6 +1322,7 @@ class GitHubSyncService:
 
         try:
             async with self.repo_manager.lock() as work_dir:
+                await self.repo_manager.ensure_storage_unchanged(work_dir, self.branch)
                 if retry_plan and retry_plan.db_applied:
                     if not retry_plan.checkpoint_id:
                         raise SyncError("Publication retry is missing its workspace checkpoint")
@@ -1419,6 +1469,7 @@ class GitHubSyncService:
 
         try:
             async with self.repo_manager.lock() as work_dir:
+                await self.repo_manager.ensure_storage_unchanged(work_dir, self.branch)
                 repo = self._open_or_init(work_dir)
                 discarded = []
 
@@ -1462,12 +1513,15 @@ class GitHubSyncService:
         """Open existing .git/ or clone fresh. Ensure remote URL and user identity are set."""
         if (work_dir / ".git").exists():
             repo = GitRepo(str(work_dir))
+            # Also rewrites a remote that an earlier release stored with the
+            # token embedded in its URL.
             if "origin" in [r.name for r in repo.remotes]:
                 repo.remotes.origin.set_url(self.repo_url)
             else:
                 repo.create_remote("origin", self.repo_url)
         else:
             repo = self._clone_or_init(work_dir)
+        repo.git.update_environment(**self._git_env)
 
         # Ensure git user identity is configured (needed for merge/commit)
         with repo.config_writer() as cw:
@@ -1516,7 +1570,6 @@ class GitHubSyncService:
 
         Returns tuple of (count of entities resolved, list of entity changes).
         """
-        from src.models.contracts.github import EntityChange
         from src.services.manifest_generator import generate_manifest
         from src.services.manifest_import import _diff_and_collect
 
@@ -1661,13 +1714,15 @@ class GitHubSyncService:
     # Reimport from repo (no git operations)
     # -----------------------------------------------------------------
 
-    async def reimport_from_repo(self) -> int:
+    async def reimport_from_repo(self) -> ReimportResult:
         """Re-import all entities from S3 _repo/ without git operations.
 
         Downloads the working tree from S3, imports entities into DB,
         updates file_index, and syncs app previews.
 
-        Returns count of entities imported.
+        Reimport never deletes. Entities whose files are missing from storage
+        are returned as ``pending_deletes``; removing them goes through a git
+        sync, which asks for confirmation.
         """
         async with self.repo_manager.checkout() as work_dir:
             storage_is_empty = not _has_workspace_files(work_dir)
@@ -1675,28 +1730,25 @@ class GitHubSyncService:
             # Regenerate manifest from current DB state
             await self._regenerate_manifest_to_dir(self.db, work_dir)
 
-            # The regenerated manifest drops entities whose files are missing,
-            # so empty storage would otherwise delete every file-backed entity.
-            if storage_is_empty:
-                removals = [
-                    change
-                    for change in await self._resolver._resolve_deletions(
-                        work_dir=work_dir, dry_run=True,
-                    )
-                    if change.action != "keep"
-                ]
-                if removals:
-                    raise WorkspaceSourceMissing(
-                        "Reimport refused: workspace storage has no workspace files, so "
-                        f"reimporting would delete {len(removals)} workspace entities. "
-                        "Nothing was changed. Restore the workspace files (for example "
-                        "with a git sync), then reimport again."
-                    )
+            # The regenerated manifest drops entities whose files are missing.
+            pending_deletes = [
+                change
+                for change in await self._resolver._resolve_deletions(
+                    work_dir=work_dir, dry_run=True,
+                )
+                if change.action != "keep"
+            ]
+            if storage_is_empty and pending_deletes:
+                raise WorkspaceSourceMissing(
+                    "Reimport refused: workspace storage has no workspace files, but "
+                    f"{len(pending_deletes)} workspace entities expect files there. "
+                    "Nothing was changed. Restore the workspace files (for example "
+                    "with a git sync), then reimport again."
+                )
 
             # Import entities atomically with savepoint
             async with self.db.begin_nested():
                 count, _changes = await self._import_all_entities(work_dir)
-                await self._resolver._resolve_deletions(work_dir=work_dir)
                 await self._update_file_index(work_dir)
             await self.db.commit()
 
@@ -1707,8 +1759,11 @@ class GitHubSyncService:
             # Sync app preview files
             await self._sync_app_previews(work_dir)
 
-            logger.info(f"Reimport complete: {count} entities")
-            return count
+            logger.info(
+                f"Reimport complete: {count} entities, "
+                f"{len(pending_deletes)} pending deletions kept"
+            )
+            return ReimportResult(entities_imported=count, pending_deletes=pending_deletes)
 
     # -----------------------------------------------------------------
     # Internal: git operations
@@ -1732,6 +1787,7 @@ class GitHubSyncService:
                     self.repo_url,
                     str(clone_dir),
                     branch=self.branch,
+                    env=self._git_env,
                 )
                 # Move .git/ to the target
                 shutil.move(str(clone_dir / ".git"), str(target / ".git"))

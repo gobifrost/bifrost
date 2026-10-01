@@ -38,3 +38,34 @@ async def test_reimport_reports_missing_workspace_source_as_structured_failure(
     assert error.value.code == "workspace_source_missing"
     assert error.value.message == message
     assert error.value.retryable is False
+
+
+@pytest.mark.asyncio
+async def test_reimport_reports_kept_deletions_in_its_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.models.contracts.github import EntityChange
+    from src.services.github_sync import ReimportResult
+
+    @asynccontextmanager
+    async def fake_db_context():
+        yield SimpleNamespace()
+
+    pending = EntityChange(
+        action="removed", entity_type="workflows", name="Old Workflow", entity_id="wf-1",
+    )
+    monkeypatch.setattr("src.jobs.platform.reimport.get_db_context", fake_db_context)
+    monkeypatch.setattr(
+        "src.services.github_sync.GitHubSyncService.reimport_from_repo",
+        AsyncMock(return_value=ReimportResult(entities_imported=3, pending_deletes=[pending])),
+    )
+
+    result = await run_workspace_reimport(
+        SimpleNamespace(report=AsyncMock(), log=AsyncMock()),
+        WorkspaceReimportPayload(),
+    )
+
+    assert result["entities_imported"] == 3
+    assert [change["entity_id"] for change in result["pending_deletes"]] == ["wf-1"]
+    assert "Old Workflow" in result["message"]
+    assert "git sync" in result["message"]

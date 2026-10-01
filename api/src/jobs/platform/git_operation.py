@@ -23,6 +23,7 @@ from src.services.github_sync import (
     GitConnectPreviewError,
     GitConnectPreviewStale,
     GitHubSyncService,
+    redact_token,
 )
 
 
@@ -37,14 +38,14 @@ class GitOperationPayload(BaseModel):
     options: dict[str, Any] = Field(default_factory=dict)
 
 
-def _authenticated_clone_url(config: Any, repository_url: str | None = None) -> str:
-    """Build the authenticated GitHub remote without exposing it to callers."""
+def _github_remote_url(config: Any, repository_url: str | None = None) -> str:
+    """Build the credential-free GitHub remote; the token is passed to git separately."""
     repo = repository_url or config.repo_url
     if not repo:
         raise ValueError("repository URL is required")
     if repo.startswith("https://github.com/"):
         repo = repo.removeprefix("https://github.com/").removesuffix(".git")
-    return f"https://x-access-token:{config.token}@github.com/{repo}.git"
+    return f"https://github.com/{repo}.git"
 
 
 async def _report(
@@ -154,25 +155,32 @@ async def run_git_operation(
                     "github_already_configured",
                     "GitHub is already connected; disconnect it before first-connect reconciliation.",
                 )
-            service_url = _authenticated_clone_url(config, preview.repository_url)
+            service_url = _github_remote_url(config, preview.repository_url)
             service_branch = preview.branch
         else:
             if not config.repo_url:
                 raise PlatformJobFailure("github_not_configured", "GitHub is not configured.")
-            service_url = _authenticated_clone_url(config)
+            service_url = _github_remote_url(config)
             service_branch = config.branch
         service = GitHubSyncService(
             db=db,
             repo_url=service_url,
             branch=service_branch,
             settings=get_settings(),
+            token=config.token,
         )
         try:
-            result = await dispatch_git_operation(service, payload, context)
+            result = redact_token(
+                await dispatch_git_operation(service, payload, context), config.token
+            )
         except GitConnectPreviewStale as exc:
-            raise PlatformJobFailure("git_connect_plan_stale", str(exc)) from exc
+            raise PlatformJobFailure(
+                "git_connect_plan_stale", redact_token(str(exc), config.token)
+            ) from exc
         except GitConnectDecisionError as exc:
-            raise PlatformJobFailure("git_connect_decision_invalid", str(exc)) from exc
+            raise PlatformJobFailure(
+                "git_connect_decision_invalid", redact_token(str(exc), config.token)
+            ) from exc
         if payload.operation == "connect" and (
             result.get("success") or result.get("requires_action")
         ):
