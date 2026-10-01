@@ -1941,13 +1941,18 @@ class SolutionDeployer:
 
         Each entry is a ManifestEventSource-shaped dict (flat schedule/webhook
         config + nested ``subscriptions``). For each: guard ownership, full-replace
-        the source row + its child schedule/webhook row + its subscriptions, all
-        via Core statements (the always-on read-only guard rejects ORM-object
+        the source row + its child schedule/webhook row + the subscriptions THIS
+        install manages (``solution_id == sid``), all via Core statements (the always-on read-only guard rejects ORM-object
         mutation of managed rows — Core insert/update/delete is the contract).
         Subscription ``workflow_id``/``agent_id`` were already remapped by
         ``_remapped_bundle``; webhook instance secrets are absent (capture scrubs
         them) so the install starts the webhook from a clean, unauthenticated
         shell the operator re-establishes.
+
+        Subscriptions an operator added to a Solution-owned source outside the
+        Solution (``solution_id IS NULL`` — e.g. a workspace workflow listening
+        to the Solution's topic or schedule) are NOT this deploy's to manage:
+        they survive every redeploy and only go away with the source itself.
         """
         from src.models.enums import ScheduleOverlapPolicy
 
@@ -1959,10 +1964,13 @@ class SolutionDeployer:
             source_id = UUID(str(mevent["id"]))
             await self._guard_owner(EventSource, source_id, sid)
 
-            # Full-replace children + subs for a clean idempotent redeploy.
+            # Full-replace children + this install's managed subs for a clean
+            # idempotent redeploy. External (non-managed) subscriptions on the
+            # source are left alone.
             await self.db.execute(
                 delete(EventSubscription).where(
-                    EventSubscription.event_source_id == source_id
+                    EventSubscription.event_source_id == source_id,
+                    EventSubscription.solution_id == sid,
                 )
             )
             await self.db.execute(
@@ -2040,9 +2048,13 @@ class SolutionDeployer:
             for msub in mevent.get("subscriptions") or []:
                 sub_workflow = msub.get("workflow_id")
                 sub_agent = msub.get("agent_id")
+                sub_id = UUID(str(msub["id"])) if msub.get("id") else uuid4()
+                # Managed subs were deleted above, so a surviving row with this
+                # id belongs to someone else — refuse rather than hijack it.
+                await self._guard_owner(EventSubscription, sub_id, sid)
                 await self.db.execute(
                     insert(EventSubscription).values(
-                        id=UUID(str(msub["id"])) if msub.get("id") else uuid4(),
+                        id=sub_id,
                         event_source_id=source_id,
                         workflow_id=UUID(str(sub_workflow)) if sub_workflow else None,
                         agent_id=UUID(str(sub_agent)) if sub_agent else None,

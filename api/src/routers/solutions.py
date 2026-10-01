@@ -2114,6 +2114,28 @@ async def get_solution_deletion_summary(
 
     file_entries = await enumerate_solution_files(ctx.db, solution_id)
 
+    # Operator-created subscriptions (solution_id IS NULL) are not owned, but
+    # the hard-delete still cascades them away through the install's sources,
+    # workflows, or agents. Surface them so the confirmation doesn't undercount.
+    external_subs = (
+        await ctx.db.execute(
+            select(func.count())
+            .select_from(EventSubscription)
+            .where(
+                EventSubscription.solution_id.is_(None),
+                EventSubscription.event_source_id.in_(
+                    select(EventSource.id).where(EventSource.solution_id == solution_id)
+                )
+                | EventSubscription.workflow_id.in_(
+                    select(Workflow.id).where(Workflow.solution_id == solution_id)
+                )
+                | EventSubscription.agent_id.in_(
+                    select(Agent.id).where(Agent.solution_id == solution_id)
+                ),
+            )
+        )
+    ).scalar_one()
+
     return SolutionDeletionSummary(
         solution_id=solution_id,
         files=len(file_entries),
@@ -2125,6 +2147,7 @@ async def get_solution_deletion_summary(
         claims=await _count(CustomClaim),
         config_declarations=await _count(SolutionConfigSchema),
         events=await _count(EventSource) + await _count(EventSubscription),
+        external_event_subscriptions=external_subs,
     )
 
 

@@ -287,6 +287,7 @@ beforeEach(() => {
 		claims: 1,
 		config_declarations: 2,
 		events: 0,
+		external_event_subscriptions: 0,
 	});
 	mockGetSolutionCaptureCandidates.mockResolvedValue({
 		workflows: [],
@@ -1190,6 +1191,9 @@ describe("SolutionDetail", () => {
 		expect(summaryList).toHaveTextContent(/2 files/);
 		expect(summaryList).toHaveTextContent(/1 table/);
 		expect(summaryList).toHaveTextContent(/3 workflows/);
+		expect(
+			screen.queryByTestId("deletion-summary-external-listeners"),
+		).toBeNull();
 
 		expect(screen.getByTestId("hard-delete-slug")).toHaveTextContent(
 			"my-solution",
@@ -1209,6 +1213,34 @@ describe("SolutionDetail", () => {
 		await user.clear(input);
 		await user.type(input, "my-solution");
 		expect(confirmBtn).not.toBeDisabled();
+	});
+
+	it("warns about external listeners the hard-delete will also remove", async () => {
+		mockGetSolutionDeletionSummary.mockResolvedValue({
+			solution_id: "sol-1",
+			files: 0,
+			tables: 0,
+			workflows: 1,
+			apps: 0,
+			forms: 0,
+			agents: 0,
+			claims: 0,
+			config_declarations: 0,
+			events: 2,
+			external_event_subscriptions: 3,
+		});
+		const { user } = await renderPage();
+		await screen.findByTestId("solution-detail");
+
+		await user.click(screen.getByTestId("solution-actions"));
+		await user.click(await screen.findByTestId("hard-delete-solution"));
+
+		const warning = await screen.findByTestId(
+			"deletion-summary-external-listeners",
+		);
+		expect(warning).toHaveTextContent(
+			/3 external listeners outside this Solution will also be removed/,
+		);
 	});
 
 	it("calls deleteSolution with confirm=slug and navigates away on hard-delete", async () => {
