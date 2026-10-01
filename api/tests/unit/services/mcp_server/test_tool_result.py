@@ -8,7 +8,6 @@ from src.services.mcp_server.tool_result import (
     error_result,
     format_diff,
     format_file_content,
-    format_grep_matches,
     success_result,
 )
 
@@ -57,20 +56,6 @@ class TestErrorResult:
         result = error_result("Failed", {"code": 500})
         assert result.structured_content["error"] == "Failed"
         assert result.structured_content["code"] == 500
-
-
-class TestFormatGrepMatches:
-    def test_formats_matches(self):
-        matches = [
-            {"path": "file.py", "line_number": 10, "match": "def foo():"},
-        ]
-        result = format_grep_matches(matches, "def")
-        assert "Found 1 match for 'def'" in result
-        assert "file.py:10: def foo():" in result
-
-    def test_handles_empty_matches(self):
-        result = format_grep_matches([], "pattern")
-        assert "No matches found" in result
 
 
 class TestFormatDiff:

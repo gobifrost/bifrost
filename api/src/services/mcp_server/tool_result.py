@@ -73,33 +73,6 @@ def error_result(error_message: str, extra_data: dict[str, Any] | None = None) -
     )
 
 
-def format_grep_matches(matches: list[dict[str, Any]], pattern: str) -> str:
-    """
-    Format search results in grep style (file:line: match).
-
-    This format is recognized by Claude Code for automatic syntax highlighting.
-
-    Args:
-        matches: List of match dicts with path, line_number, match keys
-        pattern: The search pattern (for display in header)
-
-    Returns:
-        Grep-style formatted string
-    """
-    if not matches:
-        return f"No matches found for pattern: {pattern}"
-
-    count_word = "match" if len(matches) == 1 else "matches"
-    lines = [f"Found {len(matches)} {count_word} for '{pattern}'", ""]
-
-    for m in matches:
-        # Format: path:line: match_content (grep style)
-        match_text = m.get("match", "").strip()
-        lines.append(f"{m['path']}:{m['line_number']}: {match_text}")
-
-    return "\n".join(lines)
-
-
 def format_diff(path: str, old_lines: list[str], new_lines: list[str]) -> str:
     """
     Format changes in diff style.

@@ -11,7 +11,7 @@ All files are accessed via their path in the file_index / S3 _repo/ store.
 
 These tools mirror Claude Code's precision editing workflow:
 1. list_content - List files, optionally filtered by path prefix
-2. search_content - Find code with regex
+2. bifrost_file_search - Paged grep over workspace + Solution source (REST wrapper)
 3. read_content_lines - Read specific line ranges
 4. get_content - Full content read (fallback)
 5. patch_content - Surgical old->new replacement
@@ -20,24 +20,21 @@ These tools mirror Claude Code's precision editing workflow:
 """
 
 import logging
-import re
 from dataclasses import dataclass
 from typing import Any
 
 from fastmcp.tools import ToolResult
-from sqlalchemy import select
 
 from src.services.mcp_server.tools.db import get_tool_db
-from src.models.orm.file_index import FileIndex
 from src.services.file_storage import FileStorageService
 from src.services.repo_storage import RepoStorage
 from src.services.mcp_server.tool_result import (
     error_result,
     format_diff,
     format_file_content,
-    format_grep_matches,
     success_result,
 )
+from src.services.mcp_server.tools._http_bridge import call_rest
 from src.services.mcp_server.tools._org_scope import mcp_write_scope_bypass
 
 
@@ -141,22 +138,6 @@ MAX_CONTENT_CHARS = 100_000  # ~100KB, similar to Claude Code's Read tool
 def _normalize_line_endings(content: str) -> str:
     """Normalize line endings to \\n for consistent matching."""
     return content.replace("\r\n", "\n").replace("\r", "\n")
-
-
-def _get_lines_with_context(
-    content: str, line_number: int, context_lines: int = 3
-) -> tuple[list[str], list[str]]:
-    """Get context lines before and after a given line number (1-indexed)."""
-    lines = content.split("\n")
-    idx = line_number - 1  # Convert to 0-indexed
-
-    start_before = max(0, idx - context_lines)
-    end_after = min(len(lines), idx + context_lines + 1)
-
-    before = [f"{i + 1}: {lines[i]}" for i in range(start_before, idx)]
-    after = [f"{i + 1}: {lines[i]}" for i in range(idx + 1, end_after)]
-
-    return before, after
 
 
 def _find_match_locations(content: str, search_string: str) -> list[dict[str, Any]]:
@@ -339,74 +320,70 @@ async def list_content(
 
 
 # =============================================================================
-# search_content Tool
+# bifrost_file_search Tool
 # =============================================================================
 
 
-async def search_content(
+async def bifrost_file_search(
     context: Any,
-    pattern: str,
-    path: str | None = None,
-    organization_id: str | None = None,
-    context_lines: int = 3,
-    max_results: int = 20,
+    query: str,
+    is_regex: bool = False,
+    case_sensitive: bool = False,
+    include_pattern: str | None = None,
+    source: str = "all",
+    solution_id: str | None = None,
+    output_mode: str = "content",
+    context_lines: int = 1,
+    limit: int = 25,
+    cursor: str | None = None,
 ) -> ToolResult:
-    """Search for regex patterns across all workspace files."""
-    logger.info(f"MCP search_content: pattern={pattern}")
+    """Search workspace and Solution source like grep, one page at a time.
 
-    denial = _check_read_scope(context)
-    if denial is not None:
-        return error_result(denial)
+    Thin wrapper over ``POST /api/files/search``. ``query`` is literal unless
+    ``is_regex``; ``include_pattern`` is a ripgrep-style glob such as
+    ``*.py``. Results come ``limit`` per page (default 25); follow the
+    returned ``guidance`` / ``next_cursor`` for more, or use
+    ``output_mode="files"`` to list matching files first. Solution source hits
+    are read-only (deploy-owned).
+    """
+    body: dict[str, Any] = {
+        "query": query,
+        "is_regex": is_regex,
+        "case_sensitive": case_sensitive,
+        "source": source,
+        "output_mode": output_mode,
+        "context_lines": context_lines,
+        "limit": limit,
+    }
+    if include_pattern is not None:
+        body["include_pattern"] = include_pattern
+    if solution_id is not None:
+        body["solution_id"] = solution_id
+    if cursor is not None:
+        body["cursor"] = cursor
 
-    if not pattern:
-        return error_result("pattern is required")
+    status_code, page = await call_rest(context, "POST", "/api/files/search", json=body)
+    if status_code != 200 or not isinstance(page, dict):
+        detail = page.get("detail") if isinstance(page, dict) else page
+        return error_result(f"bifrost_file_search failed: HTTP {status_code}: {detail}", {"body": page})
 
-    try:
-        regex = re.compile(pattern)
-    except re.error as e:
-        return error_result(f"Invalid regex pattern: {e}")
+    def where(item: dict[str, Any]) -> tuple[str, str]:
+        src = item.get("source") or {}
+        if src.get("kind") == "solution":
+            return f"{src.get('solution_slug')}:{item['file_path']}", "  (read-only)"
+        return item["file_path"], ""
 
-    matches: list[dict[str, Any]] = []
-
-    try:
-        async with get_tool_db(context) as db:
-            query = select(FileIndex.path, FileIndex.content).where(
-                FileIndex.content.isnot(None),
-            )
-            if path:
-                query = query.where(FileIndex.path == path)
-
-            result = await db.execute(query)
-            all_files = result.all()
-
-            for row in all_files:
-                content = _normalize_line_endings(row.content)
-                file_lines = content.split("\n")
-                for i, line in enumerate(file_lines):
-                    if regex.search(line):
-                        before, after = _get_lines_with_context(content, i + 1, context_lines)
-                        matches.append({
-                            "path": row.path,
-                            "line_number": i + 1,
-                            "match": line,
-                            "context_before": before,
-                            "context_after": after,
-                        })
-                        if len(matches) >= max_results:
-                            break
-                if len(matches) >= max_results:
-                    break
-
-        truncated = len(matches) >= max_results
-        display = format_grep_matches(matches, pattern)
-        return success_result(display, {
-            "matches": matches,
-            "total_matches": len(matches),
-            "truncated": truncated,
-        })
-    except Exception as e:
-        logger.exception(f"Error in search_content: {e}")
-        return error_result(f"Search failed: {str(e)}")
+    lines: list[str] = []
+    if page["output_mode"] == "files":
+        for hit in page["files"]:
+            path, suffix = where(hit)
+            lines.append(f"{path} ({hit['match_count']} matches, first at line {hit['first_line']}){suffix}")
+    else:
+        for m in page["matches"]:
+            path, suffix = where(m)
+            lines.append(f"{path}:{m['line']}: {m['text']}{suffix}")
+    lines += ["", page["guidance"]]
+    return success_result("\n".join(lines).strip(), page)
 
 
 # =============================================================================
@@ -791,7 +768,7 @@ async def delete_content(
 # Tool metadata for registration
 TOOLS = [
     ("list_content", "List Content", "List files in the workspace. Optionally filter by path prefix."),
-    ("search_content", "Search Content", "Search for patterns in code files. Returns matching lines with context."),
+    ("bifrost_file_search", "Search Files", "Search workspace and Solution source like grep. Returns a small page; follow guidance/next_cursor for more."),
     ("read_content_lines", "Read Content Lines", "Read specific line range from a file."),
     ("get_content", "Get Content", "Get entire file content."),
     ("patch_content", "Patch Content", "Surgical edit: replace old_string with new_string."),
@@ -806,7 +783,7 @@ def register_tools(mcp: Any, get_context_fn: Any) -> None:
 
     tool_funcs = {
         "list_content": list_content,
-        "search_content": search_content,
+        "bifrost_file_search": bifrost_file_search,
         "read_content_lines": read_content_lines,
         "get_content": get_content,
         "patch_content": patch_content,
