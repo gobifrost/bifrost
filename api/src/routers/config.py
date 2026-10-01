@@ -125,16 +125,16 @@ async def set_config(
     repo = ConfigRepository(ctx.db, org_id=target_org_id, is_superuser=True)
 
     try:
-        result = await repo.set_config(request, updated_by=user.email)
+        write = await repo.set_config(request, updated_by=user.email)
 
-        # Upsert to cache after successful write (dual-write pattern)
+        # Upsert to cache after successful write (dual-write pattern).
+        # The cache holds the stored value (ciphertext for secrets); the
+        # response carries the masked one.
         org_id_str = str(target_org_id) if target_org_id else None
         config_type_str = request.type.value if request.type else "string"
-        # Note: For secrets, stored_value is already encrypted by the repository
-        stored_value = result.value
-        await upsert_config(org_id_str, request.key, stored_value, config_type_str)
+        await upsert_config(org_id_str, request.key, write.stored_value, config_type_str)
 
-        return result
+        return write.response
     except Exception as e:
         logger.error(f"Error setting config: {str(e)}", exc_info=True)
         raise HTTPException(
@@ -173,7 +173,8 @@ async def update_config(
             detail="Configuration not found",
         )
 
-    result, old_org_id, old_key = update
+    write, old_org_id, old_key = update
+    result = write.response
 
     new_org_id_str = str(result.org_id) if result.org_id else None
     old_org_id_str = str(old_org_id) if old_org_id else None
@@ -200,8 +201,7 @@ async def update_config(
             logger.warning(f"Failed to bump global config version on transition: {e}")
 
     config_type_str = result.type.value if result.type else "string"
-    stored_value = result.value
-    await upsert_config(new_org_id_str, result.key, stored_value, config_type_str)
+    await upsert_config(new_org_id_str, result.key, write.stored_value, config_type_str)
 
     return result
 

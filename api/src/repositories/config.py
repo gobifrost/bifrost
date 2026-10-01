@@ -2,6 +2,7 @@
 
 import json
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
@@ -10,6 +11,7 @@ from sqlalchemy import and_, or_, select
 
 from src.core.log_safety import log_safe
 from src.core.org_filter import OrgFilterType
+from src.core.security import SECRET_PLACEHOLDER
 from src.models import (
     Config as ConfigModel,
     ConfigResponse,
@@ -38,6 +40,15 @@ class RequiredConfigUnset(RuntimeError):
             f"Set it with `bifrost configs set {key} --value <value>` "
             f"or in the solution's Setup tab."
         )
+
+
+@dataclass(frozen=True)
+class ConfigWrite:
+    """A config write's masked response plus the value the cache must store."""
+
+    response: ConfigResponse
+    # As persisted: ciphertext for secrets, never returned to a caller.
+    stored_value: Any
 
 
 class ConfigRepository(OrgScopedRepository[ConfigModel]):  # type: ignore[type-var]
@@ -92,7 +103,7 @@ class ConfigRepository(OrgScopedRepository[ConfigModel]):  # type: ignore[type-v
                 else config.value
             )
             display_value = (
-                "[SECRET]"
+                SECRET_PLACEHOLDER
                 if config.config_type == ConfigTypeEnum.SECRET
                 else raw_value
             )
@@ -142,7 +153,7 @@ class ConfigRepository(OrgScopedRepository[ConfigModel]):  # type: ignore[type-v
             else config.value
         )
         display_value = (
-            "[SECRET]"
+            SECRET_PLACEHOLDER
             if config.config_type == ConfigTypeEnum.SECRET
             else raw_value
         )
@@ -325,7 +336,7 @@ class ConfigRepository(OrgScopedRepository[ConfigModel]):  # type: ignore[type-v
 
     async def set_config(
         self, request: SetConfigRequest, updated_by: str
-    ) -> ConfigResponse:
+    ) -> ConfigWrite:
         """Create or update a config in current org scope."""
         now = datetime.now(timezone.utc)
 
@@ -375,19 +386,9 @@ class ConfigRepository(OrgScopedRepository[ConfigModel]):  # type: ignore[type-v
 
         logger.info(f"Set config {log_safe(request.key)} in org {self.org_id}")
 
-        value = config.value.get("value") if isinstance(config.value, dict) else config.value
-        return ConfigResponse(
-            id=config.id,
-            key=config.key,
-            value=value,
-            type=request.type if request.type else ConfigType.STRING,
-            scope="org" if config.organization_id else "GLOBAL",
-            org_id=str(config.organization_id) if config.organization_id else None,
-            description=config.description,
-            required=config.required,
-            position=config.position,
-            updated_at=config.updated_at,
-            updated_by=config.updated_by,
+        return ConfigWrite(
+            response=self._to_response(config, integration_name=None),
+            stored_value=stored_value,
         )
 
     async def update_config_by_id(
@@ -395,7 +396,7 @@ class ConfigRepository(OrgScopedRepository[ConfigModel]):  # type: ignore[type-v
         config_id: UUID,
         request: UpdateConfigRequest,
         updated_by: str,
-    ) -> tuple[ConfigResponse, UUID | None, str] | None:
+    ) -> tuple[ConfigWrite, UUID | None, str] | None:
         """Update a config by ID and return the prior cache identity."""
         query = select(self.model).where(self.model.id == config_id)
         result = await self.session.execute(query)
@@ -445,26 +446,12 @@ class ConfigRepository(OrgScopedRepository[ConfigModel]):  # type: ignore[type-v
             f"(id={log_safe(config_id)}) org={log_safe(config.organization_id)}"
         )
 
-        response_type = (
-            ConfigType(config.config_type.value)
-            if config.config_type
-            else ConfigType.STRING
+        stored_value = config.value.get("value") if isinstance(config.value, dict) else config.value
+        write = ConfigWrite(
+            response=self._to_response(config, integration_name=None),
+            stored_value=stored_value,
         )
-        value = config.value.get("value") if isinstance(config.value, dict) else config.value
-        response = ConfigResponse(
-            id=config.id,
-            key=config.key,
-            value=value,
-            type=response_type,
-            scope="org" if config.organization_id else "GLOBAL",
-            org_id=str(config.organization_id) if config.organization_id else None,
-            description=config.description,
-            required=config.required,
-            position=config.position,
-            updated_at=config.updated_at,
-            updated_by=config.updated_by,
-        )
-        return response, old_org_id, old_key
+        return write, old_org_id, old_key
 
     async def delete_config(self, config_id: UUID) -> ConfigModel | None:
         """Delete config by ID. Returns the deleted config or None if missing."""

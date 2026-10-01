@@ -95,6 +95,32 @@ class TestCliConfigs:
         finally:
             _cleanup_config(e2e_client, platform_admin, config_id)
 
+    def test_set_secret_prints_redacted_value(
+        self, cli_client, _invoke, e2e_client, platform_admin
+    ) -> None:
+        """``configs set --type secret`` echoes ``[SECRET]`` on create and update."""
+        key = f"cli_secret_echo_{uuid4().hex[:8]}"
+        plaintext = f"cli-plain-{uuid4().hex}"
+        rotated = f"cli-rotated-{uuid4().hex}"
+
+        create_result = _invoke(
+            ["--json", "set", key, "--value", plaintext, "--type", "secret", "--global"]
+        )
+        assert create_result.exit_code == 0, create_result.output
+        created = json.loads(create_result.output)
+        config_id = str(created["id"])
+
+        try:
+            assert plaintext not in create_result.output
+            assert created["value"] == "[SECRET]"
+
+            update_result = _invoke(["--json", "set", key, "--value", rotated, "--global"])
+            assert update_result.exit_code == 0, update_result.output
+            assert rotated not in update_result.output
+            assert json.loads(update_result.output)["value"] == "[SECRET]"
+        finally:
+            _cleanup_config(e2e_client, platform_admin, config_id)
+
     def test_delete_secret_requires_confirm(
         self, cli_client, _invoke, e2e_client, platform_admin
     ) -> None:
