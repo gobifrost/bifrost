@@ -56,6 +56,7 @@ from src.models.orm.workflows import Workflow
 from src.services.solution_deploy_preflight import preflight_workflows
 from src.services.solutions.storage import SolutionStorage
 from src.services.sync_ops import Upsert
+from src.services.webhooks.signing_secret import carry_signing_secret
 from src.services.workflow_permissions import sync_solution_permission_requests
 from shared.logo_processing import ProcessedLogo, process_logo
 
@@ -1955,9 +1956,10 @@ class SolutionDeployer:
         install manages (``solution_id == sid``), all via Core statements (the always-on read-only guard rejects ORM-object
         mutation of managed rows — Core insert/update/delete is the contract).
         Subscription ``workflow_id``/``agent_id`` were already remapped by
-        ``_remapped_bundle``; webhook instance secrets are absent (capture scrubs
-        them) so the install starts the webhook from a clean, unauthenticated
-        shell the operator re-establishes.
+        ``_remapped_bundle``; webhook instance state is absent (capture scrubs
+        it) so the install starts the webhook from a clean shell the operator
+        re-establishes. The one exception is the encrypted signing secret: no
+        bundle carries it, so a redeploy keeps the one already stored.
 
         Subscriptions an operator added to a Solution-owned source outside the
         Solution (``solution_id IS NULL`` — e.g. a workspace workflow listening
@@ -1988,14 +1990,17 @@ class SolutionDeployer:
                     ScheduleSource.event_source_id == source_id
                 )
             )
-            await self.db.execute(
-                delete(WebhookSource).where(
-                    WebhookSource.event_source_id == source_id
+            previous_webhook_state = (
+                await self.db.execute(
+                    delete(WebhookSource)
+                    .where(WebhookSource.event_source_id == source_id)
+                    .returning(WebhookSource.state)
                 )
-            )
+            ).scalar_one_or_none()
 
             # Source parent field dict from the model; install stamps org/solution/created_by.
-            _direct = ManifestEventSource.model_validate(mevent).to_orm_values(Destination.INSTALL).direct
+            manifest_event = ManifestEventSource.model_validate(mevent)
+            _direct = manifest_event.to_orm_values(Destination.INSTALL).direct
             source_values: dict[str, Any] = {
                 **_direct,
                 "organization_id": solution.organization_id,
@@ -2038,14 +2043,16 @@ class SolutionDeployer:
                 )
             elif mevent.get("source_type") == "webhook":
                 # Webhook shell: portable adapter/config only. external_id/state/
-                # expires_at are instance secrets (scrubbed at capture); the
+                # expires_at are instance state (scrubbed at capture); the
                 # operator re-establishes the external subscription post-install.
+                # The validated model's config never holds the signing secret.
                 await self.db.execute(
                     insert(WebhookSource).values(
                         event_source_id=source_id,
                         adapter_name=mevent.get("adapter_name"),
                         integration_id=None,
-                        config=mevent.get("webhook_config") or {},
+                        config=manifest_event.webhook_config or {},
+                        state=carry_signing_secret(previous_webhook_state, {}),
                         rate_limit_per_minute=mevent.get("rate_limit_per_minute", 60),
                         rate_limit_window_seconds=mevent.get(
                             "rate_limit_window_seconds", 60

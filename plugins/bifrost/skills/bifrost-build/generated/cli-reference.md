@@ -803,6 +803,7 @@ Commands:
   list-sources         List all event sources (wrapped ``{items, total}``...
   list-subscriptions   List subscriptions for an event source.
   resubscribe-source   Replace an event source's external provider...
+  rotate-secret        Generate a new signing secret for a webhook source.
   subscribe            Subscribe a workflow or agent to an event source.
   update-source        Update an event source.
   update-subscription  Update an event subscription.
@@ -955,6 +956,22 @@ Options:
 Usage: events resubscribe-source [OPTIONS] REF
 
   Replace an event source's external provider subscription.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `events rotate-secret`
+
+```
+Usage: events rotate-secret [OPTIONS] REF
+
+  Generate a new signing secret for a webhook source.
+
+  The output's ``raw_secret`` is the only time the new secret is shown;
+  configure it in the sending service before it is lost. Requests signed with
+  the previous secret are rejected from now on.
 
 Options:
   --json  Emit JSON instead of human-readable output.

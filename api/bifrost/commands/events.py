@@ -22,6 +22,8 @@ parity follow-up:
   (body from :class:`EventSubscriptionUpdate`)
 * ``bifrost events create-graph-source`` → ergonomic Microsoft Graph source creation
 * ``bifrost events resubscribe-source <ref>`` → replace the provider registration
+* ``bifrost events rotate-secret <ref>`` → generate a new webhook signing secret,
+  shown once
 * ``bifrost events delete-source <ref>`` → remove the provider registration and source
 
 Flat-to-nested translation
@@ -543,6 +545,32 @@ async def resubscribe_source(
     """Replace an event source's external provider subscription."""
     source_uuid = await resolver.resolve("event_source", ref)
     response = await client.post(f"/api/events/sources/{source_uuid}/resubscribe")
+    response.raise_for_status()
+    output_result(response.json(), ctx=ctx)
+
+
+@events_group.command("rotate-secret")
+@click.argument("ref")
+@click.pass_context
+@pass_resolver
+@run_async
+async def rotate_secret(
+    ctx: click.Context,
+    ref: str,
+    *,
+    client: BifrostClient,
+    resolver: RefResolver,
+) -> None:
+    """Generate a new signing secret for a webhook source.
+
+    The output's ``raw_secret`` is the only time the new secret is shown;
+    configure it in the sending service before it is lost. Requests signed
+    with the previous secret are rejected from now on.
+    """
+    source_uuid = await resolver.resolve("event_source", ref)
+    response = await client.post(
+        f"/api/events/sources/{source_uuid}/rotate-secret", json={}
+    )
     response.raise_for_status()
     output_result(response.json(), ctx=ctx)
 

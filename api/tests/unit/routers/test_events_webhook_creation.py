@@ -66,7 +66,7 @@ async def test_provider_subscription_starts_after_webhook_source_commit(monkeypa
     registry.get.return_value = adapter
     monkeypatch.setattr("src.routers.events.get_adapter_registry", lambda: registry)
     monkeypatch.setattr(
-        "src.routers.events._build_event_source_response",
+        "src.routers.events._build_event_source_secret_response",
         AsyncMock(return_value=response),
     )
     async def execute(_statement):

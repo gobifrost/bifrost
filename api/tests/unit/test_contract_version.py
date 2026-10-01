@@ -284,7 +284,12 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # parses. 1.4.2 is unreleased (latest tag v1.4.1) and ships this
     # change, so it is already the first compatible release — MIN_CLI_VERSION
     # stays 1.4.2 (api/shared/version.py); fingerprint refreshed only.
-    "f8939b691af202c4434d54a5bc3bfb5e6f4953fda396b46023ad7ad2f9ce4a12"
+    #
+    # WebhookSourceConfig.config description (2026-10-01): documents that a
+    # "secret" key is write-only (stored encrypted, never returned; omit to
+    # keep, null/"" to clear). COSMETIC: the schema shape is unchanged and old
+    # CLIs send the same body. Fingerprint refreshed only.
+    "d78354f9732ca881ac423c2e9e30b394aeb4e170fb5212c82319dc8cecc4d214"
 )
 
 
