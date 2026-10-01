@@ -17,13 +17,15 @@ from shared.builtin_roles import (
     PLATFORM_ADMIN_ROLE_ID,
     PLATFORM_OPERATOR_PERMISSIONS,
     PLATFORM_OPERATOR_ROLE_ID,
+    SECRETS_READER_PERMISSIONS,
+    SECRETS_READER_ROLE_ID,
     USER_BASE_PERMISSIONS,
     USER_ROLE_ID,
     WILDCARD_PERMISSION,
     derive_user_base_permissions,
     is_builtin_role_id,
 )
-from src.models.contracts.permissions import parse_permission
+from src.models.contracts.permissions import WILDCARD_EXCLUDED_PERMISSIONS, parse_permission
 from src.services.access_list import ACCESS_LIST
 
 
@@ -35,22 +37,31 @@ def test_seeded_user_permissions_match_derivation():
     )
 
 
+_ALL_BUILTIN = (PLATFORM_ADMIN_ROLE_ID, USER_ROLE_ID, PLATFORM_OPERATOR_ROLE_ID, SECRETS_READER_ROLE_ID)
+
+
 def test_fixed_ids_are_distinct_and_well_known():
-    assert len({PLATFORM_ADMIN_ROLE_ID, USER_ROLE_ID, PLATFORM_OPERATOR_ROLE_ID}) == 3
-    for role_id in (PLATFORM_ADMIN_ROLE_ID, USER_ROLE_ID, PLATFORM_OPERATOR_ROLE_ID):
+    assert len(set(_ALL_BUILTIN)) == 4
+    for role_id in _ALL_BUILTIN:
         assert isinstance(role_id, UUID)
+    # ...0003/...0004 belonged to the withdrawn Builder roles and are
+    # permanently forbidden (see tests/e2e/platform/test_withdrawn_builder_migrations.py).
+    forbidden = {UUID("00000000-0000-0000-0000-000000000003"), UUID("00000000-0000-0000-0000-000000000004")}
+    assert not forbidden & set(_ALL_BUILTIN)
 
 
 def test_base_and_builtin_sets():
     assert BASE_ROLE_IDS == {PLATFORM_ADMIN_ROLE_ID, USER_ROLE_ID}
-    assert BUILTIN_ROLE_IDS == {PLATFORM_ADMIN_ROLE_ID, USER_ROLE_ID, PLATFORM_OPERATOR_ROLE_ID}
+    assert BUILTIN_ROLE_IDS == set(_ALL_BUILTIN)
     assert PLATFORM_OPERATOR_ROLE_ID not in BASE_ROLE_IDS
+    assert SECRETS_READER_ROLE_ID not in BASE_ROLE_IDS
 
 
 def test_is_builtin_role_id():
     assert is_builtin_role_id(PLATFORM_ADMIN_ROLE_ID)
     assert is_builtin_role_id(USER_ROLE_ID)
     assert is_builtin_role_id(PLATFORM_OPERATOR_ROLE_ID)
+    assert is_builtin_role_id(SECRETS_READER_ROLE_ID)
     assert not is_builtin_role_id(UUID(int=0x1234))
 
 
@@ -84,6 +95,14 @@ def test_platform_operator_permissions_are_user_support_and_reads():
     assert not any(parse_permission(p).extended for p in PLATFORM_OPERATOR_PERMISSIONS)
 
 
+def test_secrets_reader_holds_only_the_wildcard_excluded_permission():
+    """Secrets Reader is the explicit assignment that `secrets.read` needs:
+    exactly that permission, which the Platform Admin wildcard never
+    satisfies."""
+    assert SECRETS_READER_PERMISSIONS == {"secrets.read"}
+    assert SECRETS_READER_PERMISSIONS == WILDCARD_EXCLUDED_PERMISSIONS
+
+
 def _load_migration(filename: str):
     import importlib.util
     from pathlib import Path
@@ -101,7 +120,7 @@ def test_migration_frozen_copies_match_live_constants():
     """Each migration carries its own frozen copy (it must not import live
     code). The latest migration that seeds each builtin role must equal the
     live constant: `20260929_user_base_perm_fix` for the User role and
-    `20261001_r3a_operator_perms` for Platform Operator. After a deliberate
+    `20261001_r3a_operator_perms` for Platform Operator and Secrets Reader. After a deliberate
     change to the live values, update them through a NEW migration and adjust
     this test to pin the new revision instead. The R2b migration stays pinned
     to what it seeded."""
@@ -123,3 +142,5 @@ def test_migration_frozen_copies_match_live_constants():
     assert operator.PLATFORM_OPERATOR_PERMISSIONS == PLATFORM_OPERATOR_PERMISSIONS
     assert r2b.PLATFORM_OPERATOR_PERMISSIONS | operator.ADDED_PERMISSIONS == PLATFORM_OPERATOR_PERMISSIONS
     assert not r2b.PLATFORM_OPERATOR_PERMISSIONS & operator.ADDED_PERMISSIONS
+    assert operator.SECRETS_READER_ROLE_ID == SECRETS_READER_ROLE_ID
+    assert operator.SECRETS_READER_PERMISSIONS == SECRETS_READER_PERMISSIONS

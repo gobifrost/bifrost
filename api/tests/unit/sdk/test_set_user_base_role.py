@@ -7,7 +7,12 @@ from uuid import uuid4
 
 import pytest
 
-from shared.builtin_roles import PLATFORM_ADMIN_ROLE_ID, PLATFORM_OPERATOR_ROLE_ID, USER_ROLE_ID
+from shared.builtin_roles import (
+    PLATFORM_ADMIN_ROLE_ID,
+    PLATFORM_OPERATOR_ROLE_ID,
+    SECRETS_READER_ROLE_ID,
+    USER_ROLE_ID,
+)
 from shared.sdk_users import set_user_base_role
 
 
@@ -75,6 +80,8 @@ async def test_rejects_non_base_role_id(db_session):
 
     with pytest.raises(ValueError):
         await set_user_base_role(db_session, user, PLATFORM_OPERATOR_ROLE_ID)
+    with pytest.raises(ValueError):
+        await set_user_base_role(db_session, user, SECRETS_READER_ROLE_ID)
 
 
 @pytest.mark.asyncio

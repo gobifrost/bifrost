@@ -1,6 +1,6 @@
 """Fixed identities and seeded permissions for the R2b base-roles model.
 
-Three built-in roles exist, each with a fixed UUID so migrations, seed data,
+Four built-in roles exist, each with a fixed UUID so migrations, seed data,
 and runtime code agree on identity without a name lookup:
 
 - **Platform Admin** (base, builtin): full access. Represented in code as
@@ -14,6 +14,10 @@ and runtime code agree on identity without a name lookup:
 - **Platform Operator** (builtin, not base): seeded but assigned to
   nobody yet. Read visibility into managed organizations plus user support
   and role assignment (see ``PLATFORM_OPERATOR_PERMISSIONS``).
+- **Secrets Reader** (builtin, not base): seeded but assigned to nobody
+  yet. Holds only ``secrets.read``, the one permission the Platform Admin
+  wildcard does not include, so decrypting a secret always takes an
+  explicit assignment.
 
 Migrations must not import live application code (a historical migration
 has to keep producing the same rows regardless of later refactors), so the
@@ -44,24 +48,26 @@ if TYPE_CHECKING:
 PLATFORM_ADMIN_ROLE_ID = UUID("00000000-0000-0000-0000-000000000005")
 USER_ROLE_ID = UUID("00000000-0000-0000-0000-000000000006")
 PLATFORM_OPERATOR_ROLE_ID = UUID("00000000-0000-0000-0000-000000000007")
+SECRETS_READER_ROLE_ID = UUID("00000000-0000-0000-0000-000000000008")
 
 # The wildcard permission representing Platform Admin's full access. Never
 # stored as a ``role_permissions`` row — Platform Admin has none.
 WILDCARD_PERMISSION = "*"
 
 BUILTIN_ROLE_IDS = frozenset(
-    {PLATFORM_ADMIN_ROLE_ID, USER_ROLE_ID, PLATFORM_OPERATOR_ROLE_ID}
+    {PLATFORM_ADMIN_ROLE_ID, USER_ROLE_ID, PLATFORM_OPERATOR_ROLE_ID, SECRETS_READER_ROLE_ID}
 )
 
 BASE_ROLE_IDS = frozenset({PLATFORM_ADMIN_ROLE_ID, USER_ROLE_ID})
 
 
 def is_builtin_role_id(role_id: UUID) -> bool:
-    """Whether `role_id` is one of the three builtin roles.
+    """Whether `role_id` is one of the builtin roles.
 
     Resource-assignment endpoints (role-to-agent/app/workflow/user/form)
     refuse builtin role ids with 409 — there's no UI yet (R3a) for
-    assigning entities to Platform Admin/User/Platform Operator, and their
+    assigning entities to Platform Admin/User/Platform Operator/Secrets
+    Reader, and their
     access is meant to come from their permission set, not per-entity
     role bindings.
     """
@@ -154,3 +160,7 @@ PLATFORM_OPERATOR_PERMISSIONS: frozenset[str] = frozenset(
         "roleassignments.readwrite",
     }
 )
+
+# Seeded but assigned to nobody yet. Frozen copy of what
+# 20261001_r3a_operator_perms writes; see `tests/unit/test_builtin_roles.py`.
+SECRETS_READER_PERMISSIONS: frozenset[str] = frozenset({"secrets.read"})
