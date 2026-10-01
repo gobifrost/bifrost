@@ -31,8 +31,9 @@ class TestFilesSharedClientTransport:
     @staticmethod
     def _search_doc():
         return {
-            "query": "TODO", "total_matches": 1, "files_searched": 2,
-            "results": [], "truncated": False, "search_time_ms": 3,
+            "query": "TODO", "output_mode": "content", "matches": [], "files": [],
+            "returned": 1, "has_more_matches": False, "response_complete": True,
+            "next_cursor": None, "guidance": "Complete.", "search_time_ms": 3,
         }
 
     @pytest.mark.asyncio
@@ -77,7 +78,7 @@ class TestFilesSharedClientTransport:
             assert signed["url"] == "https://s3/x"
             assert signed["expires_in"] == 600
             hits = await files.search("TODO")
-            assert hits["total_matches"] == 1
+            assert hits["returned"] == 1
 
         # The migrated facade never reads a channel frame: every call went
         # through the shared client's engine-local entry point.
