@@ -498,24 +498,24 @@ class TestBuiltinRoleGuards:
         assert not BUILTIN_ROLE_IDS & ids
 
     async def test_secrets_reader_is_hidden_and_immutable(self, db_session):
-        from shared.builtin_roles import SECRETS_READER_ROLE_ID
+        from shared.builtin_roles import DECRYPTION_ROLE_ID
         from shared.sdk_roles import assign_users_to_role, delete_role, get_role, update_role
 
         with pytest.raises(RoleServiceError) as exc_info:
-            await get_role(db_session, role_id=SECRETS_READER_ROLE_ID)
+            await get_role(db_session, role_id=DECRYPTION_ROLE_ID)
         assert exc_info.value.status_code == 404
         with pytest.raises(RoleServiceError) as exc_info:
             await update_role(
-                db_session, role_id=SECRETS_READER_ROLE_ID, name="Renamed", actor_email="a@t.local",
+                db_session, role_id=DECRYPTION_ROLE_ID, name="Renamed", actor_email="a@t.local",
             )
         assert exc_info.value.status_code == 409
         with pytest.raises(RoleServiceError) as exc_info:
-            await delete_role(db_session, role_id=SECRETS_READER_ROLE_ID)
+            await delete_role(db_session, role_id=DECRYPTION_ROLE_ID)
         assert exc_info.value.status_code == 409
         user = await _seed_user(db_session)
         with pytest.raises(RoleServiceError) as exc_info:
             await assign_users_to_role(
-                db_session, role_id=SECRETS_READER_ROLE_ID, user_ids=[str(user.id)], actor_email="a@t.local",
+                db_session, role_id=DECRYPTION_ROLE_ID, user_ids=[str(user.id)], actor_email="a@t.local",
             )
         assert exc_info.value.status_code == 409
 

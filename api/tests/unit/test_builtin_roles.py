@@ -14,11 +14,11 @@ from uuid import UUID
 from shared.builtin_roles import (
     BASE_ROLE_IDS,
     BUILTIN_ROLE_IDS,
+    DECRYPTION_ROLE_ID,
+    DECRYPTION_ROLE_PERMISSIONS,
     PLATFORM_ADMIN_ROLE_ID,
     PLATFORM_OPERATOR_PERMISSIONS,
     PLATFORM_OPERATOR_ROLE_ID,
-    SECRETS_READER_PERMISSIONS,
-    SECRETS_READER_ROLE_ID,
     USER_BASE_PERMISSIONS,
     USER_ROLE_ID,
     WILDCARD_PERMISSION,
@@ -37,7 +37,7 @@ def test_seeded_user_permissions_match_derivation():
     )
 
 
-_ALL_BUILTIN = (PLATFORM_ADMIN_ROLE_ID, USER_ROLE_ID, PLATFORM_OPERATOR_ROLE_ID, SECRETS_READER_ROLE_ID)
+_ALL_BUILTIN = (PLATFORM_ADMIN_ROLE_ID, USER_ROLE_ID, PLATFORM_OPERATOR_ROLE_ID, DECRYPTION_ROLE_ID)
 
 
 def test_fixed_ids_are_distinct_and_well_known():
@@ -54,14 +54,14 @@ def test_base_and_builtin_sets():
     assert BASE_ROLE_IDS == {PLATFORM_ADMIN_ROLE_ID, USER_ROLE_ID}
     assert BUILTIN_ROLE_IDS == set(_ALL_BUILTIN)
     assert PLATFORM_OPERATOR_ROLE_ID not in BASE_ROLE_IDS
-    assert SECRETS_READER_ROLE_ID not in BASE_ROLE_IDS
+    assert DECRYPTION_ROLE_ID not in BASE_ROLE_IDS
 
 
 def test_is_builtin_role_id():
     assert is_builtin_role_id(PLATFORM_ADMIN_ROLE_ID)
     assert is_builtin_role_id(USER_ROLE_ID)
     assert is_builtin_role_id(PLATFORM_OPERATOR_ROLE_ID)
-    assert is_builtin_role_id(SECRETS_READER_ROLE_ID)
+    assert is_builtin_role_id(DECRYPTION_ROLE_ID)
     assert not is_builtin_role_id(UUID(int=0x1234))
 
 
@@ -99,8 +99,8 @@ def test_secrets_reader_holds_only_the_wildcard_excluded_permission():
     """Secrets Reader is the explicit assignment that `secrets.read` needs:
     exactly that permission, which the Platform Admin wildcard never
     satisfies."""
-    assert SECRETS_READER_PERMISSIONS == {"secrets.read"}
-    assert SECRETS_READER_PERMISSIONS == WILDCARD_EXCLUDED_PERMISSIONS
+    assert DECRYPTION_ROLE_PERMISSIONS == {"secrets.read"}
+    assert DECRYPTION_ROLE_PERMISSIONS == WILDCARD_EXCLUDED_PERMISSIONS
 
 
 def _load_migration(filename: str):
@@ -142,5 +142,5 @@ def test_migration_frozen_copies_match_live_constants():
     assert operator.PLATFORM_OPERATOR_PERMISSIONS == PLATFORM_OPERATOR_PERMISSIONS
     assert r2b.PLATFORM_OPERATOR_PERMISSIONS | operator.ADDED_PERMISSIONS == PLATFORM_OPERATOR_PERMISSIONS
     assert not r2b.PLATFORM_OPERATOR_PERMISSIONS & operator.ADDED_PERMISSIONS
-    assert operator.SECRETS_READER_ROLE_ID == SECRETS_READER_ROLE_ID
-    assert operator.SECRETS_READER_PERMISSIONS == SECRETS_READER_PERMISSIONS
+    assert operator.DECRYPTION_ROLE_ID == DECRYPTION_ROLE_ID
+    assert operator.DECRYPTION_ROLE_PERMISSIONS == DECRYPTION_ROLE_PERMISSIONS

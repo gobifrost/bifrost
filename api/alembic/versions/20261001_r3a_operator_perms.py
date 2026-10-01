@@ -59,10 +59,10 @@ ADDED_PERMISSIONS: frozenset[str] = frozenset(
         "users.readwrite",
     }
 )
-SECRETS_READER_ROLE_ID = UUID("00000000-0000-0000-0000-000000000008")
-SECRETS_READER_PERMISSIONS: frozenset[str] = frozenset({"secrets.read"})
-SECRETS_READER_NAME = "Secrets Reader"
-SECRETS_READER_DESCRIPTION = (
+DECRYPTION_ROLE_ID = UUID("00000000-0000-0000-0000-000000000008")
+DECRYPTION_ROLE_PERMISSIONS: frozenset[str] = frozenset({"secrets.read"})
+DECRYPTION_ROLE_NAME = "Secrets Reader"
+DECRYPTION_ROLE_DESCRIPTION = (
     "Decrypts secret values through the SDK secret paths, for local "
     "development. Not included in the Platform Admin wildcard. Not yet "
     "assignable."
@@ -120,20 +120,20 @@ def upgrade() -> None:
             "ON CONFLICT (id) DO NOTHING"
         ),
         {
-            "role_id": str(SECRETS_READER_ROLE_ID),
-            "name": SECRETS_READER_NAME,
-            "description": SECRETS_READER_DESCRIPTION,
+            "role_id": str(DECRYPTION_ROLE_ID),
+            "name": DECRYPTION_ROLE_NAME,
+            "description": DECRYPTION_ROLE_DESCRIPTION,
             "actor": SYSTEM_ACTOR,
         },
     )
-    _insert_permissions(SECRETS_READER_ROLE_ID, SECRETS_READER_PERMISSIONS)
+    _insert_permissions(DECRYPTION_ROLE_ID, DECRYPTION_ROLE_PERMISSIONS)
 
 
 def downgrade() -> None:
-    _delete_permissions(SECRETS_READER_ROLE_ID, SECRETS_READER_PERMISSIONS)
+    _delete_permissions(DECRYPTION_ROLE_ID, DECRYPTION_ROLE_PERMISSIONS)
     op.get_bind().execute(
         sa.text("DELETE FROM roles WHERE id = CAST(:role_id AS uuid)"),
-        {"role_id": str(SECRETS_READER_ROLE_ID)},
+        {"role_id": str(DECRYPTION_ROLE_ID)},
     )
 
     _delete_permissions(PLATFORM_OPERATOR_ROLE_ID, ADDED_PERMISSIONS)

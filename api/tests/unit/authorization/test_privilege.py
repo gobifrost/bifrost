@@ -6,11 +6,11 @@ from __future__ import annotations
 from uuid import UUID, uuid4
 
 from shared.builtin_roles import (
+    DECRYPTION_ROLE_ID,
+    DECRYPTION_ROLE_PERMISSIONS,
     PLATFORM_ADMIN_ROLE_ID,
     PLATFORM_OPERATOR_PERMISSIONS,
     PLATFORM_OPERATOR_ROLE_ID,
-    SECRETS_READER_PERMISSIONS,
-    SECRETS_READER_ROLE_ID,
     USER_BASE_PERMISSIONS,
     USER_ROLE_ID,
     WILDCARD_PERMISSION,
@@ -69,7 +69,7 @@ class TestIsPrivilegedPrincipal:
         assert is_privileged_principal(_ctx(operator).held_permissions)
 
     def test_secrets_reader_holder_is_privileged(self) -> None:
-        reader = RoleGrant(SECRETS_READER_ROLE_ID, SECRETS_READER_PERMISSIONS, (Boundary(BoundaryKind.ORGANIZATION, ORG_A),))
+        reader = RoleGrant(DECRYPTION_ROLE_ID, DECRYPTION_ROLE_PERMISSIONS, (Boundary(BoundaryKind.ORGANIZATION, ORG_A),))
         assert is_privileged_principal(_ctx(reader).held_permissions)
 
     def test_stitched_custom_roles(self) -> None:
@@ -121,7 +121,7 @@ class TestOperatorAssignableRole:
     def test_builtin_roles_are_refused_even_without_stored_permissions(self) -> None:
         # Platform Admin stores no permission rows (its access is the
         # wildcard in code), so the permission check alone would admit it.
-        for role_id in (PLATFORM_ADMIN_ROLE_ID, USER_ROLE_ID, PLATFORM_OPERATOR_ROLE_ID, SECRETS_READER_ROLE_ID):
+        for role_id in (PLATFORM_ADMIN_ROLE_ID, USER_ROLE_ID, PLATFORM_OPERATOR_ROLE_ID, DECRYPTION_ROLE_ID):
             assert not operator_assignable_role(
                 role_id=role_id, role_permissions=frozenset(), target_permissions=self.ordinary_target
             ), role_id

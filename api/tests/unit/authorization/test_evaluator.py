@@ -8,11 +8,11 @@ from uuid import UUID, uuid4
 import pytest
 
 from shared.builtin_roles import (
+    DECRYPTION_ROLE_ID,
+    DECRYPTION_ROLE_PERMISSIONS,
     PLATFORM_ADMIN_ROLE_ID,
     PLATFORM_OPERATOR_PERMISSIONS,
     PLATFORM_OPERATOR_ROLE_ID,
-    SECRETS_READER_PERMISSIONS,
-    SECRETS_READER_ROLE_ID,
     USER_BASE_PERMISSIONS,
     USER_ROLE_ID,
 )
@@ -167,10 +167,10 @@ class TestSecretDecryption:
         assert not decide(admin, self.entry, cross_org(CUSTOMER_B)).allowed
 
     def test_platform_admin_holding_secrets_reader_is_allowed(self) -> None:
-        reader = RoleGrant(SECRETS_READER_ROLE_ID, SECRETS_READER_PERMISSIONS, (Boundary(BoundaryKind.ORGANIZATION, CUSTOMER_A),))
+        reader = RoleGrant(DECRYPTION_ROLE_ID, DECRYPTION_ROLE_PERMISSIONS, (Boundary(BoundaryKind.ORGANIZATION, CUSTOMER_A),))
         admin = _ctx(reader, base=PLATFORM_ADMIN_ROLE_ID, home=PROVIDER_ORG_ID)
         decision = decide(admin, self.entry, cross_org(CUSTOMER_A))
-        assert decision.rule == f"role:{SECRETS_READER_ROLE_ID}:secrets.read@organization"
+        assert decision.rule == f"role:{DECRYPTION_ROLE_ID}:secrets.read@organization"
 
     def test_user_with_an_explicit_grant_is_allowed(self) -> None:
         grant = RoleGrant(uuid4(), frozenset({"secrets.read"}), (Boundary(BoundaryKind.ORGANIZATION, CUSTOMER_A),))

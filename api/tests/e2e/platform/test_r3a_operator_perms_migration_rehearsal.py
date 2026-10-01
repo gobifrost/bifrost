@@ -41,7 +41,7 @@ REVISION = "20261001_r3a_operator_perms"
 PLATFORM_ADMIN_ROLE_ID = UUID("00000000-0000-0000-0000-000000000005")
 USER_ROLE_ID = UUID("00000000-0000-0000-0000-000000000006")
 PLATFORM_OPERATOR_ROLE_ID = UUID("00000000-0000-0000-0000-000000000007")
-SECRETS_READER_ROLE_ID = UUID("00000000-0000-0000-0000-000000000008")
+DECRYPTION_ROLE_ID = UUID("00000000-0000-0000-0000-000000000008")
 
 OPERATOR_BEFORE = {
     "agentruns.read",
@@ -113,7 +113,7 @@ async def _snapshot(database_url: str, custom_role_id: str) -> dict[str, Any]:
                     "admin": str(PLATFORM_ADMIN_ROLE_ID),
                     "user": str(USER_ROLE_ID),
                     "operator": str(PLATFORM_OPERATOR_ROLE_ID),
-                    "reader": str(SECRETS_READER_ROLE_ID),
+                    "reader": str(DECRYPTION_ROLE_ID),
                     "custom": custom_role_id,
                 },
             )
@@ -125,7 +125,7 @@ async def _snapshot(database_url: str, custom_role_id: str) -> dict[str, Any]:
             str(PLATFORM_ADMIN_ROLE_ID): "admin",
             str(USER_ROLE_ID): "user",
             str(PLATFORM_OPERATOR_ROLE_ID): "operator",
-            str(SECRETS_READER_ROLE_ID): "reader",
+            str(DECRYPTION_ROLE_ID): "reader",
             custom_role_id: "custom",
         }
         for role_id, permission in rows:
@@ -140,12 +140,12 @@ async def _snapshot(database_url: str, custom_role_id: str) -> dict[str, Any]:
                     "SELECT name, description, is_base, is_builtin FROM roles "
                     "WHERE id = CAST(:id AS uuid)"
                 ),
-                {"id": str(SECRETS_READER_ROLE_ID)},
+                {"id": str(DECRYPTION_ROLE_ID)},
             )
         ).mappings().one_or_none()
         reader_assignments = await connection.scalar(
             sa.text("SELECT COUNT(*) FROM user_roles WHERE role_id = CAST(:id AS uuid)"),
-            {"id": str(SECRETS_READER_ROLE_ID)},
+            {"id": str(DECRYPTION_ROLE_ID)},
         )
         return {
             "permissions": permissions,

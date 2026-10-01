@@ -20,9 +20,9 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from shared.builtin_roles import (
+    DECRYPTION_ROLE_ID,
     PLATFORM_ADMIN_ROLE_ID,
     PLATFORM_OPERATOR_ROLE_ID,
-    SECRETS_READER_ROLE_ID,
     USER_ROLE_ID,
 )
 from src.models.orm import Base
@@ -216,7 +216,7 @@ def test_upgrade_over_builder_residue_removes_it_and_matches_the_orm() -> None:
             PLATFORM_ADMIN_ROLE_ID,
             USER_ROLE_ID,
             PLATFORM_OPERATOR_ROLE_ID,
-            SECRETS_READER_ROLE_ID,
+            DECRYPTION_ROLE_ID,
         }
 
         # Rows written before the upgrade are untouched.

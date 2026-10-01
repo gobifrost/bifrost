@@ -7,9 +7,9 @@ import pytest
 
 from src.models.contracts.access_list import AccessClass, AccessEntry, CurrentGate
 from src.models.contracts.permissions import (
+    DECRYPT_PERMISSION,
     PERMISSION_DOMAINS,
     PRIVILEGED_PERMISSIONS,
-    SECRETS_READ,
     WILDCARD_EXCLUDED_PERMISSIONS,
     ParsedPermission,
     parse_permission,
@@ -126,5 +126,5 @@ def test_every_privileged_permission_gates_some_operation() -> None:
 
 
 def test_secret_decryption_is_excluded_from_the_wildcard_and_privileged() -> None:
-    assert WILDCARD_EXCLUDED_PERMISSIONS == {SECRETS_READ}
+    assert WILDCARD_EXCLUDED_PERMISSIONS == {DECRYPT_PERMISSION}
     assert WILDCARD_EXCLUDED_PERMISSIONS <= PRIVILEGED_PERMISSIONS

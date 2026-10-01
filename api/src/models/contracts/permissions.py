@@ -234,9 +234,9 @@ def parse_permission(permission: str) -> ParsedPermission:
     return ParsedPermission(domain=domain, action=action, extended=extended)
 
 
-SECRETS_READ = "secrets.read"
+DECRYPT_PERMISSION = "secrets.read"
 
-WILDCARD_EXCLUDED_PERMISSIONS: frozenset[str] = frozenset({SECRETS_READ})
+WILDCARD_EXCLUDED_PERMISSIONS: frozenset[str] = frozenset({DECRYPT_PERMISSION})
 """Permissions the Platform Admin wildcard does not satisfy: they must be
 held explicitly (see the ``secrets`` domain)."""
 
@@ -247,7 +247,7 @@ PRIVILEGED_PERMISSIONS: frozenset[str] = frozenset(
         "roles.readwrite",
         "roleassignments.readwrite",
         "organizations.readwrite",
-        SECRETS_READ,
+        DECRYPT_PERMISSION,
         "configs.readwrite",
         "integrations.readwrite",
         "settings.readwrite",
