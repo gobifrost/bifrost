@@ -45,6 +45,21 @@ class TestSpikeSolutionRef:
         got = await resolve_solution_ref(db_session, "acme-crm", org_b)
         assert got is None
 
+    async def test_global_install_resolves_by_name_from_org_scope(self, db_session):
+        # A global (organization_id=None) install serves every org, so an
+        # org-scoped caller can reference it by name or slug.
+        org = (await _org(db_session)).id
+        sol = await _sol(db_session, None, f"grc-{uuid4().hex[:6]}")
+        assert await resolve_solution_ref(db_session, sol.name, org) == sol.id
+        assert await resolve_solution_ref(db_session, sol.slug, org) == sol.id
+
+    async def test_org_install_wins_over_global_with_same_name(self, db_session):
+        org = (await _org(db_session)).id
+        slug = f"shared-{uuid4().hex[:6]}"
+        await _sol(db_session, None, slug)
+        own = await _sol(db_session, org, slug)
+        assert await resolve_solution_ref(db_session, own.name, org) == own.id
+
     async def test_derive_body_slug_wins_when_ctx_unset(self, db_session):
         org = (await _org(db_session)).id
         sol = await _sol(db_session, org, "acme-crm")

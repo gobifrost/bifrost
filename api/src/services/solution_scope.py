@@ -177,8 +177,9 @@ async def resolve_solution_ref(
     ``ref`` is a solution install UUID or a slug/name. UUIDs pass through
     (downstream resolvers + org gates enforce reachability, as today — keeps
     the deprecated body-UUID compat path unchanged). Slugs/names resolve to
-    the active install in ``target_org_id`` (None = global install); no extra
-    permission check since the scope resolver already gated the scope.
+    the active install in ``target_org_id`` (None = global install), then to a
+    global install; no extra permission check since the scope resolver
+    already gated the scope and the inbound gate still applies.
     """
     if not ref:
         return None
@@ -189,19 +190,26 @@ async def resolve_solution_ref(
         return UUID(raw)
     except ValueError:
         pass
-    stmt = select(Solution).where(
-        Solution.status == "active",
-        Solution.organization_id.is_(None)
-        if target_org_id is None
-        else Solution.organization_id == target_org_id,
-    )
-    rows = (await db.execute(stmt)).scalars().all()
-    for sol in rows:
-        if sol.slug == raw:
-            return sol.id
-    for sol in rows:
-        if sol.name == raw:
-            return sol.id
+    scopes: list[UUID | None] = [target_org_id]
+    if target_org_id is not None:
+        # A global install serves every org, so an org-scoped caller can
+        # reference it by slug or name. The org's own install wins a tie, and
+        # the inbound-access gate still decides whether the call is allowed.
+        scopes.append(None)
+    for scope in scopes:
+        stmt = select(Solution).where(
+            Solution.status == "active",
+            Solution.organization_id.is_(None)
+            if scope is None
+            else Solution.organization_id == scope,
+        )
+        rows = (await db.execute(stmt)).scalars().all()
+        for sol in rows:
+            if sol.slug == raw:
+                return sol.id
+        for sol in rows:
+            if sol.name == raw:
+                return sol.id
     return None
 
 
