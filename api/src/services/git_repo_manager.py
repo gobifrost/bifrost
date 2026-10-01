@@ -38,6 +38,13 @@ WORKSPACE_CHECKPOINT_PREFIX = "_workspace_sync_checkpoints"
 
 PERSISTENT_WORK_DIR = Path("/tmp/git")
 TREE_HASH_CHUNK_SIZE = 8 * 1024 * 1024
+# Fingerprint of S3 _repo/ taken when the working dir last matched it. Kept
+# inside .git/ so it lives and dies with the working dir it describes.
+STORAGE_BASELINE_FILE = "bifrost-storage-baseline"
+
+
+class WorkspaceStorageChanged(RuntimeError):
+    """S3 _repo/ changed since the persistent working dir last matched it."""
 
 
 @dataclass(frozen=True)
@@ -169,16 +176,67 @@ class GitRepoManager:
         """Mirror S3 _repo/ into a local directory, removing stale local files."""
         target.mkdir(parents=True, exist_ok=True)
         s3_uri = self._s3_uri()
-        cmd = self._build_sync_cmd(source=s3_uri, dest=str(target), delete=True)
+        # Without --exact-timestamps the CLI skips an S3 object that kept its
+        # size when the local copy is older, so a same-size edit never arrives.
+        cmd = self._build_sync_cmd(
+            source=s3_uri, dest=str(target), delete=True, exact_timestamps=True,
+        )
         logger.info(f"sync_down: {s3_uri} -> {target}")
+        self._clear_storage_baseline(target)
+        # Fingerprint before transferring: a write that lands mid-transfer then
+        # shows up as a change rather than being silently absorbed.
+        fingerprint = await self._storage_fingerprint()
         await self._run_aws_cli(cmd)
+        self._write_storage_baseline(target, fingerprint)
 
     async def sync_up(self, source: Path) -> None:
         """Sync a local directory back to S3 _repo/ with --delete."""
         s3_uri = self._s3_uri()
         cmd = self._build_sync_cmd(source=str(source), dest=s3_uri, delete=True)
         logger.info(f"sync_up: {source} -> {s3_uri}")
+        self._clear_storage_baseline(source)
         await self._run_aws_cli(cmd)
+        self._write_storage_baseline(source, await self._storage_fingerprint())
+
+    async def ensure_storage_unchanged(self, work_dir: Path) -> None:
+        """Refuse to act on a working dir that predates the current S3 _repo/.
+
+        Editor, MCP and CLI writes reach S3 only. An operation that commits the
+        working dir or syncs it back to S3 with --delete would otherwise revert
+        or delete them.
+        """
+        baseline = work_dir / ".git" / STORAGE_BASELINE_FILE
+        if not baseline.is_file() or baseline.read_text() != await self._storage_fingerprint():
+            raise WorkspaceStorageChanged(
+                "Workspace files changed since this working copy was last fetched, "
+                "so continuing could overwrite them. Nothing was changed. "
+                "Run Fetch to pick up the changes, then try again."
+            )
+
+    async def _storage_fingerprint(self) -> str:
+        """Hash every S3 _repo/ key and ETag except .bifrost/, which commit regenerates."""
+        from src.services.repo_storage import RepoStorage
+
+        listing = await RepoStorage(self._settings).list_with_metadata("")
+        digest = hashlib.sha256()
+        for path in sorted(listing):
+            if path.startswith(".bifrost/"):
+                continue
+            digest.update(path.encode("utf-8"))
+            digest.update(b"\0")
+            digest.update(listing[path].etag.encode("utf-8"))
+            digest.update(b"\0")
+        return digest.hexdigest()
+
+    @staticmethod
+    def _clear_storage_baseline(work_dir: Path) -> None:
+        (work_dir / ".git" / STORAGE_BASELINE_FILE).unlink(missing_ok=True)
+
+    @staticmethod
+    def _write_storage_baseline(work_dir: Path, fingerprint: str) -> None:
+        git_dir = work_dir / ".git"
+        if git_dir.is_dir():
+            (git_dir / STORAGE_BASELINE_FILE).write_text(fingerprint)
 
     async def checkpoint_workspace(self, source: Path) -> str:
         """Persist an exact workspace snapshot for a post-DB publication retry."""
@@ -227,11 +285,14 @@ class GitRepoManager:
         source: str,
         dest: str,
         delete: bool = False,
+        exact_timestamps: bool = False,
     ) -> list[str]:
         """Build the aws s3 sync command with proper flags."""
         cmd = ["aws", "s3", "sync", source, dest]
         if delete:
             cmd.append("--delete")
+        if exact_timestamps:
+            cmd.append("--exact-timestamps")
         # For self-hosted or custom S3 endpoints
         endpoint_url = self._settings.s3_endpoint_url
         if endpoint_url:

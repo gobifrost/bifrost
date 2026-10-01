@@ -268,6 +268,8 @@ async def sync_service(db_session: AsyncSession, bare_repo, tmp_path):
     service.repo_manager.checkpoint_workspace = checkpoint_workspace  # type: ignore[assignment]
     service.repo_manager.restore_workspace_checkpoint = restore_workspace_checkpoint  # type: ignore[assignment]
     service.repo_manager.delete_workspace_checkpoint = delete_workspace_checkpoint  # type: ignore[assignment]
+    # The simulated storage is the persistent dir itself, so it is never stale.
+    service.repo_manager.ensure_storage_unchanged = AsyncMock()  # type: ignore[assignment]
     service._sync_up_calls = sync_up_calls  # type: ignore[attr-defined]
     # Patch the module-level PERSISTENT_WORK_DIR so is_initialized checks the test dir
     import src.services.git_repo_manager as grm_mod
