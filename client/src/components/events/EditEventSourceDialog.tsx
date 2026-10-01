@@ -390,6 +390,7 @@ function EditEventSourceDialogContent({
 								}
 								config={webhookConfig}
 								onChange={setWebhookConfig}
+								secretConfigured={source.webhook?.secret_set}
 							/>
 						</>
 					)}

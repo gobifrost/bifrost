@@ -109,6 +109,44 @@ describe("DynamicConfigForm — string field", () => {
 	});
 });
 
+describe("DynamicConfigForm — write-only secret field", () => {
+	const secretSchema: ConfigSchema = {
+		type: "object",
+		properties: {
+			secret: { type: "string", title: "Webhook Secret", format: "password" },
+		},
+	};
+
+	it("marks a stored secret without showing it and keeps it when left blank", () => {
+		const onChange = vi.fn();
+		renderWithProviders(
+			<DynamicConfigForm
+				adapterName="generic"
+				configSchema={secretSchema}
+				config={{}}
+				onChange={onChange}
+				secretConfigured
+			/>,
+		);
+
+		expect(screen.getByText("Secret configured")).toBeInTheDocument();
+		const input = screen.getByLabelText(/webhook secret/i) as HTMLInputElement;
+		expect(input.type).toBe("password");
+		expect(input.value).toBe("");
+		expect(input.placeholder).toBe("Leave blank to keep the current secret");
+		expect(onChange).not.toHaveBeenCalled();
+
+		fireEvent.change(input, { target: { value: "replacement" } });
+		expect(onChange).toHaveBeenLastCalledWith({ secret: "replacement" });
+	});
+
+	it("shows no stored-secret badge when none is set", () => {
+		renderForm(secretSchema);
+
+		expect(screen.queryByText("Secret configured")).not.toBeInTheDocument();
+	});
+});
+
 describe("DynamicConfigForm — boolean field", () => {
 	it("renders a switch and emits booleans", async () => {
 		const { user, onChange } = renderForm({

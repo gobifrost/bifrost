@@ -1960,6 +1960,39 @@ class TestMcpParityEvents:
             assert delete_result.structured_content is not None
             assert delete_result.structured_content.get("deleted") == source_id
 
+    async def test_event_source_reads_report_only_that_a_secret_is_set(
+        self, admin_context
+    ) -> None:
+        from src.services.mcp_server.tools.events import (
+            bifrost_event_source_create,
+            bifrost_event_source_delete,
+            bifrost_event_source_get,
+            bifrost_event_source_list,
+        )
+
+        secret = f"mcp-secret-{uuid4().hex}"
+        create_result = await bifrost_event_source_create(
+            admin_context,
+            name=f"mcp-parity-signed-{uuid4().hex[:8]}",
+            source_type="webhook",
+            adapter_name="generic",
+            webhook_config={"secret": secret},
+            scope="global",
+        )
+        created = create_result.structured_content or {}
+        assert "error" not in created, created
+        source_id = str(created["id"])
+        try:
+            get_result = await bifrost_event_source_get(admin_context, source_ref=source_id)
+            list_result = await bifrost_event_source_list(admin_context)
+            fetched = get_result.structured_content or {}
+            assert fetched["webhook"]["secret_set"] is True
+            for payload in (fetched, list_result.structured_content or {}):
+                assert secret not in str(payload)
+                assert "raw_secret" not in str(payload)
+        finally:
+            await bifrost_event_source_delete(admin_context, source_ref=source_id)
+
     async def test_regular_user_cannot_list_event_sources(
         self, org_user_context: MockMCPContext
     ) -> None:

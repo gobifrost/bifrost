@@ -787,6 +787,57 @@ async def test_deploy_schedule_trigger_under_guard(db_session) -> None:
     assert sub.workflow_id == wf.id  # same-install identity preserved
 
 
+async def test_redeploy_keeps_a_webhook_signing_secret_no_bundle_carries(db_session) -> None:
+    """Capture omits the signing secret, and redeploying, even a legacy bundle
+    whose config still holds a plaintext secret, keeps the stored one."""
+    from src.models.orm.events import EventSource, WebhookSource
+    from src.services.solutions.guard import install_solution_write_guard
+    from src.services.webhooks.signing_secret import (
+        read_signing_secret,
+        with_signing_secret,
+    )
+
+    install_solution_write_guard()
+
+    db = db_session
+    sol = await _make_solution(db)
+    es = EventSource(
+        id=uuid.uuid4(), name=f"signed-{uuid.uuid4().hex[:6]}", source_type="webhook",
+        organization_id=None, solution_id=None, created_by="test",
+    )
+    db.add(es)
+    await db.flush()
+    db.add(WebhookSource(
+        id=uuid.uuid4(), event_source_id=es.id, adapter_name="generic",
+        config={"signature_header": "X-Sig"},
+        state=with_signing_secret({}, "STORED-SECRET"),
+    ))
+    await db.flush()
+
+    await SolutionCaptureService(db).capture(
+        sol,
+        SolutionCaptureSelectors(
+            workflows=[], tables=[], apps=[], forms=[], agents=[], claims=[],
+            configs=[], events=[es.id],
+        ),
+    )
+    await db.flush()
+    bundle = await SolutionCaptureService(db).bundle_for(sol)
+    assert "STORED-SECRET" not in str(bundle.events)
+    assert "secret_encrypted" not in str(bundle.events)
+
+    bundle.events[0]["webhook_config"] = {"signature_header": "X-Sig", "secret": "LEGACY-PLAINTEXT"}
+    await SolutionDeployer(db).deploy(bundle)
+    await db.flush()
+
+    webhook = (await db.execute(
+        select(WebhookSource).where(WebhookSource.event_source_id == es.id)
+        .execution_options(populate_existing=True)
+    )).scalar_one()
+    assert webhook.config == {"signature_header": "X-Sig"}
+    assert read_signing_secret(webhook.state) == "STORED-SECRET"
+
+
 async def test_deploy_reconcile_sweeps_stale_trigger(db_session) -> None:
     """A managed EventSource absent from the new bundle is swept (and its subs
     cascade), scoped to this install."""

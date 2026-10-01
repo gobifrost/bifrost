@@ -7856,7 +7856,7 @@ export interface paths {
         put?: never;
         /**
          * Create event source
-         * @description Create a new event source (Platform admin only).
+         * @description Create a new event source (Platform admin only). A webhook signing secret supplied as webhook.config.secret is returned once, in raw_secret.
          */
         post: operations["events.sources.create"];
         delete?: never;
@@ -7907,6 +7907,26 @@ export interface paths {
          * @description Replace the external webhook registration while preserving the Bifrost event source.
          */
         post: operations["resubscribe_source_api_events_sources__source_id__resubscribe_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/events/sources/{source_id}/rotate-secret": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rotate a webhook source's signing secret
+         * @description Replace the HMAC signing secret with a supplied or generated one. The response returns the new secret once, in raw_secret; no later call returns it (Platform admin only).
+         */
+        post: operations["rotate_source_secret_api_events_sources__source_id__rotate_secret_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -16619,6 +16639,89 @@ export interface components {
             webhook?: components["schemas"]["WebhookSourceResponse"] | null;
             /** @description Schedule configuration details */
             schedule?: components["schemas"]["ScheduleSourceResponse"] | null;
+        };
+        /**
+         * EventSourceSecretResponse
+         * @description Event source returned by the create or rotate call that set its signing secret.
+         *     POST /api/events/sources, POST /api/events/sources/{source_id}/rotate-secret
+         */
+        EventSourceSecretResponse: {
+            /**
+             * Id
+             * Format: uuid
+             * @description Event source ID
+             */
+            id: string;
+            /**
+             * Name
+             * @description Event source name
+             */
+            name: string;
+            /** @description Source type */
+            source_type: components["schemas"]["EventSourceType"];
+            /**
+             * Event Type
+             * @description Topic string for topic sources (e.g. 'user.invited')
+             */
+            event_type?: string | null;
+            /**
+             * Organization Id
+             * @description Organization ID (null for global)
+             */
+            organization_id?: string | null;
+            /**
+             * Organization Name
+             * @description Organization name (for display)
+             */
+            organization_name?: string | null;
+            /**
+             * Is Active
+             * @description Whether the source is active
+             */
+            is_active: boolean;
+            /**
+             * Error Message
+             * @description Error message if source is in error state
+             */
+            error_message?: string | null;
+            /**
+             * Subscription Count
+             * @description Number of active subscriptions
+             * @default 0
+             */
+            subscription_count: number;
+            /**
+             * Event Count 24H
+             * @description Number of events received in the last 24 hours
+             * @default 0
+             */
+            event_count_24h: number;
+            /**
+             * Created By
+             * @description User who created the source
+             */
+            created_by: string;
+            /**
+             * Created At
+             * Format: date-time
+             * @description Creation timestamp
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             * @description Last update timestamp
+             */
+            updated_at: string;
+            /** @description Webhook configuration details */
+            webhook?: components["schemas"]["WebhookSourceResponse"] | null;
+            /** @description Schedule configuration details */
+            schedule?: components["schemas"]["ScheduleSourceResponse"] | null;
+            /**
+             * Raw Secret
+             * @description The signing secret this call set, shown once. No other response returns it. Null when the source has no signing secret.
+             */
+            raw_secret?: string | null;
         };
         /**
          * EventSourceType
@@ -27754,6 +27857,18 @@ export interface components {
             adapters: components["schemas"]["WebhookAdapterInfo"][];
         };
         /**
+         * WebhookSecretRotate
+         * @description Request model for rotating a webhook source's signing secret.
+         *     POST /api/events/sources/{source_id}/rotate-secret
+         */
+        WebhookSecretRotate: {
+            /**
+             * Secret
+             * @description New signing secret. If omitted, one is generated.
+             */
+            secret?: string | null;
+        };
+        /**
          * WebhookSourceConfig
          * @description Webhook-specific configuration for creating an event source.
          */
@@ -27770,7 +27885,7 @@ export interface components {
             integration_id?: string | null;
             /**
              * Config
-             * @description Adapter-specific configuration
+             * @description Adapter-specific configuration. A 'secret' key sets the HMAC signing secret, which is write-only: it is stored encrypted and never returned. On update, omit the key to keep the stored secret, or send null or an empty string to remove it.
              */
             config?: {
                 [key: string]: unknown;
@@ -27816,11 +27931,17 @@ export interface components {
             integration_name?: string | null;
             /**
              * Config
-             * @description Adapter configuration
+             * @description Adapter configuration, without the signing secret
              */
             config?: {
                 [key: string]: unknown;
             };
+            /**
+             * Secret Set
+             * @description Whether a signing secret is stored. The secret itself is never returned.
+             * @default false
+             */
+            secret_set: boolean;
             /**
              * Callback Url
              * @description Full callback URL for this webhook
@@ -42989,7 +43110,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["EventSourceResponse"];
+                    "application/json": components["schemas"]["EventSourceSecretResponse"];
                 };
             };
             /** @description Validation Error */
@@ -43116,6 +43237,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EventSourceResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rotate_source_secret_api_events_sources__source_id__rotate_secret_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WebhookSecretRotate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventSourceSecretResponse"];
                 };
             };
             /** @description Validation Error */

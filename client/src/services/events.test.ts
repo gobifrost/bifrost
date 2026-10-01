@@ -15,7 +15,11 @@ vi.mock("@tanstack/react-query", () => ({
 	useQueryClient: () => ({ invalidateQueries: mockInvalidateQueries }),
 }));
 
-import { useDynamicValues, useResubscribeEventSource } from "./events";
+import {
+	useDynamicValues,
+	useResubscribeEventSource,
+	useRotateWebhookSecret,
+} from "./events";
 
 describe("event dynamic values service", () => {
 	beforeEach(() => {
@@ -63,5 +67,26 @@ describe("event dynamic values service", () => {
 			params: { path: { source_id: "source-1" } },
 		});
 		expect(mockInvalidateQueries).toHaveBeenCalledTimes(2);
+	});
+
+	it("wires signing-secret rotation and refreshes source queries", () => {
+		useRotateWebhookSecret();
+
+		expect(mockUseMutation).toHaveBeenCalledWith(
+			"post",
+			"/api/events/sources/{source_id}/rotate-secret",
+			expect.objectContaining({ onSuccess: expect.any(Function) }),
+		);
+		const options = mockUseMutation.mock.calls[0]![2];
+		options.onSuccess(undefined, {
+			params: { path: { source_id: "source-1" } },
+		});
+		expect(mockInvalidateQueries).toHaveBeenCalledWith({
+			queryKey: [
+				"get",
+				"/api/events/sources/{source_id}",
+				{ params: { path: { source_id: "source-1" } } },
+			],
+		});
 	});
 });

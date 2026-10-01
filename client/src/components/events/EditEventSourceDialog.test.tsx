@@ -14,6 +14,7 @@ import { renderWithProviders, screen, waitFor, fireEvent } from "@/test-utils";
 
 const mockUpdate = vi.fn();
 const mockAuthFetch = vi.fn();
+let mockAdapters: unknown[] = [];
 
 vi.mock("@/contexts/AuthContext", () => ({
 	useAuth: () => ({ isPlatformAdmin: false }),
@@ -43,7 +44,7 @@ vi.mock("@/services/events", async () => {
 			isPending: false,
 		}),
 		useWebhookAdapters: () => ({
-			data: { adapters: [] },
+			data: { adapters: mockAdapters },
 		}),
 	};
 });
@@ -75,6 +76,7 @@ function makeWebhookSource(overrides: Partial<EventSource> = {}): EventSource {
 }
 
 beforeEach(() => {
+	mockAdapters = [];
 	mockUpdate.mockReset();
 	mockUpdate.mockResolvedValue({});
 	mockAuthFetch.mockReset();
@@ -247,6 +249,7 @@ describe("EditEventSourceDialog — rate-limit hit counter", () => {
 						rate_limit_window_seconds: 60,
 						rate_limit_enabled: true,
 						rate_limited_count_24h: 5,
+						secret_set: false,
 					},
 				})}
 				open
@@ -275,6 +278,7 @@ describe("EditEventSourceDialog — rate-limit hit counter", () => {
 						rate_limit_window_seconds: 60,
 						rate_limit_enabled: true,
 						rate_limited_count_24h: 0,
+						secret_set: false,
 					},
 				})}
 				open
@@ -411,5 +415,45 @@ describe("EditEventSourceDialog — recovery", () => {
 		await user.click(screen.getByRole("button", { name: "Save Changes" }));
 		await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
 		expect(mockUpdate).toHaveBeenCalledTimes(2);
+	});
+});
+
+describe("EditEventSourceDialog — webhook signing secret", () => {
+	it("marks a stored secret and leaves it out of the update when blank", async () => {
+		mockAdapters = [
+			{
+				name: "generic",
+				display_name: "Generic Webhook",
+				config_schema: {
+					type: "object",
+					properties: {
+						secret: {
+							type: "string",
+							title: "Webhook Secret",
+							format: "password",
+						},
+					},
+				},
+			},
+		];
+		const source = makeWebhookSource();
+		const { user } = renderWithProviders(
+			<EditEventSourceDialog
+				source={
+					{
+						...source,
+						webhook: { ...source.webhook, secret_set: true },
+					} as EventSource
+				}
+				open
+				onOpenChange={() => {}}
+			/>,
+		);
+
+		expect(screen.getByText("Secret configured")).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: /save changes/i }));
+
+		await waitFor(() => expect(mockUpdate).toHaveBeenCalledTimes(1));
+		expect(mockUpdate.mock.calls[0]![0].body.webhook.config).toEqual({});
 	});
 });

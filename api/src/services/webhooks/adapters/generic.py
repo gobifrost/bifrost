@@ -15,6 +15,7 @@ from src.services.webhooks.protocol import (
     WebhookAdapter,
     WebhookRequest,
 )
+from src.services.webhooks.signing_secret import read_signing_secret
 
 
 class GenericWebhookAdapter(WebhookAdapter):
@@ -104,16 +105,12 @@ class GenericWebhookAdapter(WebhookAdapter):
         """
         Create subscription for generic webhook.
 
-        No external service call - just returns the state.
+        No external service call. The events router stores the signing secret
+        encrypted in state (see ``signing_secret``), so subscribe stores none.
         """
-        # Store secret in state if provided (will be encrypted at rest)
-        state = {}
-        if config.get("secret"):
-            state["secret"] = config["secret"]
-
         return SubscribeResult(
             external_id=None,  # No external subscription
-            state=state,
+            state={},
             expires_at=None,  # Never expires
         )
 
@@ -141,8 +138,7 @@ class GenericWebhookAdapter(WebhookAdapter):
 
         Validates signature if secret is configured, then delivers the payload.
         """
-        # Get secret from state (set during subscribe)
-        secret = state.get("secret")
+        secret = read_signing_secret(state)
 
         if secret:
             # Validate signature

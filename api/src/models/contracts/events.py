@@ -64,7 +64,12 @@ class WebhookSourceConfig(BaseModel):
     )
     config: dict[str, Any] = Field(
         default_factory=dict,
-        description="Adapter-specific configuration",
+        description=(
+            "Adapter-specific configuration. A 'secret' key sets the HMAC signing "
+            "secret, which is write-only: it is stored encrypted and never returned. "
+            "On update, omit the key to keep the stored secret, or send null or an "
+            "empty string to remove it."
+        ),
     )
     rate_limit_per_minute: int | None = Field(
         default=60,
@@ -77,6 +82,19 @@ class WebhookSourceConfig(BaseModel):
     rate_limit_enabled: bool = Field(
         default=True,
         description="Per-source kill switch.",
+    )
+
+
+class WebhookSecretRotate(BaseModel):
+    """
+    Request model for rotating a webhook source's signing secret.
+    POST /api/events/sources/{source_id}/rotate-secret
+    """
+
+    secret: str | None = Field(
+        default=None,
+        min_length=1,
+        description="New signing secret. If omitted, one is generated.",
     )
 
 
@@ -253,7 +271,11 @@ class WebhookSourceResponse(BaseModel):
     )
     config: dict[str, Any] = Field(
         default_factory=dict,
-        description="Adapter configuration",
+        description="Adapter configuration, without the signing secret",
+    )
+    secret_set: bool = Field(
+        default=False,
+        description="Whether a signing secret is stored. The secret itself is never returned.",
     )
     callback_url: str = Field(
         ...,
@@ -360,6 +382,21 @@ class EventSourceResponse(BaseModel):
     schedule: ScheduleSourceResponse | None = Field(
         default=None,
         description="Schedule configuration details",
+    )
+
+
+class EventSourceSecretResponse(EventSourceResponse):
+    """
+    Event source returned by the create or rotate call that set its signing secret.
+    POST /api/events/sources, POST /api/events/sources/{source_id}/rotate-secret
+    """
+
+    raw_secret: str | None = Field(
+        default=None,
+        description=(
+            "The signing secret this call set, shown once. No other response "
+            "returns it. Null when the source has no signing secret."
+        ),
     )
 
 

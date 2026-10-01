@@ -20,6 +20,7 @@ type EventSourceResponse = {
 		rate_limit_per_minute: number | null;
 		rate_limit_window_seconds: number;
 		rate_limit_enabled: boolean;
+		secret_set: boolean;
 	} | null;
 };
 
@@ -251,6 +252,28 @@ test("[EVENT-MGMT-01 desktop] creates, edits, persists, deactivates, and deletes
 	await expect(
 		page.getByRole("cell", { name: eventType, exact: true }),
 	).toBeVisible();
+
+	await page
+		.getByRole("button", { name: `${editedSourceName} actions` })
+		.click();
+	await page.getByRole("menuitem", { name: "Rotate signing secret" }).click();
+	const rotateDialog = page.getByRole("alertdialog", {
+		name: "Rotate signing secret?",
+	});
+	await rotateDialog.getByRole("button", { name: "Rotate secret" }).click();
+	const reveal = page.getByRole("region", {
+		name: "New webhook signing secret",
+	});
+	const revealed = (await reveal.getByLabel("Secret value").textContent()) ?? "";
+	expect(revealed.length).toBeGreaterThanOrEqual(32);
+	const rotatedRead = await api.get(`/api/events/sources/${sourceId!}`);
+	await expectOk(rotatedRead);
+	expect(await rotatedRead.text()).not.toContain(revealed);
+	expect(((await rotatedRead.json()) as EventSourceResponse).webhook).toMatchObject({
+		secret_set: true,
+	});
+	await reveal.getByRole("button", { name: "Dismiss secret" }).click();
+	await expect(reveal).toBeHidden();
 
 	await page.getByRole("switch", { name: "Source active" }).click();
 	await expect(page.getByText("Inactive", { exact: true })).toBeVisible({

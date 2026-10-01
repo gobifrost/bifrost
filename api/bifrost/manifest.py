@@ -1283,6 +1283,16 @@ class ManifestEventSource(EntityCodec, BaseModel):
     # Subscriptions
     subscriptions: list[ManifestEventSubscription] = Field(default_factory=list, description="Workflow subscriptions", **classify(FieldClass.CONTENT))
 
+    @field_validator("webhook_config")
+    @classmethod
+    def _without_signing_secret(cls, value: dict | None) -> dict | None:
+        """The HMAC signing secret is write-only instance state (encrypted in
+        the webhook source's state), so no manifest carries it. This also drops
+        the plaintext copy that manifests written before that change contain."""
+        if value is None:
+            return None
+        return {key: item for key, item in value.items() if key != "secret"}
+
     @classmethod
     def from_row(
         cls,

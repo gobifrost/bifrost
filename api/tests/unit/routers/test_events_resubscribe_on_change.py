@@ -86,10 +86,12 @@ async def test_resubscribe_success_subscribes_new_then_unsubscribes_old(monkeypa
 
     old_adapter = SimpleNamespace(
         requires_integration=False,
+        config_schema={},
         unsubscribe=AsyncMock(side_effect=lambda **_kw: calls.append("unsubscribe_old")),
     )
     new_adapter = SimpleNamespace(
         requires_integration=False,
+        config_schema={},
         subscribe=AsyncMock(
             side_effect=lambda **_kw: calls.append("subscribe_new")
             or SubscribeResult(external_id="new-ext-id", state={"secret": "new"})
@@ -123,9 +125,12 @@ async def test_resubscribe_new_failure_leaves_webhook_source_untouched(monkeypat
     source = _fake_source(ws)
     db = _fake_db(source)
 
-    old_adapter = SimpleNamespace(requires_integration=False, unsubscribe=AsyncMock())
+    old_adapter = SimpleNamespace(
+        requires_integration=False, config_schema={}, unsubscribe=AsyncMock()
+    )
     new_adapter = SimpleNamespace(
         requires_integration=False,
+        config_schema={},
         subscribe=AsyncMock(side_effect=RuntimeError("provider rejected")),
     )
     registry = MagicMock()
@@ -159,10 +164,12 @@ async def test_resubscribe_old_unsubscribe_failure_is_logged_and_request_still_s
 
     old_adapter = SimpleNamespace(
         requires_integration=False,
+        config_schema={},
         unsubscribe=AsyncMock(side_effect=RuntimeError("provider already gone")),
     )
     new_adapter = SimpleNamespace(
         requires_integration=False,
+        config_schema={},
         subscribe=AsyncMock(
             return_value=SubscribeResult(external_id="new-ext-id", state={})
         ),

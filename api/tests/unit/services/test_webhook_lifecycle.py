@@ -11,6 +11,10 @@ from src.services.webhooks.lifecycle import (
     unsubscribe_provider,
 )
 from src.services.webhooks.protocol import SubscribeResult
+from src.services.webhooks.signing_secret import (
+    read_signing_secret,
+    with_signing_secret,
+)
 
 
 def _source() -> SimpleNamespace:
@@ -117,3 +121,27 @@ async def test_unsubscribe_propagates_provider_failure(monkeypatch):
 
     with pytest.raises(ValueError, match="Graph unavailable"):
         await unsubscribe_provider(MagicMock(), source)
+
+
+@pytest.mark.asyncio
+async def test_resubscribe_keeps_the_encrypted_signing_secret(monkeypatch):
+    source = _source()
+    source.webhook_source.state = with_signing_secret({}, "s3cret")
+    db = MagicMock()
+    db.commit = AsyncMock()
+    adapter = SimpleNamespace(
+        requires_integration=None,
+        unsubscribe=AsyncMock(),
+        subscribe=AsyncMock(return_value=SubscribeResult(state={"fresh": True})),
+    )
+    registry = MagicMock()
+    registry.get.return_value = adapter
+    monkeypatch.setattr(
+        "src.services.webhooks.lifecycle.get_adapter_registry",
+        lambda: registry,
+    )
+
+    await resubscribe_provider(db, source, "https://example.test/api/hooks/source-1")
+
+    assert source.webhook_source.state["fresh"] is True
+    assert read_signing_secret(source.webhook_source.state) == "s3cret"
