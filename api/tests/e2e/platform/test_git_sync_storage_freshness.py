@@ -26,17 +26,22 @@ PAT = "ghp_e2eSecretToken0123456789abcdef"
 TOKENIZED_REMOTE = f"https://x-access-token:{PAT}@github.com/owner/repo.git"
 
 
-async def _wipe_repo_storage(storage: RepoStorage) -> None:
-    for path in await storage.list(""):
-        await storage.delete(path)
-
-
 @pytest_asyncio.fixture
 async def storage():
+    """Run on an empty _repo/, then put back exactly what other tests left there.
+
+    The operations under test mirror the whole working tree, so the test owns
+    every key it finds afterwards; only those are deleted.
+    """
     storage = RepoStorage(get_settings())
-    await _wipe_repo_storage(storage)
+    set_aside = {path: await storage.read(path) for path in await storage.list("")}
+    for path in set_aside:
+        await storage.delete(path)
     yield storage
-    await _wipe_repo_storage(storage)
+    for path in await storage.list(""):
+        await storage.delete(path)
+    for path, content in set_aside.items():
+        await storage.write(path, content)
 
 
 @pytest.fixture
