@@ -12,7 +12,7 @@ from uuid import uuid4
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models import Workflow, Execution
@@ -535,9 +535,16 @@ class TestDeactivationProtection:
         db_session.add(execution)
         await db_session.commit()
 
-        # Step 2: Try to remove workflow
-        result = await storage.write_file(path, EMPTY_WORKFLOW_FILE.encode("utf-8"), updated_by="test")
-        await db_session.commit()
+        try:
+            # Step 2: Try to remove workflow
+            result = await storage.write_file(path, EMPTY_WORKFLOW_FILE.encode("utf-8"), updated_by="test")
+            await db_session.commit()
+        finally:
+            # A leftover user makes the next registration non-first, which
+            # breaks the session platform_admin fixture for later modules.
+            await db_session.execute(delete(Execution).where(Execution.id == execution.id))
+            await db_session.execute(delete(User).where(User.id == test_user.id))
+            await db_session.commit()
 
         # Step 3: Assert execution history info
         assert result.pending_deactivations is not None

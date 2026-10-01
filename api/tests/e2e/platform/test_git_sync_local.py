@@ -429,6 +429,13 @@ async def cleanup_test_data(db_session: AsyncSession):
     await db_session.execute(
         delete(Table).where(Table.created_by == "git-sync")
     )
+    # Policy rules imported by TestPolicyRuleRoundTrip. A leftover rule is a
+    # workspace entity, so a later first Git connection would refuse to sync.
+    from src.models.orm.policy_rule import PolicyRule
+
+    await db_session.execute(
+        delete(PolicyRule).where(PolicyRule.name.in_(["ops_read_only", "ops_access"]))
+    )
 
     # Clean up orgs and roles last (entities FK into these)
     from src.models.orm.executions import Execution
