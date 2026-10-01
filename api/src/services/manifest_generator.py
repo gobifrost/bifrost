@@ -14,7 +14,7 @@ from collections.abc import Sequence
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import ColumnElement, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -254,6 +254,32 @@ def serialize_mcp_server(
 
 
 # =============================================================================
+# Export criteria
+# =============================================================================
+
+
+def export_criteria(model: type) -> list[ColumnElement[bool]]:
+    """Row criteria, besides Solution scoping, for the ``model`` rows a manifest exports.
+
+    The git-sync deletion sweep (``ManifestResolver._resolve_deletions``) applies
+    the same criteria, so it only considers rows the export could have written.
+    A row the export leaves out (an inactive agent, an independent V2 app with no
+    repo path) is never swept as "removed from the repo".
+    """
+    criteria: dict[type, list[ColumnElement[bool]]] = {
+        Workflow: [Workflow.is_active.is_(True)],
+        Form: [Form.is_active.is_(True)],
+        Agent: [Agent.is_active.is_(True)],
+        Application: [Application.repo_path.isnot(None)],
+        Integration: [Integration.is_deleted.is_(False)],
+        PolicyRule: [PolicyRule.is_builtin.is_(False)],
+        EventSource: [EventSource.is_active.is_(True)],
+        EventSubscription: [EventSubscription.is_active.is_(True)],
+    }
+    return criteria[model]
+
+
+# =============================================================================
 # Full manifest generation
 # =============================================================================
 
@@ -287,14 +313,14 @@ async def generate_manifest(
     # Fetch all active workflows (sorted by name for deterministic manifest output)
     wf_result = await db.execute(
         _scope(
-            select(Workflow).where(Workflow.is_active == True), Workflow  # noqa: E712
+            select(Workflow).where(*export_criteria(Workflow)), Workflow
         ).order_by(Workflow.name)
     )
     workflows_list = wf_result.scalars().all()
 
     # Fetch all active forms (sorted by name)
     form_result = await db.execute(
-        _scope(select(Form).where(Form.is_active == True), Form).order_by(Form.name)  # noqa: E712
+        _scope(select(Form).where(*export_criteria(Form)), Form).order_by(Form.name)
     )
     forms_list = form_result.scalars().all()
 
@@ -303,14 +329,18 @@ async def generate_manifest(
         _scope(
             select(Agent)
             .options(selectinload(Agent.llm_profile))
-            .where(Agent.is_active.is_(True)),
+            .where(*export_criteria(Agent)),
             Agent,
         ).order_by(Agent.name)
     )
     agents_list = agent_result.scalars().all()
 
-    # Fetch all apps (sorted by name)
-    app_result = await db.execute(_scope(select(Application), Application).order_by(Application.name))
+    # Fetch apps (sorted by name)
+    app_result = await db.execute(
+        _scope(
+            select(Application).where(*export_criteria(Application)), Application
+        ).order_by(Application.name)
+    )
     apps_list = app_result.scalars().all()
 
     # Fetch organizations (sorted by name)
@@ -394,7 +424,7 @@ async def generate_manifest(
     # ------------------------------------------------------------------
     integ_result = await db.execute(
         select(Integration)
-        .where(Integration.is_deleted == False)  # noqa: E712
+        .where(*export_criteria(Integration))
         .order_by(Integration.name)
     )
     integrations_list = integ_result.scalars().unique().all()
@@ -447,7 +477,7 @@ async def generate_manifest(
     # ------------------------------------------------------------------
     policy_rule_result = await db.execute(
         select(PolicyRule)
-        .where(PolicyRule.is_builtin == False)  # noqa: E712
+        .where(*export_criteria(PolicyRule))
         .order_by(PolicyRule.organization_id, PolicyRule.domain, PolicyRule.name)
     )
     policy_rules_list = policy_rule_result.scalars().all()
@@ -513,7 +543,7 @@ async def generate_manifest(
     # ------------------------------------------------------------------
     event_source_result = await db.execute(
         select(EventSource)
-        .where(EventSource.is_active == True)  # noqa: E712
+        .where(*export_criteria(EventSource))
         .order_by(EventSource.name)
     )
     event_sources_list = event_source_result.scalars().unique().all()
@@ -533,7 +563,7 @@ async def generate_manifest(
     # Subscriptions keyed by event_source_id
     sub_result = await db.execute(
         select(EventSubscription)
-        .where(EventSubscription.is_active == True)  # noqa: E712
+        .where(*export_criteria(EventSubscription))
         .order_by(EventSubscription.event_source_id, EventSubscription.workflow_id)
     )
     subs_by_source: dict[str, list[EventSubscription]] = {}
@@ -637,7 +667,6 @@ async def generate_manifest(
         apps={
             str(app.id): serialize_app(app, app_roles_by_app.get(str(app.id), []))
             for app in apps_list
-            if app.repo_path is not None
         },
         mcp_servers={
             str(server.id): serialize_mcp_server(

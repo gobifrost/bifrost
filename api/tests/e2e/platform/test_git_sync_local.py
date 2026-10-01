@@ -6244,6 +6244,104 @@ class TestMissingManifestGuard:
 
 @pytest.mark.e2e
 @pytest.mark.asyncio
+class TestDeletionSweepMatchesExport:
+    """The deletion sweep only considers rows the workspace export would write."""
+
+    async def test_sweep_never_removes_rows_the_export_excludes(
+        self,
+        db_session: AsyncSession,
+    ):
+        from bifrost.manifest import get_all_entity_ids
+        from src.models.orm.agents import Agent
+        from src.models.orm.applications import Application
+        from src.models.orm.events import EventSource, EventSubscription
+        from src.services.manifest_generator import generate_manifest
+        from src.services.manifest_import import ManifestResolver
+
+        suffix = uuid4().hex[:8]
+        wf = Workflow(
+            id=uuid4(), name="Sweep WF", function_name="sweep_wf",
+            path=f"workflows/git_sync_test_sweep_{suffix}.py", is_active=True,
+        )
+        active_source = EventSource(
+            id=uuid4(), name=f"sweep-active-{suffix}", source_type="schedule",
+            is_active=True, created_by="test",
+        )
+        excluded = [
+            Agent(
+                id=uuid4(), name=f"sweep-inactive-{suffix}", system_prompt="x",
+                channels=["chat"], is_active=False, created_by="test",
+            ),
+            Application(
+                id=uuid4(), name="Independent V2", slug=f"sweep-v2-{suffix}",
+                repo_path=None,
+            ),
+            EventSource(
+                id=uuid4(), name=f"sweep-inactive-{suffix}", source_type="schedule",
+                is_active=False, created_by="test",
+            ),
+        ]
+        db_session.add_all([wf, active_source, *excluded])
+        await db_session.flush()
+        inactive_sub = EventSubscription(
+            id=uuid4(), event_source_id=active_source.id, workflow_id=wf.id,
+            is_active=False, created_by="test",
+        )
+        exported_agent = Agent(
+            id=uuid4(), name=f"sweep-active-{suffix}", system_prompt="x",
+            channels=["chat"], is_active=True, created_by="test",
+        )
+        db_session.add_all([inactive_sub, exported_agent])
+        await db_session.flush()
+        excluded_ids = {str(row.id) for row in [*excluded, inactive_sub]}
+
+        try:
+            manifest = await generate_manifest(db_session)
+            assert not excluded_ids & get_all_entity_ids(manifest)
+            # Removing an exported row from the manifest still sweeps it.
+            del manifest.agents[str(exported_agent.id)]
+            changes = await ManifestResolver(db_session)._resolve_deletions(
+                manifest=manifest, dry_run=True,
+            )
+        finally:
+            await db_session.rollback()
+
+        removed = {c.entity_id for c in changes if c.action == "removed"}
+        assert not removed & excluded_ids
+        assert str(exported_agent.id) in removed
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+class TestReimportNonDestructive:
+    """Maintenance Reimport imports, but leaves deletions to a confirmed git sync."""
+
+    async def test_reimport_reports_missing_entities_instead_of_deleting(
+        self,
+        db_session: AsyncSession,
+        sync_service,
+    ):
+        kept_path = "workflows/git_sync_test_reimport_kept.py"
+        write_entity_to_repo(sync_service._persistent_dir, kept_path, SAMPLE_WORKFLOW_PY)
+        missing_id = uuid4()
+        db_session.add(Workflow(
+            id=missing_id,
+            name="Reimport Missing File",
+            function_name="git_sync_test_wf",
+            path="workflows/git_sync_test_reimport_missing.py",
+            is_active=True,
+        ))
+        await db_session.commit()
+
+        result = await sync_service.reimport_from_repo()
+
+        db_session.expire_all()
+        assert await db_session.get(Workflow, missing_id) is not None
+        assert str(missing_id) in {change.entity_id for change in result.pending_deletes}
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
 class TestSolutionFilesManifestRoundTrip:
     """Task 22: solution_files manifest + import round-trip (files + sha256 match).
 

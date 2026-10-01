@@ -94,4 +94,9 @@ async def test_reimport_regenerates_manifest_and_reindexes_workflows():
 
         mock_regen.assert_called_once()
         mock_reindex.assert_called_once()
-        assert result == 5
+        assert result.entities_imported == 5
+        # Reimport only previews deletions; it never applies them.
+        assert all(
+            call.kwargs.get("dry_run") is True
+            for call in mock_resolver._resolve_deletions.await_args_list
+        )

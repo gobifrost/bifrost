@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import Settings, get_settings
 from src.models.contracts.github import (
+    EntityChange,
     GitConnectItem,
     GitConnectPreview,
     GitConnectRequest,
@@ -133,6 +134,13 @@ class _GitConnectPreviewRecord(BaseModel):
     remote_fingerprint: str
     remote_head_sha: str | None
     items: list[GitConnectItem]
+
+
+class ReimportResult(BaseModel):
+    """Outcome of a Maintenance Reimport, which imports but never deletes."""
+
+    entities_imported: int
+    pending_deletes: list[EntityChange]
 
 
 def _delete_keys(changes: list) -> set[tuple[str, str]]:
@@ -1516,7 +1524,6 @@ class GitHubSyncService:
 
         Returns tuple of (count of entities resolved, list of entity changes).
         """
-        from src.models.contracts.github import EntityChange
         from src.services.manifest_generator import generate_manifest
         from src.services.manifest_import import _diff_and_collect
 
@@ -1661,13 +1668,15 @@ class GitHubSyncService:
     # Reimport from repo (no git operations)
     # -----------------------------------------------------------------
 
-    async def reimport_from_repo(self) -> int:
+    async def reimport_from_repo(self) -> ReimportResult:
         """Re-import all entities from S3 _repo/ without git operations.
 
         Downloads the working tree from S3, imports entities into DB,
         updates file_index, and syncs app previews.
 
-        Returns count of entities imported.
+        Reimport never deletes. Entities whose files are missing from storage
+        are returned as ``pending_deletes``; removing them goes through a git
+        sync, which asks for confirmation.
         """
         async with self.repo_manager.checkout() as work_dir:
             storage_is_empty = not _has_workspace_files(work_dir)
@@ -1675,28 +1684,25 @@ class GitHubSyncService:
             # Regenerate manifest from current DB state
             await self._regenerate_manifest_to_dir(self.db, work_dir)
 
-            # The regenerated manifest drops entities whose files are missing,
-            # so empty storage would otherwise delete every file-backed entity.
-            if storage_is_empty:
-                removals = [
-                    change
-                    for change in await self._resolver._resolve_deletions(
-                        work_dir=work_dir, dry_run=True,
-                    )
-                    if change.action != "keep"
-                ]
-                if removals:
-                    raise WorkspaceSourceMissing(
-                        "Reimport refused: workspace storage has no workspace files, so "
-                        f"reimporting would delete {len(removals)} workspace entities. "
-                        "Nothing was changed. Restore the workspace files (for example "
-                        "with a git sync), then reimport again."
-                    )
+            # The regenerated manifest drops entities whose files are missing.
+            pending_deletes = [
+                change
+                for change in await self._resolver._resolve_deletions(
+                    work_dir=work_dir, dry_run=True,
+                )
+                if change.action != "keep"
+            ]
+            if storage_is_empty and pending_deletes:
+                raise WorkspaceSourceMissing(
+                    "Reimport refused: workspace storage has no workspace files, but "
+                    f"{len(pending_deletes)} workspace entities expect files there. "
+                    "Nothing was changed. Restore the workspace files (for example "
+                    "with a git sync), then reimport again."
+                )
 
             # Import entities atomically with savepoint
             async with self.db.begin_nested():
                 count, _changes = await self._import_all_entities(work_dir)
-                await self._resolver._resolve_deletions(work_dir=work_dir)
                 await self._update_file_index(work_dir)
             await self.db.commit()
 
@@ -1707,8 +1713,11 @@ class GitHubSyncService:
             # Sync app preview files
             await self._sync_app_previews(work_dir)
 
-            logger.info(f"Reimport complete: {count} entities")
-            return count
+            logger.info(
+                f"Reimport complete: {count} entities, "
+                f"{len(pending_deletes)} pending deletions kept"
+            )
+            return ReimportResult(entities_imported=count, pending_deletes=pending_deletes)
 
     # -----------------------------------------------------------------
     # Internal: git operations
