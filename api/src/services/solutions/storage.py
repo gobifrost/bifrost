@@ -82,24 +82,27 @@ class SolutionStorage:
 
     async def list_with_metadata(self, prefix: str = "") -> dict[str, S3FileMetadata]:
         """List this install's objects with size/etag metadata, keyed by relative path."""
+        async with self._get_client() as client:
+            return await self._list_with_metadata_from_s3(client, prefix)
+
+    async def _list_with_metadata_from_s3(self, client, prefix: str = "") -> dict[str, S3FileMetadata]:
         strip = len(self.prefix)
         result: dict[str, S3FileMetadata] = {}
-        async with self._get_client() as client:
-            continuation_token = None
-            while True:
-                kwargs: dict = {"Bucket": self._bucket, "Prefix": self._key(prefix)}
-                if continuation_token:
-                    kwargs["ContinuationToken"] = continuation_token
-                response = await client.list_objects_v2(**kwargs)
-                for obj in response.get("Contents", []):
-                    result[obj["Key"][strip:]] = S3FileMetadata(
-                        etag=obj["ETag"].strip('"'),
-                        last_modified=obj["LastModified"],
-                        size=obj["Size"],
-                    )
-                if not response.get("IsTruncated"):
-                    break
-                continuation_token = response.get("NextContinuationToken")
+        continuation_token = None
+        while True:
+            kwargs: dict = {"Bucket": self._bucket, "Prefix": self._key(prefix)}
+            if continuation_token:
+                kwargs["ContinuationToken"] = continuation_token
+            response = await client.list_objects_v2(**kwargs)
+            for obj in response.get("Contents", []):
+                result[obj["Key"][strip:]] = S3FileMetadata(
+                    etag=obj["ETag"].strip('"'),
+                    last_modified=obj["LastModified"],
+                    size=obj["Size"],
+                )
+            if not response.get("IsTruncated"):
+                break
+            continuation_token = response.get("NextContinuationToken")
         return result
 
     async def content_hash(self, path: str) -> str | None:
