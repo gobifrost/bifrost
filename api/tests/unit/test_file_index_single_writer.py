@@ -5,10 +5,7 @@ from pathlib import Path
 
 API = Path(__file__).resolve().parents[2]
 WRITE = re.compile(r"\b(insert|delete|update)\(\s*(FileIndex|SolutionFileIndex)\b")
-ALLOWED = {
-    "src/services/file_index_service.py",
-    "src/services/file_index_reconciler.py",  # rewritten onto FileIndexService in Task 3
-}
+ALLOWED = {"src/services/file_index_service.py"}
 
 
 def test_only_file_index_service_writes_index_tables():

@@ -290,47 +290,51 @@ class TestReconciler:
         fi = result.scalar_one()
         assert fi.content == content.decode("utf-8")
         assert fi.content_hash == hashlib.sha256(content).hexdigest()
-        assert stats["added"] >= 1
+        assert stats["workspace"]["added"] >= 1
 
     async def test_reconciler_removes_orphaned_entries(
         self,
         db_session: AsyncSession,
         repo_storage: RepoStorage,
     ):
-        """Insert orphan file_index row with content → reconciler reverse-syncs to S3."""
-        from sqlalchemy.dialects.postgresql import insert
+        """An index row whose object is gone is removed; storage is never written back."""
         from src.services.file_index_reconciler import reconcile_file_index
 
         path = "test_storage_reconcile_orphan.py"
 
-        # Insert orphan directly into file_index (no matching S3 object)
-        stmt = insert(FileIndex).values(
-            path=path,
-            content="# Orphaned content",
-            content_hash="deadbeef" * 4,
-        ).on_conflict_do_nothing()
-        await db_session.execute(stmt)
+        # Index a row with no matching S3 object (an out-of-band delete)
+        await FileIndexService(db_session, repo_storage).index(
+            path, b"# Orphaned content", "deadbeef" * 8
+        )
         await db_session.commit()
 
-        # Verify it's in file_index
-        result = await db_session.execute(
-            select(FileIndex).where(FileIndex.path == path)
-        )
-        assert result.scalar_one_or_none() is not None
-
-        # Run reconciler
         stats = await reconcile_file_index(db_session, repo_storage)
 
-        # file_index should still have the entry (reverse-synced to S3)
         result = await db_session.execute(
             select(FileIndex).where(FileIndex.path == path)
         )
-        assert result.scalar_one_or_none() is not None
-        assert stats["reverse_synced"] >= 1
+        assert result.scalar_one_or_none() is None
+        assert stats["workspace"]["removed"] >= 1
+        assert not await repo_storage.exists(path)
 
-        # S3 should now have the content too
-        s3_content = await repo_storage.read(path)
-        assert s3_content == b"# Orphaned content"
+    async def test_reconciler_refreshes_stale_content(
+        self,
+        db_session: AsyncSession,
+        repo_storage: RepoStorage,
+    ):
+        """A direct S3 overwrite (e.g. a ref rewrite) is healed into the index."""
+        from src.services.file_index_reconciler import reconcile_file_index
+
+        path = "test_storage_reconcile_stale.py"
+        await FileIndexService(db_session, repo_storage).write(path, b"OLD = 1\n")
+        await db_session.commit()
+        await repo_storage.write(path, b"NEW = 1\n")
+
+        stats = await reconcile_file_index(db_session, repo_storage)
+
+        content = await db_session.scalar(select(FileIndex.content).where(FileIndex.path == path))
+        assert content == "NEW = 1\n"
+        assert stats["workspace"]["updated"] >= 1
 
 
 # =============================================================================

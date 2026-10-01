@@ -1,94 +1,149 @@
 """
-File Index Reconciler — heals drift between S3 _repo/ and file_index DB.
+File Index Reconciler — heals drift between source storage and the search index.
 
-Runs on API startup and can be triggered manually.
-Lists all files in S3 _repo/, compares against file_index,
-adds missing entries, removes orphaned entries, updates stale content.
+Storage is the source of truth; the index is a projection of it. For the
+instance ``_repo/`` workspace and every Solution install's source prefix, the
+reconciler adds rows for unindexed objects, refreshes rows whose content hash
+no longer matches the object, and removes rows whose object is gone. It never
+writes to storage.
+
+Memory is bounded to one object at a time: listings carry sizes, objects over
+the index cap are hashed by streaming, and only path + hash are read from the
+database.
 """
 
 from __future__ import annotations
 
 import hashlib
 import logging
+from collections.abc import Awaitable, Callable
+from typing import Protocol
+from uuid import UUID
 
-from sqlalchemy import delete, select
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.models.orm.file_index import FileIndex
-from src.services.file_index_service import _is_text_file
-from src.services.repo_storage import RepoStorage
+from src.models.orm.file_index import FileIndex, SolutionFileIndex
+from src.models.orm.solutions import Solution
+from src.services.file_index_service import (
+    MAX_INDEXABLE_TEXT_BYTES,
+    FileIndexService,
+    is_tracked_path,
+)
+from src.services.repo_storage import RepoStorage, S3FileMetadata
+from src.services.solutions.storage import SolutionStorage
 
 logger = logging.getLogger(__name__)
+
+
+class _SourceStore(Protocol):
+    async def list_with_metadata(self, prefix: str = "") -> dict[str, S3FileMetadata]: ...
+    async def read(self, path: str) -> bytes: ...
+    async def content_hash(self, path: str) -> str | None: ...
+
+
+def _empty_stats() -> dict[str, int]:
+    return {"added": 0, "updated": 0, "removed": 0, "unchanged": 0}
+
+
+async def _reconcile_scope(
+    store: _SourceStore,
+    indexed: dict[str, str | None],
+    *,
+    index: Callable[[str, bytes, str], Awaitable[None]],
+    index_path_only: Callable[[str, str], Awaitable[None]],
+    unindex: Callable[[str], Awaitable[None]],
+    stats: dict[str, int],
+) -> None:
+    listing = {
+        path: meta
+        for path, meta in (await store.list_with_metadata("")).items()
+        if is_tracked_path(path)
+    }
+    for path, meta in sorted(listing.items()):
+        known = path in indexed
+        if meta.size > MAX_INDEXABLE_TEXT_BYTES:
+            content_hash = await store.content_hash(path) or ""
+            if indexed.get(path) == content_hash:
+                stats["unchanged"] += 1
+                continue
+            await index_path_only(path, content_hash)
+        else:
+            body = await store.read(path)
+            content_hash = hashlib.sha256(body).hexdigest()
+            if indexed.get(path) == content_hash:
+                stats["unchanged"] += 1
+                continue
+            await index(path, body, content_hash)
+        stats["updated" if known else "added"] += 1
+
+    for path in sorted(set(indexed) - set(listing)):
+        await unindex(path)
+        stats["removed"] += 1
 
 
 async def reconcile_file_index(
     db: AsyncSession,
     repo_storage: RepoStorage | None = None,
-) -> dict[str, int]:
+    solution_storage_factory: Callable[[UUID], SolutionStorage] = SolutionStorage,
+) -> dict[str, dict[str, int]]:
+    """Reconcile the workspace and Solution source indexes with storage.
+
+    Returns ``{"workspace": stats, "solutions": stats}`` where each stats dict
+    counts ``added``, ``updated``, ``removed`` and ``unchanged`` rows; the
+    solutions dict also counts installs that ``failed`` to reconcile. Each scope
+    commits on its own so one failing install cannot discard the rest.
     """
-    Reconcile file_index with S3 _repo/ contents.
-
-    Returns stats dict with counts of added, removed, updated entries.
-    """
-    repo = repo_storage or RepoStorage()
-    stats = {"added": 0, "removed": 0, "updated": 0, "unchanged": 0, "reverse_synced": 0}
-
-    # Get all files from S3
-    s3_paths = set(await repo.list())
-    # Filter to text files only
-    s3_text_paths = {p for p in s3_paths if _is_text_file(p)}
-
-    # Get all paths from file_index
-    result = await db.execute(select(FileIndex.path))
-    db_paths = {row[0] for row in result.all()}
-
-    # Files in S3 but not in DB -> add
-    to_add = s3_text_paths - db_paths
-    for path in to_add:
-        try:
-            content = await repo.read(path)
-            content_str = content.decode("utf-8")
-            content_hash = hashlib.sha256(content).hexdigest()
-
-            stmt = insert(FileIndex).values(
-                path=path,
-                content=content_str,
-                content_hash=content_hash,
-            ).on_conflict_do_nothing()
-            await db.execute(stmt)
-            stats["added"] += 1
-        except Exception as e:
-            logger.warning(f"Failed to index {path}: {e}")
-
-    # Files in DB but not in S3 -> reverse-sync (write DB content to S3)
-    # This handles the case where the pre-migration backfill populated
-    # file_index but S3 was unavailable at the time.
-    to_reverse_sync = db_paths - s3_paths
-    for path in to_reverse_sync:
-        try:
-            fi_result = await db.execute(
-                select(FileIndex.content).where(FileIndex.path == path)
-            )
-            content_str = fi_result.scalar_one_or_none()
-            if content_str is not None:
-                await repo.write(path, content_str.encode("utf-8"))
-                stats["reverse_synced"] += 1
-            else:
-                # No content in DB either — orphaned row, remove it
-                await db.execute(
-                    delete(FileIndex).where(FileIndex.path == path)
-                )
-                stats["removed"] += 1
-        except Exception as e:
-            logger.warning(f"Failed to reverse-sync {path}: {e}")
-
+    service = FileIndexService(db, repo_storage)
+    workspace = _empty_stats()
+    indexed = dict((await db.execute(select(FileIndex.path, FileIndex.content_hash))).tuples().all())
+    await _reconcile_scope(
+        service.repo_storage,
+        indexed,
+        index=service.index,
+        index_path_only=service.index_path_only,
+        unindex=service.unindex,
+        stats=workspace,
+    )
     await db.commit()
 
-    logger.info(
-        f"Reconciliation complete: {stats['added']} added, "
-        f"{stats['removed']} removed, {stats['updated']} updated, "
-        f"{stats['reverse_synced']} reverse-synced"
-    )
+    solutions = {**_empty_stats(), "failed": 0}
+    for (solution_id,) in (await db.execute(select(Solution.id).order_by(Solution.id))).all():
+        sol_indexed = dict(
+            (
+                await db.execute(
+                    select(SolutionFileIndex.path, SolutionFileIndex.content_hash).where(
+                        SolutionFileIndex.solution_id == solution_id
+                    )
+                )
+            ).tuples().all()
+        )
 
-    return stats
+        async def index_sol(path: str, body: bytes, content_hash: str, sid: UUID = solution_id) -> None:
+            await service.index_solution(sid, path, body, content_hash)
+
+        async def index_sol_path_only(path: str, content_hash: str, sid: UUID = solution_id) -> None:
+            await service.index_solution_path_only(sid, path, content_hash)
+
+        async def unindex_sol(path: str, sid: UUID = solution_id) -> None:
+            await service.unindex_solution(sid, path)
+
+        try:
+            await _reconcile_scope(
+                solution_storage_factory(solution_id),
+                sol_indexed,
+                index=index_sol,
+                index_path_only=index_sol_path_only,
+                unindex=unindex_sol,
+                stats=solutions,
+            )
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            solutions["failed"] += 1
+            logger.exception("Solution source index reconcile failed for %s", solution_id)
+
+    logger.info(
+        "File index reconciled: workspace %s; solutions %s", workspace, solutions
+    )
+    return {"workspace": workspace, "solutions": solutions}

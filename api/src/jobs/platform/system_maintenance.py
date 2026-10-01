@@ -94,16 +94,18 @@ async def run_file_index_reconciliation(
 ) -> dict:
     from src.services.file_index_reconciler import reconcile_file_index
 
-    await context.report("Reconciling the workspace file index", percent=5)
+    await context.report("Reconciling the workspace and Solution source index", percent=5)
     async with get_db_context() as db:
         result = await reconcile_file_index(db)
-    await context.report("Workspace file index reconciled", percent=100)
+    await context.report("Source search index reconciled", percent=100)
     await context.log(
         "info",
         "file_index_reconciliation_completed",
-        (
-            f"File index reconciliation completed: {result['added']} added, "
-            f"{result['removed']} removed, {result['reverse_synced']} reverse-synced"
+        "File index reconciliation completed: "
+        + "; ".join(
+            f"{scope} +{stats['added']} ~{stats['updated']} -{stats['removed']}"
+            + (f" failed={stats['failed']}" if stats.get("failed") else "")
+            for scope, stats in result.items()
         ),
     )
     return result
