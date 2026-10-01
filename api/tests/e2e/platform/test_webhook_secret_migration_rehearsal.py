@@ -37,7 +37,7 @@ from tests.e2e.platform.test_r2b_roles_migration_rehearsal import (
 
 pytestmark = pytest.mark.e2e
 
-LEGACY_REVISION = "20260929_user_base_perm_fix"
+LEGACY_REVISION = "20261001_r3a_operator_perms"
 MIGRATION = Path("/app/alembic/versions/20261001_webhook_secret_encrypt.py")
 
 

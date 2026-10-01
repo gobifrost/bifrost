@@ -1,7 +1,7 @@
 """Encrypt webhook signing secrets and remove them from adapter config
 
 Revision ID: 20261001_webhook_secret_enc
-Revises: 20260929_user_base_perm_fix
+Revises: 20261001_r3a_operator_perms
 Create Date: 2026-10-01
 
 A generic webhook source's HMAC signing secret was stored in plaintext twice:
@@ -35,7 +35,7 @@ from alembic import op
 from sqlalchemy.engine import Connection
 
 revision: str = "20261001_webhook_secret_enc"
-down_revision: Union[str, None] = "20260929_user_base_perm_fix"
+down_revision: Union[str, None] = "20261001_r3a_operator_perms"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
