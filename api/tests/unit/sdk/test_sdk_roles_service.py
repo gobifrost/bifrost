@@ -483,20 +483,41 @@ class TestRolesRouterBoundary:
 
 @pytest.mark.asyncio
 class TestBuiltinRoleGuards:
-    """Builtin roles (Platform Admin, User, Platform Operator) are hidden
+    """Builtin roles (Platform Admin, User, Platform Operator, Secrets
+    Reader) are hidden
     from list/get and refuse update/delete/assignment (409) — see
     `shared.builtin_roles`. R3a adds their UI; until then no existing
     screen or picker should start showing them."""
 
     async def test_builtins_hidden_from_list(self, db_session):
-        from shared.builtin_roles import PLATFORM_ADMIN_ROLE_ID, USER_ROLE_ID, PLATFORM_OPERATOR_ROLE_ID
+        from shared.builtin_roles import BUILTIN_ROLE_IDS
         from shared.sdk_roles import list_roles
 
         items, _total = await list_roles(db_session)
         ids = {item.id for item in items}
-        assert PLATFORM_ADMIN_ROLE_ID not in ids
-        assert USER_ROLE_ID not in ids
-        assert PLATFORM_OPERATOR_ROLE_ID not in ids
+        assert not BUILTIN_ROLE_IDS & ids
+
+    async def test_secrets_reader_is_hidden_and_immutable(self, db_session):
+        from shared.builtin_roles import DECRYPTION_ROLE_ID
+        from shared.sdk_roles import assign_users_to_role, delete_role, get_role, update_role
+
+        with pytest.raises(RoleServiceError) as exc_info:
+            await get_role(db_session, role_id=DECRYPTION_ROLE_ID)
+        assert exc_info.value.status_code == 404
+        with pytest.raises(RoleServiceError) as exc_info:
+            await update_role(
+                db_session, role_id=DECRYPTION_ROLE_ID, name="Renamed", actor_email="a@t.local",
+            )
+        assert exc_info.value.status_code == 409
+        with pytest.raises(RoleServiceError) as exc_info:
+            await delete_role(db_session, role_id=DECRYPTION_ROLE_ID)
+        assert exc_info.value.status_code == 409
+        user = await _seed_user(db_session)
+        with pytest.raises(RoleServiceError) as exc_info:
+            await assign_users_to_role(
+                db_session, role_id=DECRYPTION_ROLE_ID, user_ids=[str(user.id)], actor_email="a@t.local",
+            )
+        assert exc_info.value.status_code == 409
 
     async def test_builtin_hidden_from_get_404(self, db_session):
         from shared.builtin_roles import USER_ROLE_ID

@@ -40,6 +40,7 @@ from src.models.contracts.access_list import (
     CurrentGate,
     InlineEffect,
 )
+from src.models.contracts.permissions import parse_permission
 from src.services.access_list import ACCESS_LIST
 from src.services.mcp_server.server import get_system_tools
 from src.services.operation_catalog import OPERATION_CATALOG
@@ -375,16 +376,15 @@ class TestConsistency:
         # AccessEntry's own validator already enforces this at construction
         # time (see PERMISSION_DOMAINS); re-assert here for the same reason
         # as test_permission_entries_have_permission_and_boundary above.
-        from src.models.contracts.permissions import PERMISSION_DOMAINS
-
         unknown = []
         for entry in ACCESS_LIST:
             if entry.permission is None:
                 continue
-            domain, _, _action = entry.permission.rpartition(".")
-            if domain not in PERMISSION_DOMAINS:
-                unknown.append((entry.key, domain))
-        assert not unknown, f"permission domain outside PERMISSION_DOMAINS: {unknown}"
+            try:
+                parse_permission(entry.permission)
+            except ValueError as exc:
+                unknown.append((entry.key, str(exc)))
+        assert not unknown, f"permission outside the grammar or PERMISSION_DOMAINS: {unknown}"
 
     # A (domain, current_gate) group is allowed mixed boundaries only when the
     # domain is one of the intentionally-collapsed multi-resource buckets
@@ -404,10 +404,12 @@ class TestConsistency:
         # (/api/services/*) sits alongside genuinely global maintenance/
         # packages/github/kubernetes/worker admin.
         ("platform", CurrentGate.SUPERUSER),
-        # Roles domain: /api/roles/* is genuinely org-cascaded; the two
-        # /api/users/{id}/roles|forms reads are flat global lookups with no
-        # org filter (see their reason text).
-        ("roles", CurrentGate.SUPERUSER),
+        # Organizations domain: creating an organization has no existing
+        # organization to apply to, so it is Platform-boundary; reading,
+        # updating and disabling one apply to that organization. The MCP
+        # tools inherit the same split (authenticated transport floor).
+        ("organizations", CurrentGate.SUPERUSER),
+        ("organizations", CurrentGate.AUTHENTICATED),
         # required-instructions (settings, folded in above) has a
         # platform-wide GET/PUT and a deliberate per-org
         # /organizations/{organization_id} variant (see reason text).
@@ -418,7 +420,7 @@ class TestConsistency:
         for entry in ACCESS_LIST:
             if entry.permission is None:
                 continue
-            domain, _, _action = entry.permission.rpartition(".")
+            domain = parse_permission(entry.permission).domain
             groups.setdefault((domain, entry.current_gate), set()).add(entry.boundary)
         unjustified = {
             key: boundaries

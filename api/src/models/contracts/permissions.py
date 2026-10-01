@@ -12,9 +12,18 @@ its parent. Platform-operations surfaces with no catalog domain of their
 own are collapsed into three buckets (``settings``, ``metrics``,
 ``platform``) rather than getting one domain each — see each bucket's
 ``description`` for exactly what it covers.
+
+A permission string is ``<domain>.<read|readwrite|execute>[.all]``. The
+optional ``.all`` suffix means extended management detail on objects the
+holder can already reach (an app's source, a form's publication review);
+it never widens which organizations the holder reaches. There is no
+implicit hierarchy: ``readwrite`` does not imply ``read`` and ``read.all``
+does not imply ``read``.
 """
 
 from __future__ import annotations
+
+from dataclasses import dataclass
 
 from pydantic import BaseModel, ConfigDict
 
@@ -28,8 +37,29 @@ class PermissionDomain(BaseModel):
 
 PERMISSION_DOMAINS: dict[str, PermissionDomain] = {
     "roles": PermissionDomain(
-        description="Role definitions and their entity/agent grants (workflows, forms, apps, agents, knowledge, users).",
+        description=(
+            "Role definitions and their permission sets. Assigning roles to "
+            "users is `roleassignments`; sharing an entity with a role is "
+            "that entity's own domain (workflows, forms, apps, agents)."
+        ),
         who_should_hold="Platform admins. Others only through an admin-assigned role at a specific boundary; never the User base role.",
+    ),
+    "roleassignments": PermissionDomain(
+        description="Assigning roles to users and setting where each assignment applies (its boundaries), distinct from authoring the role definitions themselves.",
+        who_should_hold="Platform admins. Others only through an admin-assigned role at a specific boundary; never the User base role. The Platform Operator role may assign only roles that carry no permissions, and never to a privileged user.",
+    ),
+    "users": PermissionDomain(
+        description=(
+            "The user directory and limited support actions on ordinary "
+            "users: sending, resending, regenerating and revoking invites, "
+            "changing a name, resetting a password or MFA, deactivating, "
+            "and forcing sessions to sign out."
+        ),
+        who_should_hold="Platform admins. Others only through an admin-assigned role at a specific boundary; never the User base role. The Platform Operator role gets user support at Managed organizations.",
+    ),
+    "users.lifecycle": PermissionDomain(
+        description="Elevated user changes: creating users, moving a user between organizations or into Global, changing a user's base role, and permanently deleting a user.",
+        who_should_hold="Platform admins. Others only through an admin-assigned role at a specific boundary; never the User base role or the Platform Operator role.",
     ),
     "integrations": PermissionDomain(
         description="Integration definitions, config schema, and per-org OAuth/API mappings.",
@@ -40,8 +70,8 @@ PERMISSION_DOMAINS: dict[str, PermissionDomain] = {
         who_should_hold="Platform admins at the Platform boundary, and running workflows through workflow permissions. Never ordinary users.",
     ),
     "organizations": PermissionDomain(
-        description="Organization and user lifecycle: creating orgs, inviting/managing/removing users, forcing a user's sessions revoked.",
-        who_should_hold="Platform admins. Others only through an admin-assigned role at a specific boundary; never the User base role. The Platform Operator role gets limited user support at Managed organizations.",
+        description="Organization records and their lifecycle: creating, renaming, configuring and disabling organizations. Users inside an organization are `users`.",
+        who_should_hold="Platform admins. Others only through an admin-assigned role at a specific boundary; never the User base role. The Platform Operator role reads Managed organizations.",
     ),
     "solutions": PermissionDomain(
         description="Solution catalog entries: install records, updates, connection references.",
@@ -119,7 +149,7 @@ PERMISSION_DOMAINS: dict[str, PermissionDomain] = {
         description=(
             "Platform or org configuration that isn't a first-class entity of its "
             "own: AI model routing/pricing/behavior, branding, OAuth/SSO provider "
-            "config, ROI targets, required-instructions content, decorator "
+            "config, required-instructions content, decorator "
             "properties, the tool catalog, workflow signing keys, and app/form "
             "embed secrets. Some of these are inherently global (branding, AI "
             "pricing); others are inherently per-org (OAuth SSO config, embed "
@@ -128,8 +158,27 @@ PERMISSION_DOMAINS: dict[str, PermissionDomain] = {
         ),
         who_should_hold="Platform admins. Others only through an admin-assigned role at a specific boundary; never the User base role.",
     ),
+    "secrets": PermissionDomain(
+        description=(
+            "Decrypting secret values: secret config values, integration "
+            "OAuth tokens and client secrets returned in plain text. "
+            "Metadata about a secret (that it exists, its key, whether it is "
+            "set) is the owning domain's `read`, not this. Only these "
+            "decrypt paths return a secret in plain text: UI and admin "
+            "routes redact secret values for everyone, admins included."
+        ),
+        who_should_hold=(
+            "The engine execution principal, for running workflows. Humans "
+            "only through an explicit role assignment; the Platform Admin "
+            "wildcard never implies it."
+        ),
+    ),
+    "reports": PermissionDomain(
+        description="ROI reporting: per-organization and per-workflow ROI summaries and trends, and the ROI settings they are computed from.",
+        who_should_hold="Platform admins. Others only through an admin-assigned role at a specific boundary; never the User base role.",
+    ),
     "metrics": PermissionDomain(
-        description="Aggregate usage/cost/ROI reporting, the audit log, and scheduler diagnostics.",
+        description="Aggregate usage/cost reporting, the audit log, and scheduler diagnostics. ROI reporting is `reports`.",
         who_should_hold="Platform admins. Others only through an admin-assigned role at a specific boundary; never the User base role. The Platform Operator role reads metrics at Managed organizations.",
     ),
     "platform": PermissionDomain(
@@ -145,3 +194,76 @@ PERMISSION_DOMAINS: dict[str, PermissionDomain] = {
         who_should_hold="Platform admins only.",
     ),
 }
+
+
+PERMISSION_ACTIONS = ("read", "readwrite", "execute")
+"""The actions a permission string may name, before an optional ``.all``."""
+
+ALL_SUFFIX = "all"
+
+
+@dataclass(frozen=True)
+class ParsedPermission:
+    domain: str
+    action: str
+    # True when the string carries the ``.all`` suffix.
+    extended: bool
+
+
+def parse_permission(permission: str) -> ParsedPermission:
+    """Parse ``<domain>.<read|readwrite|execute>[.all]``.
+
+    Raises ``ValueError`` when the string is malformed or its domain is not
+    in ``PERMISSION_DOMAINS``. A domain may itself contain a dot
+    (``solutions.deploy``, ``users.lifecycle``).
+    """
+    body, _, last = permission.rpartition(".")
+    extended = last == ALL_SUFFIX
+    if not extended:
+        body = permission
+    domain, _, action = body.rpartition(".")
+    if not domain or action not in PERMISSION_ACTIONS:
+        raise ValueError(
+            f"Invalid permission format: {permission!r} "
+            "(expected '<domain>.<read|readwrite|execute>[.all]')"
+        )
+    if domain not in PERMISSION_DOMAINS:
+        raise ValueError(
+            f"Unknown permission domain {domain!r} (not in PERMISSION_DOMAINS)"
+        )
+    return ParsedPermission(domain=domain, action=action, extended=extended)
+
+
+DECRYPT_PERMISSION = "secrets.read"
+
+WILDCARD_EXCLUDED_PERMISSIONS: frozenset[str] = frozenset({DECRYPT_PERMISSION})
+"""Permissions the Platform Admin wildcard does not satisfy: they must be
+held explicitly (see the ``secrets`` domain)."""
+
+PRIVILEGED_PERMISSIONS: frozenset[str] = frozenset(
+    {
+        "users.readwrite",
+        "users.lifecycle.readwrite",
+        "roles.readwrite",
+        "roleassignments.readwrite",
+        "organizations.readwrite",
+        DECRYPT_PERMISSION,
+        "configs.readwrite",
+        "integrations.readwrite",
+        "settings.readwrite",
+        "platform.read",
+        "platform.readwrite",
+        "repository.read",
+        "repository.readwrite",
+        "claims.readwrite",
+        "filepolicies.readwrite",
+        "policyrules.readwrite",
+        "solutions.deploy.execute",
+        "executions.readwrite",
+        "mcp.readwrite",
+    }
+)
+"""Permissions that make whoever holds them, at any boundary, a privileged
+principal (see ``src.services.authorization.privilege``). The Platform
+Admin wildcard is privileged too. A privileged user is a protected target:
+limited user-support and role-assignment permissions do not reach them."""

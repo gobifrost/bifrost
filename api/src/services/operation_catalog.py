@@ -1076,7 +1076,7 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
         mcp=McpOperationBinding(name="bifrost_workflow_role_grant"),
         native_builder=True,
         manifest=ManifestOperationBinding(entity="workflows"),
-        action_scopes=("workflows.readwrite", "roles.readwrite"),
+        action_scopes=("workflows.readwrite",),
         authorization_resolver="Platform-admin and Solution-management guards",
         audit_event="workflow.roles.grant",
         side_effects=(
@@ -1097,7 +1097,7 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
         mcp=McpOperationBinding(name="bifrost_workflow_role_revoke"),
         native_builder=True,
         manifest=ManifestOperationBinding(entity="workflows"),
-        action_scopes=("workflows.readwrite", "roles.readwrite"),
+        action_scopes=("workflows.readwrite",),
         authorization_resolver="Platform-admin and Solution-management guards",
         audit_event="workflow.roles.revoke",
         side_effects=(
@@ -1796,7 +1796,7 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
         mcp=McpOperationBinding(name="bifrost_role_list"),
         native_builder=True,
         action_scopes=("roles.read",),
-        authorization_resolver="roles.read in the selected boundary",
+        authorization_resolver="roles.read in the Platform boundary",
         exclusions={
             "manifest": "Manifests reconcile Role state; they do not perform collection reads.",
             "sdk": _ROLE_SDK_EXCLUSION,
@@ -1815,7 +1815,7 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
         mcp=McpOperationBinding(name="bifrost_role_get"),
         native_builder=True,
         action_scopes=("roles.read",),
-        authorization_resolver="roles.read in the selected boundary",
+        authorization_resolver="roles.read in the Platform boundary",
         exclusions={
             "manifest": "Manifests reconcile Role state; they do not perform resource reads.",
             "sdk": _ROLE_SDK_EXCLUSION,
@@ -1902,7 +1902,7 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
             path="/api/roles/{role_id}/users",
             response_model="RoleUsersResponse",
         ),
-        action_scopes=("roles.read",),
+        action_scopes=("roleassignments.read",),
         authorization_resolver="Boundary-aware Role assignment visibility",
         exclusions=_ROLE_ASSIGNMENT_SURFACE_EXCLUSIONS,
     ),
@@ -1915,9 +1915,9 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
             path="/api/roles/{role_id}/users",
             request_model="AssignUsersToRoleRequest",
         ),
-        action_scopes=("roles.readwrite",),
+        action_scopes=("roleassignments.readwrite",),
         authorization_resolver=(
-            "Role assignment service requires roles.readwrite at every existing and requested boundary"
+            "Role assignment service requires roleassignments.readwrite at every existing and requested boundary"
         ),
         audit_event="role.user_assigned",
         side_effects=(
@@ -1935,9 +1935,9 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
             method="DELETE",
             path="/api/roles/{role_id}/users/{user_id}",
         ),
-        action_scopes=("roles.readwrite",),
+        action_scopes=("roleassignments.readwrite",),
         authorization_resolver=(
-            "Role assignment service requires roles.readwrite at every existing boundary"
+            "Role assignment service requires roleassignments.readwrite at every existing boundary"
         ),
         audit_event="role.user_unassigned",
         side_effects=(
@@ -1956,9 +1956,9 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
             path="/api/roles/{role_id}/users",
             request_model="UnassignUsersFromRoleRequest",
         ),
-        action_scopes=("roles.readwrite",),
+        action_scopes=("roleassignments.readwrite",),
         authorization_resolver=(
-            "Role assignment service requires roles.readwrite at every existing boundary"
+            "Role assignment service requires roleassignments.readwrite at every existing boundary"
         ),
         audit_event="role.users_bulk_unassigned",
         side_effects=(
@@ -1977,8 +1977,8 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
             path="/api/roles/{role_id}/forms",
             response_model="RoleFormsResponse",
         ),
-        action_scopes=("roles.read",),
-        authorization_resolver="roles.read in the selected boundary and form organization filtering",
+        action_scopes=("forms.read.all",),
+        authorization_resolver="forms.read.all in the selected boundary and form organization filtering",
         exclusions=_ROLE_RESOURCE_ASSIGNMENT_SURFACE_EXCLUSIONS,
     ),
     OperationDefinition(
@@ -1990,8 +1990,8 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
             path="/api/roles/{role_id}/forms",
             request_model="AssignFormsToRoleRequest",
         ),
-        action_scopes=("roles.readwrite",),
-        authorization_resolver="roles.readwrite in the selected boundary, exact form boundary, and Solution-management guard",
+        action_scopes=("forms.readwrite",),
+        authorization_resolver="forms.readwrite in the selected boundary, exact form boundary, and Solution-management guard",
         side_effects=(
             "verify each form exists before assignment",
             "reject solution-managed forms",
@@ -2007,8 +2007,8 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
             method="DELETE",
             path="/api/roles/{role_id}/forms/{form_id}",
         ),
-        action_scopes=("roles.readwrite",),
-        authorization_resolver="roles.readwrite in the selected boundary, exact form boundary, and Solution-management guard",
+        action_scopes=("forms.readwrite",),
+        authorization_resolver="forms.readwrite in the selected boundary, exact form boundary, and Solution-management guard",
         side_effects=(
             "reject solution-managed forms",
             "delete the role-form junction row and invalidate role form caches",
@@ -2024,8 +2024,8 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
             path="/api/roles/{role_id}/forms",
             request_model="UnassignFormsFromRoleRequest",
         ),
-        action_scopes=("roles.readwrite",),
-        authorization_resolver="roles.readwrite in the selected boundary, exact form boundaries, and Solution-management guard",
+        action_scopes=("forms.readwrite",),
+        authorization_resolver="forms.readwrite in the selected boundary, exact form boundaries, and Solution-management guard",
         side_effects=(
             "reject solution-managed forms",
             "delete role-form junction rows and invalidate role form caches",
@@ -2041,8 +2041,8 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
             path="/api/roles/{role_id}/agents",
             response_model="RoleAgentsResponse",
         ),
-        action_scopes=("roles.read",),
-        authorization_resolver="roles.read in the selected boundary and Agent organization filtering",
+        action_scopes=("agents.read.all",),
+        authorization_resolver="agents.read.all in the selected boundary and Agent organization filtering",
         exclusions=_ROLE_RESOURCE_ASSIGNMENT_SURFACE_EXCLUSIONS,
     ),
     OperationDefinition(
@@ -2054,8 +2054,8 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
             path="/api/roles/{role_id}/agents",
             request_model="AssignAgentsToRoleRequest",
         ),
-        action_scopes=("roles.readwrite",),
-        authorization_resolver="roles.readwrite in the selected boundary, exact Agent boundary, and Solution-management guard",
+        action_scopes=("agents.readwrite",),
+        authorization_resolver="agents.readwrite in the selected boundary, exact Agent boundary, and Solution-management guard",
         side_effects=(
             "verify each agent exists before assignment",
             "reject solution-managed agents",
@@ -2071,8 +2071,8 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
             method="DELETE",
             path="/api/roles/{role_id}/agents/{agent_id}",
         ),
-        action_scopes=("roles.readwrite",),
-        authorization_resolver="roles.readwrite in the selected boundary, exact Agent boundary, and Solution-management guard",
+        action_scopes=("agents.readwrite",),
+        authorization_resolver="agents.readwrite in the selected boundary, exact Agent boundary, and Solution-management guard",
         side_effects=(
             "reject solution-managed agents",
             "delete the role-agent junction row and invalidate role agent caches",
@@ -2088,8 +2088,8 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
             path="/api/roles/{role_id}/agents",
             request_model="UnassignAgentsFromRoleRequest",
         ),
-        action_scopes=("roles.readwrite",),
-        authorization_resolver="roles.readwrite in the selected boundary, exact Agent boundaries, and Solution-management guard",
+        action_scopes=("agents.readwrite",),
+        authorization_resolver="agents.readwrite in the selected boundary, exact Agent boundaries, and Solution-management guard",
         side_effects=(
             "reject solution-managed agents",
             "delete role-agent junction rows and invalidate role agent caches",
@@ -2105,8 +2105,8 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
             path="/api/roles/{role_id}/apps",
             response_model="RoleAppsResponse",
         ),
-        action_scopes=("roles.read",),
-        authorization_resolver="roles.read in the selected boundary and Application organization filtering",
+        action_scopes=("apps.read.all",),
+        authorization_resolver="apps.read.all in the selected boundary and Application organization filtering",
         exclusions=_ROLE_RESOURCE_ASSIGNMENT_SURFACE_EXCLUSIONS,
     ),
     OperationDefinition(
@@ -2118,8 +2118,8 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
             path="/api/roles/{role_id}/apps",
             request_model="AssignAppsToRoleRequest",
         ),
-        action_scopes=("roles.readwrite",),
-        authorization_resolver="roles.readwrite in the selected boundary, exact Application boundary, and Solution-management guard",
+        action_scopes=("apps.readwrite",),
+        authorization_resolver="apps.readwrite in the selected boundary, exact Application boundary, and Solution-management guard",
         side_effects=(
             "verify each application exists before assignment",
             "reject solution-managed applications",
@@ -2136,8 +2136,8 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
             path="/api/roles/{role_id}/apps",
             request_model="UnassignAppsFromRoleRequest",
         ),
-        action_scopes=("roles.readwrite",),
-        authorization_resolver="roles.readwrite in the selected boundary, exact Application boundaries, and Solution-management guard",
+        action_scopes=("apps.readwrite",),
+        authorization_resolver="apps.readwrite in the selected boundary, exact Application boundaries, and Solution-management guard",
         side_effects=(
             "reject solution-managed applications",
             "delete role-app junction rows and emit an audit event",
@@ -2153,8 +2153,8 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
             path="/api/roles/{role_id}/workflows",
             response_model="RoleWorkflowsResponse",
         ),
-        action_scopes=("roles.read",),
-        authorization_resolver="roles.read in the selected boundary and Workflow organization filtering",
+        action_scopes=("workflows.read.all",),
+        authorization_resolver="workflows.read.all in the selected boundary and Workflow organization filtering",
         exclusions=_ROLE_RESOURCE_ASSIGNMENT_SURFACE_EXCLUSIONS,
     ),
     OperationDefinition(
@@ -2166,8 +2166,8 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
             path="/api/roles/{role_id}/workflows",
             request_model="AssignWorkflowsToRoleRequest",
         ),
-        action_scopes=("roles.readwrite",),
-        authorization_resolver="roles.readwrite in the selected boundary, exact Workflow boundary, and Solution-management guard",
+        action_scopes=("workflows.readwrite",),
+        authorization_resolver="workflows.readwrite in the selected boundary, exact Workflow boundary, and Solution-management guard",
         side_effects=(
             "verify each workflow exists before assignment",
             "reject solution-managed workflows",
@@ -2184,8 +2184,8 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
             path="/api/roles/{role_id}/workflows",
             request_model="UnassignWorkflowsFromRoleRequest",
         ),
-        action_scopes=("roles.readwrite",),
-        authorization_resolver="roles.readwrite in the selected boundary, exact Workflow boundaries, and Solution-management guard",
+        action_scopes=("workflows.readwrite",),
+        authorization_resolver="workflows.readwrite in the selected boundary, exact Workflow boundaries, and Solution-management guard",
         side_effects=(
             "reject solution-managed workflows",
             "delete role-workflow junction rows and emit an audit event",
@@ -2201,7 +2201,7 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
             path="/api/users",
             response_model="list[UserPublic]",
         ),
-        action_scopes=("organizations.read",),
+        action_scopes=("users.read",),
         authorization_resolver="Organization-boundary user visibility",
         exclusions=_USER_ADMIN_SURFACE_EXCLUSIONS,
     ),
@@ -2214,7 +2214,7 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
             path="/api/users/{user_id}",
             response_model="UserPublic",
         ),
-        action_scopes=("organizations.read",),
+        action_scopes=("users.read",),
         authorization_resolver="Exact organization-boundary user visibility",
         exclusions=_USER_ADMIN_SURFACE_EXCLUSIONS,
     ),
@@ -2228,7 +2228,7 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
             request_model="UserCreate",
             response_model="UserPublic",
         ),
-        action_scopes=("organizations.readwrite",),
+        action_scopes=("users.lifecycle.readwrite",),
         authorization_resolver="Exact target organization boundary",
         audit_event="user.create",
         side_effects=(
@@ -2248,7 +2248,7 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
             request_model="UserUpdate",
             response_model="UserPublic",
         ),
-        action_scopes=("organizations.readwrite",),
+        action_scopes=("users.lifecycle.readwrite",),
         authorization_resolver="Existing and destination organization boundaries",
         audit_event="user.update",
         side_effects=(
@@ -2265,7 +2265,7 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
             method="DELETE",
             path="/api/users/{user_id}",
         ),
-        action_scopes=("organizations.readwrite",),
+        action_scopes=("users.lifecycle.readwrite",),
         authorization_resolver="Exact organization-boundary user mutation",
         audit_event="user.delete",
         side_effects=(
@@ -2284,7 +2284,7 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
             request_model="BulkUserOperation",
             response_model="BulkUserResponse",
         ),
-        action_scopes=("organizations.readwrite",),
+        action_scopes=("users.lifecycle.readwrite",),
         authorization_resolver=(
             "Per-user source/destination organization checks plus Role-boundary checks for assignment replacement"
         ),
@@ -2305,7 +2305,7 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
             path="/api/users/{user_id}/invite/resend",
             response_model="CreateInviteResponse",
         ),
-        action_scopes=("organizations.readwrite",),
+        action_scopes=("users.readwrite",),
         authorization_resolver="Exact organization-boundary user mutation",
         audit_event="user.invite_resend",
         side_effects=("replace the registration invite", "emit the invite event"),
@@ -2321,7 +2321,7 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
             request_model="SendInviteRequest",
             response_model="CreateInviteResponse",
         ),
-        action_scopes=("organizations.readwrite",),
+        action_scopes=("users.readwrite",),
         authorization_resolver="Exact organization-boundary user mutation",
         audit_event="user.invite_send",
         side_effects=("emit the invite event",),
@@ -2336,7 +2336,7 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
             path="/api/users/{user_id}/invite/regenerate",
             response_model="CreateInviteResponse",
         ),
-        action_scopes=("organizations.readwrite",),
+        action_scopes=("users.readwrite",),
         authorization_resolver="Exact organization-boundary user mutation",
         audit_event="user.invite_regenerate",
         side_effects=("replace the registration invite",),
@@ -2350,7 +2350,7 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
             method="DELETE",
             path="/api/users/{user_id}/invite",
         ),
-        action_scopes=("organizations.readwrite",),
+        action_scopes=("users.readwrite",),
         authorization_resolver="Exact organization-boundary user mutation",
         audit_event="user.invite_revoke",
         side_effects=("revoke the active registration invite",),
@@ -2365,7 +2365,7 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
             path="/api/users/{user_id}/roles",
             response_model="list[RoleAssignmentPublic]",
         ),
-        action_scopes=("roles.read",),
+        action_scopes=("roleassignments.read",),
         authorization_resolver="Organization-boundary user visibility",
         exclusions=_ROLE_ASSIGNMENT_SURFACE_EXCLUSIONS,
     ),
@@ -2378,7 +2378,7 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
             path="/api/users/{user_id}/forms",
             response_model="UserFormsResponse",
         ),
-        action_scopes=("roles.read",),
+        action_scopes=("roleassignments.read",),
         authorization_resolver="Organization-boundary user visibility and resource Role projection",
         exclusions=_ROLE_ASSIGNMENT_SURFACE_EXCLUSIONS,
     ),
