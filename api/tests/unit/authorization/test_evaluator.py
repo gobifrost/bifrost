@@ -142,6 +142,32 @@ class TestPlatformAdmin:
         entry = _perm_entry("settings.readwrite", current_gate=CurrentGate.SUPERUSER)
         assert decide(self.admin, entry, GLOBAL).allowed
 
+    def test_wildcard_satisfies_extended_reads(self) -> None:
+        entry = _perm_entry("apps.read.all", current_gate=CurrentGate.SUPERUSER)
+        assert decide(self.admin, entry, HOME).rule == "platform_admin"
+
+
+class TestSecretDecryption:
+    """``secrets.read`` is never implied by the Platform Admin wildcard."""
+
+    entry = _perm_entry("secrets.read", current_gate=CurrentGate.SUPERUSER)
+
+    def test_platform_admin_without_an_explicit_grant_is_denied(self) -> None:
+        admin = _ctx(base=PLATFORM_ADMIN_ROLE_ID, home=PROVIDER_ORG_ID)
+        for target in (HOME, cross_org(CUSTOMER_A), GLOBAL):
+            decision = decide(admin, self.entry, target)
+            assert (decision.allowed, decision.rule) == (False, "denied:missing:secrets.read")
+
+    def test_platform_admin_with_an_explicit_grant_is_allowed_where_it_applies(self) -> None:
+        grant = RoleGrant(uuid4(), frozenset({"secrets.read"}), (Boundary(BoundaryKind.ORGANIZATION, CUSTOMER_A),))
+        admin = _ctx(grant, base=PLATFORM_ADMIN_ROLE_ID, home=PROVIDER_ORG_ID)
+        assert decide(admin, self.entry, cross_org(CUSTOMER_A)).allowed
+        assert not decide(admin, self.entry, cross_org(CUSTOMER_B)).allowed
+
+    def test_user_with_an_explicit_grant_is_allowed(self) -> None:
+        grant = RoleGrant(uuid4(), frozenset({"secrets.read"}), (Boundary(BoundaryKind.ORGANIZATION, CUSTOMER_A),))
+        assert decide(_ctx(grant, home=CUSTOMER_A), self.entry, HOME).allowed
+
 
 class TestNonPermissionClasses:
     @pytest.mark.parametrize(

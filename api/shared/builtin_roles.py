@@ -12,7 +12,8 @@ and runtime code agree on identity without a name lookup:
   so it can never silently drift from what an authenticated user can
   already reach today. See ``derive_user_base_permissions``.
 - **Platform Operator** (builtin, not base): seeded but assigned to
-  nobody in this PR. Read-only visibility into managed organizations.
+  nobody yet. Read visibility into managed organizations plus user support
+  and role assignment (see ``PLATFORM_OPERATOR_PERMISSIONS``).
 
 Migrations must not import live application code (a historical migration
 has to keep producing the same rows regardless of later refactors), so the
@@ -79,7 +80,8 @@ def derive_user_base_permissions(access_list: "list[AccessEntry]") -> frozenset[
       (``inline_effect`` is not ``deny_unless_superuser``/``deny_unless_bypass``)
     - ``intended_change is None`` (a permanent, not a transitional, grant)
     - ``boundary == "organization"``
-    - action ``read`` (permission string ends in ``.read``)
+    - action ``read`` (permission string ends in ``.read``; an extended
+      ``.read.all`` management read is never derived)
 
     These are exactly the reads any authenticated user can already make
     today with no admin/provider-org bypass involved, so granting them via
@@ -127,9 +129,13 @@ USER_BASE_PERMISSIONS: frozenset[str] = frozenset(
     }
 )
 
-# Seeded but assigned to nobody in this PR (R2b). Its user-support actions
-# (reset password/MFA, resend invite, deactivate) get a permission when R3a
-# converts those routes to the permission model — not invented here.
+# Seeded but assigned to nobody yet. Frozen copy of what the latest
+# migration that seeds it (20261001_r3a_operator_perms) writes; see
+# `tests/unit/test_builtin_roles.py`. `configs.read` and `integrations.read`
+# are metadata only: decrypting a secret is `secrets.read`, which this role
+# never holds. `roleassignments.readwrite` is limited at the cutover to roles
+# that carry no permissions, on users who are not privileged
+# (`src.services.authorization.privilege.operator_assignable_role`).
 PLATFORM_OPERATOR_PERMISSIONS: frozenset[str] = frozenset(
     {
         "agents.read",
@@ -142,5 +148,9 @@ PLATFORM_OPERATOR_PERMISSIONS: frozenset[str] = frozenset(
         "integrations.read",
         "metrics.read",
         "organizations.read",
+        "users.read",
+        "users.readwrite",
+        "roleassignments.read",
+        "roleassignments.readwrite",
     }
 )

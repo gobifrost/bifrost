@@ -23,6 +23,7 @@ from shared.builtin_roles import (
     derive_user_base_permissions,
     is_builtin_role_id,
 )
+from src.models.contracts.permissions import parse_permission
 from src.services.access_list import ACCESS_LIST
 
 
@@ -71,9 +72,16 @@ def test_derived_permissions_are_read_only_organization_scoped():
         assert permission.endswith(".read"), permission
 
 
-def test_platform_operator_permissions_are_read_only():
-    for permission in PLATFORM_OPERATOR_PERMISSIONS:
-        assert permission.endswith(".read"), permission
+def test_platform_operator_permissions_are_user_support_and_reads():
+    """The Operator role gets read visibility plus user support and role
+    assignment (constrained at the cutover to permissionless roles on
+    unprivileged users). Never secret decryption, elevated user lifecycle,
+    role authoring, or extended management detail."""
+    writes = {p for p in PLATFORM_OPERATOR_PERMISSIONS if not p.endswith(".read")}
+    assert writes == {"users.readwrite", "roleassignments.readwrite"}
+    for forbidden in ("secrets.read", "users.lifecycle.readwrite", "roles.readwrite"):
+        assert forbidden not in PLATFORM_OPERATOR_PERMISSIONS
+    assert not any(parse_permission(p).extended for p in PLATFORM_OPERATOR_PERMISSIONS)
 
 
 def _load_migration(filename: str):
@@ -91,14 +99,15 @@ def _load_migration(filename: str):
 
 def test_migration_frozen_copies_match_live_constants():
     """Each migration carries its own frozen copy (it must not import live
-    code). The latest migration that seeds the User role
-    (`20260929_user_base_perm_fix`) must equal the live constant; after a
-    deliberate change to the live values, update them through a NEW migration
-    and adjust this test to pin the new revision instead. The R2b migration
-    stays pinned to what it seeded, and to the Platform Operator set, which
-    no later migration changed."""
+    code). The latest migration that seeds each builtin role must equal the
+    live constant: `20260929_user_base_perm_fix` for the User role and
+    `20261001_r3a_operator_perms` for Platform Operator. After a deliberate
+    change to the live values, update them through a NEW migration and adjust
+    this test to pin the new revision instead. The R2b migration stays pinned
+    to what it seeded."""
     fix = _load_migration("20260929_user_base_perm_fix.py")
     r2b = _load_migration("20260929_r2b_roles.py")
+    operator = _load_migration("20261001_r3a_operator_perms.py")
 
     assert fix.down_revision == "20260929_r2b_wf_permissions"
     assert fix.USER_ROLE_ID == USER_ROLE_ID
@@ -108,4 +117,9 @@ def test_migration_frozen_copies_match_live_constants():
     assert r2b.PLATFORM_ADMIN_ROLE_ID == PLATFORM_ADMIN_ROLE_ID
     assert r2b.USER_ROLE_ID == USER_ROLE_ID
     assert r2b.PLATFORM_OPERATOR_ROLE_ID == PLATFORM_OPERATOR_ROLE_ID
-    assert r2b.PLATFORM_OPERATOR_PERMISSIONS == PLATFORM_OPERATOR_PERMISSIONS
+
+    assert operator.down_revision == "20260929_user_base_perm_fix"
+    assert operator.PLATFORM_OPERATOR_ROLE_ID == PLATFORM_OPERATOR_ROLE_ID
+    assert operator.PLATFORM_OPERATOR_PERMISSIONS == PLATFORM_OPERATOR_PERMISSIONS
+    assert r2b.PLATFORM_OPERATOR_PERMISSIONS | operator.ADDED_PERMISSIONS == PLATFORM_OPERATOR_PERMISSIONS
+    assert not r2b.PLATFORM_OPERATOR_PERMISSIONS & operator.ADDED_PERMISSIONS

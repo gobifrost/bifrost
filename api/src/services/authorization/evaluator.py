@@ -12,7 +12,10 @@ This module implements the operation level: the first two. The object level
 (``OrgScopedRepository``, ``access_level``, role grants) stays in existing
 code.
 
-1. A Platform Admin base role is allowed.
+1. A Platform Admin base role is allowed, except on an entry whose permission
+   the wildcard does not satisfy (``WILDCARD_EXCLUDED_PERMISSIONS``: secret
+   decryption). There an admin is decided like anyone else, by explicit
+   role grants.
 2. ``permission`` class: the entry's permission must be held by the base role
    (home organization only, never for a ``platform``-boundary entry) or by an
    additional role whose boundary covers the target:
@@ -49,6 +52,7 @@ from src.models.contracts.access_list import (
     CurrentGate,
     InlineEffect,
 )
+from src.models.contracts.permissions import WILDCARD_EXCLUDED_PERMISSIONS
 from src.services.authorization.context import AuthorizationContext, Boundary, BoundaryKind
 
 
@@ -131,7 +135,7 @@ def decide(ctx: AuthorizationContext | None, entry: AccessEntry, target: Target)
     ):
         target = HOME
 
-    if ctx.is_platform_admin:
+    if ctx.is_platform_admin and entry.permission not in WILDCARD_EXCLUDED_PERMISSIONS:
         if target.kind == TargetKind.HOME or acts_beyond_own_org(entry):
             return Decision(True, "platform_admin")
         return Decision(False, "denied:operation_confined_to_own_org")

@@ -18,7 +18,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
-from src.models.contracts.permissions import PERMISSION_DOMAINS
+from src.models.contracts.permissions import parse_permission
 
 
 class AccessClass(StrEnum):
@@ -129,7 +129,8 @@ class AccessEntry(BaseModel):
     # ``reason`` then says where).
     inline_effect: InlineEffect | None = None
 
-    # Required iff access_class is PERMISSION. Format: "<domain>.<read|readwrite|execute>".
+    # Required iff access_class is PERMISSION. Format:
+    # "<domain>.<read|readwrite|execute>[.all]" (see parse_permission).
     permission: str | None = None
     # Required iff access_class is PERMISSION.
     boundary: str | None = None
@@ -178,16 +179,7 @@ class AccessEntry(BaseModel):
                 raise ValueError("boundary is required when access_class is 'permission'")
             if self.boundary not in _PERMISSION_BOUNDARIES:
                 raise ValueError(f"boundary must be one of {_PERMISSION_BOUNDARIES}")
-            domain, _, suffix = self.permission.rpartition(".")
-            if not domain or suffix not in ("read", "readwrite", "execute"):
-                raise ValueError(
-                    "permission must be '<domain>.<read|readwrite|execute>'"
-                )
-            if domain not in PERMISSION_DOMAINS:
-                raise ValueError(
-                    f"permission domain {domain!r} is not in the closed "
-                    "PERMISSION_DOMAINS vocabulary (src.models.contracts.permissions)"
-                )
+            parse_permission(self.permission)
         else:
             if self.permission is not None or self.boundary is not None:
                 raise ValueError(

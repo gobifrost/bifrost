@@ -6,7 +6,7 @@ import pytest
 
 from src.main import app
 from src.models.contracts.operation_catalog import OperationDefinition
-from src.models.contracts.permissions import PERMISSION_DOMAINS
+from src.models.contracts.permissions import parse_permission
 from src.services.operation_catalog import (
     OPERATION_CATALOG,
     get_operation,
@@ -1294,11 +1294,12 @@ def test_action_scopes_use_the_closed_permission_domain_vocabulary() -> None:
     unknown: dict[str, set[str]] = {}
     for operation in OPERATION_CATALOG:
         for scope in operation.action_scopes:
-            domain, _, _action = scope.rpartition(".")
-            if domain not in PERMISSION_DOMAINS:
-                unknown.setdefault(domain, set()).add(operation.operation_id)
+            try:
+                parse_permission(scope)
+            except ValueError:
+                unknown.setdefault(scope, set()).add(operation.operation_id)
     assert not unknown, (
-        f"catalog action_scopes use a domain outside PERMISSION_DOMAINS: {unknown}"
+        f"catalog action_scopes outside the grammar or PERMISSION_DOMAINS: {unknown}"
     )
 
 

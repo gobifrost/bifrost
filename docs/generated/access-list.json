@@ -556,7 +556,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/admin/required-instructions/organizations/{organization_id}",
-    "permission": "settings.read",
+    "permission": "settings.read.all",
     "reason": "Platform-admin-only operation. (Per-org variant: this route takes an explicit organization_id path param, unlike the platform-wide GET above.)"
   },
   {
@@ -584,7 +584,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/admin/roi/settings",
-    "permission": "settings.read",
+    "permission": "reports.read.all",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -630,7 +630,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/agent-runs/backfill-eligible",
-    "permission": "agentruns.read",
+    "permission": "agentruns.read.all",
     "reason": "Summarizer backfill/regeneration on agent-run history; platform admins only. The check is the module-local `_is_platform_admin` helper in agent_runs.py, which the one-hop token scan cannot see."
   },
   {
@@ -644,7 +644,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/agent-runs/backfill-jobs",
-    "permission": "agentruns.read",
+    "permission": "agentruns.read.all",
     "reason": "Summarizer backfill/regeneration on agent-run history; platform admins only. The check is the module-local `_is_platform_admin` helper in agent_runs.py, which the one-hop token scan cannot see."
   },
   {
@@ -658,7 +658,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/agent-runs/backfill-jobs/{job_id}",
-    "permission": "agentruns.read",
+    "permission": "agentruns.read.all",
     "reason": "Summarizer backfill/regeneration on agent-run history; platform admins only. The check is the module-local `_is_platform_admin` helper in agent_runs.py, which the one-hop token scan cannot see."
   },
   {
@@ -1453,7 +1453,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/applications/{app_id}/embed-secrets",
-    "permission": "settings.read",
+    "permission": "apps.read.all",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -1725,7 +1725,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/applications/{app_id}/source",
-    "permission": "apps.read",
+    "permission": "apps.read.all",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -2330,7 +2330,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/decorator-properties",
-    "permission": "settings.read",
+    "permission": "settings.read.all",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -3512,7 +3512,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/forms/{form_id}/embed-secrets",
-    "permission": "settings.read",
+    "permission": "forms.read.all",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -3643,7 +3643,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/forms/{form_id}/publication",
-    "permission": "forms.read",
+    "permission": "forms.read.all",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -3671,7 +3671,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/forms/{form_id}/publication-review",
-    "permission": "forms.read",
+    "permission": "forms.read.all",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -5137,7 +5137,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/mcp/config",
-    "permission": "mcp.read",
+    "permission": "mcp.read.all",
     "reason": "Reads the org's MCP client config."
   },
   {
@@ -5749,8 +5749,8 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/oauth/credentials/{connection_name}",
-    "permission": "integrations.read",
-    "reason": "Platform-admin-only operation."
+    "permission": "secrets.read",
+    "reason": "Returns a connection's decrypted OAuth access and refresh tokens."
   },
   {
     "access_class": "permission",
@@ -5782,7 +5782,7 @@
   },
   {
     "access_class": "permission",
-    "boundary": "platform",
+    "boundary": "organization",
     "current_gate": "superuser",
     "inline_checks": [],
     "inline_effect": null,
@@ -5792,7 +5792,7 @@
     "operation_id": "organizations.list",
     "path": "/api/organizations",
     "permission": "organizations.read",
-    "reason": "Platform-admin-only operation."
+    "reason": "Lists organization records. At the cutover the list is filtered to organizations the caller holds this permission for."
   },
   {
     "access_class": "permission",
@@ -5806,11 +5806,11 @@
     "operation_id": "organizations.create",
     "path": "/api/organizations",
     "permission": "organizations.readwrite",
-    "reason": "Platform-admin-only operation."
+    "reason": "Creates an organization; there is no existing organization for the grant to apply to, so this needs a Platform-boundary grant."
   },
   {
     "access_class": "permission",
-    "boundary": "platform",
+    "boundary": "organization",
     "current_gate": "superuser",
     "inline_checks": [],
     "inline_effect": null,
@@ -5820,11 +5820,11 @@
     "operation_id": "organizations.delete",
     "path": "/api/organizations/{org_id}",
     "permission": "organizations.readwrite",
-    "reason": "Platform-admin-only operation."
+    "reason": "Disables one organization."
   },
   {
     "access_class": "permission",
-    "boundary": "platform",
+    "boundary": "organization",
     "current_gate": "superuser",
     "inline_checks": [],
     "inline_effect": null,
@@ -5834,11 +5834,11 @@
     "operation_id": "organizations.get",
     "path": "/api/organizations/{org_id}",
     "permission": "organizations.read",
-    "reason": "Platform-admin-only operation."
+    "reason": "Reads one organization record."
   },
   {
     "access_class": "permission",
-    "boundary": "platform",
+    "boundary": "organization",
     "current_gate": "superuser",
     "inline_checks": [],
     "inline_effect": null,
@@ -5848,7 +5848,7 @@
     "operation_id": "organizations.update",
     "path": "/api/organizations/{org_id}",
     "permission": "organizations.readwrite",
-    "reason": "Platform-admin-only operation."
+    "reason": "Updates one organization record (name, domain, active state, settings)."
   },
   {
     "access_class": "permission",
@@ -6279,7 +6279,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/reports/roi/by-organization",
-    "permission": "metrics.read",
+    "permission": "reports.read.all",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -6293,7 +6293,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/reports/roi/by-workflow",
-    "permission": "metrics.read",
+    "permission": "reports.read.all",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -6307,7 +6307,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/reports/roi/summary",
-    "permission": "metrics.read",
+    "permission": "reports.read.all",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -6321,7 +6321,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/reports/roi/trends",
-    "permission": "metrics.read",
+    "permission": "reports.read.all",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -6368,7 +6368,7 @@
   },
   {
     "access_class": "permission",
-    "boundary": "organization",
+    "boundary": "platform",
     "current_gate": "superuser",
     "inline_checks": [],
     "inline_effect": null,
@@ -6378,11 +6378,11 @@
     "operation_id": "roles.list",
     "path": "/api/roles",
     "permission": "roles.read",
-    "reason": "Platform-admin-only operation."
+    "reason": "Reads role definitions, which are global (not per organization)."
   },
   {
     "access_class": "permission",
-    "boundary": "organization",
+    "boundary": "platform",
     "current_gate": "superuser",
     "inline_checks": [],
     "inline_effect": null,
@@ -6392,11 +6392,11 @@
     "operation_id": "roles.create",
     "path": "/api/roles",
     "permission": "roles.readwrite",
-    "reason": "Platform-admin-only operation."
+    "reason": "Authors a role definition or its permission set; role definitions are global."
   },
   {
     "access_class": "permission",
-    "boundary": "organization",
+    "boundary": "platform",
     "current_gate": "superuser",
     "inline_checks": [],
     "inline_effect": null,
@@ -6406,11 +6406,11 @@
     "operation_id": "roles.delete",
     "path": "/api/roles/{role_id}",
     "permission": "roles.readwrite",
-    "reason": "Platform-admin-only operation."
+    "reason": "Authors a role definition or its permission set; role definitions are global."
   },
   {
     "access_class": "permission",
-    "boundary": "organization",
+    "boundary": "platform",
     "current_gate": "superuser",
     "inline_checks": [],
     "inline_effect": null,
@@ -6420,11 +6420,11 @@
     "operation_id": "roles.get",
     "path": "/api/roles/{role_id}",
     "permission": "roles.read",
-    "reason": "Platform-admin-only operation."
+    "reason": "Reads role definitions, which are global (not per organization)."
   },
   {
     "access_class": "permission",
-    "boundary": "organization",
+    "boundary": "platform",
     "current_gate": "superuser",
     "inline_checks": [],
     "inline_effect": null,
@@ -6434,11 +6434,11 @@
     "operation_id": "roles.update",
     "path": "/api/roles/{role_id}",
     "permission": "roles.readwrite",
-    "reason": "Platform-admin-only operation."
+    "reason": "Authors a role definition or its permission set; role definitions are global."
   },
   {
     "access_class": "permission",
-    "boundary": "organization",
+    "boundary": "platform",
     "current_gate": "superuser",
     "inline_checks": [],
     "inline_effect": null,
@@ -6448,7 +6448,7 @@
     "operation_id": null,
     "path": "/api/roles/{role_id}",
     "permission": "roles.readwrite",
-    "reason": "Platform-admin-only operation."
+    "reason": "Authors a role definition or its permission set; role definitions are global."
   },
   {
     "access_class": "permission",
@@ -6461,8 +6461,8 @@
     "method": "DELETE",
     "operation_id": "roles.agents.bulk_remove",
     "path": "/api/roles/{role_id}/agents",
-    "permission": "roles.readwrite",
-    "reason": "Platform-admin-only operation."
+    "permission": "agents.readwrite",
+    "reason": "Shares agents with a role or stops sharing them; an entity-sharing write in that entity's own domain, not role authoring."
   },
   {
     "access_class": "permission",
@@ -6475,8 +6475,8 @@
     "method": "GET",
     "operation_id": "roles.agents.list",
     "path": "/api/roles/{role_id}/agents",
-    "permission": "roles.read",
-    "reason": "Platform-admin-only operation."
+    "permission": "agents.read.all",
+    "reason": "Reads which agents a role shares: management detail on agents the caller can already reach (`.all`), so the User base role's plain read does not reach it."
   },
   {
     "access_class": "permission",
@@ -6489,8 +6489,8 @@
     "method": "POST",
     "operation_id": "roles.agents.assign",
     "path": "/api/roles/{role_id}/agents",
-    "permission": "roles.readwrite",
-    "reason": "Platform-admin-only operation."
+    "permission": "agents.readwrite",
+    "reason": "Shares agents with a role or stops sharing them; an entity-sharing write in that entity's own domain, not role authoring."
   },
   {
     "access_class": "permission",
@@ -6503,8 +6503,8 @@
     "method": "DELETE",
     "operation_id": "roles.agents.remove",
     "path": "/api/roles/{role_id}/agents/{agent_id}",
-    "permission": "roles.readwrite",
-    "reason": "Platform-admin-only operation."
+    "permission": "agents.readwrite",
+    "reason": "Shares agents with a role or stops sharing them; an entity-sharing write in that entity's own domain, not role authoring."
   },
   {
     "access_class": "permission",
@@ -6517,8 +6517,8 @@
     "method": "DELETE",
     "operation_id": "roles.apps.bulk_remove",
     "path": "/api/roles/{role_id}/apps",
-    "permission": "roles.readwrite",
-    "reason": "Platform-admin-only operation."
+    "permission": "apps.readwrite",
+    "reason": "Shares apps with a role or stops sharing them; an entity-sharing write in that entity's own domain, not role authoring."
   },
   {
     "access_class": "permission",
@@ -6531,8 +6531,8 @@
     "method": "GET",
     "operation_id": "roles.apps.list",
     "path": "/api/roles/{role_id}/apps",
-    "permission": "roles.read",
-    "reason": "Platform-admin-only operation."
+    "permission": "apps.read.all",
+    "reason": "Reads which apps a role shares: management detail on apps the caller can already reach (`.all`), so the User base role's plain read does not reach it."
   },
   {
     "access_class": "permission",
@@ -6545,8 +6545,8 @@
     "method": "POST",
     "operation_id": "roles.apps.assign",
     "path": "/api/roles/{role_id}/apps",
-    "permission": "roles.readwrite",
-    "reason": "Platform-admin-only operation."
+    "permission": "apps.readwrite",
+    "reason": "Shares apps with a role or stops sharing them; an entity-sharing write in that entity's own domain, not role authoring."
   },
   {
     "access_class": "permission",
@@ -6559,8 +6559,8 @@
     "method": "DELETE",
     "operation_id": "roles.forms.bulk_remove",
     "path": "/api/roles/{role_id}/forms",
-    "permission": "roles.readwrite",
-    "reason": "Platform-admin-only operation."
+    "permission": "forms.readwrite",
+    "reason": "Shares forms with a role or stops sharing them; an entity-sharing write in that entity's own domain, not role authoring."
   },
   {
     "access_class": "permission",
@@ -6573,8 +6573,8 @@
     "method": "GET",
     "operation_id": "roles.forms.list",
     "path": "/api/roles/{role_id}/forms",
-    "permission": "roles.read",
-    "reason": "Platform-admin-only operation."
+    "permission": "forms.read.all",
+    "reason": "Reads which forms a role shares: management detail on forms the caller can already reach (`.all`), so the User base role's plain read does not reach it."
   },
   {
     "access_class": "permission",
@@ -6587,8 +6587,8 @@
     "method": "POST",
     "operation_id": "roles.forms.assign",
     "path": "/api/roles/{role_id}/forms",
-    "permission": "roles.readwrite",
-    "reason": "Platform-admin-only operation."
+    "permission": "forms.readwrite",
+    "reason": "Shares forms with a role or stops sharing them; an entity-sharing write in that entity's own domain, not role authoring."
   },
   {
     "access_class": "permission",
@@ -6601,8 +6601,8 @@
     "method": "DELETE",
     "operation_id": "roles.forms.remove",
     "path": "/api/roles/{role_id}/forms/{form_id}",
-    "permission": "roles.readwrite",
-    "reason": "Platform-admin-only operation."
+    "permission": "forms.readwrite",
+    "reason": "Shares forms with a role or stops sharing them; an entity-sharing write in that entity's own domain, not role authoring."
   },
   {
     "access_class": "permission",
@@ -6615,8 +6615,8 @@
     "method": "DELETE",
     "operation_id": "roles.users.bulk_remove",
     "path": "/api/roles/{role_id}/users",
-    "permission": "roles.readwrite",
-    "reason": "Platform-admin-only operation."
+    "permission": "roleassignments.readwrite",
+    "reason": "Assigns or removes a role on users and sets where each assignment applies."
   },
   {
     "access_class": "permission",
@@ -6629,8 +6629,8 @@
     "method": "GET",
     "operation_id": "roles.users.list",
     "path": "/api/roles/{role_id}/users",
-    "permission": "roles.read",
-    "reason": "Platform-admin-only operation."
+    "permission": "roleassignments.read",
+    "reason": "Reads which users hold a role and where each assignment applies."
   },
   {
     "access_class": "permission",
@@ -6643,8 +6643,8 @@
     "method": "POST",
     "operation_id": "roles.users.assign",
     "path": "/api/roles/{role_id}/users",
-    "permission": "roles.readwrite",
-    "reason": "Platform-admin-only operation."
+    "permission": "roleassignments.readwrite",
+    "reason": "Assigns or removes a role on users and sets where each assignment applies."
   },
   {
     "access_class": "permission",
@@ -6657,8 +6657,8 @@
     "method": "DELETE",
     "operation_id": "roles.users.remove",
     "path": "/api/roles/{role_id}/users/{user_id}",
-    "permission": "roles.readwrite",
-    "reason": "Platform-admin-only operation."
+    "permission": "roleassignments.readwrite",
+    "reason": "Assigns or removes a role on users and sets where each assignment applies."
   },
   {
     "access_class": "permission",
@@ -6671,8 +6671,8 @@
     "method": "DELETE",
     "operation_id": "roles.workflows.bulk_remove",
     "path": "/api/roles/{role_id}/workflows",
-    "permission": "roles.readwrite",
-    "reason": "Platform-admin-only operation."
+    "permission": "workflows.readwrite",
+    "reason": "Shares workflows with a role or stops sharing them; an entity-sharing write in that entity's own domain, not role authoring."
   },
   {
     "access_class": "permission",
@@ -6685,8 +6685,8 @@
     "method": "GET",
     "operation_id": "roles.workflows.list",
     "path": "/api/roles/{role_id}/workflows",
-    "permission": "roles.read",
-    "reason": "Platform-admin-only operation."
+    "permission": "workflows.read.all",
+    "reason": "Reads which workflows a role shares: management detail on workflows the caller can already reach (`.all`), so the User base role's plain read does not reach it."
   },
   {
     "access_class": "permission",
@@ -6699,8 +6699,8 @@
     "method": "POST",
     "operation_id": "roles.workflows.assign",
     "path": "/api/roles/{role_id}/workflows",
-    "permission": "roles.readwrite",
-    "reason": "Platform-admin-only operation."
+    "permission": "workflows.readwrite",
+    "reason": "Shares workflows with a role or stops sharing them; an entity-sharing write in that entity's own domain, not role authoring."
   },
   {
     "access_class": "permission",
@@ -6963,8 +6963,8 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/sdk/config/get",
-    "permission": "configs.read",
-    "reason": "Workflow/agent SDK call reading or writing config during execution."
+    "permission": "secrets.read",
+    "reason": "Workflow/agent SDK config read during execution; returns the decrypted value when the key is a secret. The cutover must split: reading a non-secret key is configs.read."
   },
   {
     "access_class": "permission",
@@ -7066,8 +7066,8 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/sdk/integrations/get",
-    "permission": "integrations.read",
-    "reason": "Workflow/agent SDK call reading or writing integrations during execution."
+    "permission": "secrets.read",
+    "reason": "Workflow/agent SDK integration read during execution; returns decrypted secret config, the OAuth access/refresh tokens and the provider client secret."
   },
   {
     "access_class": "permission",
@@ -7084,8 +7084,8 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/sdk/integrations/get_mapping",
-    "permission": "integrations.read",
-    "reason": "Workflow/agent SDK call reading or writing integrations during execution."
+    "permission": "secrets.read",
+    "reason": "Workflow/agent SDK mapping read during execution; its merged config includes decrypted secret values."
   },
   {
     "access_class": "permission",
@@ -7102,8 +7102,8 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/sdk/integrations/list_mappings",
-    "permission": "integrations.read",
-    "reason": "Workflow/agent SDK call reading or writing integrations during execution."
+    "permission": "secrets.read",
+    "reason": "Workflow/agent SDK mapping list during execution; each mapping's merged config includes decrypted secret values."
   },
   {
     "access_class": "permission",
@@ -7120,8 +7120,8 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/sdk/integrations/refresh_token",
-    "permission": "integrations.readwrite",
-    "reason": "Workflow/agent SDK call reading or writing integrations during execution."
+    "permission": "secrets.read",
+    "reason": "Workflow/agent SDK token refresh during execution; returns the fresh OAuth access token (and persists it)."
   },
   {
     "access_class": "permission",
@@ -7549,7 +7549,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/settings/oauth",
-    "permission": "settings.read",
+    "permission": "settings.read.all",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -7633,7 +7633,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/settings/oauth/{provider}",
-    "permission": "settings.read",
+    "permission": "settings.read.all",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -8396,7 +8396,7 @@
   },
   {
     "access_class": "permission",
-    "boundary": "platform",
+    "boundary": "organization",
     "current_gate": "superuser",
     "inline_checks": [
       "is_superuser"
@@ -8407,12 +8407,12 @@
     "method": "GET",
     "operation_id": "users.list",
     "path": "/api/users",
-    "permission": "organizations.read",
-    "reason": "Platform-admin-only operation."
+    "permission": "users.read",
+    "reason": "Reads the user directory. At the cutover the list is filtered to users in organizations the caller holds this permission for; today it is a global lookup."
   },
   {
     "access_class": "permission",
-    "boundary": "platform",
+    "boundary": "organization",
     "current_gate": "superuser",
     "inline_checks": [
       "is_superuser"
@@ -8423,12 +8423,12 @@
     "method": "POST",
     "operation_id": "users.create",
     "path": "/api/users",
-    "permission": "organizations.readwrite",
-    "reason": "Creates a user in the caller's org."
+    "permission": "users.lifecycle.readwrite",
+    "reason": "Creates a user, choosing their home organization and base role (is_superuser). Creating into Global needs a Platform-boundary grant."
   },
   {
     "access_class": "permission",
-    "boundary": "platform",
+    "boundary": "organization",
     "current_gate": "superuser",
     "inline_checks": [
       "is_superuser"
@@ -8439,12 +8439,12 @@
     "method": "PATCH",
     "operation_id": "users.bulk_update",
     "path": "/api/users/bulk",
-    "permission": "organizations.readwrite",
-    "reason": "Bulk-mutates users in the caller's org."
+    "permission": "users.lifecycle.readwrite",
+    "reason": "Bulk user operation, classified by its most privileged operation (move_org, which can move users into Global). The cutover must split per operation: replace_roles is roleassignments.readwrite and set_active is users.readwrite."
   },
   {
     "access_class": "permission",
-    "boundary": "platform",
+    "boundary": "organization",
     "current_gate": "superuser",
     "inline_checks": [],
     "inline_effect": null,
@@ -8453,12 +8453,12 @@
     "method": "DELETE",
     "operation_id": "users.delete",
     "path": "/api/users/{user_id}",
-    "permission": "organizations.readwrite",
-    "reason": "Platform-admin-only operation."
+    "permission": "users.lifecycle.readwrite",
+    "reason": "Permanently deletes a user."
   },
   {
     "access_class": "permission",
-    "boundary": "platform",
+    "boundary": "organization",
     "current_gate": "superuser",
     "inline_checks": [],
     "inline_effect": null,
@@ -8467,12 +8467,12 @@
     "method": "GET",
     "operation_id": "users.get",
     "path": "/api/users/{user_id}",
-    "permission": "organizations.read",
-    "reason": "Platform-admin-only operation."
+    "permission": "users.read",
+    "reason": "Reads one user's directory record."
   },
   {
     "access_class": "permission",
-    "boundary": "platform",
+    "boundary": "organization",
     "current_gate": "superuser",
     "inline_checks": [
       "is_superuser"
@@ -8483,12 +8483,12 @@
     "method": "PATCH",
     "operation_id": "users.update",
     "path": "/api/users/{user_id}",
-    "permission": "organizations.readwrite",
-    "reason": "Mutates a user in the caller's org."
+    "permission": "users.lifecycle.readwrite",
+    "reason": "Updates a user. Classified by its most privileged fields (organization_id moves the user, into Global when unset; is_superuser changes the base role; email/is_verified/is_external change identity). The cutover must split field checks: name, password, mfa_enabled and is_active are users.readwrite support changes."
   },
   {
     "access_class": "permission",
-    "boundary": "platform",
+    "boundary": "organization",
     "current_gate": "superuser",
     "inline_checks": [
       "is_superuser"
@@ -8499,12 +8499,12 @@
     "method": "GET",
     "operation_id": "users.forms.list",
     "path": "/api/users/{user_id}/forms",
-    "permission": "roles.read",
-    "reason": "Reads a user's assigned forms (global lookup by user id/email, no org filter \u2014 platform admin only)."
+    "permission": "roleassignments.read",
+    "reason": "Projects a user's role assignments onto the forms those roles share (form ids only), so it reads role assignments rather than form definitions; forms.read would hand it to every member through the User base role. Today a global lookup; at the cutover limited to users in organizations the caller holds this permission for."
   },
   {
     "access_class": "permission",
-    "boundary": "platform",
+    "boundary": "organization",
     "current_gate": "superuser",
     "inline_checks": [],
     "inline_effect": null,
@@ -8513,12 +8513,12 @@
     "method": "DELETE",
     "operation_id": "users.invites.revoke",
     "path": "/api/users/{user_id}/invite",
-    "permission": "organizations.readwrite",
-    "reason": "Platform-admin-only operation."
+    "permission": "users.readwrite",
+    "reason": "User support action on an ordinary user (users domain). At the cutover it must also refuse privileged target users."
   },
   {
     "access_class": "permission",
-    "boundary": "platform",
+    "boundary": "organization",
     "current_gate": "superuser",
     "inline_checks": [],
     "inline_effect": null,
@@ -8527,12 +8527,12 @@
     "method": "POST",
     "operation_id": "users.invites.regenerate",
     "path": "/api/users/{user_id}/invite/regenerate",
-    "permission": "organizations.readwrite",
-    "reason": "Platform-admin-only operation."
+    "permission": "users.readwrite",
+    "reason": "User support action on an ordinary user (users domain). At the cutover it must also refuse privileged target users."
   },
   {
     "access_class": "permission",
-    "boundary": "platform",
+    "boundary": "organization",
     "current_gate": "superuser",
     "inline_checks": [],
     "inline_effect": null,
@@ -8541,12 +8541,12 @@
     "method": "POST",
     "operation_id": "users.invites.resend",
     "path": "/api/users/{user_id}/invite/resend",
-    "permission": "organizations.readwrite",
-    "reason": "Platform-admin-only operation."
+    "permission": "users.readwrite",
+    "reason": "User support action on an ordinary user (users domain). At the cutover it must also refuse privileged target users."
   },
   {
     "access_class": "permission",
-    "boundary": "platform",
+    "boundary": "organization",
     "current_gate": "superuser",
     "inline_checks": [],
     "inline_effect": null,
@@ -8555,12 +8555,12 @@
     "method": "POST",
     "operation_id": "users.invites.send",
     "path": "/api/users/{user_id}/invite/send",
-    "permission": "organizations.readwrite",
-    "reason": "Platform-admin-only operation."
+    "permission": "users.readwrite",
+    "reason": "User support action on an ordinary user (users domain). At the cutover it must also refuse privileged target users."
   },
   {
     "access_class": "permission",
-    "boundary": "platform",
+    "boundary": "organization",
     "current_gate": "superuser",
     "inline_checks": [],
     "inline_effect": null,
@@ -8569,8 +8569,8 @@
     "method": "GET",
     "operation_id": "users.roles.list",
     "path": "/api/users/{user_id}/roles",
-    "permission": "roles.read",
-    "reason": "Reads a user's role assignments (global lookup by user id/email, no org filter \u2014 platform admin only)."
+    "permission": "roleassignments.read",
+    "reason": "Reads a user's role assignments. Today a global lookup by user id or email; at the cutover limited to users in organizations the caller holds this permission for."
   },
   {
     "access_class": "public",
@@ -8597,7 +8597,7 @@
     "method": "GET",
     "operation_id": null,
     "path": "/api/workflow-keys",
-    "permission": "settings.read",
+    "permission": "workflows.read.all",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -8891,7 +8891,7 @@
   },
   {
     "access_class": "permission",
-    "boundary": "platform",
+    "boundary": "organization",
     "current_gate": "superuser",
     "inline_checks": [],
     "inline_effect": null,
@@ -8900,8 +8900,8 @@
     "method": "POST",
     "operation_id": null,
     "path": "/auth/admin/revoke-user",
-    "permission": "organizations.readwrite",
-    "reason": "Platform-admin-only operation."
+    "permission": "users.readwrite",
+    "reason": "Signs a user out everywhere (revokes their sessions): a user support action. At the cutover it must also refuse privileged target users."
   },
   {
     "access_class": "personal",
@@ -10520,7 +10520,7 @@
   },
   {
     "access_class": "permission",
-    "boundary": "platform",
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [],
     "inline_effect": null,
@@ -10534,7 +10534,7 @@
   },
   {
     "access_class": "permission",
-    "boundary": "platform",
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [],
     "inline_effect": null,
@@ -10548,7 +10548,7 @@
   },
   {
     "access_class": "permission",
-    "boundary": "platform",
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [],
     "inline_effect": null,
@@ -10562,7 +10562,7 @@
   },
   {
     "access_class": "permission",
-    "boundary": "platform",
+    "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [],
     "inline_effect": null,
@@ -10676,7 +10676,7 @@
   },
   {
     "access_class": "permission",
-    "boundary": "organization",
+    "boundary": "platform",
     "current_gate": "authenticated",
     "inline_checks": [],
     "inline_effect": null,
@@ -10690,7 +10690,7 @@
   },
   {
     "access_class": "permission",
-    "boundary": "organization",
+    "boundary": "platform",
     "current_gate": "authenticated",
     "inline_checks": [],
     "inline_effect": null,
@@ -10704,7 +10704,7 @@
   },
   {
     "access_class": "permission",
-    "boundary": "organization",
+    "boundary": "platform",
     "current_gate": "authenticated",
     "inline_checks": [],
     "inline_effect": null,
@@ -10718,7 +10718,7 @@
   },
   {
     "access_class": "permission",
-    "boundary": "organization",
+    "boundary": "platform",
     "current_gate": "authenticated",
     "inline_checks": [],
     "inline_effect": null,
@@ -10732,7 +10732,7 @@
   },
   {
     "access_class": "permission",
-    "boundary": "organization",
+    "boundary": "platform",
     "current_gate": "authenticated",
     "inline_checks": [],
     "inline_effect": null,
