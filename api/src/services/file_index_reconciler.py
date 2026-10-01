@@ -29,7 +29,7 @@ from src.services.file_index_service import (
     FileIndexService,
     is_tracked_path,
 )
-from src.services.repo_storage import RepoStorage, S3FileMetadata
+from src.services.repo_storage import RepoStorage
 from src.services.solutions.storage import SolutionStorage
 
 logger = logging.getLogger(__name__)
