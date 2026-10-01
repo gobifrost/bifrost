@@ -1110,7 +1110,7 @@ class GitHubSyncService:
 
         try:
             async with self.repo_manager.lock() as work_dir:
-                await self.repo_manager.ensure_storage_unchanged(work_dir)
+                await self.repo_manager.ensure_storage_unchanged(work_dir, self.branch)
                 repo = self._open_or_init(work_dir)
                 return await self._do_commit(work_dir, repo, message)
         except Exception as e:
@@ -1322,7 +1322,7 @@ class GitHubSyncService:
 
         try:
             async with self.repo_manager.lock() as work_dir:
-                await self.repo_manager.ensure_storage_unchanged(work_dir)
+                await self.repo_manager.ensure_storage_unchanged(work_dir, self.branch)
                 if retry_plan and retry_plan.db_applied:
                     if not retry_plan.checkpoint_id:
                         raise SyncError("Publication retry is missing its workspace checkpoint")
@@ -1469,7 +1469,7 @@ class GitHubSyncService:
 
         try:
             async with self.repo_manager.lock() as work_dir:
-                await self.repo_manager.ensure_storage_unchanged(work_dir)
+                await self.repo_manager.ensure_storage_unchanged(work_dir, self.branch)
                 repo = self._open_or_init(work_dir)
                 discarded = []
 

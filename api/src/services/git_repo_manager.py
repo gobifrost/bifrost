@@ -87,6 +87,37 @@ def iter_tree_metadata(root: Path) -> Iterator[TreeEntryMetadata]:
         yield TreeEntryMetadata(path.relative_to(root).as_posix(), size, sha256)
 
 
+def _unsynced_work_warning(work_dir: Path, branch: str) -> str:
+    """Describe local-only git work that Fetch, a full mirror of S3, discards."""
+    from git import GitCommandError, InvalidGitRepositoryError
+    from git import Repo as GitRepo
+
+    try:
+        repo = GitRepo(str(work_dir))
+    except InvalidGitRepositoryError:
+        return ""
+    if (work_dir / ".git" / "MERGE_HEAD").exists() or repo.index.unmerged_blobs():
+        return (
+            " You have an unfinished merge with conflict resolutions. Fetch "
+            "discards it, so you'll need to sync and resolve the conflicts again."
+        )
+    if not repo.head.is_valid():
+        return ""
+    try:
+        ahead = int(repo.git.rev_list("--count", f"origin/{branch}..HEAD"))
+    except GitCommandError:
+        # Never fetched: no commit has been published yet.
+        ahead = int(repo.git.rev_list("--count", "HEAD"))
+    if ahead == 0:
+        return ""
+    noun = "commit" if ahead == 1 else "commits"
+    pronoun = "it" if ahead == 1 else "them"
+    return (
+        f" You have {ahead} local {noun} not yet synced. Fetch discards "
+        f"{pronoun}, so you'll need to redo {pronoun} after fetching."
+    )
+
+
 class GitRepoManager:
     """Context manager that syncs _repo/ between S3 and a persistent local working dir."""
 
@@ -203,7 +234,7 @@ class GitRepoManager:
         await self._run_aws_cli(cmd)
         self._write_storage_baseline(source, await self._storage_fingerprint())
 
-    async def ensure_storage_unchanged(self, work_dir: Path) -> None:
+    async def ensure_storage_unchanged(self, work_dir: Path, branch: str) -> None:
         """Refuse to act on a working dir that predates the current S3 _repo/.
 
         Editor, MCP and CLI writes reach S3 only. An operation that commits the
@@ -216,6 +247,7 @@ class GitRepoManager:
                 "Workspace files changed since this working copy was last fetched, "
                 "so continuing could overwrite them. Nothing was changed. "
                 "Run Fetch to pick up the changes, then try again."
+                + _unsynced_work_warning(work_dir, branch)
             )
 
     async def _storage_fingerprint(self) -> str:
