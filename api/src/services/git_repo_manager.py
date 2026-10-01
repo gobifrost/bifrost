@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import re
 from uuid import UUID, uuid4
 from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator, Iterator
@@ -41,6 +42,10 @@ TREE_HASH_CHUNK_SIZE = 8 * 1024 * 1024
 # Fingerprint of S3 _repo/ taken when the working dir last matched it. Kept
 # inside .git/ so it lives and dies with the working dir it describes.
 STORAGE_BASELINE_FILE = "bifrost-storage-baseline"
+
+
+# user:password@ in an http(s) URL, as earlier releases wrote into .git/config.
+_URL_CREDENTIALS = re.compile(r"(https?://)[^/@\s]+@")
 
 
 class WorkspaceStorageChanged(RuntimeError):
@@ -260,6 +265,48 @@ class GitRepoManager:
             cmd.extend(["--endpoint-url", endpoint_url])
         cmd.append("--only-show-errors")
         await self._run_aws_cli(cmd)
+
+    async def remove_stored_credentials(self) -> None:
+        """Strip credentials from every stored copy of .git/config.
+
+        Covers this process's working dir, S3 _repo/ and every retry
+        checkpoint. Another process's working dir is rewritten the next time a
+        git operation opens it there.
+        """
+        from aiobotocore.session import get_session
+
+        local = PERSISTENT_WORK_DIR / ".git" / "config"
+        if local.is_file():
+            local.write_text(_URL_CREDENTIALS.sub(r"\1", local.read_text()))
+
+        bucket = self._settings.s3_bucket
+        async with get_session().create_client(
+            "s3",
+            endpoint_url=self._settings.s3_endpoint_url,
+            aws_access_key_id=self._settings.s3_access_key,
+            aws_secret_access_key=self._settings.s3_secret_key,
+            region_name=self._settings.s3_region,
+        ) as client:
+            keys = ["_repo/.git/config"]
+            paginator = client.get_paginator("list_objects_v2")
+            async for page in paginator.paginate(
+                Bucket=bucket, Prefix=f"{WORKSPACE_CHECKPOINT_PREFIX}/"
+            ):
+                keys.extend(
+                    key for obj in page.get("Contents", [])
+                    if (key := obj.get("Key", "")).endswith("/.git/config")
+                )
+            for key in keys:
+                try:
+                    response = await client.get_object(Bucket=bucket, Key=key)
+                except client.exceptions.NoSuchKey:
+                    continue
+                config = (await response["Body"].read()).decode("utf-8")
+                stripped = _URL_CREDENTIALS.sub(r"\1", config)
+                if stripped != config:
+                    await client.put_object(
+                        Bucket=bucket, Key=key, Body=stripped.encode("utf-8")
+                    )
 
     async def has_git_dir(self) -> bool:
         """Check if .git/HEAD exists in S3 _repo/ (quick existence check)."""

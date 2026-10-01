@@ -11,6 +11,7 @@ Key principles:
 5. Preflight validates repo health (syntax, lint, refs, orphans)
 """
 
+import base64
 import hashlib
 import logging
 import shutil
@@ -18,7 +19,7 @@ import subprocess
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Mapping
+from typing import TYPE_CHECKING, Any, Literal, Mapping
 from uuid import uuid4
 
 import yaml
@@ -158,6 +159,37 @@ def _delete_keys(changes: list) -> set[tuple[str, str]]:
 # =============================================================================
 # Helpers
 # =============================================================================
+
+
+def _git_auth_env(token: str | None) -> dict[str, str]:
+    """Per-command git environment that sends the GitHub token without persisting it.
+
+    The token travels as an HTTP header that git reads from its environment
+    (GIT_CONFIG_*), so it is never written into .git/config, which is mirrored
+    to workspace storage and into retry checkpoints.
+    """
+    if not token:
+        return {}
+    credentials = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+    return {
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
+        "GIT_CONFIG_VALUE_0": f"Authorization: Basic {credentials}",
+        "GIT_TERMINAL_PROMPT": "0",
+    }
+
+
+def redact_token(value: Any, token: str | None) -> Any:
+    """Replace the token in every string of a JSON-shaped result or message."""
+    if not token:
+        return value
+    if isinstance(value, str):
+        return value.replace(token, "***")
+    if isinstance(value, dict):
+        return {key: redact_token(item, token) for key, item in value.items()}
+    if isinstance(value, list):
+        return [redact_token(item, token) for item in value]
+    return value
 
 
 def _manifest_is_empty(manifest: Manifest) -> bool:
@@ -308,9 +340,13 @@ class GitHubSyncService:
         repo_url: str,
         branch: str = "main",
         settings: Settings | None = None,
+        token: str | None = None,
     ):
         self.db = db
+        # A credential-free URL: it is written into .git/config. The token
+        # reaches git only through _git_env.
         self.repo_url = repo_url
+        self._git_env = _git_auth_env(token)
         self.branch = branch
         self.repo_manager = GitRepoManager(settings or get_settings())
         self._resolver = ManifestResolver(db)
@@ -319,11 +355,12 @@ class GitHubSyncService:
     def _connect_preview_key(token: str) -> str:
         return f"{_GIT_CONNECT_PREVIEW_KEY_PREFIX}{token}"
 
-    @staticmethod
-    def _clone_connect_remote(destination: Path, repository_url: str, branch: str) -> GitRepo | None:
+    def _clone_connect_remote(self, destination: Path, repository_url: str, branch: str) -> GitRepo | None:
         """Clone the reviewed remote branch, treating an empty remote as an empty tree."""
         try:
-            repo = GitRepo.clone_from(repository_url, str(destination), branch=branch)
+            repo = GitRepo.clone_from(
+                repository_url, str(destination), branch=branch, env=self._git_env,
+            )
         except Exception as exc:
             message = str(exc).lower()
             if "empty repository" in message:
@@ -336,7 +373,9 @@ class GitHubSyncService:
                 if destination.exists():
                     shutil.rmtree(destination)
                 try:
-                    fallback = GitRepo.clone_from(repository_url, str(destination))
+                    fallback = GitRepo.clone_from(
+                        repository_url, str(destination), env=self._git_env,
+                    )
                 except Exception as fallback_exc:
                     if "empty repository" in str(fallback_exc).lower():
                         return None
@@ -459,6 +498,7 @@ class GitHubSyncService:
         shutil.copy2(source, destination)
 
     def _configure_connect_repo(self, repo: GitRepo) -> None:
+        repo.git.update_environment(**self._git_env)
         if "origin" in [remote.name for remote in repo.remotes]:
             repo.remotes.origin.set_url(self.repo_url)
         else:
@@ -1473,12 +1513,15 @@ class GitHubSyncService:
         """Open existing .git/ or clone fresh. Ensure remote URL and user identity are set."""
         if (work_dir / ".git").exists():
             repo = GitRepo(str(work_dir))
+            # Also rewrites a remote that an earlier release stored with the
+            # token embedded in its URL.
             if "origin" in [r.name for r in repo.remotes]:
                 repo.remotes.origin.set_url(self.repo_url)
             else:
                 repo.create_remote("origin", self.repo_url)
         else:
             repo = self._clone_or_init(work_dir)
+        repo.git.update_environment(**self._git_env)
 
         # Ensure git user identity is configured (needed for merge/commit)
         with repo.config_writer() as cw:
@@ -1744,6 +1787,7 @@ class GitHubSyncService:
                     self.repo_url,
                     str(clone_dir),
                     branch=self.branch,
+                    env=self._git_env,
                 )
                 # Move .git/ to the target
                 shutil.move(str(clone_dir / ".git"), str(target / ".git"))

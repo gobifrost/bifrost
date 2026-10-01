@@ -673,3 +673,69 @@ class TestMemoryUsageDuringFileScan:
             f"expected max {max_expected / 1024 / 1024:.1f}MB. "
             f"This simulates sync pull pattern - memory should not accumulate."
         )
+
+
+PAT = "ghp_unitTestSecretToken0123456789"
+
+
+def test_clone_failure_error_does_not_contain_the_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GitPython errors quote the command line, which carries the clone URL."""
+    from git import GitCommandError
+
+    from src.services.github_sync import GitHubSyncService
+
+    def failing_clone(url, path, **_kwargs):
+        raise GitCommandError(["git", "clone", "-v", "--", url, path], 128, b"fatal: denied")
+
+    monkeypatch.setattr("src.services.github_sync.GitRepo.clone_from", failing_clone)
+    service = GitHubSyncService(
+        db=None,  # type: ignore[arg-type]
+        repo_url="https://github.com/owner/repo.git",
+        token=PAT,
+    )
+
+    with pytest.raises(SyncError) as error:
+        service._clone_or_init(tmp_path)
+
+    assert PAT not in str(error.value)
+
+
+def test_opening_a_repo_rewrites_a_tokenized_remote(tmp_path: Path) -> None:
+    """Instances that stored the token in .git/config heal on the next open."""
+    from src.services.github_sync import GitHubSyncService
+
+    legacy = Repo.init(str(tmp_path))
+    legacy.create_remote("origin", f"https://x-access-token:{PAT}@github.com/owner/repo.git")
+    service = GitHubSyncService(
+        db=None,  # type: ignore[arg-type]
+        repo_url="https://github.com/owner/repo.git",
+        token=PAT,
+    )
+
+    repo = service._open_or_init(tmp_path)
+
+    assert repo.remotes.origin.url == "https://github.com/owner/repo.git"
+    assert PAT not in (tmp_path / ".git" / "config").read_text()
+
+
+def test_git_commands_authenticate_through_their_environment(tmp_path: Path) -> None:
+    """The token reaches git per command, scoped to github.com, never on disk."""
+    import base64
+
+    from src.services.github_sync import GitHubSyncService
+
+    Repo.init(str(tmp_path))
+    service = GitHubSyncService(
+        db=None,  # type: ignore[arg-type]
+        repo_url="https://github.com/owner/repo.git",
+        token=PAT,
+    )
+
+    repo = service._open_or_init(tmp_path)
+
+    header = repo.git.config("--get", "http.https://github.com/.extraheader")
+    basic = base64.b64encode(f"x-access-token:{PAT}".encode()).decode()
+    assert header == f"Authorization: Basic {basic}"
+    assert PAT not in (tmp_path / ".git" / "config").read_text()

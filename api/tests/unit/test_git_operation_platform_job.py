@@ -174,3 +174,63 @@ async def test_connect_job_revalidates_its_preview_and_persists_the_connection(
         branch="main",
         updated_by="admin@example.com",
     )
+
+
+PAT = "ghp_jobTestSecretToken0123456789"
+
+
+async def _run_with_service(
+    monkeypatch: pytest.MonkeyPatch, service: SimpleNamespace, operation: str,
+) -> dict:
+    captured: dict = {}
+
+    @asynccontextmanager
+    async def db_context():
+        yield SimpleNamespace()
+
+    def build_service(**kwargs):
+        captured.update(kwargs)
+        return service
+
+    monkeypatch.setattr("src.jobs.platform.git_operation.get_db_context", db_context)
+    monkeypatch.setattr(
+        "src.jobs.platform.git_operation.get_github_config",
+        AsyncMock(return_value=SimpleNamespace(token=PAT, repo_url="owner/repo", branch="main")),
+    )
+    monkeypatch.setattr("src.jobs.platform.git_operation.GitHubSyncService", build_service)
+    context = SimpleNamespace(job_id=uuid4(), organization_id=uuid4(), report=AsyncMock())
+    await run_git_operation(context, GitOperationPayload(operation=operation))  # type: ignore[arg-type]
+    return captured
+
+
+@pytest.mark.asyncio
+async def test_git_job_keeps_the_token_out_of_the_remote_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.models.contracts.github import WorkingTreeStatus
+
+    service = SimpleNamespace(desktop_status=AsyncMock(return_value=WorkingTreeStatus()))
+
+    captured = await _run_with_service(monkeypatch, service, "status")
+
+    assert captured["repo_url"] == "https://github.com/owner/repo.git"
+    assert captured["token"] == PAT
+
+
+@pytest.mark.asyncio
+async def test_git_job_redacts_the_token_from_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.jobs.platform.base import PlatformJobFailure
+    from src.models.contracts.github import CommitResult
+
+    leaked = f"fatal: https://x-access-token:{PAT}@github.com/owner/repo.git denied"
+    service = SimpleNamespace(
+        desktop_commit=AsyncMock(return_value=CommitResult(success=False, error=leaked)),
+    )
+
+    with pytest.raises(PlatformJobFailure) as failure:
+        await _run_with_service(monkeypatch, service, "commit")
+
+    assert PAT not in failure.value.message
+    assert PAT not in str(failure.value.result)

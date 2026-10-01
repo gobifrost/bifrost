@@ -3,8 +3,12 @@
 Editor, MCP and CLI writes land in S3 ``_repo/`` only. Commit, sync and discard
 work on the persistent working tree, so they must never act on a tree that
 predates those writes: sync and discard upload it back with ``--delete``.
+
+The working tree, including ``.git/config``, is mirrored to storage and into
+retry checkpoints, so the GitHub token must never be written into it.
 """
 
+import shutil
 from pathlib import Path
 
 import pytest
@@ -18,6 +22,8 @@ from src.services.repo_storage import RepoStorage
 EDITED = "notes/git_sync_freshness_edited.txt"
 SAME_SIZE = "notes/git_sync_freshness_same_size.txt"
 CREATED = "notes/git_sync_freshness_created.txt"
+PAT = "ghp_e2eSecretToken0123456789abcdef"
+TOKENIZED_REMOTE = f"https://x-access-token:{PAT}@github.com/owner/repo.git"
 
 
 async def _wipe_repo_storage(storage: RepoStorage) -> None:
@@ -90,3 +96,84 @@ async def test_platform_edits_after_fetch_are_never_overwritten(
     assert (head.tree / EDITED).data_stream.read() == b"second, longer version\n"
     assert (head.tree / SAME_SIZE).data_stream.read() == b"value=2\n"
     assert (head.tree / CREATED).data_stream.read() == b"created in the editor\n"
+
+
+def _legacy_workspace(path: Path) -> Path:
+    """A working tree stored by an earlier release, with the token in its remote."""
+    repo = Repo.init(str(path))
+    repo.create_remote("origin", TOKENIZED_REMOTE)
+    # Storage keeps no empty directories, so give .git/ real objects and refs.
+    (path / "README.md").write_text("workspace\n")
+    repo.index.add(["README.md"])
+    repo.index.commit("legacy workspace")
+    return path
+
+
+def _assert_tree_has_no_token(root: Path) -> None:
+    for path in root.rglob("*"):
+        if path.is_file():
+            assert PAT.encode() not in path.read_bytes(), path
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+async def test_token_never_reaches_disk_or_storage(
+    db_session: AsyncSession,
+    storage: RepoStorage,
+    bare_repo: Path,
+    work_dir: Path,
+    tmp_path: Path,
+):
+    from src.services.git_repo_manager import GitRepoManager
+    from src.services.github_sync import GitHubSyncService
+
+    manager = GitRepoManager(get_settings())
+    await manager.sync_up(_legacy_workspace(tmp_path / "legacy"))
+    await storage.write(EDITED, b"content\n")
+    service = GitHubSyncService(
+        db=db_session, repo_url=f"file://{bare_repo}", branch="main", token=PAT,
+    )
+
+    fetched = await service.desktop_fetch()
+    assert fetched.success, fetched.error
+    commit = await service.desktop_commit("commit with a token configured")
+    assert commit.success, commit.error
+    checkpoint = await manager.checkpoint_workspace(work_dir)
+    try:
+        await manager.restore_workspace_checkpoint(checkpoint, tmp_path / "restored")
+    finally:
+        await manager.delete_workspace_checkpoint(checkpoint)
+
+    _assert_tree_has_no_token(work_dir)
+    _assert_tree_has_no_token(tmp_path / "restored")
+    for path in await storage.list(""):
+        assert PAT.encode() not in await storage.read(path), path
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+async def test_disconnect_removes_stored_credentials(
+    storage: RepoStorage,
+    work_dir: Path,
+    tmp_path: Path,
+):
+    from src.services.git_repo_manager import GitRepoManager
+
+    manager = GitRepoManager(get_settings())
+    legacy = _legacy_workspace(tmp_path / "legacy")
+    await manager.sync_up(legacy)
+    checkpoint = await manager.checkpoint_workspace(legacy)
+    shutil.copytree(legacy, work_dir)
+    try:
+        await manager.remove_stored_credentials()
+        await manager.restore_workspace_checkpoint(checkpoint, tmp_path / "restored")
+    finally:
+        await manager.delete_workspace_checkpoint(checkpoint)
+
+    for config in (
+        (await storage.read(".git/config")).decode(),
+        (tmp_path / "restored" / ".git" / "config").read_text(),
+        (work_dir / ".git" / "config").read_text(),
+    ):
+        assert PAT not in config
+        assert "https://github.com/owner/repo.git" in config
