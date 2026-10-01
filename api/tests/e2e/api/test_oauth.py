@@ -5,7 +5,9 @@ Tests CRUD operations for OAuth connections.
 """
 
 import pytest
-from uuid import uuid4
+import pytest_asyncio
+from datetime import datetime, timedelta, timezone
+from uuid import UUID, uuid4
 
 
 @pytest.mark.e2e
@@ -385,3 +387,88 @@ class TestOAuthAuthorizationFlow:
                 f"/api/oauth/connections/{connection['connection_name']}",
                 headers=platform_admin.headers,
             )
+
+
+@pytest.mark.e2e
+class TestOAuthCredentialsRedaction:
+    """GET /api/oauth/credentials keeps its metadata but never returns tokens."""
+
+    @pytest_asyncio.fixture
+    async def connected_oauth(self, e2e_client, platform_admin, db_session):
+        """An OAuth connection with a stored token in the admin's org scope."""
+        from sqlalchemy import select
+
+        from src.core.security import encrypt_secret
+        from src.models.orm import OAuthProvider, OAuthToken, User
+
+        integration = e2e_client.post(
+            "/api/integrations",
+            headers=platform_admin.headers,
+            json={"name": f"e2e_oauth_creds_{uuid4().hex[:8]}"},
+        ).json()
+        connection = e2e_client.post(
+            "/api/oauth/connections",
+            headers=platform_admin.headers,
+            json={
+                "integration_id": integration["id"],
+                "oauth_flow_type": "authorization_code",
+                "client_id": "creds-client-id",
+                "client_secret": "creds-client-secret",
+                "authorization_url": "https://provider.example.com/authorize",
+                "token_url": "https://provider.example.com/token",
+                "scopes": "read",
+            },
+        )
+        assert connection.status_code == 201, connection.text
+
+        provider = (
+            await db_session.execute(
+                select(OAuthProvider).where(OAuthProvider.integration_id == UUID(integration["id"]))
+            )
+        ).scalar_one()
+        admin = (
+            await db_session.execute(select(User).where(User.email == platform_admin.email))
+        ).scalar_one()
+        access_token = f"access-plain-{uuid4().hex}"
+        refresh_token = f"refresh-plain-{uuid4().hex}"
+        db_session.add(
+            OAuthToken(
+                organization_id=admin.organization_id,
+                provider_id=provider.id,
+                encrypted_access_token=encrypt_secret(access_token).encode(),
+                encrypted_refresh_token=encrypt_secret(refresh_token).encode(),
+                expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+                scopes=["read"],
+                status="completed",
+            )
+        )
+        await db_session.commit()
+
+        yield {
+            "connection_name": connection.json()["connection_name"],
+            "integration_id": integration["id"],
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+        }
+
+        e2e_client.delete(f"/api/integrations/{integration['id']}", headers=platform_admin.headers)
+
+    def test_credentials_redact_tokens_and_keep_metadata(
+        self, e2e_client, platform_admin, connected_oauth
+    ):
+        response = e2e_client.get(
+            f"/api/oauth/credentials/{connected_oauth['connection_name']}",
+            headers=platform_admin.headers,
+        )
+        assert response.status_code == 200, response.text
+        assert connected_oauth["access_token"] not in response.text
+        assert connected_oauth["refresh_token"] not in response.text
+
+        body = response.json()
+        assert body["integration_id"] == connected_oauth["integration_id"]
+        assert body["expires_at"] is not None
+        credentials = body["credentials"]
+        assert credentials["access_token"] == "[SECRET]"
+        assert credentials["refresh_token"] == "[SECRET]"
+        assert credentials["scopes"] == "read"
+        assert credentials["expires_at"] == body["expires_at"]

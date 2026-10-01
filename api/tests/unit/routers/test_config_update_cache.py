@@ -65,9 +65,9 @@ async def test_update_returns_old_org_and_key_for_rename():
     update = await repo.update_config_by_id(config_id, request, updated_by="t@example.com")
 
     assert update is not None
-    response, old_org_id, old_key = update
+    write, old_org_id, old_key = update
     assert old_key == "api_token"
-    assert response.key == "api_token_v2"
+    assert write.response.key == "api_token_v2"
     assert old_org_id == org
 
 
@@ -85,9 +85,9 @@ async def test_update_returns_old_org_for_org_move():
     update = await repo.update_config_by_id(config_id, request, updated_by="t@example.com")
 
     assert update is not None
-    response, old_org_id, old_key = update
+    write, old_org_id, old_key = update
     assert old_org_id == src_org
-    assert response.org_id == str(dst_org)
+    assert write.response.org_id == str(dst_org)
     assert old_key == "api_token"
 
 
@@ -198,3 +198,37 @@ async def test_router_bumps_global_version_on_org_to_global_transition():
         await update_config(config_id, request, ctx, user)
 
     fake_redis.incr.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_router_caches_ciphertext_but_returns_masked_secret():
+    """A secret update writes the stored ciphertext to the cache (the SDK
+    decrypts it on read) while the HTTP response carries only the mask."""
+    from src.models.enums import ConfigType as ConfigTypeEnum
+    from src.routers.config import update_config
+
+    config_id = uuid4()
+    row = _config_row(id=config_id, key="api_token", org_id=None)
+    row.config_type = ConfigTypeEnum.SECRET
+    row.integration_id = None
+    row.required = False
+    row.position = 0
+    repo = _mk_repo(row)
+
+    ctx = MagicMock()
+    ctx.db = repo.session
+    ctx.org_id = None
+    user = MagicMock(email="admin@example.com")
+    request = UpdateConfigRequest(value="plain-rotated")
+
+    with (
+        patch("src.routers.config.ConfigRepository", return_value=repo),
+        patch("src.routers.config.invalidate_config", new=AsyncMock()),
+        patch("src.routers.config.upsert_config", new=AsyncMock()) as ups,
+    ):
+        response = await update_config(config_id, request, ctx, user)
+
+    assert response.value == "[SECRET]"
+    cached_value = ups.await_args.args[2]
+    assert cached_value == row.value["value"]
+    assert cached_value not in ("plain-rotated", "[SECRET]")

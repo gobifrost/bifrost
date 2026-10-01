@@ -744,6 +744,110 @@ class TestMcpParityIntegrations:
 
 
 # =============================================================================
+# Secret redaction (thin wrappers inherit the REST masking)
+# =============================================================================
+
+
+def _tool_output(result) -> str:
+    """Everything an MCP client sees from a tool call, as one string."""
+    return f"{result.content!r} {result.structured_content!r}"
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+class TestMcpSecretRedaction:
+    async def test_config_create_and_update_redact_secret(self, admin_context) -> None:
+        from src.services.mcp_server.tools.configs import (
+            bifrost_config_create,
+            bifrost_config_delete,
+            bifrost_config_update,
+        )
+
+        plaintext = f"mcp-plain-{uuid4().hex}"
+        rotated = f"mcp-rotated-{uuid4().hex}"
+        create_result = await bifrost_config_create(
+            admin_context,
+            key=f"mcp_secret_{uuid4().hex[:8]}",
+            value=plaintext,
+            config_type="secret",
+        )
+        created = create_result.structured_content or {}
+        assert "error" not in created, created
+        config_id = str(created["id"])
+
+        try:
+            assert created["value"] == "[SECRET]"
+            assert plaintext not in _tool_output(create_result)
+
+            update_result = await bifrost_config_update(
+                admin_context, config_ref=config_id, value=rotated
+            )
+            updated = update_result.structured_content or {}
+            assert "error" not in updated, updated
+            assert updated["value"] == "[SECRET]"
+            assert rotated not in _tool_output(update_result)
+        finally:
+            await bifrost_config_delete(admin_context, config_ref=config_id)
+
+    async def test_integration_tools_redact_secret_config(
+        self, admin_context, e2e_client, platform_admin, org1
+    ) -> None:
+        from src.services.mcp_server.tools.integrations import (
+            bifrost_integration_get,
+            bifrost_integration_mapping_create,
+        )
+
+        default_secret = f"mcp-default-{uuid4().hex}"
+        org_secret = f"mcp-org-{uuid4().hex}"
+        create_resp = e2e_client.post(
+            "/api/integrations",
+            headers=platform_admin.headers,
+            json={
+                "name": f"mcp-secret-int-{uuid4().hex[:8]}",
+                "config_schema": [{"key": "api_key", "type": "secret", "required": True}],
+            },
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        integration_id = create_resp.json()["id"]
+
+        try:
+            put = e2e_client.put(
+                f"/api/integrations/{integration_id}/config",
+                headers=platform_admin.headers,
+                json={"config": {"api_key": default_secret}},
+            )
+            assert put.status_code == 200, put.text
+
+            mapping_result = await bifrost_integration_mapping_create(
+                admin_context,
+                integration_ref=integration_id,
+                organization=org1["name"],
+                entity_id=f"tenant-{uuid4().hex[:8]}",
+                config={"api_key": org_secret},
+            )
+            mapping = mapping_result.structured_content or {}
+            assert "error" not in mapping, mapping
+            assert mapping["config"] == {"api_key": "[SECRET]"}
+            assert org_secret not in _tool_output(mapping_result)
+
+            get_result = await bifrost_integration_get(
+                admin_context, integration_ref=integration_id
+            )
+            payload = get_result.structured_content or {}
+            assert "error" not in payload, payload
+            assert payload["config_defaults"] == {"api_key": "[SECRET]"}
+            assert [m["config"] for m in payload["mappings"]] == [{"api_key": "[SECRET]"}]
+            output = _tool_output(get_result)
+            assert default_secret not in output
+            assert org_secret not in output
+        finally:
+            e2e_client.delete(
+                f"/api/integrations/{integration_id}",
+                headers=platform_admin.headers,
+            )
+
+
+# =============================================================================
 # Policy Rules
 # =============================================================================
 

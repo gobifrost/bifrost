@@ -1273,6 +1273,137 @@ class TestIntegrationConfigSecrets:
                 headers=platform_admin.headers,
             )
 
+    def test_admin_default_config_routes_redact_secrets(
+        self, e2e_client, platform_admin, integration_with_secret_schema
+    ):
+        """Default-config admin reads and the PUT echo mask secret fields."""
+        integration = integration_with_secret_schema
+        plaintext = f"default-plain-{uuid4().hex}"
+
+        put = e2e_client.put(
+            f"/api/integrations/{integration['id']}/config",
+            headers=platform_admin.headers,
+            json={"config": {"base_url": "https://api.example.com", "api_key": plaintext}},
+        )
+        get = e2e_client.get(
+            f"/api/integrations/{integration['id']}/config",
+            headers=platform_admin.headers,
+        )
+        detail = e2e_client.get(
+            f"/api/integrations/{integration['id']}",
+            headers=platform_admin.headers,
+        )
+
+        for response in (put, get, detail):
+            assert response.status_code == 200, response.text
+            assert plaintext not in response.text
+        for config in (put.json()["config"], get.json()["config"], detail.json()["config_defaults"]):
+            assert config == {"base_url": "https://api.example.com", "api_key": "[SECRET]"}
+
+    def test_admin_mapping_routes_redact_secret_overrides(
+        self, e2e_client, platform_admin, integration_with_secret_schema, org1
+    ):
+        """Mapping create/get/by-org/update and the detail view mask org secrets."""
+        integration = integration_with_secret_schema
+        base = f"/api/integrations/{integration['id']}"
+        plaintext = f"org-plain-{uuid4().hex}"
+        rotated = f"org-rotated-{uuid4().hex}"
+
+        create = e2e_client.post(
+            f"{base}/mappings",
+            headers=platform_admin.headers,
+            json={
+                "organization_id": str(org1["id"]),
+                "entity_id": "redaction-test",
+                "config": {"api_key": plaintext},
+            },
+        )
+        assert create.status_code == 201, create.text
+        mapping = create.json()
+
+        try:
+            reads = [
+                create,
+                e2e_client.get(f"{base}/mappings/{mapping['id']}", headers=platform_admin.headers),
+                e2e_client.get(f"{base}/mappings/by-org/{org1['id']}", headers=platform_admin.headers),
+                e2e_client.put(
+                    f"{base}/mappings/{mapping['id']}",
+                    headers=platform_admin.headers,
+                    json={"config": {"api_key": rotated}},
+                ),
+            ]
+            detail = e2e_client.get(base, headers=platform_admin.headers)
+
+            for response in [*reads, detail]:
+                assert response.status_code in (200, 201), response.text
+                assert plaintext not in response.text
+                assert rotated not in response.text
+            for response in reads:
+                assert response.json()["config"] == {"api_key": "[SECRET]"}
+            detail_mapping = next(m for m in detail.json()["mappings"] if m["id"] == mapping["id"])
+            assert detail_mapping["config"] == {"api_key": "[SECRET]"}
+
+            # The rotation still reached the engine-facing SDK path.
+            sdk = _sdk_get(e2e_client, platform_admin.headers, name=integration["name"], org_id=org1["id"])
+            assert sdk.status_code == 200, sdk.text
+            assert sdk.json()["config"]["api_key"] == rotated
+        finally:
+            e2e_client.delete(f"{base}/mappings/{mapping['id']}", headers=platform_admin.headers)
+
+    def test_saving_redacted_placeholder_keeps_stored_secret(
+        self, e2e_client, platform_admin, integration_with_secret_schema, org1
+    ):
+        """The admin UI saves the config it read back; the placeholder must not
+        overwrite the stored secret at either the default or the org tier."""
+        integration = integration_with_secret_schema
+        base = f"/api/integrations/{integration['id']}"
+        default_secret = f"default-keep-{uuid4().hex}"
+        org_secret = f"org-keep-{uuid4().hex}"
+
+        e2e_client.put(
+            f"{base}/config",
+            headers=platform_admin.headers,
+            json={"config": {"base_url": "https://api.example.com", "api_key": default_secret}},
+        )
+        echoed = e2e_client.get(f"{base}/config", headers=platform_admin.headers).json()["config"]
+        resave = e2e_client.put(
+            f"{base}/config",
+            headers=platform_admin.headers,
+            json={"config": {**echoed, "base_url": "https://api.changed.example.com"}},
+        )
+        assert resave.status_code == 200, resave.text
+
+        mapping = e2e_client.post(
+            f"{base}/mappings",
+            headers=platform_admin.headers,
+            json={"organization_id": str(org1["id"]), "entity_id": "keep-test"},
+        ).json()
+        try:
+            # Global tier: mapping has no org override, so the SDK resolves the default.
+            sdk = _sdk_get(e2e_client, platform_admin.headers, name=integration["name"], org_id=org1["id"])
+            assert sdk.json()["config"]["api_key"] == default_secret
+            assert sdk.json()["config"]["base_url"] == "https://api.changed.example.com"
+
+            e2e_client.put(
+                f"{base}/mappings/{mapping['id']}",
+                headers=platform_admin.headers,
+                json={"config": {"api_key": org_secret}},
+            )
+            echoed_org = e2e_client.get(
+                f"{base}/mappings/{mapping['id']}", headers=platform_admin.headers
+            ).json()["config"]
+            resave_org = e2e_client.put(
+                f"{base}/mappings/{mapping['id']}",
+                headers=platform_admin.headers,
+                json={"config": echoed_org},
+            )
+            assert resave_org.status_code == 200, resave_org.text
+
+            sdk = _sdk_get(e2e_client, platform_admin.headers, name=integration["name"], org_id=org1["id"])
+            assert sdk.json()["config"]["api_key"] == org_secret
+        finally:
+            e2e_client.delete(f"{base}/mappings/{mapping['id']}", headers=platform_admin.headers)
+
 
 @pytest.mark.e2e
 class TestIntegrationsAuthorization:
