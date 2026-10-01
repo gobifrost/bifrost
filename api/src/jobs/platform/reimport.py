@@ -7,6 +7,7 @@ from src.core.database import get_db_context
 from src.jobs.platform.base import (
     PlatformJobContext,
     PlatformJobDefinition,
+    PlatformJobFailure,
     PlatformJobPolicy,
 )
 
@@ -19,7 +20,7 @@ async def run_workspace_reimport(
     context: PlatformJobContext,
     payload: WorkspaceReimportPayload,
 ) -> dict:
-    from src.services.github_sync import GitHubSyncService
+    from src.services.github_sync import GitHubSyncService, WorkspaceSourceMissing
 
     await context.report("Reimporting workspace entities", percent=5)
     async with get_db_context() as db:
@@ -28,7 +29,10 @@ async def run_workspace_reimport(
             repo_url="unused://reimport-only",
             settings=get_settings(),
         )
-        count = await service.reimport_from_repo()
+        try:
+            count = await service.reimport_from_repo()
+        except WorkspaceSourceMissing as exc:
+            raise PlatformJobFailure("workspace_source_missing", str(exc)) from exc
     await context.report("Workspace reimport complete", percent=100)
     await context.log(
         "info",

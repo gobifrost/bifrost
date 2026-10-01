@@ -3382,6 +3382,124 @@ class TestPullUpsertNaturalKeys:
         assert len(rows) == 1, f"Expected 1 workflow row, got {len(rows)}"
         assert rows[0].id == id_b, f"Expected manifest ID {id_b}, got {rows[0].id}"
 
+    async def test_workspace_sync_leaves_solution_workflow_with_same_path(
+        self,
+        db_session: AsyncSession,
+        sync_service,
+        bare_repo,
+        working_clone,
+    ):
+        """A workspace manifest entry sharing (path, function_name) with a
+        Solution-owned workflow becomes its own row; the Solution row keeps its
+        id and ownership."""
+        from sqlalchemy import insert
+        from src.models.orm.solutions import Solution
+
+        path = "workflows/git_sync_test_solution_owned.py"
+        solution = Solution(
+            id=uuid4(),
+            slug=f"git-sync-guard-{uuid4().hex[:8]}",
+            name="Git sync guard",
+            organization_id=None,
+        )
+        solution_id = solution.id
+        db_session.add(solution)
+        await db_session.flush()
+        solution_wf_id = uuid4()
+        await db_session.execute(insert(Workflow).values(
+            id=solution_wf_id,
+            name="Solution copy",
+            function_name="git_sync_test_wf",
+            path=path,
+            solution_id=solution_id,
+        ))
+        await db_session.commit()
+
+        try:
+            workspace_wf_id = uuid4()
+            clone_dir = Path(working_clone.working_dir)
+            (clone_dir / "workflows").mkdir(exist_ok=True)
+            (clone_dir / path).write_text(SAMPLE_WORKFLOW_PY)
+            (clone_dir / ".bifrost").mkdir(exist_ok=True)
+            (clone_dir / ".bifrost" / "workflows.yaml").write_text(yaml.dump({
+                "workflows": {
+                    "git_sync_test_wf": {
+                        "id": str(workspace_wf_id),
+                        "path": path,
+                        "function_name": "git_sync_test_wf",
+                        "type": "workflow",
+                    }
+                }
+            }, default_flow_style=False))
+            working_clone.index.add([path, ".bifrost/workflows.yaml"])
+            working_clone.index.commit("Add workspace workflow at a Solution path")
+            working_clone.remotes.origin.push("main")
+
+            sync_result = await sync_service.desktop_sync(confirm_deletes=True)
+            assert sync_result.success, f"Sync failed: {sync_result.error}"
+
+            db_session.expire_all()
+            rows = (await db_session.execute(
+                select(Workflow.id, Workflow.solution_id).where(Workflow.path == path)
+            )).all()
+            assert {row.id: row.solution_id for row in rows} == {
+                solution_wf_id: solution_id,
+                workspace_wf_id: None,
+            }
+        finally:
+            await db_session.execute(delete(Workflow).where(Workflow.path == path))
+            await db_session.execute(delete(Solution).where(Solution.id == solution_id))
+            await db_session.commit()
+
+    async def test_workspace_prefetch_excludes_solution_owned_rows(
+        self,
+        db_session: AsyncSession,
+    ):
+        """Every natural-key map the workspace importer matches against omits
+        Solution-owned rows, so no manifest entry can re-key or overwrite one."""
+        from src.models.orm.applications import Application
+        from src.models.orm.custom_claims import CustomClaim
+        from src.models.orm.policy_rule import PolicyRule
+        from src.models.orm.solutions import Solution
+        from src.models.orm.tables import Table
+        from src.services.manifest_import import ManifestResolver
+
+        suffix = uuid4().hex[:8]
+        solution = Solution(
+            id=uuid4(),
+            slug=f"git-sync-prefetch-{suffix}",
+            name="Prefetch guard",
+            organization_id=None,
+        )
+        db_session.add(solution)
+        await db_session.flush()
+        db_session.add_all([
+            Workflow(
+                name="wf", function_name="wf", path=f"workflows/prefetch_{suffix}.py",
+                solution_id=solution.id,
+            ),
+            Application(name="app", slug=f"prefetch-{suffix}", solution_id=solution.id),
+            Table(name=f"prefetch_{suffix}", solution_id=solution.id),
+            CustomClaim(name=f"prefetch_{suffix}", query={}, solution_id=solution.id),
+            PolicyRule(
+                name=f"prefetch_{suffix}", domain="table", body={},
+                solution_id=solution.id,
+            ),
+        ])
+        await db_session.flush()
+
+        try:
+            cache = await ManifestResolver(db_session)._prefetch_existing_entities()
+        finally:
+            # This module's cleanup fixture commits; keep the seeded rows out of it.
+            await db_session.rollback()
+
+        assert (f"workflows/prefetch_{suffix}.py", "wf") not in cache["wf_by_natural"]
+        assert f"prefetch-{suffix}" not in cache["app_by_slug"]
+        assert (f"prefetch_{suffix}", None) not in cache["table_by_natural"]
+        assert (f"prefetch_{suffix}", None) not in cache["claim_by_natural"]
+        assert (f"prefetch_{suffix}", "table", None) not in cache["policy_rule_by_natural"]
+
     async def test_integration_import_with_different_id(
         self,
         db_session: AsyncSession,
@@ -6062,6 +6180,66 @@ class TestDeleteConfirmation:
         deleted_wf = row.scalar_one_or_none()
         # Either deleted or deactivated
         assert deleted_wf is None or deleted_wf.is_active is False
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+class TestMissingManifestGuard:
+    """A source with no workspace manifest must never become a delete-everything plan."""
+
+    async def test_sync_refuses_remote_without_manifest(
+        self,
+        db_session: AsyncSession,
+        sync_service,
+        bare_repo,
+        working_clone,
+    ):
+        wf_id = uuid4()
+        db_session.add(Workflow(
+            id=wf_id,
+            name="Missing Manifest Guard",
+            function_name="git_sync_test_wf",
+            path="workflows/git_sync_test_guard.py",
+            is_active=True,
+        ))
+        await db_session.commit()
+
+        clone_dir = Path(working_clone.working_dir)
+        (clone_dir / "workflows").mkdir(exist_ok=True)
+        (clone_dir / "workflows" / "git_sync_test_guard.py").write_text(SAMPLE_WORKFLOW_PY)
+        working_clone.index.add(["workflows/git_sync_test_guard.py"])
+        working_clone.index.commit("Remote without .bifrost/")
+        working_clone.remotes.origin.push("main")
+
+        result = await sync_service.desktop_sync(confirm_deletes=True)
+
+        assert result.success is False
+        assert "Nothing was changed" in (result.error or "")
+        db_session.expire_all()
+        assert await db_session.get(Workflow, wf_id) is not None
+
+    async def test_reimport_refuses_empty_workspace_storage(
+        self,
+        db_session: AsyncSession,
+        sync_service,
+    ):
+        from src.services.github_sync import WorkspaceSourceMissing
+
+        wf_id = uuid4()
+        db_session.add(Workflow(
+            id=wf_id,
+            name="Empty Storage Guard",
+            function_name="git_sync_test_wf",
+            path="workflows/git_sync_test_reimport_guard.py",
+            is_active=True,
+        ))
+        await db_session.commit()
+
+        with pytest.raises(WorkspaceSourceMissing, match="Nothing was changed"):
+            await sync_service.reimport_from_repo()
+
+        db_session.expire_all()
+        assert await db_session.get(Workflow, wf_id) is not None
 
 
 @pytest.mark.e2e

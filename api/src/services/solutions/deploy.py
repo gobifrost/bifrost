@@ -1558,18 +1558,30 @@ class SolutionDeployer:
         from src.services.manifest_import import _agent_content_from_manifest
 
         sid = solution.id
+        await self._check_agent_delegations(agents)
         indexer = AgentIndexer(self.db)
+        bundle_ids = {UUID(a["id"]) for a in agents}
+        indexed: set[UUID] = set()
+        # The indexer links only delegation targets that already exist, so a
+        # parent indexed before its in-bundle child is indexed again once every
+        # bundle agent is in place.
+        reindex: list[tuple[str, bytes]] = []
         for magent in agents:
             agent_id = UUID(magent["id"])
             await self._guard_owner(Agent, agent_id, sid)
             ma = ManifestAgent.model_validate({**magent, "id": str(agent_id)})
             content = _agent_content_from_manifest(ma)
+            path = f"agents/{agent_id}.agent.yaml"
             try:
-                await indexer.index_agent(f"agents/{agent_id}.agent.yaml", content)
+                await indexer.index_agent(path, content)
             except ValueError as exc:
                 raise SolutionDeployConflict(
                     f"agent {agent_id}: {exc}"
                 ) from exc
+            indexed.add(agent_id)
+            children = {UUID(str(c)) for c in magent.get("delegated_agent_ids") or []}
+            if children & (bundle_ids - indexed):
+                reindex.append((path, content))
             # access_level is deploy-owned (manifest-declared); apply it here —
             # the indexer preserves it and the entity is read-only outside deploy
             # (Codex #14). org/solution scope is stamped alongside.
@@ -1621,6 +1633,39 @@ class SolutionDeployer:
             if "mcp_connection_ids" in magent:
                 mcp_ids = self._parse_uuids(magent.get("mcp_connection_ids") or [])
                 await self._sync_agent_mcp_connections(agent_id, mcp_ids)
+        for path, content in reindex:
+            await indexer.index_agent(path, content)
+
+    async def _check_agent_delegations(self, agents: list[dict[str, Any]]) -> None:
+        """Fail the deploy when an agent delegates to an agent that is neither
+        in this bundle nor already present on the instance; the indexer would
+        otherwise drop the delegation with only a log warning."""
+        bundle_ids = {UUID(a["id"]) for a in agents}
+        targets: list[tuple[str, str, UUID | None]] = []
+        for magent in agents:
+            for ref in magent.get("delegated_agent_ids") or []:
+                try:
+                    child: UUID | None = UUID(str(ref))
+                except ValueError:
+                    child = None
+                if child not in bundle_ids:
+                    targets.append((magent.get("name") or magent["id"], str(ref), child))
+        if not targets:
+            return
+        outside = {child for _, _, child in targets if child is not None}
+        existing = set(
+            (await self.db.execute(select(Agent.id).where(Agent.id.in_(outside)))).scalars()
+        ) if outside else set()
+        missing = [
+            f"agent {name!r} delegates to agent {ref}"
+            for name, ref, child in targets
+            if child not in existing
+        ]
+        if missing:
+            raise SolutionDeployConflict(
+                "delegation target not in this bundle and not found on this instance: "
+                + "; ".join(missing)
+            )
 
     async def _upsert_config_schemas(
         self, solution: Solution, config_schemas: list[dict[str, Any]]

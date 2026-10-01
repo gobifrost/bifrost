@@ -484,10 +484,6 @@ class ManifestResolver:
         # changed non-secret value) does not keep serving stale until TTL.
         self.configs_touched: set[tuple[str | None, str]] = set()
         self._skip_role_sync = False
-        # Partial workspace-bundle imports only match unattached rows. A
-        # globally unique workflow path or app slug can be moved across scopes
-        # by an explicit Replace decision in the workspace review.
-        self._workspace_global_scope = False
         # Target scope for workspace-partial lookups (None = global). Set only
         # for the duration of plan_partial_import.
         self._workspace_organization_id: UUID | None = None
@@ -529,6 +525,11 @@ class ManifestResolver:
         from src.models.orm.users import Role
         from src.models.orm.workflows import Workflow
 
+        # Lookups for entities a Solution can own (workflows, apps, tables,
+        # policy rules, claims) only see workspace rows (solution_id IS NULL).
+        # Solution-owned rows have exactly one writer, the Solution deploy; a
+        # workspace manifest entry that shares a Solution row's natural key must
+        # never re-key or overwrite it.
         cache: dict = {}
 
         # Organizations: {id} set + {name: id} dict
@@ -548,12 +549,10 @@ class ManifestResolver:
             cache["role_by_name"][row[1]] = row[0]
 
         # Workflows: {(path, function_name): id} + {id} set
-        workflow_query = select(Workflow.id, Workflow.path, Workflow.function_name)
-        if self._workspace_global_scope:
-            workflow_query = workflow_query.where(
-                Workflow.solution_id.is_(None),
-            )
-        wf_result = await self.db.execute(workflow_query)
+        wf_result = await self.db.execute(
+            select(Workflow.id, Workflow.path, Workflow.function_name)
+            .where(Workflow.solution_id.is_(None))
+        )
         cache["wf_ids"] = set()
         cache["wf_by_natural"] = {}
         for row in wf_result.all():
@@ -583,12 +582,10 @@ class ManifestResolver:
             cache["integ_mappings"].setdefault(m.integration_id, {})[org_key] = m
 
         # Apps: {slug: id}
-        app_query = select(Application.id, Application.slug)
-        if self._workspace_global_scope:
-            app_query = app_query.where(
-                Application.solution_id.is_(None),
-            )
-        app_result = await self.db.execute(app_query)
+        app_result = await self.db.execute(
+            select(Application.id, Application.slug)
+            .where(Application.solution_id.is_(None))
+        )
         cache["app_by_slug"] = {}
         for row in app_result.all():
             cache["app_by_slug"][row[1]] = row[0]
@@ -596,6 +593,7 @@ class ManifestResolver:
         # Tables: {(name, org_id): id} + {id} set
         table_result = await self.db.execute(
             select(Table.id, Table.name, Table.organization_id)
+            .where(Table.solution_id.is_(None))
         )
         cache["table_ids"] = set()
         cache["table_by_natural"] = {}
@@ -636,6 +634,7 @@ class ManifestResolver:
         from src.models.orm.policy_rule import PolicyRule as PolicyRuleOrm
         pr_result = await self.db.execute(
             select(PolicyRuleOrm.id, PolicyRuleOrm.name, PolicyRuleOrm.domain, PolicyRuleOrm.organization_id)
+            .where(PolicyRuleOrm.solution_id.is_(None))
         )
         cache["policy_rule_ids"] = set()
         cache["policy_rule_by_natural"] = {}
@@ -646,6 +645,7 @@ class ManifestResolver:
         # Custom Claims: {(name, org_id): id} + {id} set
         claim_result = await self.db.execute(
             select(CustomClaim.id, CustomClaim.name, CustomClaim.organization_id)
+            .where(CustomClaim.solution_id.is_(None))
         )
         cache["claim_ids"] = set()
         cache["claim_by_natural"] = {}
@@ -1006,7 +1006,6 @@ class ManifestResolver:
             for entity in collection.values()
         }
         self._skip_role_sync = True
-        self._workspace_global_scope = True
         self._workspace_organization_id = organization_id
         try:
             ops = await self.plan_import(
@@ -1015,7 +1014,6 @@ class ManifestResolver:
             )
         finally:
             self._skip_role_sync = False
-            self._workspace_global_scope = False
             self._workspace_organization_id = None
 
         async def read_workspace(path: str) -> bytes | None:
