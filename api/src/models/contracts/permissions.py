@@ -149,7 +149,7 @@ PERMISSION_DOMAINS: dict[str, PermissionDomain] = {
         description=(
             "Platform or org configuration that isn't a first-class entity of its "
             "own: AI model routing/pricing/behavior, branding, OAuth/SSO provider "
-            "config, ROI targets, required-instructions content, decorator "
+            "config, required-instructions content, decorator "
             "properties, the tool catalog, workflow signing keys, and app/form "
             "embed secrets. Some of these are inherently global (branding, AI "
             "pricing); others are inherently per-org (OAuth SSO config, embed "
@@ -163,7 +163,9 @@ PERMISSION_DOMAINS: dict[str, PermissionDomain] = {
             "Decrypting secret values: secret config values, integration "
             "OAuth tokens and client secrets returned in plain text. "
             "Metadata about a secret (that it exists, its key, whether it is "
-            "set) is the owning domain's `read`, not this."
+            "set) is the owning domain's `read`, not this. Only these "
+            "decrypt paths return a secret in plain text: UI and admin "
+            "routes redact secret values for everyone, admins included."
         ),
         who_should_hold=(
             "The engine execution principal, for running workflows. Humans "
@@ -172,7 +174,7 @@ PERMISSION_DOMAINS: dict[str, PermissionDomain] = {
         ),
     ),
     "reports": PermissionDomain(
-        description="ROI reporting: per-organization and per-workflow ROI summaries and trends, and reading the ROI settings they are computed from.",
+        description="ROI reporting: per-organization and per-workflow ROI summaries and trends, and the ROI settings they are computed from.",
         who_should_hold="Platform admins. Others only through an admin-assigned role at a specific boundary; never the User base role.",
     ),
     "metrics": PermissionDomain(

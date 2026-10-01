@@ -598,7 +598,7 @@
     "method": "POST",
     "operation_id": null,
     "path": "/api/admin/roi/settings",
-    "permission": "settings.readwrite",
+    "permission": "reports.readwrite",
     "reason": "Platform-admin-only operation."
   },
   {
@@ -4242,7 +4242,7 @@
     "operation_id": "integrations.get",
     "path": "/api/integrations/{integration_id}",
     "permission": "integrations.read",
-    "reason": "Platform-admin-only operation."
+    "reason": "Platform-admin-only operation. The response includes secret config values decrypted; at the cutover they are redacted (nobody, admins included, reads a secret through the UI or admin routes; only secrets.read decrypt paths return plain text), so integrations.read stays metadata only."
   },
   {
     "access_class": "permission",
@@ -4270,7 +4270,7 @@
     "operation_id": "integrations.config.get",
     "path": "/api/integrations/{integration_id}/config",
     "permission": "integrations.read",
-    "reason": "Platform-admin-only operation."
+    "reason": "Platform-admin-only operation. The response includes secret config values decrypted; at the cutover they are redacted (nobody, admins included, reads a secret through the UI or admin routes; only secrets.read decrypt paths return plain text), so integrations.read stays metadata only."
   },
   {
     "access_class": "permission",
@@ -4284,7 +4284,7 @@
     "operation_id": "integrations.config.update",
     "path": "/api/integrations/{integration_id}/config",
     "permission": "integrations.readwrite",
-    "reason": "Platform-admin-only operation."
+    "reason": "Platform-admin-only operation. The response echoes secret config values decrypted; at the cutover they are redacted (nobody, admins included, reads a secret through the UI or admin routes; only secrets.read decrypt paths return plain text)."
   },
   {
     "access_class": "permission",
@@ -4368,7 +4368,7 @@
     "operation_id": "integrations.mappings.create",
     "path": "/api/integrations/{integration_id}/mappings",
     "permission": "integrations.readwrite",
-    "reason": "Platform-admin-only operation."
+    "reason": "Platform-admin-only operation. The response echoes secret config values decrypted; at the cutover they are redacted (nobody, admins included, reads a secret through the UI or admin routes; only secrets.read decrypt paths return plain text)."
   },
   {
     "access_class": "permission",
@@ -4396,7 +4396,7 @@
     "operation_id": "integrations.mappings.get_by_org",
     "path": "/api/integrations/{integration_id}/mappings/by-org/{org_id}",
     "permission": "integrations.read",
-    "reason": "Platform-admin-only operation."
+    "reason": "Platform-admin-only operation. The response includes secret config values decrypted; at the cutover they are redacted (nobody, admins included, reads a secret through the UI or admin routes; only secrets.read decrypt paths return plain text), so integrations.read stays metadata only."
   },
   {
     "access_class": "permission",
@@ -4424,7 +4424,7 @@
     "operation_id": "integrations.mappings.get",
     "path": "/api/integrations/{integration_id}/mappings/{mapping_id}",
     "permission": "integrations.read",
-    "reason": "Platform-admin-only operation."
+    "reason": "Platform-admin-only operation. The response includes secret config values decrypted; at the cutover they are redacted (nobody, admins included, reads a secret through the UI or admin routes; only secrets.read decrypt paths return plain text), so integrations.read stays metadata only."
   },
   {
     "access_class": "permission",
@@ -4438,7 +4438,7 @@
     "operation_id": "integrations.mappings.update",
     "path": "/api/integrations/{integration_id}/mappings/{mapping_id}",
     "permission": "integrations.readwrite",
-    "reason": "Platform-admin-only operation."
+    "reason": "Platform-admin-only operation. The response echoes secret config values decrypted; at the cutover they are redacted (nobody, admins included, reads a secret through the UI or admin routes; only secrets.read decrypt paths return plain text)."
   },
   {
     "access_class": "permission",
