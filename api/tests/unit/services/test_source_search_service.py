@@ -171,3 +171,17 @@ async def test_dense_file_pages_resume_inside_the_file(db_session):
 async def test_bad_glob_is_an_invalid_request(db_session):
     with pytest.raises(InvalidSearchRequest, match="Invalid glob"):
         await search_source(db_session, SearchRequest(query="x", include_pattern="[!]"))
+
+
+@pytest.mark.asyncio
+async def test_catastrophic_regex_is_rejected_quickly_instead_of_hanging(db_session):
+    import time
+
+    tok = _token()
+    await _seed(db_session, {f"ss/{tok}/evil.txt": "a" * 35 + "b"})
+    started = time.monotonic()
+    with pytest.raises(InvalidSearchRequest, match="took too long"):
+        await search_source(
+            db_session, SearchRequest(query=r"(a|a)+$", is_regex=True, include_pattern=f"ss/{tok}/**")
+        )
+    assert time.monotonic() - started < 5

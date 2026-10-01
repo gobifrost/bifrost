@@ -20,7 +20,8 @@ def _meta(body: bytes) -> S3FileMetadata:
 
 
 class FakeRepo(RepoStorage):
-    def __init__(self, objects: dict[str, bytes] | None = None):  # noqa: D107 - no S3 settings
+    def __init__(self, objects: dict[str, bytes] | None = None):
+        super().__init__()
         self.objects = dict(objects or {})
 
     async def list_with_metadata(self, prefix: str = "") -> dict[str, S3FileMetadata]:
@@ -38,7 +39,8 @@ class FakeRepo(RepoStorage):
 
 
 class FakeSolutionStorage(SolutionStorage):
-    def __init__(self, objects: dict[str, bytes] | None = None):  # noqa: D107 - no S3 settings
+    def __init__(self, objects: dict[str, bytes] | None = None):
+        super().__init__(uuid4())
         self.objects = dict(objects or {})
 
     async def list_with_metadata(self, prefix: str = "") -> dict[str, S3FileMetadata]:
@@ -112,13 +114,11 @@ async def test_excluded_objects_are_not_indexed(db_session):
 
 @pytest.mark.asyncio
 async def test_oversized_object_gets_path_only_row_without_full_read(db_session, monkeypatch):
-    import src.services.file_index_reconciler as reconciler
-
     class NoReadRepo(FakeRepo):
         async def read(self, path: str) -> bytes:
             raise AssertionError("oversized objects must not be read whole")
 
-    monkeypatch.setattr(reconciler, "MAX_INDEXABLE_TEXT_BYTES", 4)
+    monkeypatch.setattr("src.services.file_index_reconciler.MAX_INDEXABLE_TEXT_BYTES", 4)
     repo = NoReadRepo({"big.log": b"0123456789"})
     await reconcile_file_index(db_session, repo_storage=repo, solution_storage_factory=_no_solutions)
     assert await _exists(db_session, "big.log") and await _content(db_session, "big.log") is None
@@ -187,13 +187,11 @@ async def test_a_write_racing_the_reconciler_is_not_overwritten(db_session):
 
 @pytest.mark.asyncio
 async def test_large_object_that_vanishes_gets_no_row(db_session, monkeypatch):
-    import src.services.file_index_reconciler as reconciler
-
     class VanishingRepo(FakeRepo):
         async def content_hash(self, path: str) -> str | None:
             return None
 
-    monkeypatch.setattr(reconciler, "MAX_INDEXABLE_TEXT_BYTES", 4)
+    monkeypatch.setattr("src.services.file_index_reconciler.MAX_INDEXABLE_TEXT_BYTES", 4)
     repo = VanishingRepo({"huge.bin": b"0123456789"})
     await reconcile_file_index(db_session, repo_storage=repo, solution_storage_factory=_no_solutions)
     assert not await _exists(db_session, "huge.bin")

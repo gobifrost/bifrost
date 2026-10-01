@@ -18,7 +18,8 @@ from src.services.file_index_service import (
 
 
 class FakeRepoStorage(RepoStorage):
-    def __init__(self):  # noqa: D107 - no S3 settings needed
+    def __init__(self):
+        super().__init__()
         self.objects: dict[str, bytes] = {}
 
     async def write(self, path: str, content: bytes) -> str:

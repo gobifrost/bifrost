@@ -86,10 +86,9 @@ async def test_object_uploaded_outside_the_service_is_indexed_on_completion(db_s
 
 @pytest.mark.asyncio
 async def test_oversized_upload_gets_a_path_only_row(db_session, monkeypatch):
-    import src.services.file_index_service as fis
     from src.services.repo_storage import RepoStorage
 
-    monkeypatch.setattr(fis, "MAX_INDEXABLE_TEXT_BYTES", 8)
+    monkeypatch.setattr("src.services.file_index_service.MAX_INDEXABLE_TEXT_BYTES", 8)
     path = f"uploads-{uuid4().hex[:8]}/big.txt"
     await RepoStorage().write(path, b"0123456789")
     await FileIndexService(db_session).index_existing_object(path)

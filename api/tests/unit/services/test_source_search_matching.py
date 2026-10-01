@@ -56,7 +56,7 @@ class _CountingMatcher:
         self._re = re.compile(pattern)
         self.scanned: list[str] = []
 
-    def finditer(self, line: str):
+    def finditer(self, line: str, *, timeout: float):
         self.scanned.append(line)
         return self._re.finditer(line)
 
@@ -91,3 +91,10 @@ def test_count_matches_counts_without_building_hits():
     assert count_matches("x\nfoo foo\nbar\nfoo", build_matcher("foo", False, True)) == (3, 2)
     assert count_matches("abc\ndef", build_matcher("x*", True, True)) == (2, 1)
     assert count_matches("abc", build_matcher("zzz", False, True)) == (0, 0)
+
+
+def test_catastrophic_pattern_times_out_as_a_value_error():
+    from src.services.source_search.matching import RegexTimeout
+
+    with pytest.raises(RegexTimeout, match="took too long"):
+        list(iter_line_hits("a" * 35 + "b", build_matcher(r"(a|a)+$", True, True), context_lines=0))

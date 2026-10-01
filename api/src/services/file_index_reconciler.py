@@ -17,7 +17,6 @@ from __future__ import annotations
 import hashlib
 import logging
 from collections.abc import Awaitable, Callable
-from typing import Protocol
 from uuid import UUID
 
 from sqlalchemy import select
@@ -36,12 +35,6 @@ from src.services.solutions.storage import SolutionStorage
 logger = logging.getLogger(__name__)
 
 
-class _SourceStore(Protocol):
-    async def list_with_metadata(self, prefix: str = "") -> dict[str, S3FileMetadata]: ...
-    async def read(self, path: str) -> bytes: ...
-    async def content_hash(self, path: str) -> str | None: ...
-
-
 RECONCILE_COMMIT_EVERY = 200
 
 
@@ -51,7 +44,7 @@ def _empty_stats() -> dict[str, int]:
 
 async def _reconcile_scope(
     db: AsyncSession,
-    store: _SourceStore,
+    store: RepoStorage | SolutionStorage,
     indexed: dict[str, str | None],
     *,
     write: Callable[[str, bytes | None, str, str | None, bool], Awaitable[None]],

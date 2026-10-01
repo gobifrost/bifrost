@@ -31,7 +31,12 @@ from src.services.source_search.cursor import (
     fingerprint,
 )
 from src.services.source_search.guidance import guidance
-from src.services.source_search.matching import build_matcher, count_matches, iter_line_hits
+from src.services.source_search.matching import (
+    RegexTimeout,
+    build_matcher,
+    count_matches,
+    iter_line_hits,
+)
 
 
 class InvalidSearchRequest(ValueError):
@@ -86,7 +91,10 @@ async def search_source(db: AsyncSession, request: SearchRequest) -> SearchRespo
         if files_mode:
             if in_cursor_file:
                 continue
-            count, first_line = await asyncio.to_thread(count_matches, cand.content, matcher)
+            try:
+                count, first_line = await asyncio.to_thread(count_matches, cand.content, matcher)
+            except RegexTimeout as exc:
+                raise InvalidSearchRequest(str(exc)) from exc
             if not count:
                 continue
             if len(files) == request.limit:
@@ -100,11 +108,14 @@ async def search_source(db: AsyncSession, request: SearchRequest) -> SearchRespo
         # One more hit than the page needs tells us whether more results exist.
         wanted = request.limit - len(matches) + 1
         after = (pos.line, pos.column) if in_cursor_file and pos is not None else None
-        hits = await asyncio.to_thread(
-            lambda: list(islice(
-                iter_line_hits(cand.content, matcher, request.context_lines, after=after), wanted,
-            ))
-        )
+        try:
+            hits = await asyncio.to_thread(
+                lambda: list(islice(
+                    iter_line_hits(cand.content, matcher, request.context_lines, after=after), wanted,
+                ))
+            )
+        except RegexTimeout as exc:
+            raise InvalidSearchRequest(str(exc)) from exc
         for hit in hits:
             if len(matches) == request.limit:
                 has_more = True
