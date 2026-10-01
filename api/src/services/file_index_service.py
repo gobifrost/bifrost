@@ -29,7 +29,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.models.orm.file_index import FileIndex, SolutionFileIndex
 from src.services.editor.file_filter import is_excluded_path
 from src.services.repo_storage import RepoStorage
-from src.services.file_storage.s3_client import S3StorageClient
 
 # Search is a bounded projection of source content, not an alternate source of
 # truth. Oversized text stays in storage but gets a path-only row so sync and
@@ -135,6 +134,37 @@ class FileIndexService:
             return
         await self._upsert(new_path, row.content, row.content_hash or "", row.updated_by)
 
+    async def upsert_many(self, rows: list[dict]) -> None:
+        """Bulk upsert prepared workspace rows (``path``, ``content``, ``content_hash``)."""
+        if not rows:
+            return
+        stmt = insert(FileIndex).values(rows)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[FileIndex.path],
+            set_={
+                "content": stmt.excluded.content,
+                "content_hash": stmt.excluded.content_hash,
+                "updated_at": text("NOW()"),
+            },
+        )
+        await self.db.execute(stmt)
+
+    async def unindex_many(self, paths: list[str]) -> None:
+        if paths:
+            await self.db.execute(delete(FileIndex).where(FileIndex.path.in_(paths)))
+
+    async def index_existing_object(self, path: str, updated_by: str | None = None) -> None:
+        """Index a workspace object already in S3 (e.g. after a presigned PUT)."""
+        meta = await self.repo_storage.head(path)
+        if meta is None:
+            await self.unindex(path)
+            return
+        if meta.size > MAX_INDEXABLE_TEXT_BYTES:
+            await self.index_path_only(path, await self.repo_storage.content_hash(path) or "", updated_by)
+            return
+        content = await self.repo_storage.read(path)
+        await self.index(path, content, hashlib.sha256(content).hexdigest(), updated_by)
+
     # ── workspace S3 + index ────────────────────────────────────────────────
 
     async def write(self, path: str, content: bytes, updated_by: str | None = None) -> str:
@@ -158,6 +188,8 @@ class FileIndexService:
             with source.open("rb") as handle:
                 while chunk := handle.read(FILE_COPY_CHUNK_SIZE):
                     yield chunk
+
+        from src.services.file_storage.s3_client import S3StorageClient
 
         storage = S3StorageClient(self.repo_storage._settings)
         content_hash, size = await storage.put_object_from_chunks(

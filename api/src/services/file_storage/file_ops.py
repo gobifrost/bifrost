@@ -10,13 +10,13 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Callable
 
 from sqlalchemy import select, update
-from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import Settings
 from src.core.log_safety import log_safe
 from src.models import Workflow
 from src.models.orm.file_index import FileIndex
+from src.services.file_index_service import FileIndexService
 from src.core.module_cache import set_module, invalidate_module
 from src.services.repo_storage import REPO_PREFIX
 from .models import WriteResult
@@ -186,30 +186,9 @@ class FileOperationsService:
                 ContentType=content_type,
             )
 
-        now = datetime.now(timezone.utc)
-
-        # Write to file_index (the sole search index)
-        # Binary files (containing null bytes) can't be stored in PostgreSQL text columns,
-        # so we index them with path only (no content) for listing/existence checks.
-        content_str = cached_content_str or content.decode("utf-8", errors="replace")
-        is_binary = b"\x00" in content
-        fi_stmt = insert(FileIndex).values(
-            path=path,
-            content="" if is_binary else content_str,
-            content_hash=content_hash,
-            updated_at=now,
-            updated_by=updated_by,
-        ).on_conflict_do_update(
-            index_elements=[FileIndex.path],
-            set_={
-                "content": "" if is_binary else content_str,
-                "content_hash": content_hash,
-                "updated_at": now,
-                "updated_by": updated_by,
-            },
-        )
-        await self.db.execute(fi_stmt)
+        await FileIndexService(self.db).index(path, content, content_hash, updated_by)
         await self.db.flush()
+        content_str = cached_content_str or content.decode("utf-8", errors="replace")
 
         # Update module cache in Redis for immediate availability in virtual imports.
         # Both workflows and modules need caching — workers load code via Redis→S3.
@@ -326,34 +305,6 @@ class FileOperationsService:
             diagnostics=diagnostics if diagnostics else None,
         )
 
-    async def record_signed_upload_metadata(
-        self,
-        path: str,
-        *,
-        updated_by: str,
-    ) -> None:
-        """Record a workspace metadata marker for a presigned PUT.
-
-        Direct S3 PUTs do not call ``write_file`` after upload completion, so
-        there is no content available to index at signing time.
-        """
-        now = datetime.now(timezone.utc)
-        stmt = insert(FileIndex).values(
-            path=path,
-            content=None,
-            content_hash="",
-            updated_at=now,
-            updated_by=updated_by,
-        ).on_conflict_do_update(
-            index_elements=[FileIndex.path],
-            set_={
-                "updated_at": now,
-                "updated_by": updated_by,
-            },
-        )
-        await self.db.execute(stmt)
-        await self.db.flush()
-
     async def delete_file(self, path: str) -> None:
         """
         Delete a file from storage.
@@ -403,10 +354,8 @@ class FileOperationsService:
             await s3.delete_object(Bucket=self.settings.s3_bucket, Key=s3_key)
 
     async def _remove_from_search_index(self, path: str) -> None:
-        """Remove from file_index search table if present."""
-        from sqlalchemy import delete
-        del_stmt = delete(FileIndex).where(FileIndex.path == path)
-        await self.db.execute(del_stmt)
+        """Remove from the source search index if present."""
+        await FileIndexService(self.db).unindex(path)
 
     async def _find_app_by_path(self, path: str) -> "Application | None":
         """Find the Application that owns a file path via repo_path prefix match.
@@ -693,27 +642,7 @@ class FileOperationsService:
                     f"{log_safe(new_path)}: {log_safe(e)}"
                 )
 
-        # Update file_index: insert new path, delete old
-        new_stmt = insert(FileIndex).values(
-            path=new_path,
-            content=old_record.content,
-            content_hash=old_record.content_hash,
-            updated_at=now,
-            updated_by=old_record.updated_by,
-        ).on_conflict_do_update(
-            index_elements=[FileIndex.path],
-            set_={
-                "content": old_record.content,
-                "content_hash": old_record.content_hash,
-                "updated_at": now,
-                "updated_by": old_record.updated_by,
-            },
-        )
-        await self.db.execute(new_stmt)
-
-        from sqlalchemy import delete
-        del_stmt = delete(FileIndex).where(FileIndex.path == old_path)
-        await self.db.execute(del_stmt)
+        await FileIndexService(self.db).move_index(old_path, new_path)
 
         logger.info(
             f"File moved: {log_safe(old_path)} -> {log_safe(new_path)}"

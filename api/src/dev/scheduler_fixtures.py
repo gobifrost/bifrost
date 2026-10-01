@@ -32,6 +32,7 @@ from src.models.orm.solutions import Solution
 from src.models.orm.summary_backfill_job import SummaryBackfillJob
 from src.models.orm.users import User
 from src.scheduler.registry import ScheduledTaskOutcome
+from src.services.file_index_service import FileIndexService
 from src.services.repo_storage import RepoStorage
 from src.services.scheduler_diagnostics import (
     finish_scheduler_run,
@@ -108,7 +109,7 @@ async def seed_scheduler_fixtures() -> UUID:
         )
         await db.execute(delete(EventSource).where(EventSource.id == EVENT_SOURCE_ID))
         await db.execute(delete(Solution).where(Solution.id == SOLUTION_ID))
-        await db.execute(delete(FileIndex).where(FileIndex.path == FILE_PATH))
+        await FileIndexService(db).unindex(FILE_PATH)
         await db.commit()
 
         now = datetime.now(timezone.utc)

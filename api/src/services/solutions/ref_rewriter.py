@@ -32,6 +32,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from src.services.file_index_service import FileIndexService
+
 
 @dataclass(frozen=True)
 class WorkflowRename:
@@ -183,6 +185,6 @@ class WorkflowRefRewriter:
                 continue  # absent / binary — nothing to rewrite
             new_src = rewrite_source_refs(src, renames)
             if new_src != src:
-                await self.repo.write(path, new_src.encode("utf-8"))
+                await FileIndexService(self.db, self.repo).write(path, new_src.encode("utf-8"))
                 updated.append(path)
         return updated

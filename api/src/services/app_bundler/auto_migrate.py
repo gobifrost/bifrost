@@ -24,6 +24,8 @@ from bifrost.migrate_imports import (
 )
 from bifrost.platform_names import PLATFORM_EXPORT_NAMES
 from src.core.log_safety import log_safe
+from src.core.database import get_db_context
+from src.services.file_index_service import FileIndexService
 from src.services.repo_storage import RepoStorage
 
 logger = logging.getLogger(__name__)
@@ -87,10 +89,14 @@ async def auto_migrate_repo_prefix(
             return False, results
 
         summary_parts: list[str] = []
+        async with get_db_context() as db:
+            index = FileIndexService(db, repo)
+            for r in changed:
+                rel_path = str(r.path.relative_to(app_dir))
+                await index.write(repo_prefix + rel_path, r.updated.encode("utf-8"))
+            await db.commit()
         for r in changed:
             rel_path = str(r.path.relative_to(app_dir))
-            key_rel = repo_prefix + rel_path
-            await repo.write(key_rel, r.updated.encode("utf-8"))
             moves: list[str] = []
             if r.moved_icons:
                 moves.append(f"{r.moved_icons}icon")

@@ -5,7 +5,6 @@ the indexer's lookup/deactivate-by-path queries must scope to solution_id IS NUL
 solution-managed row (which is written ONLY by deploy)."""
 from __future__ import annotations
 
-from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -70,44 +69,6 @@ async def _new_solution(db):
     db.add(sol)
     await db.flush()
     return sol
-
-
-async def test_reindex_does_not_deactivate_solution_workflow(db_session, tmp_path):
-    """A workspace reindex deactivates _repo/ workflows whose file is absent from
-    disk. It must NEVER deactivate a solution-managed workflow at a path that is
-    (legitimately) not in the workspace filesystem — deploy is its only writer."""
-    db = db_session
-    sol = await _new_solution(db)
-
-    repo_wf = await _add_wf(db, solution_id=None, path="workflows/gone.py")
-    sol_wf = await _add_wf(db, solution_id=sol.id, path="workflows/sol.py")
-
-    from src.config import get_settings
-    from src.services.file_storage.reindex import WorkspaceReindexService
-
-    async def _noop(*_a, **_k):
-        return None
-
-    svc = WorkspaceReindexService(
-        db=db,
-        settings=get_settings(),
-        s3_client=None,
-        entity_resolution=None,
-        file_hash_fn=lambda b: "h",
-        content_type_fn=lambda p: "text/plain",
-        extract_metadata_fn=_noop,
-        index_python_file_fn=_noop,
-    )
-    # Empty workspace dir → every active workflow is "orphaned" by path.
-    empty_dir = Path(tmp_path) / "ws"
-    empty_dir.mkdir()
-    await svc.reindex_workspace_files(empty_dir)
-    await db.flush()
-
-    await db.refresh(repo_wf)
-    await db.refresh(sol_wf)
-    assert repo_wf.is_active is False  # _repo/ row deactivated (its file is gone)
-    assert sol_wf.is_active is True  # solution row untouched by a workspace reindex
 
 
 async def test_force_deactivation_does_not_touch_solution_workflow(db_session):

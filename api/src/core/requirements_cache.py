@@ -202,13 +202,15 @@ async def save_requirements(content: str) -> None:
     Args:
         content: Full requirements.txt content
     """
-    from src.services.repo_storage import RepoStorage
+    from src.core.database import get_db_context
+    from src.services.file_index_service import FileIndexService
 
     content_hash = hashlib.sha256(content.encode()).hexdigest()
 
-    # Write to S3 (source of truth)
-    repo = RepoStorage()
-    await repo.write("requirements.txt", content.encode())
+    # Write to S3 (source of truth) and keep the source search index current
+    async with get_db_context() as db:
+        await FileIndexService(db).write("requirements.txt", content.encode())
+        await db.commit()
 
     # Update Redis cache (workers read this synchronously at startup)
     await set_requirements(content, content_hash)

@@ -245,33 +245,33 @@ class TestSaveRequirements:
         mock_client.setex = AsyncMock()
         return mock_client
 
-    async def test_writes_to_s3_and_cache(self, mock_redis_client):
-        """Test save_requirements writes to S3 and updates Redis cache."""
-        content = "flask==2.3.0\nrequests==2.31.0\n"
-        mock_repo = AsyncMock()
+    async def test_writes_to_s3_index_and_cache(self, mock_redis_client):
+        """save_requirements stores the bytes, indexes them for search, and updates Redis."""
+        from sqlalchemy import select
 
-        with (
-            patch("src.core.requirements_cache.get_redis_client", return_value=mock_redis_client),
-            patch("src.services.repo_storage.RepoStorage", return_value=mock_repo),
-        ):
+        from src.core.database import get_db_context
+        from src.models.orm.file_index import FileIndex
+        from src.services.repo_storage import RepoStorage
+
+        content = "flask==2.3.0\nrequests==2.31.0\n"
+
+        with patch("src.core.requirements_cache.get_redis_client", return_value=mock_redis_client):
             await save_requirements(content)
 
-            # Verify S3 write
-            mock_repo.write.assert_called_once_with("requirements.txt", content.encode())
-
-            # Verify cache was updated
-            mock_redis_client.setex.assert_called_once()
+        assert await RepoStorage().read("requirements.txt") == content.encode()
+        async with get_db_context() as db:
+            indexed = await db.scalar(
+                select(FileIndex.content).where(FileIndex.path == "requirements.txt")
+            )
+        assert indexed == content
+        mock_redis_client.setex.assert_called_once()
 
     async def test_computes_correct_hash(self, mock_redis_client):
         """Test save_requirements computes SHA-256 hash correctly."""
         content = "flask==2.3.0\nrequests==2.31.0\n"
         expected_hash = hashlib.sha256(content.encode()).hexdigest()
-        mock_repo = AsyncMock()
 
-        with (
-            patch("src.core.requirements_cache.get_redis_client", return_value=mock_redis_client),
-            patch("src.services.repo_storage.RepoStorage", return_value=mock_repo),
-        ):
+        with patch("src.core.requirements_cache.get_redis_client", return_value=mock_redis_client):
             await save_requirements(content)
 
             # Verify cache received correct hash
