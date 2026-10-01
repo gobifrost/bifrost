@@ -7139,7 +7139,7 @@
     "operation_id": null,
     "path": "/api/sdk/integrations/upsert_mapping",
     "permission": "integrations.readwrite",
-    "reason": "Workflow/agent SDK call reading or writing integrations during execution."
+    "reason": "Workflow/agent SDK call writing an integration mapping during execution. The response echoes the decrypted merged config; at the R3b cutover that echo is redacted unless the caller holds secrets.read (the engine execution principal does)."
   },
   {
     "access_class": "permission",
