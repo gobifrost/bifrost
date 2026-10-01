@@ -1,48 +1,56 @@
 """
-File Index Service — dual-write facade for _repo/ files.
+File Index Service — the single writer of the source search index.
 
-Every write goes to both S3 (_repo/) and the file_index DB table.
-Searches go through the DB; content reads go through get_module() (Redis/S3).
-Binary files are written to S3 only (not indexed).
+``file_index`` mirrors the instance ``_repo/`` workspace and
+``solution_file_index`` mirrors each Solution install's ``_solutions/{id}/``
+source. Every code path that changes those objects updates the index through
+this service, and one policy decides what a row holds:
+
+* every tracked object (anything not excluded by ``file_filter``) gets a row,
+  so listing, moves, and search agree on what exists;
+* ``content`` is the UTF-8 text when the bytes decode and fit under
+  ``MAX_INDEXABLE_TEXT_BYTES``; otherwise it is NULL (a path-only row).
+
+Content reads still go through RepoStorage / get_module(); the index is for
+search and metadata only.
 """
 
 from __future__ import annotations
 
-import logging
 import hashlib
 from collections.abc import AsyncIterator
 from pathlib import Path
+from uuid import UUID
 
 from sqlalchemy import delete, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.models.orm.file_index import FileIndex
+from src.models.orm.file_index import FileIndex, SolutionFileIndex
+from src.services.editor.file_filter import is_excluded_path
 from src.services.repo_storage import RepoStorage
 from src.services.file_storage.s3_client import S3StorageClient
 
-logger = logging.getLogger(__name__)
-
-# File extensions that should be indexed (text-searchable)
-TEXT_EXTENSIONS = frozenset({
-    ".py", ".yaml", ".yml", ".md", ".txt", ".rst",
-    ".toml", ".ini", ".cfg", ".csv", ".tsx", ".ts", ".js",
-    ".jsx", ".css", ".html", ".xml", ".sql", ".sh",
-})
-
-# Search is intentionally a bounded projection of workspace content, not an
-# alternate source of truth. Oversized text stays in repository storage but is
-# omitted from PostgreSQL search so sync/import cannot materialize it in a job.
+# Search is a bounded projection of source content, not an alternate source of
+# truth. Oversized text stays in storage but gets a path-only row so sync and
+# import never materialize it in PostgreSQL.
 MAX_INDEXABLE_TEXT_BYTES = 8 * 1024 * 1024
 FILE_COPY_CHUNK_SIZE = 8 * 1024 * 1024
 
 
-def _is_text_file(path: str) -> bool:
-    """Check if a file should be indexed based on extension."""
-    for ext in TEXT_EXTENSIONS:
-        if path.endswith(ext):
-            return True
-    return False
+def is_tracked_path(path: str) -> bool:
+    """Every source object gets an index row unless the workspace filter excludes it."""
+    return not is_excluded_path(path)
+
+
+def indexable_text(content: bytes) -> str | None:
+    """Return searchable text, or None for a path-only row (binary/invalid/oversized)."""
+    if len(content) > MAX_INDEXABLE_TEXT_BYTES or b"\x00" in content:
+        return None
+    try:
+        return content.decode("utf-8").removeprefix("﻿")
+    except UnicodeDecodeError:
+        return None
 
 
 async def _invalidate_python_module_cache(path: str) -> None:
@@ -53,52 +61,88 @@ async def _invalidate_python_module_cache(path: str) -> None:
 
 
 class FileIndexService:
-    """Dual-write facade for _repo/ files."""
+    """Single writer for ``file_index`` and ``solution_file_index``."""
 
     def __init__(self, db: AsyncSession, repo_storage: RepoStorage | None = None):
         self.db = db
         self.repo_storage = repo_storage or RepoStorage()
 
-    async def write(self, path: str, content: bytes, updated_by: str | None = None) -> str:
-        """
-        Write a file to S3 and index it in the DB.
+    # ── workspace rows ──────────────────────────────────────────────────────
 
-        Returns the content hash.
-        """
-        # Always write to S3
-        content_hash = await self.repo_storage.write(path, content)
+    async def _upsert(
+        self,
+        path: str,
+        content: str | None,
+        content_hash: str,
+        updated_by: str | None,
+    ) -> None:
+        values = {
+            "path": path,
+            "content": content,
+            "content_hash": content_hash,
+            "updated_by": updated_by,
+        }
+        stmt = insert(FileIndex).values(**values).on_conflict_do_update(
+            index_elements=[FileIndex.path],
+            set_={
+                "content": content,
+                "content_hash": content_hash,
+                "updated_at": text("NOW()"),
+                "updated_by": updated_by,
+            },
+        )
+        await self.db.execute(stmt)
 
-        # Only index text files
-        if _is_text_file(path):
-            if len(content) > MAX_INDEXABLE_TEXT_BYTES:
-                logger.info("Skipping oversized text file in search index: %s", path)
-                await self.db.execute(delete(FileIndex).where(FileIndex.path == path))
-                await _invalidate_python_module_cache(path)
-                return content_hash
-            try:
-                content_str = content.decode("utf-8")
-            except UnicodeDecodeError:
-                logger.warning(f"Could not decode {path} as UTF-8, skipping index")
-                await self.db.execute(delete(FileIndex).where(FileIndex.path == path))
-                await _invalidate_python_module_cache(path)
-                return content_hash
+    async def index(
+        self,
+        path: str,
+        content: bytes,
+        content_hash: str,
+        updated_by: str | None = None,
+    ) -> None:
+        """Index workspace bytes already stored at ``path``."""
+        if not is_tracked_path(path):
+            await self.unindex(path)
+            return
+        await self._upsert(path, indexable_text(content), content_hash, updated_by)
 
-            stmt = insert(FileIndex).values(
-                path=path,
-                content=content_str,
-                content_hash=content_hash,
-                updated_by=updated_by,
-            ).on_conflict_do_update(
-                index_elements=[FileIndex.path],
-                set_={
-                    "content": content_str,
-                    "content_hash": content_hash,
-                    "updated_at": text("NOW()"),
-                    "updated_by": updated_by,
-                },
+    async def index_path_only(
+        self,
+        path: str,
+        content_hash: str,
+        updated_by: str | None = None,
+    ) -> None:
+        """Record a workspace object whose bytes are not searchable."""
+        if not is_tracked_path(path):
+            await self.unindex(path)
+            return
+        await self._upsert(path, None, content_hash, updated_by)
+
+    async def unindex(self, path: str) -> None:
+        await self.db.execute(delete(FileIndex).where(FileIndex.path == path))
+
+    async def move_index(self, old_path: str, new_path: str) -> None:
+        """Carry a workspace row to a new path (content is unchanged by a move)."""
+        row = (
+            await self.db.execute(
+                select(FileIndex.content, FileIndex.content_hash, FileIndex.updated_by).where(
+                    FileIndex.path == old_path
+                )
             )
-            await self.db.execute(stmt)
+        ).first()
+        await self.unindex(old_path)
+        if row is None or not is_tracked_path(new_path):
+            return
+        await self._upsert(new_path, row.content, row.content_hash or "", row.updated_by)
 
+    # ── workspace S3 + index ────────────────────────────────────────────────
+
+    async def write(self, path: str, content: bytes, updated_by: str | None = None) -> str:
+        """Write a workspace file to S3 and index it. Returns the content hash."""
+        content_hash = await self.repo_storage.write(path, content)
+        await self.index(path, content, content_hash, updated_by)
+        if indexable_text(content) is None:
+            await _invalidate_python_module_cache(path)
         return content_hash
 
     async def write_file(self, path: str, source: Path, *, expected_hash: str) -> str:
@@ -121,8 +165,8 @@ class FileIndexService:
         )
         if content_hash != expected_hash:
             raise ValueError(f"promoted source hash mismatch for {path}")
-        if not _is_text_file(path) or size > MAX_INDEXABLE_TEXT_BYTES:
-            await self.db.execute(delete(FileIndex).where(FileIndex.path == path))
+        if size > MAX_INDEXABLE_TEXT_BYTES:
+            await self.index_path_only(path, content_hash)
             await _invalidate_python_module_cache(path)
             return content_hash
         content = source.read_bytes()
@@ -130,29 +174,69 @@ class FileIndexService:
         if path.endswith(".py"):
             from src.core.module_cache import set_module
 
-            try:
-                module_content = content.decode("utf-8")
-            except UnicodeDecodeError:
+            module_content = indexable_text(content)
+            if module_content is None:
                 return content_hash
             await set_module(path, module_content, content_hash)
         return content_hash
 
     async def delete(self, path: str) -> None:
-        """Delete a file from S3 and the DB index."""
+        """Delete a workspace file from S3 and the index."""
         await self.repo_storage.delete(path)
-        await self.db.execute(
-            delete(FileIndex).where(FileIndex.path == path)
+        await self.unindex(path)
+
+    # ── Solution source rows ────────────────────────────────────────────────
+
+    async def _upsert_solution(
+        self,
+        solution_id: UUID,
+        path: str,
+        content: str | None,
+        content_hash: str,
+    ) -> None:
+        stmt = insert(SolutionFileIndex).values(
+            solution_id=solution_id,
+            path=path,
+            content=content,
+            content_hash=content_hash,
+        ).on_conflict_do_update(
+            index_elements=[SolutionFileIndex.solution_id, SolutionFileIndex.path],
+            set_={
+                "content": content,
+                "content_hash": content_hash,
+                "updated_at": text("NOW()"),
+            },
         )
+        await self.db.execute(stmt)
 
-    async def search(self, pattern: str) -> list[dict]:
-        """
-        Search file contents for a pattern.
+    async def index_solution(
+        self,
+        solution_id: UUID,
+        path: str,
+        content: bytes,
+        content_hash: str,
+    ) -> None:
+        """Index Solution source bytes already stored under the install prefix."""
+        if not is_tracked_path(path):
+            await self.unindex_solution(solution_id, path)
+            return
+        await self._upsert_solution(solution_id, path, indexable_text(content), content_hash)
 
-        Returns list of dicts with 'path' and 'content' keys.
-        """
-        result = await self.db.execute(
-            select(FileIndex.path, FileIndex.content).where(
-                FileIndex.content.ilike(f"%{pattern}%")
+    async def index_solution_path_only(
+        self,
+        solution_id: UUID,
+        path: str,
+        content_hash: str,
+    ) -> None:
+        if not is_tracked_path(path):
+            await self.unindex_solution(solution_id, path)
+            return
+        await self._upsert_solution(solution_id, path, None, content_hash)
+
+    async def unindex_solution(self, solution_id: UUID, path: str) -> None:
+        await self.db.execute(
+            delete(SolutionFileIndex).where(
+                SolutionFileIndex.solution_id == solution_id,
+                SolutionFileIndex.path == path,
             )
         )
-        return [{"path": row.path, "content": row.content} for row in result.all()]

@@ -53,6 +53,7 @@ if TYPE_CHECKING:
         PlatformMetricsSnapshot,
         WorkflowROIDaily,
         FileIndex,
+        SolutionFileIndex,
         Application,
         PlatformJob,
         SchedulerLease,

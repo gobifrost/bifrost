@@ -527,6 +527,7 @@ ORM_EXPORTS: tuple[str, ...] = (
     'PlatformMetricsSnapshot',
     'WorkflowROIDaily',
     'FileIndex',
+    'SolutionFileIndex',
     'Application',
     'PlatformJob',
     'SchedulerLease',
