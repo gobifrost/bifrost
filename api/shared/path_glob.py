@@ -5,6 +5,8 @@
 * A pattern with no ``/`` (other than a trailing one) matches at any depth.
   A leading ``/`` anchors to the root. A trailing ``/`` matches a directory.
 * A pattern matching a directory also matches everything below it.
+* Exclusion globs (a leading ``!``) are rejected rather than silently matching
+  nothing.
 """
 
 from __future__ import annotations
@@ -80,7 +82,15 @@ def _translate(pattern: str) -> str:
 
 
 def compile_glob(pattern: str) -> re.Pattern[str]:
-    """Compile a source-search glob into an anchored regex over repo-relative paths."""
+    """Compile a source-search glob into an anchored regex over repo-relative paths.
+
+    Raises ValueError for exclusion globs (``!pattern``) and malformed globs.
+    """
+    if pattern.startswith("!"):
+        raise ValueError(
+            "Exclusion globs ('!pattern') are not supported; pass the files to "
+            "include instead, e.g. 'api/**/*.py'"
+        )
     alternatives = []
     for alt in _expand_braces(pattern):
         anchored = alt.startswith("/")
@@ -89,7 +99,10 @@ def compile_glob(pattern: str) -> re.Pattern[str]:
         if not anchored and "/" not in alt:
             body = "(?:.*/)?" + body
         alternatives.append(body)
-    return re.compile(r"\A(?:" + "|".join(alternatives) + r")\Z")
+    try:
+        return re.compile(r"\A(?:" + "|".join(alternatives) + r")\Z")
+    except re.error as exc:
+        raise ValueError(f"Invalid glob {pattern!r}: {exc}") from exc
 
 
 def glob_matches(compiled: re.Pattern[str], path: str) -> bool:

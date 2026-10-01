@@ -95,3 +95,27 @@ async def test_oversized_upload_gets_a_path_only_row(db_session, monkeypatch):
     await FileIndexService(db_session).index_existing_object(path)
     row = (await db_session.execute(select(FileIndex).where(FileIndex.path == path))).scalar_one()
     assert row.content is None and len(row.content_hash) == 64
+
+
+@pytest.mark.asyncio
+async def test_saving_an_app_file_that_auto_migrate_rewrites_completes_and_indexes_the_rewrite(db_session):
+    """The save path's bundle rebuild runs auto-migration on the file being saved.
+
+    The migration's index write must share the request session: a second
+    session would wait forever on the row lock the save itself holds.
+    """
+    import asyncio
+
+    from src.models.orm.applications import Application
+    from src.services.file_storage import FileStorageService
+
+    slug = f"am-{uuid4().hex[:8]}"
+    db_session.add(Application(name=slug, slug=slug, repo_path=f"apps/{slug}", created_by="test"))
+    await db_session.flush()
+    path = f"apps/{slug}/_layout.tsx"
+    source = b'import { Button, Phone } from "bifrost";\n\nexport default function L(){return null;}\n'
+
+    await asyncio.wait_for(FileStorageService(db_session).write_file(path, source, updated_by="me"), timeout=30)
+
+    indexed = await _content(db_session, path)
+    assert indexed is not None and 'import { Phone } from "lucide-react";' in indexed

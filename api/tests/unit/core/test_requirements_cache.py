@@ -255,14 +255,14 @@ class TestSaveRequirements:
 
         content = "flask==2.3.0\nrequests==2.31.0\n"
 
-        with patch("src.core.requirements_cache.get_redis_client", return_value=mock_redis_client):
-            await save_requirements(content)
-
-        assert await RepoStorage().read("requirements.txt") == content.encode()
         async with get_db_context() as db:
+            with patch("src.core.requirements_cache.get_redis_client", return_value=mock_redis_client):
+                await save_requirements(content, db)
             indexed = await db.scalar(
                 select(FileIndex.content).where(FileIndex.path == "requirements.txt")
             )
+
+        assert await RepoStorage().read("requirements.txt") == content.encode()
         assert indexed == content
         mock_redis_client.setex.assert_called_once()
 
@@ -272,7 +272,7 @@ class TestSaveRequirements:
         expected_hash = hashlib.sha256(content.encode()).hexdigest()
 
         with patch("src.core.requirements_cache.get_redis_client", return_value=mock_redis_client):
-            await save_requirements(content)
+            await save_requirements(content, AsyncMock())
 
             # Verify cache received correct hash
             call_args = mock_redis_client.setex.call_args

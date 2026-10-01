@@ -143,3 +143,57 @@ async def test_solution_source_is_indexed_and_healed(db_session):
         )
     )
     assert {path: content for path, content in result.all()} == {"functions/x.py": "def x(): ...\n"}
+
+
+@pytest.mark.asyncio
+async def test_object_that_fails_to_read_is_counted_and_the_run_continues(db_session):
+    class FlakyRepo(FakeRepo):
+        async def read(self, path: str) -> bytes:
+            if path == "gone-mid-run.txt":
+                raise FileNotFoundError(path)
+            return await super().read(path)
+
+    repo = FlakyRepo({"gone-mid-run.txt": b"x", "kept.txt": b"kept"})
+    solution = Solution(id=uuid4(), slug=f"rec-{uuid4().hex[:8]}", name="Reconcile")
+    db_session.add(solution)
+    await db_session.flush()
+    storage = FakeSolutionStorage({"f.py": b"F = 1\n"})
+
+    def factory(sid: UUID) -> SolutionStorage:
+        return storage if sid == solution.id else FakeSolutionStorage()
+
+    stats = await reconcile_file_index(db_session, repo_storage=repo, solution_storage_factory=factory)
+    assert stats["workspace"]["failed"] == 1
+    assert await _content(db_session, "kept.txt") == "kept"
+    assert stats["solutions"]["added"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_a_write_racing_the_reconciler_is_not_overwritten(db_session):
+    service = FileIndexService(db_session)
+    await service.index("race.txt", b"OLD", "0" * 64)
+
+    class RacingRepo(FakeRepo):
+        async def read(self, path: str) -> bytes:
+            body = await super().read(path)
+            if path == "race.txt":  # a user saves while the reconciler holds stale bytes
+                await service.index("race.txt", b"NEWEST", hashlib.sha256(b"NEWEST").hexdigest())
+            return body
+
+    repo = RacingRepo({"race.txt": b"STALE-READ"})
+    await reconcile_file_index(db_session, repo_storage=repo, solution_storage_factory=_no_solutions)
+    assert await _content(db_session, "race.txt") == "NEWEST"
+
+
+@pytest.mark.asyncio
+async def test_large_object_that_vanishes_gets_no_row(db_session, monkeypatch):
+    import src.services.file_index_reconciler as reconciler
+
+    class VanishingRepo(FakeRepo):
+        async def content_hash(self, path: str) -> str | None:
+            return None
+
+    monkeypatch.setattr(reconciler, "MAX_INDEXABLE_TEXT_BYTES", 4)
+    repo = VanishingRepo({"huge.bin": b"0123456789"})
+    await reconcile_file_index(db_session, repo_storage=repo, solution_storage_factory=_no_solutions)
+    assert not await _exists(db_session, "huge.bin")

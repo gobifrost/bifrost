@@ -152,3 +152,22 @@ async def test_cursor_crosses_from_workspace_into_each_solution_exactly_once(db_
     assert seen == [(None, f"ss/{tok}/w0.txt"), (None, f"ss/{tok}/w1.txt")] + [
         (sol.slug, f"f{i}.py") for sol in ordered for i in range(2)
     ]
+
+
+@pytest.mark.asyncio
+async def test_dense_file_pages_resume_inside_the_file(db_session):
+    tok = _token()
+    await _seed(db_session, {f"ss/{tok}/dense.txt": "\n".join(f"{tok} {tok}" for _ in range(10_000))})
+    first = await search_source(db_session, SearchRequest(query=tok, limit=5))
+    assert [(m.line, m.column) for m in first.matches] == [(1, 0), (1, 14), (2, 0), (2, 14), (3, 0)]
+    second = await search_source(db_session, SearchRequest(query=tok, limit=5, cursor=first.next_cursor))
+    assert [(m.line, m.column) for m in second.matches] == [(3, 14), (4, 0), (4, 14), (5, 0), (5, 14)]
+    assert second.has_more_matches and "matches 6-10" in second.guidance
+    files = await search_source(db_session, SearchRequest(query=tok, output_mode="files"))
+    assert [(f.match_count, f.first_line) for f in files.files] == [(20_000, 1)]
+
+
+@pytest.mark.asyncio
+async def test_bad_glob_is_an_invalid_request(db_session):
+    with pytest.raises(InvalidSearchRequest, match="Invalid glob"):
+        await search_source(db_session, SearchRequest(query="x", include_pattern="[!]"))

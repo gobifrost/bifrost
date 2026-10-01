@@ -1492,8 +1492,11 @@ class GitHubSyncService:
                     except Exception as e:
                         logger.warning(f"Failed to discard {path}: {e}")
 
-                # S3 sync up so other containers see the reverted files
+                # S3 sync up so other containers see the reverted files, and
+                # keep source search in step with what storage now holds
                 await self.repo_manager.sync_up(work_dir)
+                await self._update_file_index(work_dir)
+                await self.db.commit()
 
                 # Refresh Redis module cache so editor + workers see reverted .py content
                 from src.core.module_cache import refresh_modules_from_directory

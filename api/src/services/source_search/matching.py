@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass, field
+from typing import Protocol
 
 MAX_LINE_CHARS = 400
 
@@ -34,18 +36,49 @@ def window_line(line: str, column: int) -> str:
     return ("…" if start else "") + line[start:end] + ("…" if end < len(line) else "")
 
 
-def match_lines(content: str, matcher: re.Pattern[str], context_lines: int) -> list[LineHit]:
+class _Matcher(Protocol):
+    def finditer(self, string: str) -> Iterator[re.Match[str]]: ...
+
+
+def iter_line_hits(
+    content: str,
+    matcher: _Matcher,
+    context_lines: int,
+    *,
+    after: tuple[int, int] | None = None,
+) -> Iterator[LineHit]:
+    """Yield hits in (line, column) order, lazily, strictly after ``after``.
+
+    Callers take only what a page needs, so a dense or huge file costs one
+    page of hit objects, and resuming from a cursor starts at its line.
+    """
     lines = content.replace("\r\n", "\n").split("\n")
-    hits: list[LineHit] = []
-    for idx, line in enumerate(lines):
+    start = after[0] - 1 if after else 0
+    for idx in range(max(start, 0), len(lines)):
+        line = lines[idx]
         for m in matcher.finditer(line):
-            hits.append(LineHit(
+            if after is not None and (idx + 1, m.start()) <= after:
+                if m.start() == m.end():
+                    break
+                continue
+            yield LineHit(
                 line=idx + 1,
                 column=m.start(),
                 text=window_line(line, m.start()),
                 context_before=[window_line(x, 0) for x in lines[max(0, idx - context_lines):idx]],
                 context_after=[window_line(x, 0) for x in lines[idx + 1:idx + 1 + context_lines]],
-            ))
+            )
             if m.start() == m.end():
                 break  # a zero-width match counts once per line, like grep
-    return hits
+
+
+def count_matches(content: str, matcher: _Matcher) -> tuple[int, int]:
+    """Return ``(match_count, first_line)`` without building hit objects."""
+    count = first = 0
+    for idx, line in enumerate(content.replace("\r\n", "\n").split("\n")):
+        for m in matcher.finditer(line):
+            count += 1
+            first = first or idx + 1
+            if m.start() == m.end():
+                break
+    return count, first

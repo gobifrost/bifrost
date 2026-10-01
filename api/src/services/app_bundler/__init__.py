@@ -21,6 +21,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from bifrost.platform_names import PLATFORM_EXPORT_NAMES
 from src.core.log_safety import log_safe
 from src.core.malloc import trim_malloc
@@ -719,6 +721,8 @@ async def build_with_migrate(
     repo_prefix: str,
     mode: Mode,
     dependencies: dict[str, str] | None = None,
+    *,
+    db: AsyncSession,
 ) -> tuple[BundleResult, bool]:
     """Run auto-migration, then bundle.
 
@@ -737,7 +741,7 @@ async def build_with_migrate(
     # which is cheap, but sub-modules of app_bundler can import this one.
     from src.services.app_bundler.auto_migrate import auto_migrate_repo_prefix
 
-    migrated, _results = await auto_migrate_repo_prefix(app_id, repo_prefix)
+    migrated, _results = await auto_migrate_repo_prefix(app_id, repo_prefix, db)
     result = await BundlerService().build(app_id, repo_prefix, mode, dependencies)
     return result, migrated
 

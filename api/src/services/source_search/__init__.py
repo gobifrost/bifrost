@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from itertools import islice
 from uuid import UUID
 
 from sqlalchemy import select
@@ -30,7 +31,7 @@ from src.services.source_search.cursor import (
     fingerprint,
 )
 from src.services.source_search.guidance import guidance
-from src.services.source_search.matching import build_matcher, match_lines
+from src.services.source_search.matching import build_matcher, count_matches, iter_line_hits
 
 
 class InvalidSearchRequest(ValueError):
@@ -81,23 +82,29 @@ async def search_source(db: AsyncSession, request: SearchRequest) -> SearchRespo
 
     async for cand in iter_candidates(db, request, start=start, include=include):
         in_cursor_file = pos is not None and (cand.rank, cand.scope, cand.path) == start
-        if files_mode and in_cursor_file:
-            continue
-        hits = await asyncio.to_thread(match_lines, cand.content, matcher, request.context_lines)
-        if in_cursor_file and pos is not None:
-            hits = [h for h in hits if (h.line, h.column) > (pos.line, pos.column)]
-        if not hits:
-            continue
         source = _source(cand)
         if files_mode:
+            if in_cursor_file:
+                continue
+            count, first_line = await asyncio.to_thread(count_matches, cand.content, matcher)
+            if not count:
+                continue
             if len(files) == request.limit:
                 has_more = True
                 break
             files.append(SearchFileHit(
-                file_path=cand.path, source=source, match_count=len(hits), first_line=hits[0].line,
+                file_path=cand.path, source=source, match_count=count, first_line=first_line,
             ))
             last = SearchPosition(cand.rank, cand.scope, cand.path, 0, 0, seen_before + len(files))
             continue
+        # One more hit than the page needs tells us whether more results exist.
+        wanted = request.limit - len(matches) + 1
+        after = (pos.line, pos.column) if in_cursor_file and pos is not None else None
+        hits = await asyncio.to_thread(
+            lambda: list(islice(
+                iter_line_hits(cand.content, matcher, request.context_lines, after=after), wanted,
+            ))
+        )
         for hit in hits:
             if len(matches) == request.limit:
                 has_more = True

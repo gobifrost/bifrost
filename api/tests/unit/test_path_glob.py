@@ -42,3 +42,14 @@ def test_literal_prefix(pattern, prefix):
 def test_unbalanced_brace_is_value_error():
     with pytest.raises(ValueError):
         compile_glob("*.{py,json")
+
+
+@pytest.mark.parametrize("pattern", ["[!]", "a[z-a]"])
+def test_malformed_class_is_value_error(pattern):
+    with pytest.raises(ValueError, match="Invalid glob"):
+        compile_glob(pattern)
+
+
+def test_exclusion_glob_is_rejected_with_guidance():
+    with pytest.raises(ValueError, match="Exclusion globs"):
+        compile_glob("!tests/**")

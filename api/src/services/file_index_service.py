@@ -22,7 +22,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from uuid import UUID
 
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -50,6 +50,10 @@ def indexable_text(content: bytes) -> str | None:
         return content.decode("utf-8").removeprefix("﻿")
     except UnicodeDecodeError:
         return None
+
+
+def _hash_is(column, observed: str | None):
+    return column.is_(None) if observed is None else column == observed
 
 
 async def _invalidate_python_module_cache(path: str) -> None:
@@ -165,6 +169,73 @@ class FileIndexService:
         content = await self.repo_storage.read(path)
         await self.index(path, content, hashlib.sha256(content).hexdigest(), updated_by)
 
+    # ── reconciler writes (never clobber a concurrent writer) ───────────────
+    #
+    # The reconciler reads an object, then writes its row. A user write landing
+    # in between must win, so each reconciled write only applies while the row
+    # still carries the hash the reconciler observed (or is still absent).
+
+    async def reconcile_row(
+        self, path: str, content: bytes | None, content_hash: str, *, observed: str | None, known: bool
+    ) -> None:
+        text_content = indexable_text(content) if content is not None else None
+        if not known:
+            await self.db.execute(
+                insert(FileIndex)
+                .values(path=path, content=text_content, content_hash=content_hash)
+                .on_conflict_do_nothing(index_elements=[FileIndex.path])
+            )
+            return
+        await self.db.execute(
+            update(FileIndex)
+            .where(FileIndex.path == path, _hash_is(FileIndex.content_hash, observed))
+            .values(content=text_content, content_hash=content_hash, updated_at=text("NOW()"))
+        )
+
+    async def unindex_if_unchanged(self, path: str, observed: str | None) -> None:
+        await self.db.execute(
+            delete(FileIndex).where(FileIndex.path == path, _hash_is(FileIndex.content_hash, observed))
+        )
+
+    async def reconcile_solution_row(
+        self,
+        solution_id: UUID,
+        path: str,
+        content: bytes | None,
+        content_hash: str,
+        *,
+        observed: str | None,
+        known: bool,
+    ) -> None:
+        text_content = indexable_text(content) if content is not None else None
+        if not known:
+            await self.db.execute(
+                insert(SolutionFileIndex)
+                .values(solution_id=solution_id, path=path, content=text_content, content_hash=content_hash)
+                .on_conflict_do_nothing(index_elements=[SolutionFileIndex.solution_id, SolutionFileIndex.path])
+            )
+            return
+        await self.db.execute(
+            update(SolutionFileIndex)
+            .where(
+                SolutionFileIndex.solution_id == solution_id,
+                SolutionFileIndex.path == path,
+                _hash_is(SolutionFileIndex.content_hash, observed),
+            )
+            .values(content=text_content, content_hash=content_hash, updated_at=text("NOW()"))
+        )
+
+    async def unindex_solution_if_unchanged(
+        self, solution_id: UUID, path: str, observed: str | None
+    ) -> None:
+        await self.db.execute(
+            delete(SolutionFileIndex).where(
+                SolutionFileIndex.solution_id == solution_id,
+                SolutionFileIndex.path == path,
+                _hash_is(SolutionFileIndex.content_hash, observed),
+            )
+        )
+
     # ── workspace S3 + index ────────────────────────────────────────────────
 
     async def write(self, path: str, content: bytes, updated_by: str | None = None) -> str:
@@ -253,17 +324,6 @@ class FileIndexService:
             await self.unindex_solution(solution_id, path)
             return
         await self._upsert_solution(solution_id, path, indexable_text(content), content_hash)
-
-    async def index_solution_path_only(
-        self,
-        solution_id: UUID,
-        path: str,
-        content_hash: str,
-    ) -> None:
-        if not is_tracked_path(path):
-            await self.unindex_solution(solution_id, path)
-            return
-        await self._upsert_solution(solution_id, path, None, content_hash)
 
     async def unindex_solution(self, solution_id: UUID, path: str) -> None:
         await self.db.execute(

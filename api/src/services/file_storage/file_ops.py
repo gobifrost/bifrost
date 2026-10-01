@@ -440,6 +440,7 @@ class FileOperationsService:
                 repo_prefix=app_prefix,
                 mode="preview",
                 dependencies=app.dependencies or {},
+                db=self.db,
             )
         except Exception as e:
             # Bundler should surface esbuild failures via BundleResult.errors

@@ -325,7 +325,7 @@ async def install_package(
             updated_content, is_update = append_package_to_requirements(
                 current_content, request.package_name, request.version
             )
-            await save_requirements(updated_content)
+            await save_requirements(updated_content, ctx.db)
 
             logger.info(f"Updated requirements.txt with {log_safe(package_spec)}")
         else:
@@ -394,7 +394,7 @@ async def uninstall_package(
         )
 
         if was_present:
-            await save_requirements(updated_content)
+            await save_requirements(updated_content, ctx.db)
             logger.info(f"Removed {log_safe(package_name)} from requirements.txt")
 
         # Tell workers to pip uninstall and recycle. The "action" field

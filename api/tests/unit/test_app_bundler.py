@@ -212,7 +212,7 @@ async def test_build_with_migrate_runs_migration_before_bundle() -> None:
     call_order: list[str] = []
 
     async def fake_migrate(
-        app_id: str, repo_prefix: str
+        app_id: str, repo_prefix: str, db: object
     ) -> tuple[bool, list[object]]:
         call_order.append("migrate")
         return True, []
@@ -243,6 +243,7 @@ async def test_build_with_migrate_runs_migration_before_bundle() -> None:
             repo_prefix="apps/test/",
             mode="preview",
             dependencies={},
+            db=AsyncMock(),
         )
 
     assert call_order == ["migrate", "build"]
