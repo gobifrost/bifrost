@@ -48,7 +48,6 @@ from src.models import (
     SearchResponse,
     WorkflowIdConflict,
 )
-from src.services.editor.search import search_files_db
 from src.services.file_storage import FileStorageService
 from shared.role_cache import get_user_roles
 from shared.file_access import (
@@ -1624,14 +1623,13 @@ async def search_file_contents(
     user: CurrentSuperuser,
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> SearchResponse:
-    """
-    Search file contents for text or regex patterns.
+    """Search workspace and Solution source like grep, one bounded page at a time.
 
-    Searches database directly - workflows, modules, forms, and agents.
+    Follow ``next_cursor`` (or the ``guidance`` sentence) for more results.
     """
+    from src.services.source_search import InvalidSearchRequest, search_source
+
     try:
-        results = await search_files_db(db, request, root_path="")
-        return results
-
-    except ValueError as e:
+        return await search_source(db, request)
+    except InvalidSearchRequest as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))

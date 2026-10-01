@@ -5,6 +5,7 @@ Code editor contract models for Bifrost.
 from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -267,38 +268,84 @@ class FileConflictResponse(BaseModel):
 
 
 class SearchRequest(BaseModel):
-    """Search query request"""
-    query: str = Field(..., min_length=1, description="Search text or regex pattern")
-    case_sensitive: bool = Field(default=False, description="Case-sensitive matching")
-    is_regex: bool = Field(default=False, description="Treat query as regex")
-    include_pattern: str | None = Field(default="**/*", description="Glob pattern for files to search")
-    max_results: int = Field(default=1000, ge=1, le=10000, description="Maximum results to return")
+    """Search workspace and Solution source like grep, one page at a time."""
+    query: str = Field(
+        ..., min_length=1,
+        description="Literal text, or a Python `re` pattern when is_regex is true. Matched per line.",
+    )
+    is_regex: bool = Field(default=False, description="Treat query as a Python regular expression")
+    case_sensitive: bool = Field(
+        default=False,
+        description=(
+            "Case-sensitive matching. Case-insensitive literal search prefilters with "
+            "PostgreSQL ILIKE, so a few non-ASCII case folds (e.g. ß) may be missed."
+        ),
+    )
+    include_pattern: str | None = Field(
+        default=None,
+        description="ripgrep-style glob over repo-relative paths, e.g. '*.py', 'workflows/**', '*.{ts,tsx}'",
+    )
+    source: Literal["all", "workspace", "solutions"] = Field(
+        default="all", description="Search workspace source, Solution source, or both"
+    )
+    solution_id: UUID | None = Field(
+        default=None, description="Restrict the search to one Solution install's source"
+    )
+    output_mode: Literal["content", "files"] = Field(
+        default="content",
+        description="'content' returns matching lines; 'files' returns one entry per matching file",
+    )
+    context_lines: int = Field(default=1, ge=0, le=5, description="Lines of context around each match")
+    limit: int = Field(
+        default=25, ge=1, le=200,
+        description="Matches (content mode) or files (files mode) per page",
+    )
+    cursor: str | None = Field(
+        default=None, description="next_cursor from the previous page of this exact search"
+    )
 
-    model_config = ConfigDict(from_attributes=True)
+
+class SearchSource(BaseModel):
+    """Where a search hit lives and whether it can be edited in place."""
+    kind: Literal["workspace", "solution"]
+    solution_id: UUID | None = None
+    solution_slug: str | None = None
+    editable: bool = Field(
+        ..., description="False for Solution source, which is deploy-owned (edit locally and redeploy)"
+    )
 
 
-class SearchResult(BaseModel):
-    """Single search match result"""
-    file_path: str = Field(..., description="Relative path to file containing match")
+class SearchMatch(BaseModel):
+    """One matching line."""
+    file_path: str = Field(..., description="Path relative to its source root")
+    source: SearchSource
     line: int = Field(..., ge=1, description="Line number (1-indexed)")
-    column: int = Field(..., ge=0, description="Column number (0-indexed)")
-    match_text: str = Field(..., description="The matched text")
-    context_before: str | None = Field(default=None, description="Line before match")
-    context_after: str | None = Field(default=None, description="Line after match")
+    column: int = Field(..., ge=0, description="Column of the match start (0-indexed)")
+    text: str = Field(..., description="The matching line, windowed around the match when very long")
+    context_before: list[str] = Field(default_factory=list)
+    context_after: list[str] = Field(default_factory=list)
 
-    model_config = ConfigDict(from_attributes=True)
+
+class SearchFileHit(BaseModel):
+    """One matching file (files output mode)."""
+    file_path: str
+    source: SearchSource
+    match_count: int = Field(..., ge=1)
+    first_line: int = Field(..., ge=1)
 
 
 class SearchResponse(BaseModel):
-    """Search results response"""
-    query: str = Field(..., description="Original search query")
-    total_matches: int = Field(..., description="Total matches found")
-    files_searched: int = Field(..., description="Number of files searched")
-    results: list[SearchResult] = Field(..., description="Array of search results")
-    truncated: bool = Field(..., description="Whether results were truncated")
-    search_time_ms: int = Field(..., description="Search duration in milliseconds")
-
-    model_config = ConfigDict(from_attributes=True)
+    """One page of search results plus what to do next."""
+    query: str
+    output_mode: Literal["content", "files"]
+    matches: list[SearchMatch] = Field(default_factory=list)
+    files: list[SearchFileHit] = Field(default_factory=list)
+    returned: int = Field(..., description="Results in this page")
+    has_more_matches: bool = Field(..., description="More results exist beyond this page")
+    response_complete: bool = Field(..., description="This page ends the result set")
+    next_cursor: str | None = Field(default=None, description="Pass as cursor to get the next page")
+    guidance: str = Field(..., description="Plain-language summary and how to get more results")
+    search_time_ms: int
 
 
 class ScriptExecutionRequest(BaseModel):

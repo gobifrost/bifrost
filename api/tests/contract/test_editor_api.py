@@ -11,9 +11,11 @@ from src.models import (
     FileType,
     FileContentRequest,
     FileContentResponse,
+    SearchFileHit,
+    SearchMatch,
     SearchRequest,
-    SearchResult,
     SearchResponse,
+    SearchSource,
 )
 
 
@@ -91,167 +93,52 @@ class TestEditorModelContracts:
         assert response.etag == "abc123"
         assert response.modified == "2025-10-23T14:30:00Z"
 
-    def test_search_request_model(self):
-        """Test SearchRequest model structure"""
-        request = SearchRequest(
-            query="def run",
-            case_sensitive=False,
-            is_regex=False,
-            include_pattern="**/*.py",
-            max_results=100,
-        )
-
-        assert request.query == "def run"
-        assert request.case_sensitive is False
-        assert request.is_regex is False
-        assert request.include_pattern == "**/*.py"
-        assert request.max_results == 100
-
     def test_search_request_defaults(self):
-        """Test SearchRequest default values"""
+        """A bare query searches everything, literally, one small page at a time."""
         request = SearchRequest(query="test")
 
-        assert request.case_sensitive is False
-        assert request.is_regex is False
-        assert request.include_pattern == "**/*"
-        assert request.max_results == 1000
+        assert (request.is_regex, request.case_sensitive, request.include_pattern) == (False, False, None)
+        assert (request.source, request.solution_id, request.output_mode) == ("all", None, "content")
+        assert (request.limit, request.context_lines, request.cursor) == (25, 1, None)
 
     def test_search_request_validates_query_not_empty(self):
-        """Test SearchRequest rejects empty query"""
         with pytest.raises(ValidationError):
             SearchRequest(query="")
 
-    def test_search_request_validates_max_results_range(self):
-        """Test SearchRequest validates max_results is within range"""
-        # Valid range
-        SearchRequest(query="test", max_results=1)
-        SearchRequest(query="test", max_results=10000)
-
-        # Too low
+    @pytest.mark.parametrize("field,value", [("limit", 0), ("limit", 201), ("context_lines", 6), ("source", "nope")])
+    def test_search_request_rejects_out_of_range(self, field, value):
         with pytest.raises(ValidationError):
-            SearchRequest(query="test", max_results=0)
+            SearchRequest(query="test", **{field: value})
 
-        # Too high
-        with pytest.raises(ValidationError):
-            SearchRequest(query="test", max_results=10001)
-
-    def test_search_result_model(self):
-        """Test SearchResult model structure"""
-        result = SearchResult(
-            file_path="workflows/sync.py",
+    def test_search_match_and_source(self):
+        match = SearchMatch(
+            file_path="functions/sync.py",
+            source=SearchSource(kind="solution", solution_slug="covi-psa", editable=False),
             line=42,
-            column=15,
-            match_text="def run",
-            context_before="# Sync workflow",
-            context_after="    context.info('Starting')",
+            column=4,
+            text="def run():",
+            context_before=["# Sync"],
         )
-
-        assert result.file_path == "workflows/sync.py"
-        assert result.line == 42
-        assert result.column == 15
-        assert result.match_text == "def run"
-        assert result.context_before == "# Sync workflow"
-        assert result.context_after == "    context.info('Starting')"
-
-    def test_search_result_optional_context(self):
-        """Test SearchResult with optional context fields"""
-        result = SearchResult(
-            file_path="workflows/sync.py",
-            line=1,
-            column=0,
-            match_text="import",
-            context_before=None,
-            context_after=None,
-        )
-
-        assert result.context_before is None
-        assert result.context_after is None
-
-    def test_search_result_validates_line_number(self):
-        """Test SearchResult validates line >= 1"""
-        # Valid line numbers
-        SearchResult(
-            file_path="test.py",
-            line=1,
-            column=0,
-            match_text="test",
-        )
-
-        # Invalid line number (must be >= 1)
+        assert (match.source.kind, match.source.editable, match.context_after) == ("solution", False, [])
         with pytest.raises(ValidationError):
-            SearchResult(
-                file_path="test.py",
-                line=0,
-                column=0,
-                match_text="test",
-            )
+            SearchMatch(file_path="a.py", source=match.source, line=0, column=0, text="")
 
-    def test_search_result_validates_column_number(self):
-        """Test SearchResult validates column >= 0"""
-        # Valid column numbers
-        SearchResult(
-            file_path="test.py",
-            line=1,
-            column=0,
-            match_text="test",
-        )
-
-        # Invalid column number (must be >= 0)
-        with pytest.raises(ValidationError):
-            SearchResult(
-                file_path="test.py",
-                line=1,
-                column=-1,
-                match_text="test",
-            )
-
-    def test_search_response_model(self):
-        """Test SearchResponse model structure"""
-        results = [
-            SearchResult(
-                file_path="test1.py",
-                line=10,
-                column=5,
-                match_text="test",
-            ),
-            SearchResult(
-                file_path="test2.py",
-                line=20,
-                column=8,
-                match_text="test",
-            ),
-        ]
-
+    def test_search_response_page(self):
         response = SearchResponse(
-            query="test",
-            total_matches=2,
-            files_searched=50,
-            results=results,
-            truncated=False,
-            search_time_ms=123,
+            query="def run",
+            output_mode="files",
+            files=[SearchFileHit(
+                file_path="a.py", source=SearchSource(kind="workspace", editable=True),
+                match_count=3, first_line=7,
+            )],
+            returned=1,
+            has_more_matches=True,
+            response_complete=False,
+            next_cursor="abc",
+            guidance="Showing files 1-1; more results exist.",
+            search_time_ms=5,
         )
-
-        assert response.query == "test"
-        assert response.total_matches == 2
-        assert response.files_searched == 50
-        assert len(response.results) == 2
-        assert response.truncated is False
-        assert response.search_time_ms == 123
-
-    def test_search_response_truncated_results(self):
-        """Test SearchResponse with truncated results"""
-        response = SearchResponse(
-            query="test",
-            total_matches=5000,
-            files_searched=1000,
-            results=[],  # Truncated
-            truncated=True,
-            search_time_ms=456,
-        )
-
-        assert response.total_matches == 5000
-        assert len(response.results) == 0
-        assert response.truncated is True
+        assert (response.matches, response.files[0].match_count, response.next_cursor) == ([], 3, "abc")
 
     def test_file_type_enum_values(self):
         """Test FileType enum has correct values"""
