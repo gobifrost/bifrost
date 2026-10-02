@@ -440,7 +440,7 @@ jobs:
         run: |
           chmod +x test.sh
           timeout -k 30 600 ./test.sh stack up
-          timeout -k 30 900 ./test.sh tests/unit/test_path_glob.py -v  # TEMP BISECT B: stack up + one pure test
+          timeout -k 30 900 ./test.sh tests/unit/test_file_index_writers.py tests/unit/test_file_index_reconciler.py tests/unit/test_file_index_service.py tests/unit/test_file_index_single_writer.py tests/unit/test_path_glob.py tests/unit/services/test_source_search_service.py tests/unit/services/test_source_search_matching.py tests/unit/services/test_source_search_cursor.py -v  # TEMP BISECT A: new test files only
 
       - name: TEMP DIAGNOSTIC (PR #873) — stack state after unit tests
         if: always()
