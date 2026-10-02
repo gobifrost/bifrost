@@ -167,17 +167,15 @@ async def test_bundle_solution_files_empty_when_no_files(db_session) -> None:
     assert bundle.solution_files == []
 
 
-async def test_bundle_file_cap_logs_warning_and_truncates(db_session, caplog) -> None:
-    """When a solution has more than FILE_CAP files, a WARNING is logged and
-    only FILE_CAP entries are returned."""
-    import logging
-    from src.services.solutions.capture import FILE_CAP, SolutionCaptureService
+async def test_bundle_keeps_all_file_metadata_above_one_thousand_without_reading_bytes(db_session) -> None:
+    """Metadata enumeration is complete even when payload bytes stream later."""
+    from src.services.solutions.capture import SolutionCaptureService
 
     sol = _make_solution()
     db_session.add(sol)
     await db_session.flush()
 
-    # Build FILE_CAP + 1 meta entries.
+    # More than the historical cap, with metadata only.
     over_cap = [
         SolutionFileEntry(
             location="shared",
@@ -185,7 +183,7 @@ async def test_bundle_file_cap_logs_warning_and_truncates(db_session, caplog) ->
             sha256=hashlib.sha256(f"content {i}".encode()).hexdigest(),
             size=len(f"content {i}"),
         )
-        for i in range(FILE_CAP + 1)
+        for i in range(1_001)
     ]
 
     async def _mock_enumerate(db, install_id):
@@ -200,12 +198,10 @@ async def test_bundle_file_cap_logs_warning_and_truncates(db_session, caplog) ->
             "src.services.solution_files.read_solution_file",
             side_effect=AssertionError("capture must not read solution file bytes"),
         ),
-        caplog.at_level(logging.WARNING, logger="src.services.solutions.capture"),
     ):
         bundle = await SolutionCaptureService(db_session).bundle_for(sol, include_files=True)
 
-    assert len(bundle.solution_files) == FILE_CAP
-    assert any("file" in r.message.lower() for r in caplog.records)
+    assert len(bundle.solution_files) == 1_001
 
 
 # ---------------------------------------------------------------------------

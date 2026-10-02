@@ -459,10 +459,136 @@ async def test_table_content_collision_requires_replace_data_and_replaces_all_ro
     replaced_rows = (
         (
             await db_session.execute(
-                select(Document.data).where(Document.table_id == table.id)
+                select(Document.id, Document.data).where(Document.table_id == table.id)
             )
         )
-        .scalars()
         .all()
     )
-    assert replaced_rows == [{"account": "north", "total": 42}]
+    assert len(replaced_rows) == 1
+    assert replaced_rows[0].data == {"account": "north", "total": 42}
+    assert replaced_rows[0].id != "target-only"
+
+
+@pytest.mark.e2e
+async def test_empty_table_backup_clears_existing_rows_when_replacing(db_session) -> None:
+    """An empty table key in a new backup clears stale target rows."""
+    from sqlalchemy import select
+
+    from src.models.orm.solutions import Solution
+    from src.models.orm.tables import Document, Table
+    from src.services.solutions.secrets_blob import SolutionContent
+    from src.services.solutions.zip_install import _apply_content
+
+    solution = Solution(
+        id=uuid4(), slug=f"empty-data-{uuid4().hex[:8]}", name="Empty data", organization_id=None
+    )
+    table = Table(
+        id=uuid4(), name=f"rows_{uuid4().hex[:8]}", organization_id=None, solution_id=solution.id
+    )
+    db_session.add_all([solution, table])
+    await db_session.flush()
+    db_session.add(Document(id="stale", table_id=table.id, data={"name": "old"}))
+    await db_session.flush()
+
+    await _apply_content(
+        db_session,
+        solution=solution,
+        content=SolutionContent(
+            table_data={table.name: []}, table_document_ids={table.name: []}
+        ),
+        workspace=Path(),
+        password=None,
+        replace_secrets=False,
+        replace_data=True,
+        deployer_email="test",
+    )
+
+    remaining = (await db_session.execute(select(Document.id).where(Document.table_id == table.id))).scalars().all()
+    assert remaining == []
+
+
+@pytest.mark.e2e
+async def test_table_content_rejects_bad_ids_before_replacing_rows(db_session) -> None:
+    """Malformed IDs cannot clear a live table before the import fails."""
+    from sqlalchemy import select
+
+    from src.models.orm.solutions import Solution
+    from src.models.orm.tables import Document, Table
+    from src.services.solutions.secrets_blob import SolutionContent
+    from src.services.solutions.zip_install import _apply_content
+
+    solution = Solution(
+        id=uuid4(), slug=f"bad-ids-{uuid4().hex[:8]}", name="Bad ids", organization_id=None
+    )
+    table = Table(
+        id=uuid4(), name=f"rows_{uuid4().hex[:8]}", organization_id=None, solution_id=solution.id
+    )
+    db_session.add_all([solution, table])
+    await db_session.flush()
+    db_session.add(Document(id="keep-me", table_id=table.id, data={"name": "existing"}))
+    await db_session.flush()
+
+    malformed = SolutionContent(
+        table_data={table.name: [{"name": "replacement"}]},
+        table_document_ids={table.name: []},
+    )
+    with pytest.raises(ValueError, match="table_document_ids.*alignment"):
+        await _apply_content(
+            db_session,
+            solution=solution,
+            content=malformed,
+            workspace=Path(),
+            password=None,
+            replace_secrets=False,
+            replace_data=True,
+            deployer_email="test",
+        )
+
+    retained = (await db_session.execute(select(Document.id).where(Document.table_id == table.id))).scalars().all()
+    assert retained == ["keep-me"]
+
+
+@pytest.mark.e2e
+async def test_encrypted_backup_restores_document_graph_with_source_ids(db_session) -> None:
+    """The encrypted export/install path preserves relationship target IDs."""
+    from sqlalchemy import select
+
+    from src.models.orm.solutions import Solution
+    from src.models.orm.tables import Document, Table
+    from src.services.solutions.deploy import SolutionBundle
+    from src.services.solutions.export import build_workspace_zip
+
+    table_name = f"graph_{uuid4().hex[:8]}"
+    manifest_table_id = str(uuid4())
+    row_ids = ["folder-source-id", "document-source-id", "attachment-source-id"]
+    rows = [
+        {"name": "Runbooks"},
+        {"name": "Getting started", "parent_id": row_ids[0]},
+        {"name": "Guide.pdf", "attachment_parent_id": row_ids[1]},
+    ]
+    backup = SolutionBundle(
+        solution=Solution(slug=f"graph-{uuid4().hex[:8]}", name="Graph backup", organization_id=None),
+        tables=[{"id": manifest_table_id, "name": table_name, "schema": {"columns": []}, "policies": None}],
+        table_data={table_name: rows},
+        table_document_ids={table_name: row_ids},
+    )
+    archive = build_workspace_zip(backup, password="backup-password")
+
+    installed = await install_zip(
+        db_session,
+        archive,
+        organization_id=None,
+        config_values={},
+        deployer_email="backup-test",
+        password="backup-password",
+    )
+    target_table = (
+        await db_session.execute(select(Table).where(Table.solution_id == installed.id, Table.name == table_name))
+    ).scalar_one()
+    restored = (
+        await db_session.execute(select(Document).where(Document.table_id == target_table.id).order_by(Document.id))
+    ).scalars().all()
+    by_id = {row.id: row.data for row in restored}
+    assert set(by_id) == set(row_ids)
+    assert by_id["document-source-id"]["parent_id"] == "folder-source-id"
+    assert by_id["attachment-source-id"]["attachment_parent_id"] == "document-source-id"

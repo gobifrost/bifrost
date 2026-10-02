@@ -12,11 +12,23 @@ def test_blob_roundtrips_values_and_data():
     content = SolutionContent(
         config_values={"api_key": "xyz", "region": "us-east"},
         table_data={"widgets": [{"id": 1, "name": "a"}]},
+        table_document_ids={"widgets": ["widget-1"]},
     )
     blob = encode_secrets_blob(content, password="pw")
     out = decode_secrets_blob(blob, password="pw")
     assert out.config_values == content.config_values
     assert out.table_data == content.table_data
+    assert out.table_document_ids == content.table_document_ids
+
+
+def test_blob_without_document_ids_decodes_as_legacy_content():
+    """Backups written before ID preservation retain fresh-ID restore behavior."""
+    blob = encode_secrets_blob(
+        SolutionContent(table_data={"widgets": [{"name": "legacy row"}]}),
+        password="pw",
+    )
+
+    assert decode_secrets_blob(blob, password="pw").table_document_ids == {}
 
 
 def test_wrong_password_raises():
