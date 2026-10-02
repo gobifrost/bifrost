@@ -186,9 +186,10 @@ class RolePermission(Base):
     is validated in the service layer (``src.services.role_permissions``),
     not by a DB enum, so a new domain doesn't require a migration.
 
-    Platform Admin holds none of these rows — its access is the wildcard
-    permission (``shared.builtin_roles.WILDCARD_PERMISSION``), represented
-    in code, never as rows here.
+    Platform Admin's access is the wildcard permission
+    (``shared.builtin_roles.WILDCARD_PERMISSION``), stored as its one row
+    here. The permission vocabulary rejects the wildcard, so no custom role
+    can hold it.
     """
 
     __tablename__ = "role_permissions"

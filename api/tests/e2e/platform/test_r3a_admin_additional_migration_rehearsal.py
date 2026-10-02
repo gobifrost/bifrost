@@ -4,7 +4,8 @@ Builds a disposable database at the migration's ``down_revision``, seeds a
 Platform Admin whose base role is Platform Admin (with a home organization
 and Global), a regular User and a user with a custom base role, upgrades,
 and checks that each admin becomes a User who also holds Platform Admin at
-the platform boundary, that ``is_superuser`` and everyone else are untouched,
+the platform boundary, that Platform Admin's wildcard is stored as a
+permission row, that ``is_superuser`` and everyone else are untouched,
 that Platform Admin stops being flagged as a base role, that the upgrade is
 idempotent at head, and that the downgrade restores the earlier shape.
 
@@ -131,7 +132,20 @@ async def _state(database_url: str, ids: dict[str, str]) -> dict:
                 {"admin_role": str(PLATFORM_ADMIN_ROLE_ID)},
             )
         ).scalar_one()
+        permissions = [
+            permission
+            for (permission,) in (
+                await connection.execute(
+                    sa.text(
+                        "SELECT permission FROM role_permissions "
+                        "WHERE role_id = CAST(:admin_role AS uuid)"
+                    ),
+                    {"admin_role": str(PLATFORM_ADMIN_ROLE_ID)},
+                )
+            ).all()
+        ]
         return {
+            "admin_permissions": permissions,
             "users": users,
             "assignments": assignments,
             "boundaries": boundaries,
@@ -162,6 +176,7 @@ def test_platform_admins_become_users_who_hold_platform_admin() -> None:
         assert before["assignments"] == set()
         assert before["boundaries"] == set()
         assert before["is_base"] is True
+        assert before["admin_permissions"] == []
 
         _upgrade(database_url, REVISION)
         after = asyncio.run(_state(database_url, ids))
@@ -177,6 +192,7 @@ def test_platform_admins_become_users_who_hold_platform_admin() -> None:
             (ids["global_admin"], admin_role, "platform", None),
         }
         assert after["is_base"] is False
+        assert after["admin_permissions"] == ["*"]
 
         _upgrade(database_url, "head")
         assert asyncio.run(_state(database_url, ids)) == after

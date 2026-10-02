@@ -198,10 +198,13 @@ def test_operator_gains_user_support_and_secrets_reader_is_seeded() -> None:
         assert after["reader_assignments"] == 0
 
         # At head the later 20261001_r3a_operator_desc revision has rewritten
-        # the Operator description; everything else this revision wrote holds.
+        # the Operator description and 20261002_r3a_admin_additional has
+        # stored Platform Admin's wildcard; everything else this revision
+        # wrote holds.
         _upgrade(database_url, "head")
         assert asyncio.run(_snapshot(database_url, custom_role_id)) == {
             **after,
+            "permissions": {**after["permissions"], "admin": {"*"}},
             "operator_description": OPERATOR_DESCRIPTION_AT_HEAD,
         }
 

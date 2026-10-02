@@ -2,9 +2,9 @@
 
 Builtin roles (Platform Admin, User, Platform Operator, Secrets Reader —
 see ``shared.builtin_roles``) cannot be modified through this service: their
-permission sets are fixed by migration/seed data. Platform Admin never has
-``role_permissions`` rows; its access is the wildcard permission represented
-in code. Custom roles' identity permissions are edited through
+permission sets are fixed by migration/seed data. Platform Admin's access is
+the wildcard permission, stored as its one ``role_permissions`` row like any
+other role's permissions; no custom role can be given it. Custom roles' identity permissions are edited through
 ``replace_identity_permissions``; their other permissions are not editable
 from the API yet.
 """
@@ -16,7 +16,7 @@ from uuid import UUID
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.builtin_roles import BUILTIN_ROLE_IDS, PLATFORM_ADMIN_ROLE_ID, WILDCARD_PERMISSION
+from shared.builtin_roles import BUILTIN_ROLE_IDS, WILDCARD_PERMISSION
 from src.models.contracts.permissions import parse_permission
 
 
@@ -40,10 +40,7 @@ def validate_permission(permission: str) -> None:
 
 
 async def get_role_permissions(session: AsyncSession, *, role_id: UUID) -> frozenset[str]:
-    """The role's permission set. Platform Admin returns the wildcard."""
-    if role_id == PLATFORM_ADMIN_ROLE_ID:
-        return frozenset({WILDCARD_PERMISSION})
-
+    """The role's permission set."""
     from src.models import RolePermission as RolePermissionORM
 
     result = await session.execute(
@@ -72,20 +69,23 @@ async def set_role_permissions(
 async def role_has_permission(
     session: AsyncSession, *, role_ids: list[UUID], permission: str
 ) -> bool:
-    """Whether any of `role_ids` grants `permission` (or holds the Platform
-    Admin wildcard)."""
-    if PLATFORM_ADMIN_ROLE_ID in role_ids:
-        return True
+    """Whether any of `role_ids` grants `permission`: it holds the permission,
+    or the wildcard, which satisfies everything but
+    ``WILDCARD_EXCLUDED_PERMISSIONS``."""
     if not role_ids:
         return False
 
     from src.models import RolePermission as RolePermissionORM
+    from src.models.contracts.permissions import WILDCARD_EXCLUDED_PERMISSIONS
 
+    satisfying = {permission}
+    if permission not in WILDCARD_EXCLUDED_PERMISSIONS:
+        satisfying.add(WILDCARD_PERMISSION)
     result = await session.execute(
         select(RolePermissionORM.role_id)
         .where(
             RolePermissionORM.role_id.in_(role_ids),
-            RolePermissionORM.permission == permission,
+            RolePermissionORM.permission.in_(satisfying),
         )
         .limit(1)
     )

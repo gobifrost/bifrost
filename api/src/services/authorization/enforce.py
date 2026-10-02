@@ -39,7 +39,6 @@ from sqlalchemy import ColumnElement, and_, false, or_, select
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.builtin_roles import PLATFORM_ADMIN_ROLE_ID, WILDCARD_PERMISSION
 from src.core.constants import PROVIDER_ORG_ID
 from src.core.principal import UserPrincipal
 from src.models.contracts.access_list import AccessEntry, CurrentGate
@@ -342,9 +341,9 @@ def operation_reach(caller: Caller, operation: str, *, permission: str | None = 
 async def held_permissions_by_user(
     db: AsyncSession, user_ids: list[UUID]
 ) -> dict[UUID, frozenset[str]]:
-    """What each user holds at any boundary (base role, every additional
-    role, the wildcard for a Platform Admin), in three queries however many
-    users are asked about.
+    """What each user holds at any boundary (base role and every additional
+    role, the stored wildcard row of Platform Admin included), in three
+    queries however many users are asked about.
 
     Every ``user_roles`` row counts, with or without a boundary row: for
     deciding whether someone is protected, an assignment that applies
@@ -382,8 +381,6 @@ async def held_permissions_by_user(
         permissions: set[str] = set()
         for role_id in roles:
             permissions |= permissions_by_role.get(role_id, set())
-        if PLATFORM_ADMIN_ROLE_ID in roles:
-            permissions.add(WILDCARD_PERMISSION)
         held[user_id] = frozenset(permissions)
     return held
 

@@ -8,13 +8,19 @@ Until now a Platform Admin was a user whose base role was Platform Admin.
 From R3a every user's base role is User or a custom role, and Platform
 Admin is an additional role held with a platform boundary. Every user whose
 base role is Platform Admin becomes a User who also holds Platform Admin.
-The role stops being flagged as a base role (`roles.is_base`). `users.is_superuser` is untouched: it stays true for exactly the people who
+The role stops being flagged as a base role (`roles.is_base`) and holds its
+wildcard permission as data: a `role_permissions` row with permission `*`, so
+what a person holds is always the union of their roles' stored permissions.
+No custom role can be given `*` (the permission vocabulary rejects it).
+`users.is_superuser` is untouched: it stays true for exactly the people who
 hold the Platform Admin assignment, so live access does not change.
 
 Data only and idempotent: a user already holding the assignment or its
-boundary is left as is, and a user whose base role is no longer Platform
-Admin is not touched again. Downgrade restores Platform Admin as the base
-role of everyone who holds the assignment and removes the assignment.
+boundary, or a role that already holds the wildcard row, is left as is, and a
+user whose base role is no longer Platform Admin is not touched again.
+Downgrade restores Platform Admin as the base role of everyone who holds the
+assignment, removes the assignment and the wildcard row, and flags the role
+as a base role again.
 """
 
 from __future__ import annotations
@@ -32,6 +38,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 PLATFORM_ADMIN_ROLE_ID = UUID("00000000-0000-0000-0000-000000000005")
 USER_ROLE_ID = UUID("00000000-0000-0000-0000-000000000006")
+WILDCARD_PERMISSION = "*"
 ASSIGNED_BY = "migration:20261002_r3a_admin_additional"
 
 _IDS = {"admin_id": str(PLATFORM_ADMIN_ROLE_ID), "user_id": str(USER_ROLE_ID)}
@@ -81,10 +88,24 @@ def upgrade() -> None:
         sa.text("UPDATE roles SET is_base = false WHERE id = CAST(:admin_id AS uuid)"),
         _IDS,
     )
+    bind.execute(
+        sa.text(
+            "INSERT INTO role_permissions (role_id, permission) "
+            "VALUES (CAST(:admin_id AS uuid), :permission) ON CONFLICT DO NOTHING"
+        ),
+        {**_IDS, "permission": WILDCARD_PERMISSION},
+    )
 
 
 def downgrade() -> None:
     bind = op.get_bind()
+    bind.execute(
+        sa.text(
+            "DELETE FROM role_permissions "
+            "WHERE role_id = CAST(:admin_id AS uuid) AND permission = :permission"
+        ),
+        {**_IDS, "permission": WILDCARD_PERMISSION},
+    )
     bind.execute(
         sa.text("UPDATE roles SET is_base = true WHERE id = CAST(:admin_id AS uuid)"),
         _IDS,

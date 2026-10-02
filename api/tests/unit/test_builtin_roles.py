@@ -66,11 +66,11 @@ def test_is_builtin_role_id():
     assert not is_builtin_role_id(UUID(int=0x1234))
 
 
-def test_platform_admin_holds_no_stored_permission_rows():
-    # Platform Admin's access is the wildcard, in code — never derived from
-    # the access list and never stored as role_permissions rows.
-    assert PLATFORM_ADMIN_ROLE_ID not in {}
-    assert WILDCARD_PERMISSION == "*"
+def test_platform_admin_wildcard_is_stored_data_in_the_admin_additional_migration():
+    # Platform Admin's access is the wildcard, stored as its one
+    # role_permissions row (never derived from the access list).
+    migration = _load_migration("20261002_r3a_admin_additional.py")
+    assert migration.WILDCARD_PERMISSION == WILDCARD_PERMISSION == "*"
 
 
 def test_derived_permissions_are_read_only_organization_scoped():

@@ -13,6 +13,7 @@ from shared.builtin_roles import (
     PLATFORM_OPERATOR_ROLE_ID,
     USER_BASE_PERMISSIONS,
     USER_ROLE_ID,
+    WILDCARD_PERMISSION,
 )
 from src.core.constants import PROVIDER_ORG_ID
 from src.models.orm.organizations import Organization
@@ -58,6 +59,9 @@ async def test_platform_admin_context_is_recognised_by_the_assignment(db_session
     assert ctx.base_role_id == USER_ROLE_ID
     assert ctx.is_platform_admin
     assert [grant.role_id for grant in ctx.role_grants] == [PLATFORM_ADMIN_ROLE_ID]
+    assert ctx.role_grants[0].permissions == frozenset({WILDCARD_PERMISSION})
+    assert (WILDCARD_PERMISSION, Boundary(BoundaryKind.PLATFORM)) in ctx.effective_grants
+    assert WILDCARD_PERMISSION in ctx.held_permissions
     assert ctx.role_grants[0].boundaries == (Boundary(BoundaryKind.PLATFORM),)
     assert not ctx.is_external
 

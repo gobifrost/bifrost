@@ -14,6 +14,7 @@ from shared.builtin_roles import PLATFORM_ADMIN_ROLE_ID, USER_ROLE_ID, WILDCARD_
 from src.services.role_permissions import (
     RolePermissionError,
     get_role_permissions,
+    replace_identity_permissions,
     role_has_permission,
     set_role_permissions,
     validate_permission,
@@ -57,7 +58,7 @@ def test_validate_permission_rejects_missing_dot():
 
 
 @pytest.mark.asyncio
-async def test_platform_admin_returns_wildcard(db_session):
+async def test_platform_admin_holds_the_wildcard_as_a_stored_row(db_session):
     perms = await get_role_permissions(db_session, role_id=PLATFORM_ADMIN_ROLE_ID)
     assert perms == frozenset({WILDCARD_PERMISSION})
 
@@ -118,10 +119,35 @@ async def test_set_validates_every_permission(db_session):
 
 
 @pytest.mark.asyncio
-async def test_role_has_permission_true_for_platform_admin_regardless_of_rows(db_session):
+async def test_role_has_permission_true_for_the_wildcard_except_secrets(db_session):
     assert await role_has_permission(
-        db_session, role_ids=[PLATFORM_ADMIN_ROLE_ID], permission="anything.readwrite"
+        db_session, role_ids=[PLATFORM_ADMIN_ROLE_ID], permission="agents.readwrite"
     )
+    assert not await role_has_permission(
+        db_session, role_ids=[PLATFORM_ADMIN_ROLE_ID], permission="secrets.read"
+    )
+
+
+def test_no_role_can_be_given_the_wildcard():
+    with pytest.raises(RolePermissionError) as exc_info:
+        validate_permission(WILDCARD_PERMISSION)
+    assert exc_info.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_a_custom_role_cannot_be_given_the_wildcard(db_session):
+    role = await _seed_role(db_session)
+    with pytest.raises(RolePermissionError) as exc_info:
+        await set_role_permissions(
+            db_session, role_id=role.id, permissions=frozenset({WILDCARD_PERMISSION})
+        )
+    assert exc_info.value.status_code == 422
+    with pytest.raises(RolePermissionError) as exc_info:
+        await replace_identity_permissions(
+            db_session, role_id=role.id, permissions=[WILDCARD_PERMISSION]
+        )
+    assert exc_info.value.status_code == 422
+    assert await get_role_permissions(db_session, role_id=role.id) == frozenset()
 
 
 @pytest.mark.asyncio

@@ -406,7 +406,8 @@ def _assert_migrated_state(snapshot: dict[str, Any], ids: dict[str, str]) -> Non
     assert operator_role["is_base"] is False
     assert operator_role["is_builtin"] is True
 
-    assert snapshot["role_permissions"][str(PLATFORM_ADMIN_ROLE_ID)] == []
+    # The later admin-additional migration stores Platform Admin's wildcard.
+    assert snapshot["role_permissions"][str(PLATFORM_ADMIN_ROLE_ID)] == ["*"]
     assert set(snapshot["role_permissions"][str(USER_ROLE_ID)]) == USER_BASE_PERMISSIONS
     assert set(snapshot["role_permissions"][str(PLATFORM_OPERATOR_ROLE_ID)]) == PLATFORM_OPERATOR_PERMISSIONS
 
