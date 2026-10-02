@@ -7,12 +7,13 @@ Uses Node.js subprocesses:
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from src.services.node_subprocess import run_node_script
 
 logger = logging.getLogger(__name__)
 
@@ -47,15 +48,9 @@ class AppCompilerService:
         input_data = json.dumps({"files": files})
 
         try:
-            proc = await asyncio.create_subprocess_exec(
-                "node", str(COMPILE_SCRIPT),
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await proc.communicate(input=input_data.encode())
+            returncode, stdout, stderr = await run_node_script(COMPILE_SCRIPT, input_data.encode())
 
-            if proc.returncode != 0:
+            if returncode != 0:
                 error_msg = stderr.decode().strip() or "Node process exited with error"
                 logger.error(f"Compiler process failed: {error_msg}")
                 return [
@@ -203,15 +198,9 @@ class AppTailwindService:
         input_data = json.dumps(payload)
 
         try:
-            proc = await asyncio.create_subprocess_exec(
-                "node", str(TAILWIND_SCRIPT),
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await proc.communicate(input=input_data.encode())
+            returncode, stdout, stderr = await run_node_script(TAILWIND_SCRIPT, input_data.encode())
 
-            if proc.returncode != 0:
+            if returncode != 0:
                 error_msg = stderr.decode().strip() or "tailwind.js exited with error"
                 logger.error(f"Tailwind CSS generation failed: {error_msg}")
                 return None
