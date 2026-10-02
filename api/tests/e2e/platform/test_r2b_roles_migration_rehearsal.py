@@ -378,11 +378,13 @@ def _boundaries_for(snapshot: dict[str, Any], *, user_id: str) -> list[dict[str,
 def _assert_migrated_state(snapshot: dict[str, Any], ids: dict[str, str]) -> None:
     users = snapshot["users"]
 
-    # base_role_id follows is_superuser, for every shape (superuser, system,
+    # R2b set base_role_id from is_superuser; the later admin-additional
+    # migration moved every Platform Admin to the User base role plus the
+    # Platform Admin assignment, for every shape (superuser, system,
     # no-home-org, provider-org non-admin, regular, external).
-    assert users[ids["superuser"]]["base_role_id"] == PLATFORM_ADMIN_ROLE_ID
-    assert users[ids["system_user"]]["base_role_id"] == PLATFORM_ADMIN_ROLE_ID
-    assert users[ids["no_org_user"]]["base_role_id"] == PLATFORM_ADMIN_ROLE_ID
+    assert users[ids["superuser"]]["base_role_id"] == USER_ROLE_ID
+    assert users[ids["system_user"]]["base_role_id"] == USER_ROLE_ID
+    assert users[ids["no_org_user"]]["base_role_id"] == USER_ROLE_ID
     assert users[ids["provider_non_admin"]]["base_role_id"] == USER_ROLE_ID
     assert users[ids["regular_user"]]["base_role_id"] == USER_ROLE_ID
     assert users[ids["external_user"]]["base_role_id"] == USER_ROLE_ID
@@ -391,7 +393,7 @@ def _assert_migrated_state(snapshot: dict[str, Any], ids: dict[str, str]) -> Non
     roles = snapshot["roles"]
     admin_role = roles[str(PLATFORM_ADMIN_ROLE_ID)]
     assert admin_role["name"] == "Platform Admin"
-    assert admin_role["is_base"] is True
+    assert admin_role["is_base"] is False
     assert admin_role["is_builtin"] is True
 
     user_role = roles[str(USER_ROLE_ID)]
@@ -442,9 +444,17 @@ def _assert_migrated_state(snapshot: dict[str, Any], ids: dict[str, str]) -> Non
             "organization_id": UUID(ids["customer_org"]),
         }
     ]
-    assert _boundaries_for(snapshot, user_id=ids["no_org_user"]) == []
-    assert _boundaries_for(snapshot, user_id=ids["superuser"]) == []
-    assert _boundaries_for(snapshot, user_id=ids["system_user"]) == []
+    # Admins hold Platform Admin at the platform boundary and nothing else;
+    # the no-org user's custom role still has no boundary.
+    for key in ("no_org_user", "superuser", "system_user"):
+        assert _boundaries_for(snapshot, user_id=ids[key]) == [
+            {
+                "user_id": UUID(ids[key]),
+                "role_id": PLATFORM_ADMIN_ROLE_ID,
+                "kind": "platform",
+                "organization_id": None,
+            }
+        ]
 
 
 @pytest.fixture
