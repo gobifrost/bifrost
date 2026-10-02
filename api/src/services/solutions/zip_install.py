@@ -681,6 +681,7 @@ async def _install_workspace(
         # S3 only after the DB is durable; still inside the lock so finalize
         # can't race another writer.
         await result.finalize_s3()
+        await db.commit()  # source search index rows written by finalize
 
         # STILL INSIDE THE LOCK, after finalize: apply provided config
         # values atomically with the deploy. A missing required value does

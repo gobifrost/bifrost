@@ -2381,6 +2381,7 @@ async def _run_deploy_job(
                 # code (P1-c). Still inside the lock so finalize can't race another deploy.
                 await _set_phase("storing source artifact and runtime files")
                 await result.finalize_s3()
+                await db.commit()  # source search index rows written by finalize
                 deploy_result = {
                     "solution_id": str(solution_id),
                     "workflows_upserted": result.workflows_upserted,

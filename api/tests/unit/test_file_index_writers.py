@@ -59,6 +59,7 @@ async def test_write_python_indexes_and_unindexes_solution_source():
             deployer = SolutionDeployer(db)
             await deployer._write_python(sid, {"functions/a.py": "A = 1\n", "functions/b.py": "B = 1\n"})
             await deployer._write_python(sid, {"functions/a.py": "A = 2\n"})
+            await db.commit()  # deploy callers commit after finalize_s3
         async with get_db_context() as db:
             result = await db.execute(
                 select(SolutionFileIndex.path, SolutionFileIndex.content).where(
