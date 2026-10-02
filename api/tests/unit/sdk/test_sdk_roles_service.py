@@ -508,6 +508,14 @@ class TestBuiltinRoleGuards:
         ids = {item.id for item in items}
         assert not BUILTIN_ROLE_IDS & ids
 
+    async def test_builtins_listed_on_request_without_counts_for_non_admins(self, db_session):
+        from shared.builtin_roles import BUILTIN_ROLE_IDS
+        from shared.sdk_roles import list_roles
+
+        items, _total = await list_roles(db_session, include_builtin=True, include_counts=False)
+        assert BUILTIN_ROLE_IDS <= {item.id for item in items}
+        assert all(item.consumer_counts is None for item in items)
+
     async def test_secrets_reader_is_hidden_and_immutable(self, db_session):
         from shared.builtin_roles import DECRYPTION_ROLE_ID
         from shared.sdk_roles import assign_users_to_role, delete_role, get_role, update_role
