@@ -174,10 +174,6 @@ def test_device_flow_authorization_requires_auth(
     data = response.json()
     user_code = data["user_code"]
 
-    # Clear any cookies that might trigger CSRF validation
-    # This simulates a fresh client that has never logged in
-    e2e_client.cookies.clear()
-
     # Try to authorize without token
     response = e2e_client.post(
         "/auth/device/authorize",
@@ -216,21 +212,21 @@ def test_device_code_user_code_format(
 
 @pytest.mark.e2e
 def test_device_flow_refresh_token_works(
-    e2e_client: httpx.Client,
+    private_client: httpx.Client,
     org1_user,
 ):
     """
     Test that refresh tokens obtained via device flow can be used to get new access tokens.
     """
     # Complete device flow
-    response = e2e_client.post("/auth/device/code")
+    response = private_client.post("/auth/device/code")
     assert response.status_code == 200
     data = response.json()
     device_code = data["device_code"]
     user_code = data["user_code"]
 
     # Authorize
-    response = e2e_client.post(
+    response = private_client.post(
         "/auth/device/authorize",
         json={"user_code": user_code},
         headers=org1_user.headers
@@ -238,7 +234,7 @@ def test_device_flow_refresh_token_works(
     assert response.status_code == 200
 
     # Get tokens
-    response = e2e_client.post(
+    response = private_client.post(
         "/auth/device/token",
         json={"device_code": device_code}
     )
@@ -247,7 +243,7 @@ def test_device_flow_refresh_token_works(
     refresh_token = token_data["refresh_token"]
 
     # Use refresh token to get new access token
-    response = e2e_client.post(
+    response = private_client.post(
         "/auth/refresh",
         json={"refresh_token": refresh_token}
     )
@@ -257,7 +253,7 @@ def test_device_flow_refresh_token_works(
     assert "refresh_token" in new_tokens
 
     # New access token should work
-    response = e2e_client.get(
+    response = private_client.get(
         "/auth/me",
         headers={"Authorization": f"Bearer {new_tokens['access_token']}"}
     )

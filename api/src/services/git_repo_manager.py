@@ -25,10 +25,14 @@ from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import redis.asyncio as redis
 
 from src.config import Settings, get_settings
+
+if TYPE_CHECKING:
+    from git import Repo as GitRepo
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +91,11 @@ def iter_tree_metadata(root: Path) -> Iterator[TreeEntryMetadata]:
         yield TreeEntryMetadata(path.relative_to(root).as_posix(), size, sha256)
 
 
+def merge_in_progress(work_dir: Path, repo: GitRepo) -> bool:
+    """Whether a merge or stash pop left conflicts that are not yet resolved."""
+    return (work_dir / ".git" / "MERGE_HEAD").exists() or bool(repo.index.unmerged_blobs())
+
+
 def _unsynced_work_warning(work_dir: Path, branch: str) -> str:
     """Describe local-only git work that Fetch, a full mirror of S3, discards."""
     from git import GitCommandError, InvalidGitRepositoryError
@@ -96,7 +105,7 @@ def _unsynced_work_warning(work_dir: Path, branch: str) -> str:
         repo = GitRepo(str(work_dir))
     except InvalidGitRepositoryError:
         return ""
-    if (work_dir / ".git" / "MERGE_HEAD").exists() or repo.index.unmerged_blobs():
+    if merge_in_progress(work_dir, repo):
         return (
             " You have an unfinished merge with conflict resolutions. Fetch "
             "discards it, so you'll need to sync and resolve the conflicts again."

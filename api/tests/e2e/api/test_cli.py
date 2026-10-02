@@ -47,7 +47,6 @@ class TestCLIContext:
         self,
         e2e_client,
     ):
-        e2e_client.cookies.clear()
         response = e2e_client.get("/api/sdk/context")
         assert response.status_code in [401, 422]
 

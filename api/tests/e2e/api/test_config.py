@@ -219,8 +219,6 @@ class TestConfigAccess:
 
     def test_config_list_requires_auth(self, e2e_client):
         """Config listing requires authentication."""
-        # Clear any cookies from previous tests and make unauthenticated request
-        e2e_client.cookies.clear()
         response = e2e_client.get("/api/config")
         assert response.status_code == 401
 

@@ -28,8 +28,18 @@ API_BASE_URL = os.environ.get("TEST_API_URL", "http://api:8000")
 WS_BASE_URL = API_BASE_URL.replace("http://", "ws://").replace("https://", "wss://")
 
 
+def _anonymous_client() -> httpx.Client:
+    """Throwaway client for credential exchanges.
+
+    Login, MFA and refresh responses set ``access_token`` / ``refresh_token`` /
+    ``csrf_token`` cookies. Doing the exchange on a private client keeps those
+    cookies out of the shared ``e2e_client`` jar, so tests authenticate only
+    through the explicit headers on ``E2EUser``.
+    """
+    return httpx.Client(base_url=API_BASE_URL, timeout=60.0)
+
+
 def _register_and_authenticate_user(
-    client: httpx.Client,
     user: E2EUser,
     skip_registration: bool = False,
 ) -> E2EUser:
@@ -37,104 +47,104 @@ def _register_and_authenticate_user(
     Register a user (if needed) and complete MFA setup.
 
     Args:
-        client: HTTP client
         user: User to register/authenticate
         skip_registration: If True, skip registration (user already exists)
 
     Returns:
         User with populated tokens
     """
-    # Register if needed
-    if not skip_registration:
+    with _anonymous_client() as client:
+        # Register if needed
+        if not skip_registration:
+            response = client.post(
+                "/auth/register",
+                json={
+                    "email": user.email,
+                    "password": user.password,
+                    "name": user.name,
+                },
+            )
+            assert response.status_code == 201, f"Register failed: {response.text}"
+            data = response.json()
+            user.user_id = UUID(data["id"])
+            user.is_superuser = data.get("is_superuser", False)
+
+        # Login to get MFA token
         response = client.post(
-            "/auth/register",
-            json={
-                "email": user.email,
+            "/auth/login",
+            data={
+                "username": user.email,
                 "password": user.password,
-                "name": user.name,
             },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
-        assert response.status_code == 201, f"Register failed: {response.text}"
-        data = response.json()
-        user.user_id = UUID(data["id"])
-        user.is_superuser = data.get("is_superuser", False)
+        assert response.status_code == 200, f"Login failed: {response.text}"
+        login_data = response.json()
+        mfa_token = login_data.get("mfa_token") or login_data.get("access_token")
+        assert mfa_token, f"No MFA token in response: {login_data}"
 
-    # Login to get MFA token
-    response = client.post(
-        "/auth/login",
-        data={
-            "username": user.email,
-            "password": user.password,
-        },
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-    )
-    assert response.status_code == 200, f"Login failed: {response.text}"
-    login_data = response.json()
-    mfa_token = login_data.get("mfa_token") or login_data.get("access_token")
-    assert mfa_token, f"No MFA token in response: {login_data}"
+        # Setup MFA
+        response = client.post(
+            "/auth/mfa/setup",
+            headers={"Authorization": f"Bearer {mfa_token}"},
+        )
+        assert response.status_code == 200, f"MFA setup failed: {response.text}"
+        user.totp_secret = response.json()["secret"]
 
-    # Setup MFA
-    response = client.post(
-        "/auth/mfa/setup",
-        headers={"Authorization": f"Bearer {mfa_token}"},
-    )
-    assert response.status_code == 200, f"MFA setup failed: {response.text}"
-    user.totp_secret = response.json()["secret"]
+        # Verify MFA to get tokens
+        assert user.totp_secret is not None, "TOTP secret not set"
+        totp_code = generate_totp_code(user.totp_secret)
+        response = client.post(
+            "/auth/mfa/verify",
+            headers={"Authorization": f"Bearer {mfa_token}"},
+            json={"code": totp_code},
+        )
+        assert response.status_code == 200, f"MFA verify failed: {response.text}"
+        verify_data = response.json()
 
-    # Verify MFA to get tokens
-    assert user.totp_secret is not None, "TOTP secret not set"
-    totp_code = generate_totp_code(user.totp_secret)
-    response = client.post(
-        "/auth/mfa/verify",
-        headers={"Authorization": f"Bearer {mfa_token}"},
-        json={"code": totp_code},
-    )
-    assert response.status_code == 200, f"MFA verify failed: {response.text}"
-    verify_data = response.json()
+        user.access_token = verify_data["access_token"]
+        user.refresh_token = verify_data["refresh_token"]
 
-    user.access_token = verify_data["access_token"]
-    user.refresh_token = verify_data["refresh_token"]
-
-    logger.info(f"Authenticated user: {user.email}")
-    return user
+        logger.info(f"Authenticated user: {user.email}")
+        return user
 
 
-def _login_user(client: httpx.Client, user: E2EUser) -> E2EUser:
+def _login_user(user: E2EUser) -> E2EUser:
     """
     Login an existing user with MFA, refreshing tokens.
 
     Args:
-        client: HTTP client
         user: User to login (must have totp_secret)
 
     Returns:
         User with refreshed tokens
     """
-    response = client.post(
-        "/auth/login",
-        data={
-            "username": user.email,
-            "password": user.password,
-        },
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-    )
-    assert response.status_code == 200, f"Login failed: {response.text}"
-    login_data = response.json()
-
-    if login_data.get("mfa_required"):
-        mfa_token = login_data["mfa_token"]
-        assert user.totp_secret is not None, "TOTP secret not set for login"
-        totp_code = generate_totp_code(user.totp_secret)
+    with _anonymous_client() as client:
         response = client.post(
-            "/auth/mfa/login",
-            json={"mfa_token": mfa_token, "code": totp_code},
+            "/auth/login",
+            data={
+                "username": user.email,
+                "password": user.password,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
-        assert response.status_code == 200, f"MFA login failed: {response.text}"
+        assert response.status_code == 200, f"Login failed: {response.text}"
         login_data = response.json()
 
-    user.access_token = login_data["access_token"]
-    user.refresh_token = login_data["refresh_token"]
-    return user
+        if login_data.get("mfa_required"):
+            mfa_token = login_data["mfa_token"]
+            assert user.totp_secret is not None, "TOTP secret not set for login"
+            totp_code = generate_totp_code(user.totp_secret)
+            response = client.post(
+                "/auth/mfa/login",
+                json={"mfa_token": mfa_token, "code": totp_code},
+            )
+            assert response.status_code == 200, f"MFA login failed: {response.text}"
+            login_data = response.json()
+
+        user.access_token = login_data["access_token"]
+        user.refresh_token = login_data["refresh_token"]
+        return user
 
 
 # =============================================================================
@@ -161,7 +171,7 @@ def platform_admin(e2e_client: httpx.Client) -> E2EUser:
         password="AdminPass123!",
         name="Platform Admin",
     )
-    user = _register_and_authenticate_user(e2e_client, user)
+    user = _register_and_authenticate_user(user)
     assert user.is_superuser, "First user should be platform admin"
     logger.info("Platform admin created and authenticated")
     return user
@@ -242,7 +252,7 @@ def org1_user(
     user.user_id = UUID(response.json()["id"])
 
     # User completes registration and MFA
-    user = _register_and_authenticate_user(e2e_client, user, skip_registration=False)
+    user = _register_and_authenticate_user(user, skip_registration=False)
     user.organization_id = UUID(org1["id"])
 
     logger.info(f"Created org1 user: {user.email}")
@@ -282,7 +292,7 @@ def org2_user(
     user.user_id = UUID(response.json()["id"])
 
     # User completes registration and MFA
-    user = _register_and_authenticate_user(e2e_client, user, skip_registration=False)
+    user = _register_and_authenticate_user(user, skip_registration=False)
     user.organization_id = UUID(org2["id"])
 
     logger.info(f"Created org2 user: {user.email}")
@@ -320,7 +330,7 @@ def non_admin_user(
     assert response.status_code == 201, f"Create user failed: {response.text}"
     user.user_id = UUID(response.json()["id"])
 
-    user = _register_and_authenticate_user(e2e_client, user, skip_registration=False)
+    user = _register_and_authenticate_user(user, skip_registration=False)
     user.organization_id = UUID(org1["id"])
 
     logger.info(f"Created non_admin_user: {user.email}")
@@ -358,7 +368,7 @@ def alice_user(
     assert response.status_code == 201, f"Create user failed: {response.text}"
     user.user_id = UUID(response.json()["id"])
 
-    user = _register_and_authenticate_user(e2e_client, user, skip_registration=False)
+    user = _register_and_authenticate_user(user, skip_registration=False)
     user.organization_id = UUID(org1["id"])
 
     logger.info(f"Created alice_user: {user.email}")
@@ -396,7 +406,7 @@ def bob_user(
     assert response.status_code == 201, f"Create user failed: {response.text}"
     user.user_id = UUID(response.json()["id"])
 
-    user = _register_and_authenticate_user(e2e_client, user, skip_registration=False)
+    user = _register_and_authenticate_user(user, skip_registration=False)
     user.organization_id = UUID(org1["id"])
 
     logger.info(f"Created bob_user: {user.email}")
@@ -440,7 +450,7 @@ def provider_org_user(
     assert response.status_code == 201, f"Create provider user failed: {response.text}"
     user.user_id = UUID(response.json()["id"])
 
-    user = _register_and_authenticate_user(e2e_client, user, skip_registration=False)
+    user = _register_and_authenticate_user(user, skip_registration=False)
     user.organization_id = PROVIDER_ORG_ID
     user.is_superuser = False
 
@@ -475,7 +485,7 @@ def second_platform_admin(
     assert response.status_code == 201, f"Create second admin failed: {response.text}"
     user.user_id = UUID(response.json()["id"])
 
-    user = _register_and_authenticate_user(e2e_client, user, skip_registration=False)
+    user = _register_and_authenticate_user(user, skip_registration=False)
     user.organization_id = PROVIDER_ORG_ID
     user.is_superuser = True
 
@@ -489,7 +499,7 @@ def second_platform_admin(
 
 
 @pytest.fixture
-def refresh_user_tokens(e2e_client: httpx.Client):
+def refresh_user_tokens():
     """
     Function fixture to refresh a user's tokens mid-test.
 
@@ -501,7 +511,7 @@ def refresh_user_tokens(e2e_client: httpx.Client):
     """
 
     def _refresh(user: E2EUser) -> E2EUser:
-        return _login_user(e2e_client, user)
+        return _login_user(user)
 
     return _refresh
 

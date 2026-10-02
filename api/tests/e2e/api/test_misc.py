@@ -430,9 +430,6 @@ class TestMetrics:
 
     def test_get_metrics_unauthenticated(self, e2e_client):
         """Unauthenticated request should fail."""
-        # Clear any cookies from previous authenticated tests
-        # (e2e_client is session-scoped and may have access_token cookie)
-        e2e_client.cookies.clear()
         response = e2e_client.get(
             "/api/metrics",
             headers={},  # No auth header
