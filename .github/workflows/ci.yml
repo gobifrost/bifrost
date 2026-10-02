@@ -433,6 +433,7 @@ jobs:
           cache-to: type=gha,scope=test-api-dev,mode=max
 
       - name: Run unit tests
+        timeout-minutes: 20  # TEMP DIAGNOSTIC (PR #873) — revert before merge
         env:
           BIFROST_SKIP_BUILD: "1"
           BIFROST_TEST_USE_CLEAN_BOOT: "1"
@@ -440,6 +441,25 @@ jobs:
           chmod +x test.sh
           ./test.sh stack up
           ./test.sh unit
+
+      - name: TEMP DIAGNOSTIC (PR #873) — stack state after unit tests
+        if: always()
+        run: |
+          df -h / /var/lib/docker || true
+          free -m || true
+          docker ps -a --format '{{.Names}} {{.Status}}' || true
+          docker stats --no-stream || true
+          for f in /tmp/bifrost-*/test-runner.log; do echo "== $f"; tail -n 80 "$f"; done || true
+          for c in $(docker ps -a --format '{{.Names}}' | grep -E 'api-1|scheduler-1|init-1'); do echo "== $c"; docker logs --tail 60 "$c" 2>&1; done || true
+
+      - name: TEMP DIAGNOSTIC (PR #873) — upload test logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: unit-diagnostic-logs
+          path: /tmp/bifrost-*/
+          if-no-files-found: warn
+          retention-days: 3
 
   # =============================================================================
   # E2E Tests - Sharded across 3 parallel runners. Each shard boots its own
