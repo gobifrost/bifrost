@@ -13,7 +13,6 @@ from src.models.orm.file_metadata import FilePolicy
 from src.models.orm.organizations import Organization
 from src.models.orm.policy_rule import PolicyRule
 from src.models.orm.solutions import Solution
-from src.services.audit_context import ActorContext
 from src.services.policy_rule_service import (
     PolicyRuleInUse,
     PolicyRuleReadOnly,
@@ -32,13 +31,8 @@ async def seed_org(db_session):
     return org.id
 
 
-@pytest.fixture
-def admin_actor():
-    return ActorContext(user_id=uuid4(), organization_id=None, source="test")
-
-
 @pytest.mark.asyncio
-async def test_delete_blocked_while_referenced(db_session, seed_org, admin_actor):
+async def test_delete_blocked_while_referenced(db_session, seed_org):
     svc = PolicyRuleService(db_session)
     await svc.create(
         PolicyRuleCreate(
@@ -47,7 +41,6 @@ async def test_delete_blocked_while_referenced(db_session, seed_org, admin_actor
             organization_id=seed_org,
             body={"actions": ["read"], "when": None},
         ),
-        actor=admin_actor,
     )
     db_session.add(
         FilePolicy(
@@ -59,11 +52,11 @@ async def test_delete_blocked_while_referenced(db_session, seed_org, admin_actor
     )
     await db_session.flush()
     with pytest.raises(PolicyRuleInUse):
-        await svc.delete("ops", "file", org_id=seed_org, actor=admin_actor)
+        await svc.delete("ops", "file", org_id=seed_org)
 
 
 @pytest.mark.asyncio
-async def test_seeds_both_domains_idempotent_and_readonly(db_session, admin_actor):
+async def test_seeds_both_domains_idempotent_and_readonly(db_session):
     svc = PolicyRuleService(db_session)
     await svc.seed_builtin_admin_bypass()
     await svc.seed_builtin_admin_bypass()
@@ -74,12 +67,12 @@ async def test_seeds_both_domains_idempotent_and_readonly(db_session, admin_acto
     assert len(rows) == 2
     with pytest.raises(PolicyRuleReadOnly):
         await svc.update(
-            "admin_bypass", "file", PolicyRuleUpdate(description="x"), org_id=None, actor=admin_actor
+            "admin_bypass", "file", PolicyRuleUpdate(description="x"), org_id=None
         )
 
 
 @pytest.mark.asyncio
-async def test_solution_managed_rule_update_and_delete_raise_409(db_session, seed_org, admin_actor):
+async def test_solution_managed_rule_update_and_delete_raise_409(db_session, seed_org):
     """Solution-managed PolicyRule must 409 on update and delete, not 500."""
     install_solution_write_guard()
     sol = Solution(
@@ -105,10 +98,10 @@ async def test_solution_managed_rule_update_and_delete_raise_409(db_session, see
 
     with pytest.raises(HTTPException) as exc:
         await svc.update(
-            "sol-rule", "file", PolicyRuleUpdate(description="hacked"), org_id=seed_org, actor=admin_actor
+            "sol-rule", "file", PolicyRuleUpdate(description="hacked"), org_id=seed_org
         )
     assert exc.value.status_code == 409
 
     with pytest.raises(HTTPException) as exc:
-        await svc.delete("sol-rule", "file", org_id=seed_org, actor=admin_actor)
+        await svc.delete("sol-rule", "file", org_id=seed_org)
     assert exc.value.status_code == 409
