@@ -3,7 +3,8 @@
  *
  * A Platform Admin opens a user, assigns Platform Operator for all customer
  * organizations, saves, and sees the assignment listed; after a reload the
- * assignment is still there.
+ * assignment is still there. Platform Admin is an additional role too: it is
+ * added platform-wide and removed again from the same screen.
  */
 
 import { test, expect } from "./fixtures/api-fixture";
@@ -77,5 +78,36 @@ test.describe("Roles & access", () => {
 		await expect(
 			operatorPlaces().getByText("In all customer organizations"),
 		).toBeVisible();
+	});
+
+	test("adds and removes Platform Admin as an additional role", async ({
+		page,
+	}) => {
+		const adminPlaces = () =>
+			page.getByRole("list", { name: "Where Platform Admin applies" });
+
+		await page.goto(`/users/${userId}`);
+		const dialog = page.getByRole("dialog", { name: /edit user/i });
+		await expect(dialog).toBeVisible({ timeout: 10000 });
+		await dialog.getByRole("tab", { name: "Roles & access" }).click();
+
+		await dialog.getByRole("button", { name: "Add role" }).click();
+		await page.getByRole("option", { name: /Platform Admin/ }).click();
+		await expect(adminPlaces().getByText("Platform-wide")).toBeVisible();
+		await dialog.getByRole("button", { name: "Save roles" }).click();
+		await expect(page.getByText("Roles saved")).toBeVisible();
+
+		await page.reload();
+		const reopened = page.getByRole("dialog", { name: /edit user/i });
+		await expect(reopened).toBeVisible({ timeout: 10000 });
+		await reopened.getByRole("tab", { name: "Roles & access" }).click();
+		await expect(adminPlaces().getByText("Platform-wide")).toBeVisible();
+
+		await reopened
+			.getByRole("button", { name: "Remove Platform Admin" })
+			.click();
+		await reopened.getByRole("button", { name: "Save roles" }).click();
+		await expect(page.getByText("Roles saved")).toBeVisible();
+		await expect(adminPlaces()).toHaveCount(0);
 	});
 });

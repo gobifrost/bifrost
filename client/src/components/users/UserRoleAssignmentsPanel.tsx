@@ -38,6 +38,7 @@ import {
 } from "@/hooks/useUsers";
 import { getErrorMessage } from "@/lib/api-error";
 import { orgTarget } from "@/lib/authorization";
+import { PLATFORM_ADMIN_ROLE_ID } from "@/lib/builtin-roles";
 import { placeLabel } from "@/lib/role-boundaries";
 import { useAuthorization } from "@/services/authorization";
 import type { components } from "@/lib/v1";
@@ -347,9 +348,6 @@ export function UserRoleAssignmentsPanel({
 	}, [replace.isPending, onPendingChange]);
 
 	const providerOrgId = authorization.authorization?.provider_organization_id;
-	const adminRoleId = authorization.isPlatformAdmin
-		? authorization.authorization?.base_role.id
-		: undefined;
 	const blockedByProtection =
 		!!data?.is_protected && !authorization.isPlatformAdmin;
 	const canEdit =
@@ -508,25 +506,25 @@ export function UserRoleAssignmentsPanel({
 		),
 	];
 	const canChangeBase = canEdit && baseOptions.length > 1;
-	// The server offers Platform Admin as a base role only in the provider
-	// organization (or for a Global user).
+	// The server offers Platform Admin as an additional role only to people in
+	// the provider organization (or Global users).
 	const adminHint =
 		canEdit &&
-		!!adminRoleId &&
+		authorization.isPlatformAdmin &&
 		!user.is_superuser &&
-		!baseOptions.some((role) => role.id === adminRoleId);
+		!data.assignable_roles.some(
+			(role) => role.id === PLATFORM_ADMIN_ROLE_ID,
+		);
 	const takenRoleIds = new Set(draft.additional.map((r) => r.roleId));
 	const addableRoles = data.assignable_roles.filter(
 		(r) => r.can_be_additional && !takenRoleIds.has(r.id),
 	);
+	const holdsAdmin = (roles: { roleId: string }[]) =>
+		roles.some((role) => role.roleId === PLATFORM_ADMIN_ROLE_ID);
 	const promoting =
-		!!adminRoleId &&
-		draft.baseRoleId === adminRoleId &&
-		data.base_role.id !== adminRoleId;
+		holdsAdmin(draft.additional) && !holdsAdmin(draftFrom(data).additional);
 	const demoting =
-		!!adminRoleId &&
-		data.base_role.id === adminRoleId &&
-		draft.baseRoleId !== adminRoleId;
+		!holdsAdmin(draft.additional) && holdsAdmin(draftFrom(data).additional);
 	// A custom base role replaces the old base role's permissions outright.
 	const newCustomBase =
 		draft.baseRoleId !== data.base_role.id
@@ -648,43 +646,16 @@ export function UserRoleAssignmentsPanel({
 							{data.base_role.name}
 						</p>
 					)}
-					{canEdit && !canChangeBase && !adminHint && (
+					{canEdit && !canChangeBase && (
 						<p className="text-xs text-muted-foreground">
-							{authorization.isPlatformAdmin && user.is_superuser
-								? "Move this person into an organization before changing their base role."
-								: "You can't change this person's base role."}
+							You can't change this person's base role.
 						</p>
-					)}
-					{adminHint && (
-						<p className="text-xs text-muted-foreground">
-							To make this person a Platform Admin, first move
-							them to the provider organization on the Profile
-							tab.
-						</p>
-					)}
-					{promoting && (
-						<Alert>
-							<Shield className="h-4 w-4" />
-							<AlertDescription>
-								A Platform Admin has unrestricted access to
-								every organization, user, and setting.
-							</AlertDescription>
-						</Alert>
 					)}
 					{baseChangeNotice && (
 						<Alert>
 							<AlertTriangle className="h-4 w-4" />
 							<AlertDescription>
 								{baseChangeNotice}
-							</AlertDescription>
-						</Alert>
-					)}
-					{demoting && (
-						<Alert variant="destructive">
-							<AlertTriangle className="h-4 w-4" />
-							<AlertDescription>
-								This person will lose access to other
-								organizations and platform settings.
 							</AlertDescription>
 						</Alert>
 					)}
@@ -858,15 +829,44 @@ export function UserRoleAssignmentsPanel({
 										)}
 										{canEdit && !editable && (
 											<p className="mt-2 text-xs text-muted-foreground">
-												{removable
-													? "This person can't be given this role any more. You can remove it, but not change where it applies."
-													: "You can't change this role. Saving keeps it as it is."}
+												{role.roleId ===
+													PLATFORM_ADMIN_ROLE_ID &&
+												!user.organization_id
+													? "Move this person into an organization before removing Platform Admin."
+													: removable
+														? "This person can't be given this role any more. You can remove it, but not change where it applies."
+														: "You can't change this role. Saving keeps it as it is."}
 											</p>
 										)}
 									</li>
 								);
 							})}
 						</ul>
+					)}
+					{adminHint && (
+						<p className="text-xs text-muted-foreground">
+							To make this person a Platform Admin, first move
+							them to the provider organization on the Profile
+							tab.
+						</p>
+					)}
+					{promoting && (
+						<Alert>
+							<Shield className="h-4 w-4" />
+							<AlertDescription>
+								A Platform Admin has unrestricted access to
+								every organization, user, and setting.
+							</AlertDescription>
+						</Alert>
+					)}
+					{demoting && (
+						<Alert variant="destructive">
+							<AlertTriangle className="h-4 w-4" />
+							<AlertDescription>
+								This person will lose access to other
+								organizations and platform settings.
+							</AlertDescription>
+						</Alert>
 					)}
 					{canEdit && addableRoles.length > 0 && (
 						<AddRolePicker

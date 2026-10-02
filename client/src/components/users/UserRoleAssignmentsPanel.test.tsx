@@ -96,10 +96,7 @@ function summary(
 		is_platform_admin: isPlatformAdmin,
 		home_organization_id: PROVIDER,
 		provider_organization_id: PROVIDER,
-		base_role: {
-			id: isPlatformAdmin ? ADMIN_ROLE : USER_ROLE,
-			name: isPlatformAdmin ? "Platform Admin" : "User",
-		},
+		base_role: { id: USER_ROLE, name: "User" },
 		grants,
 	};
 }
@@ -173,11 +170,12 @@ function adminView(): Assignments {
 			{
 				id: ADMIN_ROLE,
 				name: "Platform Admin",
+				description: "Full platform administration.",
 				is_builtin: true,
 				permissions: [],
-				can_be_base: true,
-				can_be_additional: false,
-				boundary_kinds: [],
+				can_be_base: false,
+				can_be_additional: true,
+				boundary_kinds: ["platform"],
 				provider_organization_allowed: true,
 			},
 			{
@@ -296,19 +294,100 @@ describe("UserRoleAssignmentsPanel", () => {
 		).toBeInTheDocument();
 	});
 
-	it("warns before making someone a Platform Admin", async () => {
+	it("never offers Platform Admin as a base role", () => {
+		render();
+
+		expect(
+			within(screen.getByLabelText("base-role")).queryByRole("option", {
+				name: "Platform Admin",
+			}),
+		).not.toBeInTheDocument();
+	});
+
+	it("warns before adding Platform Admin, which applies platform-wide with no choice", async () => {
 		const { user } = render();
-		await user.selectOptions(
-			screen.getByLabelText("base-role"),
-			ADMIN_ROLE,
+		await user.click(screen.getByRole("button", { name: "Add role" }));
+		await user.click(
+			await screen.findByRole("option", { name: /Platform Admin/ }),
 		);
 
 		expect(
 			screen.getByText(/unrestricted access to every organization/i),
 		).toBeInTheDocument();
 		expect(
-			screen.getByRole("button", { name: "Save roles" }),
-		).toBeEnabled();
+			within(
+				screen.getByRole("list", {
+					name: "Where Platform Admin applies",
+				}),
+			).getByText("Platform-wide"),
+		).toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", {
+				name: "Add where Platform Admin applies",
+			}),
+		).not.toBeInTheDocument();
+
+		await user.click(screen.getByRole("button", { name: "Save roles" }));
+		await waitFor(() => expect(state.mutateAsync).toHaveBeenCalled());
+		expect(state.mutateAsync.mock.calls[0][0].body).toEqual({
+			base_role_id: USER_ROLE,
+			additional: [
+				{
+					role_id: ADMIN_ROLE,
+					boundaries: [{ kind: "platform", organization_id: null }],
+				},
+			],
+		});
+	});
+
+	it("warns before removing Platform Admin", async () => {
+		state.assignments = {
+			...adminView(),
+			additional: [
+				{
+					role_id: ADMIN_ROLE,
+					name: "Platform Admin",
+					is_builtin: true,
+					permissions: [],
+					boundaries: [{ kind: "platform", organization_id: null }],
+				},
+			],
+		};
+		const { user } = render(makeUser({ is_superuser: true }));
+
+		await user.click(
+			screen.getByRole("button", { name: "Remove Platform Admin" }),
+		);
+
+		expect(
+			screen.getByText(/lose access to other organizations/i),
+		).toBeInTheDocument();
+	});
+
+	it("keeps Platform Admin on a Global user and says why", () => {
+		state.assignments = {
+			...adminView(),
+			additional: [
+				{
+					role_id: ADMIN_ROLE,
+					name: "Platform Admin",
+					is_builtin: true,
+					permissions: [],
+					boundaries: [{ kind: "platform", organization_id: null }],
+				},
+			],
+			assignable_roles: adminView().assignable_roles.filter(
+				(role) => role.id !== ADMIN_ROLE,
+			),
+		};
+		render(makeUser({ is_superuser: true, organization_id: null }));
+
+		expect(
+			screen.queryByRole("button", { name: "Remove Platform Admin" }),
+		).not.toBeInTheDocument();
+		expect(
+			screen.getByText(/before removing Platform Admin/i),
+		).toBeInTheDocument();
 	});
 
 	it("spells out what a custom base role replaces", async () => {

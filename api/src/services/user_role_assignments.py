@@ -326,6 +326,10 @@ def _assignable_roles(
     for role in sorted(roles.values(), key=lambda r: (not r.is_builtin, r.name.lower())):
         if role.id == DECRYPTION_ROLE_ID or not _may_change(caller, role, target.held):
             continue
+        # A Global user can't lose Platform Admin, so it is neither offered
+        # nor removable.
+        if role.id == PLATFORM_ADMIN_ROLE_ID and target.user.organization_id is None:
+            continue
         can_be_base = may_change_base and (
             role.id in BASE_ROLE_IDS or not role.is_builtin
         )

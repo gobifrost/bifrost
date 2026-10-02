@@ -164,6 +164,23 @@ describe("RoleDetail", () => {
 		expect(await screen.findByText("People panel")).toBeInTheDocument();
 	});
 
+	it("lists who holds Platform Admin, an additional role", async () => {
+		state.role = {
+			...customRole,
+			id: "00000000-0000-0000-0000-000000000005",
+			name: "Platform Admin",
+			is_builtin: true,
+			is_base: false,
+			consumer_counts: null,
+		};
+		const { user } = renderAt(
+			"/roles/00000000-0000-0000-0000-000000000005",
+		);
+
+		await user.click(screen.getByRole("tab", { name: "People" }));
+		expect(await screen.findByText("People panel")).toBeInTheDocument();
+	});
+
 	it("lists no people for base roles or callers without role-assignment access", () => {
 		state.role = {
 			...customRole,

@@ -45,8 +45,6 @@ function permissionsOf(
 const state = vi.hoisted(() => ({
 	data: undefined as Permissions | undefined,
 	canManage: true,
-	isPlatformAdmin: true,
-	baseRoleId: "admin-role",
 	mutateAsync: vi.fn(),
 }));
 
@@ -65,8 +63,6 @@ vi.mock("@/hooks/useRoles", () => ({
 
 vi.mock("@/services/authorization", () => ({
 	useAuthorization: () => ({
-		isPlatformAdmin: state.isPlatformAdmin,
-		authorization: { base_role: { id: state.baseRoleId } },
 		meets: () => state.canManage,
 	}),
 }));
@@ -82,8 +78,6 @@ function area(name: string) {
 beforeEach(() => {
 	state.data = permissionsOf(["users.read", "agents.readwrite"]);
 	state.canManage = true;
-	state.isPlatformAdmin = true;
-	state.baseRoleId = "admin-role";
 	state.mutateAsync.mockReset();
 	state.mutateAsync.mockResolvedValue(state.data);
 });
@@ -180,7 +174,10 @@ describe("RolePermissionsPanel", () => {
 	it("describes Platform Admin instead of listing nothing", () => {
 		state.data = permissionsOf([], { isBuiltin: true });
 		renderWithProviders(
-			<RolePermissionsPanel roleId="admin-role" isBuiltin />,
+			<RolePermissionsPanel
+				roleId="00000000-0000-0000-0000-000000000005"
+				isBuiltin
+			/>,
 		);
 
 		expect(

@@ -625,6 +625,11 @@ class TestRoleAssignments:
         assert (exc_info.value.status_code, exc_info.value.detail) == (409, ADMIN_REMOVAL_MESSAGE)
         assert global_admin.is_superuser is True
 
+        from src.services.user_role_assignments import get_role_assignments
+
+        view = await get_role_assignments(db_session, admin_caller(), user_id=global_admin.id)
+        assert PLATFORM_ADMIN_ROLE_ID not in {r.id for r in view.assignable_roles}
+
     async def test_only_a_platform_admin_grants_or_removes_platform_admin(self, db_session) -> None:
         from src.services.user_role_assignments import ADMIN_ROLE_MESSAGE, RoleAssignmentError
 

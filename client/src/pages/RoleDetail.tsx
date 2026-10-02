@@ -158,7 +158,7 @@ export function RoleDetail() {
 		!isBuiltin &&
 		authorization.meets({ permission: "roles.readwrite", at: "global" });
 	// Built-in additional roles (Platform Operator, Secrets Reader) list
-	// who holds them; base roles (Platform Admin, User) would list everyone.
+	// who holds them; the base role (User) would list everyone.
 	const showsPeople =
 		isBuiltin &&
 		!role.is_base &&

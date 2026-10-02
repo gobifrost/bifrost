@@ -10,6 +10,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useRolePermissions, useUpdateRolePermissions } from "@/hooks/useRoles";
 import { getErrorMessage } from "@/lib/api-error";
+import { PLATFORM_ADMIN_ROLE_ID } from "@/lib/builtin-roles";
 import { useAuthorization } from "@/services/authorization";
 import type { components } from "@/lib/v1";
 
@@ -123,10 +124,7 @@ export function RolePermissionsPanel({
 	const canEdit =
 		!isBuiltin &&
 		authorization.meets({ permission: "roles.readwrite", at: "global" });
-	const isPlatformAdminRole =
-		isBuiltin &&
-		authorization.isPlatformAdmin &&
-		authorization.authorization?.base_role.id === roleId;
+	const isPlatformAdminRole = isBuiltin && roleId === PLATFORM_ADMIN_ROLE_ID;
 
 	if (query.isError && !data) {
 		return (
