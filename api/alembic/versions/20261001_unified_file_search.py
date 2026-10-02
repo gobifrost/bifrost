@@ -1,7 +1,7 @@
 """Unified source search: solution_file_index, optional pg_trgm, MCP tool rename.
 
 Revision ID: 20261001_unified_file_search
-Revises: 20261001_webhook_secret_enc
+Revises: 20261001_graph_client_state_enc
 Create Date: 2026-10-01
 
 pg_trgm is an accelerator only. Source search issues the same ILIKE/LIKE
@@ -15,7 +15,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision = "20261001_unified_file_search"
-down_revision = "20261001_webhook_secret_enc"
+down_revision = "20261001_graph_client_state_enc"
 branch_labels = None
 depends_on = None
 
