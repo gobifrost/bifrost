@@ -1,8 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { apiClient, authFetch } from "./api-client";
+import { apiClient, authFetch, setRefusedChangeListener } from "./api-client";
 import { ACCESS_TOKEN_KEY } from "./auth-token";
-import { AUTHORIZATION_QUERY_KEY } from "./authorization";
-import { queryClient } from "./queryClient";
 
 interface TestPlatformAuthBridge {
 	getAccessToken: () => string | null;
@@ -385,13 +383,15 @@ describe("apiClient refused changes", () => {
 		vi.stubGlobal("fetch", fetchMock);
 	});
 	afterEach(() => {
+		setRefusedChangeListener(null);
 		vi.restoreAllMocks();
 		vi.unstubAllGlobals();
 		localStorage.clear();
 	});
 
-	it("refetches the caller's authorization when a change is refused", async () => {
-		const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+	it("tells the listener when a change is refused", async () => {
+		const listener = vi.fn();
+		setRefusedChangeListener(listener);
 		fetchMock.mockResolvedValueOnce(
 			mockJsonResponse(403, {
 				detail: "You don't have permission to manage users",
@@ -405,17 +405,16 @@ describe("apiClient refused changes", () => {
 		} as never);
 
 		expect(response.status).toBe(403);
-		expect(invalidate).toHaveBeenCalledWith({
-			queryKey: AUTHORIZATION_QUERY_KEY,
-		});
+		expect(listener).toHaveBeenCalledOnce();
 	});
 
-	it("leaves authorization alone when a read is refused", async () => {
-		const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+	it("stays quiet when a read is refused", async () => {
+		const listener = vi.fn();
+		setRefusedChangeListener(listener);
 		fetchMock.mockResolvedValueOnce(mockResponse(403));
 
 		await apiClient.GET("/api/version", { fetch: fetchMock } as never);
 
-		expect(invalidate).not.toHaveBeenCalled();
+		expect(listener).not.toHaveBeenCalled();
 	});
 });

@@ -12,8 +12,6 @@ import createClient from "openapi-fetch";
 import createQueryClient from "openapi-react-query";
 import type { paths } from "./v1";
 import { parseApiError, ApiError, RateLimitError } from "./api-error";
-import { AUTHORIZATION_QUERY_KEY } from "./authorization";
-import { queryClient } from "./queryClient";
 import {
 	ACCESS_TOKEN_KEY,
 	clearAuthTokens,
@@ -294,6 +292,17 @@ export function getCsrfToken(): string | null {
 /**
  * Check if request method requires CSRF protection
  */
+let refusedChangeListener: (() => void) | null = null;
+
+/**
+ * Run ``listener`` whenever the server refuses a change with 403: the UI
+ * offered something the caller may no longer do. ``main.tsx`` uses it to
+ * refetch the caller's authorization. Pass ``null`` to remove it.
+ */
+export function setRefusedChangeListener(listener: (() => void) | null) {
+	refusedChangeListener = listener;
+}
+
 function requiresCsrf(method: string): boolean {
 	return ["POST", "PUT", "PATCH", "DELETE"].includes(method.toUpperCase());
 }
@@ -372,12 +381,8 @@ baseClient.use({
 
 		// 403 Forbidden = permission issue, don't redirect (user is authenticated)
 		// Let the calling code handle displaying an appropriate error message.
-		// A refused change means the UI offered something the server no
-		// longer allows: refetch the caller's authorization so it corrects.
 		if (response.status === 403 && requiresCsrf(request.method)) {
-			void queryClient.invalidateQueries({
-				queryKey: AUTHORIZATION_QUERY_KEY,
-			});
+			refusedChangeListener?.();
 		}
 
 		// Retry transient 5xx (502/503/504) on idempotent methods. Rides

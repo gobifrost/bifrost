@@ -5,6 +5,8 @@ import { Toaster } from "@/components/ui/sonner";
 import "./index.css";
 import App from "./App.tsx";
 import { queryClient } from "./lib/queryClient";
+import { setRefusedChangeListener } from "./lib/api-client";
+import { invalidateAuthorization } from "./lib/authorization";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { OrgScopeQueryInvalidator } from "./components/OrgScopeQueryInvalidator";
 import { configureMonaco } from "./lib/monaco-setup";
@@ -19,6 +21,10 @@ window.addEventListener("vite:preloadError", handleVitePreloadError);
 
 // Expose platform React via import map so esm.sh packages use the same instance
 initReactShim();
+
+// A refused change means the UI offered something the server no longer
+// allows: refetch the caller's authorization so the UI corrects itself.
+setRefusedChangeListener(() => void invalidateAuthorization(queryClient));
 
 // Configure Monaco editor before React renders (sets up CDN paths for workers)
 configureMonaco();
