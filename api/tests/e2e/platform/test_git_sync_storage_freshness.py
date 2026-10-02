@@ -4,6 +4,9 @@ Editor, MCP and CLI writes land in S3 ``_repo/`` only. Commit, sync and discard
 work on the persistent working tree, so they must never act on a tree that
 predates those writes: sync and discard upload it back with ``--delete``.
 
+A merge left unresolved after a conflicting sync lives only in the working
+tree, so it must never be mirrored to storage either.
+
 The working tree, including ``.git/config``, is mirrored to storage and into
 retry checkpoints, so the GitHub token must never be written into it.
 """
@@ -13,7 +16,7 @@ from pathlib import Path
 
 import pytest
 import pytest_asyncio
-from git import Repo
+from git import GitCommandError, Repo
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import get_settings
@@ -22,6 +25,8 @@ from src.services.repo_storage import RepoStorage
 EDITED = "notes/git_sync_freshness_edited.txt"
 SAME_SIZE = "notes/git_sync_freshness_same_size.txt"
 CREATED = "notes/git_sync_freshness_created.txt"
+CONFLICTED = "modules/git_sync_merge_conflicted.py"
+UNRELATED = "modules/git_sync_merge_unrelated.py"
 PAT = "ghp_e2eSecretToken0123456789abcdef"
 TOKENIZED_REMOTE = f"https://x-access-token:{PAT}@github.com/owner/repo.git"
 
@@ -182,3 +187,88 @@ async def test_disconnect_removes_stored_credentials(
     ):
         assert PAT not in config
         assert "https://github.com/owner/repo.git" in config
+
+
+async def _start_conflicting_merge(
+    service, storage: RepoStorage, bare_repo: Path, work_dir: Path, tmp_path: Path,
+) -> Repo:
+    """Leave the working tree mid-merge, as a sync that hit conflicts does.
+
+    Storage still holds the fetched files, since a conflicting sync never
+    publishes. UNRELATED carries an uncommitted edit the user may discard.
+    """
+    await storage.write(CONFLICTED, b"value = 'base'\n")
+    await storage.write(UNRELATED, b"value = 'base'\n")
+    fetched = await service.desktop_fetch()
+    assert fetched.success, fetched.error
+
+    repo = Repo(str(work_dir))
+    repo.git.checkout("-B", "main")
+    repo.git.add(A=True)
+    repo.index.commit("base")
+    repo.git.push("origin", "main")
+
+    other = Repo.clone_from(str(bare_repo), str(tmp_path / "other"), branch="main")
+    (Path(other.working_dir) / CONFLICTED).write_text("value = 'theirs'\n")
+    other.git.add(A=True)
+    other.index.commit("remote edit")
+    other.git.push("origin", "main")
+
+    (work_dir / CONFLICTED).write_text("value = 'ours'\n")
+    repo.git.add(A=True)
+    repo.index.commit("local edit")
+    (work_dir / UNRELATED).write_text("value = 'edited'\n")
+    repo.git.fetch("origin")
+    with pytest.raises(GitCommandError):
+        repo.git.merge("origin/main")
+    assert (work_dir / ".git" / "MERGE_HEAD").exists()
+    return repo
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+async def test_discard_during_merge_never_publishes_conflicts(
+    db_session: AsyncSession,
+    storage: RepoStorage,
+    bare_repo: Path,
+    work_dir: Path,
+    tmp_path: Path,
+):
+    from src.core.module_cache import get_module
+    from src.services.github_sync import GitHubSyncService
+
+    service = GitHubSyncService(db=db_session, repo_url=f"file://{bare_repo}", branch="main")
+    await _start_conflicting_merge(service, storage, bare_repo, work_dir, tmp_path)
+    stored_before = {path: await storage.read(path) for path in await storage.list("")}
+
+    discard = await service.desktop_discard([UNRELATED])
+
+    assert discard.success is False
+    assert "merge is in progress" in (discard.error or "")
+    assert {path: await storage.read(path) for path in await storage.list("")} == stored_before
+    assert b"<<<<<<<" not in await storage.read(CONFLICTED)
+    module = await get_module(CONFLICTED)
+    assert module is None or "<<<<<<<" not in module["content"]
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+async def test_discard_after_aborting_merge_publishes_the_revert(
+    db_session: AsyncSession,
+    storage: RepoStorage,
+    bare_repo: Path,
+    work_dir: Path,
+    tmp_path: Path,
+):
+    from src.services.github_sync import GitHubSyncService
+
+    service = GitHubSyncService(db=db_session, repo_url=f"file://{bare_repo}", branch="main")
+    await _start_conflicting_merge(service, storage, bare_repo, work_dir, tmp_path)
+    aborted = await service.desktop_abort_merge()
+    assert aborted.success, aborted.error
+
+    discard = await service.desktop_discard([UNRELATED])
+
+    assert discard.success, discard.error
+    assert await storage.read(UNRELATED) == b"value = 'base'\n"
+    assert not await storage.exists(".git/MERGE_HEAD")

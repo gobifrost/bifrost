@@ -39,7 +39,12 @@ from src.models.contracts.github import (
     WorkspaceFileChange,
     WorkspaceSyncPlan,
 )
-from src.services.git_repo_manager import GitRepoManager, hash_file, iter_tree_metadata
+from src.services.git_repo_manager import (
+    GitRepoManager,
+    hash_file,
+    iter_tree_metadata,
+    merge_in_progress,
+)
 from src.services.github_sync_entity_metadata import extract_entity_metadata
 
 if TYPE_CHECKING:
@@ -1471,6 +1476,15 @@ class GitHubSyncService:
             async with self.repo_manager.lock() as work_dir:
                 await self.repo_manager.ensure_storage_unchanged(work_dir, self.branch)
                 repo = self._open_or_init(work_dir)
+                if merge_in_progress(work_dir, repo):
+                    # Syncing up would publish the conflict markers to storage.
+                    return DiscardResult(
+                        success=False,
+                        error=(
+                            "A merge is in progress. Resolve the conflicts or abort "
+                            "the merge before discarding changes. Nothing was changed."
+                        ),
+                    )
                 discarded = []
 
                 for path in paths:
