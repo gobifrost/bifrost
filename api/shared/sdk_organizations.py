@@ -63,7 +63,7 @@ class OrganizationServiceError(Exception):
 async def list_organizations(
     session: AsyncSession,
     *,
-    reach: "OrgReach",
+    reach: OrgReach,
     include_inactive: bool = False,
 ) -> list[OrganizationPublic]:
     """List the organizations in ``reach``, provider first then active then

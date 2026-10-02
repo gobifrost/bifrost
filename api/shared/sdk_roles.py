@@ -377,7 +377,7 @@ async def list_role_users(
     session: AsyncSession,
     *,
     role_id: UUID,
-    reach: "OrgReach",
+    reach: OrgReach,
     search: str | None = None,
     limit: int | None = None,
     offset: int = 0,
