@@ -13,7 +13,6 @@ Unlike app_compiler (per-file Babel), this pipeline:
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import tempfile
@@ -27,6 +26,7 @@ from bifrost.platform_names import PLATFORM_EXPORT_NAMES
 from src.core.log_safety import log_safe
 from src.core.malloc import trim_malloc
 from src.services.app_storage import AppStorageService
+from src.services.node_subprocess import run_node_script
 from src.services.repo_storage import RepoStorage
 
 logger = logging.getLogger(__name__)
@@ -700,14 +700,8 @@ class BundlerService:
           {"success": False, "errors": [...], "warnings": [...], "duration_ms": N}
         """
         input_data = json.dumps(cfg).encode()
-        proc = await asyncio.create_subprocess_exec(
-            "node", str(BUNDLE_SCRIPT),
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await proc.communicate(input=input_data)
-        if proc.returncode != 0:
+        returncode, stdout, stderr = await run_node_script(BUNDLE_SCRIPT, input_data)
+        if returncode != 0:
             err_text = stderr.decode(errors="replace").strip() or "non-zero exit from node"
             return {"success": False, "errors": [{"text": err_text}]}
         try:
