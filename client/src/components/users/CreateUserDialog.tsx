@@ -31,7 +31,6 @@ import {
 } from "@/components/ui/command";
 import { Shield, AlertCircle, Loader2, ChevronsUpDown, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useQueryClient } from "@tanstack/react-query";
 import { useCreateUser } from "@/hooks/useUsers";
 import { useRoles, useAssignUsersToRole } from "@/hooks/useRoles";
 import { useOrganizations } from "@/hooks/useOrganizations";
@@ -82,7 +81,6 @@ function CreateUserDialogContent({
 	);
 	const [rolesPopoverOpen, setRolesPopoverOpen] = useState(false);
 
-	const queryClient = useQueryClient();
 	const createMutation = useCreateUser();
 	const [createdUser, setCreatedUser] = useState<Awaited<
 		ReturnType<typeof createMutation.mutateAsync>
@@ -208,9 +206,6 @@ function CreateUserDialogContent({
 					});
 					completedRoles.current.add(roleId);
 				}
-				await queryClient.invalidateQueries({
-					queryKey: ["get", "/api/users/{user_id}/roles"],
-				});
 			}
 
 			toast.success("User created successfully", {

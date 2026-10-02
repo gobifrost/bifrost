@@ -108,18 +108,6 @@ export function useUser(userId: string | undefined) {
 }
 
 /**
- * Fetch roles for a specific user
- */
-export function useUserRoles(userId: string | undefined) {
-	return $api.useQuery(
-		"get",
-		"/api/users/{user_id}/roles",
-		{ params: { path: { user_id: userId! } } },
-		{ enabled: !!userId },
-	);
-}
-
-/**
  * A user's base role, additional roles (with where each applies), and the
  * roles the caller may grant them.
  */
@@ -158,9 +146,6 @@ export function useReplaceUserRoleAssignments() {
 			queryClient.invalidateQueries({
 				queryKey: ["get", "/api/users/{user_id}"],
 			});
-			queryClient.invalidateQueries({
-				queryKey: ["get", "/api/users/{user_id}/roles"],
-			});
 			queryClient.invalidateQueries({ queryKey: ["get", "/api/roles"] });
 			queryClient.invalidateQueries({
 				queryKey: ["get", "/api/roles/{role_id}/users"],
@@ -168,18 +153,6 @@ export function useReplaceUserRoleAssignments() {
 			void invalidateAuthorization(queryClient);
 		},
 	});
-}
-
-/**
- * Fetch forms accessible to a specific user
- */
-export function useUserForms(userId: string | undefined) {
-	return $api.useQuery(
-		"get",
-		"/api/users/{user_id}/forms",
-		{ params: { path: { user_id: userId! } } },
-		{ enabled: !!userId },
-	);
 }
 
 /**
