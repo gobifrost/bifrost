@@ -409,26 +409,6 @@ jobs:
     if: github.event_name != 'push' || github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
     name: Unit Tests
-    strategy:  # TEMP BISECT C (PR #873) — revert before merge
-      fail-fast: false
-      matrix:
-        leg:
-          - id: writers-rest
-            args: tests/unit/test_file_index_writers.py -k "not auto_migrate"
-          - id: writers-automigrate
-            args: tests/unit/test_file_index_writers.py -k auto_migrate
-          - id: matching-rest
-            args: tests/unit/services/test_source_search_matching.py -k "not catastrophic"
-          - id: matching-catastrophic
-            args: tests/unit/services/test_source_search_matching.py -k catastrophic
-          - id: search-service
-            args: tests/unit/services/test_source_search_service.py
-          - id: reconciler
-            args: tests/unit/test_file_index_reconciler.py
-          - id: index-service
-            args: tests/unit/test_file_index_service.py
-          - id: single-writer-cursor
-            args: tests/unit/test_file_index_single_writer.py tests/unit/services/test_source_search_cursor.py
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -460,7 +440,7 @@ jobs:
         run: |
           chmod +x test.sh
           timeout -k 30 600 ./test.sh stack up
-          timeout -k 30 900 ./test.sh ${{ matrix.leg.args }} -v  # TEMP BISECT C
+          timeout -k 30 900 ./test.sh tests/unit/test_path_glob.py -v  # TEMP BISECT B: stack up + one pure test
 
       - name: TEMP DIAGNOSTIC (PR #873) — stack state after unit tests
         if: always()
@@ -476,7 +456,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: unit-diagnostic-logs-${{ matrix.leg.id }}
+          name: unit-diagnostic-logs
           path: /tmp/bifrost-*/
           if-no-files-found: warn
           retention-days: 3
