@@ -35,7 +35,10 @@
    and the service it calls; a token can sit in a claim or a repository
    argument without gating anyone (`no_caller_effect`). A check the one-hop
    token scan cannot see (a module-local helper, a deeper service) still gets
-   its `inline_effect`, with `reason` saying where the check lives. Set
+   its `inline_effect`, with `reason` saying where the check lives. A route
+   cut over to the evaluator depends on `CurrentActiveUser` and decides
+   through `src.services.authorization.enforce` by this entry's operation
+   key; its `current_gate` is `evaluator`. Set
    `access_class` to the
    narrowest class the classification rules support (in short:
    public/personal/execute/own_private_agent/table_policy/embed before

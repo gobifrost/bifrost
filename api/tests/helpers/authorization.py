@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+import importlib
+from contextlib import ExitStack, contextmanager
 from unittest.mock import AsyncMock, patch
 from uuid import UUID, uuid4
 
@@ -39,10 +40,8 @@ def admin_caller(email: str = "admin@example.com", user_id: UUID | None = None) 
 def handlers_as(caller: Caller, module: str):
     """Make the handlers in ``module`` load ``caller`` instead of reading
     the database, for router-boundary tests with a mocked session."""
-    loaded = AsyncMock(return_value=caller)
-    with patch(f"{module}.load_caller", new=loaded):
-        if hasattr(__import__(module, fromlist=["_"]), "authorize_operation"):
-            with patch(f"{module}.authorize_operation", new=AsyncMock(return_value=caller)):
-                yield caller
-        else:
-            yield caller
+    with ExitStack() as stack:
+        for name in ("load_caller", "authorize_operation"):
+            if hasattr(importlib.import_module(module), name):
+                stack.enter_context(patch(f"{module}.{name}", new=AsyncMock(return_value=caller)))
+        yield caller

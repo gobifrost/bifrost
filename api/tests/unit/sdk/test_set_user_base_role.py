@@ -73,8 +73,8 @@ async def test_toggling_back_and_forth_keeps_invariant(db_session):
 
 @pytest.mark.asyncio
 async def test_rejects_non_base_role_id(db_session):
-    """Platform Operator is builtin but NOT a base role — a user's
-    base_role_id must always be Platform Admin or User."""
+    """Platform Operator and Secrets Reader are builtin but never base
+    roles — a user's base_role_id is Platform Admin, User, or a custom role."""
     org = await _seed_org(db_session)
     user = await _seed_user(db_session, organization_id=org.id)
 

@@ -14,6 +14,7 @@ over the worker socket.
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 import pytest
 
@@ -31,8 +32,10 @@ def _tag() -> str:
     return uuid.uuid4().hex[:8]
 
 
-def _ok(response, status: int = 200):
-    assert response.status_code == status, f"{response.request.method} {response.request.url}: {response.status_code} {response.text}"
+def _ok(response, status: int = 200) -> Any:
+    assert response.status_code == status, (
+        f"{response.request.method} {response.request.url}: {response.status_code} {response.text}"
+    )
     return response.json() if response.content else None
 
 

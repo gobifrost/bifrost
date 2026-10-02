@@ -63,8 +63,9 @@ class User(Base):
     organization_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("organizations.id"), nullable=True
     )
-    # The R2b base role. Always Platform Admin or User (never Platform
-    # Operator, which is builtin but not base). Kept in lockstep with
+    # The base role: Platform Admin, User, or a custom role (never Platform
+    # Operator or Secrets Reader, which are builtin but never base). A role
+    # that is anyone's base role can't be deleted. Kept in lockstep with
     # `is_superuser` by `shared.sdk_users.set_user_base_role` — see that
     # function's docstring for the invariant. The column default below
     # mirrors that same invariant for callers that construct `User(...)`
@@ -139,13 +140,14 @@ class Role(Base):
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     name: Mapped[str] = mapped_column(String(100))
     description: Mapped[str | None] = mapped_column(Text, default=None)
-    # A base role (Platform Admin, User) is one every user holds exactly one
-    # of via `User.base_role_id`, never assigned through `user_roles`.
+    # The builtin base roles (Platform Admin, User) are held only through
+    # `User.base_role_id`, never assigned through `user_roles`. A custom role
+    # can also be someone's base role (it keeps is_base false).
     is_base: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
     # A builtin role (Platform Admin, User, Platform Operator, Secrets
     # Reader) has a fixed id (see `shared.builtin_roles`), can't be
-    # renamed/deleted, and is hidden from the roles list/get/resource-
-    # assignment surfaces until R3a ships the UI for it.
+    # renamed/deleted, and is hidden from the roles list (unless asked for)
+    # and the get/resource-assignment surfaces.
     is_builtin: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
     created_by: Mapped[str] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(
