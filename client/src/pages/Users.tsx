@@ -35,6 +35,8 @@ import { UserAccountActionDialog } from "@/components/users/UserAccountActionDia
 import { SearchBox } from "@/components/search/SearchBox";
 import {
 	useDeleteUser,
+	useResetUserMfa,
+	useSignOutUserEverywhere,
 	useUser,
 	useUsersPage,
 	useUpdateUser,
@@ -82,6 +84,8 @@ import { ListPagination } from "@/components/pagination/ListPagination";
 import type { components, components as v1 } from "@/lib/v1";
 type User = components["schemas"]["UserPublic"];
 type Organization = components["schemas"]["OrganizationPublic"];
+type UserMfaReset = components["schemas"]["UserMfaResetResponse"];
+type SecurityAction = { mode: "reset-mfa" | "sign-out"; user: User } | null;
 type RegistrationLinkDialogState = {
 	userId: string;
 	email: string;
@@ -91,6 +95,30 @@ type RegistrationLinkDialogState = {
 type SortColumn = "name" | "email" | "status" | "created" | "last_login";
 type SortDirection = "asc" | "desc";
 const PAGE_SIZE = 25;
+
+const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
+
+function describeMfaReset(result: UserMfaReset): string {
+	const removed = [
+		result.totp_removed ? "the authenticator app" : null,
+		result.recovery_codes_removed > 0
+			? count(result.recovery_codes_removed, "recovery code")
+			: null,
+		result.passkeys_removed > 0
+			? count(result.passkeys_removed, "passkey")
+			: null,
+		result.trusted_devices_revoked > 0
+			? count(result.trusted_devices_revoked, "remembered device")
+			: null,
+	].filter((part) => part !== null);
+	return [
+		removed.length > 0
+			? `Removed ${removed.join(", ")}.`
+			: "They had no MFA set up.",
+		`Ended ${count(result.sessions_revoked, "session")}.`,
+		"They'll set up MFA at their next sign-in.",
+	].join(" ");
+}
 
 function SortIcon({
 	column,
@@ -222,6 +250,7 @@ export function Users() {
 	const [offset, setOffset] = useState(0);
 	const [registrationLinkDialog, setRegistrationLinkDialog] =
 		useState<RegistrationLinkDialogState>(null);
+	const [securityAction, setSecurityAction] = useState<SecurityAction>(null);
 
 	const { scope } = useOrgScope();
 	const { user: currentUser } = useAuth();
@@ -262,6 +291,8 @@ export function Users() {
 	}, [routeUserRetrySurface]);
 	const deleteMutation = useDeleteUser();
 	const updateMutation = useUpdateUser();
+	const resetMfaMutation = useResetUserMfa();
+	const signOutMutation = useSignOutUserEverywhere();
 	const resendMutation = useResendInvite();
 	const regenerateMutation = useRegenerateInvite();
 	const revokeMutation = useRevokeInvite();
@@ -447,6 +478,27 @@ export function Users() {
 		setIsDeleteOpen(false);
 		setSelectedUser(undefined);
 	};
+	const handleConfirmSecurityAction = async () => {
+		if (!securityAction) return;
+		const { mode, user } = securityAction;
+		const name = user.name || user.email;
+		if (mode === "reset-mfa") {
+			const result = await resetMfaMutation.mutateAsync({
+				params: { path: { user_id: user.id } },
+			});
+			toast.success(`MFA reset for ${name}`, {
+				description: describeMfaReset(result),
+			});
+		} else {
+			const result = await signOutMutation.mutateAsync({
+				body: { user_id: user.id },
+			});
+			toast.success(`${name} signed out`, {
+				description: `Ended ${count(result.sessions_revoked, "session")}.`,
+			});
+		}
+		setSecurityAction(null);
+	};
 	const handleEditClose = () => {
 		if (userId) navigate("/users", { replace: true });
 	};
@@ -523,6 +575,8 @@ export function Users() {
 						),
 				})
 			}
+			onResetMfa={() => setSecurityAction({ mode: "reset-mfa", user })}
+			onSignOut={() => setSecurityAction({ mode: "sign-out", user })}
 			onToggleActive={() => handleToggleActive(user)}
 			onDelete={() => handleDeleteUser(user)}
 		/>
@@ -1321,6 +1375,17 @@ export function Users() {
 					name={selectedUser.name || selectedUser.email}
 					onOpenChange={setIsDisableOpen}
 					onConfirm={handleConfirmDisable}
+				/>
+			)}
+			{securityAction && (
+				<UserAccountActionDialog
+					mode={securityAction.mode}
+					returnFocusRef={createUserButtonRef}
+					name={securityAction.user.name || securityAction.user.email}
+					onOpenChange={(open) => {
+						if (!open) setSecurityAction(null);
+					}}
+					onConfirm={handleConfirmSecurityAction}
 				/>
 			)}
 			{isDeleteOpen && selectedUser && (

@@ -11,6 +11,8 @@ const mockUseUsersPage = vi.fn();
 const mockUseUser = vi.fn();
 const mockUseDeleteUser = vi.fn();
 const mockUseUpdateUser = vi.fn();
+const mockResetMfa = vi.fn();
+const mockSignOut = vi.fn();
 const mockUseOrganizations = vi.fn();
 const mockUseAuth = vi.fn();
 const mockUseOrgScope = vi.fn();
@@ -29,6 +31,8 @@ vi.mock("@/hooks/useUsers", () => ({
 	useUser: (...args: unknown[]) => mockUseUser(...args),
 	useDeleteUser: () => mockUseDeleteUser(),
 	useUpdateUser: () => mockUseUpdateUser(),
+	useResetUserMfa: () => ({ mutateAsync: mockResetMfa }),
+	useSignOutUserEverywhere: () => ({ mutateAsync: mockSignOut }),
 }));
 
 vi.mock("@/hooks/useOrganizations", () => ({
@@ -714,6 +718,94 @@ describe("Users — permission-driven actions", () => {
 		).not.toBeInTheDocument();
 	});
 
+	it("resets a user's MFA after the confirm dialog and reports what was removed", async () => {
+		mockResetMfa.mockResolvedValue({
+			totp_removed: true,
+			recovery_codes_removed: 8,
+			passkeys_removed: 1,
+			trusted_devices_revoked: 2,
+			sessions_revoked: 3,
+		});
+		authz.summary = operatorSummary();
+		const { user } = renderUsersRoute();
+
+		await user.click(
+			screen.getByRole("button", { name: "Ordinary Person actions" }),
+		);
+		await user.click(screen.getByRole("menuitem", { name: "Reset MFA" }));
+		expect(screen.getByRole("alertdialog")).toHaveTextContent(
+			"Removes Ordinary Person’s authenticator app, recovery codes, passkeys and remembered devices, and signs them out everywhere.",
+		);
+		expect(mockResetMfa).not.toHaveBeenCalled();
+		await user.click(screen.getByRole("button", { name: "Reset MFA" }));
+
+		await waitFor(() =>
+			expect(mockResetMfa).toHaveBeenCalledWith({
+				params: { path: { user_id: "ordinary" } },
+			}),
+		);
+		expect(mockToastSuccess).toHaveBeenCalledWith(
+			"MFA reset for Ordinary Person",
+			{
+				description:
+					"Removed the authenticator app, 8 recovery codes, 1 passkey, 2 remembered devices. Ended 3 sessions. They'll set up MFA at their next sign-in.",
+			},
+		);
+		await waitFor(() =>
+			expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
+		);
+	});
+
+	it("shows the passkey-only refusal inside the dialog and leaves it open", async () => {
+		mockResetMfa.mockRejectedValue({
+			detail: "This user signs in only with a passkey. Resetting would leave them no way to sign in.",
+		});
+		const { user } = renderUsersRoute();
+
+		await user.click(
+			screen.getByRole("button", { name: "Ordinary Person actions" }),
+		);
+		await user.click(screen.getByRole("menuitem", { name: "Reset MFA" }));
+		await user.click(screen.getByRole("button", { name: "Reset MFA" }));
+
+		expect(await screen.findByRole("alert")).toHaveTextContent(
+			"This user signs in only with a passkey. Resetting would leave them no way to sign in.",
+		);
+		expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+		expect(mockToastSuccess).not.toHaveBeenCalled();
+	});
+
+	it("signs a user out of every device through the admin revoke endpoint", async () => {
+		mockSignOut.mockResolvedValue({
+			message: "All sessions have been revoked",
+			sessions_revoked: 1,
+		});
+		const { user } = renderUsersRoute();
+
+		await user.click(
+			screen.getByRole("button", { name: "Ordinary Person actions" }),
+		);
+		await user.click(
+			screen.getByRole("menuitem", { name: "Sign out of all devices" }),
+		);
+		expect(screen.getByRole("alertdialog")).toHaveTextContent(
+			"Signs Ordinary Person out on every device. They can sign in again right away.",
+		);
+		await user.click(
+			screen.getByRole("button", { name: "Sign out everywhere" }),
+		);
+
+		await waitFor(() =>
+			expect(mockSignOut).toHaveBeenCalledWith({
+				body: { user_id: "ordinary" },
+			}),
+		);
+		expect(mockToastSuccess).toHaveBeenCalledWith(
+			"Ordinary Person signed out",
+			{ description: "Ended 1 session." },
+		);
+	});
+
 	it("shows an operator a protected user's actions disabled, with why", async () => {
 		authz.summary = operatorSummary();
 		const { user } = renderUsersRoute();
@@ -725,9 +817,11 @@ describe("Users — permission-driven actions", () => {
 		expect(
 			screen.getByText(/only a platform admin can change it/i),
 		).toBeInTheDocument();
-		expect(
-			screen.getByRole("menuitem", { name: "Disable" }),
-		).toHaveAttribute("data-disabled");
+		for (const name of ["Reset MFA", "Sign out of all devices", "Disable"]) {
+			expect(screen.getByRole("menuitem", { name })).toHaveAttribute(
+				"data-disabled",
+			);
+		}
 	});
 
 	it("lets a Platform Admin change protected users", async () => {

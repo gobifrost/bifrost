@@ -1,10 +1,12 @@
 import {
 	Ban,
 	Link as LinkIcon,
+	LogOut,
 	Mail,
 	MoreVertical,
 	RefreshCw,
 	Power,
+	ShieldOff,
 	Trash2,
 } from "lucide-react";
 
@@ -26,7 +28,7 @@ interface Props {
 	status: string;
 	isActive: boolean;
 	isSelf: boolean;
-	/** Invites, registration links, enable/disable (users.readwrite). */
+	/** Invites, registration links, MFA reset, sign out, enable/disable (users.readwrite). */
 	canSupport: boolean;
 	/** Permanent deletion (users.lifecycle.readwrite). */
 	canDelete: boolean;
@@ -36,6 +38,8 @@ interface Props {
 	onRegenerate: () => void;
 	onCopyLink: () => void;
 	onRevoke: () => void;
+	onResetMfa: () => void;
+	onSignOut: () => void;
 	onToggleActive: () => void;
 	onDelete: () => void;
 }
@@ -52,6 +56,8 @@ export function UserActionsMenu({
 	onRegenerate,
 	onCopyLink,
 	onRevoke,
+	onResetMfa,
+	onSignOut,
 	onToggleActive,
 	onDelete,
 }: Props) {
@@ -127,14 +133,33 @@ export function UserActionsMenu({
 					</>
 				)}
 				{canSupport && (
-					<DropdownMenuItem
-						className="min-h-11 lg:min-h-9"
-						onClick={onToggleActive}
-						disabled={isSelf || isProtected}
-					>
-						<Power className="h-4 w-4" />
-						{isActive ? "Disable" : "Enable"}
-					</DropdownMenuItem>
+					<>
+						<DropdownMenuItem
+							className="min-h-11 lg:min-h-9"
+							onClick={onResetMfa}
+							disabled={isSelf || isProtected}
+						>
+							<ShieldOff className="h-4 w-4" />
+							Reset MFA
+						</DropdownMenuItem>
+						<DropdownMenuItem
+							className="min-h-11 lg:min-h-9"
+							onClick={onSignOut}
+							disabled={isSelf || isProtected}
+						>
+							<LogOut className="h-4 w-4" />
+							Sign out of all devices
+						</DropdownMenuItem>
+						<DropdownMenuSeparator />
+						<DropdownMenuItem
+							className="min-h-11 lg:min-h-9"
+							onClick={onToggleActive}
+							disabled={isSelf || isProtected}
+						>
+							<Power className="h-4 w-4" />
+							{isActive ? "Disable" : "Enable"}
+						</DropdownMenuItem>
+					</>
 				)}
 				{canDelete && (
 					<DropdownMenuItem

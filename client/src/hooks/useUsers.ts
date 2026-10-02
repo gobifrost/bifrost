@@ -199,6 +199,21 @@ export function useDeleteUser() {
 }
 
 /**
+ * Reset a user's MFA: removes their authenticator app, recovery codes,
+ * passkeys and remembered devices, and signs them out everywhere.
+ */
+export function useResetUserMfa() {
+	return $api.useMutation("post", "/api/users/{user_id}/mfa/reset");
+}
+
+/**
+ * Sign a user out of every device.
+ */
+export function useSignOutUserEverywhere() {
+	return $api.useMutation("post", "/auth/admin/revoke-user");
+}
+
+/**
  * Bulk user operation — move_org / replace_roles / set_active.
  *
  * Returns BulkUserResponse with succeeded[] and failed[{user_id, reason}].
