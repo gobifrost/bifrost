@@ -30,7 +30,7 @@ def org_admin(e2e_client, platform_admin, org1) -> E2EUser:
         },
     )
     assert response.status_code == 201, response.text
-    user = _register_and_authenticate_user(e2e_client, user, skip_registration=False)
+    user = _register_and_authenticate_user(user, skip_registration=False)
     assert user.is_superuser
     user.organization_id = org1["id"]
     return user

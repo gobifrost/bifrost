@@ -86,7 +86,7 @@ def external_user(e2e_client, platform_admin, org1, portal_role) -> E2EUser:
     )
     assert assign.status_code == 204, assign.text
 
-    user = _register_and_authenticate_user(e2e_client, user, skip_registration=False)
+    user = _register_and_authenticate_user(user, skip_registration=False)
     user.organization_id = UUID(org1["id"])
     return user
 

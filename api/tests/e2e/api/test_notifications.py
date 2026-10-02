@@ -107,7 +107,5 @@ class TestNotificationAuthorization:
 
     def test_unauthenticated_cannot_access_notifications(self, e2e_client):
         """Test that unauthenticated requests are rejected."""
-        # Clear any cookies from previous authenticated tests
-        e2e_client.cookies.clear()
         response = e2e_client.get("/api/notifications")
         assert response.status_code in [401, 403, 422]
