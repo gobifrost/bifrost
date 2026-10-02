@@ -45,6 +45,9 @@ def test_utf8_bom_is_stripped():
 @pytest.mark.parametrize(
     "content",
     [b"PK\x03\x04\x00\x00", b"\xff\xfe\xfa", b"a" * (MAX_INDEXABLE_TEXT_BYTES + 1)],
+    # Explicit ids: a bytes param becomes its own test ID, and an 8 MiB ID line
+    # in -v output wedges the GitHub Actions runner.
+    ids=["zip-magic", "invalid-utf8", "oversized"],
 )
 def test_binary_invalid_or_oversized_is_path_only(content):
     assert indexable_text(content) is None
