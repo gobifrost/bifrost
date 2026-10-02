@@ -216,6 +216,15 @@ class TestUpdateUser:
         assert user.base_role_id == custom.id
         assert await _boundaries(db_session, user.id, PLATFORM_ADMIN_ROLE_ID) == set()
 
+    async def test_demoting_a_global_admin_needs_an_organization_first(self, db_session) -> None:
+        from shared.sdk_users import UserServiceError
+
+        user = await _user(db_session, None, admin=True)
+        with pytest.raises(UserServiceError) as exc_info:
+            await self._update(db_session, admin_caller(), user, is_superuser=False)
+        assert exc_info.value.status_code == 409
+        assert user.is_superuser is True
+
     async def test_promoting_adds_platform_admin_and_keeps_the_base_role(self, db_session) -> None:
         user = await _user(db_session, PROVIDER_ORG_ID)
         updated = await self._update(db_session, admin_caller(), user, is_superuser=True)

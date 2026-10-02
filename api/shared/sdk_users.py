@@ -532,7 +532,8 @@ async def update_user(
 
     Raises:
         UserServiceError: 404 when missing, 403 for the system user, 409
-            when moving a Platform Operator out of the provider organization.
+            when moving a Platform Operator out of the provider organization
+            or removing Platform Admin from a Global user.
     """
     from src.services.audit import emit_audit
     from src.services.authorization.enforce import (
@@ -561,6 +562,10 @@ async def update_user(
         and db_user.id in await _platform_operator_holders(session, [db_user.id])
     ):
         raise UserServiceError(409, OPERATOR_MOVE_MESSAGE)
+    if is_superuser is False and db_user.organization_id is None and organization_id is None:
+        from src.services.user_role_assignments import ADMIN_REMOVAL_MESSAGE
+
+        raise UserServiceError(409, ADMIN_REMOVAL_MESSAGE)
 
     if email is not None:
         db_user.email = email
