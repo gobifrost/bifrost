@@ -33,7 +33,7 @@ from tests.e2e.platform.test_r2b_roles_migration_rehearsal import (
 
 pytestmark = pytest.mark.e2e
 
-PREVIOUS_REVISION = "20261001_graph_client_state_enc"
+PREVIOUS_REVISION = "20261001_unified_file_search"
 REVISION = "20261001_r3a_boundary_fill"
 
 PLATFORM_ADMIN_ROLE_ID = UUID("00000000-0000-0000-0000-000000000005")

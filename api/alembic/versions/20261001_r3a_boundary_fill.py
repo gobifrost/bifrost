@@ -1,7 +1,7 @@
 """Give every role assignment made since the R2b backfill its home-org boundary
 
 Revision ID: 20261001_r3a_boundary_fill
-Revises: 20261001_graph_client_state_enc
+Revises: 20261001_unified_file_search
 Create Date: 2026-10-01
 
 The R2b migration (20260929_r2b_roles) gave every existing user_roles row an
@@ -30,7 +30,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "20261001_r3a_boundary_fill"
-down_revision: Union[str, None] = "20261001_graph_client_state_enc"
+down_revision: Union[str, None] = "20261001_unified_file_search"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
