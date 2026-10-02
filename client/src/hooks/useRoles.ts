@@ -39,6 +39,8 @@ export function useRolesPage(params: RolesPageParams) {
 					params: {
 						query: {
 							search: params.search?.trim() || undefined,
+							// The Roles page lists built-in roles too (read-only).
+							include_builtin: true,
 							sort_by: params.sortBy,
 							sort_direction: params.sortDirection,
 							limit: params.limit,

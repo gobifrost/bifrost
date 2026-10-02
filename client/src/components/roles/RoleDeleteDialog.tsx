@@ -21,7 +21,9 @@ export function RoleDeleteDialog({
 	name: string;
 	open: boolean;
 	pending: boolean;
-	error: boolean;
+	/** The server's reason the delete failed, e.g. the role is still
+	 * someone's base role. */
+	error: string | null;
 	onOpenChange: (open: boolean) => void;
 	onDelete: () => void;
 }) {
@@ -51,7 +53,7 @@ export function RoleDeleteDialog({
 						role="alert"
 						className="rounded-[var(--bf-radius-control)] bg-[var(--bf-warning-soft)] p-3 text-sm"
 					>
-						Could not delete the role. Try again.
+						{error}
 					</p>
 				)}
 				<AlertDialogFooter>

@@ -24,6 +24,11 @@ vi.mock("@/components/roles/RoleDialog", () => ({
 	RoleDialog: () => null,
 }));
 
+const authz = vi.hoisted(() => ({ canManage: true }));
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => ({ meets: () => authz.canManage }),
+}));
+
 import { Roles } from "./Roles";
 
 const role = {
@@ -53,6 +58,7 @@ const longRole = {
 
 describe("Roles", () => {
 	beforeEach(() => {
+		authz.canManage = true;
 		mockUseRolesPage.mockReset();
 		mockDeleteMutate.mockReset();
 		mockUseMediaQuery.mockReturnValue(false);
@@ -214,5 +220,57 @@ describe("Roles", () => {
 				.getByRole("link", { name: /2 users/i })
 				.getAttribute("class"),
 		).toContain("rounded-[var(--bf-radius-control)]");
+	});
+
+	it("shows built-in roles read-only, with no edit or delete actions", () => {
+		mockUseRolesPage.mockReturnValue({
+			data: {
+				items: [
+					{
+						...role,
+						id: "operator",
+						name: "Platform Operator",
+						is_builtin: true,
+					},
+					role,
+				],
+				total: 2,
+			},
+			isLoading: false,
+			isFetching: false,
+			isError: false,
+			refetch: vi.fn(),
+		});
+		renderWithProviders(<Roles />);
+
+		expect(screen.getByText("Built-in")).toBeInTheDocument();
+		expect(
+			screen.getByRole("link", { name: "View permissions" }),
+		).toHaveAttribute("href", "/roles/operator");
+		expect(
+			screen.queryByRole("button", { name: "Platform Operator actions" }),
+		).not.toBeInTheDocument();
+		expect(
+			screen.getByRole("button", { name: "Billing admins actions" }),
+		).toBeInTheDocument();
+	});
+
+	it("hides role management from callers who can only view roles", () => {
+		authz.canManage = false;
+		mockUseRolesPage.mockReturnValue({
+			data: { items: [{ ...role, consumer_counts: null }], total: 1 },
+			isLoading: false,
+			isFetching: false,
+			isError: false,
+			refetch: vi.fn(),
+		});
+		renderWithProviders(<Roles />);
+
+		expect(
+			screen.queryByRole("button", { name: "Create role" }),
+		).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", { name: "Billing admins actions" }),
+		).not.toBeInTheDocument();
 	});
 });
