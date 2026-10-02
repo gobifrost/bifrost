@@ -47,7 +47,10 @@ import { useOrgScope } from "@/contexts/OrgScopeContext";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
 import { CreateUserDialog } from "@/components/users/CreateUserDialog";
 import { EditUserDialog } from "@/components/users/EditUserDialog";
-import { UserActionsMenu } from "@/components/users/UserActionsMenu";
+import {
+	PROTECTED_ACCOUNT_NOTICE,
+	UserActionsMenu,
+} from "@/components/users/UserActionsMenu";
 import { RegistrationLinkDialog } from "@/components/users/RegistrationLinkDialog";
 import { UserStatusBadge } from "@/components/users/UserStatusBadge";
 import { Badge } from "@/components/ui/badge";
@@ -72,6 +75,8 @@ import {
 	useSendInvite,
 } from "@/hooks/useUserInvites";
 import { useEventSources } from "@/services/events";
+import { orgTarget } from "@/lib/authorization";
+import { useAuthorization } from "@/services/authorization";
 import { toast } from "sonner";
 import { ListPagination } from "@/components/pagination/ListPagination";
 import type { components, components as v1 } from "@/lib/v1";
@@ -101,6 +106,19 @@ function SortIcon({
 		<ArrowUp className="inline ml-1 h-3 w-3" />
 	) : (
 		<ArrowDown className="inline ml-1 h-3 w-3" />
+	);
+}
+
+function ProtectedBadge() {
+	return (
+		<Tooltip>
+			<TooltipTrigger asChild>
+				<Badge variant="warning" className="shrink-0 text-xs">
+					Protected
+				</Badge>
+			</TooltipTrigger>
+			<TooltipContent>{PROTECTED_ACCOUNT_NOTICE}</TooltipContent>
+		</Tooltip>
 	);
 }
 
@@ -206,10 +224,12 @@ export function Users() {
 		useState<RegistrationLinkDialogState>(null);
 
 	const { scope } = useOrgScope();
-	const { user: currentUser, isPlatformAdmin } = useAuth();
+	const { user: currentUser } = useAuth();
+	const authorization = useAuthorization();
+	const canSeeOrganizations = authorization.canAnywhere("organizations.read");
 
 	const usersQuery = useUsersPage({
-		scope: isPlatformAdmin ? filterOrgId : undefined,
+		scope: canSeeOrganizations ? filterOrgId : undefined,
 		includeInactive: showDisabled,
 		search: searchTerm,
 		sortBy: sortColumn,
@@ -259,7 +279,7 @@ export function Users() {
 		) ?? false;
 
 	const { data: organizations } = useOrganizations({
-		enabled: isPlatformAdmin,
+		enabled: canSeeOrganizations,
 	});
 
 	const getOrgInfo = (
@@ -270,10 +290,45 @@ export function Users() {
 		return {
 			name:
 				org?.name ||
-				(organizations ? "Unknown organization" : "Loading…"),
+				(organizations
+					? "Unknown organization"
+					: canSeeOrganizations
+						? "Loading…"
+						: "Not visible to you"),
 			isProvider: org?.is_provider ?? false,
 		};
 	};
+
+	// Per-row actions follow the row's organization; a protected user can be
+	// changed only by a Platform Admin.
+	const rowAbilities = (user: User) => {
+		const target = orgTarget(user.organization_id);
+		return {
+			canSupport: authorization.canAt("users.readwrite", target),
+			canDelete: authorization.canAt("users.lifecycle.readwrite", target),
+			isProtected: user.is_protected && !authorization.isPlatformAdmin,
+		};
+	};
+
+	// Bulk operations follow the organization filter (anywhere when it shows
+	// every organization); the server still decides each user and reports
+	// per-user failures.
+	const canBulk = (permission: string) =>
+		filterOrgId
+			? authorization.canAt(permission, orgTarget(filterOrgId))
+			: authorization.canAnywhere(permission);
+	const bulkAbilities = {
+		canMoveOrg: canBulk("users.lifecycle.readwrite"),
+		// The replace-roles dialog lists every role, which needs roles.read.
+		canReplaceRoles:
+			canBulk("roleassignments.readwrite") &&
+			authorization.meets({ permission: "roles.read", at: "global" }),
+		canSetActive: canBulk("users.readwrite"),
+	};
+	const showSelection =
+		bulkAbilities.canMoveOrg ||
+		bulkAbilities.canReplaceRoles ||
+		bulkAbilities.canSetActive;
 
 	const handleSort = (column: SortColumn) => {
 		if (sortColumn === column) {
@@ -413,6 +468,7 @@ export function Users() {
 			status={user.invite_status ?? "active"}
 			isActive={user.is_active}
 			isSelf={isSelf(user)}
+			{...rowAbilities(user)}
 			onResend={() =>
 				resendMutation.mutate(user.id, {
 					onSuccess: (res) => {
@@ -496,14 +552,16 @@ export function Users() {
 								className={`h-4 w-4 ${usersQuery.isFetching ? "animate-spin motion-reduce:animate-none" : ""}`}
 							/>
 						</Button>
-						<Button
-							className="min-h-11 lg:min-h-0"
-							ref={createUserButtonRef}
-							onClick={() => setIsCreateOpen(true)}
-						>
-							<Plus className="h-4 w-4 mr-1.5" />
-							Create user
-						</Button>
+						{authorization.canAnywhere("users.readwrite") && (
+							<Button
+								className="min-h-11 lg:min-h-0"
+								ref={createUserButtonRef}
+								onClick={() => setIsCreateOpen(true)}
+							>
+								<Plus className="h-4 w-4 mr-1.5" />
+								Create user
+							</Button>
+						)}
 					</>
 				}
 			/>
@@ -560,7 +618,7 @@ export function Users() {
 					placeholder="Search users by email or name..."
 					className="w-full sm:flex-1"
 				/>
-				{isPlatformAdmin && (
+				{canSeeOrganizations && (
 					<div className="w-full sm:w-64">
 						<OrganizationSelect
 							value={filterOrgId}
@@ -634,22 +692,24 @@ export function Users() {
 					isNarrow ? (
 						<div className="rounded-[var(--bf-radius-surface)] border bg-card">
 							<div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-2">
-								<label className="flex min-h-11 items-center gap-3 text-sm">
-									<Checkbox
-										aria-label="Select all visible users"
-										checked={
-											selection.allVisibleSelected
-												? true
-												: selection.someVisibleSelected
-													? "indeterminate"
-													: false
-										}
-										onCheckedChange={() =>
-											selection.toggleAllVisible()
-										}
-									/>
-									Select page
-								</label>
+								{showSelection && (
+									<label className="flex min-h-11 items-center gap-3 text-sm">
+										<Checkbox
+											aria-label="Select all visible users"
+											checked={
+												selection.allVisibleSelected
+													? true
+													: selection.someVisibleSelected
+														? "indeterminate"
+														: false
+											}
+											onCheckedChange={() =>
+												selection.toggleAllVisible()
+											}
+										/>
+										Select page
+									</label>
+								)}
 								<label className="flex min-w-0 items-center gap-2 text-sm">
 									Sort
 									<select
@@ -696,32 +756,34 @@ export function Users() {
 								{users.map((user) => (
 									<li key={user.id} className="min-w-0 p-4">
 										<div className="flex items-start gap-2">
-											<label className="flex h-11 w-11 shrink-0 items-center justify-center">
-												<Checkbox
-													aria-label={
-														isSelf(user)
-															? "Cannot select yourself"
-															: `Select ${user.name || user.email}`
-													}
-													disabled={isSelf(user)}
-													checked={
-														!isSelf(user) &&
-														selection.isSelected(
-															user.id,
-														)
-													}
-													onClick={(event) => {
-														selection.toggle(
-															user.id,
-															{
-																shiftKey:
-																	event.shiftKey,
-															},
-														);
-														event.preventDefault();
-													}}
-												/>
-											</label>
+											{showSelection && (
+												<label className="flex h-11 w-11 shrink-0 items-center justify-center">
+													<Checkbox
+														aria-label={
+															isSelf(user)
+																? "Cannot select yourself"
+																: `Select ${user.name || user.email}`
+														}
+														disabled={isSelf(user)}
+														checked={
+															!isSelf(user) &&
+															selection.isSelected(
+																user.id,
+															)
+														}
+														onClick={(event) => {
+															selection.toggle(
+																user.id,
+																{
+																	shiftKey:
+																		event.shiftKey,
+																},
+															);
+															event.preventDefault();
+														}}
+													/>
+												</label>
+											)}
 											<div className="min-w-0 flex-1">
 												<button
 													type="button"
@@ -758,6 +820,9 @@ export function Users() {
 												<Badge variant="outline">
 													Platform admin
 												</Badge>
+											)}
+											{user.is_protected && (
+												<ProtectedBadge />
 											)}
 											{user.is_external && (
 												<Badge variant="outline">
@@ -825,21 +890,23 @@ export function Users() {
 						<DataTable className="max-h-full">
 							<DataTableHeader>
 								<DataTableRow>
-									<DataTableHead className="w-0 whitespace-nowrap">
-										<Checkbox
-											aria-label="Select all visible users"
-											checked={
-												selection.allVisibleSelected
-													? true
-													: selection.someVisibleSelected
-														? "indeterminate"
-														: false
-											}
-											onCheckedChange={() =>
-												selection.toggleAllVisible()
-											}
-										/>
-									</DataTableHead>
+									{showSelection && (
+										<DataTableHead className="w-0 whitespace-nowrap">
+											<Checkbox
+												aria-label="Select all visible users"
+												checked={
+													selection.allVisibleSelected
+														? true
+														: selection.someVisibleSelected
+															? "indeterminate"
+															: false
+												}
+												onCheckedChange={() =>
+													selection.toggleAllVisible()
+												}
+											/>
+										</DataTableHead>
+									)}
 									<DataTableHead className="w-0 whitespace-nowrap">
 										Organization
 									</DataTableHead>
@@ -979,50 +1046,54 @@ export function Users() {
 											onClick={() => handleEditUser(user)}
 											className={"group/row"}
 										>
-											<DataTableCell
-												className="w-0 whitespace-nowrap"
-												onClick={(e) =>
-													e.stopPropagation()
-												}
-											>
-												{isSelf(user) ? (
-													<Tooltip>
-														<TooltipTrigger asChild>
-															<span>
-																<Checkbox
-																	checked={
-																		false
-																	}
-																	disabled
-																	aria-label="Cannot select yourself"
-																/>
-															</span>
-														</TooltipTrigger>
-														<TooltipContent>
-															You can't include
-															yourself in a bulk
-															action
-														</TooltipContent>
-													</Tooltip>
-												) : (
-													<Checkbox
-														aria-label={`Select ${user.name || user.email}`}
-														checked={selection.isSelected(
-															user.id,
-														)}
-														onClick={(e) => {
-															selection.toggle(
+											{showSelection && (
+												<DataTableCell
+													className="w-0 whitespace-nowrap"
+													onClick={(e) =>
+														e.stopPropagation()
+													}
+												>
+													{isSelf(user) ? (
+														<Tooltip>
+															<TooltipTrigger
+																asChild
+															>
+																<span>
+																	<Checkbox
+																		checked={
+																			false
+																		}
+																		disabled
+																		aria-label="Cannot select yourself"
+																	/>
+																</span>
+															</TooltipTrigger>
+															<TooltipContent>
+																You can't
+																include yourself
+																in a bulk action
+															</TooltipContent>
+														</Tooltip>
+													) : (
+														<Checkbox
+															aria-label={`Select ${user.name || user.email}`}
+															checked={selection.isSelected(
 																user.id,
-																{
-																	shiftKey:
-																		e.shiftKey,
-																},
-															);
-															e.preventDefault();
-														}}
-													/>
-												)}
-											</DataTableCell>
+															)}
+															onClick={(e) => {
+																selection.toggle(
+																	user.id,
+																	{
+																		shiftKey:
+																			e.shiftKey,
+																	},
+																);
+																e.preventDefault();
+															}}
+														/>
+													)}
+												</DataTableCell>
+											)}
 											<DataTableCell className="min-w-0 w-0 whitespace-nowrap text-sm">
 												<span className="inline-flex min-w-0 items-center gap-1">
 													{orgInfo.isProvider ? (
@@ -1052,6 +1123,9 @@ export function Users() {
 																Platform Admin
 															</TooltipContent>
 														</Tooltip>
+													)}
+													{user.is_protected && (
+														<ProtectedBadge />
 													)}
 													{user.is_external && (
 														<Tooltip>
@@ -1124,7 +1198,10 @@ export function Users() {
 							</DataTableBody>
 							<DataTableFooter>
 								<DataTableRow>
-									<DataTableCell colSpan={8} className="p-0">
+									<DataTableCell
+										colSpan={showSelection ? 8 : 7}
+										className="p-0"
+									>
 										<ListPagination
 											offset={offset}
 											limit={PAGE_SIZE}
@@ -1157,6 +1234,7 @@ export function Users() {
 			<BulkActionBar
 				count={selection.count}
 				activeMix={activeMix}
+				{...bulkAbilities}
 				onClear={selection.clear}
 				onMoveOrg={() => setBulkMode("move_org")}
 				onReplaceRoles={() => setBulkMode("replace_roles")}

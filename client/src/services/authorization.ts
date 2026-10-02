@@ -2,13 +2,13 @@
  * The signed-in user's authorization summary (GET /api/auth/authorization).
  *
  * Keyed by user id so a different sign-in never reads another person's
- * summary; refetched on window focus, and after any change to role
- * assignments or role permissions (`invalidateAuthorization`). A refused
- * mutation also refetches it (see api-client), so stale controls correct
+ * summary; refetched on window focus, after any change to role assignments
+ * or role permissions (`invalidateAuthorization` in lib/authorization), and
+ * after a refused change (see api-client), so stale controls correct
  * themselves.
  */
 
-import { useQuery, type QueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 
 import { useAuth } from "@/contexts/AuthContext";
 import { apiClient } from "@/lib/api-client";
@@ -26,10 +26,6 @@ export async function fetchAuthorization(): Promise<AuthorizationSummary> {
 	const { data, error } = await apiClient.GET("/api/auth/authorization");
 	if (error || !data) throw error ?? new Error("Authorization unavailable");
 	return data;
-}
-
-export function invalidateAuthorization(queryClient: QueryClient) {
-	return queryClient.invalidateQueries({ queryKey: AUTHORIZATION_QUERY_KEY });
 }
 
 export function useAuthorization() {

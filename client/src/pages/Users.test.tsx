@@ -39,6 +39,52 @@ vi.mock("@/contexts/AuthContext", () => ({
 	useAuth: () => mockUseAuth(),
 }));
 
+const authz = vi.hoisted(() => ({
+	summary: undefined as AuthorizationSummary | undefined,
+}));
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => ({
+		authorization: authz.summary,
+		isPlatformAdmin: authz.summary?.is_platform_admin ?? false,
+		canAt: (permission: string, target: AuthorizationTarget) =>
+			canAt(authz.summary, permission, target),
+		canAnywhere: (permission: string) =>
+			canAnywhere(authz.summary, permission),
+		meets: (requirement: PermissionRequirement) =>
+			meetsRequirement(authz.summary, requirement),
+	}),
+}));
+
+const PROVIDER_ORG = "org-provider";
+
+function adminSummary(): AuthorizationSummary {
+	return {
+		is_platform_admin: true,
+		home_organization_id: PROVIDER_ORG,
+		provider_organization_id: PROVIDER_ORG,
+		base_role: { id: "admin-role", name: "Platform Admin" },
+		grants: [],
+	};
+}
+
+function operatorSummary(): AuthorizationSummary {
+	return {
+		...adminSummary(),
+		is_platform_admin: false,
+		base_role: { id: "user-role", name: "User" },
+		grants: [
+			"users.read",
+			"users.readwrite",
+			"organizations.read",
+			"roleassignments.read",
+			"roleassignments.readwrite",
+		].map((permission) => ({
+			permission,
+			boundary: { kind: "managed_organizations", organization_id: null },
+		})),
+	};
+}
+
 vi.mock("@/contexts/OrgScopeContext", () => ({
 	useOrgScope: () => mockUseOrgScope(),
 }));
@@ -88,7 +134,19 @@ vi.mock("@/components/users/BulkUserDialogs", () => ({
 	BulkSetActiveDialog: () => null,
 }));
 
+import {
+	canAnywhere,
+	canAt,
+	meetsRequirement,
+	type AuthorizationSummary,
+	type AuthorizationTarget,
+	type PermissionRequirement,
+} from "@/lib/authorization";
 import { Users } from "./Users";
+
+beforeEach(() => {
+	authz.summary = adminSummary();
+});
 
 function renderUsersRoute(initialEntry = "/users") {
 	return renderWithProviders(
@@ -591,5 +649,120 @@ describe("Users", () => {
 		).toBeChecked();
 		await user.click(screen.getByRole("button", { name: "Retry users" }));
 		expect(mockRefetch).toHaveBeenCalledOnce();
+	});
+});
+
+describe("Users — permission-driven actions", () => {
+	beforeEach(() => {
+		mockUseUser.mockReturnValue({ data: undefined });
+		mockUseDeleteUser.mockReturnValue({ mutateAsync: vi.fn() });
+		mockUseUpdateUser.mockReturnValue({ mutateAsync: vi.fn() });
+		mockUseOrganizations.mockReturnValue({
+			data: [
+				{ id: "org-1", name: "Acme", is_provider: false },
+				{ id: PROVIDER_ORG, name: "Provider", is_provider: true },
+			],
+		});
+		mockUseAuth.mockReturnValue({ user: { id: "current-user" } });
+		mockUseOrgScope.mockReturnValue({
+			scope: { type: "global", orgName: null },
+		});
+		mockUseEventSources.mockReturnValue({ data: { items: [] } });
+		mockUseUsersPage.mockReturnValue({
+			data: {
+				items: [
+					makeUser({
+						id: "ordinary",
+						name: "Ordinary Person",
+						email: "ordinary@acme.test",
+						is_superuser: false,
+						organization_id: "org-1",
+					}),
+					makeUser({
+						id: "protected",
+						name: "Guarded Admin",
+						email: "guarded@acme.test",
+						is_superuser: false,
+						is_protected: true,
+						organization_id: "org-1",
+					}),
+				],
+				total: 2,
+			},
+			isLoading: false,
+			isFetching: false,
+			isError: false,
+			refetch: vi.fn(),
+		});
+	});
+
+	it("gives an operator support actions only, and no deletion", async () => {
+		authz.summary = operatorSummary();
+		const { user } = renderUsersRoute();
+
+		expect(
+			screen.getByRole("button", { name: "Create user" }),
+		).toBeInTheDocument();
+		await user.click(
+			screen.getByRole("button", { name: "Ordinary Person actions" }),
+		);
+		expect(
+			screen.getByRole("menuitem", { name: "Disable" }),
+		).not.toHaveAttribute("data-disabled");
+		expect(
+			screen.queryByRole("menuitem", { name: "Delete" }),
+		).not.toBeInTheDocument();
+	});
+
+	it("shows an operator a protected user's actions disabled, with why", async () => {
+		authz.summary = operatorSummary();
+		const { user } = renderUsersRoute();
+
+		expect(screen.getAllByText("Protected").length).toBeGreaterThan(0);
+		await user.click(
+			screen.getByRole("button", { name: "Guarded Admin actions" }),
+		);
+		expect(
+			screen.getByText(/only a platform admin can change it/i),
+		).toBeInTheDocument();
+		expect(
+			screen.getByRole("menuitem", { name: "Disable" }),
+		).toHaveAttribute("data-disabled");
+	});
+
+	it("lets a Platform Admin change protected users", async () => {
+		const { user } = renderUsersRoute();
+
+		await user.click(
+			screen.getByRole("button", { name: "Guarded Admin actions" }),
+		);
+		expect(
+			screen.queryByText(/only a platform admin can change it/i),
+		).not.toBeInTheDocument();
+		expect(
+			screen.getByRole("menuitem", { name: "Delete" }),
+		).not.toHaveAttribute("data-disabled");
+	});
+
+	it("hides creation, selection and row actions from a read-only viewer", () => {
+		authz.summary = {
+			...operatorSummary(),
+			grants: operatorSummary().grants.filter((grant) =>
+				grant.permission.endsWith(".read"),
+			),
+		};
+		renderUsersRoute();
+
+		expect(
+			screen.queryByRole("button", { name: "Create user" }),
+		).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole("checkbox", {
+				name: "Select all visible users",
+			}),
+		).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", { name: "Ordinary Person actions" }),
+		).not.toBeInTheDocument();
 	});
 });

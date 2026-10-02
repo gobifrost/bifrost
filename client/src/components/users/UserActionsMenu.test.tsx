@@ -11,6 +11,8 @@ function makeProps(
 		status: "active",
 		isActive: true,
 		isSelf: false,
+		canSupport: true,
+		canDelete: true,
 		onResend: vi.fn(),
 		onRegenerate: vi.fn(),
 		onCopyLink: vi.fn(),
@@ -101,5 +103,51 @@ describe("UserActionsMenu", () => {
 		await user.click(screen.getByRole("button", { name: /user actions/i }));
 		await user.click(screen.getByText(/resend invite/i));
 		expect(handlers.onResend).toHaveBeenCalledTimes(1);
+	});
+
+	it("hides what the caller's roles don't grant", async () => {
+		const user = userEvent.setup();
+		render(
+			<UserActionsMenu
+				{...makeProps({ status: "pending", canDelete: false })}
+			/>,
+		);
+		await user.click(screen.getByRole("button", { name: /user actions/i }));
+		expect(screen.getByText(/resend invite/i)).toBeInTheDocument();
+		expect(
+			screen.getByRole("menuitem", { name: "Disable" }),
+		).toBeInTheDocument();
+		expect(
+			screen.queryByRole("menuitem", { name: "Delete" }),
+		).not.toBeInTheDocument();
+	});
+
+	it("renders nothing when the caller can change nothing", () => {
+		render(
+			<UserActionsMenu
+				{...makeProps({ canSupport: false, canDelete: false })}
+			/>,
+		);
+		expect(
+			screen.queryByRole("button", { name: /user actions/i }),
+		).not.toBeInTheDocument();
+	});
+
+	it("shows a protected account's actions disabled, with why", async () => {
+		const user = userEvent.setup();
+		render(
+			<UserActionsMenu
+				{...makeProps({ status: "pending", isProtected: true })}
+			/>,
+		);
+		await user.click(screen.getByRole("button", { name: /user actions/i }));
+		expect(
+			screen.getByText(/only a platform admin can change it/i),
+		).toBeInTheDocument();
+		for (const name of [/resend invite/i, /^disable$/i, /^delete$/i]) {
+			expect(
+				screen.getByText(name).closest('[role="menuitem"]'),
+			).toHaveAttribute("data-disabled");
+		}
 	});
 });

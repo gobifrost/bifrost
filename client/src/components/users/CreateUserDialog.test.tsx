@@ -6,6 +6,7 @@
  * - validation: missing display name blocks submit
  * - validation: missing organization blocks submit (regular org user)
  * - happy path: submits createUser with trimmed email + name + org
+ * - a non-admin invites ordinary users only, into orgs they can manage
  *
  * The Combobox/Popover/Command internals are backed by Radix Portal + cmdk,
  * which are cumbersome to drive in happy-dom. To keep tests fast and
@@ -54,6 +55,15 @@ vi.mock("@/hooks/useUserInvites", () => ({
 	}),
 }));
 
+const authz = vi.hoisted(() => ({
+	isPlatformAdmin: true as boolean,
+	canAt: (_permission: string, _target: { kind: string; id?: string }) =>
+		true as boolean,
+}));
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => authz,
+}));
+
 // Stub the Combobox to a native select so userEvent can drive it.
 vi.mock("@/components/ui/combobox", () => ({
 	Combobox: ({
@@ -86,6 +96,8 @@ vi.mock("@/components/ui/combobox", () => ({
 import { CreateUserDialog } from "./CreateUserDialog";
 
 beforeEach(() => {
+	authz.isPlatformAdmin = true;
+	authz.canAt = () => true;
 	mockCreateMutate.mockReset();
 	mockCreateMutate.mockResolvedValue({
 		id: "new-user-1",
@@ -354,4 +366,33 @@ it("blocks creation while organization or role options cannot be loaded", async 
 	rerender(<CreateUserDialog open onOpenChange={vi.fn()} />);
 	expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 	expect(screen.getByRole("button", { name: "Create User" })).toBeEnabled();
+});
+
+it("lets a non-admin invite ordinary users only, into organizations they manage", async () => {
+	authz.isPlatformAdmin = false;
+	authz.canAt = (_permission, target) => target.id === "org-1";
+	const { user } = renderWithProviders(
+		<CreateUserDialog open={true} onOpenChange={vi.fn()} />,
+	);
+
+	expect(screen.queryByLabelText("userType")).not.toBeInTheDocument();
+	expect(
+		screen.queryByRole("combobox", { name: "Roles" }),
+	).not.toBeInTheDocument();
+	const options = Array.from(
+		screen.getByLabelText("organization").querySelectorAll("option"),
+	).map((option) => option.textContent);
+	expect(options).toEqual(["(none)", "Acme"]);
+
+	await user.type(screen.getByLabelText(/email address/i), "new@acme.com");
+	await user.type(screen.getByLabelText(/display name/i), "New Person");
+	await user.selectOptions(screen.getByLabelText("organization"), "org-1");
+	await user.click(screen.getByRole("button", { name: /create user/i }));
+
+	await waitFor(() => expect(mockCreateMutate).toHaveBeenCalled());
+	expect(mockCreateMutate.mock.calls[0][0].body).toMatchObject({
+		is_superuser: false,
+		organization_id: "org-1",
+	});
+	expect(mockAssignMutate).not.toHaveBeenCalled();
 });

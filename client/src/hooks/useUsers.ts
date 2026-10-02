@@ -9,6 +9,7 @@ import {
 	useQueryClient,
 } from "@tanstack/react-query";
 import { $api, apiClient } from "@/lib/api-client";
+import { invalidateAuthorization } from "@/lib/authorization";
 
 export interface UsersPageParams {
 	scope?: string | null;
@@ -119,6 +120,57 @@ export function useUserRoles(userId: string | undefined) {
 }
 
 /**
+ * A user's base role, additional roles (with where each applies), and the
+ * roles the caller may grant them.
+ */
+export function useUserRoleAssignments(
+	userId: string | undefined,
+	enabled = true,
+) {
+	return $api.useQuery(
+		"get",
+		"/api/users/{user_id}/role-assignments",
+		{ params: { path: { user_id: userId! } } },
+		{ enabled: !!userId && enabled },
+	);
+}
+
+/**
+ * Replace a user's base role and additional roles in one request.
+ */
+export function useReplaceUserRoleAssignments() {
+	const queryClient = useQueryClient();
+	return $api.useMutation("put", "/api/users/{user_id}/role-assignments", {
+		onSuccess: (data, variables) => {
+			queryClient.setQueryData(
+				[
+					"get",
+					"/api/users/{user_id}/role-assignments",
+					{
+						params: {
+							path: { user_id: variables.params.path.user_id },
+						},
+					},
+				],
+				data,
+			);
+			queryClient.invalidateQueries({ queryKey: ["get", "/api/users"] });
+			queryClient.invalidateQueries({
+				queryKey: ["get", "/api/users/{user_id}"],
+			});
+			queryClient.invalidateQueries({
+				queryKey: ["get", "/api/users/{user_id}/roles"],
+			});
+			queryClient.invalidateQueries({ queryKey: ["get", "/api/roles"] });
+			queryClient.invalidateQueries({
+				queryKey: ["get", "/api/roles/{role_id}/users"],
+			});
+			void invalidateAuthorization(queryClient);
+		},
+	});
+}
+
+/**
  * Fetch forms accessible to a specific user
  */
 export function useUserForms(userId: string | undefined) {
@@ -150,6 +202,13 @@ export function useUpdateUser() {
 	return $api.useMutation("patch", "/api/users/{user_id}", {
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ["get", "/api/users"] });
+			queryClient.invalidateQueries({
+				queryKey: ["get", "/api/users/{user_id}"],
+			});
+			// A move changes which roles the user can hold and where.
+			queryClient.invalidateQueries({
+				queryKey: ["get", "/api/users/{user_id}/role-assignments"],
+			});
 		},
 	});
 }

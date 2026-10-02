@@ -9,6 +9,11 @@ export interface BulkActionBarProps {
 	count: number;
 	/** Mix of active/inactive in the selection — controls which power buttons appear. */
 	activeMix: "all_active" | "all_inactive" | "mixed";
+	/** Which operations the caller may offer (the server still decides
+	 * each user, and reports per-user failures). */
+	canMoveOrg: boolean;
+	canReplaceRoles: boolean;
+	canSetActive: boolean;
 	/** Clear-selection callback. */
 	onClear: () => void;
 	onMoveOrg: () => void;
@@ -29,6 +34,9 @@ export interface BulkActionBarProps {
 export function BulkActionBar({
 	count,
 	activeMix,
+	canMoveOrg,
+	canReplaceRoles,
+	canSetActive,
 	onClear,
 	onMoveOrg,
 	onReplaceRoles,
@@ -38,8 +46,8 @@ export function BulkActionBar({
 }: BulkActionBarProps) {
 	if (count === 0) return null;
 
-	const showDisable = activeMix !== "all_inactive";
-	const showEnable = activeMix !== "all_active";
+	const showDisable = canSetActive && activeMix !== "all_inactive";
+	const showEnable = canSetActive && activeMix !== "all_active";
 
 	return (
 		<div
@@ -65,24 +73,28 @@ export function BulkActionBar({
 			</div>
 			<Separator orientation="vertical" className="hidden h-6 sm:block" />
 
-			<Button
-				variant="ghost"
-				size="sm"
-				className="min-h-11 sm:min-h-0"
-				onClick={onMoveOrg}
-			>
-				<Building2 className="h-4 w-4 mr-1.5" />
-				Move to org
-			</Button>
-			<Button
-				variant="ghost"
-				size="sm"
-				className="min-h-11 sm:min-h-0"
-				onClick={onReplaceRoles}
-			>
-				<Shield className="h-4 w-4 mr-1.5" />
-				Replace roles
-			</Button>
+			{canMoveOrg && (
+				<Button
+					variant="ghost"
+					size="sm"
+					className="min-h-11 sm:min-h-0"
+					onClick={onMoveOrg}
+				>
+					<Building2 className="h-4 w-4 mr-1.5" />
+					Move to org
+				</Button>
+			)}
+			{canReplaceRoles && (
+				<Button
+					variant="ghost"
+					size="sm"
+					className="min-h-11 sm:min-h-0"
+					onClick={onReplaceRoles}
+				>
+					<Shield className="h-4 w-4 mr-1.5" />
+					Replace roles
+				</Button>
+			)}
 			{showDisable && (
 				<Button
 					variant="ghost"

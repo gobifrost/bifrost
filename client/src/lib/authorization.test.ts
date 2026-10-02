@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { QueryClient } from "@tanstack/react-query";
 
 import {
+	AUTHORIZATION_QUERY_KEY,
 	canAnywhere,
+	invalidateAuthorization,
 	canAt,
 	GLOBAL_TARGET,
 	meetsRequirement,
@@ -145,6 +148,20 @@ describe("canAnywhere and meetsRequirement", () => {
 				permission: "roles.read",
 				at: "global",
 			}),
+		).toBe(true);
+	});
+});
+
+describe("invalidateAuthorization", () => {
+	it("invalidates every user's cached summary", async () => {
+		const client = new QueryClient();
+		client.setQueryData([...AUTHORIZATION_QUERY_KEY, "user-1"], {});
+
+		await invalidateAuthorization(client);
+
+		expect(
+			client.getQueryState([...AUTHORIZATION_QUERY_KEY, "user-1"])
+				?.isInvalidated,
 		).toBe(true);
 	});
 });

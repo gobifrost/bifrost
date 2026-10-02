@@ -7,6 +7,8 @@
  * UI from offering what it would refuse.
  */
 
+import type { QueryClient } from "@tanstack/react-query";
+
 import type { components } from "@/lib/v1";
 
 export type AuthorizationSummary =
@@ -26,6 +28,12 @@ export interface PermissionRequirement {
 }
 
 export const AUTHORIZATION_QUERY_KEY = ["authorization"] as const;
+
+/** Refetch the caller's authorization, after a change to role assignments
+ * or role permissions. */
+export function invalidateAuthorization(queryClient: QueryClient) {
+	return queryClient.invalidateQueries({ queryKey: AUTHORIZATION_QUERY_KEY });
+}
 
 /** The one permission the Platform Admin wildcard leaves out. */
 const WILDCARD_EXCLUDED_PERMISSIONS = new Set(["secrets.read"]);

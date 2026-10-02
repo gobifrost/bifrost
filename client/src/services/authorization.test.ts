@@ -4,7 +4,10 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { createElement, type ReactNode } from "react";
 
 import { makeQueryClient } from "@/test-utils";
-import { AUTHORIZATION_QUERY_KEY } from "@/lib/authorization";
+import {
+	AUTHORIZATION_QUERY_KEY,
+	invalidateAuthorization,
+} from "@/lib/authorization";
 
 const mockGet = vi.fn();
 vi.mock("@/lib/api-client", () => ({
@@ -18,11 +21,7 @@ const auth = {
 };
 vi.mock("@/contexts/AuthContext", () => ({ useAuth: () => auth }));
 
-import {
-	fetchAuthorization,
-	invalidateAuthorization,
-	useAuthorization,
-} from "./authorization";
+import { fetchAuthorization, useAuthorization } from "./authorization";
 
 const operatorSummary = {
 	is_platform_admin: false,
