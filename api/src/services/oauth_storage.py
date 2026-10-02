@@ -31,12 +31,6 @@ def _encrypt(value: str) -> bytes:
     return f.encrypt(value.encode())
 
 
-def _decrypt(value: bytes) -> str:
-    """Decrypt bytes to string."""
-    f = Fernet(_get_encryption_key())
-    return f.decrypt(value).decode()
-
-
 class OAuthStorageService:
     """
     Service for managing OAuth connections in PostgreSQL.
@@ -379,59 +373,6 @@ class OAuthStorageService:
 
             await db.commit()
             return True
-
-    async def get_tokens(
-        self,
-        org_id: str | None,
-        connection_name: str,
-        user_id: str | None = None
-    ) -> dict[str, Any] | None:
-        """
-        Get OAuth tokens for a connection.
-
-        Args:
-            org_id: Organization ID or None for GLOBAL
-            connection_name: Name of the connection
-            user_id: Optional user ID for user-specific tokens
-
-        Returns:
-            Dict with token info or None if not found
-        """
-        from sqlalchemy import select
-        from src.models import OAuthProvider, OAuthToken
-
-        async with self._get_session_context() as db:
-            org_uuid = UUID(org_id) if org_id and org_id != "GLOBAL" else None
-            user_uuid = UUID(user_id) if user_id else None
-
-            # Find provider
-            query = select(OAuthProvider).where(
-                OAuthProvider.provider_name == connection_name,
-                OAuthProvider.organization_id == org_uuid
-            )
-            result = await db.execute(query)
-            provider = result.scalars().first()
-
-            if not provider:
-                return None
-
-            # Find token
-            token_query = select(OAuthToken).where(
-                OAuthToken.provider_id == provider.id,
-                OAuthToken.user_id == user_uuid
-            )
-            result = await db.execute(token_query)
-            token = result.scalars().first()
-
-            if not token:
-                return None
-
-            return {
-                "access_token": _decrypt(token.encrypted_access_token),
-                "refresh_token": _decrypt(token.encrypted_refresh_token) if token.encrypted_refresh_token else None,
-                "expires_at": token.expires_at.isoformat() if token.expires_at else None,
-                "scopes": token.scopes
-            }
 
     def _to_connection_model(self, provider) -> OAuthConnection:
         """Convert OAuthProvider to OAuthConnection model."""
