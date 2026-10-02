@@ -7,7 +7,7 @@ import pytest
 
 from src.models.orm.solutions import Solution
 from src.models.orm.tables import Document, Table
-from src.services.solutions.capture import SolutionCaptureService
+from src.services.solutions import capture
 
 pytestmark = pytest.mark.e2e
 
@@ -55,7 +55,7 @@ async def test_bundle_includes_table_rows_when_requested(db_session) -> None:
     sol = await _make_solution_with_table_rows(
         db, table="widgets", rows=[{"id": 1, "name": "a"}]
     )
-    bundle = await SolutionCaptureService(db).bundle_for(
+    bundle = await capture.SolutionCaptureService(db).bundle_for(
         sol, include_values=True, include_data=True
     )
     assert bundle.table_data["widgets"] == [{"id": 1, "name": "a"}]
@@ -68,7 +68,7 @@ async def test_bundle_excludes_table_data_by_default(db_session) -> None:
     sol = await _make_solution_with_table_rows(
         db, table="things", rows=[{"id": "x", "val": 99}]
     )
-    bundle = await SolutionCaptureService(db).bundle_for(sol)
+    bundle = await capture.SolutionCaptureService(db).bundle_for(sol)
     assert bundle.table_data == {}
 
 
@@ -87,15 +87,13 @@ async def test_bundle_table_data_includes_empty_table_for_replace(db_session) ->
     db.add(tbl)
     await db.flush()
 
-    bundle = await SolutionCaptureService(db).bundle_for(sol, include_data=True)
+    bundle = await capture.SolutionCaptureService(db).bundle_for(sol, include_data=True)
     assert bundle.table_data["empty"] == []
     assert bundle.table_document_ids["empty"] == []
 
 
 async def test_bundle_refuses_table_data_above_cap(db_session, monkeypatch) -> None:
     """A partial full backup is unsafe: reject it rather than truncating rows."""
-    import src.services.solutions.capture as capture
-
     monkeypatch.setattr(capture, "TABLE_ROW_CAP", 1)
     sol = await _make_solution_with_table_rows(
         db_session,
@@ -104,4 +102,4 @@ async def test_bundle_refuses_table_data_above_cap(db_session, monkeypatch) -> N
     )
 
     with pytest.raises(ValueError, match="over-cap.*1"):
-        await SolutionCaptureService(db_session).bundle_for(sol, include_data=True)
+        await capture.SolutionCaptureService(db_session).bundle_for(sol, include_data=True)
