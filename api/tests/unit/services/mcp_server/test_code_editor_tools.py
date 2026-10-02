@@ -3,7 +3,7 @@ Unit tests for Code Editor MCP Tools.
 
 Tests the precision editing tools:
 - list_content: List files, optionally filtered by path prefix
-- search_content: Regex search with context
+- bifrost_file_search: thin wrapper over POST /api/files/search
 - read_content_lines: Line range reading
 - get_content: Full content read
 - patch_content: Surgical edits
@@ -209,76 +209,74 @@ class TestListContent:
         assert is_error_result(result)
 
 
-class TestSearchContent:
-    """Tests for the search_content MCP tool."""
+_PAGE = {
+    "query": "x", "output_mode": "content", "returned": 2, "has_more_matches": True,
+    "response_complete": False, "next_cursor": "c", "search_time_ms": 1, "files": [],
+    "guidance": 'Showing matches 1-2 across 2 files; more results exist. ... cursor="c" ...',
+    "matches": [
+        {"file_path": "a.py", "line": 3, "column": 0, "text": "x = 1",
+         "context_before": [], "context_after": [], "source": {"kind": "workspace", "editable": True}},
+        {"file_path": "functions/f.py", "line": 9, "column": 4, "text": "    x()",
+         "context_before": [], "context_after": [],
+         "source": {"kind": "solution", "solution_slug": "covi-psa", "editable": False}},
+    ],
+}
+
+
+class TestBifrostFileSearch:
+    """bifrost_file_search is a thin wrapper over POST /api/files/search."""
 
     @pytest.mark.asyncio
-    async def test_search_workflow_content(self, platform_admin_context):
-        """Should find matches in file content with context."""
-        from src.services.mcp_server.tools.code_editor import search_content
+    async def test_posts_the_documented_body_and_renders_grep_lines(self, platform_admin_context, monkeypatch):
+        from src.services.mcp_server.tools import code_editor
 
-        code = '''from bifrost import workflow
+        calls = []
 
-@workflow(name="Sync Tickets")
-async def sync_tickets(client_id: str) -> dict:
-    """Sync tickets from HaloPSA."""
-    return {"synced": True}
-'''
+        async def fake_call_rest(ctx, method, path, *, json_body=None, params=None):
+            calls.append((method, path, json_body))
+            return 200, _PAGE
 
-        with patch("src.services.mcp_server.tools.code_editor.get_tool_db") as mock_db:
-            mock_session = AsyncMock()
-            mock_db.return_value.__aenter__.return_value = mock_session
+        monkeypatch.setattr(code_editor, "call_rest", fake_call_rest)
+        result = await code_editor.bifrost_file_search(platform_admin_context, query="x", limit=2)
 
-            # search_content does: select(FileIndex.path, FileIndex.content) -> result.all()
-            mock_fi_result = MagicMock()
-            mock_fi_row = MagicMock()
-            mock_fi_row.path = "workflows/sync_tickets.py"
-            mock_fi_row.content = code
-            mock_fi_result.all.return_value = [mock_fi_row]
-            mock_session.execute.return_value = mock_fi_result
-
-            result = await search_content(
-                context=platform_admin_context,
-                pattern="async def",
-            )
-
-            assert isinstance(result, ToolResult)
-            data = get_result_data(result)
-            assert "matches" in data
-            assert len(data["matches"]) == 1
-            assert data["matches"][0]["line_number"] == 4
-            assert "sync_tickets" in data["matches"][0]["match"]
+        assert calls == [("POST", "/api/files/search", {
+            "query": "x", "is_regex": False, "case_sensitive": False, "source": "all",
+            "output_mode": "content", "context_lines": 1, "limit": 2,
+        })]
+        text = get_result_text(result)
+        assert "a.py:3: x = 1" in text
+        assert "covi-psa:functions/f.py:9:     x()  (read-only)" in text
+        assert f"(read-only)\n\n{_PAGE['guidance']}" in text
+        assert get_result_data(result)["next_cursor"] == "c"
 
     @pytest.mark.asyncio
-    async def test_search_invalid_regex(self, platform_admin_context):
-        """Should return error for invalid regex pattern."""
-        from src.services.mcp_server.tools.code_editor import search_content
+    async def test_files_mode_lists_one_line_per_file(self, platform_admin_context, monkeypatch):
+        from src.services.mcp_server.tools import code_editor
 
-        result = await search_content(
-            context=platform_admin_context,
-            pattern="[invalid",
-        )
+        page = {**_PAGE, "output_mode": "files", "matches": [], "files": [
+            {"file_path": "a.py", "match_count": 4, "first_line": 2, "source": {"kind": "workspace", "editable": True}},
+            {"file_path": "b.py", "match_count": 1, "first_line": 9, "source": {"kind": "workspace", "editable": True}},
+        ]}
 
-        assert isinstance(result, ToolResult)
+        async def fake_call_rest(ctx, method, path, *, json_body=None, params=None):
+            return 200, page
+
+        monkeypatch.setattr(code_editor, "call_rest", fake_call_rest)
+        result = await code_editor.bifrost_file_search(platform_admin_context, query="x", output_mode="files")
+        assert "a.py (4 matches, first at line 2)" in get_result_text(result)
+        assert "b.py (1 match, first at line 9)" in get_result_text(result)
+
+    @pytest.mark.asyncio
+    async def test_rest_rejection_is_a_tool_error(self, platform_admin_context, monkeypatch):
+        from src.services.mcp_server.tools import code_editor
+
+        async def fake_call_rest(ctx, method, path, *, json_body=None, params=None):
+            return 400, {"detail": "cursor does not belong to this search"}
+
+        monkeypatch.setattr(code_editor, "call_rest", fake_call_rest)
+        result = await code_editor.bifrost_file_search(platform_admin_context, query="x", cursor="bad")
         assert is_error_result(result)
-        data = get_result_data(result)
-        assert "error" in data
-        assert "Invalid regex" in data["error"]
-
-    @pytest.mark.asyncio
-    async def test_search_empty_pattern(self, platform_admin_context):
-        """Should return error for empty pattern."""
-        from src.services.mcp_server.tools.code_editor import search_content
-
-        result = await search_content(
-            context=platform_admin_context,
-            pattern="",
-        )
-
-        assert isinstance(result, ToolResult)
-        assert is_error_result(result)
-        data = get_result_data(result)
-        assert "error" in data
+        assert "cursor does not belong" in get_result_text(result)
 
 
 class TestReadContentLines:
@@ -837,44 +835,6 @@ async def get_ticket(ticket_id: str):
                     assert data["success"] is True
                     assert data["path"] == "workflows/multi.py"
                     mock_fs_instance.delete_file.assert_called_once_with("workflows/multi.py")
-
-    @pytest.mark.asyncio
-    async def test_search_deduplicates_multi_function_results(self, platform_admin_context):
-        """Should not produce duplicate search results from multi-function files."""
-        from src.services.mcp_server.tools.code_editor import search_content
-
-        code = '''from bifrost import workflow
-
-@workflow(name="Sync")
-async def sync():
-    return {"done": True}
-
-@workflow(name="Cleanup")
-async def cleanup():
-    return {"done": True}
-'''
-
-        with patch("src.services.mcp_server.tools.code_editor.get_tool_db") as mock_db:
-            mock_session = AsyncMock()
-            mock_db.return_value.__aenter__.return_value = mock_session
-
-            # search_content queries FileIndex directly, one row per file
-            mock_fi_result = MagicMock()
-            mock_fi_row = MagicMock()
-            mock_fi_row.path = "workflows/multi.py"
-            mock_fi_row.content = code
-            mock_fi_result.all.return_value = [mock_fi_row]
-            mock_session.execute.return_value = mock_fi_result
-
-            result = await search_content(
-                context=platform_admin_context,
-                pattern="return",
-            )
-
-            assert isinstance(result, ToolResult)
-            data = get_result_data(result)
-            # Should have exactly 2 matches (one per "return" line), NOT 4
-            assert data["total_matches"] == 2
 
 
 class TestFormatDeactivationResult:

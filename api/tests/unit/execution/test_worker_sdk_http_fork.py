@@ -1033,8 +1033,8 @@ async def test_forked_child_files_over_worker_socket(monkeypatch, async_session_
         )
         assert result["signed_path"].endswith("blob.bin")
         assert set(result["search_keys"]) == {
-            "query", "total_matches", "files_searched", "results",
-            "truncated", "search_time_ms",
+            "query", "output_mode", "matches", "files", "returned", "has_more_matches",
+            "response_complete", "next_cursor", "guidance", "search_time_ms",
         }
         # 2 MiB binary payload round-trips intact.
         assert result["big_len"] == 2 * 1024 * 1024

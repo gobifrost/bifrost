@@ -227,8 +227,8 @@ class TestSdkFilesLocalLiveE2E:
         )
         assert out["signed_url"]
         assert set(out["search_keys"]) == {
-            "query", "total_matches", "files_searched", "results",
-            "truncated", "search_time_ms",
+            "query", "output_mode", "matches", "files", "returned", "has_more_matches",
+            "response_complete", "next_cursor", "guidance", "search_time_ms",
         }
         # ~2 MiB payload over the real worker socket.
         assert out["big_len"] == 2 * 1024 * 1024

@@ -22,3 +22,12 @@ def test_file_index_primary_key():
     from src.models.orm.file_index import FileIndex
     pk_cols = [c.name for c in FileIndex.__table__.primary_key.columns]
     assert pk_cols == ["path"]
+
+
+def test_solution_file_index_is_keyed_by_install_and_path():
+    """Solution source rows are keyed per install, so equal relative paths never collide."""
+    from src.models.orm.file_index import SolutionFileIndex
+    pk_cols = [c.name for c in SolutionFileIndex.__table__.primary_key.columns]
+    assert pk_cols == ["solution_id", "path"]
+    (fk,) = SolutionFileIndex.__table__.c.solution_id.foreign_keys
+    assert (fk.target_fullname, fk.ondelete) == ("solutions.id", "CASCADE")

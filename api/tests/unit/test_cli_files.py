@@ -325,70 +325,93 @@ class TestExists:
         assert "false" in result.output.lower()
 
 
-class TestSearch:
-    def test_search_posts_query(self) -> None:
-        captured: dict = {}
-        result = _invoke(
-            ["search", "TODO"],
-            captured,
-            {"/api/files/search": {
-                "query": "TODO",
-                "total_matches": 0,
-                "files_searched": 0,
-                "results": [],
-                "truncated": False,
-                "search_time_ms": 1,
-            }},
-        )
-        assert result.exit_code == 0, result.output
-        body = captured["calls"][0]["body"]
-        assert body["query"] == "TODO"
-        assert body["is_regex"] is False
-        assert body["case_sensitive"] is False
-        assert body["include_pattern"] == "**/*"
-        assert body["max_results"] == 1000
+def _search_page(*, matches=(), files=(), has_more=False, cursor=None, mode="content") -> dict:
+    return {
+        "query": "q", "output_mode": mode, "matches": list(matches), "files": list(files),
+        "returned": len(matches) or len(files), "has_more_matches": has_more,
+        "response_complete": not has_more, "next_cursor": cursor,
+        "guidance": "server guidance", "search_time_ms": 1,
+    }
 
-    def test_search_passes_through_flags(self) -> None:
+
+_WS = {"kind": "workspace", "editable": True}
+_SOL = {"kind": "solution", "solution_slug": "covi-psa", "solution_id": None, "editable": False}
+
+
+class TestSearch:
+    def test_search_defaults_send_a_small_first_page(self) -> None:
+        captured: dict = {}
+        result = _invoke(["search", "TODO"], captured, {"/api/files/search": _search_page()})
+        assert result.exit_code == 0, result.output
+        assert captured["calls"][0]["body"] == {
+            "query": "TODO", "is_regex": False, "case_sensitive": False, "source": "all",
+            "output_mode": "content", "context_lines": 1, "limit": 25,
+        }
+
+    def test_search_passes_paging_scope_and_mode(self) -> None:
         captured: dict = {}
         _invoke(
-            ["search", "f.*o", "--regex", "--case-sensitive",
-             "--include", "**/*.py", "--max-results", "50"],
+            ["search", "f.*o", "--regex", "--case-sensitive", "--include", "*.py", "--source", "workspace",
+             "--files", "-C", "0", "--limit", "5", "--cursor", "c1"],
             captured,
-            {"/api/files/search": {
-                "query": "f.*o",
-                "total_matches": 0,
-                "files_searched": 0,
-                "results": [],
-                "truncated": False,
-                "search_time_ms": 1,
-            }},
+            {"/api/files/search": _search_page()},
         )
         body = captured["calls"][0]["body"]
-        assert body["is_regex"] is True
-        assert body["case_sensitive"] is True
-        assert body["include_pattern"] == "**/*.py"
-        assert body["max_results"] == 50
-
-    def test_search_json_output(self) -> None:
-        captured: dict = {}
-        result = _invoke(
-            ["search", "x", "--json"],
-            captured,
-            {"/api/files/search": {
-                "query": "x",
-                "total_matches": 1,
-                "files_searched": 1,
-                "results": [{
-                    "file_path": "a.py", "line": 3, "column": 0,
-                    "match_text": "x", "context_before": None, "context_after": None,
-                }],
-                "truncated": False,
-                "search_time_ms": 2,
-            }},
+        assert (body["is_regex"], body["case_sensitive"], body["include_pattern"], body["source"]) == (
+            True, True, "*.py", "workspace",
         )
+        assert (body["output_mode"], body["context_lines"], body["limit"], body["cursor"]) == ("files", 0, 5, "c1")
+
+    def test_solution_flag_resolves_install_and_targets_solution_source(self) -> None:
+        captured: dict = {}
+        sid = "0f6b1c2e-0000-4000-8000-000000000000"
+        _invoke(["search", "x", "--solution", sid], captured, {"/api/files/search": _search_page()})
+        assert captured["calls"][0]["body"]["solution_id"] == sid
+
+    def test_human_output_is_grep_style_with_copy_paste_next_page(self) -> None:
+        page = _search_page(
+            matches=[
+                {"file_path": "modules/halo.py", "line": 12, "column": 4, "text": "def halo():",
+                 "context_before": ["# api"], "context_after": [], "source": _SOL},
+                {"file_path": "modules/halo.py", "line": 30, "column": 0, "text": "halo()",
+                 "context_before": [], "context_after": [], "source": _SOL},
+                {"file_path": "workflows/t.py", "line": 2, "column": 0, "text": "halo = 1",
+                 "context_before": [], "context_after": [], "source": _WS},
+            ],
+            has_more=True, cursor="abc",
+        )
+        result = _invoke(["search", "halo", "--include", "*.py"], {}, {"/api/files/search": page})
         assert result.exit_code == 0, result.output
-        assert '"total_matches": 1' in result.output
-        assert '"file_path": "a.py"' in result.output
+        lines = result.output.splitlines()
+        assert lines[:6] == [
+            "covi-psa:modules/halo.py  (read-only Solution source)",
+            "  11- # api",
+            "  12: def halo():",
+            "  30: halo()",
+            "workflows/t.py",
+            "  2: halo = 1",
+        ]
+        assert "More results: bifrost files search halo --include '*.py' --cursor abc" in result.output
+
+    def test_human_output_files_mode_and_completion(self) -> None:
+        page = _search_page(
+            files=[{"file_path": "a.py", "match_count": 3, "first_line": 7, "source": _WS}], mode="files",
+        )
+        result = _invoke(["search", "x", "--files"], {}, {"/api/files/search": page})
+        assert "a.py  (3 matches, first at line 7)" in result.output
+        assert "1 result — complete." in result.output
+
+    def test_files_mode_singular_match(self) -> None:
+        page = _search_page(
+            files=[{"file_path": "b.py", "match_count": 1, "first_line": 2, "source": _WS}], mode="files",
+        )
+        result = _invoke(["search", "x", "--files"], {}, {"/api/files/search": page})
+        assert "b.py  (1 match, first at line 2)" in result.output
+
+    def test_json_output_is_the_raw_page(self) -> None:
+        result = _invoke(["search", "x", "--json"], {}, {"/api/files/search": _search_page(cursor=None)})
+        assert result.exit_code == 0, result.output
+        assert '"response_complete": true' in result.output and '"guidance": "server guidance"' in result.output
 
 
 # ---------------------------------------------------------------------------

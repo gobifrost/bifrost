@@ -3194,9 +3194,9 @@ export interface paths {
         put?: never;
         /**
          * Search file contents
-         * @description Search file contents for text or regex patterns.
+         * @description Search workspace and Solution source like grep, one bounded page at a time.
          *
-         *     Searches database directly - workflows, modules, forms, and agents.
+         *     Follow ``next_cursor`` (or the ``guidance`` sentence) for more results.
          */
         post: operations["workspace.files.search"];
         delete?: never;
@@ -24778,86 +24778,29 @@ export interface components {
             last_run?: components["schemas"]["SchedulerTaskRunStatus"] | null;
         };
         /**
-         * SearchRequest
-         * @description Search query request
+         * SearchFileHit
+         * @description One matching file (files output mode).
          */
-        SearchRequest: {
-            /**
-             * Query
-             * @description Search text or regex pattern
-             */
-            query: string;
-            /**
-             * Case Sensitive
-             * @description Case-sensitive matching
-             * @default false
-             */
-            case_sensitive: boolean;
-            /**
-             * Is Regex
-             * @description Treat query as regex
-             * @default false
-             */
-            is_regex: boolean;
-            /**
-             * Include Pattern
-             * @description Glob pattern for files to search
-             * @default **\/*
-             */
-            include_pattern: string | null;
-            /**
-             * Max Results
-             * @description Maximum results to return
-             * @default 1000
-             */
-            max_results: number;
+        SearchFileHit: {
+            /** File Path */
+            file_path: string;
+            source: components["schemas"]["SearchSource"];
+            /** Match Count */
+            match_count: number;
+            /** First Line */
+            first_line: number;
         };
         /**
-         * SearchResponse
-         * @description Search results response
+         * SearchMatch
+         * @description One matching line.
          */
-        SearchResponse: {
-            /**
-             * Query
-             * @description Original search query
-             */
-            query: string;
-            /**
-             * Total Matches
-             * @description Total matches found
-             */
-            total_matches: number;
-            /**
-             * Files Searched
-             * @description Number of files searched
-             */
-            files_searched: number;
-            /**
-             * Results
-             * @description Array of search results
-             */
-            results: components["schemas"]["SearchResult"][];
-            /**
-             * Truncated
-             * @description Whether results were truncated
-             */
-            truncated: boolean;
-            /**
-             * Search Time Ms
-             * @description Search duration in milliseconds
-             */
-            search_time_ms: number;
-        };
-        /**
-         * SearchResult
-         * @description Single search match result
-         */
-        SearchResult: {
+        SearchMatch: {
             /**
              * File Path
-             * @description Relative path to file containing match
+             * @description Path relative to its source root
              */
             file_path: string;
+            source: components["schemas"]["SearchSource"];
             /**
              * Line
              * @description Line number (1-indexed)
@@ -24865,24 +24808,152 @@ export interface components {
             line: number;
             /**
              * Column
-             * @description Column number (0-indexed)
+             * @description Column of the match start (0-indexed)
              */
             column: number;
             /**
-             * Match Text
-             * @description The matched text
+             * Text
+             * @description The matching line, windowed around the match when very long
              */
-            match_text: string;
+            text: string;
+            /** Context Before */
+            context_before?: string[];
+            /** Context After */
+            context_after?: string[];
+        };
+        /**
+         * SearchRequest
+         * @description Search workspace and Solution source like grep, one page at a time.
+         */
+        SearchRequest: {
             /**
-             * Context Before
-             * @description Line before match
+             * Query
+             * @description Literal text, or a Python `re` pattern when is_regex is true. Matched per line.
              */
-            context_before?: string | null;
+            query: string;
             /**
-             * Context After
-             * @description Line after match
+             * Is Regex
+             * @description Treat query as a Python regular expression
+             * @default false
              */
-            context_after?: string | null;
+            is_regex: boolean;
+            /**
+             * Case Sensitive
+             * @description Case-sensitive matching. Case-insensitive literal search prefilters with PostgreSQL ILIKE, so a few non-ASCII case folds (e.g. ß) may be missed.
+             * @default false
+             */
+            case_sensitive: boolean;
+            /**
+             * Include Pattern
+             * @description ripgrep-style glob over repo-relative paths, e.g. '*.py', 'workflows/**', '*.{ts,tsx}'
+             */
+            include_pattern?: string | null;
+            /**
+             * Source
+             * @description Search workspace source, Solution source, or both
+             * @default all
+             * @enum {string}
+             */
+            source: "all" | "workspace" | "solutions";
+            /**
+             * Solution Id
+             * @description Restrict the search to one Solution install's source
+             */
+            solution_id?: string | null;
+            /**
+             * Output Mode
+             * @description 'content' returns matching lines; 'files' returns one entry per matching file
+             * @default content
+             * @enum {string}
+             */
+            output_mode: "content" | "files";
+            /**
+             * Context Lines
+             * @description Lines of context around each match
+             * @default 1
+             */
+            context_lines: number;
+            /**
+             * Limit
+             * @description Matches (content mode) or files (files mode) per page
+             * @default 25
+             */
+            limit: number;
+            /**
+             * Cursor
+             * @description next_cursor from the previous page of this exact search
+             */
+            cursor?: string | null;
+        };
+        /**
+         * SearchResponse
+         * @description One page of search results plus what to do next.
+         */
+        SearchResponse: {
+            /** Query */
+            query: string;
+            /**
+             * Output Mode
+             * @enum {string}
+             */
+            output_mode: "content" | "files";
+            /**
+             * Matches
+             * @description Matching lines (content mode; empty in files mode)
+             */
+            matches: components["schemas"]["SearchMatch"][];
+            /**
+             * Files
+             * @description Matching files (files mode; empty in content mode)
+             */
+            files: components["schemas"]["SearchFileHit"][];
+            /**
+             * Returned
+             * @description Results in this page
+             */
+            returned: number;
+            /**
+             * Has More Matches
+             * @description More results exist beyond this page
+             */
+            has_more_matches: boolean;
+            /**
+             * Response Complete
+             * @description This page ends the result set
+             */
+            response_complete: boolean;
+            /**
+             * Next Cursor
+             * @description Pass as cursor to get the next page
+             */
+            next_cursor?: string | null;
+            /**
+             * Guidance
+             * @description Plain-language summary and how to get more results
+             */
+            guidance: string;
+            /** Search Time Ms */
+            search_time_ms: number;
+        };
+        /**
+         * SearchSource
+         * @description Where a search hit lives and whether it can be edited in place.
+         */
+        SearchSource: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "workspace" | "solution";
+            /** Solution Id */
+            solution_id?: string | null;
+            /** Solution Slug */
+            solution_slug?: string | null;
+            /**
+             * Editable
+             * @description False for Solution source, which is deploy-owned (edit locally and redeploy)
+             */
+            editable: boolean;
         };
         /** SendFlagMessageRequest */
         SendFlagMessageRequest: {

@@ -83,6 +83,7 @@ dependencies = [
     "python-docx>=1.2.0",  # Typed DOCX artifacts
     "openpyxl>=3.1.5",  # Typed XLSX artifacts
     "jmespath>=1.0.1",  # Safe event subscription payload filters
+    "regex>=2024.11.6",  # Source search regex matching with a per-call timeout (ReDoS bound)
 
     # =========================================================================
     # Code Transformation

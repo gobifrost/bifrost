@@ -10362,6 +10362,20 @@
   },
   {
     "access_class": "permission",
+    "boundary": "platform",
+    "current_gate": "authenticated",
+    "inline_checks": [],
+    "inline_effect": null,
+    "intended_change": null,
+    "mcp_tool": "bifrost_file_search",
+    "method": null,
+    "operation_id": "workspace.files.search",
+    "path": null,
+    "permission": "repository.read",
+    "reason": "Thin MCP wrapper over POST /api/files/search; inherits that route's entry."
+  },
+  {
+    "access_class": "permission",
     "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [],
@@ -11092,22 +11106,6 @@
     "path": null,
     "permission": "repository.readwrite",
     "reason": "Writes `_repo/` workspace content; scope-bypass admin only, matching REST files.py editor routes."
-  },
-  {
-    "access_class": "permission",
-    "boundary": "platform",
-    "current_gate": "authenticated",
-    "inline_checks": [
-      "mcp_write_scope_bypass"
-    ],
-    "inline_effect": "deny_unless_bypass",
-    "intended_change": "Provider-org non-admins lose this access at the R3 cutover; platform admins keep it.",
-    "mcp_tool": "search_content",
-    "method": null,
-    "operation_id": null,
-    "path": null,
-    "permission": "repository.read",
-    "reason": "Searches `_repo/` workspace content; scope-bypass admin only, matching REST files.py editor routes."
   },
   {
     "access_class": "permission",

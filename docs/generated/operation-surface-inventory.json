@@ -9008,8 +9008,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": null,
-          "status": "missing_surface"
+          "name": "bifrost_file_search",
+          "status": "exact_parity"
         },
         "rest": {
           "operation_id": "workspace.files.search",
@@ -10729,12 +10729,6 @@
       {
         "hidden": false,
         "name": "replace_content",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "search_content",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },

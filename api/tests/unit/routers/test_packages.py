@@ -59,7 +59,7 @@ async def test_install_persists_requirements_before_broadcasting_recycle() -> No
     run_id = UUID("d2e87d6a-fb8e-4a64-a9b4-7eecc3fac49e")
     events: list[str] = []
 
-    async def save(content: str) -> None:
+    async def save(content: str, db: object) -> None:
         assert content == "requests==2.31.0\nhumanize==4.13.0\n"
         events.append("saved")
 

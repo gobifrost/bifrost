@@ -306,8 +306,10 @@ if TYPE_CHECKING:
         ScriptExecutionRequest,
         ScriptExecutionResponse,
         SearchRequest,
+        SearchSource,
+        SearchMatch,
+        SearchFileHit,
         SearchResponse,
-        SearchResult,
         WorkflowDeactivationConflict,
         WorkflowIdConflict,
     )

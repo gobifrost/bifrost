@@ -368,3 +368,22 @@ def pytest_configure(config):
         "e2e: End-to-end tests (Docker stack with database, message queue, and services)",
     )
     config.addinivalue_line("markers", "slow: Tests that take >1 second")
+
+
+# ==================== COLLECTION GUARDS ====================
+
+MAX_TEST_ID_CHARS = 1000
+
+
+def pytest_collection_modifyitems(config, items):
+    """Reject test IDs long enough to wedge CI.
+
+    Pytest prints each node ID under ``-v``; a parametrize value such as an
+    8 MiB bytes literal becomes a multi-megabyte log line that froze the
+    GitHub Actions runner with no retrievable log. Give such params ``ids=``.
+    """
+    oversized = [item.nodeid[:120] for item in items if len(item.nodeid) > MAX_TEST_ID_CHARS]
+    if oversized:
+        raise pytest.UsageError(
+            f"Test IDs over {MAX_TEST_ID_CHARS} chars (pass ids= to parametrize): {oversized}"
+        )

@@ -5,7 +5,6 @@ from src.services.mcp_server.schema_utils import model_to_markdown, _format_type
 from src.services.mcp_server.tool_result import (
     success_result,
     error_result,
-    format_grep_matches,
     format_diff,
     format_file_content,
 )
@@ -134,29 +133,6 @@ class TestErrorResult:
     def test_without_extra_data(self):
         result = error_result("oops")
         assert "code" not in result.structured_content
-
-
-class TestFormatGrepMatches:
-    def test_empty_matches(self):
-        result = format_grep_matches([], "foo")
-        assert "No matches found" in result
-        assert "foo" in result
-
-    def test_single_match_singular(self):
-        matches = [{"path": "a.py", "line_number": 10, "match": "hello"}]
-        result = format_grep_matches(matches, "hello")
-        assert "1 match " in result
-        assert "a.py:10: hello" in result
-
-    def test_multiple_matches(self):
-        matches = [
-            {"path": "a.py", "line_number": 1, "match": "x"},
-            {"path": "b.py", "line_number": 2, "match": "y"},
-        ]
-        result = format_grep_matches(matches, "pat")
-        assert "2 matches" in result
-        assert "a.py:1: x" in result
-        assert "b.py:2: y" in result
 
 
 class TestFormatDiff:

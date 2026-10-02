@@ -21,7 +21,7 @@ from contextlib import asynccontextmanager
 from uuid import UUID
 
 from src.config import Settings, get_settings
-from src.services.repo_storage import _get_shared_session
+from src.services.repo_storage import S3FileMetadata, _get_shared_session
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +79,45 @@ class SolutionStorage:
         """List files under this install (optional sub-prefix). Returns relative paths."""
         async with self._get_client() as client:
             return await self._list_from_s3(client, prefix)
+
+    async def list_with_metadata(self, prefix: str = "") -> dict[str, S3FileMetadata]:
+        """List this install's objects with size/etag metadata, keyed by relative path."""
+        async with self._get_client() as client:
+            return await self._list_with_metadata_from_s3(client, prefix)
+
+    async def _list_with_metadata_from_s3(self, client, prefix: str = "") -> dict[str, S3FileMetadata]:
+        strip = len(self.prefix)
+        result: dict[str, S3FileMetadata] = {}
+        continuation_token = None
+        while True:
+            kwargs: dict = {"Bucket": self._bucket, "Prefix": self._key(prefix)}
+            if continuation_token:
+                kwargs["ContinuationToken"] = continuation_token
+            response = await client.list_objects_v2(**kwargs)
+            for obj in response.get("Contents", []):
+                result[obj["Key"][strip:]] = S3FileMetadata(
+                    etag=obj["ETag"].strip('"'),
+                    last_modified=obj["LastModified"],
+                    size=obj["Size"],
+                )
+            if not response.get("IsTruncated"):
+                break
+            continuation_token = response.get("NextContinuationToken")
+        return result
+
+    async def content_hash(self, path: str) -> str | None:
+        """Return a bounded-memory SHA-256 fingerprint, or None when absent."""
+        async with self._get_client() as client:
+            try:
+                response = await client.get_object(Bucket=self._bucket, Key=self._key(path))
+            except client.exceptions.NoSuchKey:
+                return None
+            digest = hashlib.sha256()
+            body = response["Body"]
+            async with body:
+                while chunk := await body.read(8 * 1024 * 1024):
+                    digest.update(chunk)
+            return digest.hexdigest()
 
     async def prefix_exists(self, prefix: str) -> bool:
         """Check if any object exists under this install's prefix."""

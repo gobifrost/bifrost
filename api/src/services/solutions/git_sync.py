@@ -298,3 +298,4 @@ async def _run_sync_once(db: AsyncSession, solution: Solution) -> None:
     # temp dir is gone is fine.
     await db.commit()
     await result.finalize_s3()
+    await db.commit()  # source search index rows written by finalize

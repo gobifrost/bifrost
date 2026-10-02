@@ -30,6 +30,8 @@ import logging
 import os
 from typing import Any, TypedDict
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from src.core.redis_client import get_redis_client
 
 logger = logging.getLogger(__name__)
@@ -195,20 +197,19 @@ async def warm_requirements_cache() -> bool:
         return False
 
 
-async def save_requirements(content: str) -> None:
+async def save_requirements(content: str, db: AsyncSession) -> None:
     """
     Save requirements.txt to S3 and update Redis cache.
 
     Args:
         content: Full requirements.txt content
     """
-    from src.services.repo_storage import RepoStorage
+    from src.services.file_index_service import FileIndexService
 
     content_hash = hashlib.sha256(content.encode()).hexdigest()
 
-    # Write to S3 (source of truth)
-    repo = RepoStorage()
-    await repo.write("requirements.txt", content.encode())
+    # Write to S3 (source of truth) and index it in the caller's transaction
+    await FileIndexService(db).write("requirements.txt", content.encode())
 
     # Update Redis cache (workers read this synchronously at startup)
     await set_requirements(content, content_hash)
