@@ -375,6 +375,39 @@ class TestRoleAssignments:
             ("managed_organizations", None)
         }
 
+    async def test_assignable_roles_say_where_each_may_apply(self, db_session) -> None:
+        from src.services.user_role_assignments import get_role_assignments
+
+        org = await _org(db_session)
+        user = await _user(db_session, org.id)
+        plain = await _role(db_session)
+
+        as_admin = {
+            r.id: r
+            for r in (
+                await get_role_assignments(db_session, admin_caller(), user_id=user.id)
+            ).assignable_roles
+        }
+        operator = as_admin[PLATFORM_OPERATOR_ROLE_ID]
+        assert operator.boundary_kinds == ["organization", "managed_organizations"]
+        assert operator.provider_organization_allowed is False
+        assert operator.description
+        assert as_admin[plain.id].boundary_kinds == [
+            "organization",
+            "managed_organizations",
+            "platform",
+        ]
+        assert as_admin[plain.id].provider_organization_allowed is True
+
+        assigner = _delegate(({"roleassignments.read", "roleassignments.readwrite"}, _at(org.id)))
+        as_delegate = {
+            r.id: r
+            for r in (
+                await get_role_assignments(db_session, assigner, user_id=user.id)
+            ).assignable_roles
+        }
+        assert as_delegate[plain.id].boundary_kinds == ["organization"]
+
     async def test_operator_boundaries_and_base_are_limited(self, db_session) -> None:
         from src.services.user_role_assignments import RoleAssignmentError
 

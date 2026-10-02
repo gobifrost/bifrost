@@ -371,16 +371,23 @@ class TestRolesRouterBoundary:
         with patch(
             "shared.sdk_roles.get_role", new=AsyncMock(return_value="ROLE")
         ) as mock_get:
-            assert await get_role(role_id, _stub_user(), AsyncMock()) == "ROLE"
+            assert (
+                await get_role(role_id, _stub_user(), AsyncMock(), include_builtin=False)
+                == "ROLE"
+            )
         mock_get.assert_awaited_once()
-        assert mock_get.call_args[1] == {"role_id": role_id, "include_counts": True}
+        assert mock_get.call_args[1] == {
+            "role_id": role_id,
+            "include_counts": True,
+            "include_builtin": False,
+        }
 
         with patch(
             "shared.sdk_roles.get_role",
             new=AsyncMock(side_effect=RoleServiceError(404, "Role not found")),
         ):
             with pytest.raises(HTTPException) as exc_info:
-                await get_role(role_id, _stub_user(), AsyncMock())
+                await get_role(role_id, _stub_user(), AsyncMock(), include_builtin=False)
         assert exc_info.value.status_code == 404
 
     async def test_update_delegates_partial_fields(self):
@@ -515,6 +522,18 @@ class TestBuiltinRoleGuards:
         items, _total = await list_roles(db_session, include_builtin=True, include_counts=False)
         assert BUILTIN_ROLE_IDS <= {item.id for item in items}
         assert all(item.consumer_counts is None for item in items)
+
+    async def test_a_builtin_is_found_only_when_asked_for(self, db_session):
+        from shared.builtin_roles import PLATFORM_OPERATOR_ROLE_ID
+        from shared.sdk_roles import get_role
+
+        with pytest.raises(RoleServiceError) as exc_info:
+            await get_role(db_session, role_id=PLATFORM_OPERATOR_ROLE_ID)
+        assert exc_info.value.status_code == 404
+        role = await get_role(
+            db_session, role_id=PLATFORM_OPERATOR_ROLE_ID, include_builtin=True, include_counts=False
+        )
+        assert role.is_builtin and role.consumer_counts is None
 
     async def test_secrets_reader_is_hidden_and_immutable(self, db_session):
         from shared.builtin_roles import DECRYPTION_ROLE_ID

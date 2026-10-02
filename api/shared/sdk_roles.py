@@ -152,12 +152,15 @@ async def get_role(
     *,
     role_id: UUID,
     include_counts: bool = True,
+    include_builtin: bool = False,
 ) -> RolePublic:
-    """Get a role by ID. Raises 404 when missing or builtin.
+    """Get a role by ID. Raises 404 when missing, or builtin unless
+    ``include_builtin``.
 
     Builtin roles (Platform Admin, User, Platform Operator, Secrets Reader)
-    are hidden from this surface — see `shared.builtin_roles`; their
-    permission sets are readable at ``/api/roles/{role_id}/permissions``.
+    are hidden from this surface unless asked for (the Roles UI shows them
+    read-only) — see `shared.builtin_roles`; their permission sets are
+    readable at ``/api/roles/{role_id}/permissions``.
     ``include_counts=False`` omits the consumer counts (they count users in
     every organization, which only a Platform Admin may see).
     """
@@ -167,7 +170,7 @@ async def get_role(
     result = await session.execute(select(RoleORM).where(RoleORM.id == role_id))
     role = result.scalar_one_or_none()
 
-    if not role or role.is_builtin:
+    if not role or (role.is_builtin and not include_builtin):
         raise RoleServiceError(404, "Role not found")
 
     public = RolePublic.model_validate(role)

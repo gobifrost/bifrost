@@ -42,12 +42,14 @@ class RoleBoundaryPublic(BaseModel):
 class RoleSummary(BaseModel):
     id: UUID
     name: str
+    description: str | None = None
     is_builtin: bool
 
 
 class AssignedRole(BaseModel):
     role_id: UUID
     name: str
+    description: str | None = None
     is_builtin: bool
     permissions: list[str]
     boundaries: list[RoleBoundaryPublic]
@@ -59,6 +61,7 @@ class AssignableRole(BaseModel):
 
     id: UUID
     name: str
+    description: str | None = None
     is_builtin: bool
     permissions: list[str]
     can_be_base: bool = Field(
@@ -66,6 +69,16 @@ class AssignableRole(BaseModel):
     )
     can_be_additional: bool = Field(
         description="Whether the caller may add this as an additional role."
+    )
+    boundary_kinds: list[BoundaryKindLiteral] = Field(
+        description=(
+            "Where the caller may make this role apply as an additional role. "
+            "An 'organization' boundary is further limited to organizations "
+            "where the caller can assign roles."
+        )
+    )
+    provider_organization_allowed: bool = Field(
+        description="Whether an 'organization' boundary may name the provider organization."
     )
 
 

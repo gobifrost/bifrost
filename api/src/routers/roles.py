@@ -165,6 +165,10 @@ async def get_role(
     role_id: UUID,
     user: CurrentActiveUser,
     db: DbSession,
+    include_builtin: bool = Query(
+        False,
+        description="Also find the builtin roles (Platform Admin, User, Platform Operator, Secrets Reader)",
+    ),
 ) -> RolePublic:
     """Get a role by ID (consumer counts for a Platform Admin only)."""
     from shared.sdk_roles import RoleServiceError, get_role as get_role_service
@@ -172,7 +176,10 @@ async def get_role(
     caller = await authorize_operation(db, user, "roles.get", GLOBAL)
     try:
         return await get_role_service(
-            db, role_id=role_id, include_counts=caller.is_platform_admin
+            db,
+            role_id=role_id,
+            include_counts=caller.is_platform_admin,
+            include_builtin=include_builtin,
         )
     except RoleServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail) from None

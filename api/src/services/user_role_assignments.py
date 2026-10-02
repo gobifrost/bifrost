@@ -95,6 +95,7 @@ class RoleAssignmentError(Exception):
 class RoleInfo:
     id: UUID
     name: str
+    description: str | None
     is_builtin: bool
     permissions: frozenset[str]
 
@@ -161,6 +162,7 @@ async def load_roles(session: AsyncSession, role_ids: Iterable[UUID]) -> dict[UU
         role.id: RoleInfo(
             id=role.id,
             name=role.name,
+            description=role.description,
             is_builtin=role.is_builtin,
             permissions=frozenset(permissions.get(role.id, ())),
         )
@@ -181,23 +183,42 @@ def check_role_change(caller: Caller, role: RoleInfo, target_permissions: frozen
         raise RoleAssignmentError(403, CEILING_MESSAGE)
 
 
+def _role_boundary_rule(role: RoleInfo) -> tuple[frozenset[BoundaryKind], bool]:
+    """The boundary kinds ``role`` may apply at, and whether an
+    ``organization`` boundary may name the provider org, whoever assigns it."""
+    if role.id == PLATFORM_OPERATOR_ROLE_ID:
+        return frozenset({BoundaryKind.ORGANIZATION, BoundaryKind.MANAGED_ORGANIZATIONS}), False
+    return frozenset(BoundaryKind), True
+
+
+def boundary_placement(caller: Caller, role: RoleInfo) -> tuple[frozenset[BoundaryKind], bool]:
+    """Where ``caller`` may make ``role`` apply (``check_boundaries`` decides
+    the same): the role's own rule, narrowed to ``organization`` boundaries
+    for anyone but a Platform Admin (and those only within their reach)."""
+    kinds, provider_allowed = _role_boundary_rule(role)
+    if not caller.is_platform_admin:
+        kinds = kinds & {BoundaryKind.ORGANIZATION}
+    return kinds, provider_allowed
+
+
 def check_boundaries(
     caller: Caller, reach: OrgReach, role: RoleInfo, boundaries: frozenset[Boundary]
 ) -> None:
     """Where ``role`` may be written to apply."""
     if not boundaries:
         raise RoleAssignmentError(422, f"'{role.name}' needs at least one boundary")
-    if role.id == PLATFORM_OPERATOR_ROLE_ID:
-        for boundary in boundaries:
-            if boundary.kind == BoundaryKind.PLATFORM or (
-                boundary.kind == BoundaryKind.ORGANIZATION
-                and boundary.organization_id == PROVIDER_ORG_ID
-            ):
-                raise RoleAssignmentError(
-                    422,
-                    "Platform Operator applies only at managed organizations or at "
-                    "customer organizations",
-                )
+    kinds, provider_allowed = _role_boundary_rule(role)
+    for boundary in boundaries:
+        if boundary.kind not in kinds or (
+            not provider_allowed
+            and boundary.kind == BoundaryKind.ORGANIZATION
+            and boundary.organization_id == PROVIDER_ORG_ID
+        ):
+            raise RoleAssignmentError(
+                422,
+                "Platform Operator applies only at managed organizations or at "
+                "customer organizations",
+            )
     if caller.is_platform_admin:
         return
     for boundary in boundaries:
@@ -276,14 +297,18 @@ def _assignable_roles(
         can_be_additional = role.id not in BASE_ROLE_IDS
         if not (can_be_base or can_be_additional):
             continue
+        kinds, provider_allowed = boundary_placement(caller, role)
         out.append(
             AssignableRole(
                 id=role.id,
                 name=role.name,
+                description=role.description,
                 is_builtin=role.is_builtin,
                 permissions=sorted(role.permissions),
                 can_be_base=can_be_base,
                 can_be_additional=can_be_additional,
+                boundary_kinds=[kind.value for kind in BoundaryKind if kind in kinds],
+                provider_organization_allowed=provider_allowed,
             )
         )
     return out
@@ -323,6 +348,7 @@ async def _response(
         AssignedRole(
             role_id=role_id,
             name=roles[role_id].name,
+            description=roles[role_id].description,
             is_builtin=roles[role_id].is_builtin,
             permissions=sorted(roles[role_id].permissions),
             boundaries=[
@@ -343,7 +369,9 @@ async def _response(
         )
     ]
     return UserRoleAssignmentsResponse(
-        base_role=RoleSummary(id=base.id, name=base.name, is_builtin=base.is_builtin),
+        base_role=RoleSummary(
+            id=base.id, name=base.name, description=base.description, is_builtin=base.is_builtin
+        ),
         additional=additional,
         is_protected=target.is_privileged,
         assignable_roles=_assignable_roles(caller, target, roles),

@@ -13071,6 +13071,8 @@ export interface components {
             id: string;
             /** Name */
             name: string;
+            /** Description */
+            description?: string | null;
             /** Is Builtin */
             is_builtin: boolean;
             /** Permissions */
@@ -13085,6 +13087,16 @@ export interface components {
              * @description Whether the caller may add this as an additional role.
              */
             can_be_additional: boolean;
+            /**
+             * Boundary Kinds
+             * @description Where the caller may make this role apply as an additional role. An 'organization' boundary is further limited to organizations where the caller can assign roles.
+             */
+            boundary_kinds: ("organization" | "managed_organizations" | "platform")[];
+            /**
+             * Provider Organization Allowed
+             * @description Whether an 'organization' boundary may name the provider organization.
+             */
+            provider_organization_allowed: boolean;
         };
         /** AssignedRole */
         AssignedRole: {
@@ -13095,6 +13107,8 @@ export interface components {
             role_id: string;
             /** Name */
             name: string;
+            /** Description */
+            description?: string | null;
             /** Is Builtin */
             is_builtin: boolean;
             /** Permissions */
@@ -24351,6 +24365,8 @@ export interface components {
             id: string;
             /** Name */
             name: string;
+            /** Description */
+            description?: string | null;
             /** Is Builtin */
             is_builtin: boolean;
         };
@@ -31749,7 +31765,10 @@ export interface operations {
     };
     "roles.get": {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Also find the builtin roles (Platform Admin, User, Platform Operator, Secrets Reader) */
+                include_builtin?: boolean;
+            };
             header?: never;
             path: {
                 role_id: string;
