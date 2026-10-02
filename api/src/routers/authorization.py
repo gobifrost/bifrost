@@ -3,6 +3,10 @@ Authorization Router
 
 The signed-in user's own authorization summary, for the UI to decide which
 controls to show. Every request is still decided by the server.
+
+Served under /auth with the other session routes: the client's proxies
+rewrite /api/auth/* to /auth/*, so an /api/auth route is unreachable from
+the browser.
 """
 
 from fastapi import APIRouter, HTTPException, status
@@ -12,7 +16,7 @@ from src.core.db_deps import DbSession
 from src.models.contracts.role_assignments import AuthorizationSummary
 from src.services.user_role_assignments import authorization_summary
 
-router = APIRouter(prefix="/api/auth", tags=["auth"])
+router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.get(

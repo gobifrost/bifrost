@@ -56,7 +56,7 @@ describe("fetchAuthorization", () => {
 		mockGet.mockResolvedValue({ data: operatorSummary });
 
 		await expect(fetchAuthorization()).resolves.toEqual(operatorSummary);
-		expect(mockGet).toHaveBeenCalledWith("/api/auth/authorization");
+		expect(mockGet).toHaveBeenCalledWith("/auth/authorization");
 	});
 
 	it("throws the server error", async () => {

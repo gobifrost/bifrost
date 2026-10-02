@@ -11441,13 +11441,6 @@
         "status": "missing_surface"
       },
       {
-        "method": "GET",
-        "operation_id": "",
-        "path": "/api/auth/authorization",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
         "method": "DELETE",
         "operation_id": "",
         "path": "/api/branding",
@@ -13789,6 +13782,13 @@
         "method": "POST",
         "operation_id": "",
         "path": "/auth/admin/revoke-user",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/auth/authorization",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },

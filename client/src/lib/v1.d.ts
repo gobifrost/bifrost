@@ -821,7 +821,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/auth/authorization": {
+    "/auth/authorization": {
         parameters: {
             query?: never;
             header?: never;
@@ -832,7 +832,7 @@ export interface paths {
          * Get my authorization
          * @description Whether the signed-in user is a Platform Admin, their base role, and the permissions their roles grant at each boundary. Read from the database on every call.
          */
-        get: operations["get_my_authorization_api_auth_authorization_get"];
+        get: operations["get_my_authorization_auth_authorization_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -30491,7 +30491,7 @@ export interface operations {
             };
         };
     };
-    get_my_authorization_api_auth_authorization_get: {
+    get_my_authorization_auth_authorization_get: {
         parameters: {
             query?: never;
             header?: never;

@@ -2,7 +2,7 @@
  * What the signed-in user may do, for deciding which controls to show.
  *
  * Mirrors the server's coverage rule (api/src/services/authorization/
- * evaluator.py `_covers`) over the summary from GET /api/auth/authorization.
+ * evaluator.py `_covers`) over the summary from GET /auth/authorization.
  * The server decides every request on its own; these helpers only keep the
  * UI from offering what it would refuse.
  */

@@ -1777,20 +1777,6 @@
     "reason": "Platform-admin-only operation."
   },
   {
-    "access_class": "personal",
-    "boundary": null,
-    "current_gate": "authenticated",
-    "inline_checks": [],
-    "inline_effect": null,
-    "intended_change": null,
-    "mcp_tool": null,
-    "method": "GET",
-    "operation_id": null,
-    "path": "/api/auth/authorization",
-    "permission": null,
-    "reason": "The signed-in user's own authorization summary (base role, grants and their boundaries), read from the database."
-  },
-  {
     "access_class": "permission",
     "boundary": "platform",
     "current_gate": "superuser",
@@ -8976,6 +8962,20 @@
     "path": "/auth/admin/revoke-user",
     "permission": "users.readwrite",
     "reason": "Signs a user out everywhere (revokes their sessions): a user support action. Decided by the evaluator (src.services.authorization.enforce) at the user's organization; protected users only for a Platform Admin."
+  },
+  {
+    "access_class": "personal",
+    "boundary": null,
+    "current_gate": "authenticated",
+    "inline_checks": [],
+    "inline_effect": null,
+    "intended_change": null,
+    "mcp_tool": null,
+    "method": "GET",
+    "operation_id": null,
+    "path": "/auth/authorization",
+    "permission": null,
+    "reason": "The signed-in user's own authorization summary (base role, grants and their boundaries), read from the database."
   },
   {
     "access_class": "personal",

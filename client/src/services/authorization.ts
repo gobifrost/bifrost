@@ -1,5 +1,5 @@
 /**
- * The signed-in user's authorization summary (GET /api/auth/authorization).
+ * The signed-in user's authorization summary (GET /auth/authorization).
  *
  * Keyed by user id so a different sign-in never reads another person's
  * summary; refetched on window focus, after any change to role assignments
@@ -23,7 +23,7 @@ import {
 } from "@/lib/authorization";
 
 export async function fetchAuthorization(): Promise<AuthorizationSummary> {
-	const { data, error } = await apiClient.GET("/api/auth/authorization");
+	const { data, error } = await apiClient.GET("/auth/authorization");
 	if (error || !data) throw error ?? new Error("Authorization unavailable");
 	return data;
 }

@@ -231,10 +231,10 @@ class TestPlatformOperator:
         assert e2e_client.get("/api/roles", headers=headers).status_code == 403
 
     def test_own_authorization_summary(self, e2e_client, world, platform_admin) -> None:
-        summary = _ok(e2e_client.get("/api/auth/authorization", headers=world["operator"].headers))
+        summary = _ok(e2e_client.get("/auth/authorization", headers=world["operator"].headers))
         assert summary["is_platform_admin"] is False
         assert {"permission": "users.readwrite", "boundary": {"kind": "managed_organizations", "organization_id": None}} in summary["grants"]
-        admin = _ok(e2e_client.get("/api/auth/authorization", headers=platform_admin.headers))
+        admin = _ok(e2e_client.get("/auth/authorization", headers=platform_admin.headers))
         assert admin["is_platform_admin"] is True and admin["grants"] == []
 
 
@@ -256,7 +256,7 @@ def test_regular_user_is_refused_every_identity_route(e2e_client, org1_user, wor
     for method, path, body in requests:
         response = e2e_client.request(method, path, headers=headers, json=body)
         assert response.status_code == 403, f"{method} {path}: {response.status_code} {response.text}"
-    assert _ok(e2e_client.get("/api/auth/authorization", headers=headers))["is_platform_admin"] is False
+    assert _ok(e2e_client.get("/auth/authorization", headers=headers))["is_platform_admin"] is False
 
 
 def test_engine_token_lists_users_over_the_worker_socket(e2e_client, platform_admin, org1, org1_user) -> None:

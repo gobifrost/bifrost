@@ -113,7 +113,6 @@
 | POST | `/api/applications/{app_id}/validate` |
 | GET | `/api/applications/{slug}` |
 | GET | `/api/audit` |
-| GET | `/api/auth/authorization` |
 | DELETE | `/api/branding` |
 | GET | `/api/branding` |
 | PUT | `/api/branding` |
@@ -592,6 +591,7 @@
 | POST | `/api/workflows/{workflow_id}/roles` |
 | DELETE | `/api/workflows/{workflow_id}/roles/{role_id}` |
 | POST | `/auth/admin/revoke-user` |
+| GET | `/auth/authorization` |
 | POST | `/auth/device/authorize` |
 | POST | `/auth/device/code` |
 | POST | `/auth/device/token` |
