@@ -19,7 +19,7 @@ from typing import Any
 import pytest
 
 from tests.e2e.conftest import execute_workflow_sync, write_and_register
-from tests.e2e.fixtures.setup import PROVIDER_ORG_ID, _register_and_authenticate_user
+from tests.e2e.fixtures.setup import PROVIDER_ORG_ID, _anonymous_client, _register_and_authenticate_user
 from tests.e2e.fixtures.users import E2EUser
 
 pytestmark = pytest.mark.e2e
@@ -155,6 +155,47 @@ class TestPlatformOperator:
             f"/api/users/{user_id}", headers=headers, json={"email": f"moved-{world['tag']}@example.com"}
         ).status_code == 403
 
+    def test_mfa_reset_signs_the_user_out_and_they_enroll_again(self, e2e_client, world, platform_admin) -> None:
+        headers = world["operator"].headers
+        created = _create_user(e2e_client, platform_admin, org_id=world["org"]["id"], tag=world["tag"], name="mfa")
+        target = _register_and_authenticate_user(
+            E2EUser(
+                email=created["email"],
+                password="R3aMfaTarget123!",
+                name="R3a mfa",
+                organization_id=world["org"]["id"],
+            )
+        )
+        try:
+            result = _ok(e2e_client.post(f"/api/users/{created['id']}/mfa/reset", headers=headers))
+            assert result["totp_removed"] is True
+            assert result["recovery_codes_removed"] > 0
+            assert result["passkeys_removed"] == 0
+            assert result["sessions_revoked"] >= 1
+
+            with _anonymous_client() as anonymous:
+                assert anonymous.post("/auth/refresh", json={"refresh_token": target.refresh_token}).status_code == 401
+                login = _ok(
+                    anonymous.post(
+                        "/auth/login",
+                        data={"username": target.email, "password": target.password},
+                        headers={"Content-Type": "application/x-www-form-urlencoded"},
+                    )
+                )
+            assert login["mfa_setup_required"] is True
+            assert login.get("access_token") is None
+        finally:
+            e2e_client.delete(f"/api/users/{created['id']}", headers=platform_admin.headers)
+
+    def test_mfa_reset_refuses_privileged_users_and_the_callers_own_account(
+        self, e2e_client, world, platform_admin
+    ) -> None:
+        headers = world["operator"].headers
+        assert e2e_client.post(f"/api/users/{world['privileged']['id']}/mfa/reset", headers=headers).status_code == 403
+        assert e2e_client.post(f"/api/users/{platform_admin.user_id}/mfa/reset", headers=headers).status_code == 403
+        own = e2e_client.post(f"/api/users/{world['operator_id']}/mfa/reset", headers=headers)
+        assert own.status_code == 400, own.text
+
     def test_invites_an_ordinary_user_only(self, e2e_client, world, platform_admin) -> None:
         headers = world["operator"].headers
         invited = _ok(
@@ -245,6 +286,7 @@ def test_regular_user_is_refused_every_identity_route(e2e_client, org1_user, wor
         ("GET", f"/api/users/{user_id}", None),
         ("POST", "/api/users", {"email": f"nope-{world['tag']}@example.com", "organization_id": str(org1_user.organization_id)}),
         ("PATCH", f"/api/users/{user_id}", {"name": "x"}),
+        ("POST", f"/api/users/{user_id}/mfa/reset", None),
         ("GET", f"/api/users/{user_id}/role-assignments", None),
         ("GET", "/api/organizations", None),
         ("GET", f"/api/organizations/{org1_user.organization_id}", None),

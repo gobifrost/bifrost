@@ -6464,6 +6464,62 @@
           "status": "intentionally_unsupported"
         },
         "rest": {
+          "operation_id": "users.mfa.reset",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "users.readwrite"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "user.mfa_reset",
+        "authorization_resolver": "Exact organization-boundary user mutation",
+        "cli": null,
+        "exclusions": {
+          "cli": "User lifecycle administration is available through the administrative UI and REST API, not the coding CLI.",
+          "manifest": "Users and their Role assignments are deployment-local identities, not portable manifest content.",
+          "mcp": "User lifecycle administration is intentionally excluded from coding-harness MCP tools.",
+          "native_builder": "User lifecycle administration is not a coding target.",
+          "sdk": "User lifecycle administration is not available to application SDKs."
+        },
+        "manifest": null,
+        "mcp": null,
+        "native_builder": false,
+        "operation_id": "users.mfa.reset",
+        "rest": {
+          "method": "POST",
+          "path": "/api/users/{user_id}/mfa/reset",
+          "request_model": null,
+          "response_model": "UserMfaResetResponse"
+        },
+        "side_effects": [
+          "remove the authenticator app, recovery codes, passkeys and remembered devices",
+          "revoke every refresh token"
+        ],
+        "summary": "Reset one admitted user's MFA and sign them out everywhere",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": null,
+          "status": "intentionally_unsupported"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": null,
+          "status": "intentionally_unsupported"
+        },
+        "rest": {
           "operation_id": "users.roles.list",
           "status": "exact_parity"
         },
@@ -9912,7 +9968,7 @@
     "cli": 155,
     "manifest": 16,
     "mcp": 94,
-    "rest": 652,
+    "rest": 653,
     "sdk": 19
   },
   "schema_version": 1,

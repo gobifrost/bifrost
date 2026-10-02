@@ -1557,6 +1557,26 @@ export interface paths {
         patch: operations["users.update"];
         trace?: never;
     };
+    "/api/users/{user_id}/mfa/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reset a user's MFA
+         * @description Remove the user's authenticator app, recovery codes, passkeys and remembered devices, and sign them out everywhere. They enroll MFA again at their next sign-in.
+         */
+        post: operations["users.mfa.reset"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/users/{user_id}/roles": {
         parameters: {
             query?: never;
@@ -27820,6 +27840,22 @@ export interface components {
             updated_at: string;
         };
         /**
+         * UserMfaResetResponse
+         * @description What an administrator's MFA reset removed.
+         */
+        UserMfaResetResponse: {
+            /** Totp Removed */
+            totp_removed: boolean;
+            /** Recovery Codes Removed */
+            recovery_codes_removed: number;
+            /** Passkeys Removed */
+            passkeys_removed: number;
+            /** Trusted Devices Revoked */
+            trusted_devices_revoked: number;
+            /** Sessions Revoked */
+            sessions_revoked: number;
+        };
+        /**
          * UserPublic
          * @description User output for API responses (excludes sensitive fields).
          */
@@ -31554,6 +31590,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UserPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "users.mfa.reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserMfaResetResponse"];
                 };
             };
             /** @description Validation Error */

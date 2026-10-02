@@ -200,6 +200,15 @@ class BulkUserResponse(BaseModel):
     failed: list[BulkUserFailure]
 
 
+class UserMfaResetResponse(BaseModel):
+    """What an administrator's MFA reset removed."""
+    totp_removed: bool
+    recovery_codes_removed: int
+    passkeys_removed: int
+    trusted_devices_revoked: int
+    sessions_revoked: int
+
+
 # ==================== ROLE MODELS ====================
 
 

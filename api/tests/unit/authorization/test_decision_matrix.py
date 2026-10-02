@@ -237,6 +237,7 @@ _OPERATOR_AT_CUSTOMER_ORG = {
     ("users.invites.send", "users.readwrite"),
     ("users.invites.regenerate", "users.readwrite"),
     ("users.invites.revoke", "users.readwrite"),
+    ("users.mfa.reset", "users.readwrite"),
     ("POST /auth/admin/revoke-user", "users.readwrite"),
     ("users.roles.list", "roleassignments.read"),
     ("users.forms.list", "roleassignments.read"),

@@ -26,6 +26,7 @@ from src.services.authorization.enforce import (
 )
 from src.services.events import emit_event
 from src.services.user_invite_service import UserInviteService
+from src.services.user_mfa_reset import reset_user_mfa as reset_user_mfa_service
 from src.services.user_role_assignments import (
     RoleAssignmentError,
     get_role_assignments as get_role_assignments_service,
@@ -45,6 +46,7 @@ from src.models.contracts.role_assignments import (
     UserRoleAssignmentsResponse,
     UserRoleAssignmentsUpdate,
 )
+from src.models.contracts.users import UserMfaResetResponse
 from src.models.contracts.user_invites import (
     CreateInviteResponse,
     SendInviteRequest,
@@ -416,6 +418,26 @@ async def delete_user(
 
     try:
         await delete_user_service(db, await load_caller(db, user), user_id=user_id)
+    except UserServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
+
+
+@router.post(
+    "/{user_id}/mfa/reset",
+    response_model=UserMfaResetResponse,
+    summary="Reset a user's MFA",
+    description="Remove the user's authenticator app, recovery codes, passkeys and remembered devices, "
+    "and sign them out everywhere. They enroll MFA again at their next sign-in.",
+**operation_route("users.mfa.reset"))
+async def reset_user_mfa(
+    user_id: UUID,
+    user: CurrentActiveUser,
+    db: DbSession,
+) -> UserMfaResetResponse:
+    from shared.sdk_users import UserServiceError
+
+    try:
+        return await reset_user_mfa_service(db, await load_caller(db, user), user_id)
     except UserServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail) from None
 

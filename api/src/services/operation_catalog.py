@@ -2360,6 +2360,24 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
         exclusions=_USER_ADMIN_SURFACE_EXCLUSIONS,
     ),
     OperationDefinition(
+        operation_id="users.mfa.reset",
+        summary="Reset one admitted user's MFA and sign them out everywhere",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="POST",
+            path="/api/users/{user_id}/mfa/reset",
+            response_model="UserMfaResetResponse",
+        ),
+        action_scopes=("users.readwrite",),
+        authorization_resolver="Exact organization-boundary user mutation",
+        audit_event="user.mfa_reset",
+        side_effects=(
+            "remove the authenticator app, recovery codes, passkeys and remembered devices",
+            "revoke every refresh token",
+        ),
+        exclusions=_USER_ADMIN_SURFACE_EXCLUSIONS,
+    ),
+    OperationDefinition(
         operation_id="users.roles.list",
         summary="List a user's boundary-aware Role assignments",
         target_kind=OperationTargetKind.RESOURCE,
