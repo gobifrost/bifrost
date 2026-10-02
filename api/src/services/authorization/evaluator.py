@@ -14,10 +14,10 @@ This module implements the operation level: the first two. The object level
 (``OrgScopedRepository``, ``access_level``, role grants) stays in existing
 code.
 
-1. A Platform Admin (the holder of the Platform Admin role) is allowed, except on an entry whose permission
-   the wildcard does not satisfy (``WILDCARD_EXCLUDED_PERMISSIONS``: secret
-   decryption). There an admin is decided like anyone else, by explicit
-   role grants.
+1. A Platform Admin (whoever holds the wildcard at the platform boundary) is
+   allowed, except on an entry whose permission the wildcard does not
+   satisfy (``WILDCARD_EXCLUDED_PERMISSIONS``: secret decryption). There an
+   admin is decided like anyone else, by explicit role grants.
 2. ``permission`` class: the entry's permission must be held by the base role
    (home organization only, never for a ``platform``-boundary entry) or by an
    additional role whose boundary covers the target:
