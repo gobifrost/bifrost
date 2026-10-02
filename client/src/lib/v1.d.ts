@@ -482,23 +482,22 @@ export interface paths {
         put?: never;
         /**
          * Admin Revoke User Sessions
-         * @description Revoke all refresh tokens for a specific user (admin only).
+         * @description Revoke all refresh tokens for a specific user.
          *
-         *     Allows platform administrators to forcibly log out a user from all
-         *     devices. Useful for security incidents or account compromises.
-         *
-         *     Requires platform admin (superuser) privileges.
+         *     Signs a user out of every device: users.readwrite at the user's
+         *     organization, and only a Platform Admin for a privileged user. Useful
+         *     for security incidents or account compromises.
          *
          *     Args:
          *         revoke_data: Target user ID to revoke
-         *         current_user: Current authenticated user (must be admin)
+         *         current_user: Current authenticated user
          *         db: Database session
          *
          *     Returns:
          *         Number of sessions revoked
          *
          *     Raises:
-         *         HTTPException: If not admin or user not found
+         *         HTTPException: If not permitted or user not found
          */
         post: operations["admin_revoke_user_sessions_auth_admin_revoke_user_post"];
         delete?: never;
@@ -816,6 +815,26 @@ export interface paths {
          * @description Complete invite registration by verifying a passkey and logging the user in.
          */
         post: operations["register_from_invite_passkey_verify_auth_register_from_invite_passkey_verify_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/authorization": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get my authorization
+         * @description Whether the signed-in user is a Platform Admin, their base role, and the permissions their roles grant at each boundary. Read from the database on every call.
+         */
+        get: operations["get_my_authorization_api_auth_authorization_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1343,13 +1362,13 @@ export interface paths {
         };
         /**
          * List organizations
-         * @description Get active organizations, optionally including inactive ones (Platform admin only)
+         * @description Get the active organizations the caller may view, optionally including inactive ones
          */
         get: operations["organizations.list"];
         put?: never;
         /**
          * Create a new organization
-         * @description Create a new client organization (Platform admin only)
+         * @description Create a new client organization
          */
         post: operations["organizations.create"];
         delete?: never;
@@ -1367,21 +1386,21 @@ export interface paths {
         };
         /**
          * Get organization by ID
-         * @description Get a specific organization by ID (Platform admin only)
+         * @description Get a specific organization by ID
          */
         get: operations["organizations.get"];
         put?: never;
         post?: never;
         /**
          * Delete an organization
-         * @description Soft delete an organization (sets is_active=False, Platform admin only)
+         * @description Soft delete an organization (sets is_active=False)
          */
         delete: operations["organizations.delete"];
         options?: never;
         head?: never;
         /**
          * Update an organization
-         * @description Update an existing organization (Platform admin only)
+         * @description Update an existing organization
          */
         patch: operations["organizations.update"];
         trace?: never;
@@ -1401,7 +1420,7 @@ export interface paths {
         put?: never;
         /**
          * Create user
-         * @description Create a new user proactively (Platform admin only)
+         * @description Invite a new user into an organization (or, for Platform Admins, create a Global or Platform Admin user)
          */
         post: operations["users.create"];
         delete?: never;
@@ -1519,7 +1538,7 @@ export interface paths {
         };
         /**
          * Get user details
-         * @description Get a specific user's details (Platform admin only)
+         * @description Get a specific user's details
          */
         get: operations["users.get"];
         put?: never;
@@ -1578,6 +1597,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/users/{user_id}/role-assignments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get a user's role assignments
+         * @description The user's base role, additional roles with where each applies, whether the user is protected, and the roles the caller may grant them.
+         */
+        get: operations["get_role_assignments_api_users__user_id__role_assignments_get"];
+        /**
+         * Replace a user's role assignments
+         * @description Replace the user's base role and additional roles (with boundaries) atomically.
+         */
+        put: operations["replace_role_assignments_api_users__user_id__role_assignments_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/roles": {
         parameters: {
             query?: never;
@@ -1587,13 +1630,13 @@ export interface paths {
         };
         /**
          * List all roles
-         * @description Get all roles (Platform admin only)
+         * @description Get all roles
          */
         get: operations["roles.list"];
         put?: never;
         /**
          * Create a role
-         * @description Create a new role (Platform admin only)
+         * @description Create a new role
          */
         post: operations["roles.create"];
         delete?: never;
@@ -1611,21 +1654,21 @@ export interface paths {
         };
         /**
          * Get a role
-         * @description Get a role by ID (Platform admin only)
+         * @description Get a role by ID
          */
         get: operations["roles.get"];
         put?: never;
         post?: never;
         /**
          * Delete a role
-         * @description Delete a role (Platform admin only). CASCADE removes all role assignments.
+         * @description Delete a role. CASCADE removes all role assignments; a role that is anyone's base role can't be deleted.
          */
         delete: operations["roles.delete"];
         options?: never;
         head?: never;
         /**
          * Update a role
-         * @description Update a role (Platform admin only)
+         * @description Update a role
          */
         patch: operations["roles.update"];
         trace?: never;
@@ -1807,6 +1850,30 @@ export interface paths {
         post: operations["roles.workflows.assign"];
         /** Bulk unassign workflows from role */
         delete: operations["roles.workflows.bulk_remove"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/roles/{role_id}/permissions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get a role's permissions
+         * @description Every permission the role holds, marked editable (identity permissions on custom roles) and privileged, plus the identity permissions an editor offers.
+         */
+        get: operations["get_role_permissions_api_roles__role_id__permissions_get"];
+        /**
+         * Set a role's identity permissions
+         * @description Replace the role's identity permissions (users, users.lifecycle, organizations, roleassignments, roles); its other permissions are kept. Builtin roles can't be changed.
+         */
+        put: operations["set_role_permissions_api_roles__role_id__permissions_put"];
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -11576,6 +11643,19 @@ export interface components {
             /** Description */
             description?: string | null;
         };
+        /** AdditionalRoleInput */
+        AdditionalRoleInput: {
+            /**
+             * Role Id
+             * Format: uuid
+             */
+            role_id: string;
+            /**
+             * Boundaries
+             * @description Where the role applies. Omit for the default: the user's home organization (Platform for a Global user).
+             */
+            boundaries?: components["schemas"]["RoleBoundaryInput"][] | null;
+        };
         /**
          * AdminRevokeRequest
          * @description Admin revocation request.
@@ -12978,6 +13058,50 @@ export interface components {
             /** Workflow Ids */
             workflow_ids: string[];
         };
+        /**
+         * AssignableRole
+         * @description A role the caller may grant to this user (the server applies the
+         *     grant ceiling).
+         */
+        AssignableRole: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Is Builtin */
+            is_builtin: boolean;
+            /** Permissions */
+            permissions: string[];
+            /**
+             * Can Be Base
+             * @description Whether the caller may make this the user's base role.
+             */
+            can_be_base: boolean;
+            /**
+             * Can Be Additional
+             * @description Whether the caller may add this as an additional role.
+             */
+            can_be_additional: boolean;
+        };
+        /** AssignedRole */
+        AssignedRole: {
+            /**
+             * Role Id
+             * Format: uuid
+             */
+            role_id: string;
+            /** Name */
+            name: string;
+            /** Is Builtin */
+            is_builtin: boolean;
+            /** Permissions */
+            permissions: string[];
+            /** Boundaries */
+            boundaries: components["schemas"]["RoleBoundaryPublic"][];
+        };
         /** AssistantTurn */
         AssistantTurn: {
             /**
@@ -13164,6 +13288,54 @@ export interface components {
             auto_redirect_to_sso: boolean;
             /** Default Sso Provider */
             default_sso_provider?: ("microsoft" | "google" | "oidc") | null;
+        };
+        /** AuthorizationBaseRole */
+        AuthorizationBaseRole: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+        };
+        /** AuthorizationBoundary */
+        AuthorizationBoundary: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "home" | "organization" | "managed_organizations" | "platform";
+            /** Organization Id */
+            organization_id?: string | null;
+        };
+        /** AuthorizationGrant */
+        AuthorizationGrant: {
+            /** Permission */
+            permission: string;
+            boundary: components["schemas"]["AuthorizationBoundary"];
+        };
+        /**
+         * AuthorizationSummary
+         * @description What the signed-in user holds, for the UI to decide which controls to
+         *     show. The server decides every request on its own.
+         */
+        AuthorizationSummary: {
+            /** Is Platform Admin */
+            is_platform_admin: boolean;
+            /** Home Organization Id */
+            home_organization_id: string | null;
+            /**
+             * Provider Organization Id
+             * Format: uuid
+             */
+            provider_organization_id: string;
+            base_role: components["schemas"]["AuthorizationBaseRole"];
+            /**
+             * Grants
+             * @description Base-role permissions (kind='home', the home organization only) and every additional role's permissions at each of its boundaries. Empty for a Platform Admin, who holds everything except secrets.read.
+             */
+            grants: components["schemas"]["AuthorizationGrant"][];
         };
         /**
          * AuthorizeResponse
@@ -24010,6 +24182,34 @@ export interface components {
             app_ids: string[];
         };
         /**
+         * RoleBoundaryInput
+         * @description Where an additional role applies.
+         */
+        RoleBoundaryInput: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "organization" | "managed_organizations" | "platform";
+            /**
+             * Organization Id
+             * @description Required for kind='organization'; must be unset otherwise.
+             */
+            organization_id?: string | null;
+        };
+        /** RoleBoundaryPublic */
+        RoleBoundaryPublic: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "organization" | "managed_organizations" | "platform";
+            /** Organization Id */
+            organization_id?: string | null;
+            /** Organization Name */
+            organization_name?: string | null;
+        };
+        /**
          * RoleConsumerCounts
          * @description Inline counts of every consumer type for a role.
          */
@@ -24063,6 +24263,50 @@ export interface components {
              */
             form_ids: string[];
         };
+        /** RolePermissionItem */
+        RolePermissionItem: {
+            /** Permission */
+            permission: string;
+            /**
+             * Editable
+             * @description Whether PUT /api/roles/{role_id}/permissions may change it.
+             */
+            editable: boolean;
+            /**
+             * Privileged
+             * @description Holders of this permission become protected users.
+             */
+            privileged: boolean;
+        };
+        /** RolePermissionsResponse */
+        RolePermissionsResponse: {
+            /**
+             * Role Id
+             * Format: uuid
+             */
+            role_id: string;
+            /** Is Builtin */
+            is_builtin: boolean;
+            /**
+             * Permissions
+             * @description Every permission the role holds.
+             */
+            permissions: components["schemas"]["RolePermissionItem"][];
+            /**
+             * Identity Permissions
+             * @description The identity permissions an editor may choose from, held or not.
+             */
+            identity_permissions: components["schemas"]["RolePermissionItem"][];
+        };
+        /**
+         * RolePermissionsUpdate
+         * @description The role's identity permissions (users, users.lifecycle, organizations,
+         *     roleassignments, roles). Other permissions the role holds are kept.
+         */
+        RolePermissionsUpdate: {
+            /** Permissions */
+            permissions: string[];
+        };
         /**
          * RolePublic
          * @description Role output for API responses.
@@ -24097,6 +24341,18 @@ export interface components {
             updated_at: string | null;
             /** @description Inline counts of every consumer type. Populated on list-roles for the Roles UI; may be None on single-role responses where it's not needed. */
             consumer_counts?: components["schemas"]["RoleConsumerCounts"] | null;
+        };
+        /** RoleSummary */
+        RoleSummary: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Is Builtin */
+            is_builtin: boolean;
         };
         /**
          * RoleUpdate
@@ -27610,6 +27866,12 @@ export interface components {
             invite_status: string;
             /** Registration Url */
             registration_url?: string | null;
+            /**
+             * Is Protected
+             * @description The user holds privileged access somewhere (or is a Platform Admin), so only a Platform Admin can change them.
+             * @default false
+             */
+            is_protected: boolean;
         };
         /**
          * UserResponse
@@ -27635,6 +27897,32 @@ export interface components {
              * @default []
              */
             roles: string[];
+        };
+        /** UserRoleAssignmentsResponse */
+        UserRoleAssignmentsResponse: {
+            base_role: components["schemas"]["RoleSummary"];
+            /** Additional */
+            additional: components["schemas"]["AssignedRole"][];
+            /**
+             * Is Protected
+             * @description The user holds privileged access somewhere, so only a Platform Admin can change them.
+             */
+            is_protected: boolean;
+            /** Assignable Roles */
+            assignable_roles: components["schemas"]["AssignableRole"][];
+        };
+        /**
+         * UserRoleAssignmentsUpdate
+         * @description Replaces a user's base role and additional roles atomically.
+         */
+        UserRoleAssignmentsUpdate: {
+            /**
+             * Base Role Id
+             * Format: uuid
+             */
+            base_role_id: string;
+            /** Additional */
+            additional?: components["schemas"]["AdditionalRoleInput"][];
         };
         /**
          * UserRolesResponse
@@ -30187,6 +30475,26 @@ export interface operations {
             };
         };
     };
+    get_my_authorization_api_auth_authorization_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthorizationSummary"];
+                };
+            };
+        };
+    };
     get_mfa_status_auth_mfa_status_get: {
         parameters: {
             query?: never;
@@ -31300,11 +31608,79 @@ export interface operations {
             };
         };
     };
+    get_role_assignments_api_users__user_id__role_assignments_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserRoleAssignmentsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    replace_role_assignments_api_users__user_id__role_assignments_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UserRoleAssignmentsUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserRoleAssignmentsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     "roles.list": {
         parameters: {
             query?: {
                 /** @description Search role name or description */
                 search?: string | null;
+                /** @description Include the builtin roles (Platform Admin, User, Platform Operator, Secrets Reader) */
+                include_builtin?: boolean;
                 sort_by?: "name" | "created";
                 sort_direction?: "asc" | "desc";
                 /** @description Maximum rows to return; omit for the legacy unbounded response */
@@ -32036,6 +32412,72 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_role_permissions_api_roles__role_id__permissions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                role_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RolePermissionsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_role_permissions_api_roles__role_id__permissions_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                role_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RolePermissionsUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RolePermissionsResponse"];
+                };
             };
             /** @description Validation Error */
             422: {
