@@ -44,6 +44,9 @@ class SolutionContent:
 
     config_values: dict[str, str] = field(default_factory=dict)
     table_data: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    # Optional for backward compatibility with full backups written before
+    # document IDs were preserved. New captures keep this aligned to table_data.
+    table_document_ids: dict[str, list[str]] = field(default_factory=dict)
     solution_files: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -67,6 +70,8 @@ def encode_secrets_blob(content: SolutionContent, *, password: str) -> str:
         "config_values": content.config_values,
         "table_data": content.table_data,
     }
+    if content.table_document_ids:
+        payload["table_document_ids"] = content.table_document_ids
     if content.solution_files:
         payload["solution_files"] = content.solution_files
     inner = json.dumps(payload)
@@ -100,5 +105,6 @@ def decode_secrets_blob(blob: str, *, password: str) -> SolutionContent:
     return SolutionContent(
         config_values=payload.get("config_values", {}),
         table_data=payload.get("table_data", {}),
+        table_document_ids=payload.get("table_document_ids", {}),
         solution_files=payload.get("solution_files", []),
     )

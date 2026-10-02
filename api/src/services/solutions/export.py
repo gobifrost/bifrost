@@ -263,7 +263,7 @@ def build_workspace_zip(bundle: "SolutionBundle", *, password: str | None = None
                         "encryption": "fernet-chunk-v1",
                     }
                 )
-        if password and (bundle.config_values or bundle.table_data or file_sidecar_entries):
+        if password and (bundle.config_values or bundle.table_data or bundle.table_document_ids or file_sidecar_entries):
             from src.services.solutions.secrets_blob import (
                 SolutionContent,
                 encode_secrets_blob,
@@ -275,6 +275,7 @@ def build_workspace_zip(bundle: "SolutionBundle", *, password: str | None = None
                     SolutionContent(
                         config_values=bundle.config_values,
                         table_data=bundle.table_data,
+                        table_document_ids=bundle.table_document_ids,
                         solution_files=file_sidecar_entries,
                     ),
                     password=password,
@@ -341,7 +342,7 @@ async def build_workspace_zip_for_export(
                     }
                 )
 
-        if password and (bundle.config_values or bundle.table_data or file_sidecar_entries):
+        if password and (bundle.config_values or bundle.table_data or bundle.table_document_ids or file_sidecar_entries):
             from src.services.solutions.secrets_blob import (
                 SolutionContent,
                 encode_secrets_blob,
@@ -354,6 +355,7 @@ async def build_workspace_zip_for_export(
                     SolutionContent(
                         config_values=bundle.config_values,
                         table_data=bundle.table_data,
+                        table_document_ids=bundle.table_document_ids,
                         solution_files=file_sidecar_entries,
                     ),
                     password=password,
@@ -441,7 +443,7 @@ async def add_live_content_to_workspace_zip_file(
                     }
                 )
 
-        if bundle.config_values or bundle.table_data or file_sidecar_entries:
+        if bundle.config_values or bundle.table_data or bundle.table_document_ids or file_sidecar_entries:
             from src.services.solutions.secrets_blob import (
                 SolutionContent,
                 encode_secrets_blob,
@@ -454,6 +456,7 @@ async def add_live_content_to_workspace_zip_file(
                     SolutionContent(
                         config_values=bundle.config_values,
                         table_data=bundle.table_data,
+                        table_document_ids=bundle.table_document_ids,
                         solution_files=file_sidecar_entries,
                     ),
                     password=password,

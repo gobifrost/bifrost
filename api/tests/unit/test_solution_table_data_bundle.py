@@ -59,6 +59,7 @@ async def test_bundle_includes_table_rows_when_requested(db_session) -> None:
         sol, include_values=True, include_data=True
     )
     assert bundle.table_data["widgets"] == [{"id": 1, "name": "a"}]
+    assert bundle.table_document_ids["widgets"] == ["1"]
 
 
 async def test_bundle_excludes_table_data_by_default(db_session) -> None:
@@ -71,8 +72,8 @@ async def test_bundle_excludes_table_data_by_default(db_session) -> None:
     assert bundle.table_data == {}
 
 
-async def test_bundle_table_data_empty_table_not_included(db_session) -> None:
-    """Tables with no rows are omitted from table_data (keeps blob lean)."""
+async def test_bundle_table_data_includes_empty_table_for_replace(db_session) -> None:
+    """A full backup declares empty owned tables so restore can clear stale rows."""
     db = db_session
     sol = Solution(
         id=uuid.uuid4(),
@@ -87,4 +88,20 @@ async def test_bundle_table_data_empty_table_not_included(db_session) -> None:
     await db.flush()
 
     bundle = await SolutionCaptureService(db).bundle_for(sol, include_data=True)
-    assert "empty" not in bundle.table_data
+    assert bundle.table_data["empty"] == []
+    assert bundle.table_document_ids["empty"] == []
+
+
+async def test_bundle_refuses_table_data_above_cap(db_session, monkeypatch) -> None:
+    """A partial full backup is unsafe: reject it rather than truncating rows."""
+    import src.services.solutions.capture as capture
+
+    monkeypatch.setattr(capture, "TABLE_ROW_CAP", 1)
+    sol = await _make_solution_with_table_rows(
+        db_session,
+        table="over-cap",
+        rows=[{"id": "one", "name": "first"}, {"id": "two", "name": "second"}],
+    )
+
+    with pytest.raises(ValueError, match="over-cap.*1"):
+        await SolutionCaptureService(db_session).bundle_for(sol, include_data=True)
