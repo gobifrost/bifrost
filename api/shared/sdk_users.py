@@ -46,7 +46,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
-from sqlalchemy import case, exists, func, or_, select
+from sqlalchemy import case, delete, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.constants import PROVIDER_ORG_ID
@@ -62,18 +62,14 @@ logger = logging.getLogger(__name__)
 
 
 async def set_user_base_role(session: AsyncSession, user: "UserORM", role_id: UUID) -> None:
-    """The single writer of `User.base_role_id` / `User.is_superuser`.
+    """The single writer of `User.base_role_id`.
 
-    Every user creation or update path that sets `is_superuser` must route
-    through here (or through a create path that sets both fields together,
-    like this one) so the two never drift: `is_superuser` is always exactly
-    `role_id == PLATFORM_ADMIN_ROLE_ID`.
-
-    `role_id` must be Platform Admin, User, or an existing custom (non-
-    builtin) role — never Platform Operator or Secrets Reader, which are
-    builtin but never base. Raises `ValueError` otherwise.
+    `role_id` must be User or an existing custom (non-builtin) role. Platform
+    Admin, Platform Operator and Secrets Reader are builtin roles that are
+    never a base role: Platform Admin is held as an additional role, written
+    by `set_platform_admin`. Raises `ValueError` otherwise.
     """
-    from shared.builtin_roles import BASE_ROLE_IDS, BUILTIN_ROLE_IDS, PLATFORM_ADMIN_ROLE_ID
+    from shared.builtin_roles import BASE_ROLE_IDS, BUILTIN_ROLE_IDS
     from src.models import Role as RoleORM
 
     if role_id in BUILTIN_ROLE_IDS - BASE_ROLE_IDS:
@@ -84,7 +80,52 @@ async def set_user_base_role(session: AsyncSession, user: "UserORM", role_id: UU
             raise ValueError(f"role_id {role_id} is not a base role or a custom role")
 
     user.base_role_id = role_id
-    user.is_superuser = role_id == PLATFORM_ADMIN_ROLE_ID
+
+
+async def set_platform_admin(
+    session: AsyncSession, user: "UserORM", is_admin: bool, *, assigned_by: str
+) -> None:
+    """The single writer of `User.is_superuser`.
+
+    Every path that makes someone a Platform Admin or stops them being one
+    routes through here so the two never drift: `is_superuser` is always
+    exactly "the user holds the Platform Admin assignment". The assignment is
+    always held at the `platform` boundary. `user` must already be flushed
+    (the assignment references its id). Does nothing when the user is already
+    in the requested state.
+    """
+    from shared.builtin_roles import PLATFORM_ADMIN_ROLE_ID
+    from shared.role_cache import invalidate_user as invalidate_user_role_cache
+    from src.models import UserRole as UserRoleORM
+    from src.services.authorization.context import Boundary, BoundaryKind
+    from src.services.user_role_assignments import insert_assignment
+
+    holds = (
+        await session.scalar(
+            select(UserRoleORM.user_id).where(
+                UserRoleORM.user_id == user.id, UserRoleORM.role_id == PLATFORM_ADMIN_ROLE_ID
+            )
+        )
+        is not None
+    )
+    if holds == is_admin:
+        return
+    if is_admin:
+        await insert_assignment(
+            session,
+            user_id=user.id,
+            role_id=PLATFORM_ADMIN_ROLE_ID,
+            boundaries=[Boundary(BoundaryKind.PLATFORM)],
+            assigned_by=assigned_by,
+        )
+    else:
+        await session.execute(
+            delete(UserRoleORM).where(
+                UserRoleORM.user_id == user.id, UserRoleORM.role_id == PLATFORM_ADMIN_ROLE_ID
+            )
+        )
+    user.is_superuser = is_admin
+    await invalidate_user_role_cache(user.id)
 
 
 class UserServiceError(Exception):
@@ -306,7 +347,7 @@ async def create_user(
         require_unprotected,
     )
     from src.services.user_invite_service import UserInviteService
-    from shared.builtin_roles import PLATFORM_ADMIN_ROLE_ID, USER_ROLE_ID
+    from shared.builtin_roles import USER_ROLE_ID
 
     if is_superuser or organization_id is None:
         require_operation(
@@ -323,6 +364,10 @@ async def create_user(
         name=name,
         hashed_password="",
         is_active=is_active,
+        # A Global user is inserted as a superuser
+        # (ck_users_org_requires_superuser); set_platform_admin then adds the
+        # assignment the flag stands for.
+        is_superuser=is_superuser,
         is_external=is_external,
         is_verified=True,
         is_registered=False,
@@ -330,12 +375,13 @@ async def create_user(
         created_at=now,
         updated_at=now,
     )
-    await set_user_base_role(
-        session, new_user, PLATFORM_ADMIN_ROLE_ID if is_superuser else USER_ROLE_ID
-    )
+    await set_user_base_role(session, new_user, USER_ROLE_ID)
 
     session.add(new_user)
     await session.flush()
+    await set_platform_admin(
+        session, new_user, is_superuser, assigned_by=caller.principal.email
+    )
     await session.refresh(new_user)
 
     logger.info(f"Created user {new_user.email} (id: {new_user.id})")
@@ -396,8 +442,8 @@ async def get_user(
 
 # How each ``UserUpdate`` field is authorized: user support (users.readwrite),
 # elevated lifecycle changes (users.lifecycle.readwrite), or the legacy
-# Platform Admin flag, which changes the base role to or from Platform Admin
-# and so takes a Platform Admin. Every supplied field is authorized,
+# Platform Admin flag, which adds or removes the Platform Admin role and so
+# takes a Platform Admin. Every supplied field is authorized,
 # including explicit nulls and false.
 PLATFORM_ADMIN_ONLY = "platform_admin"
 UPDATE_FIELD_PERMISSIONS: dict[str, str] = {
@@ -481,8 +527,8 @@ async def update_user(
     parity but never applied (the handler never set it), promoting to
     platform admin moves the user to the provider org, and
     ``organization_id=None`` means "no change" (the org cannot be
-    cleared here). ``is_superuser=False`` makes a Platform Admin a User and
-    leaves any other base role as it is.
+    cleared here). ``is_superuser`` adds or removes the Platform Admin
+    assignment and leaves the base role as it is.
 
     Raises:
         UserServiceError: 404 when missing, 403 for the system user, 409
@@ -493,7 +539,6 @@ async def update_user(
         operation_reach,
         privileged_user_ids,
     )
-    from shared.builtin_roles import PLATFORM_ADMIN_ROLE_ID, USER_ROLE_ID
 
     for permission in set(update_field_permissions(fields).values()) - {PLATFORM_ADMIN_ONLY}:
         operation_reach(caller, "users.update", permission=permission)
@@ -524,11 +569,12 @@ async def update_user(
     # password is intentionally not applied (historical behavior).
     if is_active is not None:
         db_user.is_active = is_active
+    if is_superuser is not None:
+        await set_platform_admin(
+            session, db_user, is_superuser, assigned_by=caller.principal.email
+        )
     if is_superuser:
-        await set_user_base_role(session, db_user, PLATFORM_ADMIN_ROLE_ID)
         db_user.organization_id = PROVIDER_ORG_ID
-    elif is_superuser is False and db_user.base_role_id == PLATFORM_ADMIN_ROLE_ID:
-        await set_user_base_role(session, db_user, USER_ROLE_ID)
     if is_verified is not None:
         db_user.is_verified = is_verified
     if is_external is not None:
@@ -651,8 +697,8 @@ async def bulk_update_users(
 
     replace_roles keeps the assignments that stay (and their boundaries),
     removes the rest, and adds the new ones at the user's home organization
-    (Platform for a Global user). Built-in roles are not added or removed
-    here.
+    (Platform for a Global user). Built-in roles are not added here, and the
+    ones a user already holds (Platform Admin, for one) are left as they are.
     """
     from shared.role_cache import invalidate_user as invalidate_user_role_cache
     from shared.system_account_guard import SYSTEM_ACCOUNT_ROLE_MESSAGE, is_system_account
@@ -760,12 +806,13 @@ async def bulk_update_users(
         elif request.operation == "replace_roles":
             wanted = set(request.role_ids or [])
             have = current_roles.get(uid, set())
-            added, removed = wanted - have, have - wanted
+            added = wanted - have
+            removed = {role_id for role_id in have - wanted if not roles[role_id].is_builtin}
             unknown = added - set(roles)
             if unknown:
                 fail(uid, f"Role {sorted(unknown)[0]} not found")
                 continue
-            if any(roles[role_id].is_builtin for role_id in added | removed):
+            if any(roles[role_id].is_builtin for role_id in added):
                 fail(uid, BUILTIN_ROLE_BULK_MESSAGE)
                 continue
             try:

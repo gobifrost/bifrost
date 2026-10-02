@@ -15,6 +15,7 @@ from shared.builtin_roles import (
     USER_ROLE_ID,
     WILDCARD_PERMISSION,
 )
+from tests.helpers.authorization import platform_admin_grant
 from src.services.authorization.context import (
     AuthorizationContext,
     Boundary,
@@ -31,14 +32,14 @@ ORG_A = UUID("00000000-0000-0000-0000-00000000a001")
 ORG_B = UUID("00000000-0000-0000-0000-00000000a002")
 
 
-def _ctx(*grants: RoleGrant, base: UUID = USER_ROLE_ID) -> AuthorizationContext:
+def _ctx(*grants: RoleGrant, admin: bool = False) -> AuthorizationContext:
     return AuthorizationContext(
         user_id=uuid4(),
         home_organization_id=ORG_A,
-        base_role_id=base,
+        base_role_id=USER_ROLE_ID,
         is_external=False,
-        base_permissions=USER_BASE_PERMISSIONS if base == USER_ROLE_ID else frozenset(),
-        role_grants=tuple(grants),
+        base_permissions=USER_BASE_PERMISSIONS,
+        role_grants=(platform_admin_grant(), *grants) if admin else tuple(grants),
     )
 
 
@@ -63,7 +64,7 @@ class TestIsPrivilegedPrincipal:
         assert is_privileged_principal(frozenset({WILDCARD_PERMISSION}))
 
     def test_platform_admin_context_is_privileged(self) -> None:
-        assert is_privileged_principal(_ctx(base=PLATFORM_ADMIN_ROLE_ID).held_permissions)
+        assert is_privileged_principal(_ctx(admin=True).held_permissions)
 
     def test_platform_operator_holder_is_privileged(self) -> None:
         operator = _grant(set(PLATFORM_OPERATOR_PERMISSIONS), Boundary(BoundaryKind.MANAGED_ORGANIZATIONS))
@@ -100,7 +101,7 @@ class TestHeldPermissions:
         }
 
     def test_platform_admin_holds_the_wildcard(self) -> None:
-        assert WILDCARD_PERMISSION in _ctx(base=PLATFORM_ADMIN_ROLE_ID).held_permissions
+        assert WILDCARD_PERMISSION in _ctx(admin=True).held_permissions
 
 
 class TestOperatorAssignableRole:
@@ -144,7 +145,7 @@ class TestOperatorAssignableRole:
         assert not operator_assignable_role(
             role_id=uuid4(),
             role_permissions=frozenset(),
-            target_permissions=_ctx(base=PLATFORM_ADMIN_ROLE_ID).held_permissions,
+            target_permissions=_ctx(admin=True).held_permissions,
         )
 
 
@@ -178,4 +179,4 @@ class TestGrantCeiling:
 
     def test_delegate_may_not_change_a_privileged_user(self) -> None:
         assert not self._may(admin=False, target=frozenset({"users.readwrite"}))
-        assert not self._may(admin=False, target=_ctx(base=PLATFORM_ADMIN_ROLE_ID).held_permissions)
+        assert not self._may(admin=False, target=_ctx(admin=True).held_permissions)

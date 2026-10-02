@@ -112,7 +112,7 @@ async def _boundaries(database_url: str, ids: dict[str, str]) -> set[tuple[str, 
                 sa.text(
                     "SELECT user_id, role_id, kind, organization_id FROM user_role_boundaries "
                     "WHERE user_id IN (CAST(:unbounded AS uuid), CAST(:bounded AS uuid), "
-                    "CAST(:global_admin AS uuid))"
+                    "CAST(:global_admin AS uuid)) AND role_id IN (CAST(:role_1 AS uuid), CAST(:role_2 AS uuid))"
                 ),
                 ids,
             )

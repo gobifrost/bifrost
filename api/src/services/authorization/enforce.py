@@ -7,8 +7,8 @@ entry by its operation key (``operation_key``: the operation-catalog id, or
 ``"<METHOD> <path>"`` for an uncatalogued route).
 
 Callers. ``load_caller`` reads the person's ``AuthorizationContext`` from the
-database on every request, so Platform Admin is ``User.base_role_id`` as
-stored now, not the token's ``is_superuser`` claim. Execution credentials are
+database on every request, so Platform Admin is the assignment of the
+Platform Admin role as stored now, not the token's ``is_superuser`` claim. Execution credentials are
 the exception, decided by one explicit, staged rule (see ``decide_for``).
 
 Targets. A row-level target is the target object's own organization:

@@ -1,7 +1,7 @@
 """Structural lint: `User.is_superuser` has exactly one writer.
 
-`shared.sdk_users.set_user_base_role` is the single writer that keeps
-`is_superuser == (base_role_id == PLATFORM_ADMIN_ROLE_ID)`. Every other
+`shared.sdk_users.set_platform_admin` is the single writer that keeps
+`is_superuser == the user holds the Platform Admin assignment`. Every other
 direct assignment (`x.is_superuser = ...`, or `is_superuser=...` passed to
 a `User(...)`/`UserORM(...)` constructor call) is a latent invariant-
 breaking bug waiting to happen — this test AST-walks `api/src` and
@@ -25,7 +25,7 @@ from pathlib import Path
 API_ROOT = Path(__file__).resolve().parents[2]
 
 # The only file allowed to write `User.is_superuser`. It implements
-# `set_user_base_role`, the single writer.
+# `set_platform_admin`, the single writer.
 ALLOWED_FILES = {
     "shared/sdk_users.py",
 }
@@ -85,8 +85,8 @@ def test_no_direct_is_superuser_writes_outside_the_single_writer():
 
     assert not offenders, (
         "Direct is_superuser write(s) found outside "
-        "shared/sdk_users.py::set_user_base_role. Route them through "
-        "set_user_base_role instead so base_role_id stays in lockstep:\n"
+        "shared/sdk_users.py::set_platform_admin. Route them through "
+        "set_platform_admin instead so the Platform Admin assignment stays in lockstep:\n"
         + "\n".join(offenders)
     )
 
@@ -94,5 +94,5 @@ def test_no_direct_is_superuser_writes_outside_the_single_writer():
 def test_allowed_file_still_defines_the_single_writer():
     """If the allow-listed file stops matching, the allow-list is stale."""
     text = (API_ROOT / "shared" / "sdk_users.py").read_text()
-    assert "def set_user_base_role(" in text
-    assert "user.is_superuser = role_id == PLATFORM_ADMIN_ROLE_ID" in text
+    assert "def set_platform_admin(" in text
+    assert "user.is_superuser = is_admin" in text

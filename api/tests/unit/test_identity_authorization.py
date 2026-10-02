@@ -59,15 +59,21 @@ async def _org(db_session):
     return org
 
 
-async def _user(db_session, org_id: UUID | None, *, base: UUID = USER_ROLE_ID):
+async def _user(db_session, org_id: UUID | None, *, admin: bool = False):
+    from shared.sdk_users import set_platform_admin
     from src.models import User as UserORM
 
-    user = UserORM(email=f"ia-{uuid4().hex[:8]}@example.com", organization_id=org_id, name="Before")
+    # A Global user is inserted as a superuser (ck_users_org_requires_superuser);
+    # the assignment follows from the writer.
+    user = UserORM(
+        email=f"ia-{uuid4().hex[:8]}@example.com",
+        organization_id=org_id,
+        name="Before",
+        is_superuser=admin,
+    )
     db_session.add(user)
     await db_session.flush()
-    user.base_role_id = base
-    user.is_superuser = base == PLATFORM_ADMIN_ROLE_ID
-    await db_session.flush()
+    await set_platform_admin(db_session, user, admin, assigned_by="t")
     return user
 
 
@@ -202,12 +208,20 @@ class TestUpdateUser:
     async def test_demoting_keeps_a_custom_base_role(self, db_session) -> None:
         org = await _org(db_session)
         custom = await _role(db_session)
-        user = await _user(db_session, org.id)
+        user = await _user(db_session, org.id, admin=True)
         user.base_role_id = custom.id
         await db_session.flush()
         updated = await self._update(db_session, admin_caller(), user, is_superuser=False)
         assert updated.is_superuser is False
         assert user.base_role_id == custom.id
+        assert await _boundaries(db_session, user.id, PLATFORM_ADMIN_ROLE_ID) == set()
+
+    async def test_promoting_adds_platform_admin_and_keeps_the_base_role(self, db_session) -> None:
+        user = await _user(db_session, PROVIDER_ORG_ID)
+        updated = await self._update(db_session, admin_caller(), user, is_superuser=True)
+        assert updated.is_superuser is True
+        assert user.base_role_id == USER_ROLE_ID
+        assert await _boundaries(db_session, user.id, PLATFORM_ADMIN_ROLE_ID) == {("platform", None)}
 
 
 class TestBulk:
@@ -218,7 +232,7 @@ class TestBulk:
         org_a, org_b = await _org(db_session), await _org(db_session)
         ordinary = await _user(db_session, org_a.id)
         elsewhere = await _user(db_session, org_b.id)
-        admin = await _user(db_session, org_a.id, base=PLATFORM_ADMIN_ROLE_ID)
+        admin = await _user(db_session, org_a.id, admin=True)
         support = _delegate(({"users.readwrite"}, _at(org_a.id)))
         missing = uuid4()
         result = await bulk_update_users(
@@ -323,22 +337,22 @@ class TestBulk:
 
 
 class TestBaseRoleWriter:
-    async def test_custom_role_is_a_valid_base_and_keeps_is_superuser_in_sync(self, db_session) -> None:
+    async def test_custom_role_is_a_valid_base_and_leaves_is_superuser_alone(self, db_session) -> None:
         from shared.sdk_users import set_user_base_role
 
         org = await _org(db_session)
-        user = await _user(db_session, org.id, base=PLATFORM_ADMIN_ROLE_ID)
+        user = await _user(db_session, org.id, admin=True)
         custom = await _role(db_session)
         await set_user_base_role(db_session, user, custom.id)
-        assert (user.base_role_id, user.is_superuser) == (custom.id, False)
-        await set_user_base_role(db_session, user, PLATFORM_ADMIN_ROLE_ID)
-        assert user.is_superuser is True
+        assert (user.base_role_id, user.is_superuser) == (custom.id, True)
+        await set_user_base_role(db_session, user, USER_ROLE_ID)
+        assert (user.base_role_id, user.is_superuser) == (USER_ROLE_ID, True)
 
-    async def test_operator_and_secrets_reader_are_never_base(self, db_session) -> None:
+    async def test_admin_operator_and_secrets_reader_are_never_base(self, db_session) -> None:
         from shared.sdk_users import set_user_base_role
 
         user = await _user(db_session, (await _org(db_session)).id)
-        for role_id in (PLATFORM_OPERATOR_ROLE_ID, DECRYPTION_ROLE_ID, uuid4()):
+        for role_id in (PLATFORM_ADMIN_ROLE_ID, PLATFORM_OPERATOR_ROLE_ID, DECRYPTION_ROLE_ID, uuid4()):
             with pytest.raises(ValueError):
                 await set_user_base_role(db_session, user, role_id)
 
@@ -536,6 +550,96 @@ class TestRoleAssignments:
         with pytest.raises(RoleAssignmentError) as exc_info:
             await self._put(db_session, admin_caller(), user, additional=[{"role_id": DECRYPTION_ROLE_ID}])
         assert exc_info.value.status_code == 409
+
+    async def test_admin_grants_and_removes_platform_admin_as_an_additional_role(self, db_session) -> None:
+        user = await _user(db_session, PROVIDER_ORG_ID)
+        admin_item = {"role_id": PLATFORM_ADMIN_ROLE_ID}
+
+        response = await self._put(db_session, admin_caller(), user, additional=[admin_item])
+        assert user.is_superuser is True
+        assert user.base_role_id == USER_ROLE_ID
+        assert await _boundaries(db_session, user.id, PLATFORM_ADMIN_ROLE_ID) == {("platform", None)}
+        assert response.base_role.id == USER_ROLE_ID
+        assert response.is_protected is True
+
+        response = await self._put(db_session, admin_caller(), user, additional=[])
+        assert user.is_superuser is False
+        assert await _boundaries(db_session, user.id, PLATFORM_ADMIN_ROLE_ID) == set()
+        assert response.additional == []
+
+    async def test_platform_admin_is_never_a_base_role(self, db_session) -> None:
+        from src.services.user_role_assignments import RoleAssignmentError, get_role_assignments
+
+        user = await _user(db_session, PROVIDER_ORG_ID)
+        with pytest.raises(RoleAssignmentError) as exc_info:
+            await self._put(db_session, admin_caller(), user, base=PLATFORM_ADMIN_ROLE_ID)
+        assert exc_info.value.status_code == 422
+        assert user.is_superuser is False
+
+        view = await get_role_assignments(db_session, admin_caller(), user_id=user.id)
+        listed = {r.id: r for r in view.assignable_roles}[PLATFORM_ADMIN_ROLE_ID]
+        assert (listed.can_be_base, listed.can_be_additional) == (False, True)
+        assert listed.boundary_kinds == ["platform"]
+
+    async def test_platform_admin_applies_only_at_the_platform_boundary(self, db_session) -> None:
+        from src.services.user_role_assignments import RoleAssignmentError
+
+        user = await _user(db_session, PROVIDER_ORG_ID)
+        for boundaries in (
+            [{"kind": "organization", "organization_id": str(PROVIDER_ORG_ID)}],
+            [{"kind": "managed_organizations"}],
+        ):
+            with pytest.raises(RoleAssignmentError) as exc_info:
+                await self._put(
+                    db_session,
+                    admin_caller(),
+                    user,
+                    additional=[{"role_id": PLATFORM_ADMIN_ROLE_ID, "boundaries": boundaries}],
+                )
+            assert exc_info.value.status_code == 422
+        assert user.is_superuser is False
+
+    async def test_platform_admin_is_only_for_provider_org_and_global_people(self, db_session) -> None:
+        from src.services.user_role_assignments import (
+            ADMIN_HOLDER_MESSAGE,
+            RoleAssignmentError,
+            get_role_assignments,
+        )
+
+        customer = await _user(db_session, (await _org(db_session)).id)
+        view = await get_role_assignments(db_session, admin_caller(), user_id=customer.id)
+        assert PLATFORM_ADMIN_ROLE_ID not in {r.id for r in view.assignable_roles}
+        with pytest.raises(RoleAssignmentError) as exc_info:
+            await self._put(
+                db_session, admin_caller(), customer, additional=[{"role_id": PLATFORM_ADMIN_ROLE_ID}]
+            )
+        assert (exc_info.value.status_code, exc_info.value.detail) == (409, ADMIN_HOLDER_MESSAGE)
+        assert customer.is_superuser is False
+
+    async def test_a_global_platform_admin_cannot_lose_the_role(self, db_session) -> None:
+        from src.services.user_role_assignments import ADMIN_REMOVAL_MESSAGE, RoleAssignmentError
+
+        global_admin = await _user(db_session, None, admin=True)
+        with pytest.raises(RoleAssignmentError) as exc_info:
+            await self._put(db_session, admin_caller(), global_admin, additional=[])
+        assert (exc_info.value.status_code, exc_info.value.detail) == (409, ADMIN_REMOVAL_MESSAGE)
+        assert global_admin.is_superuser is True
+
+    async def test_only_a_platform_admin_grants_or_removes_platform_admin(self, db_session) -> None:
+        from src.services.user_role_assignments import ADMIN_ROLE_MESSAGE, RoleAssignmentError
+
+        assigner = _delegate(({"roleassignments.readwrite", "roleassignments.read"}, _at(PROVIDER_ORG_ID)))
+        plain = await _user(db_session, PROVIDER_ORG_ID)
+        with pytest.raises(RoleAssignmentError) as exc_info:
+            await self._put(db_session, assigner, plain, additional=[{"role_id": PLATFORM_ADMIN_ROLE_ID}])
+        assert (exc_info.value.status_code, exc_info.value.detail) == (403, ADMIN_ROLE_MESSAGE)
+        assert plain.is_superuser is False
+
+        admin = await _user(db_session, PROVIDER_ORG_ID, admin=True)
+        with pytest.raises(HTTPException) as http_exc:
+            await self._put(db_session, assigner, admin, additional=[])
+        assert http_exc.value.status_code == 403
+        assert admin.is_superuser is True
 
     async def test_delegate_ceiling_and_boundary_reach(self, db_session) -> None:
         from src.services.user_role_assignments import RoleAssignmentError

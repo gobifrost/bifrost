@@ -11,10 +11,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import NAMESPACE_OID, UUID, uuid5
 
-from shared.builtin_roles import PLATFORM_ADMIN_ROLE_ID, USER_BASE_PERMISSIONS, USER_ROLE_ID
+from shared.builtin_roles import USER_BASE_PERMISSIONS, USER_ROLE_ID
 from src.core.constants import PROVIDER_ORG_ID
 from src.models.contracts.access_list import AccessEntry, CurrentGate, InlineEffect
 from src.services.authorization.context import AuthorizationContext
+from tests.helpers.authorization import platform_admin_grant
 
 CUSTOMER_ORG_ID = UUID("00000000-0000-0000-0000-00000000c001")
 OTHER_CUSTOMER_ORG_ID = UUID("00000000-0000-0000-0000-00000000c002")
@@ -36,23 +37,22 @@ class Persona:
         return self.is_superuser or self.is_provider_org
 
 
-def _ctx(name: str, base_role_id: UUID, home: UUID, *, external: bool = False) -> AuthorizationContext:
+def _ctx(name: str, home: UUID, *, admin: bool = False, external: bool = False) -> AuthorizationContext:
     return AuthorizationContext(
         user_id=uuid5(NAMESPACE_OID, name),
         home_organization_id=home,
-        base_role_id=base_role_id,
+        base_role_id=USER_ROLE_ID,
         is_external=external,
-        base_permissions=frozenset()
-        if base_role_id == PLATFORM_ADMIN_ROLE_ID
-        else USER_BASE_PERMISSIONS,
+        base_permissions=USER_BASE_PERMISSIONS,
+        role_grants=(platform_admin_grant(),) if admin else (),
     )
 
 
 PERSONAS: tuple[Persona, ...] = (
-    Persona("platform_admin", _ctx("platform_admin", PLATFORM_ADMIN_ROLE_ID, PROVIDER_ORG_ID), is_superuser=True, is_provider_org=True),
-    Persona("provider_member", _ctx("provider_member", USER_ROLE_ID, PROVIDER_ORG_ID), is_provider_org=True),
-    Persona("regular", _ctx("regular", USER_ROLE_ID, CUSTOMER_ORG_ID)),
-    Persona("external", _ctx("external", USER_ROLE_ID, CUSTOMER_ORG_ID, external=True)),
+    Persona("platform_admin", _ctx("platform_admin", PROVIDER_ORG_ID, admin=True), is_superuser=True, is_provider_org=True),
+    Persona("provider_member", _ctx("provider_member", PROVIDER_ORG_ID), is_provider_org=True),
+    Persona("regular", _ctx("regular", CUSTOMER_ORG_ID)),
+    Persona("external", _ctx("external", CUSTOMER_ORG_ID, external=True)),
     Persona("anonymous", None),
 )
 

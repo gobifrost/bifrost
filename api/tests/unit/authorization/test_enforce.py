@@ -19,6 +19,7 @@ from src.core.constants import PROVIDER_ORG_ID, SYSTEM_USER_UUID
 from src.core.principal import UserPrincipal
 from src.models.contracts.access_list import CurrentGate
 from src.services.access_list import ACCESS_LIST
+from tests.helpers.authorization import platform_admin_grant
 from src.services.authorization.context import (
     AuthorizationContext,
     Boundary,
@@ -56,14 +57,14 @@ def _principal(**kwargs) -> UserPrincipal:
     return UserPrincipal(**kwargs)
 
 
-def _ctx(*grants: RoleGrant, home: UUID | None = ORG_A, base: UUID = USER_ROLE_ID) -> AuthorizationContext:
+def _ctx(*grants: RoleGrant, home: UUID | None = ORG_A, admin: bool = False) -> AuthorizationContext:
     return AuthorizationContext(
         user_id=uuid4(),
         home_organization_id=home,
-        base_role_id=base,
+        base_role_id=USER_ROLE_ID,
         is_external=False,
-        base_permissions=USER_BASE_PERMISSIONS if base == USER_ROLE_ID else frozenset(),
-        role_grants=grants,
+        base_permissions=USER_BASE_PERMISSIONS,
+        role_grants=(platform_admin_grant(), *grants) if admin else grants,
     )
 
 
@@ -142,7 +143,8 @@ class TestExecutionCredentials:
 
 @pytest.mark.asyncio
 class TestPlatformAdminFromTheDatabase:
-    async def _user(self, db_session, base_role_id: UUID):
+    async def _user(self, db_session, *, admin: bool):
+        from shared.sdk_users import set_platform_admin
         from src.models import User as UserORM
         from src.models.orm.organizations import Organization
 
@@ -152,12 +154,11 @@ class TestPlatformAdminFromTheDatabase:
         user = UserORM(email=f"enf-{uuid4().hex[:8]}@t.local", organization_id=org.id)
         db_session.add(user)
         await db_session.flush()
-        user.base_role_id = base_role_id
-        await db_session.flush()
+        await set_platform_admin(db_session, user, admin, assigned_by="t")
         return user
 
     async def test_a_superuser_token_for_a_demoted_user_is_not_an_admin(self, db_session) -> None:
-        user = await self._user(db_session, USER_ROLE_ID)
+        user = await self._user(db_session, admin=False)
         caller = await load_caller(
             db_session, _principal(user_id=user.id, organization_id=user.organization_id, is_superuser=True)
         )
@@ -167,8 +168,8 @@ class TestPlatformAdminFromTheDatabase:
         assert exc_info.value.status_code == 403
         assert exc_info.value.detail == "You don't have permission to view users"
 
-    async def test_the_stored_base_role_makes_the_admin(self, db_session) -> None:
-        user = await self._user(db_session, PLATFORM_ADMIN_ROLE_ID)
+    async def test_the_stored_assignment_makes_the_admin(self, db_session) -> None:
+        user = await self._user(db_session, admin=True)
         caller = await load_caller(
             db_session, _principal(user_id=user.id, organization_id=user.organization_id)
         )
@@ -224,7 +225,7 @@ def _contexts() -> list[AuthorizationContext]:
     perm = "users.read"
     return [
         _ctx(),
-        _ctx(base=PLATFORM_ADMIN_ROLE_ID, home=PROVIDER_ORG_ID),
+        _ctx(admin=True, home=PROVIDER_ORG_ID),
         _operator().ctx,  # type: ignore[list-item]
         _ctx(RoleGrant(uuid4(), frozenset({perm}), (Boundary(BoundaryKind.ORGANIZATION, ORG_B),))),
         _ctx(RoleGrant(uuid4(), frozenset({perm}), (Boundary(BoundaryKind.PLATFORM),))),
@@ -267,7 +268,7 @@ class TestPermittedOrganizations:
 
 class TestProtectedTargets:
     def test_only_an_admin_changes_a_privileged_user(self) -> None:
-        admin = _person(_ctx(base=PLATFORM_ADMIN_ROLE_ID))
+        admin = _person(_ctx(admin=True))
         require_unprotected(admin, True)
         require_unprotected(_operator(), False)
         with pytest.raises(HTTPException) as exc_info:
@@ -296,9 +297,9 @@ class TestPrivilegedUsers:
             users[name] = UserORM(email=f"{name}-{uuid4().hex[:6]}@t.local", organization_id=org.id)
             db_session.add(users[name])
         await db_session.flush()
-        users["admin"].base_role_id = PLATFORM_ADMIN_ROLE_ID
         db_session.add_all(
             [
+                UserRole(user_id=users["admin"].id, role_id=PLATFORM_ADMIN_ROLE_ID, assigned_by="t"),
                 UserRole(user_id=users["plain"].id, role_id=empty.id, assigned_by="t"),
                 UserRole(user_id=users["stitched"].id, role_id=support.id, assigned_by="t"),
                 UserRole(user_id=users["stitched"].id, role_id=config.id, assigned_by="t"),

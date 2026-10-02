@@ -54,14 +54,16 @@ class AuthorizationContext:
     home_organization_id: UUID | None
     base_role_id: UUID
     is_external: bool
-    # Permissions of the base role. Platform Admin's set is empty here: it is
-    # recognised by ``is_platform_admin``, not by a stored wildcard row.
+    # Permissions of the base role (User or a custom role).
     base_permissions: frozenset[str]
     role_grants: tuple[RoleGrant, ...] = ()
 
     @property
     def is_platform_admin(self) -> bool:
-        return self.base_role_id == PLATFORM_ADMIN_ROLE_ID
+        """Whether the person holds the Platform Admin role (an additional
+        role, never a base role), recognised by the assignment, not by a
+        stored wildcard row."""
+        return any(grant.role_id == PLATFORM_ADMIN_ROLE_ID for grant in self.role_grants)
 
     @property
     def held_permissions(self) -> frozenset[str]:
@@ -120,7 +122,7 @@ async def build_authorization_context(
         user_id=user_id,
         home_organization_id=home_organization_id,
         base_role_id=base_role_id,
-        is_external=bool(is_external) and base_role_id != PLATFORM_ADMIN_ROLE_ID,
+        is_external=bool(is_external) and PLATFORM_ADMIN_ROLE_ID not in boundaries_by_role,
         base_permissions=frozenset(permissions_by_role.get(base_role_id, ())),
         role_grants=tuple(
             RoleGrant(

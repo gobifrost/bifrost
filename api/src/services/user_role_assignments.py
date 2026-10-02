@@ -9,10 +9,13 @@ The grant ceiling (``src.services.authorization.privilege``): an actor who is
 not a Platform Admin may grant or remove only roles that carry no
 permissions and are not builtin, never on a privileged user, and may write
 only ``organization`` boundaries their own ``roleassignments.readwrite``
-reach covers. A Platform Admin may assign anything, with two limits that hold
-for everyone: Platform Operator is never a base role and applies only at
-managed organizations or at customer organizations (not the provider org, not
-Platform), and Secrets Reader is not assignable yet.
+reach covers. A Platform Admin may assign anything, with limits that hold for
+everyone: a base role is User or a custom role, never a builtin role beyond
+User; Platform Operator applies only at managed organizations or at customer
+organizations (not the provider org, not Platform); Platform Admin is an
+additional role held only by people in the provider organization or Global
+users, always at the ``platform`` boundary, and only a Platform Admin may grant
+or remove it; and Secrets Reader is not assignable yet.
 """
 
 from __future__ import annotations
@@ -82,6 +85,12 @@ BOUNDARY_REACH_MESSAGE = (
 ADMIN_ROLE_MESSAGE = "Only a Platform Admin can grant or remove the Platform Admin role"
 OPERATOR_HOLDER_MESSAGE = (
     "Platform Operator can only be given to people in the provider organization"
+)
+ADMIN_HOLDER_MESSAGE = (
+    "Move the user to the provider organization before making them a Platform Admin"
+)
+ADMIN_REMOVAL_MESSAGE = (
+    "Move the user into an organization before removing the Platform Admin role"
 )
 
 
@@ -188,13 +197,18 @@ def check_role_change(caller: Caller, role: RoleInfo, target_permissions: frozen
 
 def may_hold(role: RoleInfo, holder_organization_id: UUID | None) -> bool:
     """Whether someone in ``holder_organization_id`` may be given ``role``:
-    Platform Operator is for people in the provider organization only.
+    Platform Operator is for people in the provider organization only, and
+    Platform Admin for people in the provider organization or Global users.
     Removing an assignment someone already holds is never refused by this."""
+    if role.id == PLATFORM_ADMIN_ROLE_ID:
+        return holder_organization_id in (None, PROVIDER_ORG_ID)
     return role.id != PLATFORM_OPERATOR_ROLE_ID or holder_organization_id == PROVIDER_ORG_ID
 
 
 def check_holder(role: RoleInfo, holder_organization_id: UUID | None) -> None:
     if not may_hold(role, holder_organization_id):
+        if role.id == PLATFORM_ADMIN_ROLE_ID:
+            raise RoleAssignmentError(409, ADMIN_HOLDER_MESSAGE)
         raise RoleAssignmentError(422, OPERATOR_HOLDER_MESSAGE)
 
 
@@ -203,6 +217,8 @@ def _role_boundary_rule(role: RoleInfo) -> tuple[frozenset[BoundaryKind], bool]:
     ``organization`` boundary may name the provider org, whoever assigns it."""
     if role.id == PLATFORM_OPERATOR_ROLE_ID:
         return frozenset({BoundaryKind.ORGANIZATION, BoundaryKind.MANAGED_ORGANIZATIONS}), False
+    if role.id == PLATFORM_ADMIN_ROLE_ID:
+        return frozenset({BoundaryKind.PLATFORM}), True
     return frozenset(BoundaryKind), True
 
 
@@ -229,6 +245,8 @@ def check_boundaries(
             and boundary.kind == BoundaryKind.ORGANIZATION
             and boundary.organization_id == PROVIDER_ORG_ID
         ):
+            if role.id == PLATFORM_ADMIN_ROLE_ID:
+                raise RoleAssignmentError(422, "Platform Admin applies everywhere")
             raise RoleAssignmentError(
                 422,
                 "Platform Operator applies only at managed organizations or at "
@@ -301,19 +319,16 @@ def _assignable_roles(
     if target.is_privileged and not caller.is_platform_admin:
         return []
     current_base = roles[target.user.base_role_id]
-    may_change_base = (
-        allows_operation(caller, PUT_OPERATION, org, permission="users.lifecycle.readwrite")
-        and _may_change(caller, current_base, target.held)
-        and (current_base.id != PLATFORM_ADMIN_ROLE_ID or caller.is_platform_admin)
-        and not (current_base.id == PLATFORM_ADMIN_ROLE_ID and target.user.organization_id is None)
-    )
+    may_change_base = allows_operation(
+        caller, PUT_OPERATION, org, permission="users.lifecycle.readwrite"
+    ) and _may_change(caller, current_base, target.held)
     out: list[AssignableRole] = []
     for role in sorted(roles.values(), key=lambda r: (not r.is_builtin, r.name.lower())):
         if role.id == DECRYPTION_ROLE_ID or not _may_change(caller, role, target.held):
             continue
-        can_be_base = may_change_base and role.id != PLATFORM_OPERATOR_ROLE_ID
-        if role.id == PLATFORM_ADMIN_ROLE_ID:
-            can_be_base = can_be_base and target.user.organization_id in (None, PROVIDER_ORG_ID)
+        can_be_base = may_change_base and (
+            role.id in BASE_ROLE_IDS or not role.is_builtin
+        )
         can_be_additional = role.id not in BASE_ROLE_IDS and may_hold(
             role, target.user.organization_id
         )
@@ -423,9 +438,11 @@ async def get_role_assignments(
 
 
 def _requested_boundaries(
-    boundaries, home_organization_id: UUID | None
+    boundaries, home_organization_id: UUID | None, role_id: UUID
 ) -> frozenset[Boundary]:
     if boundaries is None:
+        if role_id == PLATFORM_ADMIN_ROLE_ID:
+            return frozenset({Boundary(BoundaryKind.PLATFORM)})
         return default_boundaries(home_organization_id)
     return frozenset(
         Boundary(BoundaryKind(item.kind), item.organization_id) for item in boundaries
@@ -446,7 +463,7 @@ async def replace_role_assignments(
     as they leave it as it is.
     """
     from shared.role_cache import invalidate_user as invalidate_user_role_cache
-    from shared.sdk_users import set_user_base_role
+    from shared.sdk_users import set_platform_admin, set_user_base_role
     from src.core.cache import invalidate_role_users
     from src.services.audit import emit_audit
 
@@ -462,7 +479,9 @@ async def replace_role_assignments(
     for item in request.additional:
         if item.role_id in requested:
             raise RoleAssignmentError(422, f"Role {item.role_id} is listed twice")
-        requested[item.role_id] = _requested_boundaries(item.boundaries, user.organization_id)
+        requested[item.role_id] = _requested_boundaries(
+            item.boundaries, user.organization_id, item.role_id
+        )
     current = await _current_assignments(session, user.id)
     roles = await load_roles(
         session, {request.base_role_id, user.base_role_id, *requested, *current}
@@ -486,6 +505,11 @@ async def replace_role_assignments(
     for role_id in added | rebounded:
         if role_id in BASE_ROLE_IDS:
             raise RoleAssignmentError(422, f"'{roles[role_id].name}' is a base role")
+    if PLATFORM_ADMIN_ROLE_ID in added | removed:
+        if not caller.is_platform_admin:
+            raise RoleAssignmentError(403, ADMIN_ROLE_MESSAGE)
+        if PLATFORM_ADMIN_ROLE_ID in removed and user.organization_id is None:
+            raise RoleAssignmentError(409, ADMIN_REMOVAL_MESSAGE)
     for role_id in added | removed | rebounded:
         check_role_change(caller, roles[role_id], target.held)
     for role_id in added | rebounded:
@@ -504,9 +528,12 @@ async def replace_role_assignments(
     before = _audit_view(user.base_role_id, current)
     if base_changed:
         await set_user_base_role(session, user, request.base_role_id)
-    if removed:
+    if removed - {PLATFORM_ADMIN_ROLE_ID}:
         await session.execute(
-            delete(UserRole).where(UserRole.user_id == user.id, UserRole.role_id.in_(removed))
+            delete(UserRole).where(
+                UserRole.user_id == user.id,
+                UserRole.role_id.in_(removed - {PLATFORM_ADMIN_ROLE_ID}),
+            )
         )
     for role_id in rebounded:
         await session.execute(
@@ -516,7 +543,14 @@ async def replace_role_assignments(
         )
         _add_boundaries(session, user.id, role_id, requested[role_id])
     await session.flush()
-    for role_id in added:
+    if PLATFORM_ADMIN_ROLE_ID in added | removed:
+        await set_platform_admin(
+            session,
+            user,
+            PLATFORM_ADMIN_ROLE_ID in added,
+            assigned_by=caller.principal.email,
+        )
+    for role_id in added - {PLATFORM_ADMIN_ROLE_ID}:
         await insert_assignment(
             session,
             user_id=user.id,
@@ -548,18 +582,8 @@ async def replace_role_assignments(
 def _check_base_change(caller: Caller, target: _Target, old: RoleInfo, new: RoleInfo) -> None:
     org = org_target(target.user.organization_id)
     require_operation(caller, PUT_OPERATION, org, permission="users.lifecycle.readwrite")
-    if new.id in (PLATFORM_OPERATOR_ROLE_ID, DECRYPTION_ROLE_ID):
+    if new.is_builtin and new.id not in BASE_ROLE_IDS:
         raise RoleAssignmentError(422, f"'{new.name}' can't be a base role")
-    if PLATFORM_ADMIN_ROLE_ID in (old.id, new.id) and not caller.is_platform_admin:
-        raise RoleAssignmentError(403, ADMIN_ROLE_MESSAGE)
-    if new.id == PLATFORM_ADMIN_ROLE_ID and target.user.organization_id not in (None, PROVIDER_ORG_ID):
-        raise RoleAssignmentError(
-            409, "Move the user to the provider organization before making them a Platform Admin"
-        )
-    if old.id == PLATFORM_ADMIN_ROLE_ID and target.user.organization_id is None:
-        raise RoleAssignmentError(
-            409, "Move the user into an organization before removing the Platform Admin role"
-        )
     check_role_change(caller, old, target.held)
     check_role_change(caller, new, target.held)
 

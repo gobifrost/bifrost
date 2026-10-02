@@ -51,7 +51,8 @@ def test_fixed_ids_are_distinct_and_well_known():
 
 
 def test_base_and_builtin_sets():
-    assert BASE_ROLE_IDS == {PLATFORM_ADMIN_ROLE_ID, USER_ROLE_ID}
+    assert BASE_ROLE_IDS == {USER_ROLE_ID}
+    assert PLATFORM_ADMIN_ROLE_ID not in BASE_ROLE_IDS
     assert BUILTIN_ROLE_IDS == set(_ALL_BUILTIN)
     assert PLATFORM_OPERATOR_ROLE_ID not in BASE_ROLE_IDS
     assert DECRYPTION_ROLE_ID not in BASE_ROLE_IDS
@@ -136,6 +137,11 @@ def test_migration_frozen_copies_match_live_constants():
     assert r2b.PLATFORM_ADMIN_ROLE_ID == PLATFORM_ADMIN_ROLE_ID
     assert r2b.USER_ROLE_ID == USER_ROLE_ID
     assert r2b.PLATFORM_OPERATOR_ROLE_ID == PLATFORM_OPERATOR_ROLE_ID
+
+    admin = _load_migration("20261002_r3a_admin_additional.py")
+    assert admin.down_revision == "20261001_r3a_operator_desc"
+    assert admin.PLATFORM_ADMIN_ROLE_ID == PLATFORM_ADMIN_ROLE_ID
+    assert admin.USER_ROLE_ID == USER_ROLE_ID
 
     assert operator.down_revision == "20260929_user_base_perm_fix"
     assert operator.PLATFORM_OPERATOR_ROLE_ID == PLATFORM_OPERATOR_ROLE_ID

@@ -7,10 +7,21 @@ from contextlib import ExitStack, contextmanager
 from unittest.mock import AsyncMock, patch
 from uuid import UUID, uuid4
 
-from shared.builtin_roles import PLATFORM_ADMIN_ROLE_ID
+from shared.builtin_roles import PLATFORM_ADMIN_ROLE_ID, USER_ROLE_ID
 from src.core.principal import UserPrincipal
-from src.services.authorization.context import AuthorizationContext
+from src.services.authorization.context import (
+    AuthorizationContext,
+    Boundary,
+    BoundaryKind,
+    RoleGrant,
+)
 from src.services.authorization.enforce import Caller
+
+
+def platform_admin_grant() -> RoleGrant:
+    """The Platform Admin assignment: an additional role at the platform
+    boundary, never a base role."""
+    return RoleGrant(PLATFORM_ADMIN_ROLE_ID, frozenset(), (Boundary(BoundaryKind.PLATFORM),))
 
 
 def admin_caller(email: str = "admin@example.com", user_id: UUID | None = None) -> Caller:
@@ -29,9 +40,10 @@ def admin_caller(email: str = "admin@example.com", user_id: UUID | None = None) 
         AuthorizationContext(
             user_id=principal.user_id,
             home_organization_id=None,
-            base_role_id=PLATFORM_ADMIN_ROLE_ID,
+            base_role_id=USER_ROLE_ID,
             is_external=False,
             base_permissions=frozenset(),
+            role_grants=(platform_admin_grant(),),
         ),
     )
 
