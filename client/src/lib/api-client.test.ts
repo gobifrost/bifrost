@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { apiClient, authFetch } from "./api-client";
 import { ACCESS_TOKEN_KEY } from "./auth-token";
+import { AUTHORIZATION_QUERY_KEY } from "./authorization";
+import { queryClient } from "./queryClient";
 
 interface TestPlatformAuthBridge {
 	getAccessToken: () => string | null;
@@ -374,3 +376,46 @@ describe.each(["authFetch", "apiClient"] as const)(
 		});
 	},
 );
+
+describe("apiClient refused changes", () => {
+	let fetchMock: ReturnType<typeof vi.fn>;
+	beforeEach(() => {
+		localStorage.setItem(ACCESS_TOKEN_KEY, buildFakeToken());
+		fetchMock = vi.fn();
+		vi.stubGlobal("fetch", fetchMock);
+	});
+	afterEach(() => {
+		vi.restoreAllMocks();
+		vi.unstubAllGlobals();
+		localStorage.clear();
+	});
+
+	it("refetches the caller's authorization when a change is refused", async () => {
+		const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+		fetchMock.mockResolvedValueOnce(
+			mockJsonResponse(403, {
+				detail: "You don't have permission to manage users",
+			}),
+		);
+
+		const { response } = await apiClient.PATCH("/api/users/{user_id}", {
+			params: { path: { user_id: "u1" } },
+			body: { name: "New" },
+			fetch: fetchMock,
+		} as never);
+
+		expect(response.status).toBe(403);
+		expect(invalidate).toHaveBeenCalledWith({
+			queryKey: AUTHORIZATION_QUERY_KEY,
+		});
+	});
+
+	it("leaves authorization alone when a read is refused", async () => {
+		const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+		fetchMock.mockResolvedValueOnce(mockResponse(403));
+
+		await apiClient.GET("/api/version", { fetch: fetchMock } as never);
+
+		expect(invalidate).not.toHaveBeenCalled();
+	});
+});
