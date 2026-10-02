@@ -8,12 +8,14 @@ Handles Graph API subscription lifecycle:
 - Validating client state on incoming notifications
 """
 
+import hmac
 import logging
 from datetime import timedelta
 from typing import Any
 
 import httpx
 
+from src.core.security import decrypt_secret, encrypt_secret
 from src.services.webhooks.protocol import (
     Deliver,
     HandleResult,
@@ -27,6 +29,11 @@ from src.services.webhooks.protocol import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Graph echoes the clientState we register on every notification. It is a
+# shared secret: stored only as ciphertext, decrypted only to validate, and
+# stripped from everything delivered to events and workflows.
+CLIENT_STATE_KEY = "client_state_encrypted"
 
 
 class MicrosoftGraphAdapter(WebhookAdapter):
@@ -268,7 +275,7 @@ class MicrosoftGraphAdapter(WebhookAdapter):
                 data = response.json()
                 return SubscribeResult(
                     external_id=data["id"],
-                    state={"client_state": client_state, **user_metadata},
+                    state={CLIENT_STATE_KEY: encrypt_secret(client_state), **user_metadata},
                     expires_at=self.parse_datetime(data["expirationDateTime"]),
                 )
             else:
@@ -411,11 +418,21 @@ class MicrosoftGraphAdapter(WebhookAdapter):
             return Rejected(message="No notifications in payload", status_code=400)
 
         # Validate client state on each notification
-        expected_state = state.get("client_state")
-        if expected_state:
+        encrypted_state = state.get(CLIENT_STATE_KEY)
+        if encrypted_state:
+            expected_state = decrypt_secret(encrypted_state)
             for notification in notifications:
-                if notification.get("clientState") != expected_state:
+                received = notification.get("clientState")
+                if not isinstance(received, str) or not hmac.compare_digest(
+                    received.encode(), expected_state.encode()
+                ):
                     return Rejected(message="Invalid client state", status_code=401)
+
+        # The shared secret must not reach event history or workflow input.
+        notifications = [
+            {key: value for key, value in notification.items() if key != "clientState"}
+            for notification in notifications
+        ]
 
         # For now, deliver the first notification
         # Future: could batch process all notifications
@@ -436,7 +453,6 @@ class MicrosoftGraphAdapter(WebhookAdapter):
                 "subscription_id": first_notification.get("subscriptionId"),
                 "resource": first_notification.get("resource"),
                 "change_type": first_notification.get("changeType"),
-                "client_state": first_notification.get("clientState"),
                 "tenant_id": first_notification.get("tenantId"),
                 "resource_data": first_notification.get("resourceData"),
             },

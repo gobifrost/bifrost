@@ -25,7 +25,11 @@ from src.services.webhooks.adapters.local_fixture import LocalFixtureWebhookAdap
 from src.services.webhooks.adapters.microsoft_bot_framework import (
     MicrosoftBotFrameworkAdapter,
 )
-from src.services.webhooks.adapters.microsoft_graph import MicrosoftGraphAdapter
+from src.core.security import decrypt_secret, encrypt_secret
+from src.services.webhooks.adapters.microsoft_graph import (
+    CLIENT_STATE_KEY,
+    MicrosoftGraphAdapter,
+)
 from src.services.webhooks.protocol import (
     Deliver,
     Rejected,
@@ -164,6 +168,15 @@ async def test_graph_subscription_uses_public_callback_and_resolved_token(monkey
     assert result.external_id == "subscription-1"
     assert result.state["user_display_name"] == "Ada Lovelace"
     request = client.post.await_args
+    registered = request.kwargs["json"]["clientState"]
+    assert set(result.state) == {
+        CLIENT_STATE_KEY,
+        "user_display_name",
+        "user_principal_name",
+        "user_mail",
+    }
+    assert registered not in str(result.state)
+    assert decrypt_secret(result.state[CLIENT_STATE_KEY]) == registered
     assert request.kwargs["headers"]["Authorization"] == "Bearer tenant-token"
     assert request.kwargs["json"]["notificationUrl"] == (
         "https://dev.example.com/api/hooks/source-1"
@@ -234,6 +247,89 @@ async def test_graph_event_type_uses_configured_collection_not_object_id():
 
     assert isinstance(result, Deliver)
     assert result.event_type == "graph.messages.created"
+
+
+def _graph_notification_request(*client_states: str | None) -> WebhookRequest:
+    notifications = []
+    for index, client_state in enumerate(client_states):
+        notification = {
+            "subscriptionId": "subscription-1",
+            "changeType": "created",
+            "resource": f"Users/user-1/Messages/{index}",
+            "tenantId": "tenant-1",
+            "resourceData": {"id": str(index)},
+        }
+        if client_state is not None:
+            notification["clientState"] = client_state
+        notifications.append(notification)
+    return WebhookRequest(
+        method="POST",
+        path="/api/hooks/source-1",
+        headers={},
+        query_params={},
+        body=json.dumps({"value": notifications}).encode(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_graph_accepts_the_registered_client_state():
+    state = {CLIENT_STATE_KEY: encrypt_secret("registered-state")}
+
+    result = await MicrosoftGraphAdapter().handle_request(
+        _graph_notification_request("registered-state"),
+        config={"resource": "/users/user-1/messages"},
+        state=state,
+    )
+
+    assert isinstance(result, Deliver)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("received", ["wrong-state", None])
+async def test_graph_rejects_a_wrong_or_missing_client_state(received):
+    state = {CLIENT_STATE_KEY: encrypt_secret("registered-state")}
+
+    result = await MicrosoftGraphAdapter().handle_request(
+        _graph_notification_request(received),
+        config={"resource": "/users/user-1/messages"},
+        state=state,
+    )
+
+    assert isinstance(result, Rejected)
+    assert result.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_graph_rejects_a_batch_with_any_wrong_client_state():
+    state = {CLIENT_STATE_KEY: encrypt_secret("registered-state")}
+
+    result = await MicrosoftGraphAdapter().handle_request(
+        _graph_notification_request("registered-state", "wrong-state"),
+        config={"resource": "/users/user-1/messages"},
+        state=state,
+    )
+
+    assert isinstance(result, Rejected)
+    assert result.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_graph_delivery_never_carries_the_client_state():
+    state = {CLIENT_STATE_KEY: encrypt_secret("registered-state")}
+
+    result = await MicrosoftGraphAdapter().handle_request(
+        _graph_notification_request("registered-state", "registered-state"),
+        config={"resource": "/users/user-1/messages"},
+        state=state,
+    )
+
+    assert isinstance(result, Deliver)
+    assert "registered-state" not in json.dumps(result.data)
+    assert "client_state" not in result.data
+    assert len(result.data["notifications"]) == 2
+    assert all("clientState" not in item for item in result.data["notifications"])
+    assert result.data["subscription_id"] == "subscription-1"
+    assert result.data["resource_data"] == {"id": "0"}
 
 
 @pytest.mark.asyncio
