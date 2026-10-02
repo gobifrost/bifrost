@@ -193,7 +193,7 @@ class Settings(BaseSettings):
         description="Maximum concurrent on-demand build platform jobs",
     )
     kubernetes_build_job_types: str = Field(
-        default="application.deploy,application.sdk_update",
+        default="application.deploy,application.sdk_update,solution.export",
         description=(
             "Comma-separated job types eligible for Kubernetes placement "
             "when the build backend is enabled. Other build-class jobs stay "

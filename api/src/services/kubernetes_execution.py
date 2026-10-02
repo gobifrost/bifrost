@@ -36,7 +36,7 @@ KUBERNETES_NOTICE_KEY = "detection_notice"
 #: measured high-memory compilers; anything classified later defaults off
 #: until explicitly enabled here.
 DEFAULT_REMOTE_JOB_TYPES = frozenset(
-    {"application.deploy", "application.sdk_update"}
+    {"application.deploy", "application.sdk_update", "solution.export"}
 )
 
 
