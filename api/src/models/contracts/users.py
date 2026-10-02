@@ -8,6 +8,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_serializer, model_validator
 
+from src.models.contracts.role_assignments import RoleBoundaryPublic
+
 if TYPE_CHECKING:
     pass
 
@@ -124,6 +126,13 @@ class UserPublic(UserBase):
     updated_at: datetime
     invite_status: str = "active"  # one of InviteStatus values; populated by router
     registration_url: str | None = None  # only populated immediately after invite creation
+    is_protected: bool = Field(
+        default=False,
+        description=(
+            "The user holds privileged access somewhere (or is a Platform "
+            "Admin), so only a Platform Admin can change them."
+        ),
+    )
 
     @field_serializer("created_at", "updated_at", "last_login")
     def serialize_dt(self, dt: datetime | None) -> str | None:
@@ -189,6 +198,15 @@ class BulkUserResponse(BaseModel):
     """Result of a bulk user operation."""
     succeeded: list[UUID]
     failed: list[BulkUserFailure]
+
+
+class UserMfaResetResponse(BaseModel):
+    """What an administrator's MFA reset removed."""
+    totp_removed: bool
+    recovery_codes_removed: int
+    passkeys_removed: int
+    trusted_devices_revoked: int
+    sessions_revoked: int
 
 
 # ==================== ROLE MODELS ====================
@@ -334,6 +352,10 @@ class RoleUserSummary(BaseModel):
     organization_id: UUID | None
     organization_name: str | None
     organization_is_provider: bool = False
+    boundaries: list[RoleBoundaryPublic] = Field(
+        default_factory=list,
+        description="Where the role applies for this user.",
+    )
 
 
 class RoleUsersResponse(BaseModel):

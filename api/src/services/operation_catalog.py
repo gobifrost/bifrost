@@ -2228,8 +2228,11 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
             request_model="UserCreate",
             response_model="UserPublic",
         ),
-        action_scopes=("users.lifecycle.readwrite",),
-        authorization_resolver="Exact target organization boundary",
+        action_scopes=("users.readwrite", "users.lifecycle.readwrite"),
+        authorization_resolver=(
+            "users.readwrite at the target organization for an ordinary invite; "
+            "users.lifecycle.readwrite at Global for a Global or Platform Admin user"
+        ),
         audit_event="user.create",
         side_effects=(
             "persist the user identity",
@@ -2354,6 +2357,24 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
         authorization_resolver="Exact organization-boundary user mutation",
         audit_event="user.invite_revoke",
         side_effects=("revoke the active registration invite",),
+        exclusions=_USER_ADMIN_SURFACE_EXCLUSIONS,
+    ),
+    OperationDefinition(
+        operation_id="users.mfa.reset",
+        summary="Reset one admitted user's MFA and sign them out everywhere",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="POST",
+            path="/api/users/{user_id}/mfa/reset",
+            response_model="UserMfaResetResponse",
+        ),
+        action_scopes=("users.readwrite",),
+        authorization_resolver="Exact organization-boundary user mutation",
+        audit_event="user.mfa_reset",
+        side_effects=(
+            "remove the authenticator app, recovery codes, passkeys and remembered devices",
+            "revoke every refresh token",
+        ),
         exclusions=_USER_ADMIN_SURFACE_EXCLUSIONS,
     ),
     OperationDefinition(

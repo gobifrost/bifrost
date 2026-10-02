@@ -306,7 +306,14 @@ class TestGateAgreement:
             if entry is None:
                 continue
             actual = _dependency_gate(route)
-            if actual != entry.current_gate:
+            # An evaluator entry's dependency is CurrentActiveUser; the
+            # evaluator half is checked by TestEvaluatorEnforcement.
+            expected = (
+                CurrentGate.AUTHENTICATED
+                if entry.current_gate == CurrentGate.EVALUATOR
+                else entry.current_gate
+            )
+            if actual != expected:
                 mismatches.append((method, path, entry.current_gate, actual))
         assert not mismatches, (
             "access-list current_gate disagrees with the route's actual dependency gate "
@@ -410,6 +417,7 @@ class TestConsistency:
         # tools inherit the same split (authenticated transport floor).
         ("organizations", CurrentGate.SUPERUSER),
         ("organizations", CurrentGate.AUTHENTICATED),
+        ("organizations", CurrentGate.EVALUATOR),
         # required-instructions (settings, folded in above) has a
         # platform-wide GET/PUT and a deliberate per-org
         # /organizations/{organization_id} variant (see reason text).
@@ -431,6 +439,98 @@ class TestConsistency:
             "same (permission domain, current_gate) group uses more than one "
             f"boundary with no listed justification: {unjustified}"
         )
+
+
+# The enforcement helpers that name an evaluator entry by its operation key
+# (``src.services.authorization.enforce``). In a module that calls one, the
+# operation keys are the string constants passed to those calls, passed to
+# any call as an ``operation=`` keyword, or bound to a module-level
+# ``*_OPERATION`` name or a local ``operation`` variable (how a handler names
+# the key it passes along to a helper).
+_ENFORCE_CALLS = {"require_operation", "authorize_operation", "operation_reach", "allows_operation"}
+
+
+def _enforced_operation_keys() -> set[str]:
+    keys: set[str] = set()
+    for root in ("src", "shared"):
+        for path in sorted((_API_ROOT / root).rglob("*.py")):
+            tree = ast.parse(path.read_text(), filename=str(path))
+            calls = [
+                node
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Call)
+                and (node.func.id if isinstance(node.func, ast.Name) else getattr(node.func, "attr", None))
+                in _ENFORCE_CALLS
+            ]
+            if not calls or path.name == "enforce.py":
+                continue
+            for call in calls:
+                keys |= {
+                    arg.value
+                    for arg in call.args
+                    if isinstance(arg, ast.Constant) and isinstance(arg.value, str)
+                }
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Call):
+                    keys |= {
+                        kw.value.value
+                        for kw in node.keywords
+                        if kw.arg == "operation"
+                        and isinstance(kw.value, ast.Constant)
+                        and isinstance(kw.value.value, str)
+                    }
+            for node in ast.walk(tree):
+                if not (
+                    isinstance(node, ast.Assign)
+                    and isinstance(node.value, ast.Constant)
+                    and isinstance(node.value.value, str)
+                ):
+                    continue
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and (
+                        target.id == "operation" or target.id.endswith("_OPERATION")
+                    ):
+                        keys.add(node.value.value)
+    return keys
+
+
+class TestEvaluatorEnforcement:
+    """An ``evaluator`` entry is a route cut over to the R3 evaluator: the
+    code must decide it through the enforcement helper, by the entry's
+    operation key, and every key the code decides by must be an evaluator
+    entry."""
+
+    def test_every_evaluator_entry_is_enforced(self) -> None:
+        from src.services.authorization.enforce import operation_key
+
+        enforced = _enforced_operation_keys()
+        missing = [
+            operation_key(entry)
+            for entry in ACCESS_LIST
+            if entry.current_gate == CurrentGate.EVALUATOR and operation_key(entry) not in enforced
+        ]
+        assert not missing, f"evaluator entries no handler or service decides: {missing}"
+
+    def test_every_enforced_key_is_an_evaluator_entry(self) -> None:
+        from src.services.authorization.enforce import operation_key
+
+        evaluator_keys = {
+            operation_key(entry)
+            for entry in ACCESS_LIST
+            if entry.current_gate == CurrentGate.EVALUATOR and entry.mcp_tool is None
+        }
+        operation_like = {key for key in _enforced_operation_keys() if "." in key or " /" in key}
+        stray = sorted(operation_like - evaluator_keys)
+        assert not stray, f"enforcement helper called with a key that is not an evaluator entry: {stray}"
+
+    def test_evaluator_entries_are_permission_class_rest_routes(self) -> None:
+        wrong = [
+            entry.key
+            for entry in ACCESS_LIST
+            if entry.current_gate == CurrentGate.EVALUATOR
+            and (entry.mcp_tool is not None or entry.access_class != AccessClass.PERMISSION)
+        ]
+        assert not wrong, f"evaluator entries must be permission-class REST routes: {wrong}"
 
 
 class TestMcpMatchesRest:

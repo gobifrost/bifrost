@@ -435,6 +435,8 @@
 | GET | `/api/roles/{role_id}/forms` |
 | POST | `/api/roles/{role_id}/forms` |
 | DELETE | `/api/roles/{role_id}/forms/{form_id}` |
+| GET | `/api/roles/{role_id}/permissions` |
+| PUT | `/api/roles/{role_id}/permissions` |
 | DELETE | `/api/roles/{role_id}/users` |
 | GET | `/api/roles/{role_id}/users` |
 | POST | `/api/roles/{role_id}/users` |
@@ -563,6 +565,9 @@
 | POST | `/api/users/{user_id}/invite/regenerate` |
 | POST | `/api/users/{user_id}/invite/resend` |
 | POST | `/api/users/{user_id}/invite/send` |
+| POST | `/api/users/{user_id}/mfa/reset` |
+| GET | `/api/users/{user_id}/role-assignments` |
+| PUT | `/api/users/{user_id}/role-assignments` |
 | GET | `/api/users/{user_id}/roles` |
 | GET | `/api/version` |
 | GET | `/api/workflow-keys` |
@@ -587,6 +592,7 @@
 | POST | `/api/workflows/{workflow_id}/roles` |
 | DELETE | `/api/workflows/{workflow_id}/roles/{role_id}` |
 | POST | `/auth/admin/revoke-user` |
+| GET | `/auth/authorization` |
 | POST | `/auth/device/authorize` |
 | POST | `/auth/device/code` |
 | POST | `/auth/device/token` |

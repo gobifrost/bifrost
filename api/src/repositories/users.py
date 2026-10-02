@@ -126,8 +126,8 @@ class UserRepository(BaseRepository[User]):  # type: ignore[type-var]
         Returns:
             Created user
         """
-        from shared.builtin_roles import PLATFORM_ADMIN_ROLE_ID, USER_ROLE_ID
-        from shared.sdk_users import set_user_base_role
+        from shared.builtin_roles import USER_ROLE_ID
+        from shared.sdk_users import set_platform_admin, set_user_base_role
 
         user = User(
             email=email,
@@ -137,7 +137,7 @@ class UserRepository(BaseRepository[User]):  # type: ignore[type-var]
             is_verified=False,
             organization_id=organization_id,
         )
-        await set_user_base_role(
-            self.session, user, PLATFORM_ADMIN_ROLE_ID if is_superuser else USER_ROLE_ID
-        )
-        return await self.create(user)
+        await set_user_base_role(self.session, user, USER_ROLE_ID)
+        created = await self.create(user)
+        await set_platform_admin(self.session, created, is_superuser, assigned_by="system")
+        return created

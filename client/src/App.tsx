@@ -460,21 +460,25 @@ const routeElements = (
 				}
 			/>
 
-			{/* Organizations - PlatformAdmin only */}
+			{/* Organizations - organizations.read anywhere */}
 			<Route
 				path="organizations"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute
+						requirePermission={{ permission: "organizations.read" }}
+					>
 						<Organizations />
 					</ProtectedRoute>
 				}
 			/>
 
-			{/* Users - PlatformAdmin only */}
+			{/* Users - users.read anywhere */}
 			<Route
 				path="users"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute
+						requirePermission={{ permission: "users.read" }}
+					>
 						<Users />
 					</ProtectedRoute>
 				}
@@ -482,17 +486,24 @@ const routeElements = (
 			<Route
 				path="users/:userId"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute
+						requirePermission={{ permission: "users.read" }}
+					>
 						<Users />
 					</ProtectedRoute>
 				}
 			/>
 
-			{/* Roles - PlatformAdmin only */}
+			{/* Roles - roles.read platform-wide */}
 			<Route
 				path="roles"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute
+						requirePermission={{
+							permission: "roles.read",
+							at: "global",
+						}}
+					>
 						<Roles />
 					</ProtectedRoute>
 				}
@@ -500,7 +511,12 @@ const routeElements = (
 			<Route
 				path="roles/:roleId"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute
+						requirePermission={{
+							permission: "roles.read",
+							at: "global",
+						}}
+					>
 						<RoleDetail />
 					</ProtectedRoute>
 				}
@@ -508,7 +524,12 @@ const routeElements = (
 			<Route
 				path="roles/:roleId/:tab"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute
+						requirePermission={{
+							permission: "roles.read",
+							at: "global",
+						}}
+					>
 						<RoleDetail />
 					</ProtectedRoute>
 				}

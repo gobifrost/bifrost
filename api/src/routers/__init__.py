@@ -1,5 +1,6 @@
 # FastAPI Routers
 from src.routers.auth import router as auth_router
+from src.routers.authorization import router as authorization_router
 from src.routers.mfa import router as mfa_router
 from src.routers.oauth_sso import router as oauth_router
 from src.routers.passkeys import router as passkeys_router
@@ -90,6 +91,7 @@ __all__ = [
     "health_router",
     "organizations_router",
     "users_router",
+    "authorization_router",
     "roles_router",
     "executions_router",
     "workflows_router",

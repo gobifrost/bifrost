@@ -107,7 +107,7 @@ harness.
 | `roles.workflows.bulk_remove` | — | — | `workflows.readwrite` |
 | `users.list` | — | — | `users.read` |
 | `users.get` | — | — | `users.read` |
-| `users.create` | — | — | `users.lifecycle.readwrite` |
+| `users.create` | — | — | `users.readwrite`, `users.lifecycle.readwrite` |
 | `users.update` | — | — | `users.lifecycle.readwrite` |
 | `users.delete` | — | — | `users.lifecycle.readwrite` |
 | `users.bulk_update` | — | — | `users.lifecycle.readwrite` |
@@ -115,6 +115,7 @@ harness.
 | `users.invites.send` | — | — | `users.readwrite` |
 | `users.invites.regenerate` | — | — | `users.readwrite` |
 | `users.invites.revoke` | — | — | `users.readwrite` |
+| `users.mfa.reset` | — | — | `users.readwrite` |
 | `users.roles.list` | — | — | `roleassignments.read` |
 | `users.forms.list` | — | — | `roleassignments.read` |
 | `claims.list` | `bifrost claims list` | `bifrost_claim_list` | `claims.read` |

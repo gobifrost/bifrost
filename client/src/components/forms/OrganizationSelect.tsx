@@ -65,6 +65,8 @@ export interface OrganizationSelectProps extends Pick<
 	triggerClassName?: string;
 	/** Custom className for the popover content (useful for z-index overrides) */
 	contentClassName?: string;
+	/** Offer only the organizations this returns true for */
+	filterOrganizations?: (organization: Organization) => boolean;
 }
 
 export const PERSONAL_SCOPE = "__PERSONAL__";
@@ -83,15 +85,19 @@ export function OrganizationSelect({
 	placeholder = "Select organization...",
 	triggerClassName,
 	contentClassName,
+	filterOrganizations,
 	...triggerProps
 }: OrganizationSelectProps) {
 	const {
-		data: organizations,
+		data: allOrganizations,
 		isLoading,
 		isFetching,
 		error,
 		refetch,
 	} = useOrganizations();
+	const organizations = filterOrganizations
+		? allOrganizations?.filter(filterOrganizations)
+		: allOrganizations;
 	const [open, setOpen] = useState(false);
 
 	const selectedOrg = organizations?.find(

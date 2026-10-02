@@ -22,7 +22,6 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from shared.builtin_roles import PLATFORM_ADMIN_ROLE_ID as _PLATFORM_ADMIN_ROLE_ID
 from shared.builtin_roles import USER_ROLE_ID as _USER_ROLE_ID
 from src.models.orm.base import Base
 
@@ -63,22 +62,14 @@ class User(Base):
     organization_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("organizations.id"), nullable=True
     )
-    # The R2b base role. Always Platform Admin or User (never Platform
-    # Operator, which is builtin but not base). Kept in lockstep with
-    # `is_superuser` by `shared.sdk_users.set_user_base_role` — see that
-    # function's docstring for the invariant. The column default below
-    # mirrors that same invariant for callers that construct `User(...)`
-    # directly without going through the service (chiefly test fixtures);
-    # it reads `is_superuser`'s already-applied value, so it never disagrees
-    # with `set_user_base_role`'s own computation.
+    # The base role: User or a custom role (never Platform Admin, Platform
+    # Operator or Secrets Reader, which are builtin but never base; Platform
+    # Admin is held as an additional role). A role that is anyone's base role
+    # can't be deleted. Written by `shared.sdk_users.set_user_base_role`.
     base_role_id: Mapped[UUID] = mapped_column(
         ForeignKey("roles.id", ondelete="RESTRICT"),
         nullable=False,
-        default=lambda ctx: (
-            _PLATFORM_ADMIN_ROLE_ID
-            if ctx.get_current_parameters().get("is_superuser")
-            else _USER_ROLE_ID
-        ),
+        default=_USER_ROLE_ID,
     )
     last_login: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     created_at: Mapped[datetime] = mapped_column(
@@ -139,13 +130,14 @@ class Role(Base):
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     name: Mapped[str] = mapped_column(String(100))
     description: Mapped[str | None] = mapped_column(Text, default=None)
-    # A base role (Platform Admin, User) is one every user holds exactly one
-    # of via `User.base_role_id`, never assigned through `user_roles`.
+    # The builtin User role is held only through `User.base_role_id`, never
+    # assigned through `user_roles`. A custom role can also be someone's base
+    # role (it keeps is_base false).
     is_base: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
     # A builtin role (Platform Admin, User, Platform Operator, Secrets
     # Reader) has a fixed id (see `shared.builtin_roles`), can't be
-    # renamed/deleted, and is hidden from the roles list/get/resource-
-    # assignment surfaces until R3a ships the UI for it.
+    # renamed/deleted, and is hidden from the roles list (unless asked for)
+    # and the get/resource-assignment surfaces.
     is_builtin: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
     created_by: Mapped[str] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(
@@ -194,9 +186,10 @@ class RolePermission(Base):
     is validated in the service layer (``src.services.role_permissions``),
     not by a DB enum, so a new domain doesn't require a migration.
 
-    Platform Admin holds none of these rows — its access is the wildcard
-    permission (``shared.builtin_roles.WILDCARD_PERMISSION``), represented
-    in code, never as rows here.
+    Platform Admin's access is the wildcard permission
+    (``shared.builtin_roles.WILDCARD_PERMISSION``), stored as its one row
+    here. The permission vocabulary rejects the wildcard, so no custom role
+    can hold it.
     """
 
     __tablename__ = "role_permissions"

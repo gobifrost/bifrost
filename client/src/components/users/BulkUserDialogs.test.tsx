@@ -28,6 +28,12 @@ vi.mock("@/hooks/useUsers", () => ({
 	useBulkUserOperation: () => mockBulkHook(),
 }));
 
+const mockCanAt =
+	vi.fn<(permission: string, target: { kind: string }) => boolean>();
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => ({ canAt: mockCanAt }),
+}));
+
 vi.mock("@/components/forms/OrganizationSelect", () => ({
 	OrganizationSelect: ({
 		id,
@@ -141,6 +147,8 @@ function makeUser(
 }
 
 beforeEach(() => {
+	mockCanAt.mockReset();
+	mockCanAt.mockReturnValue(true);
 	mockLookup.mockReturnValue({
 		data: [],
 		isLoading: false,
@@ -255,6 +263,24 @@ describe("BulkMoveOrgDialog", () => {
 			mockBulkMutate.mock.calls[0]![0].body.organization_id,
 		).toBeNull();
 		expect(onOpenChange).toHaveBeenCalledWith(false);
+	});
+
+	it("offers Global only to callers who manage user lifecycle platform-wide", () => {
+		mockCanAt.mockImplementation(
+			(_permission, target) => target.kind !== "global",
+		);
+		renderWithProviders(
+			<BulkMoveOrgDialog
+				open={true}
+				onOpenChange={vi.fn()}
+				users={[makeUser()]}
+				onPartialFailure={vi.fn()}
+			/>,
+		);
+
+		expect(
+			screen.queryByRole("option", { name: "Global" }),
+		).not.toBeInTheDocument();
 	});
 
 	it("reports partial failures without losing the successful rows", async () => {

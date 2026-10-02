@@ -3,10 +3,10 @@
 Four built-in roles exist, each with a fixed UUID so migrations, seed data,
 and runtime code agree on identity without a name lookup:
 
-- **Platform Admin** (base, builtin): full access. Represented in code as
-  the wildcard permission ``"*"`` — no ``role_permissions`` rows are stored
-  for it.
-- **User** (base, builtin): the default role every non-admin user holds.
+- **Platform Admin** (additional, builtin): full access. Holds the wildcard
+  permission ``"*"`` as its one ``role_permissions`` row. Held as an
+  additional role at the ``platform`` boundary, never as a base role.
+- **User** (base, builtin): the default base role.
   Its permission set is *derived* from the access list
   (``src.services.access_list.ACCESS_LIST``) rather than hand-maintained,
   so it can never silently drift from what an authenticated user can
@@ -53,15 +53,18 @@ PLATFORM_OPERATOR_ROLE_ID = UUID("00000000-0000-0000-0000-000000000007")
 # identifier as a secret, and role ids are logged.
 DECRYPTION_ROLE_ID = UUID("00000000-0000-0000-0000-000000000008")
 
-# The wildcard permission representing Platform Admin's full access. Never
-# stored as a ``role_permissions`` row — Platform Admin has none.
+# The wildcard permission representing Platform Admin's full access. Stored
+# as Platform Admin's one ``role_permissions`` row; no other role can hold it
+# (``parse_permission`` rejects it).
 WILDCARD_PERMISSION = "*"
 
 BUILTIN_ROLE_IDS = frozenset(
     {PLATFORM_ADMIN_ROLE_ID, USER_ROLE_ID, PLATFORM_OPERATOR_ROLE_ID, DECRYPTION_ROLE_ID}
 )
 
-BASE_ROLE_IDS = frozenset({PLATFORM_ADMIN_ROLE_ID, USER_ROLE_ID})
+# The one builtin role that is a base role. A base role is User or a custom
+# role; Platform Admin is held as an additional role, never a base role.
+BASE_ROLE_IDS = frozenset({USER_ROLE_ID})
 
 
 def is_builtin_role_id(role_id: UUID) -> bool:

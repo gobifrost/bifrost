@@ -292,6 +292,17 @@ export function getCsrfToken(): string | null {
 /**
  * Check if request method requires CSRF protection
  */
+let refusedChangeListener: (() => void) | null = null;
+
+/**
+ * Run ``listener`` whenever the server refuses a change with 403: the UI
+ * offered something the caller may no longer do. ``main.tsx`` uses it to
+ * refetch the caller's authorization. Pass ``null`` to remove it.
+ */
+export function setRefusedChangeListener(listener: (() => void) | null) {
+	refusedChangeListener = listener;
+}
+
 function requiresCsrf(method: string): boolean {
 	return ["POST", "PUT", "PATCH", "DELETE"].includes(method.toUpperCase());
 }
@@ -369,7 +380,10 @@ baseClient.use({
 			return handleAuthResponse(request, response);
 
 		// 403 Forbidden = permission issue, don't redirect (user is authenticated)
-		// Let the calling code handle displaying an appropriate error message
+		// Let the calling code handle displaying an appropriate error message.
+		if (response.status === 403 && requiresCsrf(request.method)) {
+			refusedChangeListener?.();
+		}
 
 		// Retry transient 5xx (502/503/504) on idempotent methods. Rides
 		// through brief windows during a rolling API deploy where a pod is

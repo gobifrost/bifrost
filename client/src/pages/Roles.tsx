@@ -37,6 +37,9 @@ import { SearchBox } from "@/components/search/SearchBox";
 import { useDeleteRole, useRolesPage } from "@/hooks/useRoles";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { RoleDialog } from "@/components/roles/RoleDialog";
+import { Badge } from "@/components/ui/badge";
+import { getErrorMessage } from "@/lib/api-error";
+import { useAuthorization } from "@/services/authorization";
 import { ListPagination } from "@/components/pagination/ListPagination";
 import { ListPageHeader } from "@/components/layout/ListPageHeader";
 import { ListToolbar } from "@/components/layout/ListToolbar";
@@ -237,12 +240,22 @@ function RoleCountLink({
 	);
 }
 
+function BuiltinBadge() {
+	return (
+		<Badge variant="outline" className="shrink-0">
+			Built-in
+		</Badge>
+	);
+}
+
 function RoleMobileRecord({
 	role,
+	canManage,
 	onEdit,
 	onDelete,
 }: {
 	role: Role;
+	canManage: boolean;
 	onEdit: () => void;
 	onDelete: () => void;
 }) {
@@ -253,38 +266,43 @@ function RoleMobileRecord({
 			<article className="space-y-4">
 				<div className="space-y-3">
 					<div className="min-w-0 space-y-1.5">
-						<Link
-							to={`/roles/${role.id}`}
-							className="block min-h-11 text-base font-semibold leading-6 [overflow-wrap:anywhere] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-						>
-							{role.name}
-						</Link>
+						<div className="flex flex-wrap items-center gap-2">
+							<Link
+								to={`/roles/${role.id}`}
+								className="block min-h-11 text-base font-semibold leading-6 [overflow-wrap:anywhere] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+							>
+								{role.name}
+							</Link>
+							{role.is_builtin && <BuiltinBadge />}
+						</div>
 						<p className="text-sm leading-6 text-muted-foreground [overflow-wrap:anywhere]">
 							{role.description || "No description"}
 						</p>
 					</div>
 				</div>
 
-				<div className="space-y-2">
-					<p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-						Consumers
-					</p>
-					<div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-						{CHIP_DEFS.map(({ key, label, icon }) => {
-							const count = counts[key] ?? 0;
-							return (
-								<RoleCountLink
-									key={key}
-									roleId={role.id}
-									count={count}
-									label={label}
-									icon={icon}
-									mobile
-								/>
-							);
-						})}
+				{!role.is_builtin && role.consumer_counts && (
+					<div className="space-y-2">
+						<p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+							Consumers
+						</p>
+						<div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+							{CHIP_DEFS.map(({ key, label, icon }) => {
+								const count = counts[key] ?? 0;
+								return (
+									<RoleCountLink
+										key={key}
+										roleId={role.id}
+										count={count}
+										label={label}
+										icon={icon}
+										mobile
+									/>
+								);
+							})}
+						</div>
 					</div>
-				</div>
+				)}
 
 				<dl className="grid gap-1 text-sm">
 					<div className="flex items-center justify-between gap-3">
@@ -296,11 +314,13 @@ function RoleMobileRecord({
 						</dd>
 					</div>
 				</dl>
-				<RoleActionsMenu
-					name={role.name}
-					onEdit={onEdit}
-					onDelete={onDelete}
-				/>
+				{canManage && !role.is_builtin && (
+					<RoleActionsMenu
+						name={role.name}
+						onEdit={onEdit}
+						onDelete={onDelete}
+					/>
+				)}
 			</article>
 		</li>
 	);
@@ -308,6 +328,7 @@ function RoleMobileRecord({
 
 function RoleMobileList({
 	roles,
+	canManage,
 	total,
 	offset,
 	isFetching,
@@ -319,6 +340,7 @@ function RoleMobileList({
 	onDelete,
 }: {
 	roles: Role[];
+	canManage: boolean;
 	total: number;
 	offset: number;
 	isFetching: boolean;
@@ -341,6 +363,7 @@ function RoleMobileList({
 					<RoleMobileRecord
 						key={role.id}
 						role={role}
+						canManage={canManage}
 						onEdit={() => onEdit(role)}
 						onDelete={() => onDelete(role)}
 					/>
@@ -379,6 +402,11 @@ export function Roles() {
 	const roles = rolesQuery.data?.items ?? [];
 	const total = rolesQuery.data?.total ?? 0;
 	const deleteRole = useDeleteRole();
+	const authorization = useAuthorization();
+	const canManage = authorization.meets({
+		permission: "roles.readwrite",
+		at: "global",
+	});
 
 	const handleSort = (column: SortColumn) => {
 		if (sortColumn === column) {
@@ -423,7 +451,7 @@ export function Roles() {
 		<PageWorkspace className="mx-auto max-w-7xl">
 			<ListPageHeader
 				title="Roles"
-				description="Control access to forms, agents, apps, and workflows. Select a count to manage assignments."
+				description="Control access to forms, agents, apps, and workflows. Select a count to manage assignments. Built-in roles are read-only."
 				actions={
 					<>
 						<Button
@@ -436,13 +464,15 @@ export function Roles() {
 						>
 							<RefreshCw className="h-4 w-4" />
 						</Button>
-						<Button
-							className="min-h-11 lg:min-h-0"
-							onClick={handleAdd}
-						>
-							<Plus className="h-4 w-4 mr-1.5" />
-							Create role
-						</Button>
+						{canManage && (
+							<Button
+								className="min-h-11 lg:min-h-0"
+								onClick={handleAdd}
+							>
+								<Plus className="h-4 w-4 mr-1.5" />
+								Create role
+							</Button>
+						)}
 					</>
 				}
 			/>
@@ -494,19 +524,22 @@ export function Roles() {
 									? "Try adjusting your search term or clear the filter"
 									: "Get started by creating your first role"}
 							</p>
-							<Button
-								variant="outline"
-								onClick={handleAdd}
-								className="mt-4"
-							>
-								<Plus className="h-4 w-4" />
-								Create role
-							</Button>
+							{canManage && (
+								<Button
+									variant="outline"
+									onClick={handleAdd}
+									className="mt-4"
+								>
+									<Plus className="h-4 w-4" />
+									Create role
+								</Button>
+							)}
 						</CardContent>
 					</Card>
 				) : compactLayout ? (
 					<RoleMobileList
 						roles={roles}
+						canManage={canManage}
 						total={total}
 						offset={offset}
 						isFetching={rolesQuery.isFetching}
@@ -554,6 +587,7 @@ export function Roles() {
 								<RoleRow
 									key={role.id}
 									role={role}
+									canManage={canManage}
 									onEdit={() => handleEdit(role)}
 									onDelete={() => handleDelete(role)}
 									onNavigate={(to) => navigate(to)}
@@ -590,7 +624,14 @@ export function Roles() {
 				name={roleToDelete?.name ?? ""}
 				open={isDeleteOpen}
 				pending={deleteRole.isPending}
-				error={deleteRole.isError}
+				error={
+					deleteRole.isError
+						? getErrorMessage(
+								deleteRole.error,
+								"Could not delete the role. Try again.",
+							)
+						: null
+				}
 				onOpenChange={setIsDeleteOpen}
 				onDelete={handleConfirmDelete}
 			/>
@@ -600,11 +641,13 @@ export function Roles() {
 
 function RoleRow({
 	role,
+	canManage,
 	onEdit,
 	onDelete,
 	onNavigate,
 }: {
 	role: Role;
+	canManage: boolean;
 	onEdit: () => void;
 	onDelete: () => void;
 	onNavigate: (to: string) => void;
@@ -619,13 +662,16 @@ function RoleRow({
 			className="group/row"
 		>
 			<DataTableCell className="min-w-0 w-0 whitespace-nowrap font-medium">
-				<Link
-					to={`/roles/${role.id}`}
-					className="block min-w-0 truncate hover:underline"
-					onClick={(e) => e.stopPropagation()}
-				>
-					{role.name}
-				</Link>
+				<span className="flex min-w-0 items-center gap-2">
+					<Link
+						to={`/roles/${role.id}`}
+						className="block min-w-0 truncate hover:underline"
+						onClick={(e) => e.stopPropagation()}
+					>
+						{role.name}
+					</Link>
+					{role.is_builtin && <BuiltinBadge />}
+				</span>
 			</DataTableCell>
 			<DataTableCell className="max-w-xs truncate text-muted-foreground">
 				{role.description || "-"}
@@ -634,20 +680,28 @@ function RoleRow({
 				className="whitespace-nowrap"
 				onClick={(e) => e.stopPropagation()}
 			>
-				<div className="flex flex-wrap gap-1">
-					{CHIP_DEFS.map(({ key, label, icon: Icon }) => {
-						const count = counts ? counts[key] : 0;
-						return (
+				{role.is_builtin ? (
+					<Link
+						to={`/roles/${role.id}`}
+						className="text-sm text-muted-foreground hover:text-foreground hover:underline"
+					>
+						View permissions
+					</Link>
+				) : counts ? (
+					<div className="flex flex-wrap gap-1">
+						{CHIP_DEFS.map(({ key, label, icon: Icon }) => (
 							<RoleCountLink
 								key={key}
 								roleId={role.id}
-								count={count}
+								count={counts[key]}
 								label={label}
 								icon={Icon}
 							/>
-						);
-					})}
-				</div>
+						))}
+					</div>
+				) : (
+					<span className="text-sm text-muted-foreground">—</span>
+				)}
 			</DataTableCell>
 			<DataTableCell className="w-0 whitespace-nowrap text-sm text-muted-foreground">
 				{role.created_at
@@ -658,11 +712,13 @@ function RoleRow({
 				className="sticky right-0 w-px whitespace-nowrap bg-card text-right group-hover/row:bg-[color-mix(in_oklch,var(--card),var(--muted)_50%)]"
 				onClick={(e) => e.stopPropagation()}
 			>
-				<RoleActionsMenu
-					name={role.name}
-					onEdit={onEdit}
-					onDelete={onDelete}
-				/>
+				{canManage && !role.is_builtin && (
+					<RoleActionsMenu
+						name={role.name}
+						onEdit={onEdit}
+						onDelete={onDelete}
+					/>
+				)}
 			</DataTableCell>
 		</DataTableRow>
 	);

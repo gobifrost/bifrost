@@ -3,8 +3,9 @@
 The matrix compares the new evaluator with a legacy oracle restated from the
 access list. This probe grounds the oracle's DENIALS in the running API: for
 every REST entry the oracle says a persona cannot reach at home, send the
-request as that persona (random-UUID path params, ``{}`` body) and require
-401/403. Only the denied side is probed, so nothing here mutates state unless
+request as that persona (random-UUID path params, ``{}`` body, or a minimal
+valid body where the handler checks permissions after validating it) and
+require 401/403. Only the denied side is probed, so nothing here mutates state unless
 the oracle is wrong, and a non-403 is a finding about the oracle's input.
 """
 
@@ -52,6 +53,29 @@ INCONCLUSIVE: dict[tuple[str, str], str] = {
     ("PATCH", "/api/mcp-connections/{connection_id}/tools/{tool_id}"): _LOOKUP_FIRST,
 }
 
+# Entries whose handler validates the body (422) before it decides the
+# permission. A minimal valid body lets the decision run; a wrong oracle
+# would let it through, which is the finding this probe exists to report.
+_PROBE_ID = str(uuid4())
+VALID_BODIES: dict[tuple[str, str], dict] = {
+    ("POST", "/api/organizations"): {"name": "deny-probe"},
+    ("POST", "/api/roles"): {"name": "deny-probe"},
+    ("PUT", "/api/roles/{role_id}/permissions"): {"permissions": []},
+    ("DELETE", "/api/roles/{role_id}/users"): {"user_ids": [_PROBE_ID]},
+    ("POST", "/api/roles/{role_id}/users"): {"user_ids": [_PROBE_ID]},
+    ("POST", "/api/users"): {"email": "deny-probe@example.com"},
+    ("PATCH", "/api/users/bulk"): {
+        "user_ids": [_PROBE_ID],
+        "operation": "set_active",
+        "is_active": True,
+    },
+    ("POST", "/api/users/{user_id}/invite/send"): {
+        "registration_url": "https://example.com/accept-invite?token=deny-probe"
+    },
+    ("PUT", "/api/users/{user_id}/role-assignments"): {"base_role_id": _PROBE_ID},
+    ("POST", "/auth/admin/revoke-user"): {"user_id": _PROBE_ID},
+}
+
 
 def _probeable(persona_name: str) -> list:
     persona = _PERSONA[persona_name]
@@ -68,7 +92,7 @@ def _send(e2e_client, headers: dict, entry):
     path = re.sub(r"\{[^}]+\}", lambda _: str(uuid4()), entry.path)
     kwargs = {"headers": headers}
     if entry.method in _METHODS_WITH_BODY:
-        kwargs["json"] = {}
+        kwargs["json"] = VALID_BODIES.get(entry.key, {})
     return e2e_client.request(entry.method, path, **kwargs)
 
 
@@ -95,7 +119,7 @@ def test_provider_member_is_refused_where_the_oracle_denies(e2e_client, provider
     assert not failures, f"{len(failures)} of {len(entries)} probes were not refused:\n" + "\n".join(failures)
 
 
-def test_inconclusive_entries_are_in_the_access_list() -> None:
+def test_inconclusive_and_body_entries_are_in_the_access_list() -> None:
     keys = {entry.key for entry in ACCESS_LIST}
-    unknown = [key for key in INCONCLUSIVE if key not in keys]
-    assert not unknown, f"INCONCLUSIVE entries not in the access list: {unknown}"
+    unknown = [key for key in (*INCONCLUSIVE, *VALID_BODIES) if key not in keys]
+    assert not unknown, f"INCONCLUSIVE or VALID_BODIES entries not in the access list: {unknown}"

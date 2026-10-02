@@ -66,6 +66,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { getErrorMessage } from "@/lib/api-error";
+import { GLOBAL_TARGET } from "@/lib/authorization";
+import { useAuthorization } from "@/services/authorization";
 import {
 	useCreateOrganization,
 	useOrganizations,
@@ -170,6 +172,18 @@ export function Organizations() {
 	);
 
 	const createMutation = useCreateOrganization({ toastOnError: false });
+	const authorization = useAuthorization();
+	// Creating is platform-level; editing and disabling are per organization.
+	const canCreate = authorization.canAt(
+		"organizations.readwrite",
+		GLOBAL_TARGET,
+	);
+	const canManage = (org: Organization) =>
+		authorization.canAt("organizations.readwrite", {
+			kind: "org",
+			id: org.id,
+		});
+	const showActions = pagedOrgs.some(canManage);
 	const updateMutation = useUpdateOrganization({ toastOnError: false });
 
 	const resetSelection = () => {
@@ -384,49 +398,76 @@ export function Organizations() {
 		return () => window.cancelAnimationFrame(frame);
 	}, [isEditDialogOpen, data, compactLayout]);
 
-	const renderOrganizationActions = (org: Organization) => (
-		<DropdownMenu>
-			<DropdownMenuTrigger asChild>
-				<Button
-					variant="ghost"
-					size="icon"
-					className="h-11 w-11 lg:h-9 lg:w-9"
-					aria-label={`${org.name} actions`}
-					onClick={(event) => {
-						editTriggerRef.current = event.currentTarget;
-					}}
-				>
-					<MoreVertical className="h-4 w-4" />
-				</Button>
-			</DropdownMenuTrigger>
-			<DropdownMenuContent align="end" className="w-48">
-				<DropdownMenuItem
-					className="min-h-11 whitespace-nowrap px-3 lg:min-h-9"
-					onClick={() => handleEdit(org)}
-					aria-label={`Edit ${org.name}`}
-				>
-					<Pencil />
-					Edit
-				</DropdownMenuItem>
-				<DropdownMenuSeparator />
-				<DropdownMenuItem
-					className="min-h-11 whitespace-nowrap px-3 lg:min-h-9"
-					onClick={() => handleToggleActive(org)}
-					disabled={org.is_provider}
-					aria-label={`${org.is_active ? "Disable" : "Enable"} ${org.name}`}
-				>
-					<Power />
-					{org.is_active ? "Disable" : "Enable"}
-				</DropdownMenuItem>
-			</DropdownMenuContent>
-		</DropdownMenu>
-	);
+	const renderOrganizationActions = (org: Organization) =>
+		canManage(org) && (
+			<DropdownMenu>
+				<DropdownMenuTrigger asChild>
+					<Button
+						variant="ghost"
+						size="icon"
+						className="h-11 w-11 lg:h-9 lg:w-9"
+						aria-label={`${org.name} actions`}
+						onClick={(event) => {
+							editTriggerRef.current = event.currentTarget;
+						}}
+					>
+						<MoreVertical className="h-4 w-4" />
+					</Button>
+				</DropdownMenuTrigger>
+				<DropdownMenuContent align="end" className="w-48">
+					<DropdownMenuItem
+						className="min-h-11 whitespace-nowrap px-3 lg:min-h-9"
+						onClick={() => handleEdit(org)}
+						aria-label={`Edit ${org.name}`}
+					>
+						<Pencil />
+						Edit
+					</DropdownMenuItem>
+					<DropdownMenuSeparator />
+					<DropdownMenuItem
+						className="min-h-11 whitespace-nowrap px-3 lg:min-h-9"
+						onClick={() => handleToggleActive(org)}
+						disabled={org.is_provider}
+						aria-label={`${org.is_active ? "Disable" : "Enable"} ${org.name}`}
+					>
+						<Power />
+						{org.is_active ? "Disable" : "Enable"}
+					</DropdownMenuItem>
+				</DropdownMenuContent>
+			</DropdownMenu>
+		);
+
+	const renderName = (
+		org: Organization,
+		className: string,
+		stopPropagation: boolean,
+	) =>
+		canManage(org) ? (
+			<button
+				type="button"
+				data-org-id={org.id}
+				onClick={(event) => {
+					if (stopPropagation) event.stopPropagation();
+					handleEdit(org, event);
+				}}
+				aria-label={`Edit ${org.name}`}
+				className={className}
+			>
+				{org.name}
+			</button>
+		) : (
+			<span className="[overflow-wrap:anywhere]">{org.name}</span>
+		);
 
 	return (
 		<PageWorkspace className="mx-auto max-w-7xl">
 			<ListPageHeader
 				title="Organizations"
-				description="Manage customer organizations and their configurations"
+				description={
+					authorization.canAnywhere("organizations.readwrite")
+						? "Manage customer organizations and their configurations"
+						: "Organizations you can view"
+				}
 				actions={
 					<>
 						<Button
@@ -442,13 +483,15 @@ export function Organizations() {
 								className={`h-4 w-4 ${isFetching ? "animate-spin motion-reduce:animate-none" : ""}`}
 							/>
 						</Button>
-						<Button
-							onClick={handleCreate}
-							className="min-h-11 flex-1 sm:flex-none lg:min-h-10"
-						>
-							<Plus className="h-4 w-4" />
-							New Organization
-						</Button>
+						{canCreate && (
+							<Button
+								onClick={handleCreate}
+								className="min-h-11 flex-1 sm:flex-none lg:min-h-10"
+							>
+								<Plus className="h-4 w-4" />
+								New Organization
+							</Button>
+						)}
 					</>
 				}
 			/>
@@ -541,20 +584,11 @@ export function Organizations() {
 										<div className="flex items-start gap-3">
 											<div className="min-w-0 flex-1">
 												<h2 className="text-base font-semibold">
-													<button
-														type="button"
-														data-org-id={org.id}
-														onClick={(event) =>
-															handleEdit(
-																org,
-																event,
-															)
-														}
-														aria-label={`Edit ${org.name}`}
-														className="min-h-11 w-full rounded-[var(--bf-radius-control)] text-left [overflow-wrap:anywhere] transition-colors duration-[var(--bf-motion-feedback)] hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none"
-													>
-														{org.name}
-													</button>
+													{renderName(
+														org,
+														"min-h-11 w-full rounded-[var(--bf-radius-control)] text-left [overflow-wrap:anywhere] transition-colors duration-[var(--bf-motion-feedback)] hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none",
+														false,
+													)}
 												</h2>
 												<div className="mt-1 flex flex-wrap gap-2">
 													{org.is_provider && (
@@ -634,17 +668,20 @@ export function Organizations() {
 									<DataTableHead className="hidden w-0 whitespace-nowrap md:table-cell">
 										Created
 									</DataTableHead>
-									<DataTableHead className="w-0 whitespace-nowrap text-right">
-										Actions
-									</DataTableHead>
+									{showActions && (
+										<DataTableHead className="w-0 whitespace-nowrap text-right">
+											Actions
+										</DataTableHead>
+									)}
 								</DataTableRow>
 							</DataTableHeader>
 							<DataTableBody>
 								{pagedOrgs.map((org) => (
 									<DataTableRow
 										key={org.id}
-										clickable
+										clickable={canManage(org)}
 										onClick={(event) =>
+											canManage(org) &&
 											handleEdit(org, event)
 										}
 										className="group/row"
@@ -654,23 +691,11 @@ export function Organizations() {
 											<div className="flex items-start gap-2">
 												<div className="min-w-0">
 													<div className="flex flex-wrap items-center gap-2">
-														<button
-															type="button"
-															data-org-id={org.id}
-															className="min-h-11 text-left font-medium [overflow-wrap:anywhere] hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-															onClick={(
-																event,
-															) => {
-																event.stopPropagation();
-																handleEdit(
-																	org,
-																	event,
-																);
-															}}
-															aria-label={`Edit ${org.name}`}
-														>
-															{org.name}
-														</button>
+														{renderName(
+															org,
+															"min-h-11 text-left font-medium [overflow-wrap:anywhere] hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+															true,
+														)}
 														{org.is_provider && (
 															<Badge
 																variant="outline"
@@ -714,20 +739,25 @@ export function Organizations() {
 													).toLocaleDateString()
 												: "N/A"}
 										</DataTableCell>
-										<DataTableCell
-											className="w-0 whitespace-nowrap text-right"
-											onClick={(event) =>
-												event.stopPropagation()
-											}
-										>
-											{renderOrganizationActions(org)}
-										</DataTableCell>
+										{showActions && (
+											<DataTableCell
+												className="w-0 whitespace-nowrap text-right"
+												onClick={(event) =>
+													event.stopPropagation()
+												}
+											>
+												{renderOrganizationActions(org)}
+											</DataTableCell>
+										)}
 									</DataTableRow>
 								))}
 							</DataTableBody>
 							<DataTableFooter>
 								<DataTableRow>
-									<DataTableCell colSpan={5} className="p-0">
+									<DataTableCell
+										colSpan={showActions ? 5 : 4}
+										className="p-0"
+									>
 										<ListPagination
 											offset={clampedOffset}
 											limit={PAGE_SIZE}
@@ -753,14 +783,18 @@ export function Organizations() {
 						<p className="mt-2 text-sm text-muted-foreground">
 							{searchTerm
 								? "Try adjusting your search or clearing the filter."
-								: showInactive
-									? "Create your first organization to get started."
-									: "Show inactive organizations or create a new one."}
+								: !canCreate
+									? "Organizations you have access to appear here."
+									: showInactive
+										? "Create your first organization to get started."
+										: "Show inactive organizations or create a new one."}
 						</p>
-						<Button onClick={handleCreate} className="mt-4">
-							<Plus className="h-4 w-4" />
-							New Organization
-						</Button>
+						{canCreate && (
+							<Button onClick={handleCreate} className="mt-4">
+								<Plus className="h-4 w-4" />
+								New Organization
+							</Button>
+						)}
 					</div>
 				)}
 			</PageScrollArea>

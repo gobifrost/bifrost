@@ -49,7 +49,7 @@ from src.models.contracts.passkeys import (
     SetupPasskeyVerifyResponse,
 )
 from src.config import get_settings
-from src.core.auth import CurrentActiveUser, CurrentSuperuser
+from src.core.auth import CurrentActiveUser
 from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
 from src.core.rate_limit import auth_limiter, mfa_limiter, get_client_ip
@@ -1116,28 +1116,39 @@ class AdminRevokeRequest(BaseModel):
 @router.post("/admin/revoke-user", response_model=RevokeAllResponse)
 async def admin_revoke_user_sessions(
     revoke_data: AdminRevokeRequest,
-    current_user: CurrentSuperuser,
+    current_user: CurrentActiveUser,
     db: DbSession,
 ) -> RevokeAllResponse:
     """
-    Revoke all refresh tokens for a specific user (admin only).
+    Revoke all refresh tokens for a specific user.
 
-    Allows platform administrators to forcibly log out a user from all
-    devices. Useful for security incidents or account compromises.
-
-    Requires platform admin (superuser) privileges.
+    Signs a user out of every device: users.readwrite at the user's
+    organization, and only a Platform Admin for a privileged user. Useful
+    for security incidents or account compromises.
 
     Args:
         revoke_data: Target user ID to revoke
-        current_user: Current authenticated user (must be admin)
+        current_user: Current authenticated user
         db: Database session
 
     Returns:
         Number of sessions revoked
 
     Raises:
-        HTTPException: If not admin or user not found
+        HTTPException: If not permitted or user not found
     """
+    from src.services.authorization.enforce import (
+        load_caller,
+        operation_reach,
+        org_target,
+        privileged_user_ids,
+        require_operation,
+        require_unprotected,
+    )
+
+    operation = "POST /auth/admin/revoke-user"
+    caller = await load_caller(db, current_user)
+    operation_reach(caller, operation)
     # Verify target user exists
     user_repo = UserRepository(db)
     target_user = await user_repo.get_by_id(revoke_data.user_id)
@@ -1146,6 +1157,8 @@ async def admin_revoke_user_sessions(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found",
         )
+    require_operation(caller, operation, org_target(target_user.organization_id))
+    require_unprotected(caller, target_user.id in await privileged_user_ids(db, [target_user.id]))
 
     # Revoke all sessions for target user
     count = await revoke_all_user_refresh_tokens(revoke_data.user_id)

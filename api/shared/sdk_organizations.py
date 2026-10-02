@@ -8,8 +8,10 @@ Single implementation used by both entry points:
   engine socket.
 
 Both paths share DTOs, response fields, HTTP statuses/error precedence,
-sorting/filter defaults, audit attribution, and cache updates. Each caller
-must enforce platform-admin authority before invoking these operations.
+sorting/filter defaults, audit attribution, and cache updates. The handlers
+decide authorization with the evaluator before invoking these operations
+(organizations.read / organizations.readwrite at the organization, creating
+one at Platform); the list is filtered here to the caller's reach.
 
 Scope is the five SDK methods: ``create``, ``get``, ``list``,
 ``update``, ``delete``. Each maps 1:1 to one HTTP call, so there are no
@@ -40,6 +42,7 @@ from src.core.log_safety import log_safe
 
 if TYPE_CHECKING:
     from src.models import OrganizationPublic
+    from src.services.authorization.enforce import OrgReach
 
 logger = logging.getLogger(__name__)
 
@@ -60,9 +63,11 @@ class OrganizationServiceError(Exception):
 async def list_organizations(
     session: AsyncSession,
     *,
+    reach: OrgReach,
     include_inactive: bool = False,
 ) -> list[OrganizationPublic]:
-    """List organizations, provider first then active then alphabetical.
+    """List the organizations in ``reach``, provider first then active then
+    alphabetical.
 
     Defaults match the historical handler (active only unless
     ``include_inactive`` is set).
@@ -71,6 +76,9 @@ async def list_organizations(
     from src.models import OrganizationPublic
 
     query = select(OrganizationORM)
+    reach_filter = reach.where(OrganizationORM.id)
+    if reach_filter is not None:
+        query = query.where(reach_filter)
     if not include_inactive:
         query = query.where(OrganizationORM.is_active)
     query = query.order_by(

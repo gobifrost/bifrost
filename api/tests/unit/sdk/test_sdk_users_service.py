@@ -26,21 +26,14 @@ from fastapi import HTTPException, Response
 from shared.sdk_users import UserServiceError
 
 
-def _principal(email: str = "admin@example.com", user_id=None):
-    from src.core.principal import UserPrincipal
-
-    return UserPrincipal(
-        user_id=user_id or uuid4(),
-        email=email,
-        organization_id=None,
-        name="Admin",
-        is_superuser=True,
-        is_verified=True,
-    )
-
-
 def _stub_actor(email: str = "admin@example.com", user_id=None):
     return SimpleNamespace(user_id=user_id or uuid4(), email=email)
+
+
+def _admin(email: str = "admin@example.com", user_id=None):
+    from tests.helpers.authorization import admin_caller
+
+    return admin_caller(email=email, user_id=user_id)
 
 
 async def _seed_org(db_session):
@@ -62,16 +55,15 @@ class TestUserService:
         from shared.sdk_users import create_user, get_user
 
         org = await _seed_org(db_session)
-        actor_id = uuid4()
         created = await create_user(
             db_session,
+            _admin(),
             email=f"round-{uuid4().hex[:8]}@example.com",
             name="Round Trip",
             is_active=True,
             is_superuser=False,
             is_external=False,
             organization_id=org.id,
-            actor_user_id=actor_id,
         )
         assert created.email.startswith("round-")
         assert created.is_verified is True
@@ -80,18 +72,18 @@ class TestUserService:
         assert created.registration_url is not None
         assert "/accept-invite?token=" in created.registration_url
 
-        fetched = await get_user(db_session, user_id=str(created.id))
+        fetched = await get_user(db_session, _admin(), user_id=str(created.id))
         assert fetched.id == created.id
         assert fetched.email == created.email
 
-        by_email = await get_user(db_session, user_id=created.email)
+        by_email = await get_user(db_session, _admin(), user_id=created.email)
         assert by_email.id == created.id
 
     async def test_get_missing_raises_404(self, db_session):
         from shared.sdk_users import get_user
 
         with pytest.raises(UserServiceError) as exc_info:
-            await get_user(db_session, user_id=str(uuid4()))
+            await get_user(db_session, _admin(), user_id=str(uuid4()))
         assert exc_info.value.status_code == 404
         assert exc_info.value.detail == "User not found"
 
@@ -102,18 +94,18 @@ class TestUserService:
         org = await _seed_org(db_session)
         active = await create_user(
             db_session,
+            _admin(),
             email=f"active-{uuid4().hex[:8]}@example.com",
             name="Active",
             organization_id=org.id,
-            actor_user_id=uuid4(),
         )
         inactive = await create_user(
             db_session,
+            _admin(),
             email=f"inactive-{uuid4().hex[:8]}@example.com",
             name="Inactive",
             is_active=False,
             organization_id=org.id,
-            actor_user_id=uuid4(),
         )
         sys_user = UserORM(
             email=f"sys-{uuid4().hex[:8]}@example.com",
@@ -125,13 +117,13 @@ class TestUserService:
         await db_session.flush()
 
         items, _total = await list_users(
-            db_session, _principal(), search=active.email[:12]
+            db_session, _admin(), search=active.email[:12]
         )
         assert [u.id for u in items] == [active.id]
 
         items, _total = await list_users(
             db_session,
-            _principal(),
+            _admin(),
             search="@example.com",
             include_inactive=True,
         )
@@ -147,34 +139,34 @@ class TestUserService:
         tag = uuid4().hex[:8]
         admin = await create_user(
             db_session,
+            _admin(),
             email=f"plat-{tag}@example.com",
             name=f"Tag {tag} Zulu",
             is_superuser=True,
-            actor_user_id=uuid4(),
         )
         member = await create_user(
             db_session,
+            _admin(),
             email=f"member-{tag}@example.com",
             name=f"Tag {tag} Alpha",
             organization_id=org.id,
-            actor_user_id=uuid4(),
         )
 
         items, total = await list_users(
-            db_session, _principal(), type="platform", search=tag
+            db_session, _admin(), type="platform", search=tag
         )
         assert total == 1
         assert [u.id for u in items] == [admin.id]
 
         items, total = await list_users(
-            db_session, _principal(), type="org", search=tag
+            db_session, _admin(), type="org", search=tag
         )
         assert total == 1
         assert [u.id for u in items] == [member.id]
 
         items, total = await list_users(
             db_session,
-            _principal(),
+            _admin(),
             search=tag,
             sort_by="name",
             sort_direction="asc",
@@ -186,7 +178,7 @@ class TestUserService:
 
         items, _ = await list_users(
             db_session,
-            _principal(),
+            _admin(),
             search=tag,
             sort_by="name",
             sort_direction="asc",
@@ -196,7 +188,7 @@ class TestUserService:
         assert [u.name for u in items] == [f"Tag {tag} Zulu"]
 
         items, total = await list_users(
-            db_session, _principal(), scope=str(org.id), search=tag
+            db_session, _admin(), scope=str(org.id), search=tag
         )
         assert total == 1
         assert items[0].id == member.id
@@ -205,7 +197,7 @@ class TestUserService:
         from shared.sdk_users import list_users
 
         with pytest.raises(UserServiceError) as exc_info:
-            await list_users(db_session, _principal(), scope="not-a-scope")
+            await list_users(db_session, _admin(), scope="not-a-scope")
         assert exc_info.value.status_code == 422
 
     async def test_update_partial_promote_and_protection(self, db_session):
@@ -216,25 +208,31 @@ class TestUserService:
         org = await _seed_org(db_session)
         created = await create_user(
             db_session,
+            _admin(),
             email=f"upd-{uuid4().hex[:8]}@example.com",
             name="Before",
             organization_id=org.id,
-            actor_user_id=uuid4(),
         )
         updated = await update_user(
-            db_session, user_id=str(created.id), name="After"
+            db_session, _admin(), fields={"name"}, user_id=str(created.id), name="After"
         )
         assert updated.name == "After"
         assert updated.organization_id == org.id
 
         promoted = await update_user(
-            db_session, user_id=str(created.id), is_superuser=True
+            db_session,
+            _admin(),
+            fields={"is_superuser"},
+            user_id=str(created.id),
+            is_superuser=True,
         )
         assert promoted.is_superuser is True
         assert promoted.organization_id == PROVIDER_ORG_ID
 
         with pytest.raises(UserServiceError) as exc_info:
-            await update_user(db_session, user_id=str(uuid4()), name="x")
+            await update_user(
+                db_session, _admin(), fields={"name"}, user_id=str(uuid4()), name="x"
+            )
         assert exc_info.value.status_code == 404
 
         sys_user = UserORM(
@@ -244,7 +242,9 @@ class TestUserService:
         db_session.add(sys_user)
         await db_session.flush()
         with pytest.raises(UserServiceError) as exc_info:
-            await update_user(db_session, user_id=str(sys_user.id), name="x")
+            await update_user(
+                db_session, _admin(), fields={"name"}, user_id=str(sys_user.id), name="x"
+            )
         assert exc_info.value.status_code == 403
         assert exc_info.value.detail == "System user cannot be modified"
 
@@ -255,18 +255,16 @@ class TestUserService:
         with pytest.raises(UserServiceError) as exc_info:
             await delete_user(
                 db_session,
+                _admin(email="admin@example.com", user_id=actor_id),
                 user_id=str(actor_id),
-                actor_user_id=actor_id,
-                actor_email="admin@example.com",
             )
         assert exc_info.value.status_code == 400
 
         with pytest.raises(UserServiceError) as exc_info:
             await delete_user(
                 db_session,
+                _admin(email="admin@example.com", user_id=uuid4()),
                 user_id="admin@example.com",
-                actor_user_id=uuid4(),
-                actor_email="admin@example.com",
             )
         assert exc_info.value.status_code == 400
 
@@ -277,9 +275,8 @@ class TestUserService:
         with pytest.raises(UserServiceError) as exc_info:
             await delete_user(
                 db_session,
+                _admin(email="admin@example.com", user_id=uuid4()),
                 user_id=str(uuid4()),
-                actor_user_id=uuid4(),
-                actor_email="admin@example.com",
             )
         assert exc_info.value.status_code == 404
 
@@ -292,31 +289,40 @@ class TestUserService:
         with pytest.raises(UserServiceError) as exc_info:
             await delete_user(
                 db_session,
+                _admin(email="admin@example.com", user_id=uuid4()),
                 user_id=str(sys_user.id),
-                actor_user_id=uuid4(),
-                actor_email="admin@example.com",
             )
         assert exc_info.value.status_code == 403
 
         created = await create_user(
             db_session,
+            _admin(),
             email=f"del-{uuid4().hex[:8]}@example.com",
             name="Gone",
             is_superuser=True,
-            actor_user_id=uuid4(),
         )
         deleted_id = await delete_user(
             db_session,
+            _admin(email="admin@example.com", user_id=uuid4()),
             user_id=str(created.id),
-            actor_user_id=uuid4(),
-            actor_email="admin@example.com",
         )
         assert deleted_id == created.id
         with pytest.raises(UserServiceError):
-            await get_user(db_session, user_id=str(created.id))
+            await get_user(db_session, _admin(), user_id=str(created.id))
+
+
+@pytest.fixture
+def admin_caller():
+    """The handlers load the caller from the database; the boundary tests
+    stand in an admin caller."""
+    from tests.helpers.authorization import handlers_as
+
+    with handlers_as(_admin(), "src.routers.users") as caller:
+        yield caller
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("admin_caller")
 class TestUsersRouterBoundary:
     """Handlers delegate to ``shared.sdk_users`` and map its errors."""
 
@@ -355,19 +361,16 @@ class TestUsersRouterBoundary:
                 )
         assert exc_info.value.status_code == 422
 
-    async def test_create_delegates(self):
+    async def test_create_delegates(self, admin_caller):
         from src.models import UserCreate
         from src.routers.users import create_user
 
-        actor_id = uuid4()
         request = UserCreate(email="n@example.com", name="N")
         with patch(
             "shared.sdk_users.create_user", new=AsyncMock(return_value="USER")
         ) as mock_create:
-            assert (
-                await create_user(request, _stub_actor(user_id=actor_id), AsyncMock())
-                == "USER"
-            )
+            assert await create_user(request, _stub_actor(), AsyncMock()) == "USER"
+        assert mock_create.call_args[0][1] is admin_caller
         kwargs = mock_create.call_args[1]
         assert kwargs == {
             "email": "n@example.com",
@@ -376,7 +379,6 @@ class TestUsersRouterBoundary:
             "is_superuser": False,
             "is_external": False,
             "organization_id": None,
-            "actor_user_id": actor_id,
         }
 
     async def test_get_maps_404(self):
@@ -412,6 +414,8 @@ class TestUsersRouterBoundary:
         assert kwargs["user_id"] == "u"
         assert kwargs["name"] == "new"
         assert kwargs["is_active"] is None
+        # Only the supplied fields are authorized.
+        assert kwargs["fields"] == {"name"}
 
         with patch(
             "shared.sdk_users.update_user",
@@ -421,7 +425,7 @@ class TestUsersRouterBoundary:
                 await update_user("u", request, _stub_actor(), AsyncMock())
         assert exc_info.value.status_code == 403
 
-    async def test_delete_maps_400_404_403(self):
+    async def test_delete_maps_400_404_403(self, admin_caller):
         from src.routers.users import delete_user
 
         actor = _stub_actor()
@@ -432,11 +436,8 @@ class TestUsersRouterBoundary:
             assert (
                 await delete_user("u", actor, AsyncMock()) is None
             )
-        assert mock_delete.call_args[1] == {
-            "user_id": "u",
-            "actor_user_id": actor.user_id,
-            "actor_email": actor.email,
-        }
+        assert mock_delete.call_args[0][1] is admin_caller
+        assert mock_delete.call_args[1] == {"user_id": "u"}
 
         for code in (400, 404, 403):
             with patch(

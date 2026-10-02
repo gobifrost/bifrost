@@ -19,7 +19,9 @@ import { useOrganizations } from "@/hooks/useOrganizations";
 import { useRoles } from "@/hooks/useRoles";
 import { UserLookupNotice } from "./UserLookupNotice";
 import { useBulkUserOperation } from "@/hooks/useUsers";
+import { GLOBAL_TARGET } from "@/lib/authorization";
 import { cn } from "@/lib/utils";
+import { useAuthorization } from "@/services/authorization";
 
 import type { components } from "@/lib/v1";
 
@@ -174,6 +176,7 @@ function BulkMoveOrgDialogInner({
 	const [orgId, setOrgId] = useState<string | null | undefined>(undefined);
 	const [submitError, setSubmitError] = useState<string | null>(null);
 	const lookup = useOrganizations();
+	const authorization = useAuthorization();
 	const lookupReady = lookup.data !== undefined && !lookup.isError;
 	const bulkOp = useBulkUserOperation();
 	const submitBusy = useRef(false);
@@ -250,7 +253,17 @@ function BulkMoveOrgDialogInner({
 					disabled={!lookupReady || bulkOp.isPending}
 					value={orgId}
 					onChange={setOrgId}
-					showGlobal={true}
+					// A move needs authority at the destination too.
+					showGlobal={authorization.canAt(
+						"users.lifecycle.readwrite",
+						GLOBAL_TARGET,
+					)}
+					filterOrganizations={(org) =>
+						authorization.canAt("users.lifecycle.readwrite", {
+							kind: "org",
+							id: org.id,
+						})
+					}
 					placeholder="Select organization..."
 				/>
 			</div>

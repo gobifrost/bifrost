@@ -64,6 +64,12 @@ class CurrentGate(StrEnum):
     ENGINE = "engine"
     # An embed-session-only dependency.
     EMBED = "embed"
+    # CurrentActiveUser (any signed-in user) plus the R3 enforcement helper
+    # (``src.services.authorization.enforce``), which decides this entry's
+    # permission and boundary with the evaluator. The route has been cut over:
+    # the dependency tree alone shows ``authenticated``; the gate-agreement
+    # test checks the handler calls the helper with this entry's operation.
+    EVALUATOR = "evaluator"
 
 
 class InlineEffect(StrEnum):

@@ -127,6 +127,15 @@ vi.mock("@/hooks/useOrganizations", () => ({
 	},
 }));
 
+const authz = vi.hoisted(() => ({
+	canAt: (_permission: string, _target: { kind: string; id?: string }) =>
+		true as boolean,
+	canAnywhere: (_permission: string) => true as boolean,
+}));
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => authz,
+}));
+
 vi.mock("@/hooks/useSearch", () => ({
 	useSearch: (items: unknown[]) => items,
 }));
@@ -146,6 +155,8 @@ vi.mock("@/pages/settings/RequiredInstructionsSettings", () => ({
 import { Organizations } from "./Organizations";
 
 beforeEach(() => {
+	authz.canAt = () => true;
+	authz.canAnywhere = () => true;
 	mockUseOrganizations.mockClear();
 	mockCreate.mockReset();
 	mockUpdate.mockReset();
@@ -494,5 +505,43 @@ describe("Organizations", () => {
 				screen.queryByRole("dialog", { name: "Create Organization" }),
 			).not.toBeInTheDocument(),
 		);
+	});
+});
+
+describe("Organizations permissions", () => {
+	it("shows a viewer the list without create, edit, or disable controls", () => {
+		authz.canAt = () => false;
+		authz.canAnywhere = () => false;
+		render(<Organizations />);
+
+		expect(screen.getByText("Acme")).toBeInTheDocument();
+		expect(
+			screen.getByText("Organizations you can view"),
+		).toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", { name: /new organization/i }),
+		).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", { name: "Edit Acme" }),
+		).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", { name: "Acme actions" }),
+		).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole("columnheader", { name: "Actions" }),
+		).not.toBeInTheDocument();
+	});
+
+	it("lets an organization's manager edit it but not create organizations", () => {
+		authz.canAt = (_permission, target) =>
+			target.kind === "org" && target.id === "org-1";
+		render(<Organizations />);
+
+		expect(
+			screen.queryByRole("button", { name: /new organization/i }),
+		).not.toBeInTheDocument();
+		expect(
+			screen.getByRole("button", { name: "Edit Acme" }),
+		).toBeInTheDocument();
 	});
 });

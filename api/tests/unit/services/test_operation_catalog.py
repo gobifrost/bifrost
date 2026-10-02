@@ -460,6 +460,13 @@ USER_ADMIN_OPERATIONS = {
         None,
         False,
     ),
+    "users.mfa.reset": (
+        "POST",
+        "/api/users/{user_id}/mfa/reset",
+        None,
+        None,
+        False,
+    ),
     "users.roles.list": (
         "GET",
         "/api/users/{user_id}/roles",

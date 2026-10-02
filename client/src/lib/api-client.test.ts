@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { apiClient, authFetch } from "./api-client";
+import { apiClient, authFetch, setRefusedChangeListener } from "./api-client";
 import { ACCESS_TOKEN_KEY } from "./auth-token";
 
 interface TestPlatformAuthBridge {
@@ -374,3 +374,47 @@ describe.each(["authFetch", "apiClient"] as const)(
 		});
 	},
 );
+
+describe("apiClient refused changes", () => {
+	let fetchMock: ReturnType<typeof vi.fn>;
+	beforeEach(() => {
+		localStorage.setItem(ACCESS_TOKEN_KEY, buildFakeToken());
+		fetchMock = vi.fn();
+		vi.stubGlobal("fetch", fetchMock);
+	});
+	afterEach(() => {
+		setRefusedChangeListener(null);
+		vi.restoreAllMocks();
+		vi.unstubAllGlobals();
+		localStorage.clear();
+	});
+
+	it("tells the listener when a change is refused", async () => {
+		const listener = vi.fn();
+		setRefusedChangeListener(listener);
+		fetchMock.mockResolvedValueOnce(
+			mockJsonResponse(403, {
+				detail: "You don't have permission to manage users",
+			}),
+		);
+
+		const { response } = await apiClient.PATCH("/api/users/{user_id}", {
+			params: { path: { user_id: "u1" } },
+			body: { name: "New" },
+			fetch: fetchMock,
+		} as never);
+
+		expect(response.status).toBe(403);
+		expect(listener).toHaveBeenCalledOnce();
+	});
+
+	it("stays quiet when a read is refused", async () => {
+		const listener = vi.fn();
+		setRefusedChangeListener(listener);
+		fetchMock.mockResolvedValueOnce(mockResponse(403));
+
+		await apiClient.GET("/api/version", { fetch: fetchMock } as never);
+
+		expect(listener).not.toHaveBeenCalled();
+	});
+});

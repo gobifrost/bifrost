@@ -34,6 +34,8 @@ import { Logo } from "@/components/branding/Logo";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { term, useTerminology, type ProductTermKey } from "@/lib/terminology";
+import type { PermissionRequirement } from "@/lib/authorization";
+import { useAuthorization } from "@/services/authorization";
 import { SidebarLink } from "./sidebarLinks";
 
 interface NavItem {
@@ -42,6 +44,7 @@ interface NavItem {
 	href: string;
 	icon: React.ElementType;
 	requiresPlatformAdmin?: boolean;
+	requiresPermission?: PermissionRequirement;
 	dividerBefore?: boolean;
 }
 
@@ -163,25 +166,24 @@ const navSections: NavSection[] = [
 	},
 	{
 		title: "Platform",
-		requiresPlatformAdmin: true,
 		items: [
 			{
 				title: "Organizations",
 				href: "/organizations",
 				icon: Building,
-				requiresPlatformAdmin: true,
+				requiresPermission: { permission: "organizations.read" },
 			},
 			{
 				title: "Users",
 				href: "/users",
 				icon: Users,
-				requiresPlatformAdmin: true,
+				requiresPermission: { permission: "users.read" },
 			},
 			{
 				title: "Roles",
 				href: "/roles",
 				icon: UserCog,
-				requiresPlatformAdmin: true,
+				requiresPermission: { permission: "roles.read", at: "global" },
 			},
 			{
 				title: "Solutions",
@@ -241,6 +243,7 @@ export function Sidebar({
 	isCollapsed,
 }: SidebarProps) {
 	const { isPlatformAdmin } = useAuth();
+	const { meets } = useAuthorization();
 	const terminology = useTerminology();
 	const location = useLocation();
 	const desktopNavRef = useRef<HTMLElement | null>(null);
@@ -264,7 +267,10 @@ export function Sidebar({
 		.map((section) => ({
 			...section,
 			items: section.items.filter(
-				(item) => !item.requiresPlatformAdmin || isPlatformAdmin,
+				(item) =>
+					(!item.requiresPlatformAdmin || isPlatformAdmin) &&
+					(!item.requiresPermission ||
+						meets(item.requiresPermission)),
 			),
 		}))
 		.filter((section) => section.items.length > 0); // Remove empty sections

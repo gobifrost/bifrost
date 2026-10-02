@@ -6,12 +6,14 @@ from uuid import uuid4
 
 import pytest
 
+from shared.sdk_users import set_platform_admin
 from shared.builtin_roles import (
     PLATFORM_ADMIN_ROLE_ID,
     PLATFORM_OPERATOR_PERMISSIONS,
     PLATFORM_OPERATOR_ROLE_ID,
     USER_BASE_PERMISSIONS,
     USER_ROLE_ID,
+    WILDCARD_PERMISSION,
 )
 from src.core.constants import PROVIDER_ORG_ID
 from src.models.orm.organizations import Organization
@@ -28,7 +30,6 @@ async def _user(db_session, *, superuser: bool = False, external: bool = False, 
         id=uuid4(),
         email=f"{uuid4().hex}@example.com",
         name="ctx",
-        is_superuser=superuser,
         is_external=external,
         organization_id=org_id,
         is_active=True,
@@ -36,6 +37,7 @@ async def _user(db_session, *, superuser: bool = False, external: bool = False, 
     )
     db_session.add(user)
     await db_session.flush()
+    await set_platform_admin(db_session, user, superuser, assigned_by="test")
     return user
 
 
@@ -51,12 +53,16 @@ async def test_user_context_carries_base_permissions_and_no_grants(db_session) -
 
 
 @pytest.mark.asyncio
-async def test_platform_admin_context_is_recognised_by_base_role(db_session) -> None:
+async def test_platform_admin_context_is_recognised_by_the_assignment(db_session) -> None:
     user = await _user(db_session, superuser=True, external=True, org_id=PROVIDER_ORG_ID)
     ctx = await build_authorization_context(db_session, user.id)
-    assert ctx.base_role_id == PLATFORM_ADMIN_ROLE_ID
+    assert ctx.base_role_id == USER_ROLE_ID
     assert ctx.is_platform_admin
-    assert ctx.base_permissions == frozenset()
+    assert [grant.role_id for grant in ctx.role_grants] == [PLATFORM_ADMIN_ROLE_ID]
+    assert ctx.role_grants[0].permissions == frozenset({WILDCARD_PERMISSION})
+    assert (WILDCARD_PERMISSION, Boundary(BoundaryKind.PLATFORM)) in ctx.effective_grants
+    assert WILDCARD_PERMISSION in ctx.held_permissions
+    assert ctx.role_grants[0].boundaries == (Boundary(BoundaryKind.PLATFORM),)
     assert not ctx.is_external
 
 

@@ -19,6 +19,7 @@ from src.core.pubsub import manager as pubsub_manager
 from src.routers.health import close_health_check_clients
 from src.routers import (
     auth_router,
+    authorization_router,
     mfa_router,
     oauth_router,
     passkeys_router,
@@ -383,6 +384,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(version_router)
     app.include_router(auth_router)
+    app.include_router(authorization_router)
     app.include_router(mfa_router)
     app.include_router(oauth_router)
     app.include_router(passkeys_router)

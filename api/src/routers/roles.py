@@ -14,15 +14,24 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, Response, status
 from sqlalchemy import select, delete
 
-from src.core.auth import CurrentSuperuser
+from src.core.auth import CurrentActiveUser, CurrentSuperuser
 from src.core.db_deps import DbSession
+from src.models.contracts.role_assignments import (
+    RolePermissionsResponse,
+    RolePermissionsUpdate,
+)
+from src.services.authorization.enforce import (
+    GLOBAL,
+    authorize_operation,
+    load_caller,
+    operation_reach,
+)
 from src.core.log_safety import log_safe
 from src.services.solutions.guard import (
     assert_entity_id_not_solution_managed,
 )
 from src.services.audit import emit_audit
 from src.models import (
-    UserRole as UserRoleORM,
     FormRole as FormRoleORM,
     AgentRole as AgentRoleORM,
     Form as FormORM,
@@ -54,18 +63,8 @@ from src.models import (
     UnassignWorkflowsFromRoleRequest,
 )
 
-# Per-user role cache (Redis-backed, used by table-policy `has_role` lookups
-# in `get_execution_context` / WS `_populate_user_roles`). Aliased on import
-# because `invalidate_role` collides with the same-named function in
-# `src.core.cache.invalidation` (which clears the global roles list, a
-# different cache).
-from shared.role_cache import invalidate_user as invalidate_user_role_cache
-
 # Import cache invalidation
-from src.core.cache import (
-    invalidate_role_users,
-    invalidate_role_forms,
-)
+from src.core.cache import invalidate_role_forms
 from src.services.operation_catalog import operation_route
 
 # Agent cache invalidation (optional, may not exist yet)
@@ -86,13 +85,17 @@ router = APIRouter(prefix="/api/roles", tags=["Roles"])
     "",
     response_model=list[RolePublic],
     summary="List all roles",
-    description="Get all roles (Platform admin only)",
+    description="Get all roles",
 **operation_route("roles.list"))
 async def list_roles(
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
     response: Response,
     search: str | None = Query(None, description="Search role name or description"),
+    include_builtin: bool = Query(
+        False,
+        description="Include the builtin roles (Platform Admin, User, Platform Operator, Secrets Reader)",
+    ),
     sort_by: Literal["name", "created"] = Query("name"),
     sort_direction: Literal["asc", "desc"] = Query("asc"),
     limit: int | None = Query(
@@ -103,9 +106,13 @@ async def list_roles(
     ),
     offset: int = Query(0, ge=0, description="Rows to skip when limit is set"),
 ) -> list[RolePublic]:
-    """List all roles with inline consumer counts (users/forms/agents/apps/workflows/knowledge)."""
+    """List all roles with inline consumer counts (users/forms/agents/apps/workflows/knowledge).
+
+    Consumer counts span every organization, so only a Platform Admin gets them.
+    """
     from shared.sdk_roles import list_roles as list_roles_service
 
+    caller = await authorize_operation(db, user, "roles.list", GLOBAL)
     items, total = await list_roles_service(
         db,
         search=search,
@@ -113,6 +120,8 @@ async def list_roles(
         sort_direction=sort_direction,
         limit=limit,
         offset=offset,
+        include_builtin=include_builtin,
+        include_counts=caller.is_platform_admin,
     )
     response.headers["X-Total-Count"] = str(total)
     return items
@@ -123,15 +132,17 @@ async def list_roles(
     response_model=RolePublic,
     status_code=status.HTTP_201_CREATED,
     summary="Create a role",
-    description="Create a new role (Platform admin only)",
+    description="Create a new role",
 **operation_route("roles.create"))
 async def create_role(
     request: RoleCreate,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> RolePublic:
     """Create a new role."""
     from shared.sdk_roles import RoleServiceError, create_role as create_role_service
+
+    await authorize_operation(db, user, "roles.create", GLOBAL)
 
     try:
         return await create_role_service(
@@ -148,18 +159,28 @@ async def create_role(
     "/{role_id}",
     response_model=RolePublic,
     summary="Get a role",
-    description="Get a role by ID (Platform admin only)",
+    description="Get a role by ID",
 **operation_route("roles.get"))
 async def get_role(
     role_id: UUID,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
+    include_builtin: bool = Query(
+        False,
+        description="Also find the builtin roles (Platform Admin, User, Platform Operator, Secrets Reader)",
+    ),
 ) -> RolePublic:
-    """Get a role by ID."""
+    """Get a role by ID (consumer counts for a Platform Admin only)."""
     from shared.sdk_roles import RoleServiceError, get_role as get_role_service
 
+    caller = await authorize_operation(db, user, "roles.get", GLOBAL)
     try:
-        return await get_role_service(db, role_id=role_id)
+        return await get_role_service(
+            db,
+            role_id=role_id,
+            include_counts=caller.is_platform_admin,
+            include_builtin=include_builtin,
+        )
     except RoleServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail) from None
 
@@ -168,16 +189,18 @@ async def get_role(
     "/{role_id}",
     response_model=RolePublic,
     summary="Update a role",
-    description="Update a role (Platform admin only)",
+    description="Update a role",
 **operation_route("roles.update"))
 async def update_role(
     role_id: UUID,
     request: RoleUpdate,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> RolePublic:
     """Update a role."""
     from shared.sdk_roles import RoleServiceError, update_role as update_role_service
+
+    await authorize_operation(db, user, "roles.update", GLOBAL)
 
     try:
         return await update_role_service(
@@ -196,16 +219,17 @@ async def update_role(
     "/{role_id}",
     response_model=RolePublic,
     summary="Update a role",
-    description="Update a role (Platform admin only)",
+    description="Update a role",
     include_in_schema=False,  # Hide from OpenAPI, use PATCH instead
 )
 async def update_role_put(
     role_id: UUID,
     request: RoleUpdate,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> RolePublic:
     """Update a role (PUT - for backwards compatibility)."""
+    await authorize_operation(db, user, "PUT /api/roles/{role_id}", GLOBAL)
     return await update_role(role_id, request, user, db)
 
 
@@ -213,15 +237,20 @@ async def update_role_put(
     "/{role_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete a role",
-    description="Delete a role (Platform admin only). CASCADE removes all role assignments.",
+    description=(
+        "Delete a role. CASCADE removes all role assignments; a role that is "
+        "anyone's base role can't be deleted."
+    ),
 **operation_route("roles.delete"))
 async def delete_role(
     role_id: UUID,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> None:
     """Delete a role."""
     from shared.sdk_roles import RoleServiceError, delete_role as delete_role_service
+
+    await authorize_operation(db, user, "roles.delete", GLOBAL)
 
     try:
         await delete_role_service(db, role_id=role_id)
@@ -242,7 +271,7 @@ async def delete_role(
 **operation_route("roles.users.list"))
 async def get_role_users(
     role_id: UUID,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
     search: str | None = Query(None, description="Search assigned user name or email"),
     limit: int | None = Query(
@@ -253,12 +282,15 @@ async def get_role_users(
     ),
     offset: int = Query(0, ge=0, description="Rows to skip when limit is set"),
 ) -> RoleUsersResponse:
-    """Get users assigned to a role."""
+    """Get users assigned to a role, limited to the organizations where the
+    caller may read role assignments."""
     from shared.sdk_roles import list_role_users as list_role_users_service
 
+    reach = operation_reach(await load_caller(db, user), "roles.users.list")
     return await list_role_users_service(
         db,
         role_id=role_id,
+        reach=reach,
         search=search,
         limit=limit,
         offset=offset,
@@ -274,7 +306,7 @@ async def get_role_users(
 async def assign_users_to_role(
     role_id: UUID,
     request: AssignUsersToRoleRequest,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> None:
     """Assign users to a role."""
@@ -286,9 +318,9 @@ async def assign_users_to_role(
     try:
         await assign_users_to_role_service(
             db,
+            await load_caller(db, user),
             role_id=role_id,
             user_ids=request.user_ids,
-            actor_email=user.email,
         )
     except RoleServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail) from None
@@ -303,10 +335,15 @@ async def assign_users_to_role(
 async def remove_user_from_role(
     role_id: UUID,
     user_id: str,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> None:
     """Remove a user from a role."""
+    from shared.sdk_roles import RoleServiceError, remove_users_from_role
+
+    operation = "roles.users.remove"
+    caller = await load_caller(db, user)
+    operation_reach(caller, operation)
     try:
         user_uuid = UUID(user_id)
     except ValueError:
@@ -318,27 +355,19 @@ async def remove_user_from_role(
                 detail="User not found",
             )
 
-    result = await db.execute(
-        delete(UserRoleORM).where(
-            UserRoleORM.user_id == user_uuid,
-            UserRoleORM.role_id == role_id,
+    try:
+        removed = await remove_users_from_role(
+            db, caller, role_id=role_id, user_ids=[user_uuid], operation=operation
         )
-    )
-
-    if result.rowcount == 0:
+    except RoleServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
+    if not removed:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User-role assignment not found",
         )
 
     logger.info(f"Removed user {log_safe(user_id)} from role {log_safe(role_id)}")
-
-    # Invalidate cache (roles are global, no org_id needed)
-    await invalidate_role_users(None, str(role_id))
-
-    # Per-user role cache: drop this user's entry so the next read sees the
-    # post-unassignment membership.
-    await invalidate_user_role_cache(user_uuid)
 
     await emit_audit(
         db,
@@ -570,10 +599,14 @@ async def remove_agent_from_role(
 async def bulk_unassign_users(
     role_id: UUID,
     request: UnassignUsersFromRoleRequest,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> None:
     """Remove multiple users from a role in one statement."""
+    from shared.sdk_roles import RoleServiceError, remove_users_from_role
+
+    caller = await load_caller(db, user)
+    operation_reach(caller, "roles.users.bulk_remove")
     uuids: list[UUID] = []
     for uid in request.user_ids:
         try:
@@ -584,18 +617,13 @@ async def bulk_unassign_users(
     if not uuids:
         return
 
-    await db.execute(
-        delete(UserRoleORM).where(
-            UserRoleORM.role_id == role_id,
-            UserRoleORM.user_id.in_(uuids),
+    try:
+        await remove_users_from_role(
+            db, caller, role_id=role_id, user_ids=uuids, operation="roles.users.bulk_remove"
         )
-    )
-    await db.flush()
+    except RoleServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
     logger.info(f"Bulk unassigned {len(uuids)} users from role {log_safe(role_id)}")
-
-    await invalidate_role_users(None, str(role_id))
-    for uid_u in uuids:
-        await invalidate_user_role_cache(uid_u)
 
     await emit_audit(
         db,
@@ -888,3 +916,57 @@ async def bulk_unassign_workflows(
         details={"workflow_ids": [str(u) for u in uuids]},
     )
 
+
+
+# =============================================================================
+# Role permission sets
+# =============================================================================
+
+
+@router.get(
+    "/{role_id}/permissions",
+    response_model=RolePermissionsResponse,
+    summary="Get a role's permissions",
+    description=(
+        "Every permission the role holds, marked editable (identity permissions on "
+        "custom roles) and privileged, plus the identity permissions an editor offers."
+    ),
+)
+async def get_role_permissions(
+    role_id: UUID,
+    user: CurrentActiveUser,
+    db: DbSession,
+) -> RolePermissionsResponse:
+    from src.services.role_permissions import RolePermissionError, describe_role_permissions
+
+    await authorize_operation(db, user, "GET /api/roles/{role_id}/permissions", GLOBAL)
+    try:
+        return await describe_role_permissions(db, role_id=role_id)
+    except RolePermissionError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
+
+
+@router.put(
+    "/{role_id}/permissions",
+    response_model=RolePermissionsResponse,
+    summary="Set a role's identity permissions",
+    description=(
+        "Replace the role's identity permissions (users, users.lifecycle, organizations, "
+        "roleassignments, roles); its other permissions are kept. Builtin roles can't be changed."
+    ),
+)
+async def set_role_permissions(
+    role_id: UUID,
+    request: RolePermissionsUpdate,
+    user: CurrentActiveUser,
+    db: DbSession,
+) -> RolePermissionsResponse:
+    from src.services.role_permissions import RolePermissionError, replace_identity_permissions
+
+    await authorize_operation(db, user, "PUT /api/roles/{role_id}/permissions", GLOBAL)
+    try:
+        return await replace_identity_permissions(
+            db, role_id=role_id, permissions=request.permissions
+        )
+    except RolePermissionError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from None

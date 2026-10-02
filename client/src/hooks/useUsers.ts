@@ -9,6 +9,7 @@ import {
 	useQueryClient,
 } from "@tanstack/react-query";
 import { $api, apiClient } from "@/lib/api-client";
+import { invalidateAuthorization } from "@/lib/authorization";
 
 export interface UsersPageParams {
 	scope?: string | null;
@@ -107,27 +108,51 @@ export function useUser(userId: string | undefined) {
 }
 
 /**
- * Fetch roles for a specific user
+ * A user's base role, additional roles (with where each applies), and the
+ * roles the caller may grant them.
  */
-export function useUserRoles(userId: string | undefined) {
+export function useUserRoleAssignments(
+	userId: string | undefined,
+	enabled = true,
+) {
 	return $api.useQuery(
 		"get",
-		"/api/users/{user_id}/roles",
+		"/api/users/{user_id}/role-assignments",
 		{ params: { path: { user_id: userId! } } },
-		{ enabled: !!userId },
+		{ enabled: !!userId && enabled },
 	);
 }
 
 /**
- * Fetch forms accessible to a specific user
+ * Replace a user's base role and additional roles in one request.
  */
-export function useUserForms(userId: string | undefined) {
-	return $api.useQuery(
-		"get",
-		"/api/users/{user_id}/forms",
-		{ params: { path: { user_id: userId! } } },
-		{ enabled: !!userId },
-	);
+export function useReplaceUserRoleAssignments() {
+	const queryClient = useQueryClient();
+	return $api.useMutation("put", "/api/users/{user_id}/role-assignments", {
+		onSuccess: (data, variables) => {
+			queryClient.setQueryData(
+				[
+					"get",
+					"/api/users/{user_id}/role-assignments",
+					{
+						params: {
+							path: { user_id: variables.params.path.user_id },
+						},
+					},
+				],
+				data,
+			);
+			queryClient.invalidateQueries({ queryKey: ["get", "/api/users"] });
+			queryClient.invalidateQueries({
+				queryKey: ["get", "/api/users/{user_id}"],
+			});
+			queryClient.invalidateQueries({ queryKey: ["get", "/api/roles"] });
+			queryClient.invalidateQueries({
+				queryKey: ["get", "/api/roles/{role_id}/users"],
+			});
+			void invalidateAuthorization(queryClient);
+		},
+	});
 }
 
 /**
@@ -150,6 +175,13 @@ export function useUpdateUser() {
 	return $api.useMutation("patch", "/api/users/{user_id}", {
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ["get", "/api/users"] });
+			queryClient.invalidateQueries({
+				queryKey: ["get", "/api/users/{user_id}"],
+			});
+			// A move changes which roles the user can hold and where.
+			queryClient.invalidateQueries({
+				queryKey: ["get", "/api/users/{user_id}/role-assignments"],
+			});
 		},
 	});
 }
@@ -164,6 +196,21 @@ export function useDeleteUser() {
 			queryClient.invalidateQueries({ queryKey: ["get", "/api/users"] });
 		},
 	});
+}
+
+/**
+ * Reset a user's MFA: removes their authenticator app, recovery codes,
+ * passkeys and remembered devices, and signs them out everywhere.
+ */
+export function useResetUserMfa() {
+	return $api.useMutation("post", "/api/users/{user_id}/mfa/reset");
+}
+
+/**
+ * Sign a user out of every device.
+ */
+export function useSignOutUserEverywhere() {
+	return $api.useMutation("post", "/auth/admin/revoke-user");
 }
 
 /**

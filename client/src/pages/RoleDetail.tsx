@@ -7,6 +7,7 @@ import {
 	FileText,
 	Bot,
 	LayoutGrid,
+	ShieldCheck,
 	Workflow,
 } from "lucide-react";
 
@@ -46,6 +47,10 @@ import { useApplications } from "@/hooks/useApplications";
 import { useWorkflows } from "@/hooks/useWorkflows";
 import { useOrganizations } from "@/hooks/useOrganizations";
 import { RoleDialog } from "@/components/roles/RoleDialog";
+import { RolePeoplePanel } from "@/components/roles/RolePeoplePanel";
+import { RolePermissionsPanel } from "@/components/roles/RolePermissionsPanel";
+import { getErrorMessage } from "@/lib/api-error";
+import { useAuthorization } from "@/services/authorization";
 import {
 	ConsumerTab,
 	type ConsumerTabItem,
@@ -53,10 +58,10 @@ import {
 
 import type { components } from "@/lib/v1";
 
-type ConsumerKey =
-	"users" | "forms" | "agents" | "apps" | "workflows";
+type ConsumerKey = "users" | "forms" | "agents" | "apps" | "workflows";
+type TabKey = ConsumerKey | "permissions";
 
-const TABS: {
+const CONSUMER_TABS: {
 	key: ConsumerKey;
 	label: string;
 	Icon: React.ComponentType<{ className?: string }>;
@@ -83,9 +88,7 @@ export function RoleDetail() {
 		refetch: refetchRole,
 	} = useRole(roleId);
 	const deleteRole = useDeleteRole();
-
-	const currentTab: ConsumerKey =
-		tab && TABS.some((t) => t.key === tab) ? (tab as ConsumerKey) : "users";
+	const authorization = useAuthorization();
 
 	if (!roleId) {
 		return (
@@ -143,6 +146,24 @@ export function RoleDetail() {
 		);
 	}
 
+	// Built-in roles are shown read-only: their permissions, no consumers.
+	const isBuiltin = role.is_builtin;
+	const currentTab: TabKey =
+		tab === "permissions"
+			? "permissions"
+			: CONSUMER_TABS.some((t) => t.key === tab)
+				? (tab as ConsumerKey)
+				: "users";
+	const canManage =
+		!isBuiltin &&
+		authorization.meets({ permission: "roles.readwrite", at: "global" });
+	// Built-in additional roles (Platform Operator, Secrets Reader) list
+	// who holds them; the base role (User) would list everyone.
+	const showsPeople =
+		isBuiltin &&
+		!role.is_base &&
+		authorization.meets({ permission: "roleassignments.read" });
+
 	const handleDelete = () => {
 		if (deleteRole.isPending) return;
 		deleteRole.mutate(
@@ -160,6 +181,8 @@ export function RoleDetail() {
 			<RoleDetailHeader
 				name={role.name}
 				description={role.description}
+				isBuiltin={isBuiltin}
+				canManage={canManage}
 				onEdit={() => setEditOpen(true)}
 				onDelete={() => {
 					deleteRole.reset();
@@ -176,72 +199,137 @@ export function RoleDetail() {
 					}}
 				/>
 			)}
-			{/* Tabs */}
-			<Tabs
-				value={currentTab}
-				onValueChange={(v) => navigate(`/roles/${role.id}/${v}`)}
-				className="flex-1 min-h-0 flex flex-col"
-			>
-				<TabsList className="grid h-auto group-data-horizontal/tabs:h-auto w-full grid-cols-2 gap-1 sm:grid-cols-3 xl:grid-cols-6">
-					{TABS.map(({ key, label, Icon }) => {
-						const count = role.consumer_counts?.[key] ?? 0;
-						return (
-							<TabsTrigger
-								key={key}
-								value={key}
-								className="min-h-11 min-w-0 gap-1.5 whitespace-normal"
-							>
-								<Icon className="h-4 w-4" />
-								{label}
-								<span className="ml-1 text-xs text-muted-foreground">
-									{count}
-								</span>
-							</TabsTrigger>
-						);
-					})}
-				</TabsList>
+			{showsPeople ? (
+				<Tabs
+					value={tab === "people" ? "people" : "permissions"}
+					onValueChange={(v) => navigate(`/roles/${role.id}/${v}`)}
+					className="flex-1 min-h-0 flex flex-col"
+				>
+					<TabsList className="grid h-auto w-full grid-cols-2 gap-1 group-data-horizontal/tabs:h-auto sm:w-80">
+						<TabsTrigger
+							value="permissions"
+							className="min-h-11 gap-1.5"
+						>
+							<ShieldCheck className="h-4 w-4" />
+							Permissions
+						</TabsTrigger>
+						<TabsTrigger
+							value="people"
+							className="min-h-11 gap-1.5"
+						>
+							<Users className="h-4 w-4" />
+							People
+						</TabsTrigger>
+					</TabsList>
+					<TabsContent
+						value="permissions"
+						className="flex min-h-0 flex-1 flex-col"
+					>
+						<PageScrollArea className="lg:overflow-auto">
+							<RolePermissionsPanel roleId={role.id} isBuiltin />
+						</PageScrollArea>
+					</TabsContent>
+					<TabsContent
+						value="people"
+						className="flex min-h-0 flex-1 flex-col"
+					>
+						<PageScrollArea className="lg:overflow-auto">
+							<RolePeoplePanel roleId={role.id} />
+						</PageScrollArea>
+					</TabsContent>
+				</Tabs>
+			) : isBuiltin ? (
+				<PageScrollArea className="lg:overflow-auto">
+					<RolePermissionsPanel roleId={role.id} isBuiltin />
+				</PageScrollArea>
+			) : (
+				<Tabs
+					value={currentTab}
+					onValueChange={(v) => navigate(`/roles/${role.id}/${v}`)}
+					className="flex-1 min-h-0 flex flex-col"
+				>
+					<TabsList className="grid h-auto group-data-horizontal/tabs:h-auto w-full grid-cols-2 gap-1 sm:grid-cols-3 xl:grid-cols-6">
+						{CONSUMER_TABS.map(({ key, label, Icon }) => {
+							const count = role.consumer_counts?.[key];
+							return (
+								<TabsTrigger
+									key={key}
+									value={key}
+									className="min-h-11 min-w-0 gap-1.5 whitespace-normal"
+								>
+									<Icon className="h-4 w-4" />
+									{label}
+									{count !== undefined && (
+										<span className="ml-1 text-xs text-muted-foreground">
+											{count}
+										</span>
+									)}
+								</TabsTrigger>
+							);
+						})}
+						<TabsTrigger
+							value="permissions"
+							className="min-h-11 min-w-0 gap-1.5 whitespace-normal"
+						>
+							<ShieldCheck className="h-4 w-4" />
+							Permissions
+						</TabsTrigger>
+					</TabsList>
 
-				<TabsContent
-					value="users"
-					className="flex min-h-0 flex-1 flex-col"
-				>
-					<PageScrollArea className="lg:flex lg:flex-col lg:overflow-hidden">
-						<UsersTab roleId={role.id} />
-					</PageScrollArea>
-				</TabsContent>
-				<TabsContent
-					value="forms"
-					className="flex min-h-0 flex-1 flex-col"
-				>
-					<PageScrollArea className="lg:flex lg:flex-col lg:overflow-hidden">
-						<FormsTab roleId={role.id} />
-					</PageScrollArea>
-				</TabsContent>
-				<TabsContent
-					value="agents"
-					className="flex min-h-0 flex-1 flex-col"
-				>
-					<PageScrollArea className="lg:flex lg:flex-col lg:overflow-hidden">
-						<AgentsTab roleId={role.id} />
-					</PageScrollArea>
-				</TabsContent>
-				<TabsContent
-					value="apps"
-					className="flex min-h-0 flex-1 flex-col"
-				>
-					<PageScrollArea className="lg:flex lg:flex-col lg:overflow-hidden">
-						<AppsTab roleId={role.id} />
-					</PageScrollArea>
-				</TabsContent>
-				<TabsContent
-					value="workflows"
-					className="flex min-h-0 flex-1 flex-col"
-				>
-					<PageScrollArea className="lg:flex lg:flex-col lg:overflow-hidden">
-						<WorkflowsTab roleId={role.id} />
-					</PageScrollArea>
-				</TabsContent>
-			</Tabs>
+					<TabsContent
+						value="permissions"
+						className="flex min-h-0 flex-1 flex-col"
+					>
+						<PageScrollArea className="lg:overflow-auto">
+							<RolePermissionsPanel
+								roleId={role.id}
+								isBuiltin={isBuiltin}
+							/>
+						</PageScrollArea>
+					</TabsContent>
+
+					<TabsContent
+						value="users"
+						className="flex min-h-0 flex-1 flex-col"
+					>
+						<PageScrollArea className="lg:flex lg:flex-col lg:overflow-hidden">
+							<UsersTab roleId={role.id} />
+						</PageScrollArea>
+					</TabsContent>
+					<TabsContent
+						value="forms"
+						className="flex min-h-0 flex-1 flex-col"
+					>
+						<PageScrollArea className="lg:flex lg:flex-col lg:overflow-hidden">
+							<FormsTab roleId={role.id} />
+						</PageScrollArea>
+					</TabsContent>
+					<TabsContent
+						value="agents"
+						className="flex min-h-0 flex-1 flex-col"
+					>
+						<PageScrollArea className="lg:flex lg:flex-col lg:overflow-hidden">
+							<AgentsTab roleId={role.id} />
+						</PageScrollArea>
+					</TabsContent>
+					<TabsContent
+						value="apps"
+						className="flex min-h-0 flex-1 flex-col"
+					>
+						<PageScrollArea className="lg:flex lg:flex-col lg:overflow-hidden">
+							<AppsTab roleId={role.id} />
+						</PageScrollArea>
+					</TabsContent>
+					<TabsContent
+						value="workflows"
+						className="flex min-h-0 flex-1 flex-col"
+					>
+						<PageScrollArea className="lg:flex lg:flex-col lg:overflow-hidden">
+							<WorkflowsTab roleId={role.id} />
+						</PageScrollArea>
+					</TabsContent>
+				</Tabs>
+			)}
 
 			<RoleDialog
 				role={role}
@@ -253,7 +341,14 @@ export function RoleDetail() {
 				name={role.name}
 				open={deleteOpen}
 				pending={deleteRole.isPending}
-				error={deleteRole.isError}
+				error={
+					deleteRole.isError
+						? getErrorMessage(
+								deleteRole.error,
+								"Could not delete the role. Try again.",
+							)
+						: null
+				}
 				onOpenChange={setDeleteOpen}
 				onDelete={handleDelete}
 			/>

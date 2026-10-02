@@ -31,10 +31,10 @@ import {
 } from "@/components/ui/command";
 import { Shield, AlertCircle, Loader2, ChevronsUpDown, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useQueryClient } from "@tanstack/react-query";
 import { useCreateUser } from "@/hooks/useUsers";
 import { useRoles, useAssignUsersToRole } from "@/hooks/useRoles";
 import { useOrganizations } from "@/hooks/useOrganizations";
+import { useAuthorization } from "@/services/authorization";
 import { useEventSources } from "@/services/events";
 import { useSendInvite } from "@/hooks/useUserInvites";
 import { RegistrationLinkDialog } from "@/components/users/RegistrationLinkDialog";
@@ -81,26 +81,35 @@ function CreateUserDialogContent({
 	);
 	const [rolesPopoverOpen, setRolesPopoverOpen] = useState(false);
 
-	const queryClient = useQueryClient();
 	const createMutation = useCreateUser();
 	const [createdUser, setCreatedUser] = useState<Awaited<
 		ReturnType<typeof createMutation.mutateAsync>
 	> | null>(null);
 	const completedRoles = useRef(new Set<string>());
 	const assignUsersToRole = useAssignUsersToRole({ toast: false });
+	const authorization = useAuthorization();
+	// Platform Admins, and the roles granted at invite, are for Platform
+	// Admins to set; anyone else invites ordinary users and assigns roles
+	// afterwards from Roles & access.
+	const callerIsAdmin = authorization.isPlatformAdmin;
+	const assignsRoles = callerIsAdmin && !isPlatformAdmin;
 	const organizationQuery = useOrganizations();
-	const { data: organizations, isLoading: orgsLoading } = organizationQuery;
-	const roleCatalog = useRoles();
+	const { data: allOrganizations, isLoading: orgsLoading } =
+		organizationQuery;
+	const organizations = allOrganizations?.filter((org: Organization) =>
+		authorization.canAt("users.readwrite", { kind: "org", id: org.id }),
+	);
+	const roleCatalog = useRoles({ enabled: callerIsAdmin });
 	const { data: allRoles } = roleCatalog;
 	const lookupsReady =
 		organizations !== undefined &&
 		!organizationQuery.isError &&
-		(isPlatformAdmin || (allRoles !== undefined && !roleCatalog.isError));
+		(!assignsRoles || (allRoles !== undefined && !roleCatalog.isError));
 
 	const roles = useMemo(() => (allRoles ?? []) as Role[], [allRoles]);
 
 	// Find the provider org (for auto-selecting when platform admin is chosen)
-	const providerOrg = organizations?.find(
+	const providerOrg = allOrganizations?.find(
 		(org: Organization) => org.is_provider,
 	);
 
@@ -188,7 +197,7 @@ function CreateUserDialogContent({
 			}
 
 			// Assign roles if any selected
-			if (selectedRoleIds.size > 0 && result?.id) {
+			if (assignsRoles && selectedRoleIds.size > 0 && result?.id) {
 				for (const roleId of selectedRoleIds) {
 					if (completedRoles.current.has(roleId)) continue;
 					await assignUsersToRole.mutateAsync({
@@ -197,9 +206,6 @@ function CreateUserDialogContent({
 					});
 					completedRoles.current.add(roleId);
 				}
-				await queryClient.invalidateQueries({
-					queryKey: ["get", "/api/users/{user_id}/roles"],
-				});
 			}
 
 			toast.success("User created successfully", {
@@ -327,29 +333,31 @@ function CreateUserDialogContent({
 							</p>
 						</div>
 
-						<div className="space-y-2">
-							<Label htmlFor="userType">User Type</Label>
-							<Combobox
-								id="userType"
-								value={isPlatformAdmin ? "platform" : "org"}
-								onValueChange={handleUserTypeChange}
-								options={[
-									{
-										value: "platform",
-										label: "Platform Administrator",
-										description:
-											"Full access to all organizations and settings",
-									},
-									{
-										value: "org",
-										label: "Organization User",
-										description:
-											"Access limited to specific organization",
-									},
-								]}
-								placeholder="Select user type"
-							/>
-						</div>
+						{callerIsAdmin && (
+							<div className="space-y-2">
+								<Label htmlFor="userType">User Type</Label>
+								<Combobox
+									id="userType"
+									value={isPlatformAdmin ? "platform" : "org"}
+									onValueChange={handleUserTypeChange}
+									options={[
+										{
+											value: "platform",
+											label: "Platform Administrator",
+											description:
+												"Full access to all organizations and settings",
+										},
+										{
+											value: "org",
+											label: "Organization User",
+											description:
+												"Access limited to specific organization",
+										},
+									]}
+									placeholder="Select user type"
+								/>
+							</div>
+						)}
 
 						<div className="space-y-2">
 							<Label htmlFor="organization">Organization</Label>
@@ -395,7 +403,9 @@ function CreateUserDialogContent({
 							<p className="text-xs text-muted-foreground">
 								{isPlatformAdmin
 									? "Platform administrators are assigned to the provider organization"
-									: "The organization this user belongs to"}
+									: callerIsAdmin
+										? "The organization this user belongs to"
+										: "Organizations where you can invite users"}
 							</p>
 						</div>
 
@@ -420,7 +430,7 @@ function CreateUserDialogContent({
 							</div>
 						)}
 
-						{!isPlatformAdmin && (
+						{assignsRoles && (
 							<div className="space-y-2">
 								<Label htmlFor="create-user-roles">Roles</Label>
 								<UserLookupNotice
@@ -462,7 +472,8 @@ function CreateUserDialogContent({
 											<ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
 										</Button>
 									</PopoverTrigger>
-									<PopoverContent variant="picker"
+									<PopoverContent
+										variant="picker"
 										className="p-0"
 										align="start"
 									>

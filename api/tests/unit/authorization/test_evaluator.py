@@ -10,7 +10,6 @@ import pytest
 from shared.builtin_roles import (
     DECRYPTION_ROLE_ID,
     DECRYPTION_ROLE_PERMISSIONS,
-    PLATFORM_ADMIN_ROLE_ID,
     PLATFORM_OPERATOR_PERMISSIONS,
     PLATFORM_OPERATOR_ROLE_ID,
     USER_BASE_PERMISSIONS,
@@ -18,6 +17,7 @@ from shared.builtin_roles import (
 )
 from src.core.constants import PROVIDER_ORG_ID
 from src.models.contracts.access_list import AccessClass, AccessEntry, CurrentGate, InlineEffect
+from tests.helpers.authorization import platform_admin_grant
 from src.services.authorization.context import (
     AuthorizationContext,
     Boundary,
@@ -39,14 +39,14 @@ def _perm_entry(permission: str, boundary: str = "organization", **kwargs) -> Ac
     return _entry(AccessClass.PERMISSION, permission=permission, boundary=boundary, **kwargs)
 
 
-def _ctx(*grants: RoleGrant, home: UUID | None = CUSTOMER_A, base: UUID = USER_ROLE_ID) -> AuthorizationContext:
+def _ctx(*grants: RoleGrant, home: UUID | None = CUSTOMER_A, admin: bool = False) -> AuthorizationContext:
     return AuthorizationContext(
         user_id=uuid4(),
         home_organization_id=home,
-        base_role_id=base,
+        base_role_id=USER_ROLE_ID,
         is_external=False,
-        base_permissions=USER_BASE_PERMISSIONS if base == USER_ROLE_ID else frozenset(),
-        role_grants=tuple(grants),
+        base_permissions=USER_BASE_PERMISSIONS,
+        role_grants=(platform_admin_grant(), *grants) if admin else tuple(grants),
     )
 
 
@@ -129,7 +129,7 @@ class TestBaseRole:
 
 
 class TestPlatformAdmin:
-    admin = _ctx(base=PLATFORM_ADMIN_ROLE_ID, home=PROVIDER_ORG_ID)
+    admin = _ctx(admin=True, home=PROVIDER_ORG_ID)
 
     def test_allowed_at_home_for_any_permission(self) -> None:
         assert decide(self.admin, _perm_entry("agents.readwrite"), HOME).rule == "platform_admin"
@@ -155,20 +155,20 @@ class TestSecretDecryption:
     entry = _perm_entry("secrets.read", current_gate=CurrentGate.SUPERUSER)
 
     def test_platform_admin_without_an_explicit_grant_is_denied(self) -> None:
-        admin = _ctx(base=PLATFORM_ADMIN_ROLE_ID, home=PROVIDER_ORG_ID)
+        admin = _ctx(admin=True, home=PROVIDER_ORG_ID)
         for target in (HOME, cross_org(CUSTOMER_A), GLOBAL):
             decision = decide(admin, self.entry, target)
             assert (decision.allowed, decision.rule) == (False, "denied:missing:secrets.read")
 
     def test_platform_admin_with_an_explicit_grant_is_allowed_where_it_applies(self) -> None:
         grant = RoleGrant(uuid4(), frozenset({"secrets.read"}), (Boundary(BoundaryKind.ORGANIZATION, CUSTOMER_A),))
-        admin = _ctx(grant, base=PLATFORM_ADMIN_ROLE_ID, home=PROVIDER_ORG_ID)
+        admin = _ctx(grant, admin=True, home=PROVIDER_ORG_ID)
         assert decide(admin, self.entry, cross_org(CUSTOMER_A)).allowed
         assert not decide(admin, self.entry, cross_org(CUSTOMER_B)).allowed
 
     def test_platform_admin_holding_secrets_reader_is_allowed(self) -> None:
         reader = RoleGrant(DECRYPTION_ROLE_ID, DECRYPTION_ROLE_PERMISSIONS, (Boundary(BoundaryKind.ORGANIZATION, CUSTOMER_A),))
-        admin = _ctx(reader, base=PLATFORM_ADMIN_ROLE_ID, home=PROVIDER_ORG_ID)
+        admin = _ctx(reader, admin=True, home=PROVIDER_ORG_ID)
         decision = decide(admin, self.entry, cross_org(CUSTOMER_A))
         assert decision.rule == f"role:{DECRYPTION_ROLE_ID}:secrets.read@organization"
 
@@ -195,7 +195,7 @@ class TestNonPermissionClasses:
 
     def test_embed_is_never_a_user_decision(self) -> None:
         entry = _entry(AccessClass.EMBED, current_gate=CurrentGate.EMBED)
-        admin = _ctx(base=PLATFORM_ADMIN_ROLE_ID)
+        admin = _ctx(admin=True)
         assert not decide(admin, entry, HOME).allowed
         assert not decide(None, entry, HOME).allowed
 
