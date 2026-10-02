@@ -1,10 +1,12 @@
 """Get/set a role's permission set, with vocabulary validation.
 
-Builtin roles (Platform Admin, User, Platform Operator — see
-``shared.builtin_roles``) cannot be modified through this service: their
-permission sets are fixed by migration/seed data until R3a's UI ships a
-supported way to change them. Platform Admin never has ``role_permissions``
-rows; its access is the wildcard permission represented in code.
+Builtin roles (Platform Admin, User, Platform Operator, Secrets Reader —
+see ``shared.builtin_roles``) cannot be modified through this service: their
+permission sets are fixed by migration/seed data. Platform Admin never has
+``role_permissions`` rows; its access is the wildcard permission represented
+in code. Custom roles' identity permissions are edited through
+``replace_identity_permissions``; their other permissions are not editable
+from the API yet.
 """
 
 from __future__ import annotations
@@ -88,3 +90,93 @@ async def role_has_permission(
         .limit(1)
     )
     return result.scalar_one_or_none() is not None
+
+
+# The permission domains a role's permission set can be edited for through
+# ``PUT /api/roles/{role_id}/permissions`` (R3a). Other domains a role holds
+# (for example ``agents.readwrite``, which agent promotion reads) are kept
+# as they are.
+IDENTITY_PERMISSION_DOMAINS = frozenset(
+    {"users", "users.lifecycle", "organizations", "roleassignments", "roles"}
+)
+
+
+def identity_permissions() -> tuple[str, ...]:
+    """The identity permissions an editor offers: every permission the
+    identity routes are decided by (their access-list entries and the
+    narrower per-field permissions), sorted."""
+    from src.services.access_list import ACCESS_LIST
+    from src.services.authorization.enforce import NARROWER_PERMISSIONS
+
+    found = {entry.permission for entry in ACCESS_LIST if entry.permission}
+    found |= {p for permissions in NARROWER_PERMISSIONS.values() for p in permissions}
+    return tuple(
+        sorted(p for p in found if parse_permission(p).domain in IDENTITY_PERMISSION_DOMAINS)
+    )
+
+
+def _item(permission: str, *, editable: bool):
+    from src.models.contracts.permissions import PRIVILEGED_PERMISSIONS
+    from src.models.contracts.role_assignments import RolePermissionItem
+
+    return RolePermissionItem(
+        permission=permission,
+        editable=editable,
+        privileged=permission == WILDCARD_PERMISSION or permission in PRIVILEGED_PERMISSIONS,
+    )
+
+
+async def describe_role_permissions(session: AsyncSession, *, role_id: UUID):
+    """Every permission the role holds, and the identity permissions an
+    editor may choose from. Builtin roles are listed read-only."""
+    from src.models import Role as RoleORM
+    from src.models.contracts.role_assignments import RolePermissionsResponse
+
+    role = await session.get(RoleORM, role_id)
+    if role is None:
+        raise RolePermissionError(404, "Role not found")
+    editable_vocabulary = set(identity_permissions()) if not role.is_builtin else set()
+    held = await get_role_permissions(session, role_id=role_id)
+    return RolePermissionsResponse(
+        role_id=role_id,
+        is_builtin=role.is_builtin,
+        permissions=[_item(p, editable=p in editable_vocabulary) for p in sorted(held)],
+        identity_permissions=[
+            _item(p, editable=not role.is_builtin) for p in identity_permissions()
+        ],
+    )
+
+
+async def replace_identity_permissions(
+    session: AsyncSession, *, role_id: UUID, permissions: list[str]
+):
+    """Replace the role's identity permissions, keeping every other
+    permission it holds. 422 for anything outside the identity set, 409 for
+    a builtin role, 404 for a missing one."""
+    from src.models import Role as RoleORM
+    from src.services.audit import emit_audit
+
+    role = await session.get(RoleORM, role_id)
+    if role is None:
+        raise RolePermissionError(404, "Role not found")
+    if role_id in BUILTIN_ROLE_IDS or role.is_builtin:
+        raise RolePermissionError(409, "Builtin roles cannot be modified")
+    vocabulary = set(identity_permissions())
+    for permission in permissions:
+        validate_permission(permission)
+        if permission not in vocabulary:
+            raise RolePermissionError(
+                422, f"{permission!r} is not an identity permission editable here"
+            )
+    held = await get_role_permissions(session, role_id=role_id)
+    kept = {p for p in held if parse_permission(p).domain not in IDENTITY_PERMISSION_DOMAINS}
+    before = sorted(held)
+    await set_role_permissions(session, role_id=role_id, permissions=frozenset(kept | set(permissions)))
+    await emit_audit(
+        session,
+        "role.permissions_updated",
+        resource_type="role",
+        resource_id=role_id,
+        details={"before": before, "after": sorted(kept | set(permissions))},
+    )
+    return await describe_role_permissions(session, role_id=role_id)

@@ -113,6 +113,7 @@
 | POST | `/api/applications/{app_id}/validate` |
 | GET | `/api/applications/{slug}` |
 | GET | `/api/audit` |
+| GET | `/api/auth/authorization` |
 | DELETE | `/api/branding` |
 | GET | `/api/branding` |
 | PUT | `/api/branding` |
@@ -435,6 +436,8 @@
 | GET | `/api/roles/{role_id}/forms` |
 | POST | `/api/roles/{role_id}/forms` |
 | DELETE | `/api/roles/{role_id}/forms/{form_id}` |
+| GET | `/api/roles/{role_id}/permissions` |
+| PUT | `/api/roles/{role_id}/permissions` |
 | DELETE | `/api/roles/{role_id}/users` |
 | GET | `/api/roles/{role_id}/users` |
 | POST | `/api/roles/{role_id}/users` |
@@ -563,6 +566,8 @@
 | POST | `/api/users/{user_id}/invite/regenerate` |
 | POST | `/api/users/{user_id}/invite/resend` |
 | POST | `/api/users/{user_id}/invite/send` |
+| GET | `/api/users/{user_id}/role-assignments` |
+| PUT | `/api/users/{user_id}/role-assignments` |
 | GET | `/api/users/{user_id}/roles` |
 | GET | `/api/version` |
 | GET | `/api/workflow-keys` |

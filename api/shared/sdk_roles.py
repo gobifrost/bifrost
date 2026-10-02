@@ -9,8 +9,11 @@ Single implementation used by both entry points:
 
 Both paths can share DTOs, response fields, HTTP statuses/error precedence,
 side effects, audit attribution, cache invalidation, and assignment
-transaction behavior. Each caller must enforce the effective token's authority
-before invoking these operations.
+transaction behavior. The handlers decide role-definition authority
+(roles.read / roles.readwrite at Platform) before invoking these
+operations; the user-assignment operations take the ``Caller`` and decide
+roleassignments.read / roleassignments.readwrite per target user, with the
+grant ceiling (``src.services.user_role_assignments``).
 
 Scope is the nine SDK methods: ``create``, ``get``, ``list``,
 ``update``, ``delete``, ``list_users``, ``list_forms``,
@@ -33,7 +36,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.log_safety import log_safe
@@ -45,6 +48,7 @@ if TYPE_CHECKING:
         RolePublic,
         RoleUsersResponse,
     )
+    from src.services.authorization.enforce import Caller, OrgReach
 
 logger = logging.getLogger(__name__)
 
@@ -147,11 +151,15 @@ async def get_role(
     session: AsyncSession,
     *,
     role_id: UUID,
+    include_counts: bool = True,
 ) -> RolePublic:
     """Get a role by ID. Raises 404 when missing or builtin.
 
-    Builtin roles (Platform Admin, User, Platform Operator) are hidden from
-    this surface until R3a ships their UI — see `shared.builtin_roles`.
+    Builtin roles (Platform Admin, User, Platform Operator, Secrets Reader)
+    are hidden from this surface — see `shared.builtin_roles`; their
+    permission sets are readable at ``/api/roles/{role_id}/permissions``.
+    ``include_counts=False`` omits the consumer counts (they count users in
+    every organization, which only a Platform Admin may see).
     """
     from src.models import Role as RoleORM
     from src.models import RolePublic
@@ -163,7 +171,8 @@ async def get_role(
         raise RoleServiceError(404, "Role not found")
 
     public = RolePublic.model_validate(role)
-    public.consumer_counts = (await get_consumer_counts(session, [role.id]))[role.id]
+    if include_counts:
+        public.consumer_counts = (await get_consumer_counts(session, [role.id]))[role.id]
     return public
 
 
@@ -175,19 +184,24 @@ async def list_roles(
     sort_direction: Literal["asc", "desc"] = "asc",
     limit: int | None = None,
     offset: int = 0,
+    include_builtin: bool = False,
+    include_counts: bool = True,
 ) -> tuple[list[RolePublic], int]:
     """List roles with inline consumer counts.
 
     Returns ``(items, total)`` — the caller sets the ``X-Total-Count``
     header from ``total``. Defaults match the historical handler (sort by
-    name ascending, unbounded when ``limit`` is None).
+    name ascending, unbounded when ``limit`` is None, builtin roles hidden).
+    ``include_builtin`` adds Platform Admin, User, Platform Operator and
+    Secrets Reader (read-only; for the roles UI). ``include_counts=False``
+    omits the consumer counts (see ``get_role``).
     """
     from src.models import Role as RoleORM
     from src.models import RolePublic
 
-    # Builtin roles (Platform Admin, User, Platform Operator, Secrets
-    # Reader) are hidden from this surface until R3a ships their UI.
-    query = select(RoleORM).where(RoleORM.is_builtin.is_(False))
+    query = select(RoleORM)
+    if not include_builtin:
+        query = query.where(RoleORM.is_builtin.is_(False))
     if search and (term := search.strip()):
         pattern = f"%{term}%"
         query = query.where(
@@ -209,12 +223,14 @@ async def list_roles(
     result = await session.execute(query)
     roles = result.scalars().all()
 
-    counts_by_role = await get_consumer_counts(session, [role.id for role in roles])
+    counts_by_role = (
+        await get_consumer_counts(session, [role.id for role in roles]) if include_counts else {}
+    )
 
     out: list[RolePublic] = []
     for r in roles:
         public = RolePublic.model_validate(r)
-        public.consumer_counts = counts_by_role[r.id]
+        public.consumer_counts = counts_by_role.get(r.id)
         out.append(public)
     return out, total or 0
 
@@ -312,6 +328,16 @@ async def delete_role(
         raise RoleServiceError(404, "Role not found")
     if role.is_builtin:
         raise RoleServiceError(409, "Builtin roles cannot be deleted")
+    from src.models import User as UserORM
+
+    base_users = await session.scalar(
+        select(func.count()).select_from(UserORM).where(UserORM.base_role_id == role_id)
+    )
+    if base_users:
+        raise RoleServiceError(
+            409,
+            f"This role is the base role of {base_users} user(s); give them another base role first",
+        )
 
     # A role assigned to a solution-managed entity has deploy-owned bindings;
     # deleting it would cascade-strip them outside deploy (Codex R4). Refuse.
@@ -348,11 +374,13 @@ async def list_role_users(
     session: AsyncSession,
     *,
     role_id: UUID,
+    reach: "OrgReach",
     search: str | None = None,
     limit: int | None = None,
     offset: int = 0,
 ) -> RoleUsersResponse:
-    """Users assigned to a role.
+    """Users assigned to a role, limited to the organizations in ``reach``
+    (the caller's roleassignments.read) before counting and paging.
 
     Like the historical handler, a role with no assignments (or an
     unknown role id) returns an empty response, not a 404.
@@ -375,6 +403,9 @@ async def list_role_users(
             UserORM.is_system.is_(False),
         )
     )
+    reach_filter = reach.where(UserORM.organization_id)
+    if reach_filter is not None:
+        query = query.where(reach_filter)
     if search and (term := search.strip()):
         pattern = f"%{term}%"
         query = query.where(
@@ -409,32 +440,83 @@ async def list_role_users(
     )
 
 
+async def _require_assignment_target(
+    session: AsyncSession, caller: "Caller", operation: str, role, user_id: UUID
+):
+    """roleassignments.readwrite at the user's organization, a Platform
+    Admin for a privileged user, and the grant ceiling for ``role``.
+    Returns the user, or None when they don't exist."""
+    from src.models import User as UserORM
+    from src.services.authorization.enforce import (
+        held_permissions_by_user,
+        org_target,
+        require_operation,
+        require_unprotected,
+    )
+    from src.services.authorization.privilege import is_privileged_principal
+    from src.services.user_role_assignments import RoleAssignmentError, check_role_change
+
+    user = await session.get(UserORM, user_id)
+    if user is None:
+        return None
+    require_operation(caller, operation, org_target(user.organization_id))
+    held = (await held_permissions_by_user(session, [user_id])).get(user_id, frozenset())
+    require_unprotected(caller, is_privileged_principal(held))
+    try:
+        check_role_change(caller, role, held)
+    except RoleAssignmentError as exc:
+        raise RoleServiceError(exc.status_code, exc.detail) from None
+    return user
+
+
+async def _load_role_info(session: AsyncSession, role_id: UUID):
+    from src.services.user_role_assignments import load_roles
+
+    role = (await load_roles(session, [role_id])).get(role_id)
+    if role is None:
+        raise RoleServiceError(404, "Role not found")
+    return role
+
+
 async def assign_users_to_role(
     session: AsyncSession,
+    caller: "Caller",
     *,
     role_id: UUID,
     user_ids: list[str],
-    actor_email: str,
 ) -> None:
     """Assign users to a role (batch; skips unknown and already-assigned).
 
     Each entry is a user UUID or an email address (resolved to a UUID;
     unresolvable entries are skipped with a warning, exactly like the
-    historical handler). Raises 409 for a builtin role id.
+    historical handler). Raises 409 for a builtin role id. Each user is
+    authorized (roleassignments.readwrite at their organization, the grant
+    ceiling, protected users) and gets the default boundary: their home
+    organization, or Platform for a Global user. One refused user refuses
+    the whole batch.
     """
     from src.models import User as UserORM
     from src.models import UserRole as UserRoleORM
     from src.services.audit import emit_audit
+    from src.services.authorization.enforce import operation_reach
+    from src.services.user_role_assignments import (
+        RoleAssignmentError,
+        check_boundaries,
+        default_boundaries,
+        insert_assignment,
+    )
     from shared.builtin_roles import is_builtin_role_id
     from shared.system_account_guard import (
         SYSTEM_ACCOUNT_ROLE_MESSAGE,
         is_system_account,
     )
 
+    operation = "roles.users.assign"
+    reach = operation_reach(caller, operation)
     if is_builtin_role_id(role_id):
         raise RoleServiceError(409, "Builtin roles cannot be assigned entities")
+    role = await _load_role_info(session, role_id)
 
-    now = datetime.now(timezone.utc)
     # Track newly-assigned users so we can invalidate the per-user role cache.
     # Skip users already assigned (no cache impact) and users that didn't resolve.
     affected_user_ids: list[UUID] = []
@@ -465,13 +547,22 @@ async def assign_users_to_role(
         if existing.scalar_one_or_none():
             continue
 
-        user_role = UserRoleORM(
+        user = await _require_assignment_target(session, caller, operation, role, user_uuid)
+        if user is None:
+            logger.warning(f"User {log_safe(user_id_str)} not found, skipping")
+            continue
+        boundaries = default_boundaries(user.organization_id)
+        try:
+            check_boundaries(caller, reach, role, boundaries)
+        except RoleAssignmentError as exc:
+            raise RoleServiceError(exc.status_code, exc.detail) from None
+        await insert_assignment(
+            session,
             user_id=user_uuid,
             role_id=role_id,
-            assigned_by=actor_email,
-            assigned_at=now,
+            boundaries=boundaries,
+            assigned_by=caller.principal.email,
         )
-        session.add(user_role)
         affected_user_ids.append(user_uuid)
 
     await session.flush()
@@ -495,6 +586,54 @@ async def assign_users_to_role(
         resource_id=role_id,
         details={"user_ids": user_ids},
     )
+
+
+async def remove_users_from_role(
+    session: AsyncSession,
+    caller: "Caller",
+    *,
+    role_id: UUID,
+    user_ids: list[UUID],
+    operation: str,
+) -> list[UUID]:
+    """Remove ``role_id`` from each user that holds it; returns who lost it.
+
+    Each user who holds the role is authorized like an assignment
+    (roleassignments.readwrite at their organization, the grant ceiling,
+    protected users); one refusal refuses the whole call. The assignment's
+    boundary rows go with it (database cascade).
+    """
+    from src.core.cache import invalidate_role_users
+    from shared.role_cache import invalidate_user as invalidate_user_role_cache
+    from src.models import UserRole as UserRoleORM
+    from src.services.authorization.enforce import operation_reach
+
+    operation_reach(caller, operation)
+    holders = list(
+        (
+            await session.execute(
+                select(UserRoleORM.user_id).where(
+                    UserRoleORM.role_id == role_id, UserRoleORM.user_id.in_(user_ids)
+                )
+            )
+        ).scalars()
+    )
+    if not holders:
+        return []
+    role = await _load_role_info(session, role_id)
+    for user_id in holders:
+        await _require_assignment_target(session, caller, operation, role, user_id)
+
+    await session.execute(
+        delete(UserRoleORM).where(
+            UserRoleORM.role_id == role_id, UserRoleORM.user_id.in_(holders)
+        )
+    )
+    await session.flush()
+    await invalidate_role_users(None, str(role_id))
+    for user_id in holders:
+        await invalidate_user_role_cache(user_id)
+    return holders
 
 
 async def list_role_forms(

@@ -22,6 +22,7 @@ import pytest
 from fastapi import HTTPException
 
 from shared.sdk_organizations import OrganizationServiceError
+from src.services.authorization.enforce import EVERYTHING
 
 
 def _stub_user(email: str = "admin@test.local"):
@@ -127,7 +128,7 @@ class TestOrganizationService:
 
         await delete_organization(db_session, org_id=beta.id)
 
-        active_only = await list_organizations(db_session)
+        active_only = await list_organizations(db_session, reach=EVERYTHING)
         names = [o.name for o in active_only]
         # Provider first even though "Zulu" sorts last alphabetically.
         provider_idx = names.index(f"Zulu Provider {tag}")
@@ -135,7 +136,9 @@ class TestOrganizationService:
         assert provider_idx < alpha_idx
         assert f"Beta {tag}" not in names
 
-        with_inactive = await list_organizations(db_session, include_inactive=True)
+        with_inactive = await list_organizations(
+            db_session, reach=EVERYTHING, include_inactive=True
+        )
         names_all = [o.name for o in with_inactive]
         assert f"Beta {tag}" in names_all
         # Provider still first; inactive sorts after active.
@@ -226,7 +229,16 @@ class TestOrganizationService:
         assert exc_info.value.detail == "Provider organization cannot be deleted"
 
 
+@pytest.fixture
+def admin_caller():
+    from tests.helpers.authorization import admin_caller, handlers_as
+
+    with handlers_as(admin_caller(), "src.routers.organizations") as caller:
+        yield caller
+
+
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("admin_caller")
 class TestOrganizationsRouterBoundary:
     """Handlers delegate to ``shared.sdk_organizations`` and map its errors."""
 
@@ -242,7 +254,7 @@ class TestOrganizationsRouterBoundary:
             )
         assert result == ["ORG"]
         mock_list.assert_awaited_once()
-        assert mock_list.call_args[1] == {"include_inactive": True}
+        assert mock_list.call_args[1] == {"reach": EVERYTHING, "include_inactive": True}
 
     async def test_create_delegates_and_maps_error(self):
         from src.models import OrganizationCreate

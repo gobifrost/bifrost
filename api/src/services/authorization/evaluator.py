@@ -1,7 +1,9 @@
-"""The authorization decision function (R2c). Not enforced.
+"""The authorization decision function (R2c).
 
-Nothing in request handling calls ``decide`` yet; R3 wires it in, domain by
-domain, after the persona x operation matrix
+Request handling reaches ``decide`` through
+``src.services.authorization.enforce`` on the routes whose access-list entry
+has ``current_gate=evaluator`` (the identity routes since R3a). Other domains
+are cut over one at a time, after the persona x operation matrix
 (``tests/unit/authorization/test_decision_matrix.py``) proved it decides what
 today's code decides, apart from the differences the access list marks as
 intended (``intended_change``: the provider-org non-admin paths that go away).
@@ -97,12 +99,16 @@ _CROSS_ORG_EFFECTS = frozenset(
 def acts_beyond_own_org(entry: AccessEntry) -> bool:
     """Whether the operation lets a caller act outside their own org at all.
 
-    Read from the access-list data: a superuser or scope-bypass gate, or an
+    Read from the access-list data: a superuser, scope-bypass or evaluator
+    gate (every route cut over to the evaluator was superuser-gated, and its
+    reach beyond the caller's org is now decided by role boundaries), or an
     inline check that admits or widens for a superuser/bypass caller. An
-    operation with neither is confined to the caller's own org for everyone.
+    operation with none of these is confined to the caller's own org for
+    everyone.
     """
     return (
-        entry.current_gate in (CurrentGate.SUPERUSER, CurrentGate.ENGINE_OR_BYPASS)
+        entry.current_gate
+        in (CurrentGate.SUPERUSER, CurrentGate.ENGINE_OR_BYPASS, CurrentGate.EVALUATOR)
         or entry.inline_effect in _CROSS_ORG_EFFECTS
     )
 

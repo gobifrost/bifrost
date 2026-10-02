@@ -67,8 +67,17 @@ _SUPERUSER_ACTS_BEYOND = frozenset(
 _PROVIDER_ACTS_BEYOND = frozenset({InlineEffect.DENY_UNLESS_BYPASS, InlineEffect.WIDENS_FOR_BYPASS})
 
 
+def _legacy_gate(entry: AccessEntry) -> CurrentGate:
+    # Every route cut over to the evaluator was superuser-gated before it
+    # (and every route added with the cutover would have been): today's
+    # behaviour for those entries is the superuser gate.
+    if entry.current_gate == CurrentGate.EVALUATOR:
+        return CurrentGate.SUPERUSER
+    return entry.current_gate
+
+
 def _acts_beyond_own_org(persona: Persona, entry: AccessEntry) -> bool:
-    gate = entry.current_gate
+    gate = _legacy_gate(entry)
     if persona.is_superuser:
         return gate in (CurrentGate.SUPERUSER, CurrentGate.ENGINE_OR_BYPASS) or entry.inline_effect in _SUPERUSER_ACTS_BEYOND
     if persona.is_provider_org:
@@ -81,7 +90,7 @@ def legacy_decide(persona: Persona, entry: AccessEntry, cross: bool) -> bool:
     another org or explicit Global (bypass-only scope)."""
     if cross:
         return _acts_beyond_own_org(persona, entry)
-    gate = entry.current_gate
+    gate = _legacy_gate(entry)
     if gate == CurrentGate.NONE:
         return True
     if not persona.signed_in:

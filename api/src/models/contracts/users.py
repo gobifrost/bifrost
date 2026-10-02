@@ -124,6 +124,13 @@ class UserPublic(UserBase):
     updated_at: datetime
     invite_status: str = "active"  # one of InviteStatus values; populated by router
     registration_url: str | None = None  # only populated immediately after invite creation
+    is_protected: bool = Field(
+        default=False,
+        description=(
+            "The user holds privileged access somewhere (or is a Platform "
+            "Admin), so only a Platform Admin can change them."
+        ),
+    )
 
     @field_serializer("created_at", "updated_at", "last_login")
     def serialize_dt(self, dt: datetime | None) -> str | None:

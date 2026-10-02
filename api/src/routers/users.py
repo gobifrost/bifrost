@@ -5,7 +5,6 @@ List and manage users, view user roles and forms.
 """
 
 import logging
-from datetime import datetime, timezone
 from typing import Literal
 from urllib.parse import parse_qs, urlparse
 from uuid import UUID
@@ -14,15 +13,26 @@ from fastapi import APIRouter, HTTPException, Query, Response, status
 from sqlalchemy import select
 
 from src.config import get_settings
-from src.core.auth import CurrentSuperuser
+from src.core.auth import CurrentActiveUser
 from src.core.db_deps import DbSession
-from src.services.audit import emit_audit
+from src.services.authorization.enforce import (
+    Caller,
+    load_caller,
+    operation_reach,
+    org_target,
+    privileged_user_ids,
+    require_operation,
+    require_unprotected,
+)
 from src.services.events import emit_event
 from src.services.user_invite_service import UserInviteService
-from shared.system_account_guard import SYSTEM_ACCOUNT_ROLE_MESSAGE, is_system_account
+from src.services.user_role_assignments import (
+    RoleAssignmentError,
+    get_role_assignments as get_role_assignments_service,
+    replace_role_assignments as replace_role_assignments_service,
+)
 from src.models import User as UserORM, UserRole as UserRoleORM, FormRole as FormRoleORM
 from src.models import (
-    BulkUserFailure,
     BulkUserOperation,
     BulkUserResponse,
     UserCreate,
@@ -31,11 +41,14 @@ from src.models import (
     UserRolesResponse,
     UserFormsResponse,
 )
+from src.models.contracts.role_assignments import (
+    UserRoleAssignmentsResponse,
+    UserRoleAssignmentsUpdate,
+)
 from src.models.contracts.user_invites import (
     CreateInviteResponse,
     SendInviteRequest,
 )
-from src.core.constants import PROVIDER_ORG_ID
 from src.services.operation_catalog import operation_route
 
 logger = logging.getLogger(__name__)
@@ -50,7 +63,7 @@ router = APIRouter(prefix="/api/users", tags=["Users"])
     description="List all users with optional filtering by type and organization",
 **operation_route("users.list"))
 async def list_users(
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
     response: Response,
     type: str | None = Query(None, description="Filter by user type: 'platform' or 'org'"),
@@ -73,9 +86,9 @@ async def list_users(
     ),
     offset: int = Query(0, ge=0, description="Rows to skip when limit is set"),
 ) -> list[UserPublic]:
-    """List users with optional filtering.
+    """List the users the caller may read (users.read), optionally pinned
+    to one organization or to Global by ``scope``.
 
-    Superusers can filter by scope or see all users.
     Note: Users are not org-scoped resources - they belong to one org.
     """
     from shared.sdk_users import UserServiceError, list_users as list_users_service
@@ -83,7 +96,7 @@ async def list_users(
     try:
         items, total = await list_users_service(
             db,
-            user,
+            await load_caller(db, user),
             type=type,
             scope=scope,
             include_inactive=include_inactive,
@@ -104,11 +117,11 @@ async def list_users(
     response_model=UserPublic,
     status_code=status.HTTP_201_CREATED,
     summary="Create user",
-    description="Create a new user proactively (Platform admin only)",
+    description="Invite a new user into an organization (or, for Platform Admins, create a Global or Platform Admin user)",
 **operation_route("users.create"))
 async def create_user(
     request: UserCreate,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> UserPublic:
     """Create a new user."""
@@ -116,13 +129,13 @@ async def create_user(
 
     return await create_user_service(
         db,
+        await load_caller(db, user),
         email=request.email,
         name=request.name,
         is_active=request.is_active,
         is_superuser=request.is_superuser,
         is_external=request.is_external,
         organization_id=request.organization_id,
-        actor_user_id=user.user_id,
     )
 
 
@@ -137,82 +150,13 @@ async def create_user(
 **operation_route("users.bulk_update"))
 async def bulk_update_users(
     request: BulkUserOperation,
-    actor: CurrentSuperuser,
+    actor: CurrentActiveUser,
     db: DbSession,
 ) -> BulkUserResponse:
     """Apply a single bulk operation across N users in one transaction."""
-    succeeded: list[UUID] = []
-    failed: list[BulkUserFailure] = []
+    from shared.sdk_users import bulk_update_users as bulk_update_users_service
 
-    rows = await db.execute(
-        select(UserORM).where(UserORM.id.in_(request.user_ids))
-    )
-    users_by_id = {u.id: u for u in rows.scalars().all()}
-
-    actor_id = (
-        UUID(str(actor.user_id))
-        if not isinstance(actor.user_id, UUID)
-        else actor.user_id
-    )
-
-    for uid in request.user_ids:
-        u = users_by_id.get(uid)
-        if u is None:
-            failed.append(BulkUserFailure(user_id=uid, reason="User not found"))
-            continue
-        if u.is_system:
-            failed.append(BulkUserFailure(user_id=uid, reason="System user cannot be modified"))
-            continue
-
-        if request.operation == "move_org":
-            target = request.organization_id  # may be None (= platform)
-            if u.is_superuser and target is not None and target != PROVIDER_ORG_ID:
-                failed.append(BulkUserFailure(
-                    user_id=uid,
-                    reason="Platform admin must be demoted before moving to a non-provider org",
-                ))
-                continue
-            u.organization_id = target
-            u.updated_at = datetime.now(timezone.utc)
-            succeeded.append(uid)
-
-        elif request.operation == "replace_roles":
-            if uid == actor_id:
-                failed.append(BulkUserFailure(user_id=uid, reason="Cannot change your own roles via bulk action"))
-                continue
-            if is_system_account(uid):
-                failed.append(BulkUserFailure(user_id=uid, reason=SYSTEM_ACCOUNT_ROLE_MESSAGE))
-                continue
-            await db.execute(
-                UserRoleORM.__table__.delete().where(UserRoleORM.user_id == uid)
-            )
-            for rid in (request.role_ids or []):
-                db.add(UserRoleORM(user_id=uid, role_id=rid, assigned_by=str(actor_id)))
-            u.updated_at = datetime.now(timezone.utc)
-            succeeded.append(uid)
-
-        elif request.operation == "set_active":
-            if uid == actor_id:
-                failed.append(BulkUserFailure(user_id=uid, reason="Cannot change your own active state"))
-                continue
-            u.is_active = bool(request.is_active)
-            u.updated_at = datetime.now(timezone.utc)
-            succeeded.append(uid)
-
-    await db.flush()
-    await emit_audit(
-        db,
-        "user.bulk_update",
-        resource_type="user",
-        resource_id=None,
-        details={
-            "operation": request.operation,
-            "requested": len(request.user_ids),
-            "succeeded": len(succeeded),
-            "failed": len(failed),
-        },
-    )
-    return BulkUserResponse(succeeded=succeeded, failed=failed)
+    return await bulk_update_users_service(db, await load_caller(db, actor), request)
 
 
 @router.post(
@@ -223,9 +167,11 @@ async def bulk_update_users(
 **operation_route("users.invites.resend"))
 async def resend_invite(
     user_id: UUID,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> CreateInviteResponse:
+    caller = await load_caller(db, user)
+    await _require_invite_target(db, caller, user_id, operation="users.invites.resend")
     return await _generate_invite(user_id=user_id, actor=user, db=db, send=True)
 
 
@@ -238,9 +184,11 @@ async def resend_invite(
 async def send_invite(
     user_id: UUID,
     request: SendInviteRequest,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> CreateInviteResponse:
+    caller = await load_caller(db, user)
+    await _require_invite_target(db, caller, user_id, operation="users.invites.send")
     token = _extract_invite_token(request.registration_url)
     svc = UserInviteService(db)
     try:
@@ -276,9 +224,11 @@ async def send_invite(
 **operation_route("users.invites.regenerate"))
 async def regenerate_invite(
     user_id: UUID,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> CreateInviteResponse:
+    caller = await load_caller(db, user)
+    await _require_invite_target(db, caller, user_id, operation="users.invites.regenerate")
     return await _generate_invite(user_id=user_id, actor=user, db=db, send=False)
 
 
@@ -290,11 +240,34 @@ async def regenerate_invite(
 **operation_route("users.invites.revoke"))
 async def revoke_invite(
     user_id: UUID,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> None:
+    caller = await load_caller(db, user)
+    target = await _require_invite_target(
+        db, caller, user_id, operation="users.invites.revoke", missing_ok=True
+    )
+    if target is None:
+        return
     svc = UserInviteService(db)
     await svc.revoke(user_id=user_id)
+
+
+async def _require_invite_target(
+    db, caller: Caller, user_id: UUID, *, operation: str, missing_ok: bool = False
+) -> UserORM | None:
+    """users.readwrite at the user's organization; a privileged user only
+    for a Platform Admin. A missing user is 404 (or nothing, for revoke,
+    which has always been a no-op then) to a caller with reach somewhere."""
+    operation_reach(caller, operation)
+    target = await db.get(UserORM, user_id)
+    if target is None:
+        if missing_ok:
+            return None
+        raise HTTPException(status_code=404, detail="User not found")
+    require_operation(caller, operation, org_target(target.organization_id))
+    require_unprotected(caller, target.id in await privileged_user_ids(db, [target.id]))
+    return target
 
 
 async def _generate_invite(
@@ -376,18 +349,18 @@ async def _emit_user_invited_event(
     "/{user_id}",
     response_model=UserPublic,
     summary="Get user details",
-    description="Get a specific user's details (Platform admin only)",
+    description="Get a specific user's details",
 **operation_route("users.get"))
 async def get_user(
     user_id: str,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> UserPublic:
     """Get a specific user's details."""
     from shared.sdk_users import UserServiceError, get_user as get_user_service
 
     try:
-        return await get_user_service(db, user_id=user_id)
+        return await get_user_service(db, await load_caller(db, user), user_id=user_id)
     except UserServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail) from None
 
@@ -401,7 +374,7 @@ async def get_user(
 async def update_user(
     user_id: str,
     request: UserUpdate,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> UserPublic:
     """Update a user."""
@@ -410,7 +383,9 @@ async def update_user(
     try:
         return await update_user_service(
             db,
+            await load_caller(db, user),
             user_id=user_id,
+            fields=set(request.model_fields_set),
             email=request.email,
             name=request.name,
             password=request.password,
@@ -433,19 +408,14 @@ async def update_user(
 **operation_route("users.delete"))
 async def delete_user(
     user_id: str,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> None:
     """Permanently delete a user. User must be inactive first."""
     from shared.sdk_users import UserServiceError, delete_user as delete_user_service
 
     try:
-        await delete_user_service(
-            db,
-            user_id=user_id,
-            actor_user_id=user.user_id,
-            actor_email=user.email,
-        )
+        await delete_user_service(db, await load_caller(db, user), user_id=user_id)
     except UserServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail) from None
 
@@ -458,21 +428,13 @@ async def delete_user(
 **operation_route("users.roles.list"))
 async def get_user_roles(
     user_id: str,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> UserRolesResponse:
     """Get all roles assigned to a user."""
-    # Get user UUID
-    try:
-        user_uuid = UUID(user_id)
-    except ValueError:
-        result = await db.execute(select(UserORM.id).where(UserORM.email == user_id))
-        user_uuid = result.scalar_one_or_none()
-        if not user_uuid:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found",
-            )
+    caller = await load_caller(db, user)
+    db_user = await _require_assignment_reader(db, caller, user_id, operation="users.roles.list")
+    user_uuid = db_user.id
 
     result = await db.execute(
         select(UserRoleORM.role_id).where(UserRoleORM.user_id == user_uuid)
@@ -490,24 +452,12 @@ async def get_user_roles(
 **operation_route("users.forms.list"))
 async def get_user_forms(
     user_id: str,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> UserFormsResponse:
     """Get all forms a user can access."""
-    # Get user
-    try:
-        uuid_id = UUID(user_id)
-        result = await db.execute(select(UserORM).where(UserORM.id == uuid_id))
-    except ValueError:
-        result = await db.execute(select(UserORM).where(UserORM.email == user_id))
-
-    db_user = result.scalar_one_or_none()
-
-    if not db_user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found",
-        )
+    caller = await load_caller(db, user)
+    db_user = await _require_assignment_reader(db, caller, user_id, operation="users.forms.list")
 
     # Platform admins have access to all forms
     if db_user.is_superuser:
@@ -541,3 +491,63 @@ async def get_user_forms(
         has_access_to_all_forms=False,
         form_ids=form_ids,
     )
+
+
+async def _require_assignment_reader(
+    db, caller: Caller, user_id: str, *, operation: str
+) -> UserORM:
+    """roleassignments.read at the user's organization (user id or email)."""
+    operation_reach(caller, operation)
+    try:
+        uuid_id = UUID(user_id)
+        result = await db.execute(select(UserORM).where(UserORM.id == uuid_id))
+    except ValueError:
+        result = await db.execute(select(UserORM).where(UserORM.email == user_id))
+    db_user = result.scalar_one_or_none()
+    if not db_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+    require_operation(caller, operation, org_target(db_user.organization_id))
+    return db_user
+
+
+@router.get(
+    "/{user_id}/role-assignments",
+    response_model=UserRoleAssignmentsResponse,
+    summary="Get a user's role assignments",
+    description=(
+        "The user's base role, additional roles with where each applies, whether "
+        "the user is protected, and the roles the caller may grant them."
+    ),
+)
+async def get_role_assignments(
+    user_id: UUID,
+    user: CurrentActiveUser,
+    db: DbSession,
+) -> UserRoleAssignmentsResponse:
+    try:
+        return await get_role_assignments_service(db, await load_caller(db, user), user_id=user_id)
+    except RoleAssignmentError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
+
+
+@router.put(
+    "/{user_id}/role-assignments",
+    response_model=UserRoleAssignmentsResponse,
+    summary="Replace a user's role assignments",
+    description="Replace the user's base role and additional roles (with boundaries) atomically.",
+)
+async def replace_role_assignments(
+    user_id: UUID,
+    request: UserRoleAssignmentsUpdate,
+    user: CurrentActiveUser,
+    db: DbSession,
+) -> UserRoleAssignmentsResponse:
+    try:
+        return await replace_role_assignments_service(
+            db, await load_caller(db, user), user_id=user_id, request=request
+        )
+    except RoleAssignmentError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from None

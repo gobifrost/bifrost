@@ -10,9 +10,16 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
 
-from src.core.auth import CurrentSuperuser
+from src.core.auth import CurrentActiveUser
 from src.core.db_deps import DbSession
 from src.models import OrganizationCreate, OrganizationPublic, OrganizationUpdate
+from src.services.authorization.enforce import (
+    GLOBAL,
+    authorize_operation,
+    load_caller,
+    operation_reach,
+    org_target,
+)
 from src.services.operation_catalog import operation_route
 
 logger = logging.getLogger(__name__)
@@ -24,10 +31,10 @@ router = APIRouter(prefix="/api/organizations", tags=["Organizations"])
     "",
     response_model=list[OrganizationPublic],
     summary="List organizations",
-    description="Get active organizations, optionally including inactive ones (Platform admin only)",
+    description="Get the active organizations the caller may view, optionally including inactive ones",
 **operation_route("organizations.list"))
 async def list_organizations(
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
     include_inactive: Annotated[
         bool,
@@ -41,7 +48,8 @@ async def list_organizations(
     """
     from shared.sdk_organizations import list_organizations as list_organizations_service
 
-    return await list_organizations_service(db, include_inactive=include_inactive)
+    reach = operation_reach(await load_caller(db, user), "organizations.list")
+    return await list_organizations_service(db, reach=reach, include_inactive=include_inactive)
 
 
 @router.post(
@@ -49,14 +57,15 @@ async def list_organizations(
     response_model=OrganizationPublic,
     status_code=status.HTTP_201_CREATED,
     summary="Create a new organization",
-    description="Create a new client organization (Platform admin only)",
+    description="Create a new client organization",
 **operation_route("organizations.create"))
 async def create_organization(
     request: OrganizationCreate,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> OrganizationPublic:
     """Create a new client organization."""
+    await authorize_operation(db, user, "organizations.create", GLOBAL)
     from shared.sdk_organizations import (
         OrganizationServiceError,
         create_organization as create_organization_service,
@@ -79,14 +88,15 @@ async def create_organization(
     "/{org_id}",
     response_model=OrganizationPublic,
     summary="Get organization by ID",
-    description="Get a specific organization by ID (Platform admin only)",
+    description="Get a specific organization by ID",
 **operation_route("organizations.get"))
 async def get_organization(
     org_id: UUID,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> OrganizationPublic:
     """Get a specific organization by ID."""
+    await authorize_operation(db, user, "organizations.get", org_target(org_id))
     from shared.sdk_organizations import (
         OrganizationServiceError,
         get_organization as get_organization_service,
@@ -102,15 +112,16 @@ async def get_organization(
     "/{org_id}",
     response_model=OrganizationPublic,
     summary="Update an organization",
-    description="Update an existing organization (Platform admin only)",
+    description="Update an existing organization",
 **operation_route("organizations.update"))
 async def update_organization(
     org_id: UUID,
     request: OrganizationUpdate,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> OrganizationPublic:
     """Update an organization."""
+    await authorize_operation(db, user, "organizations.update", org_target(org_id))
     from shared.sdk_organizations import (
         OrganizationServiceError,
         update_organization as update_organization_service,
@@ -133,14 +144,15 @@ async def update_organization(
     "/{org_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete an organization",
-    description="Soft delete an organization (sets is_active=False, Platform admin only)",
+    description="Soft delete an organization (sets is_active=False)",
 **operation_route("organizations.delete"))
 async def delete_organization(
     org_id: UUID,
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
 ) -> None:
     """Soft delete an organization."""
+    await authorize_operation(db, user, "organizations.delete", org_target(org_id))
     from shared.sdk_organizations import (
         OrganizationServiceError,
         delete_organization as delete_organization_service,

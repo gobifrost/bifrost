@@ -51,14 +51,15 @@ PERMISSION_DOMAINS: dict[str, PermissionDomain] = {
     "users": PermissionDomain(
         description=(
             "The user directory and limited support actions on ordinary "
-            "users: sending, resending, regenerating and revoking invites, "
-            "changing a name, resetting a password or MFA, deactivating, "
-            "and forcing sessions to sign out."
+            "users: inviting an ordinary user into an organization, sending, "
+            "resending, regenerating and revoking invites, changing a name, "
+            "resetting a password or MFA, deactivating, and forcing sessions "
+            "to sign out."
         ),
         who_should_hold="Platform admins. Others only through an admin-assigned role at a specific boundary; never the User base role. The Platform Operator role gets user support at Managed organizations.",
     ),
     "users.lifecycle": PermissionDomain(
-        description="Elevated user changes: creating users, moving a user between organizations or into Global, changing a user's base role, and permanently deleting a user.",
+        description="Elevated user changes: creating platform/Global users, moving a user between organizations or into Global, changing a user's identity (email, verification, External), changing a user's base role, and permanently deleting a user.",
         who_should_hold="Platform admins. Others only through an admin-assigned role at a specific boundary; never the User base role or the Platform Operator role.",
     ),
     "integrations": PermissionDomain(

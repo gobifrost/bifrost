@@ -26,6 +26,8 @@ import pytest
 from fastapi import HTTPException, Response
 
 from shared.sdk_roles import RoleServiceError
+from src.services.authorization.enforce import EVERYTHING
+from tests.helpers.authorization import admin_caller
 
 
 def _stub_user(email: str = "admin@test.local"):
@@ -183,22 +185,22 @@ class TestRoleService:
 
         await assign_users_to_role(
             db_session,
+            admin_caller(),
             role_id=role.id,
             user_ids=[str(u1.id), u2.email, "nobody@test.local"],
-            actor_email="a@t.local",
         )
-        listed = await list_role_users(db_session, role_id=role.id)
+        listed = await list_role_users(db_session, role_id=role.id, reach=EVERYTHING)
         assert sorted(listed.user_ids) == sorted([str(u1.id), str(u2.id)])
         assert listed.total == 2
 
         # Idempotent re-assign: no duplicates.
         await assign_users_to_role(
             db_session,
+            admin_caller(),
             role_id=role.id,
             user_ids=[str(u1.id), u2.email],
-            actor_email="a@t.local",
         )
-        listed = await list_role_users(db_session, role_id=role.id)
+        listed = await list_role_users(db_session, role_id=role.id, reach=EVERYTHING)
         assert listed.total == 2
 
     async def test_assign_users_refuses_system_account(self, db_session):
@@ -213,20 +215,20 @@ class TestRoleService:
         with pytest.raises(RoleServiceError) as exc_info:
             await assign_users_to_role(
                 db_session,
+                admin_caller(),
                 role_id=role.id,
                 user_ids=[SYSTEM_USER_ID],
-                actor_email="a@t.local",
             )
         assert exc_info.value.status_code == 422
         assert "system account" in exc_info.value.detail.lower()
 
-        listed = await list_role_users(db_session, role_id=role.id)
+        listed = await list_role_users(db_session, role_id=role.id, reach=EVERYTHING)
         assert listed.total == 0
 
     async def test_list_users_unknown_role_is_empty_not_404(self, db_session):
         from shared.sdk_roles import list_role_users
 
-        listed = await list_role_users(db_session, role_id=uuid4())
+        listed = await list_role_users(db_session, role_id=uuid4(), reach=EVERYTHING)
         assert listed.user_ids == []
         assert listed.total == 0
 
@@ -295,7 +297,16 @@ class TestRoleService:
         assert (await list_role_forms(db_session, role_id=uuid4())).form_ids == []
 
 
+@pytest.fixture
+def router_admin():
+    from tests.helpers.authorization import handlers_as
+
+    with handlers_as(admin_caller(), "src.routers.roles") as caller:
+        yield caller
+
+
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("router_admin")
 class TestRolesRouterBoundary:
     """Handlers delegate to ``shared.sdk_roles`` and map its errors."""
 
@@ -316,7 +327,7 @@ class TestRolesRouterBoundary:
         ) as mock_list:
             items = await list_roles(
                 _stub_user(), AsyncMock(), response,
-                search="R", sort_by="name", sort_direction="asc",
+                search="R", include_builtin=False, sort_by="name", sort_direction="asc",
                 limit=None, offset=0,
             )
         assert items == [public]
@@ -324,7 +335,8 @@ class TestRolesRouterBoundary:
         mock_list.assert_awaited_once()
         assert mock_list.call_args[1] == {
             "search": "R", "sort_by": "name", "sort_direction": "asc",
-            "limit": None, "offset": 0,
+            "limit": None, "offset": 0, "include_builtin": False,
+            "include_counts": True,
         }
 
     async def test_create_delegates_and_maps_404(self):
@@ -361,7 +373,7 @@ class TestRolesRouterBoundary:
         ) as mock_get:
             assert await get_role(role_id, _stub_user(), AsyncMock()) == "ROLE"
         mock_get.assert_awaited_once()
-        assert mock_get.call_args[1] == {"role_id": role_id}
+        assert mock_get.call_args[1] == {"role_id": role_id, "include_counts": True}
 
         with patch(
             "shared.sdk_roles.get_role",
@@ -412,7 +424,7 @@ class TestRolesRouterBoundary:
                 await delete_role(role_id, _stub_user(), AsyncMock())
         assert exc_info.value.status_code == 409
 
-    async def test_assign_users_delegates(self):
+    async def test_assign_users_delegates(self, router_admin):
         from src.models import AssignUsersToRoleRequest
         from src.routers.roles import assign_users_to_role
 
@@ -425,10 +437,9 @@ class TestRolesRouterBoundary:
                 await assign_users_to_role(role_id, request, _stub_user("m@t.local"), AsyncMock())
                 is None
             )
+        assert mock_assign.call_args[0][1] is router_admin
         kwargs = mock_assign.call_args[1]
-        assert kwargs == {
-            "role_id": role_id, "user_ids": ["u1"], "actor_email": "m@t.local"
-        }
+        assert kwargs == {"role_id": role_id, "user_ids": ["u1"]}
 
     async def test_list_users_delegates(self):
         from src.routers.roles import get_role_users
@@ -443,7 +454,7 @@ class TestRolesRouterBoundary:
             ) == "RESP"
         kwargs = mock_list.call_args[1]
         assert kwargs == {
-            "role_id": role_id, "search": "s", "limit": 10, "offset": 5
+            "role_id": role_id, "reach": EVERYTHING, "search": "s", "limit": 10, "offset": 5
         }
 
     async def test_assign_forms_delegates_and_maps_404(self):
@@ -515,7 +526,7 @@ class TestBuiltinRoleGuards:
         user = await _seed_user(db_session)
         with pytest.raises(RoleServiceError) as exc_info:
             await assign_users_to_role(
-                db_session, role_id=DECRYPTION_ROLE_ID, user_ids=[str(user.id)], actor_email="a@t.local",
+                db_session, admin_caller(), role_id=DECRYPTION_ROLE_ID, user_ids=[str(user.id)]
             )
         assert exc_info.value.status_code == 409
 
@@ -552,7 +563,7 @@ class TestBuiltinRoleGuards:
         user = await _seed_user(db_session)
         with pytest.raises(RoleServiceError) as exc_info:
             await assign_users_to_role(
-                db_session, role_id=USER_ROLE_ID, user_ids=[str(user.id)], actor_email="a@t.local",
+                db_session, admin_caller(), role_id=USER_ROLE_ID, user_ids=[str(user.id)]
             )
         assert exc_info.value.status_code == 409
 

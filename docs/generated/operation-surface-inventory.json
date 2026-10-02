@@ -6026,11 +6026,12 @@
       },
       "operation": {
         "action_scopes": [
+          "users.readwrite",
           "users.lifecycle.readwrite"
         ],
         "async_policy": "synchronous",
         "audit_event": "user.create",
-        "authorization_resolver": "Exact target organization boundary",
+        "authorization_resolver": "users.readwrite at the target organization for an ordinary invite; users.lifecycle.readwrite at Global for a Global or Platform Admin user",
         "cli": null,
         "exclusions": {
           "cli": "User lifecycle administration is available through the administrative UI and REST API, not the coding CLI.",
@@ -9911,7 +9912,7 @@
     "cli": 155,
     "manifest": 16,
     "mcp": 94,
-    "rest": 647,
+    "rest": 652,
     "sdk": 19
   },
   "schema_version": 1,
@@ -11436,6 +11437,13 @@
         "method": "GET",
         "operation_id": "",
         "path": "/api/audit",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/auth/authorization",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -12994,6 +13002,20 @@
         "status": "missing_surface"
       },
       {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/roles/{role_id}/permissions",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "PUT",
+        "operation_id": "",
+        "path": "/api/roles/{role_id}/permissions",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
         "method": "POST",
         "operation_id": "",
         "path": "/api/schedules/validate",
@@ -13655,6 +13677,20 @@
         "method": "GET",
         "operation_id": "",
         "path": "/api/tools/system",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/users/{user_id}/role-assignments",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "PUT",
+        "operation_id": "",
+        "path": "/api/users/{user_id}/role-assignments",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },

@@ -107,7 +107,7 @@ harness.
 | `roles.workflows.bulk_remove` | — | — | `workflows.readwrite` |
 | `users.list` | — | — | `users.read` |
 | `users.get` | — | — | `users.read` |
-| `users.create` | — | — | `users.lifecycle.readwrite` |
+| `users.create` | — | — | `users.readwrite`, `users.lifecycle.readwrite` |
 | `users.update` | — | — | `users.lifecycle.readwrite` |
 | `users.delete` | — | — | `users.lifecycle.readwrite` |
 | `users.bulk_update` | — | — | `users.lifecycle.readwrite` |

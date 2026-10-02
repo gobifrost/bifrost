@@ -1,5 +1,5 @@
-"""Privileged principals and the Platform Operator's role-assignment rule
-(``src.services.authorization.privilege``). Not enforced yet."""
+"""Privileged principals, the Platform Operator's role-assignment rule, and
+the R3a grant ceiling (``src.services.authorization.privilege``)."""
 
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ from src.services.authorization.context import (
 )
 from src.services.authorization.privilege import (
     is_privileged_principal,
+    may_change_role_assignment,
     operator_assignable_role,
 )
 
@@ -145,3 +146,36 @@ class TestOperatorAssignableRole:
             role_permissions=frozenset(),
             target_permissions=_ctx(base=PLATFORM_ADMIN_ROLE_ID).held_permissions,
         )
+
+
+class TestGrantCeiling:
+    """Every actor who is not a Platform Admin is held to the Operator rule,
+    whatever identity permissions their roles give them."""
+
+    def _may(self, *, admin: bool, role_id=None, permissions=frozenset(), target=USER_BASE_PERMISSIONS) -> bool:
+        return may_change_role_assignment(
+            actor_is_platform_admin=admin,
+            role_id=role_id or uuid4(),
+            role_permissions=frozenset(permissions),
+            target_permissions=target,
+        )
+
+    def test_platform_admin_may_change_anything(self) -> None:
+        assert self._may(admin=True, role_id=PLATFORM_OPERATOR_ROLE_ID)
+        assert self._may(admin=True, role_id=PLATFORM_ADMIN_ROLE_ID)
+        assert self._may(admin=True, permissions={"users.lifecycle.readwrite"}, target={"configs.readwrite"})
+
+    def test_delegate_may_change_a_permissionless_custom_role_on_an_ordinary_user(self) -> None:
+        assert self._may(admin=False)
+
+    def test_delegate_may_not_change_a_role_with_permissions(self) -> None:
+        for permission in ("forms.read", "users.read", "roleassignments.readwrite"):
+            assert not self._may(admin=False, permissions={permission}), permission
+
+    def test_delegate_may_not_change_builtin_roles(self) -> None:
+        for role_id in (PLATFORM_ADMIN_ROLE_ID, USER_ROLE_ID, PLATFORM_OPERATOR_ROLE_ID, DECRYPTION_ROLE_ID):
+            assert not self._may(admin=False, role_id=role_id), role_id
+
+    def test_delegate_may_not_change_a_privileged_user(self) -> None:
+        assert not self._may(admin=False, target=frozenset({"users.readwrite"}))
+        assert not self._may(admin=False, target=_ctx(base=PLATFORM_ADMIN_ROLE_ID).held_permissions)

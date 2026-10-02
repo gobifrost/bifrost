@@ -5,8 +5,8 @@ they hold beyond it, and where each of those roles applies (its boundaries).
 It deliberately does NOT carry the provider-org scope-bypass flag: that
 non-admin path is exactly what the role/boundary model replaces.
 
-Nothing in request handling builds or reads a context yet; R3 wires it in
-domain by domain.
+``src.services.authorization.enforce`` builds one per request on the routes
+cut over to the evaluator.
 """
 
 from __future__ import annotations

@@ -2228,8 +2228,11 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
             request_model="UserCreate",
             response_model="UserPublic",
         ),
-        action_scopes=("users.lifecycle.readwrite",),
-        authorization_resolver="Exact target organization boundary",
+        action_scopes=("users.readwrite", "users.lifecycle.readwrite"),
+        authorization_resolver=(
+            "users.readwrite at the target organization for an ordinary invite; "
+            "users.lifecycle.readwrite at Global for a Global or Platform Admin user"
+        ),
         audit_event="user.create",
         side_effects=(
             "persist the user identity",
