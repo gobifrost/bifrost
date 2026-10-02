@@ -100,6 +100,25 @@ class UserServiceError(Exception):
         self.detail = detail
 
 
+OPERATOR_MOVE_MESSAGE = (
+    "Remove Platform Operator before moving this user out of the provider organization"
+)
+
+
+async def _platform_operator_holders(session: AsyncSession, user_ids: list[UUID]) -> set[UUID]:
+    """The users among ``user_ids`` who hold Platform Operator at any boundary."""
+    from shared.builtin_roles import PLATFORM_OPERATOR_ROLE_ID
+    from src.models import UserRole as UserRoleORM
+
+    rows = await session.execute(
+        select(UserRoleORM.user_id).where(
+            UserRoleORM.user_id.in_(user_ids),
+            UserRoleORM.role_id == PLATFORM_OPERATOR_ROLE_ID,
+        )
+    )
+    return set(rows.scalars())
+
+
 async def _resolve_user(session: AsyncSession, user_id: str):
     """Load a user by UUID with email fallback. Returns None when missing."""
     from src.models import User as UserORM
@@ -466,7 +485,8 @@ async def update_user(
     leaves any other base role as it is.
 
     Raises:
-        UserServiceError: 404 when missing, 403 for the system user.
+        UserServiceError: 404 when missing, 403 for the system user, 409
+            when moving a Platform Operator out of the provider organization.
     """
     from src.services.audit import emit_audit
     from src.services.authorization.enforce import (
@@ -490,6 +510,12 @@ async def update_user(
         organization_id,
         db_user.id in await privileged_user_ids(session, [db_user.id]),
     )
+    if (
+        organization_id is not None
+        and organization_id != PROVIDER_ORG_ID
+        and db_user.id in await _platform_operator_holders(session, [db_user.id])
+    ):
+        raise UserServiceError(409, OPERATOR_MOVE_MESSAGE)
 
     if email is not None:
         db_user.email = email
@@ -661,6 +687,11 @@ async def bulk_update_users(
     rows = await session.execute(select(UserORM).where(UserORM.id.in_(request.user_ids)))
     users_by_id = {u.id: u for u in rows.scalars().all()}
     held = await held_permissions_by_user(session, list(users_by_id))
+    operators = (
+        await _platform_operator_holders(session, list(users_by_id))
+        if request.operation == "move_org"
+        else set()
+    )
     actor_id = caller.principal.user_id
 
     current_roles: dict[UUID, set[UUID]] = {}
@@ -718,6 +749,9 @@ async def bulk_update_users(
                 continue
             if u.is_superuser and target is not None and target != PROVIDER_ORG_ID:
                 fail(uid, "Platform admin must be demoted before moving to a non-provider org")
+                continue
+            if uid in operators and target != PROVIDER_ORG_ID:
+                fail(uid, OPERATOR_MOVE_MESSAGE)
                 continue
             u.organization_id = target
             u.updated_at = datetime.now(timezone.utc)

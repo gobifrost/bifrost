@@ -161,6 +161,29 @@ class TestUpdateUser:
         moved = await self._update(db_session, both, user, organization_id=destination.id)
         assert moved.organization_id == destination.id
 
+    async def test_a_platform_operator_cannot_be_moved_out_of_the_provider_org(self, db_session) -> None:
+        from shared.sdk_users import OPERATOR_MOVE_MESSAGE, UserServiceError
+        from src.models import UserRole
+
+        destination = await _org(db_session)
+        operator = await _user(db_session, PROVIDER_ORG_ID)
+        db_session.add(UserRole(user_id=operator.id, role_id=PLATFORM_OPERATOR_ROLE_ID, assigned_by="t"))
+        await db_session.flush()
+
+        with pytest.raises(UserServiceError) as exc_info:
+            await self._update(db_session, admin_caller(), operator, organization_id=destination.id)
+        assert (exc_info.value.status_code, exc_info.value.detail) == (409, OPERATOR_MOVE_MESSAGE)
+        assert operator.organization_id == PROVIDER_ORG_ID
+
+        updated = await self._update(db_session, admin_caller(), operator, organization_id=PROVIDER_ORG_ID)
+        assert updated.organization_id == PROVIDER_ORG_ID
+
+        await db_session.execute(
+            UserRole.__table__.delete().where(UserRole.user_id == operator.id)
+        )
+        moved = await self._update(db_session, admin_caller(), operator, organization_id=destination.id)
+        assert moved.organization_id == destination.id
+
     async def test_a_privileged_user_needs_a_platform_admin(self, db_session) -> None:
         org = await _org(db_session)
         target = await _user(db_session, org.id)
@@ -213,6 +236,35 @@ class TestBulk:
         assert "Only a Platform Admin" in reasons[admin.id]
         assert reasons[missing] == "User not found"
         assert ordinary.is_active is False and elsewhere.is_active is True
+
+    async def test_move_org_refuses_a_platform_operator_leaving_the_provider_org(self, db_session) -> None:
+        from shared.sdk_users import OPERATOR_MOVE_MESSAGE, bulk_update_users
+        from src.models import BulkUserOperation, UserRole
+
+        destination = await _org(db_session)
+        operator = await _user(db_session, PROVIDER_ORG_ID)
+        ordinary = await _user(db_session, PROVIDER_ORG_ID)
+        db_session.add(UserRole(user_id=operator.id, role_id=PLATFORM_OPERATOR_ROLE_ID, assigned_by="t"))
+        await db_session.flush()
+
+        result = await bulk_update_users(
+            db_session,
+            admin_caller(),
+            BulkUserOperation(
+                user_ids=[operator.id, ordinary.id], operation="move_org", organization_id=destination.id
+            ),
+        )
+        assert result.succeeded == [ordinary.id]
+        assert [(f.user_id, f.reason) for f in result.failed] == [(operator.id, OPERATOR_MOVE_MESSAGE)]
+        assert operator.organization_id == PROVIDER_ORG_ID
+        assert ordinary.organization_id == destination.id
+
+        result = await bulk_update_users(
+            db_session,
+            admin_caller(),
+            BulkUserOperation(user_ids=[operator.id], operation="move_org", organization_id=None),
+        )
+        assert [f.reason for f in result.failed] == [OPERATOR_MOVE_MESSAGE]
 
     async def test_no_reach_is_refused_outright(self, db_session) -> None:
         from shared.sdk_users import bulk_update_users
