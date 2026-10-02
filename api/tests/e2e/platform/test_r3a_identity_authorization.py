@@ -111,7 +111,7 @@ def world(e2e_client, platform_admin):
         ),
         201,
     )
-    operator = _register_and_authenticate_user(e2e_client, operator)
+    operator = _register_and_authenticate_user(operator)
     assigned = _ok(
         _assign(
             e2e_client,

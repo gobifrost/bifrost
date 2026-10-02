@@ -73,6 +73,12 @@ USER_PERMISSIONS = {
     "settings.read",
 }
 CUSTOM_PERMISSIONS = {"forms.readwrite", "users.read"}
+# Set by the later 20261001_r3a_operator_desc revision.
+OPERATOR_DESCRIPTION_AT_HEAD = (
+    "Support for customer organizations: view organizations and users, invite users, "
+    "reset MFA, deactivate ordinary users, and assign roles that carry no permissions. "
+    "Additional role only."
+)
 
 
 def _downgrade(database_url: str, revision: str) -> None:
@@ -191,8 +197,13 @@ def test_operator_gains_user_support_and_secrets_reader_is_seeded() -> None:
         assert "wildcard" in reader["description"]
         assert after["reader_assignments"] == 0
 
+        # At head the later 20261001_r3a_operator_desc revision has rewritten
+        # the Operator description; everything else this revision wrote holds.
         _upgrade(database_url, "head")
-        assert asyncio.run(_snapshot(database_url, custom_role_id)) == after
+        assert asyncio.run(_snapshot(database_url, custom_role_id)) == {
+            **after,
+            "operator_description": OPERATOR_DESCRIPTION_AT_HEAD,
+        }
 
         _downgrade(database_url, PREVIOUS_REVISION)
         assert asyncio.run(_snapshot(database_url, custom_role_id)) == before
