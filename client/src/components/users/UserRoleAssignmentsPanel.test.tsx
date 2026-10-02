@@ -151,6 +151,26 @@ function adminView(): Assignments {
 		is_protected: false,
 		assignable_roles: [
 			{
+				id: USER_ROLE,
+				name: "User",
+				is_builtin: true,
+				permissions: ["agents.read", "agentruns.read", "forms.read"],
+				can_be_base: true,
+				can_be_additional: false,
+				boundary_kinds: [],
+				provider_organization_allowed: true,
+			},
+			{
+				id: "billing-forms",
+				name: "Billing Forms",
+				is_builtin: false,
+				permissions: [],
+				can_be_base: true,
+				can_be_additional: true,
+				boundary_kinds: ["organization"],
+				provider_organization_allowed: true,
+			},
+			{
 				id: ADMIN_ROLE,
 				name: "Platform Admin",
 				is_builtin: true,
@@ -289,6 +309,25 @@ describe("UserRoleAssignmentsPanel", () => {
 		expect(
 			screen.getByRole("button", { name: "Save roles" }),
 		).toBeEnabled();
+	});
+
+	it("spells out what a custom base role replaces", async () => {
+		const { user } = render(
+			makeUser({ name: "Alice", organization_id: "org-a" }),
+		);
+		await user.selectOptions(
+			screen.getByLabelText("base-role"),
+			"billing-forms",
+		);
+
+		expect(
+			screen.getByText(
+				"Billing Forms replaces User as Alice's base role. In Contoso, they'll have only Billing Forms's permissions (none) instead of User's (view agents, view agent runs, view forms).",
+			),
+		).toBeInTheDocument();
+
+		await user.selectOptions(screen.getByLabelText("base-role"), USER_ROLE);
+		expect(screen.queryByText(/replaces User/)).not.toBeInTheDocument();
 	});
 
 	it("lets a delegate grant what the server allows, only where they reach", async () => {

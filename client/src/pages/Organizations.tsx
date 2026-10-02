@@ -463,7 +463,11 @@ export function Organizations() {
 		<PageWorkspace className="mx-auto max-w-7xl">
 			<ListPageHeader
 				title="Organizations"
-				description="Manage customer organizations and their configurations"
+				description={
+					authorization.canAnywhere("organizations.readwrite")
+						? "Manage customer organizations and their configurations"
+						: "Organizations you can view"
+				}
 				actions={
 					<>
 						<Button

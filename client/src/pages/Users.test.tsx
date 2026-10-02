@@ -754,6 +754,11 @@ describe("Users — permission-driven actions", () => {
 		renderUsersRoute();
 
 		expect(
+			screen.getByText(
+				"View and support users in the organizations you can reach",
+			),
+		).toBeInTheDocument();
+		expect(
 			screen.queryByRole("button", { name: "Create user" }),
 		).not.toBeInTheDocument();
 		expect(

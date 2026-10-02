@@ -29,7 +29,7 @@ const AREAS: [string, AreaCopy][] = [
 		{
 			title: "Users",
 			description:
-				"See people, and support them: invite, send registration links, sign out, enable or disable.",
+				"See people and support them: invite, change names, reset MFA, sign out, enable or disable.",
 			read: "View",
 			readwrite: "View & support",
 		},
@@ -224,17 +224,10 @@ export function RolePermissionsPanel({
 
 	return (
 		<div className="space-y-6">
-			{isBuiltin ? (
+			{!isBuiltin && !canEdit && (
 				<p className="text-sm text-muted-foreground">
-					Built-in roles can't be changed.
+					You can view this role's permissions but not change them.
 				</p>
-			) : (
-				!canEdit && (
-					<p className="text-sm text-muted-foreground">
-						You can view this role's permissions but not change
-						them.
-					</p>
-				)
 			)}
 			<p className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
 				<PrivilegedMark />

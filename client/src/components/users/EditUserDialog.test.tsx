@@ -343,6 +343,11 @@ describe("EditUserDialog", () => {
 		);
 
 		expect(screen.getByText("Protected account")).toBeInTheDocument();
+		expect(
+			screen.getByText(
+				"This person holds privileged access. Only Platform Admins can change their profile, sign-in, or roles.",
+			),
+		).toBeInTheDocument();
 		expect(screen.getByLabelText(/display name/i)).toBeEnabled();
 		expect(
 			screen.getByRole("button", { name: /save changes/i }),

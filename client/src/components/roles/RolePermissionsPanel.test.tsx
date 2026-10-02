@@ -167,9 +167,8 @@ describe("RolePermissionsPanel", () => {
 			<RolePermissionsPanel roleId="operator" isBuiltin />,
 		);
 
-		expect(
-			screen.getByText("Built-in roles can't be changed."),
-		).toBeInTheDocument();
+		// The page header already says built-in roles are fixed.
+		expect(screen.queryByText(/can't be changed/)).not.toBeInTheDocument();
 		expect(screen.queryByRole("radio")).not.toBeInTheDocument();
 		expect(within(area("Users")).getByText("View & support")).toBeVisible();
 		expect(screen.getByText("configs.read")).toBeInTheDocument();

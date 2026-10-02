@@ -18,7 +18,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { AlertCircle, Loader2, ShieldAlert, X } from "lucide-react";
+import { AlertCircle, Info, Loader2, ShieldAlert, X } from "lucide-react";
 import { useUpdateUser } from "@/hooks/useUsers";
 import { useOrganizations } from "@/hooks/useOrganizations";
 import { useAuth } from "@/contexts/AuthContext";
@@ -227,11 +227,15 @@ function EditUserDialogContent({
 
 			{user.is_protected && (
 				<Alert className="mx-4 mt-4 w-auto shrink-0 sm:mx-6">
-					<ShieldAlert className="h-4 w-4" />
+					{authorization.isPlatformAdmin ? (
+						<Info className="h-4 w-4" />
+					) : (
+						<ShieldAlert className="h-4 w-4" />
+					)}
 					<AlertTitle>Protected account</AlertTitle>
 					<AlertDescription>
 						{authorization.isPlatformAdmin
-							? "This person holds privileged access, so only a Platform Admin can change their profile, sign-in, or roles."
+							? "This person holds privileged access. Only Platform Admins can change their profile, sign-in, or roles."
 							: "This person holds privileged access, so only a Platform Admin can change them. You can still view their details."}
 					</AlertDescription>
 				</Alert>

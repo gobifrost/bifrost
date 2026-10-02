@@ -67,6 +67,35 @@ interface RoleInfo {
 	is_builtin: boolean;
 }
 
+const ACTION_WORDS: Record<string, string> = {
+	read: "view",
+	readwrite: "change",
+	execute: "run",
+};
+const DOMAIN_WORDS: Record<string, string> = {
+	agentruns: "agent runs",
+	configs: "configuration",
+	filepolicies: "file policies",
+	mcp: "MCP servers",
+	policyrules: "policy rules",
+	roleassignments: "role assignments",
+	"users.lifecycle": "user lifecycle",
+};
+
+/** "agents.read" → "view agents". */
+function describePermission(permission: string): string {
+	const split = permission.lastIndexOf(".");
+	const domain = permission.slice(0, split);
+	const action = permission.slice(split + 1);
+	return `${ACTION_WORDS[action] ?? action} ${DOMAIN_WORDS[domain] ?? domain.replace(/\./g, " ")}`;
+}
+
+function describePermissions(permissions: string[]): string {
+	return permissions.length > 0
+		? permissions.map(describePermission).join(", ")
+		: "none";
+}
+
 function placeKey(place: Place): string {
 	return `${place.kind}:${place.organization_id ?? ""}`;
 }
@@ -500,6 +529,23 @@ export function UserRoleAssignmentsPanel({
 		!!adminRoleId &&
 		data.base_role.id === adminRoleId &&
 		draft.baseRoleId !== adminRoleId;
+	// A custom base role replaces the old base role's permissions outright.
+	const newCustomBase =
+		draft.baseRoleId !== data.base_role.id
+			? data.assignable_roles.find(
+					(role) => role.id === draft.baseRoleId && !role.is_builtin,
+				)
+			: undefined;
+	const savedBasePermissions = assignable.get(data.base_role.id)?.permissions;
+	const baseChangeNotice =
+		newCustomBase &&
+		`${newCustomBase.name} replaces ${data.base_role.name} as ${user.name || user.email}'s base role. ` +
+			`In ${user.organization_id ? orgName(user.organization_id) : "their organization"}, ` +
+			`they'll have only ${newCustomBase.name}'s permissions (${describePermissions(newCustomBase.permissions)}) ` +
+			`instead of ${data.base_role.name}'s` +
+			(savedBasePermissions
+				? ` (${describePermissions(savedBasePermissions)}).`
+				: " permissions.");
 
 	const updateRole = (roleId: string, places: Place[]) =>
 		setDraft({
@@ -624,6 +670,14 @@ export function UserRoleAssignmentsPanel({
 							<AlertDescription>
 								A Platform Admin has unrestricted access to
 								every organization, user, and setting.
+							</AlertDescription>
+						</Alert>
+					)}
+					{baseChangeNotice && (
+						<Alert>
+							<AlertTriangle className="h-4 w-4" />
+							<AlertDescription>
+								{baseChangeNotice}
 							</AlertDescription>
 						</Alert>
 					)}

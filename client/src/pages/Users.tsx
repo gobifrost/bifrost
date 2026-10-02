@@ -533,9 +533,11 @@ export function Users() {
 			<ListPageHeader
 				title="Users"
 				description={
-					scope.type === "global"
-						? "Manage platform administrators and organization users"
-						: `Users for ${scope.orgName}`
+					scope.type !== "global"
+						? `Users for ${scope.orgName}`
+						: authorization.isPlatformAdmin
+							? "Manage platform administrators and organization users"
+							: "View and support users in the organizations you can reach"
 				}
 				actions={
 					<>

@@ -130,6 +130,7 @@ vi.mock("@/hooks/useOrganizations", () => ({
 const authz = vi.hoisted(() => ({
 	canAt: (_permission: string, _target: { kind: string; id?: string }) =>
 		true as boolean,
+	canAnywhere: (_permission: string) => true as boolean,
 }));
 vi.mock("@/services/authorization", () => ({
 	useAuthorization: () => authz,
@@ -155,6 +156,7 @@ import { Organizations } from "./Organizations";
 
 beforeEach(() => {
 	authz.canAt = () => true;
+	authz.canAnywhere = () => true;
 	mockUseOrganizations.mockClear();
 	mockCreate.mockReset();
 	mockUpdate.mockReset();
@@ -509,9 +511,13 @@ describe("Organizations", () => {
 describe("Organizations permissions", () => {
 	it("shows a viewer the list without create, edit, or disable controls", () => {
 		authz.canAt = () => false;
+		authz.canAnywhere = () => false;
 		render(<Organizations />);
 
 		expect(screen.getByText("Acme")).toBeInTheDocument();
+		expect(
+			screen.getByText("Organizations you can view"),
+		).toBeInTheDocument();
 		expect(
 			screen.queryByRole("button", { name: /new organization/i }),
 		).not.toBeInTheDocument();
