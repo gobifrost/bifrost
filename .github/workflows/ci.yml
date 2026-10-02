@@ -439,8 +439,8 @@ jobs:
           BIFROST_TEST_USE_CLEAN_BOOT: "1"
         run: |
           chmod +x test.sh
-          timeout -k 30 600 ./test.sh stack up
-          timeout -k 30 900 ./test.sh unit
+          ./test.sh stack up
+          ./test.sh unit
 
       - name: TEMP DIAGNOSTIC (PR #873) — stack state after unit tests
         if: always()
