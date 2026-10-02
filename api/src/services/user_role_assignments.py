@@ -80,6 +80,9 @@ BOUNDARY_REACH_MESSAGE = (
     "You can only make a role apply at organizations where you can assign roles"
 )
 ADMIN_ROLE_MESSAGE = "Only a Platform Admin can grant or remove the Platform Admin role"
+OPERATOR_HOLDER_MESSAGE = (
+    "Platform Operator can only be given to people in the provider organization"
+)
 
 
 class RoleAssignmentError(Exception):
@@ -183,6 +186,18 @@ def check_role_change(caller: Caller, role: RoleInfo, target_permissions: frozen
         raise RoleAssignmentError(403, CEILING_MESSAGE)
 
 
+def may_hold(role: RoleInfo, holder_organization_id: UUID | None) -> bool:
+    """Whether someone in ``holder_organization_id`` may be given ``role``:
+    Platform Operator is for people in the provider organization only.
+    Removing an assignment someone already holds is never refused by this."""
+    return role.id != PLATFORM_OPERATOR_ROLE_ID or holder_organization_id == PROVIDER_ORG_ID
+
+
+def check_holder(role: RoleInfo, holder_organization_id: UUID | None) -> None:
+    if not may_hold(role, holder_organization_id):
+        raise RoleAssignmentError(422, OPERATOR_HOLDER_MESSAGE)
+
+
 def _role_boundary_rule(role: RoleInfo) -> tuple[frozenset[BoundaryKind], bool]:
     """The boundary kinds ``role`` may apply at, and whether an
     ``organization`` boundary may name the provider org, whoever assigns it."""
@@ -270,11 +285,16 @@ async def _all_roles(session: AsyncSession) -> dict[UUID, RoleInfo]:
 
 
 def _assignable_roles(
-    caller: Caller, target: _Target, roles: dict[UUID, RoleInfo]
+    caller: Caller,
+    target: _Target,
+    roles: dict[UUID, RoleInfo],
+    held_role_ids: frozenset[UUID],
 ) -> list[AssignableRole]:
-    """Roles ``caller`` may grant to ``target``: the same rules
-    ``replace_role_assignments`` applies, so the UI never re-implements
-    them. Secrets Reader is never listed (not assignable yet)."""
+    """Roles ``caller`` may grant to ``target``, or remove from them: the
+    same rules ``replace_role_assignments`` applies, so the UI never
+    re-implements them. A role ``target`` holds (``held_role_ids``) but can
+    no longer be given stays listed with ``can_be_additional`` false, so it
+    can be removed. Secrets Reader is never listed (not assignable yet)."""
     org = org_target(target.user.organization_id)
     if not allows_operation(caller, PUT_OPERATION, org):
         return []
@@ -294,8 +314,12 @@ def _assignable_roles(
         can_be_base = may_change_base and role.id != PLATFORM_OPERATOR_ROLE_ID
         if role.id == PLATFORM_ADMIN_ROLE_ID:
             can_be_base = can_be_base and target.user.organization_id in (None, PROVIDER_ORG_ID)
-        can_be_additional = role.id not in BASE_ROLE_IDS
-        if not (can_be_base or can_be_additional):
+        can_be_additional = role.id not in BASE_ROLE_IDS and may_hold(
+            role, target.user.organization_id
+        )
+        # A role the user already holds stays listed (the caller may remove
+        # it) even when it can no longer be given to them.
+        if not (can_be_base or can_be_additional or role.id in held_role_ids):
             continue
         kinds, provider_allowed = boundary_placement(caller, role)
         out.append(
@@ -374,7 +398,7 @@ async def _response(
         ),
         additional=additional,
         is_protected=target.is_privileged,
-        assignable_roles=_assignable_roles(caller, target, roles),
+        assignable_roles=_assignable_roles(caller, target, roles, frozenset(assignments)),
     )
 
 
@@ -465,6 +489,7 @@ async def replace_role_assignments(
     for role_id in added | removed | rebounded:
         check_role_change(caller, roles[role_id], target.held)
     for role_id in added | rebounded:
+        check_holder(roles[role_id], user.organization_id)
         check_boundaries(caller, reach, roles[role_id], requested[role_id])
     await _require_organizations_exist(
         session,

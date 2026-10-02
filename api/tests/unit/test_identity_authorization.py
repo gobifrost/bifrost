@@ -380,6 +380,7 @@ class TestRoleAssignments:
 
         org = await _org(db_session)
         user = await _user(db_session, org.id)
+        provider_user = await _user(db_session, PROVIDER_ORG_ID)
         plain = await _role(db_session)
 
         as_admin = {
@@ -388,7 +389,12 @@ class TestRoleAssignments:
                 await get_role_assignments(db_session, admin_caller(), user_id=user.id)
             ).assignable_roles
         }
-        operator = as_admin[PLATFORM_OPERATOR_ROLE_ID]
+        operator = {
+            r.id: r
+            for r in (
+                await get_role_assignments(db_session, admin_caller(), user_id=provider_user.id)
+            ).assignable_roles
+        }[PLATFORM_OPERATOR_ROLE_ID]
         assert operator.boundary_kinds == ["organization", "managed_organizations"]
         assert operator.provider_organization_allowed is False
         assert operator.description
@@ -427,6 +433,49 @@ class TestRoleAssignments:
         with pytest.raises(RoleAssignmentError) as exc_info:
             await self._put(db_session, admin_caller(), user, base=PLATFORM_OPERATOR_ROLE_ID)
         assert exc_info.value.status_code == 422
+
+    async def test_operator_is_only_for_provider_org_people(self, db_session) -> None:
+        from src.services.user_role_assignments import (
+            OPERATOR_HOLDER_MESSAGE,
+            RoleAssignmentError,
+            get_role_assignments,
+        )
+
+        customer = await _user(db_session, (await _org(db_session)).id)
+        view = await get_role_assignments(db_session, admin_caller(), user_id=customer.id)
+        assert PLATFORM_OPERATOR_ROLE_ID not in {r.id for r in view.assignable_roles}
+
+        with pytest.raises(RoleAssignmentError) as exc_info:
+            await self._put(
+                db_session,
+                admin_caller(),
+                customer,
+                additional=[
+                    {"role_id": PLATFORM_OPERATOR_ROLE_ID, "boundaries": [{"kind": "managed_organizations"}]}
+                ],
+            )
+        assert exc_info.value.status_code == 422
+        assert exc_info.value.detail == OPERATOR_HOLDER_MESSAGE
+
+    async def test_an_operator_moved_out_of_the_provider_org_can_still_lose_it(self, db_session) -> None:
+        from src.services.user_role_assignments import get_role_assignments
+
+        user = await _user(db_session, PROVIDER_ORG_ID)
+        await self._put(
+            db_session,
+            admin_caller(),
+            user,
+            additional=[{"role_id": PLATFORM_OPERATOR_ROLE_ID, "boundaries": [{"kind": "managed_organizations"}]}],
+        )
+        user.organization_id = (await _org(db_session)).id
+        await db_session.flush()
+
+        view = await get_role_assignments(db_session, admin_caller(), user_id=user.id)
+        listed = {r.id: r for r in view.assignable_roles}[PLATFORM_OPERATOR_ROLE_ID]
+        assert listed.can_be_additional is False
+
+        response = await self._put(db_session, admin_caller(), user, additional=[])
+        assert response.additional == []
 
     async def test_secrets_reader_is_not_assignable_yet(self, db_session) -> None:
         from src.services.user_role_assignments import RoleAssignmentError

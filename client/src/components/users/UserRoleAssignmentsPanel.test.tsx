@@ -383,6 +383,53 @@ describe("UserRoleAssignmentsPanel", () => {
 		expect(options).toEqual(["Fabrikam"]);
 	});
 
+	it("lets an admin remove an Operator role the user can no longer be given", async () => {
+		state.assignments = {
+			...adminView(),
+			additional: [
+				{
+					role_id: OPERATOR_ROLE,
+					name: "Platform Operator",
+					is_builtin: true,
+					permissions: ["users.read"],
+					boundaries: [
+						{
+							kind: "managed_organizations",
+							organization_id: null,
+						},
+					],
+				},
+			],
+			assignable_roles: adminView().assignable_roles.map((role) =>
+				role.id === OPERATOR_ROLE
+					? { ...role, can_be_additional: false }
+					: role,
+			),
+		};
+		const { user } = render(makeUser({ organization_id: "org-a" }));
+
+		expect(
+			screen.getByText(/can't be given this role any more/),
+		).toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", {
+				name: "Add where Platform Operator applies",
+			}),
+		).not.toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Add role" }));
+		expect(
+			screen.queryByRole("option", { name: /Platform Operator/ }),
+		).not.toBeInTheDocument();
+		await user.keyboard("{Escape}");
+
+		await user.click(
+			screen.getByRole("button", { name: "Remove Platform Operator" }),
+		);
+		await user.click(screen.getByRole("button", { name: "Save roles" }));
+		await waitFor(() => expect(state.mutateAsync).toHaveBeenCalled());
+		expect(state.mutateAsync.mock.calls[0][0].body.additional).toEqual([]);
+	});
+
 	it("is read-only without permission to assign roles", () => {
 		state.summary = summary(false, [
 			{

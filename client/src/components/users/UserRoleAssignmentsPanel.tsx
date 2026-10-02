@@ -718,8 +718,13 @@ export function UserRoleAssignmentsPanel({
 								const info = roleInfo.get(role.roleId);
 								const name = info?.name ?? "Unknown role";
 								const grantable = assignable.get(role.roleId);
+								// Listed but not grantable: the user holds a role
+								// they could no longer be given (e.g. Platform
+								// Operator outside the provider org). It can only
+								// be removed.
+								const removable = canEdit && !!grantable;
 								const editable =
-									canEdit && !!grantable?.can_be_additional;
+									removable && !!grantable?.can_be_additional;
 								return (
 									<li
 										key={role.roleId}
@@ -741,7 +746,7 @@ export function UserRoleAssignmentsPanel({
 													</p>
 												)}
 											</div>
-											{editable && (
+											{removable && (
 												<Button
 													type="button"
 													variant="ghost"
@@ -855,8 +860,9 @@ export function UserRoleAssignmentsPanel({
 										)}
 										{canEdit && !editable && (
 											<p className="mt-2 text-xs text-muted-foreground">
-												You can't change this role.
-												Saving keeps it as it is.
+												{removable
+													? "This person can't be given this role any more. You can remove it, but not change where it applies."
+													: "You can't change this role. Saving keeps it as it is."}
 											</p>
 										)}
 									</li>
