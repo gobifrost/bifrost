@@ -18,6 +18,10 @@ from src.jobs.platform.application_publish import (
     APPLICATION_PUBLISH_DEFINITION,
     ApplicationPublishPayload,
 )
+from src.jobs.platform.solution_export import (
+    SOLUTION_EXPORT_DEFINITION,
+    SolutionExportPayload,
+)
 from src.jobs.platform.base import (
     PlatformJobDefinition,
     PlatformJobFailure,
@@ -77,6 +81,37 @@ async def test_enqueue_routes_build_class_jobs_to_configured_backend(
         resource_type="application",
         resource_id=str(app_id),
         title="Deploying App",
+        action_url=None,
+    )
+
+    assert reused is False
+    assert job.execution_backend == "kubernetes"
+
+
+@pytest.mark.asyncio
+async def test_enqueue_routes_full_solution_exports_to_isolated_build_backend(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        service,
+        "get_settings",
+        lambda: SimpleNamespace(platform_build_backend="kubernetes"),
+    )
+    export_id = uuid4()
+
+    job, reused = await service.enqueue_platform_job(
+        db_session,
+        SOLUTION_EXPORT_DEFINITION,
+        SolutionExportPayload(export_job_id=export_id),
+        dedupe_key=str(export_id),
+        organization_id=None,
+        requested_by_user_id=uuid4(),
+        requested_by_email="dev@example.com",
+        requested_by_name="Dev",
+        resource_type="solution_export",
+        resource_id=str(export_id),
+        title="Exporting solution",
         action_url=None,
     )
 

@@ -52,6 +52,7 @@ async def test_execution_defaults_enable_measured_jobs(
     svc = kube.KubernetesExecutionService(db_session)
     assert await svc.enabled_job_types() == kube.DEFAULT_REMOTE_JOB_TYPES
     assert await svc.is_remote_enabled("application.deploy") is True
+    assert await svc.is_remote_enabled("solution.export") is True
     assert await svc.is_remote_enabled("application.publish") is False
 
 
@@ -97,11 +98,19 @@ async def test_execution_list_reports_both_gates(
     settings = await svc.list_job_types(_settings())
 
     by_type = {item.job_type: item for item in settings.job_types}
-    assert set(by_type) == {"application.deploy", "application.sdk_update"}
+    assert set(by_type) == {
+        "application.deploy",
+        "application.sdk_update",
+        "solution.export",
+    }
     assert by_type["application.deploy"].enabled is True
     assert by_type["application.deploy"].default_enabled is True
     assert by_type["application.deploy"].allowed_by_deployment is True
     assert by_type["application.deploy"].title == "App deploys"
+    assert by_type["solution.export"].enabled is True
+    assert by_type["solution.export"].default_enabled is True
+    assert by_type["solution.export"].allowed_by_deployment is False
+    assert by_type["solution.export"].title == "Solution backup exports"
 
 
 @pytest.mark.asyncio

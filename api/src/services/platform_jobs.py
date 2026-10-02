@@ -43,7 +43,7 @@ TERMINAL_PLATFORM_JOB_STATUSES = ("succeeded", "failed", "cancelled", "requires_
 #: behave like production. (The product opt-in default lives separately in
 #: kubernetes_execution.DEFAULT_REMOTE_JOB_TYPES; both are pinned by tests.)
 DEFAULT_KUBERNETES_JOB_TYPES = frozenset(
-    {"application.deploy", "application.sdk_update"}
+    {"application.deploy", "application.sdk_update", "solution.export"}
 )
 
 
