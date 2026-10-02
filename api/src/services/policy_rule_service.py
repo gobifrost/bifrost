@@ -1,7 +1,6 @@
 """PolicyRuleService — CRUD, body validation, delete guard, built-ins."""
 from __future__ import annotations
 
-from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
@@ -73,7 +72,7 @@ class PolicyRuleService:
                 self.db.add(PolicyRule(organization_id=None, is_builtin=True, **b))
         await self.db.flush()
 
-    async def create(self, data: PolicyRuleCreate, *, actor: Any) -> PolicyRule:
+    async def create(self, data: PolicyRuleCreate) -> PolicyRule:
         row = PolicyRule(
             organization_id=data.organization_id,
             name=data.name,
@@ -89,7 +88,6 @@ class PolicyRuleService:
             resource_type="policy_rule",
             resource_id=row.id,
             details={"name": row.name, "domain": row.domain},
-            actor_override=actor,
         )
         return row
 
@@ -122,7 +120,6 @@ class PolicyRuleService:
         data: PolicyRuleUpdate,
         *,
         org_id: UUID | None,
-        actor: Any,
     ) -> PolicyRule:
         row = await self._get(name, domain, org_id)
         assert_not_solution_managed(row)
@@ -147,11 +144,10 @@ class PolicyRuleService:
             resource_type="policy_rule",
             resource_id=row.id,
             details={"name": row.name, "domain": row.domain, "renamed_to": renamed, "usages": usages.total},
-            actor_override=actor,
         )
         return row
 
-    async def delete(self, name: str, domain: str, *, org_id: UUID | None, actor: Any) -> None:
+    async def delete(self, name: str, domain: str, *, org_id: UUID | None) -> None:
         row = await self._get(name, domain, org_id)
         assert_not_solution_managed(row)
         if row.is_builtin:
@@ -169,7 +165,6 @@ class PolicyRuleService:
             resource_type="policy_rule",
             resource_id=row.id,
             details={"name": row.name, "domain": row.domain},
-            actor_override=actor,
         )
 
     async def usages(self, name: str, domain: str, *, org_id: UUID | None) -> PolicyRuleUsages:
