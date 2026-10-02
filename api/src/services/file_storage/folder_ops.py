@@ -65,12 +65,11 @@ class FolderOperationsService:
         updated_by: str = "system",
     ) -> None:
         """Create a folder by writing a .gitkeep placeholder in S3."""
-        from src.services.repo_storage import RepoStorage
+        from src.services.file_index_service import FileIndexService
 
         clean_path = path.strip("/")
         gitkeep_path = f"{clean_path}/.gitkeep"
-        repo = RepoStorage()
-        await repo.write(gitkeep_path, b"")
+        await FileIndexService(self.db).write(gitkeep_path, b"", updated_by=updated_by)
 
     async def list_files(
         self,

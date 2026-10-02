@@ -1506,8 +1506,11 @@ class GitHubSyncService:
                     except Exception as e:
                         logger.warning(f"Failed to discard {path}: {e}")
 
-                # S3 sync up so other containers see the reverted files
+                # S3 sync up so other containers see the reverted files, and
+                # keep source search in step with what storage now holds
                 await self.repo_manager.sync_up(work_dir)
+                await self._update_file_index(work_dir)
+                await self.db.commit()
 
                 # Refresh Redis module cache so editor + workers see reverted .py content
                 from src.core.module_cache import refresh_modules_from_directory
@@ -1831,18 +1834,21 @@ class GitHubSyncService:
             raise SyncError(f"Failed to clone {self.repo_url}: {e}") from e
 
     async def _update_file_index(self, work_dir: Path) -> None:
-        """Update file_index from all files in the working tree, remove stale entries.
+        """Update the source search index from the working tree, remove stale rows.
 
-        Optimized: prefetches existing (path, content_hash) pairs in one query,
-        skips files whose hash hasn't changed, and batch-upserts the rest in
-        chunks of 100.
+        Prefetches existing (path, content_hash) pairs in one query, skips files
+        whose hash hasn't changed, and batch-upserts the rest through
+        FileIndexService under the shared index policy.
         """
-        from sqlalchemy import delete, text
-        from sqlalchemy.dialects.postgresql import insert
-
         from src.models.orm.file_index import FileIndex
-        from src.services.file_index_service import MAX_INDEXABLE_TEXT_BYTES, _is_text_file
+        from src.services.file_index_service import (
+            MAX_INDEXABLE_TEXT_BYTES,
+            FileIndexService,
+            indexable_text,
+            is_tracked_path,
+        )
 
+        index = FileIndexService(self.db)
         files = iter_tree_metadata(work_dir)
         repo_paths: set[str] = set()
 
@@ -1852,9 +1858,9 @@ class GitHubSyncService:
         )
         existing_hashes = {row[0]: row[1] for row in existing_result.all()}
 
-        # Flush changed text rows as they are discovered.  A row's content must
-        # be materialized for the database write, but retaining every changed
-        # text file until traversal completes can otherwise exhaust a worker.
+        # Flush changed rows as they are discovered. A row's content must be
+        # materialized for the database write, but retaining every changed text
+        # file until traversal completes can otherwise exhaust a worker.
         pending_upserts: list[dict] = []
         pending_bytes = 0
         upserted_count = 0
@@ -1863,51 +1869,36 @@ class GitHubSyncService:
             nonlocal pending_bytes, upserted_count
             if not pending_upserts:
                 return
-            stmt = insert(FileIndex).values(pending_upserts).on_conflict_do_update(
-                index_elements=[FileIndex.path],
-                set_={
-                    "content": insert(FileIndex).excluded.content,
-                    "content_hash": insert(FileIndex).excluded.content_hash,
-                    "updated_at": text("NOW()"),
-                },
-            )
-            await self.db.execute(stmt)
+            await index.upsert_many(pending_upserts)
             upserted_count += len(pending_upserts)
             pending_upserts.clear()
             pending_bytes = 0
 
         for entry in files:
             rel_path = entry.path
+            if not is_tracked_path(rel_path):
+                continue
             repo_paths.add(rel_path)
-            if not _is_text_file(rel_path):
+            if existing_hashes.get(rel_path) == entry.sha256:
                 continue
-            if entry.size > MAX_INDEXABLE_TEXT_BYTES:
-                # Search indexing is a bounded projection. Delete a prior
-                # smaller-file entry so searches cannot return stale content,
-                # without loading the oversized repository file into memory.
-                await self.db.execute(delete(FileIndex).where(FileIndex.path == rel_path))
-                continue
-            try:
-                content_str = (work_dir / rel_path).read_text(encoding="utf-8")
-            except UnicodeDecodeError:
-                continue
-            content_hash = entry.sha256
-
-            # Skip if hash hasn't changed
-            if existing_hashes.get(rel_path) == content_hash:
-                continue
-
+            # Oversized files get a path-only row without loading them.
+            content = (
+                indexable_text((work_dir / rel_path).read_bytes())
+                if entry.size <= MAX_INDEXABLE_TEXT_BYTES
+                else None
+            )
+            row_bytes = entry.size if content is not None else 0
             if pending_upserts and (
                 len(pending_upserts) >= FILE_INDEX_UPSERT_MAX_ROWS
-                or pending_bytes + entry.size > FILE_INDEX_UPSERT_MAX_BYTES
+                or pending_bytes + row_bytes > FILE_INDEX_UPSERT_MAX_BYTES
             ):
                 await flush_pending_upserts()
             pending_upserts.append({
                 "path": rel_path,
-                "content": content_str,
-                "content_hash": content_hash,
+                "content": content,
+                "content_hash": entry.sha256,
             })
-            pending_bytes += entry.size
+            pending_bytes += row_bytes
             if (
                 len(pending_upserts) >= FILE_INDEX_UPSERT_MAX_ROWS
                 or pending_bytes >= FILE_INDEX_UPSERT_MAX_BYTES
@@ -1919,12 +1910,8 @@ class GitHubSyncService:
         if upserted_count:
             logger.info("File index: upserted %d changed files", upserted_count)
 
-        # Remove file_index entries that no longer exist in the repo
-        stale_paths = set(existing_hashes.keys()) - repo_paths
-        if stale_paths:
-            await self.db.execute(
-                delete(FileIndex).where(FileIndex.path.in_(stale_paths))
-            )
+        # Remove index rows that no longer exist in the repo
+        await index.unindex_many(sorted(set(existing_hashes) - repo_paths))
 
     # -----------------------------------------------------------------
     # Internal: preflight validation

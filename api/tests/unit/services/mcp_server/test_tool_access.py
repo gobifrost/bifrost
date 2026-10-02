@@ -578,7 +578,7 @@ class TestSystemToolMetadata:
             "search_knowledge",
             # Code editor tools (precision editing)
             "list_content",
-            "search_content",
+            "bifrost_file_search",
             "read_content_lines",
             "get_content",
             "patch_content",

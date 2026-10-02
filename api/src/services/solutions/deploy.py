@@ -806,9 +806,12 @@ class SolutionDeployer:
         BEFORE S3, so a plain S3 write would leave stale bytes cached for the
         24h TTL and removed files would still resolve. So: write-through each
         bundle file to Redis with fresh content, and delete (S3 + Redis) any
-        prior solution file absent from the new bundle (Codex P1).
+        prior solution file absent from the new bundle (Codex P1). Source search
+        index rows are written in the deployer's session; callers commit after
+        ``finalize_s3`` to make them durable.
         """
         from src.core.module_cache import invalidate_module, set_module
+        from src.services.file_index_service import FileIndexService
 
         storage = SolutionStorage(sid)
 
@@ -816,8 +819,11 @@ class SolutionDeployer:
         prior = set(await storage.list(""))
         new_rel = set(python_files.keys())
 
+        index = FileIndexService(self.db)
         for rel_path, content in python_files.items():
-            content_hash = await storage.write(rel_path, content.encode("utf-8"))
+            body = content.encode("utf-8")
+            content_hash = await storage.write(rel_path, body)
+            await index.index_solution(sid, rel_path, body, content_hash)
             storage_key = storage._key(rel_path)  # _solutions/{id}/<rel>
             # Write-through so the next execution reads the new bytes, not the
             # 24h-TTL cache. Only .py files are import-cached.
@@ -827,8 +833,10 @@ class SolutionDeployer:
         # Remove files dropped from the bundle (full replace of source).
         for rel_path in prior - new_rel:
             await storage.delete(rel_path)
+            await index.unindex_solution(sid, rel_path)
             if rel_path.endswith(".py"):
                 await invalidate_module(storage._key(rel_path))
+        await self.db.flush()
 
     # ── 2. Entity upserts (stamp solution_id + inherited scope) ──────────────
     async def _upsert_workflows(

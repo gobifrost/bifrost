@@ -47,5 +47,8 @@ SOLUTION_EXPORT_DEFINITION = PlatformJobDefinition(
         max_attempts=2,
         max_concurrency=1,
         min_memory_headroom_mb=512,
+        execution_class="build",
     ),
+    display_name="Solution backup exports",
+    description="Builds encrypted full-backup archives in an isolated job pod.",
 )

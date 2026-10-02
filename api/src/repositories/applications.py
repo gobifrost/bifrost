@@ -480,6 +480,7 @@ class ApplicationRepository(OrgScopedRepository[Application]):
             application.repo_prefix,
             "preview",
             dependencies=application.dependencies or {},
+            db=self.session,
         )
         if not bundle_result.success:
             first_err = (bundle_result.errors or [None])[0]

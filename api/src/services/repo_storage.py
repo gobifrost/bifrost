@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from aiobotocore.session import get_session
+from botocore.exceptions import ClientError
 
 from src.config import Settings, get_settings
 
@@ -28,6 +29,7 @@ class S3FileMetadata:
     """Metadata for a file stored in S3."""
     etag: str
     last_modified: datetime
+    size: int
 
 
 _shared_session = None
@@ -117,7 +119,9 @@ class RepoStorage:
                 # S3 ETags are quoted — strip quotes for clean comparison
                 etag = obj["ETag"].strip('"')
                 last_modified = obj["LastModified"]
-                result[rel_path] = S3FileMetadata(etag=etag, last_modified=last_modified)
+                result[rel_path] = S3FileMetadata(
+                    etag=etag, last_modified=last_modified, size=obj["Size"]
+                )
 
             if not response.get("IsTruncated"):
                 break
@@ -227,6 +231,21 @@ class RepoStorage:
                 return True
         except Exception:
             return False
+
+    async def head(self, path: str) -> S3FileMetadata | None:
+        """Return one object's metadata, or None when it does not exist."""
+        async with self._get_client() as client:
+            try:
+                response = await client.head_object(Bucket=self._bucket, Key=self._repo_key(path))
+            except ClientError as exc:
+                if exc.response.get("Error", {}).get("Code") in ("404", "NoSuchKey", "NotFound"):
+                    return None
+                raise
+            return S3FileMetadata(
+                etag=response["ETag"].strip('"'),
+                last_modified=response["LastModified"],
+                size=response["ContentLength"],
+            )
 
     async def content_hash(self, path: str) -> str | None:
         """Return a bounded-memory SHA-256 fingerprint, or None when absent."""

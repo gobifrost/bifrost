@@ -109,7 +109,7 @@ Event publishing operations (async).
 
 **`files.read_bytes(path: str, location: str = 'workspace', mode: Mode = 'cloud', scope: str | None = None) -> bytes`**
 
-**`files.search(query: str, case_sensitive: bool = False, is_regex: bool = False, include_pattern: str = '**/*', max_results: int = 1000) -> dict`**
+**`files.search(query: str, is_regex: bool = False, case_sensitive: bool = False, include_pattern: str | None = None, source: str = 'all', solution_id: str | None = None, output_mode: str = 'content', context_lines: int = 1, limit: int = 25, cursor: str | None = None) -> dict`**
 
 **`files.stat(path: str, location: str = 'workspace', mode: Mode = 'cloud', scope: str | None = None) -> dict`**
 

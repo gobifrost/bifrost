@@ -240,11 +240,11 @@ def test_files_search_finds_written_content(engine_creds) -> None:
         assert result.returncode == 0, result.stderr
         body = json.loads(result.stdout)
 
-        assert body["total_matches"] >= 1, (
+        assert body["returned"] >= 1, (
             "search did not find content written via CLI; "
             "FileIndex may be updated asynchronously"
         )
         leaf = path.split("/")[-1]
-        assert any(r["file_path"].endswith(leaf) for r in body["results"])
+        assert any(m["file_path"].endswith(leaf) for m in body["matches"])
     finally:
         _run_bifrost(["files", "delete", path])

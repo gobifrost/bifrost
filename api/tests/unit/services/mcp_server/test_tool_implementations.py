@@ -179,7 +179,7 @@ class TestSystemToolsRegistry:
         tools = get_system_tools()
         code_editor_tool_ids = [
             "list_content",
-            "search_content",
+            "bifrost_file_search",
             "read_content_lines",
             "get_content",
             "patch_content",

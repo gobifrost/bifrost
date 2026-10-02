@@ -1114,7 +1114,7 @@ Commands:
   list      List files in a directory (default: location root).
   policies  Manage file access policies.
   read      Read a workspace file and write its contents to stdout.
-  search    Search workspace file contents.
+  search    Search workspace and Solution source like grep, one page at a...
   stat      Show existence, version, size, and last-edit metadata without...
   write     Write to a workspace file.
 ```
@@ -1277,17 +1277,32 @@ Options:
 ```
 Usage: files search [OPTIONS] QUERY
 
-  Search workspace file contents.
+  Search workspace and Solution source like grep, one page at a time.
+
+  Examples:
+    bifrost files search get_client --include '*.py'
+    bifrost files search 'def .*_sync' --regex --files
+    bifrost files search halo --solution covi-psa
 
 Options:
-  --regex                      Treat query as a regex.
+  --regex                         Treat query as a Python regex.
   --case-sensitive
-  --include TEXT               Glob restricting which files to search
-                               (default: "**/*").
-  --max-results INTEGER RANGE  Maximum results to return (default: 1000, max:
-                               10000).  [1<=x<=10000]
-  --json                       Emit JSON instead of human-readable output.
-  --help                       Show this message and exit.
+  --include TEXT                  ripgrep-style glob over paths, e.g. '*.py',
+                                  'workflows/**', '*.{ts,tsx}'.
+  --source [all|workspace|solutions]
+                                  Search workspace source, Solution source, or
+                                  both.  [default: all]
+  --solution TEXT                 Restrict to one Solution install's deployed
+                                  source (slug or UUID). Unlike other files
+                                  verbs, this targets Solution source, not
+                                  runtime files.
+  --files                         List matching files instead of lines.
+  -C, --context INTEGER RANGE     [default: 1; 0<=x<=5]
+  --limit INTEGER RANGE           Results per page.  [default: 25; 1<=x<=200]
+  --cursor TEXT                   next_cursor from the previous page (printed
+                                  under 'More results').
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
 ```
 
 ### `files stat`

@@ -178,7 +178,6 @@ def test_workspace_bundle_job_reuses_the_shared_workspace_lock() -> None:
 @pytest.mark.asyncio
 async def test_promoted_python_refreshes_module_cache_and_oversized_text_removes_stale_index(tmp_path, monkeypatch) -> None:
     """The file phase must never leave search or module reads on old content."""
-    from src.services import file_index_service as index_module
     from src.services.file_index_service import MAX_INDEXABLE_TEXT_BYTES, FileIndexService
 
     class Storage:
@@ -203,7 +202,7 @@ async def test_promoted_python_refreshes_module_cache_and_oversized_text_removes
 
     cached = AsyncMock()
     invalidated = AsyncMock()
-    monkeypatch.setattr(index_module, "S3StorageClient", lambda _settings: Storage())
+    monkeypatch.setattr("src.services.file_storage.s3_client.S3StorageClient", lambda _settings: Storage())
     monkeypatch.setattr("src.core.module_cache.set_module", cached)
     monkeypatch.setattr("src.core.module_cache.invalidate_module", invalidated)
     db = type("Db", (), {"execute": AsyncMock()})()

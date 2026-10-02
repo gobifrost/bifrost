@@ -4,9 +4,11 @@ import { EditorSearchForm } from "./EditorSearchForm";
 import { SearchResultItem } from "./SearchResultItem";
 import {
 	searchService,
+	type SearchMatch,
 	type SearchResponse,
-	type SearchResult,
 } from "@/services/searchService";
+
+const PAGE_SIZE = 100;
 import { fileService } from "@/services/fileService";
 import { useEditorStore } from "@/stores/editorStore";
 
@@ -26,6 +28,7 @@ export function SearchPanel({
 	const [searchResults, setSearchResults] = useState<SearchResponse | null>(
 		null,
 	);
+	const [matches, setMatches] = useState<SearchMatch[]>([]);
 
 	const requestRef = useRef(0);
 	const [error, setError] = useState<string | null>(null);
@@ -37,39 +40,65 @@ export function SearchPanel({
 
 	const openingRef = useRef(false);
 	const [openingPath, setOpeningPath] = useState<string | null>(null);
-	const [openError, setOpenError] = useState<SearchResult | null>(null);
+	const [openError, setOpenError] = useState<SearchMatch | null>(null);
 
-	const handleSearch = useCallback(async () => {
-		if (!query.trim() || isSearching) return;
-		const request = ++requestRef.current;
-		const options = { query: query.trim(), caseSensitive, useRegex };
-		setIsSearching(true);
-		setError(null);
-		try {
-			const response = await searchService.searchFiles({
-				query: options.query,
-				case_sensitive: caseSensitive,
-				is_regex: useRegex,
-				include_pattern: "**/*",
-				max_results: 1000,
-			});
-			if (request !== requestRef.current) return;
-			setSearchResults(response);
-			setSubmitted(options);
-		} catch (err) {
-			if (request === requestRef.current)
-				setError(
-					err instanceof Error
-						? err.message
-						: "Couldn’t search files. Try again.",
+	const runSearch = useCallback(
+		async (
+			options: {
+				query: string;
+				caseSensitive: boolean;
+				useRegex: boolean;
+			},
+			cursor: string | null,
+		) => {
+			const request = ++requestRef.current;
+			setIsSearching(true);
+			setError(null);
+			try {
+				const response = await searchService.searchFiles({
+					query: options.query,
+					case_sensitive: options.caseSensitive,
+					is_regex: options.useRegex,
+					source: "all",
+					output_mode: "content",
+					context_lines: 0,
+					limit: PAGE_SIZE,
+					...(cursor ? { cursor } : {}),
+				});
+				if (request !== requestRef.current) return;
+				setSearchResults(response);
+				setMatches((previous) =>
+					cursor
+						? [...previous, ...response.matches]
+						: response.matches,
 				);
-		} finally {
-			if (request === requestRef.current) setIsSearching(false);
-		}
-	}, [query, caseSensitive, useRegex, isSearching]);
+				setSubmitted(options);
+			} catch (err) {
+				if (request === requestRef.current)
+					setError(
+						err instanceof Error
+							? err.message
+							: "Couldn’t search files. Try again.",
+					);
+			} finally {
+				if (request === requestRef.current) setIsSearching(false);
+			}
+		},
+		[],
+	);
+
+	const handleSearch = useCallback(() => {
+		if (!query.trim() || isSearching) return;
+		void runSearch({ query: query.trim(), caseSensitive, useRegex }, null);
+	}, [query, caseSensitive, useRegex, isSearching, runSearch]);
+
+	const handleLoadMore = useCallback(() => {
+		if (isSearching || !searchResults?.next_cursor) return;
+		void runSearch(submitted, searchResults.next_cursor);
+	}, [isSearching, searchResults, submitted, runSearch]);
 
 	const handleResultClick = useCallback(
-		async (result: SearchResult) => {
+		async (result: SearchMatch) => {
 			if (openingRef.current) return;
 			openingRef.current = true;
 			setOpeningPath(result.file_path);
@@ -128,6 +157,7 @@ export function SearchPanel({
 		requestRef.current++;
 		setQuery("");
 		setSearchResults(null);
+		setMatches([]);
 		setError(null);
 		setOpenError(null);
 		setIsSearching(false);
@@ -203,15 +233,13 @@ export function SearchPanel({
 						role="status"
 						className="border-b p-3 text-xs text-muted-foreground [overflow-wrap:anywhere]"
 					>
-						{searchResults.total_matches} matches for “
-						{submitted.query}” · {searchResults.files_searched}{" "}
-						files searched
-						{searchResults.truncated &&
-							". Results limited; narrow your search to see more."}
+						{matches.length}
+						{searchResults.has_more_matches ? "+" : ""} matches for
+						“{submitted.query}”
 					</p>
-					{searchResults.results.length ? (
+					{matches.length ? (
 						<ul className="divide-y">
-							{searchResults.results.map((result, index) => (
+							{matches.map((result, index) => (
 								<li
 									key={`${result.file_path}-${result.line}-${index}`}
 								>
@@ -231,6 +259,18 @@ export function SearchPanel({
 							No matches found. Try different text or search
 							options.
 						</p>
+					)}
+					{searchResults.has_more_matches && (
+						<div className="p-3">
+							<Button
+								variant="outline"
+								className="min-h-11 w-full"
+								onClick={handleLoadMore}
+								disabled={isSearching}
+							>
+								Load more results
+							</Button>
+						</div>
 					)}
 				</section>
 			) : (

@@ -13,8 +13,9 @@ Verbs:
 * ``bifrost files delete <path> [--location LOC]`` -> SDK ``files.delete``
 * ``bifrost files exists <path> [--location LOC]`` -> SDK ``files.exists``;
   exits 0 if exists, 1 if not
-* ``bifrost files search <query> [--regex] [--case-sensitive]
-  [--include GLOB] [--max-results N]`` -> SDK ``files.search``
+* ``bifrost files search <query> [--regex] [--case-sensitive] [--include GLOB]
+  [--source all|workspace|solutions] [--solution SLUG|ID] [--files] [-C N]
+  [--limit N] [--cursor TOKEN]`` -> SDK ``files.search`` (one page per call)
 
 The ``--solution`` flag targets the install scope for a solution install (by
 slug or UUID).  It passes ``?solution=<install_id>`` to the API so the server
@@ -26,6 +27,7 @@ for the laptop CLI where the user controls cwd directly.
 
 from __future__ import annotations
 
+import shlex
 import sys
 from pathlib import Path
 from urllib.parse import quote
@@ -399,23 +401,75 @@ async def exists_cmd(
         sys.exit(1)
 
 
+def _search_header(item: dict) -> str:
+    source = item.get("source") or {}
+    if source.get("kind") == "solution":
+        return f"{source.get('solution_slug')}:{item['file_path']}  (read-only Solution source)"
+    return item["file_path"]
+
+
+def _matches(count: int) -> str:
+    return f"{count} match{'' if count == 1 else 'es'}"
+
+
+def _next_page_command(query: str, flags: list[str], cursor: str) -> str:
+    return shlex.join(["bifrost", "files", "search", query, *flags, "--cursor", cursor])
+
+
+def _render_search(page: dict, query: str, flags: list[str]) -> None:
+    if page["output_mode"] == "files":
+        for hit in page["files"]:
+            click.echo(
+                f"{_search_header(hit)}  ({_matches(hit['match_count'])}, first at line {hit['first_line']})"
+            )
+    else:
+        current = None
+        for m in page["matches"]:
+            key = ((m.get("source") or {}).get("solution_slug"), m["file_path"])
+            if key != current:
+                click.echo(_search_header(m))
+                current = key
+            before = m.get("context_before") or []
+            for offset, text in enumerate(before):
+                click.echo(f"  {m['line'] - len(before) + offset}- {text}")
+            click.echo(f"  {m['line']}: {m['text']}")
+            for offset, text in enumerate(m.get("context_after") or [], start=1):
+                click.echo(f"  {m['line'] + offset}- {text}")
+    if page["has_more_matches"] and page.get("next_cursor"):
+        click.echo(f"More results: {_next_page_command(query, flags, page['next_cursor'])}")
+    else:
+        count = page["returned"]
+        click.echo(f"{count} result{'' if count == 1 else 's'} — complete." if count else page["guidance"])
+
+
 @files_group.command("search")
 @click.argument("query")
-@click.option("--regex", "is_regex", is_flag=True, default=False, help="Treat query as a regex.")
+@click.option("--regex", "is_regex", is_flag=True, default=False, help="Treat query as a Python regex.")
 @click.option("--case-sensitive", "case_sensitive", is_flag=True, default=False)
 @click.option(
     "--include",
     "include_pattern",
-    default="**/*",
-    help='Glob restricting which files to search (default: "**/*").',
+    default=None,
+    help="ripgrep-style glob over paths, e.g. '*.py', 'workflows/**', '*.{ts,tsx}'.",
 )
 @click.option(
-    "--max-results",
-    "max_results",
-    type=click.IntRange(1, 10000),
-    default=1000,
-    help="Maximum results to return (default: 1000, max: 10000).",
+    "--source",
+    type=click.Choice(["all", "workspace", "solutions"]),
+    default="all",
+    show_default=True,
+    help="Search workspace source, Solution source, or both.",
 )
+@click.option(
+    "--solution",
+    "solution_ref",
+    default=None,
+    help="Restrict to one Solution install's deployed source (slug or UUID). "
+    "Unlike other files verbs, this targets Solution source, not runtime files.",
+)
+@click.option("--files", "files_only", is_flag=True, default=False, help="List matching files instead of lines.")
+@click.option("-C", "--context", "context_lines", type=click.IntRange(0, 5), default=1, show_default=True)
+@click.option("--limit", type=click.IntRange(1, 200), default=25, show_default=True, help="Results per page.")
+@click.option("--cursor", default=None, help="next_cursor from the previous page (printed under 'More results').")
 @click.pass_context
 @pass_resolver
 @run_async
@@ -424,21 +478,51 @@ async def search_cmd(
     query: str,
     is_regex: bool,
     case_sensitive: bool,
-    include_pattern: str,
-    max_results: int,
+    include_pattern: str | None,
+    source: str,
+    solution_ref: str | None,
+    files_only: bool,
+    context_lines: int,
+    limit: int,
+    cursor: str | None,
     *,
-    client: BifrostClient,  # noqa: ARG001
+    client: BifrostClient,
     resolver,  # noqa: ARG001
 ) -> None:
-    """Search workspace file contents."""
-    result = await files_sdk.search(
-        query,
-        case_sensitive=case_sensitive,
-        is_regex=is_regex,
-        include_pattern=include_pattern,
-        max_results=max_results,
+    """Search workspace and Solution source like grep, one page at a time.
+
+    \b
+    Examples:
+      bifrost files search get_client --include '*.py'
+      bifrost files search 'def .*_sync' --regex --files
+      bifrost files search halo --solution covi-psa
+    """
+    solution_id = (
+        await _resolve_solution_install_id(client, solution_ref) if solution_ref else None
     )
-    output_result(result, ctx=ctx)
+    page = await files_sdk.search(
+        query,
+        is_regex=is_regex,
+        case_sensitive=case_sensitive,
+        include_pattern=include_pattern,
+        source=source,
+        solution_id=solution_id,
+        output_mode="files" if files_only else "content",
+        context_lines=context_lines,
+        limit=limit,
+        cursor=cursor,
+    )
+    flags = [
+        *(["--regex"] if is_regex else []),
+        *(["--case-sensitive"] if case_sensitive else []),
+        *(["--include", include_pattern] if include_pattern else []),
+        *(["--source", source] if source != "all" else []),
+        *(["--solution", solution_ref] if solution_ref else []),
+        *(["--files"] if files_only else []),
+        *(["-C", str(context_lines)] if context_lines != 1 else []),
+        *(["--limit", str(limit)] if limit != 25 else []),
+    ]
+    output_result(page, ctx=ctx, human=lambda p: _render_search(p, query, flags))
 
 
 @policies_group.command("list")

@@ -20,6 +20,8 @@ bifrost files write workflows/example.py \
 
 For exact options, read `../generated/cli-reference.md`.
 
+`files search` covers workspace source and every Solution install's deployed source. Solution hits print as `slug:path  (read-only Solution source)`, so check them before you change a shared workflow they use. Results come 25 per page. When more exist, the output ends with a `More results:` command; run it unchanged. To find where something lives first, add `--files` for one line per matching file, then narrow with `--include` or `--solution`.
+
 `files write` replaces the complete text content. For an existing file:
 
 1. Run `files stat --json` and retain its opaque `version`.

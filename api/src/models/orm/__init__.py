@@ -67,7 +67,7 @@ from src.models.orm.workflow_operation_usage import WorkflowOperationUsage
 from src.models.orm.workflow_permissions import WorkflowPermissionGrant
 from src.models.orm.workflow_roles import WorkflowRole
 from src.models.orm.workflows import Workflow
-from src.models.orm.file_index import FileIndex
+from src.models.orm.file_index import FileIndex, SolutionFileIndex
 from src.models.orm.file_metadata import FileMetadata, FilePolicy
 from src.models.orm.policy_rule import PolicyRule
 from src.models.orm.services import ServiceAttempt, ServiceDefinition, ServiceLog
@@ -180,6 +180,7 @@ __all__ = [
     "WorkflowROIDaily",
     # Workspace
     "FileIndex",
+    "SolutionFileIndex",
     "FileMetadata",
     "FilePolicy",
     # Policy Rules

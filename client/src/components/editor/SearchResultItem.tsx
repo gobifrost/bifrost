@@ -1,4 +1,4 @@
-import type { SearchResult } from "@/services/searchService";
+import type { SearchMatch } from "@/services/searchService";
 
 export function SearchResultItem({
 	result,
@@ -8,7 +8,7 @@ export function SearchResultItem({
 	onClick,
 	disabled = false,
 }: {
-	result: SearchResult;
+	result: SearchMatch;
 	query: string;
 	caseSensitive: boolean;
 	useRegex: boolean;
@@ -16,7 +16,8 @@ export function SearchResultItem({
 	disabled?: boolean;
 }) {
 	// Regex results retain the complete line; don't re-execute server regexes in the browser.
-	const text = result.match_text;
+	const text = result.text;
+	const readOnly = !result.source.editable;
 	const source = caseSensitive ? text : text.toLowerCase();
 	const needle = caseSensitive ? query : query.toLowerCase();
 	const parts = [];
@@ -41,7 +42,12 @@ export function SearchResultItem({
 	return (
 		<button
 			type="button"
-			disabled={disabled}
+			disabled={disabled || readOnly}
+			title={
+				readOnly
+					? "Deploy-owned Solution source — edit it locally and run bifrost solution deploy"
+					: undefined
+			}
 			onClick={onClick}
 			className="disabled:opacity-50 min-h-11 w-full min-w-0 space-y-2 p-3 text-left transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring motion-reduce:transition-none"
 		>
@@ -50,6 +56,8 @@ export function SearchResultItem({
 			</span>
 			<span className="block text-xs text-muted-foreground">
 				Line {result.line}
+				{readOnly &&
+					` · Solution · ${result.source.solution_slug} · read-only`}
 			</span>
 			<span className="block whitespace-pre-wrap font-mono text-sm leading-6 sm:text-xs sm:leading-5 [overflow-wrap:anywhere]">
 				{parts}

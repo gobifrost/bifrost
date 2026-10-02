@@ -23,7 +23,10 @@ from bifrost.migrate_imports import (
     migrate_app,
 )
 from bifrost.platform_names import PLATFORM_EXPORT_NAMES
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from src.core.log_safety import log_safe
+from src.services.file_index_service import FileIndexService
 from src.services.repo_storage import RepoStorage
 
 logger = logging.getLogger(__name__)
@@ -32,6 +35,7 @@ logger = logging.getLogger(__name__)
 async def auto_migrate_repo_prefix(
     app_id: str,
     repo_prefix: str,
+    db: AsyncSession,
 ) -> tuple[bool, list[FileMigrationResult]]:
     """
     Read every TSX/TS file under `_repo/<repo_prefix>`, run the import
@@ -87,10 +91,14 @@ async def auto_migrate_repo_prefix(
             return False, results
 
         summary_parts: list[str] = []
+        # Index in the caller's session: the save path already holds this
+        # file's index row lock in it, so a second session would wait forever.
+        index = FileIndexService(db, repo)
         for r in changed:
             rel_path = str(r.path.relative_to(app_dir))
-            key_rel = repo_prefix + rel_path
-            await repo.write(key_rel, r.updated.encode("utf-8"))
+            await index.write(repo_prefix + rel_path, r.updated.encode("utf-8"))
+        for r in changed:
+            rel_path = str(r.path.relative_to(app_dir))
             moves: list[str] = []
             if r.moved_icons:
                 moves.append(f"{r.moved_icons}icon")

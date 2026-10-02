@@ -1,6 +1,6 @@
 /**
  * Editor Search API service
- * VS Code-style file content search
+ * Paged grep over workspace and Solution source (follow next_cursor for more)
  * Uses auto-generated types from OpenAPI spec
  */
 
@@ -9,7 +9,8 @@ import type { components } from "@/lib/v1";
 
 // Auto-generated types from OpenAPI spec
 export type SearchRequest = components["schemas"]["SearchRequest"];
-export type SearchResult = components["schemas"]["SearchResult"];
+export type SearchMatch = components["schemas"]["SearchMatch"];
+export type SearchFileHit = components["schemas"]["SearchFileHit"];
 export type SearchResponse = components["schemas"]["SearchResponse"];
 
 /**

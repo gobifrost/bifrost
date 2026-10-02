@@ -402,51 +402,71 @@ class files:
     @staticmethod
     async def search(
         query: str,
-        case_sensitive: bool = False,
+        *,
         is_regex: bool = False,
-        include_pattern: str = "**/*",
-        max_results: int = 1000,
+        case_sensitive: bool = False,
+        include_pattern: str | None = None,
+        source: str = "all",
+        solution_id: str | None = None,
+        output_mode: str = "content",
+        context_lines: int = 1,
+        limit: int = 25,
+        cursor: str | None = None,
     ) -> dict:
         """
-        Search workspace file contents.
+        Search workspace and Solution source like grep, one page at a time.
 
         Note:
             Unlike the other ``files`` methods, ``search`` has no ``scope`` parameter.
-            The server scopes results by the caller's identity; a provider-org cannot
-            cross-search another org's workspace through this endpoint.
+            It searches source, not runtime file bytes: the instance ``_repo/``
+            workspace and every Solution install's deployed source.
 
         Args:
-            query: Text or regex pattern to search for.
+            query: Literal text, or a Python ``re`` pattern when ``is_regex`` is true.
+            is_regex: Treat query as a regular expression (default: False).
             case_sensitive: Case-sensitive matching (default: False).
-            is_regex: Treat query as a regex (default: False; literal substring).
-            include_pattern: Glob restricting which files to search (default: ``**/*``).
-                The SDK does not expose the server's nullable form; callers always send
-                a pattern, defaulting to "match all files".
-            max_results: Maximum results returned (default: 1000, max: 10000).
+            include_pattern: ripgrep-style glob, e.g. ``"*.py"`` or ``"workflows/**"``.
+            source: ``"all"`` (default), ``"workspace"``, or ``"solutions"``.
+            solution_id: Restrict to one Solution install's source.
+            output_mode: ``"content"`` (matching lines) or ``"files"`` (one entry per file).
+            context_lines: Lines of context around each match (0-5, default 1).
+            limit: Results per page (1-200, default 25).
+            cursor: ``next_cursor`` from the previous page of this exact search.
 
         Returns:
-            dict with keys: query, total_matches, files_searched, results,
-            truncated, search_time_ms. ``results`` is a list of dicts with
-            keys: file_path, line, column, match_text, context_before,
-            context_after.
+            dict with keys: query, output_mode, matches, files, returned,
+            has_more_matches, response_complete, next_cursor, guidance,
+            search_time_ms. Each match has file_path, line, column, text,
+            context_before, context_after, and source (kind, solution_slug,
+            editable).
 
         Example:
             >>> from bifrost import files
-            >>> hits = await files.search("TODO", include_pattern="**/*.py")
-            >>> for r in hits["results"]:
-            ...     print(f"{r['file_path']}:{r['line']}: {r['match_text']}")
+            >>> cursor = None
+            >>> while True:
+            ...     page = await files.search("TODO", include_pattern="*.py", cursor=cursor)
+            ...     for m in page["matches"]:
+            ...         print(f"{m['file_path']}:{m['line']}: {m['text']}")
+            ...     if page["response_complete"]:
+            ...         break
+            ...     cursor = page["next_cursor"]
         """
+        body: dict = {
+            "query": query,
+            "is_regex": is_regex,
+            "case_sensitive": case_sensitive,
+            "source": source,
+            "output_mode": output_mode,
+            "context_lines": context_lines,
+            "limit": limit,
+        }
+        if include_pattern is not None:
+            body["include_pattern"] = include_pattern
+        if solution_id is not None:
+            body["solution_id"] = solution_id
+        if cursor is not None:
+            body["cursor"] = cursor
         client = get_client()
-        response = await client.engine_request(
-            "POST",
-            "/api/files/search",
-            json={
-                "query": query,
-                "case_sensitive": case_sensitive,
-                "is_regex": is_regex,
-                "include_pattern": include_pattern,
-                "max_results": max_results,
-            },
-        )
+        response = await client.engine_request("POST", "/api/files/search", json=body)
         raise_for_status_with_detail(response)
         return response.json()

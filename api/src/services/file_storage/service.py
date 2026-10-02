@@ -30,7 +30,6 @@ from .entity_resolution import EntityResolutionService
 from .deactivation import DeactivationProtectionService
 from .file_ops import FileOperationsService
 from .folder_ops import FolderOperationsService
-from .reindex import WorkspaceReindexService
 from .indexers import WorkflowIndexer
 
 logger = logging.getLogger(__name__)
@@ -115,17 +114,6 @@ class FileStorageService:
             write_file_fn=self._file_ops.write_file,
         )
 
-        self._reindex_service = WorkspaceReindexService(
-            db=db,
-            settings=self.settings,
-            s3_client=self._s3_storage,
-            entity_resolution=self._entity_resolution,
-            file_hash_fn=S3StorageClient.compute_hash,
-            content_type_fn=S3StorageClient.guess_content_type,
-            extract_metadata_fn=self._extract_metadata,
-            index_python_file_fn=self._workflow_indexer.index_python_file,
-        )
-
     # ========================================================================
     # Core File Operations (delegate to FileOperationsService)
     # ========================================================================
@@ -200,23 +188,6 @@ class FileStorageService:
         )
 
     # ========================================================================
-    # Reindexing Operations (delegate to WorkspaceReindexService)
-    # ========================================================================
-
-    async def sync_index_from_s3(self) -> int:
-        """Sync index from S3 bucket contents."""
-        return await self._reindex_service.sync_index_from_s3()
-
-    async def reindex_workspace_files(
-        self,
-        local_path: Path,
-    ) -> dict[str, int | list[str]]:
-        """Reindex workspace files from local filesystem."""
-        return await self._reindex_service.reindex_workspace_files(
-            local_path=local_path,
-        )
-
-    # ========================================================================
     # S3 Direct Operations (delegate to S3StorageClient)
     # ========================================================================
 
@@ -272,10 +243,9 @@ class FileStorageService:
         (existing behaviour for non-solution writes).
         """
         if location == "workspace":
-            await self._file_ops.record_signed_upload_metadata(
-                path,
-                updated_by=updated_by,
-            )
+            from src.services.file_index_service import FileIndexService
+
+            await FileIndexService(self.db).index_existing_object(path, updated_by=updated_by)
 
         from src.services.file_policy_service import FilePolicyService
 

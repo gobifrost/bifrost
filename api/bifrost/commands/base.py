@@ -100,16 +100,24 @@ def _json_requested(ctx: click.Context | None) -> bool:
     return bool(obj and obj.get("json_output"))
 
 
-def output_result(result: Any, *, ctx: click.Context | None = None) -> None:
+def output_result(
+    result: Any,
+    *,
+    ctx: click.Context | None = None,
+    human: Callable[[Any], None] | None = None,
+) -> None:
     """Write ``result`` to stdout.
 
-    Uses JSON output when ``--json`` is set on the context, otherwise writes
-    a compact human-readable rendering. The human rendering is deliberately
-    minimal: dicts become ``key: value`` lines, lists become one item per
-    line. Rich per-entity formatting is each command's responsibility.
+    Uses JSON output when ``--json`` is set on the context. Otherwise a
+    command's own ``human`` renderer runs when given, else a compact default
+    rendering: dicts become ``key: value`` lines, lists become one item per
+    line.
     """
     if _json_requested(ctx):
         click.echo(json.dumps(result, indent=2, sort_keys=True, default=str))
+        return
+    if human is not None:
+        human(result)
         return
     if isinstance(result, dict):
         for key in sorted(result):

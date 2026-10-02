@@ -108,6 +108,46 @@ async def test_platform_edits_after_fetch_are_never_overwritten(
     assert (head.tree / CREATED).data_stream.read() == b"created in the editor\n"
 
 
+@pytest.mark.e2e
+@pytest.mark.asyncio
+async def test_discard_restores_the_search_index_with_storage(
+    db_session: AsyncSession,
+    storage: RepoStorage,
+    bare_repo: Path,
+    work_dir: Path,
+):
+    """Discard re-uploads the working tree, so search must show the reverted text."""
+    from sqlalchemy import select
+
+    from src.models.orm.file_index import FileIndex
+    from src.services.file_index_service import FileIndexService
+    from src.services.github_sync import GitHubSyncService
+
+    service = GitHubSyncService(db=db_session, repo_url=f"file://{bare_repo}", branch="main")
+    index = FileIndexService(db_session, storage)
+    await index.write(EDITED, b"committed version\n")
+    await db_session.commit()  # platform writes commit with their request
+    assert (await service.desktop_fetch()).success
+    assert (await service.desktop_commit("baseline")).success
+    # Persist the committed tree (and .git) to storage as sync does, so the
+    # next fetch's storage sync-down keeps the baseline as HEAD.
+    async with service.repo_manager.lock() as locked_dir:
+        await service.repo_manager.sync_up(locked_dir)
+
+    await index.write(EDITED, b"edited in the platform\n")
+    await index.write(CREATED, b"untracked scratch\n")
+    await db_session.commit()
+    assert (await service.desktop_fetch()).success
+    discard = await service.desktop_discard([EDITED, CREATED])
+    assert discard.success, discard.error
+
+    assert await storage.read(EDITED) == b"committed version\n"
+    indexed = dict((await db_session.execute(
+        select(FileIndex.path, FileIndex.content).where(FileIndex.path.in_([EDITED, CREATED]))
+    )).tuples().all())
+    assert indexed == {EDITED: "committed version\n"}
+
+
 def _legacy_workspace(path: Path) -> Path:
     """A working tree stored by an earlier release, with the token in its remote."""
     repo = Repo.init(str(path))

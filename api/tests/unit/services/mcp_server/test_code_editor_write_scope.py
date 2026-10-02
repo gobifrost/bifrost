@@ -4,7 +4,7 @@
 scope bypass (platform admin or provider-org member) to touch any `_repo/`
 path — own-org ownership of the underlying Application/Workflow is no
 longer sufficient, matching REST's admin-only `_repo/` write routes.
-``list_content``, ``search_content``, ``read_content_lines``, and
+``list_content``, ``read_content_lines``, and
 ``get_content`` require the same bypass to read, matching REST's
 admin-only `_repo/` read routes (files.py's `/editor`, `/editor/content`).
 """
@@ -153,14 +153,6 @@ async def test_list_content_allowed_for_bypass_caller(monkeypatch):
     ctx = _ctx(is_platform_admin=True)
     result = await code_editor.list_content(ctx)
     assert not _is_error(result)
-
-
-@pytest.mark.asyncio
-async def test_search_content_denied_for_non_bypass(db_session, monkeypatch):
-    monkeypatch.setattr(code_editor, "get_tool_db", _fake_tool_db(db_session))
-    ctx = _ctx(org_id=uuid4())
-    result = await code_editor.search_content(ctx, pattern="foo")
-    assert _is_error(result)
 
 
 @pytest.mark.asyncio
