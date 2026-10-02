@@ -225,6 +225,46 @@ class TestRoleService:
         listed = await list_role_users(db_session, role_id=role.id, reach=EVERYTHING)
         assert listed.total == 0
 
+    async def test_lists_a_builtin_role_s_holders_with_where_it_applies(self, db_session):
+        from shared.builtin_roles import PLATFORM_OPERATOR_ROLE_ID
+        from shared.sdk_roles import list_role_users
+        from src.core.constants import PROVIDER_ORG_ID
+        from src.models.contracts.role_assignments import UserRoleAssignmentsUpdate
+        from src.services.user_role_assignments import replace_role_assignments
+
+        holder = await _seed_user(db_session)
+        holder.organization_id = PROVIDER_ORG_ID
+        customer = await _seed_org(db_session)
+        await db_session.flush()
+        await replace_role_assignments(
+            db_session,
+            admin_caller(),
+            user_id=holder.id,
+            request=UserRoleAssignmentsUpdate.model_validate(
+                {
+                    "base_role_id": holder.base_role_id,
+                    "additional": [
+                        {
+                            "role_id": PLATFORM_OPERATOR_ROLE_ID,
+                            "boundaries": [
+                                {"kind": "managed_organizations"},
+                                {"kind": "organization", "organization_id": str(customer.id)},
+                            ],
+                        }
+                    ],
+                }
+            ),
+        )
+
+        listed = await list_role_users(
+            db_session, role_id=PLATFORM_OPERATOR_ROLE_ID, reach=EVERYTHING
+        )
+        (row,) = [user for user in listed.users if user.id == holder.id]
+        assert [(b.kind, b.organization_id, b.organization_name) for b in row.boundaries] == [
+            ("managed_organizations", None, None),
+            ("organization", customer.id, customer.name),
+        ]
+
     async def test_list_users_unknown_role_is_empty_not_404(self, db_session):
         from shared.sdk_roles import list_role_users
 

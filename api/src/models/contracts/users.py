@@ -8,6 +8,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_serializer, model_validator
 
+from src.models.contracts.role_assignments import RoleBoundaryPublic
+
 if TYPE_CHECKING:
     pass
 
@@ -341,6 +343,10 @@ class RoleUserSummary(BaseModel):
     organization_id: UUID | None
     organization_name: str | None
     organization_is_provider: bool = False
+    boundaries: list[RoleBoundaryPublic] = Field(
+        default_factory=list,
+        description="Where the role applies for this user.",
+    )
 
 
 class RoleUsersResponse(BaseModel):

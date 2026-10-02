@@ -436,11 +436,47 @@ async def list_role_users(
         )
         for assigned_user, organization_name, organization_is_provider in result.all()
     ]
+    await _attach_boundaries(session, role_id=role_id, users=users)
     return RoleUsersResponse(
         user_ids=[str(assigned_user.id) for assigned_user in users],
         users=users,
         total=total or 0,
     )
+
+
+async def _attach_boundaries(session: AsyncSession, *, role_id: UUID, users) -> None:
+    """Fill in where ``role_id`` applies for each listed user (two queries)."""
+    from src.models import Organization as OrganizationORM
+    from src.models.contracts.role_assignments import RoleBoundaryPublic
+    from src.models.orm.users import UserRoleBoundary
+
+    if not users:
+        return
+    rows = (
+        await session.execute(
+            select(
+                UserRoleBoundary.user_id,
+                UserRoleBoundary.kind,
+                UserRoleBoundary.organization_id,
+                OrganizationORM.name,
+            )
+            .outerjoin(OrganizationORM, OrganizationORM.id == UserRoleBoundary.organization_id)
+            .where(
+                UserRoleBoundary.role_id == role_id,
+                UserRoleBoundary.user_id.in_([user.id for user in users]),
+            )
+            .order_by(UserRoleBoundary.kind, OrganizationORM.name)
+        )
+    ).all()
+    by_user: dict[UUID, list[RoleBoundaryPublic]] = {}
+    for user_id, kind, organization_id, organization_name in rows:
+        by_user.setdefault(user_id, []).append(
+            RoleBoundaryPublic(
+                kind=kind, organization_id=organization_id, organization_name=organization_name
+            )
+        )
+    for user in users:
+        user.boundaries = by_user.get(user.id, [])
 
 
 async def _require_assignment_target(

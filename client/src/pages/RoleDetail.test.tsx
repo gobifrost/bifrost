@@ -5,6 +5,7 @@ import { renderWithProviders, screen } from "@/test-utils";
 const state = vi.hoisted(() => ({
 	role: undefined as Record<string, unknown> | undefined,
 	canManage: true,
+	canViewPeople: true,
 	deleteError: undefined as unknown,
 }));
 
@@ -26,13 +27,22 @@ vi.mock("@/hooks/useRoles", () => ({
 }));
 
 vi.mock("@/services/authorization", () => ({
-	useAuthorization: () => ({ meets: () => state.canManage }),
+	useAuthorization: () => ({
+		meets: ({ permission }: { permission: string }) =>
+			permission === "roleassignments.read"
+				? state.canViewPeople
+				: state.canManage,
+	}),
 }));
 
 vi.mock("@/components/roles/RolePermissionsPanel", () => ({
 	RolePermissionsPanel: ({ isBuiltin }: { isBuiltin: boolean }) => (
 		<p>Permissions panel{isBuiltin ? " (built-in)" : ""}</p>
 	),
+}));
+
+vi.mock("@/components/roles/RolePeoplePanel", () => ({
+	RolePeoplePanel: () => <p>People panel</p>,
 }));
 
 vi.mock("@/components/roles/RoleDialog", () => ({
@@ -72,6 +82,7 @@ const customRole = {
 beforeEach(() => {
 	state.role = customRole;
 	state.canManage = true;
+	state.canViewPeople = true;
 	state.deleteError = undefined;
 });
 
@@ -90,7 +101,9 @@ describe("RoleDetail", () => {
 		expect(
 			screen.getByText("Permissions panel (built-in)"),
 		).toBeInTheDocument();
-		expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole("tab", { name: /Forms/ }),
+		).not.toBeInTheDocument();
 		expect(
 			screen.queryByRole("button", { name: "Edit" }),
 		).not.toBeInTheDocument();
@@ -131,5 +144,53 @@ describe("RoleDetail", () => {
 		expect(
 			await screen.findByText(/is the base role of 2 user\(s\)/),
 		).toBeInTheDocument();
+	});
+
+	it("lists who holds a built-in additional role", async () => {
+		state.role = {
+			...customRole,
+			id: "operator",
+			name: "Platform Operator",
+			is_builtin: true,
+			is_base: false,
+			consumer_counts: null,
+		};
+		const { user } = renderAt("/roles/operator");
+
+		expect(
+			screen.getByRole("tab", { name: "Permissions" }),
+		).toHaveAttribute("aria-selected", "true");
+		await user.click(screen.getByRole("tab", { name: "People" }));
+		expect(await screen.findByText("People panel")).toBeInTheDocument();
+	});
+
+	it("lists no people for base roles or callers without role-assignment access", () => {
+		state.role = {
+			...customRole,
+			id: "user-role",
+			name: "User",
+			is_builtin: true,
+			is_base: true,
+			consumer_counts: null,
+		};
+		const { unmount } = renderAt("/roles/user-role");
+		expect(
+			screen.queryByRole("tab", { name: "People" }),
+		).not.toBeInTheDocument();
+		unmount();
+
+		state.canViewPeople = false;
+		state.role = {
+			...customRole,
+			id: "operator",
+			name: "Platform Operator",
+			is_builtin: true,
+			is_base: false,
+			consumer_counts: null,
+		};
+		renderAt("/roles/operator");
+		expect(
+			screen.queryByRole("tab", { name: "People" }),
+		).not.toBeInTheDocument();
 	});
 });

@@ -47,6 +47,7 @@ import { useApplications } from "@/hooks/useApplications";
 import { useWorkflows } from "@/hooks/useWorkflows";
 import { useOrganizations } from "@/hooks/useOrganizations";
 import { RoleDialog } from "@/components/roles/RoleDialog";
+import { RolePeoplePanel } from "@/components/roles/RolePeoplePanel";
 import { RolePermissionsPanel } from "@/components/roles/RolePermissionsPanel";
 import { getErrorMessage } from "@/lib/api-error";
 import { useAuthorization } from "@/services/authorization";
@@ -156,6 +157,12 @@ export function RoleDetail() {
 	const canManage =
 		!isBuiltin &&
 		authorization.meets({ permission: "roles.readwrite", at: "global" });
+	// Built-in additional roles (Platform Operator, Secrets Reader) list
+	// who holds them; base roles (Platform Admin, User) would list everyone.
+	const showsPeople =
+		isBuiltin &&
+		!role.is_base &&
+		authorization.meets({ permission: "roleassignments.read" });
 
 	const handleDelete = () => {
 		if (deleteRole.isPending) return;
@@ -192,7 +199,46 @@ export function RoleDetail() {
 					}}
 				/>
 			)}
-			{isBuiltin ? (
+			{showsPeople ? (
+				<Tabs
+					value={tab === "people" ? "people" : "permissions"}
+					onValueChange={(v) => navigate(`/roles/${role.id}/${v}`)}
+					className="flex-1 min-h-0 flex flex-col"
+				>
+					<TabsList className="grid h-auto w-full grid-cols-2 gap-1 group-data-horizontal/tabs:h-auto sm:w-80">
+						<TabsTrigger
+							value="permissions"
+							className="min-h-11 gap-1.5"
+						>
+							<ShieldCheck className="h-4 w-4" />
+							Permissions
+						</TabsTrigger>
+						<TabsTrigger
+							value="people"
+							className="min-h-11 gap-1.5"
+						>
+							<Users className="h-4 w-4" />
+							People
+						</TabsTrigger>
+					</TabsList>
+					<TabsContent
+						value="permissions"
+						className="flex min-h-0 flex-1 flex-col"
+					>
+						<PageScrollArea className="lg:overflow-auto">
+							<RolePermissionsPanel roleId={role.id} isBuiltin />
+						</PageScrollArea>
+					</TabsContent>
+					<TabsContent
+						value="people"
+						className="flex min-h-0 flex-1 flex-col"
+					>
+						<PageScrollArea className="lg:overflow-auto">
+							<RolePeoplePanel roleId={role.id} />
+						</PageScrollArea>
+					</TabsContent>
+				</Tabs>
+			) : isBuiltin ? (
 				<PageScrollArea className="lg:overflow-auto">
 					<RolePermissionsPanel roleId={role.id} isBuiltin />
 				</PageScrollArea>

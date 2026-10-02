@@ -38,6 +38,7 @@ import {
 } from "@/hooks/useUsers";
 import { getErrorMessage } from "@/lib/api-error";
 import { orgTarget } from "@/lib/authorization";
+import { placeLabel } from "@/lib/role-boundaries";
 import { useAuthorization } from "@/services/authorization";
 import type { components } from "@/lib/v1";
 
@@ -125,16 +126,13 @@ function draftSignature(draft: Draft): string {
 	});
 }
 
-/** Plain-language place a role applies at. */
-function placeLabel(place: Place, orgName: (id: string) => string): string {
-	switch (place.kind) {
-		case "organization":
-			return `In ${orgName(place.organization_id ?? "")}`;
-		case "managed_organizations":
-			return "In all customer organizations";
-		case "platform":
-			return "Platform-wide";
-	}
+function placeText(place: Place, orgName: (id: string) => string): string {
+	return placeLabel(
+		place.kind,
+		place.kind === "organization"
+			? orgName(place.organization_id ?? "")
+			: "",
+	);
 }
 
 function PlaceIcon({ kind }: { kind: BoundaryKind }) {
@@ -778,7 +776,7 @@ export function UserRoleAssignmentsPanel({
 												aria-label={`Where ${name} applies`}
 											>
 												{role.places.map((place) => {
-													const label = placeLabel(
+													const label = placeText(
 														place,
 														orgName,
 													);

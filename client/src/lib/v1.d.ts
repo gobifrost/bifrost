@@ -24403,6 +24403,11 @@ export interface components {
              * @default false
              */
             organization_is_provider: boolean;
+            /**
+             * Boundaries
+             * @description Where the role applies for this user.
+             */
+            boundaries?: components["schemas"]["RoleBoundaryPublic"][];
         };
         /**
          * RoleUsersResponse
