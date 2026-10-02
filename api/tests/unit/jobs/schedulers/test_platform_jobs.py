@@ -25,6 +25,8 @@ from src.jobs.platform.application_publish import (
 from src.jobs.platform.kubernetes_client import _lease_token_fingerprint
 from src.jobs.schedulers import platform_jobs as scheduler
 from src.models.orm.platform_jobs import PlatformJob
+from src.models.orm.solution_export_jobs import SolutionExportJob
+from src.models.orm.solutions import Solution
 from src.services.platform_jobs import enqueue_platform_job
 
 
@@ -455,6 +457,178 @@ async def test_expired_lease_requeues_then_fails_at_attempt_limit(
     await db_session.refresh(job)
     assert job.status == "failed"
     assert job.error_code == "runner_lost"
+
+
+@pytest.mark.asyncio
+async def test_terminal_runner_loss_fails_linked_solution_export_and_clears_options(
+    db_session: AsyncSession,
+) -> None:
+    solution = Solution(
+        id=uuid4(),
+        slug=f"export-loss-{uuid4().hex[:8]}",
+        name="Export loss",
+        version="1.0.0",
+        organization_id=None,
+    )
+    export = SolutionExportJob(
+        id=uuid4(),
+        solution_id=solution.id,
+        status="running",
+        progress_percent=5,
+        message="Building backup",
+        encrypted_options="opaque-encrypted-options",
+    )
+    lease_token = uuid4()
+    platform = PlatformJob(
+        id=uuid4(),
+        job_type="solution.export",
+        payload_version=1,
+        payload={"protected": True},
+        requested_by_user_id=str(uuid4()),
+        requested_by_email="dev@example.com",
+        requested_by_name="Dev",
+        resource_type="solution_export",
+        resource_id=str(export.id),
+        title="Exporting Test",
+        status="running",
+        attempt=2,
+        max_attempts=2,
+        lease_token=lease_token,
+    )
+    db_session.add_all((solution, export, platform))
+    await db_session.commit()
+
+    requeued = await scheduler._handle_runner_loss(
+        platform.id,
+        lease_token,
+        error_code="runner_lost",
+        error_message="The platform-job runner stopped before the operation completed.",
+    )
+
+    assert not requeued
+    await db_session.refresh(platform)
+    await db_session.refresh(export)
+    assert platform.status == "failed"
+    assert export.status == "failed"
+    assert export.progress_percent == 100
+    assert export.message == "Backup failed"
+    assert export.failure_message == "Backup export runner stopped before completion"
+    assert export.encrypted_options is None
+    assert export.completed_at is not None
+
+
+@pytest.mark.asyncio
+async def test_retrying_runner_loss_keeps_linked_solution_export_active(
+    db_session: AsyncSession,
+) -> None:
+    solution = Solution(
+        id=uuid4(),
+        slug=f"export-retry-{uuid4().hex[:8]}",
+        name="Export retry",
+        version="1.0.0",
+        organization_id=None,
+    )
+    export = SolutionExportJob(
+        id=uuid4(),
+        solution_id=solution.id,
+        status="running",
+        progress_percent=5,
+        message="Building backup",
+        encrypted_options="opaque-encrypted-options",
+    )
+    lease_token = uuid4()
+    platform = PlatformJob(
+        id=uuid4(),
+        job_type="solution.export",
+        payload_version=1,
+        payload={"protected": True},
+        requested_by_user_id=str(uuid4()),
+        requested_by_email="dev@example.com",
+        requested_by_name="Dev",
+        resource_type="solution_export",
+        resource_id=str(export.id),
+        title="Exporting Test",
+        status="running",
+        attempt=1,
+        max_attempts=2,
+        lease_token=lease_token,
+    )
+    db_session.add_all((solution, export, platform))
+    await db_session.commit()
+
+    requeued = await scheduler._handle_runner_loss(
+        platform.id,
+        lease_token,
+        error_code="runner_lost",
+        error_message="The platform-job runner stopped before the operation completed.",
+    )
+
+    assert requeued
+    await db_session.refresh(platform)
+    await db_session.refresh(export)
+    assert platform.status == "queued"
+    assert export.status == "running"
+    assert export.encrypted_options == "opaque-encrypted-options"
+    assert export.completed_at is None
+
+
+@pytest.mark.asyncio
+async def test_final_expired_lease_fails_linked_solution_export_and_clears_options(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    wall_clock_now = datetime.now(timezone.utc)
+    monkeypatch.setattr(
+        scheduler,
+        "_now",
+        lambda: wall_clock_now + timedelta(days=2),
+    )
+    solution = Solution(
+        id=uuid4(),
+        slug=f"export-expired-{uuid4().hex[:8]}",
+        name="Expired export",
+        version="1.0.0",
+        organization_id=None,
+    )
+    export = SolutionExportJob(
+        id=uuid4(),
+        solution_id=solution.id,
+        status="running",
+        progress_percent=5,
+        message="Building backup",
+        encrypted_options="opaque-encrypted-options",
+    )
+    platform = PlatformJob(
+        id=uuid4(),
+        job_type="solution.export",
+        payload_version=1,
+        payload={"protected": True},
+        requested_by_user_id=str(uuid4()),
+        requested_by_email="dev@example.com",
+        requested_by_name="Dev",
+        resource_type="solution_export",
+        resource_id=str(export.id),
+        title="Exporting Test",
+        status="running",
+        attempt=2,
+        max_attempts=2,
+        lease_token=uuid4(),
+        lease_expires_at=wall_clock_now + timedelta(days=1),
+    )
+    db_session.add_all((solution, export, platform))
+    await db_session.commit()
+
+    recovered, failed = await scheduler.recover_expired_platform_jobs()
+
+    # The shared scheduler fixture can hold other deliberately expired rows;
+    # assert this call's terminal export projection rather than global volume.
+    assert recovered >= 1
+    assert failed >= 1
+    await db_session.refresh(export)
+    assert export.status == "failed"
+    assert export.progress_percent == 100
+    assert export.encrypted_options is None
+    assert export.completed_at is not None
 
 
 @pytest.mark.asyncio
