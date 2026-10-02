@@ -8,7 +8,6 @@ the captured definitions. Runtime data stays in place.
 from __future__ import annotations
 
 import base64
-import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -74,17 +73,9 @@ class SolutionCaptureResult:
     events_captured: int = 0
 
 
-logger = logging.getLogger(__name__)
-
 # Hard cap on rows exported per table to keep the encrypted blob bounded.
-# If a table exceeds this, a WARNING is logged (table name + actual count)
-# and only the first TABLE_ROW_CAP rows are included — no silent truncation.
+# Full backups fail rather than silently exporting only part of a table.
 TABLE_ROW_CAP = 50_000
-
-# Hard cap on files exported per solution to keep the encrypted blob bounded.
-# If a solution exceeds this, a WARNING is logged (solution slug + actual count)
-# and only the first FILE_CAP files are included — no silent truncation.
-FILE_CAP = 1_000
 
 
 def _enum_value(value: Any) -> Any:
@@ -383,8 +374,9 @@ class SolutionCaptureService:
         if include_values:
             config_values = await self._config_values(solution)
         table_data: dict[str, list[dict[str, Any]]] = {}
+        table_document_ids: dict[str, list[str]] = {}
         if include_data:
-            table_data = await self._table_data(solution)
+            table_data, table_document_ids = await self._table_data(solution)
         solution_files: list[Any] = []
         if include_files:
             solution_files = await self._solution_file_entries(solution)
@@ -406,6 +398,7 @@ class SolutionCaptureService:
             version=solution.version,
             config_values=config_values,
             table_data=table_data,
+            table_document_ids=table_document_ids,
             solution_files=solution_files,
         )
 
@@ -825,20 +818,22 @@ class SolutionCaptureService:
 
         return out
 
-    async def _table_data(self, solution: Solution) -> dict[str, list[dict[str, Any]]]:
+    async def _table_data(
+        self, solution: Solution
+    ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, list[str]]]:
         """Read each owned table's rows for a full-backup export.
 
-        Only tables that have at least one row are included in the output dict
-        (empty tables are omitted to keep the encrypted blob lean).
+        Every owned table is included, including empty ones, so a replacement
+        restore can clear rows that no longer exist in the source. Document IDs
+        travel in a parallel map to preserve relationships without injecting
+        storage metadata into row JSON.
 
         Each row is represented as the JSONB ``data`` dict stored in the
         ``Document`` row.  The ``data`` field is already JSON-serializable
         (it came from JSON on write), so no coercion is needed here.
 
-        Row cap: if a table exceeds TABLE_ROW_CAP rows a WARNING is logged
-        naming the table and actual count, and only the first TABLE_ROW_CAP
-        rows are returned.  This is never silent — callers can observe the
-        warning in logs.
+        Row cap: if a table exceeds TABLE_ROW_CAP rows, fail the capture. A
+        truncated backup cannot safely be reported as successful.
         """
         # Query owned tables directly — _table_entries returns serialized dicts,
         # but here we need ORM Table objects for their id + name.
@@ -847,8 +842,9 @@ class SolutionCaptureService:
         ).scalars().all()
 
         out: dict[str, list[dict[str, Any]]] = {}
+        document_ids: dict[str, list[str]] = {}
         for tbl in table_rows:
-            # Fetch all rows; apply the cap after counting so we can log accurately.
+            # Fetch one extra row to detect a cap breach without unbounded reads.
             docs = (
                 await self.db.execute(
                     select(Document)
@@ -858,27 +854,17 @@ class SolutionCaptureService:
                 )
             ).scalars().all()
 
-            if not docs:
-                # Empty table — omit the key (keep blob lean).
-                continue
-
             if len(docs) > TABLE_ROW_CAP:
-                # We fetched one extra to detect overflow; trim to the cap and warn.
-                # A real row count may be even higher — the +1 trick only confirms
-                # there are MORE than TABLE_ROW_CAP rows, not the exact total.
-                logger.warning(
-                    "bundle_for: table %r has more than %d rows; "
-                    "only the first %d rows are included in the export bundle.",
-                    tbl.name,
-                    TABLE_ROW_CAP,
-                    TABLE_ROW_CAP,
+                raise ValueError(
+                    f"table {tbl.name!r} exceeds the full-backup row cap of "
+                    f"{TABLE_ROW_CAP}; export was not created"
                 )
-                docs = docs[:TABLE_ROW_CAP]
 
-            # Represent each row as its JSONB data dict — already JSON-serializable.
+            # JSON row data and storage IDs remain positionally aligned.
             out[tbl.name] = [doc.data for doc in docs]
+            document_ids[tbl.name] = [str(doc.id) for doc in docs]
 
-        return out
+        return out, document_ids
 
     async def _solution_file_entries(
         self, solution: Solution
@@ -888,10 +874,6 @@ class SolutionCaptureService:
         Enumerates via the Task-17 service (metadata-only, no S3). File bytes
         are streamed later by the export writer from each entry's ``s3_key``.
 
-        File cap: if a solution exceeds FILE_CAP files, a WARNING is logged
-        naming the solution slug and actual count, and only the first FILE_CAP
-        files are returned — no silent truncation.
-
         Empty → returns [] (omit from encrypted blob when empty).
         """
         from src.services.solution_files import enumerate_solution_files
@@ -899,16 +881,6 @@ class SolutionCaptureService:
         entries = await enumerate_solution_files(self.db, solution.id)
         if not entries:
             return []
-
-        if len(entries) > FILE_CAP:
-            logger.warning(
-                "bundle_for: solution %r has more than %d files; "
-                "only the first %d files are included in the export bundle.",
-                solution.slug,
-                FILE_CAP,
-                FILE_CAP,
-            )
-            entries = entries[:FILE_CAP]
 
         return entries
 

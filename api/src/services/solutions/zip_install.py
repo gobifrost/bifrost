@@ -667,6 +667,11 @@ async def _install_workspace(
                     "wrong password for this bundle"
                 ) from exc
 
+            # Reject malformed new-format row IDs before deploy can mutate the
+            # target install. _apply_content repeats this for direct callers.
+            _validate_table_document_ids(
+                content.table_data, content.table_document_ids
+            )
             await _assert_no_unforced_collisions(
                 db,
                 solution=solution,
@@ -913,6 +918,8 @@ async def _apply_content(
     - Tables that aren't in content.table_data are untouched.
     This runs AFTER deploy so the tables exist (deploy created/upserted them).
     """
+    _validate_table_document_ids(content.table_data, content.table_document_ids)
+
     if content.config_values:
         # All values in content.config_values are either new (no existing row)
         # or allowed to overwrite (replace_secrets=True).  _apply_config_values
@@ -929,6 +936,7 @@ async def _apply_content(
             db,
             solution=solution,
             table_data=content.table_data,
+            table_document_ids=content.table_document_ids,
             replace_data=replace_data,
             deployer_email=deployer_email,
         )
@@ -1034,6 +1042,7 @@ async def _apply_table_data(
     *,
     solution: Solution,
     table_data: dict[str, list[dict]],
+    table_document_ids: dict[str, list[str]],
     replace_data: bool,
     deployer_email: str,
 ) -> None:
@@ -1043,8 +1052,9 @@ async def _apply_table_data(
     name in ``table_data``:
     1. Find the just-deployed Table row (by name + solution_id).
     2. If replace_data, DELETE all existing Document rows for that table first.
-    3. Insert the blob rows using DocumentRepository.insert() (the real insert
-       path — fresh ids, fresh timestamps, no ids carried from the source).
+    3. Insert the blob rows using DocumentRepository.insert(). New backups pass
+       a validated parallel document-ID list; older backups omit it and retain
+       the legacy fresh-ID behavior.
 
     Tables in the solution that are NOT in table_data are untouched.
     """
@@ -1060,9 +1070,6 @@ async def _apply_table_data(
     )
 
     for table_name, rows in table_data.items():
-        if not rows:
-            continue
-
         # Look up the solution-owned Table row by name.
         tbl_q = select(Table).where(
             Table.name == table_name,
@@ -1082,10 +1089,42 @@ async def _apply_table_data(
             # Wholesale clear: delete all existing rows before inserting.
             await db.execute(sa_delete(Document).where(Document.table_id == tbl.id))
 
-        # Insert each row as a fresh Document (no source ids — data only).
+        # IDs are absent only for legacy exports. Alignment and duplicates were
+        # validated before any target table was cleared.
+        document_ids = table_document_ids.get(table_name)
         repo = DocumentRepository(db, tbl)
-        for row_data in rows:
-            await repo.insert(data=row_data, created_by=deployer_email)
+        for index, row_data in enumerate(rows):
+            await repo.insert(
+                data=row_data,
+                created_by=deployer_email,
+                doc_id=document_ids[index] if document_ids is not None else None,
+            )
+
+
+def _validate_table_document_ids(
+    table_data: dict[str, list[dict]],
+    table_document_ids: dict[str, list[str]],
+) -> None:
+    """Validate new full-backup IDs before a replacement can delete rows.
+
+    An absent map identifies a legacy archive and preserves its fresh-ID
+    restore behavior. New maps must cover precisely the same tables and every
+    list must align positionally with its row data.
+    """
+    if not table_document_ids:
+        return
+    if set(table_document_ids) != set(table_data):
+        raise ValueError("table_document_ids keys must align with table_data")
+    for table_name, rows in table_data.items():
+        document_ids = table_document_ids[table_name]
+        if not isinstance(document_ids, list) or len(document_ids) != len(rows):
+            raise ValueError(
+                f"table_document_ids alignment failed for table {table_name!r}"
+            )
+        if any(not isinstance(document_id, str) or not document_id for document_id in document_ids):
+            raise ValueError(f"table_document_ids contains an invalid ID for table {table_name!r}")
+        if len(set(document_ids)) != len(document_ids):
+            raise ValueError(f"table_document_ids contains duplicate IDs for table {table_name!r}")
 
 
 async def _apply_config_values(
