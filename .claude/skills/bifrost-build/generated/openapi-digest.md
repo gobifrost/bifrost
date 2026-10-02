@@ -565,6 +565,7 @@
 | POST | `/api/users/{user_id}/invite/regenerate` |
 | POST | `/api/users/{user_id}/invite/resend` |
 | POST | `/api/users/{user_id}/invite/send` |
+| POST | `/api/users/{user_id}/mfa/reset` |
 | GET | `/api/users/{user_id}/role-assignments` |
 | PUT | `/api/users/{user_id}/role-assignments` |
 | GET | `/api/users/{user_id}/roles` |
