@@ -770,34 +770,6 @@ class IntegrationsRepository:
 
         return configs_by_org
 
-    async def get_config_for_mapping(
-        self, integration_id: UUID, org_id: UUID, *, external: bool
-    ) -> dict[str, Any]:
-        """
-        Get merged configuration for an integration mapping.
-
-        Config resolution order:
-        1. Integration-level defaults (integration_id set, org_id is NULL)
-        2. Per-org overrides (both integration_id and org_id set)
-
-        Per-org values override integration defaults.
-
-        ``external`` is REQUIRED (no default — EXT-1 NEW-G/NEW-H). An EXTERNAL
-        portal caller passes True and gets org-specific overrides ONLY (no
-        global defaults — a decrypted SECRET never crosses to a portal user);
-        the superuser admin routes pass False explicitly.
-        """
-        # Integration-level defaults (skipped entirely for external callers).
-        config = await self.get_integration_defaults(
-            integration_id, external=external
-        )
-
-        # Merge org overrides (always the caller's own resolved org).
-        org_overrides = await self.get_org_config_overrides(integration_id, org_id)
-        config.update(org_overrides)
-
-        return config
-
     async def get_oauth_provider(self, integration_id: UUID):
         """Get the OAuth provider associated with an integration."""
         integration = await self.get_integration_by_id(integration_id)
