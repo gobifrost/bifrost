@@ -88,7 +88,9 @@ def test_all_reference_examples_are_clean():
     fail to build when copied — fix the snippet (or the linter if it's a false
     positive), don't ship it.
     """
-    paths = sorted(_REFERENCES.glob("*.md"))
+    paths = sorted(_REFERENCES.glob("*.md")) + sorted(
+        (_REFERENCES.parent / "best-practices").glob("*.md")
+    )
     assert paths, f"no reference docs found under {_REFERENCES}"
     findings = lint_examples.lint_example_paths(paths)
     assert not findings, (
