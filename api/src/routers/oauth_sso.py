@@ -33,6 +33,7 @@ from shared.external_access import (
     resolve_external_claim,
     resolve_provider_org_claim,
 )
+from shared.identities import refuse_identity_sign_in
 
 logger = logging.getLogger(__name__)
 
@@ -396,6 +397,7 @@ async def oauth_callback(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account is inactive",
         )
+    refuse_identity_sign_in(user)
 
     # Get user roles
     db_roles = await get_user_roles(db, user.id)

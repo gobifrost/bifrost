@@ -101,6 +101,7 @@ async def create_organization(
     actor_email: str,
 ) -> OrganizationPublic:
     """Create an organization (shared by the HTTP handler and worker-local calls)."""
+    from shared.identities import ensure_default_identity
     from src.models import Organization as OrganizationORM
     from src.models import OrganizationPublic
     from src.services.audit import emit_audit
@@ -120,6 +121,7 @@ async def create_organization(
     session.add(org)
     await session.flush()
     await session.refresh(org)
+    await ensure_default_identity(session, org)
 
     try:
         from src.core.cache import upsert_org

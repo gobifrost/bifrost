@@ -2761,7 +2761,15 @@ class TestSocketOrganizationsUsers:
                 from sqlalchemy import delete
                 from uuid import UUID
 
+                from src.models.orm.users import User as UserModel
+
                 async with async_session_factory() as session:
+                    # The organization's default identity was created with it.
+                    await session.execute(
+                        delete(UserModel).where(
+                            UserModel.organization_id == UUID(created_id)
+                        )
+                    )
                     await session.execute(
                         delete(OrganizationModel).where(
                             OrganizationModel.id == UUID(created_id)
@@ -2849,6 +2857,12 @@ class TestSocketOrganizationsUsers:
                         delete(UserModel).where(UserModel.id == UUID(user_id))
                     )
                 if org_id is not None:
+                    # The organization's default identity was created with it.
+                    await session.execute(
+                        delete(UserModel).where(
+                            UserModel.organization_id == UUID(org_id)
+                        )
+                    )
                     await session.execute(
                         delete(OrganizationModel).where(
                             OrganizationModel.id == UUID(org_id)

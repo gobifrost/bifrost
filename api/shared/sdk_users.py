@@ -141,6 +141,26 @@ class UserServiceError(Exception):
         self.detail = detail
 
 
+IDENTITY_MANAGEMENT_MESSAGE = "Identities are managed from Identities"
+RESERVED_EMAIL_MESSAGE = "This email domain is reserved"
+
+
+def refuse_identity_management(user: "UserORM") -> None:
+    """Identities aren't edited, deleted or bulk-changed as people."""
+    from shared.identities import is_identity
+
+    if is_identity(user):
+        raise UserServiceError(409, IDENTITY_MANAGEMENT_MESSAGE)
+
+
+def refuse_reserved_email(email: str) -> None:
+    """No person gets an email address in the identities' domain."""
+    from shared.identities import is_identity_email
+
+    if is_identity_email(email):
+        raise UserServiceError(422, RESERVED_EMAIL_MESSAGE)
+
+
 OPERATOR_MOVE_MESSAGE = (
     "Remove Platform Operator before moving this user out of the provider organization"
 )
@@ -227,7 +247,7 @@ async def list_users(
     from src.services.user_invite_service import UserInviteService
 
     reach = operation_reach(caller, "users.list")
-    query = select(UserORM).where(UserORM.is_system.is_(False))
+    query = select(UserORM).where(UserORM.is_system.is_(False), UserORM.identity_kind.is_(None))
     if scope == "global":
         require_operation(caller, "users.list", GLOBAL)
         query = query.where(UserORM.organization_id.is_(None))
@@ -349,6 +369,7 @@ async def create_user(
     from src.services.user_invite_service import UserInviteService
     from shared.builtin_roles import USER_ROLE_ID
 
+    refuse_reserved_email(email)
     if is_superuser or organization_id is None:
         require_operation(
             caller, "users.create", GLOBAL, permission="users.lifecycle.readwrite"
@@ -549,6 +570,9 @@ async def update_user(
 
     if db_user.is_system:
         raise UserServiceError(403, "System user cannot be modified")
+    refuse_identity_management(db_user)
+    if email is not None:
+        refuse_reserved_email(email)
     _authorize_update(
         caller,
         db_user,
@@ -658,6 +682,7 @@ async def delete_user(
 
     if db_user.is_system:
         raise UserServiceError(403, "System user cannot be deleted")
+    refuse_identity_management(db_user)
     require_operation(caller, "users.delete", org_target(db_user.organization_id))
     require_unprotected(caller, db_user.id in await privileged_user_ids(session, [db_user.id]))
 
@@ -771,6 +796,9 @@ async def bulk_update_users(
             continue
         if u.is_system:
             fail(uid, "System user cannot be modified")
+            continue
+        if u.identity_kind is not None:
+            fail(uid, IDENTITY_MANAGEMENT_MESSAGE)
             continue
         if request.operation in ("replace_roles", "set_active") and uid == actor_id:
             fail(

@@ -80,6 +80,9 @@ class WorkflowMetadata(BaseModel):
     is_solution_managed: bool = Field(default=False, description="True if managed by a deployed Solution (read-only on platform)")
     solution_id: UUID | None = Field(default=None, description="UUID of the owning Solution install (null if not solution-managed)")
 
+    # Identity this workflow runs as when no person starts it
+    run_identity_id: UUID | None = Field(default=None, description="Identity this workflow runs as when no person starts it. Null = its organization's default identity.")
+
     # Access control
     access_level: str = Field(default="role_based", description="Access level: 'authenticated' (any signed-in user except externals), 'everyone' (any signed-in user incl. externals), or 'role_based' (specific roles required)")
     role_ids: list[str] = Field(default_factory=list, description="List of role IDs assigned to this workflow")
@@ -310,6 +313,10 @@ class WorkflowUpdateRequest(BaseModel):
             "when provided). Mutually exclusive with clear_roles; if both are "
             "set, role_ids wins."
         ),
+    )
+    run_identity_id: UUID | None = Field(
+        default=None,
+        description="Identity this workflow runs as when no person starts it. Null = its organization's default identity.",
     )
 
     # New fields for UI management

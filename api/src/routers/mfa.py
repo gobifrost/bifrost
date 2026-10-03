@@ -29,6 +29,7 @@ from shared.external_access import (
     resolve_external_claim,
     resolve_provider_org_claim,
 )
+from shared.identities import refuse_identity_sign_in
 
 logger = logging.getLogger(__name__)
 
@@ -224,6 +225,7 @@ async def verify_mfa(
     )
 
     # Generate tokens for auto-login after MFA enrollment
+    refuse_identity_sign_in(user)
     db_roles = await get_user_roles(db, user.id)
     roles = ["authenticated", *db_roles]
 

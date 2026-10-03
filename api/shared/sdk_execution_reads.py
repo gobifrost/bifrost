@@ -136,6 +136,7 @@ def convert_workflow_orm_to_schema(
         organization_id=str(workflow.organization_id) if workflow.organization_id else None,
         is_solution_managed=workflow.solution_id is not None,
         solution_id=workflow.solution_id,
+        run_identity_id=workflow.run_identity_id,
         access_level=workflow.access_level or "role_based",
         role_ids=[str(role_id) for role_id in (role_ids or [])],
         parameters=parameters,

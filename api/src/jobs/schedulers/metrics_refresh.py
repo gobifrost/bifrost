@@ -72,7 +72,7 @@ async def refresh_metrics_snapshot() -> dict[str, Any]:
                 .scalar_subquery()
                 .label("org_count"),
                 select(func.count(User.id))
-                .where(User.is_active.is_(True))
+                .where(User.is_active.is_(True), User.identity_kind.is_(None))
                 .correlate(None)
                 .scalar_subquery()
                 .label("user_count"),

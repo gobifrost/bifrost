@@ -25,6 +25,7 @@ def _external_user():
         is_superuser=False,
         is_external=True,
         organization_id=uuid4(),
+        identity_kind=None,
     )
 
 

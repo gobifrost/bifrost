@@ -32,6 +32,7 @@ from shared.external_access import (
     resolve_external_claim,
     resolve_provider_org_claim,
 )
+from shared.identities import is_identity
 
 logger = logging.getLogger(__name__)
 
@@ -415,7 +416,7 @@ class BifrostAuthProvider:
                 user_repo = UserRepository(db)
                 user = await user_repo.get_by_id(user_id)
 
-                if not user:
+                if not user or is_identity(user):
                     return JSONResponse(
                         {"error": "invalid_grant", "error_description": "User not found"},
                         status_code=400
@@ -473,7 +474,7 @@ class BifrostAuthProvider:
                 user_repo = UserRepository(db)
                 user = await user_repo.get_by_id(user_id)
 
-                if not user:
+                if not user or is_identity(user):
                     return JSONResponse(
                         {"error": "invalid_grant", "error_description": "User not found"},
                         status_code=400

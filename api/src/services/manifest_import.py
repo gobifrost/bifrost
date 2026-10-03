@@ -522,7 +522,7 @@ class ManifestResolver:
         )
         from src.models.orm.organizations import Organization
         from src.models.orm.tables import Table
-        from src.models.orm.users import Role
+        from src.models.orm.users import Role, User
         from src.models.orm.workflows import Workflow
 
         # Lookups for entities a Solution can own (workflows, apps, tables,
@@ -559,6 +559,11 @@ class ManifestResolver:
             cache["wf_ids"].add(row[0])
             if row[1] and row[2]:
                 cache["wf_by_natural"][(row[1], row[2])] = row[0]
+        # Identities workflows run unattended as: {workflow id: identity}
+        identity_result = await self.db.execute(
+            select(Workflow.id, User).join(User, User.id == Workflow.run_identity_id)
+        )
+        cache["wf_run_identity"] = {row[0]: row[1] for row in identity_result.all()}
 
         # Integrations: {name: id} + {id} set
         integ_result = await self.db.execute(select(Integration.id, Integration.name))
@@ -797,6 +802,8 @@ class ManifestResolver:
             await _prog(f"Importing organization: {morg.name}")
             org_ops.extend(self._resolve_organization(morg, cache))
         await self._apply_ops(org_ops, all_ops, dry_run=dry_run, existing_ids=cache.get("org_ids", set()))
+        if not dry_run:
+            await self._ensure_default_identities(org_ops)
 
         # 0b. Resolve roles (no deps) — execute immediately
         role_ops: list[SyncOp] = []
@@ -1214,6 +1221,16 @@ class ManifestResolver:
 
         return modified
 
+    async def _ensure_default_identities(self, org_ops: "list[SyncOp]") -> None:
+        """Every imported organization has its default identity, like one created through the API."""
+        from shared.identities import ensure_default_identity
+        from src.models.orm.organizations import Organization
+
+        for op in org_ops:
+            organization = await self.db.get(Organization, op.id)
+            if organization is not None:
+                await ensure_default_identity(self.db, organization)
+
     def _resolve_organization(self, morg, cache: dict) -> "list[SyncOp]":
         """Resolve an organization from manifest into SyncOps.
 
@@ -1352,6 +1369,7 @@ class ManifestResolver:
 
         from bifrost.manifest_codec import Destination
 
+        from shared.identities import run_identity_allowed
         from src.models.orm.workflow_roles import WorkflowRole
         from src.models.orm.workflows import Workflow
         from src.services.sync_ops import SyncOp, SyncRoles, Upsert  # noqa: F401
@@ -1369,6 +1387,17 @@ class ManifestResolver:
             "name": manifest_name,
             "organization_id": UUID(direct["organization_id"]) if direct.get("organization_id") else None,
         }
+
+        target_id = existing_by_natural if existing_by_natural is not None else wf_id
+        identity = cache["wf_run_identity"].get(target_id)
+        if identity is not None and not run_identity_allowed(
+            workflow_organization_id=wf_values["organization_id"], identity=identity
+        ):
+            raise ValueError(
+                f"Workflow {mwf.path}::{mwf.function_name} runs unattended as {identity.name} "
+                f"(run_identity_id), which can't run workflows of organization "
+                f"{wf_values['organization_id'] or 'Global'}; change its run_identity_id first"
+            )
 
         ops: list[SyncOp] = []
 

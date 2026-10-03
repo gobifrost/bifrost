@@ -440,7 +440,7 @@ async def cleanup_test_data(db_session: AsyncSession):
     # Clean up orgs and roles last (entities FK into these)
     from src.models.orm.executions import Execution
     from src.models.orm.organizations import Organization
-    from src.models.orm.users import Role
+    from src.models.orm.users import Role, User
 
     # Executions FK into organizations (RESTRICT): other suites legitimately
     # create executions inside their created_by="test" orgs (e.g. the form
@@ -452,6 +452,10 @@ async def cleanup_test_data(db_session: AsyncSession):
     )
     await db_session.execute(
         delete(Execution).where(Execution.organization_id.in_(cohort_orgs))
+    )
+    # Each organization's default identity is a user in it.
+    await db_session.execute(
+        delete(User).where(User.organization_id.in_(cohort_orgs), User.identity_kind.is_not(None))
     )
     await db_session.execute(delete(Organization).where(Organization.created_by.in_(["git-sync", "test"])))
     await db_session.execute(delete(Role).where(Role.created_by == "git-sync"))
@@ -3391,6 +3395,78 @@ class TestPullUpsertNaturalKeys:
         assert len(rows) == 1, f"Expected 1 workflow row, got {len(rows)}"
         assert rows[0].id == id_b, f"Expected manifest ID {id_b}, got {rows[0].id}"
 
+    async def test_workflow_import_keeps_its_identity_suited_to_its_organization(
+        self,
+        db_session: AsyncSession,
+        sync_service,
+        working_clone,
+    ):
+        """A pull that keeps a workflow's organization keeps the identity it runs
+        unattended as; a pull that moves it to an organization that identity
+        can't serve is refused and changes nothing."""
+        from shared.identities import ensure_default_identity
+        from src.core.constants import PROVIDER_ORG_ID
+        from src.models.orm.organizations import Organization
+        from src.models.orm.users import User
+
+        path = "workflows/identity_import_test.py"
+        provider_identity = (
+            await db_session.execute(
+                select(User.id).where(
+                    User.organization_id == PROVIDER_ORG_ID, User.identity_kind == "org_default"
+                )
+            )
+        ).scalar_one()
+        organization = Organization(id=uuid4(), name="Identity Import Org", is_active=True, created_by="git-sync")
+        db_session.add(organization)
+        await db_session.flush()
+        await ensure_default_identity(db_session, organization)
+        wf_id = uuid4()
+        db_session.add(Workflow(
+            id=wf_id, name="identity_import_wf", function_name="git_sync_test_wf", path=path,
+            is_active=True, organization_id=None, run_identity_id=provider_identity,
+        ))
+        await db_session.commit()
+        organization_id = organization.id
+
+        def push(org_id, message: str) -> None:
+            clone_dir = Path(working_clone.working_dir)
+            (clone_dir / "workflows").mkdir(exist_ok=True)
+            (clone_dir / path).write_text(SAMPLE_WORKFLOW_PY)
+            (clone_dir / ".bifrost").mkdir(exist_ok=True)
+            entry = {"id": str(wf_id), "path": path, "function_name": "git_sync_test_wf", "type": "workflow"}
+            if org_id is not None:
+                entry["organization_id"] = str(org_id)
+            (clone_dir / ".bifrost" / "workflows.yaml").write_text(
+                yaml.dump({"workflows": {"identity_import_wf": entry}}, default_flow_style=False)
+            )
+            working_clone.index.add([path, ".bifrost/workflows.yaml"])
+            working_clone.index.commit(message)
+            working_clone.remotes.origin.push("main")
+
+        async def stored():
+            db_session.expire_all()
+            return (
+                await db_session.execute(
+                    select(Workflow.organization_id, Workflow.run_identity_id).where(Workflow.id == wf_id)
+                )
+            ).one()
+
+        try:
+            push(None, "Workflow stays global")
+            kept = await sync_service.desktop_sync(confirm_deletes=True)
+            assert kept.success, f"Sync failed: {kept.error}"
+            assert tuple(await stored()) == (None, provider_identity)
+
+            push(organization_id, "Workflow moves to a customer organization")
+            moved = await sync_service.desktop_sync(confirm_deletes=True)
+            assert not moved.success
+            assert "run_identity_id" in (moved.error or "")
+            assert tuple(await stored()) == (None, provider_identity)
+        finally:
+            await db_session.execute(delete(Workflow).where(Workflow.id == wf_id))
+            await db_session.commit()
+
     async def test_workspace_sync_leaves_solution_workflow_with_same_path(
         self,
         db_session: AsyncSession,
@@ -4124,8 +4200,11 @@ class TestOrgImport:
     async def test_create_org(
         self, db_session: AsyncSession, sync_service, working_clone,
     ):
-        """Org in manifest, not in DB → created."""
+        """Org in manifest, not in DB → created, with its default identity."""
+        from uuid import UUID
+
         from src.models.orm.organizations import Organization
+        from src.models.orm.users import User
 
         org_id = str(uuid4())
         work_dir = Path(working_clone.working_dir)
@@ -4145,6 +4224,14 @@ class TestOrgImport:
         assert org is not None, "Org not created"
         assert org.name == "TestOrg"
         assert org.is_active is True
+        identity_kinds = (
+            await db_session.scalars(
+                select(User.identity_kind).where(
+                    User.organization_id == UUID(org_id), User.identity_kind.is_not(None)
+                )
+            )
+        ).all()
+        assert identity_kinds == ["org_default"], "Imported org has its default identity"
 
     async def test_update_org_by_id_rename(
         self, db_session: AsyncSession, sync_service, working_clone,
@@ -4177,12 +4264,18 @@ class TestOrgImport:
     async def test_update_org_by_name_new_id(
         self, db_session: AsyncSession, sync_service, working_clone,
     ):
-        """Org exists by name with different UUID → ID updated (cross-env)."""
+        """Org exists by name with different UUID → ID updated (cross-env),
+        and its accounts (here its default identity) follow it."""
+        from shared.identities import ensure_default_identity
         from src.models.orm.organizations import Organization
+        from src.models.orm.users import User
 
         old_id = uuid4()
         new_id = uuid4()
-        db_session.add(Organization(id=old_id, name="SharedOrg", is_active=True, created_by="git-sync"))
+        organization = Organization(id=old_id, name="SharedOrg", is_active=True, created_by="git-sync")
+        db_session.add(organization)
+        await db_session.flush()
+        identity_id = (await ensure_default_identity(db_session, organization)).id
         await db_session.commit()
 
         work_dir = Path(working_clone.working_dir)
@@ -4203,6 +4296,10 @@ class TestOrgImport:
         )).scalar_one_or_none()
         assert row is not None, "Org should have new ID"
         assert row.name == "SharedOrg"
+        identity_org = (
+            await db_session.execute(select(User.organization_id).where(User.id == identity_id))
+        ).scalar_one()
+        assert identity_org == new_id
 
     async def test_org_preserves_domain(
         self, db_session: AsyncSession, sync_service, working_clone,

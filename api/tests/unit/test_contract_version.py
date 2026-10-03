@@ -289,7 +289,7 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # "secret" key is write-only (stored encrypted, never returned; omit to
     # keep, null/"" to clear). COSMETIC: the schema shape is unchanged and old
     # CLIs send the same body. Fingerprint refreshed only.
-    "d78354f9732ca881ac423c2e9e30b394aeb4e170fb5212c82319dc8cecc4d214"
+    "deca5400274834bb454fb1d19fdf35c912e47de8950f7b8beb3257463a21b8ae"
 )
 
 
