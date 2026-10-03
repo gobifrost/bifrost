@@ -76,18 +76,6 @@ async def ensure_default_identity(session: AsyncSession, organization: Organizat
     return identity
 
 
-async def default_identity(session: AsyncSession, organization_id: UUID | None) -> User:
-    """The default identity of an organization, or the global identity for None."""
-    if organization_id is None:
-        query = select(User).where(User.identity_kind == IdentityKind.GLOBAL_DEFAULT)
-    else:
-        query = select(User).where(
-            User.identity_kind == IdentityKind.ORG_DEFAULT,
-            User.organization_id == organization_id,
-        )
-    return (await session.scalars(query)).one()
-
-
 async def validate_run_identity(
     session: AsyncSession, *, workflow_organization_id: UUID | None, identity_id: UUID
 ) -> None:

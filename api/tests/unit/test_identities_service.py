@@ -18,7 +18,6 @@ from shared.builtin_roles import USER_ROLE_ID
 from shared.identities import (
     IDENTITY_EMAIL_DOMAIN,
     IdentityKind,
-    default_identity,
     ensure_default_identity,
     is_identity,
     is_identity_email,
@@ -82,15 +81,20 @@ async def test_ensure_default_identity_creates_one_ordinary_account(db_session: 
     assert count == 1
 
 
-@pytest.mark.asyncio
-async def test_default_identity_finds_the_global_and_organization_identities(db_session: AsyncSession) -> None:
-    global_identity = await default_identity(db_session, None)
-    assert global_identity.identity_kind == IdentityKind.GLOBAL_DEFAULT
-    assert global_identity.organization_id is None
+async def _seeded_identity(session: AsyncSession, kind: IdentityKind, organization_id) -> User:
+    return (
+        await session.scalars(
+            select(User).where(User.identity_kind == kind, User.organization_id.is_not_distinct_from(organization_id))
+        )
+    ).one()
 
-    provider_identity = await default_identity(db_session, PROVIDER_ORG_ID)
-    assert provider_identity.identity_kind == IdentityKind.ORG_DEFAULT
-    assert provider_identity.organization_id == PROVIDER_ORG_ID
+
+@pytest.mark.asyncio
+async def test_migration_seeds_the_global_and_provider_identities(db_session: AsyncSession) -> None:
+    global_identity = await _seeded_identity(db_session, IdentityKind.GLOBAL_DEFAULT, None)
+    assert global_identity.is_superuser is False
+
+    provider_identity = await _seeded_identity(db_session, IdentityKind.ORG_DEFAULT, PROVIDER_ORG_ID)
     assert provider_identity.is_superuser is True
 
 
@@ -136,7 +140,7 @@ def test_refuse_identity_sign_in() -> None:
 async def test_sso_provisioning_refuses_identity_emails(db_session: AsyncSession) -> None:
     from src.services.user_provisioning import ensure_user_provisioned
 
-    identity = await default_identity(db_session, PROVIDER_ORG_ID)
+    identity = await _seeded_identity(db_session, IdentityKind.ORG_DEFAULT, PROVIDER_ORG_ID)
     with pytest.raises(ValueError):
         await ensure_user_provisioned(db_session, identity.email.upper(), name="Claimed")
     with pytest.raises(ValueError):
